@@ -1,5 +1,5 @@
 // Cambia este valor antes de regenerar APK/EXE cuando publiques el backend.
-window.NIVRA_NATIVE_API_BASE_URL = window.NIVRA_NATIVE_API_BASE_URL || "";
+window.NIVRA_NATIVE_API_BASE_URL = "https://nivra-webapp-secure.onrender.com";
 
 // Opcional: un bridge nativo o Firebase Web puede inyectar aqui el token FCM.
 // La app lo registra contra /push-tokens sin exponerlo en codigo fuente.

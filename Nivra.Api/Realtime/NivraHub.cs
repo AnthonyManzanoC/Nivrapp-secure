@@ -19,6 +19,7 @@ public sealed class NivraHub(
     RealtimePresence presence,
     EncryptedFileStorage storage,
     PushNotificationService pushNotifications,
+    ILogger<NivraHub> logger,
     TimeProvider timeProvider) : Hub
 {
     public override async Task OnConnectedAsync()
@@ -95,33 +96,40 @@ public sealed class NivraHub(
             if (Context.Items.TryGetValue("vault_rooms", out var value) &&
                 value is HashSet<string> roomIds)
             {
-                foreach (var roomId in roomIds)
+                try
                 {
-                    var room = await db.VaultRooms.FirstOrDefaultAsync(candidate => candidate.Id == roomId && candidate.ClosedAt == null, CancellationToken.None);
-                    var member = await db.VaultRoomMembers.FirstOrDefaultAsync(candidate => candidate.VaultRoomId == roomId && candidate.UserId == currentUser.UserId, CancellationToken.None);
-                    if (room is null || member is null)
+                    foreach (var roomId in roomIds)
                     {
-                        continue;
-                    }
-
-                    member.LastSeenAt = now;
-                    if (room.RetentionMode == VaultRetentionMode.BurnOnExit)
-                    {
-                        member.Status = VaultMemberStatus.Left;
-                        member.LeftAt = now;
-                        room.ClosedAt = now;
-                        room.UpdatedAt = now;
-                        await BurnVaultRoomFilesAsync(roomId, CancellationToken.None);
-                        await Clients.Group(GroupsFor.VaultRoom(roomId)).SendAsync("vault.closed", new
+                        var room = await db.VaultRooms.FirstOrDefaultAsync(candidate => candidate.Id == roomId && candidate.ClosedAt == null, CancellationToken.None);
+                        var member = await db.VaultRoomMembers.FirstOrDefaultAsync(candidate => candidate.VaultRoomId == roomId && candidate.UserId == currentUser.UserId, CancellationToken.None);
+                        if (room is null || member is null)
                         {
-                            roomId,
-                            userId = currentUser.UserId,
-                            closedAt = now
-                        }, CancellationToken.None);
-                    }
-                }
+                            continue;
+                        }
 
-                await db.SaveChangesAsync(CancellationToken.None);
+                        member.LastSeenAt = now;
+                        if (room.RetentionMode == VaultRetentionMode.BurnOnExit)
+                        {
+                            member.Status = VaultMemberStatus.Left;
+                            member.LeftAt = now;
+                            room.ClosedAt = now;
+                            room.UpdatedAt = now;
+                            await BurnVaultRoomFilesAsync(roomId, CancellationToken.None);
+                            await Clients.Group(GroupsFor.VaultRoom(roomId)).SendAsync("vault.closed", new
+                            {
+                                roomId,
+                                userId = currentUser.UserId,
+                                closedAt = now
+                            }, CancellationToken.None);
+                        }
+                    }
+
+                    await db.SaveChangesAsync(CancellationToken.None);
+                }
+                catch (Exception cleanupException) when (cleanupException is DbUpdateException or InvalidOperationException)
+                {
+                    logger.LogWarning(cleanupException, "Vault disconnect cleanup could not complete for user {UserId}.", currentUser.UserId);
+                }
             }
         }
 
@@ -192,25 +200,6 @@ public sealed class NivraHub(
             throw new HubException("La llamada necesita al menos dos usuarios validos.");
         }
 
-        var callees = participants.Where(userId => userId != currentUser.UserId).ToList();
-        var offlineUserIds = callees.Where(userId => !presence.IsConnected(userId)).ToList();
-        if (offlineUserIds.Count > 0)
-        {
-            await InsertMissedCallMessagesAsync(request, currentUser, conversation, participants, offlineUserIds);
-            foreach (var userId in offlineUserIds)
-            {
-                await pushNotifications.SendMissedCallAsync(userId, conversation?.Id, currentUser.UserId, request.Type, Context.ConnectionAborted);
-            }
-
-            await Clients.Caller.SendAsync("call.failed", new
-            {
-                code = "user_offline",
-                message = "Usuario Offline",
-                offlineUserIds
-            }, Context.ConnectionAborted);
-            throw new HubException("Usuario Offline");
-        }
-
         var call = new CallSession
         {
             Id = NivraIds.NewId("cal"),
@@ -225,6 +214,7 @@ public sealed class NivraHub(
         await store.AddCallAsync(call, Context.ConnectionAborted);
         var response = ToCallResponse(call);
         await NotifyUsersAsync(participants, "call.started", response);
+        await SendIncomingCallPushesAsync(call, currentUser.UserId, participants);
         return response;
     }
 
@@ -429,6 +419,33 @@ public sealed class NivraHub(
         {
             await Clients.Group(GroupsFor.User(userId)).SendAsync(method, payload, Context.ConnectionAborted);
         }
+    }
+
+    private async Task SendIncomingCallPushesAsync(CallSession call, string callerUserId, IEnumerable<string> participantUserIds)
+    {
+        var callerName = await GetCallerNameAsync(callerUserId, Context.ConnectionAborted);
+        var callees = participantUserIds
+            .Where(userId => userId != callerUserId)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var userId in callees)
+        {
+            await pushNotifications.SendIncomingCallAsync(userId, call.ConversationId, call.Id, callerUserId, callerName, call.Type, Context.ConnectionAborted);
+        }
+    }
+
+    private async Task<string> GetCallerNameAsync(string callerUserId, CancellationToken cancellationToken)
+    {
+        var caller = await db.Users
+            .AsNoTracking()
+            .Where(user => user.Id == callerUserId)
+            .Select(user => new { user.Alias, user.DisplayName })
+            .FirstOrDefaultAsync(cancellationToken);
+
+        return string.IsNullOrWhiteSpace(caller?.DisplayName)
+            ? caller?.Alias ?? "un contacto"
+            : caller.DisplayName;
     }
 
     private static CallResponse ToCallResponse(CallSession call)

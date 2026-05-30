@@ -2059,7 +2059,7 @@ public static partial class EndpointExtensions
     {
         var group = app.MapGroup("/calls");
 
-        group.MapPost("/start", async Task<IResult> (StartCallRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        group.MapPost("/start", async Task<IResult> (StartCallRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2104,10 +2104,11 @@ public static partial class EndpointExtensions
 
             await store.AddCallAsync(call, cancellationToken);
             var response = ToCallResponse(call);
+            var callerName = await GetCallerNameAsync(store, current.UserId, cancellationToken);
             await NotifyUsers(hub, participants, "call.started", response);
-            foreach (var userId in participants.Where(userId => userId != current.UserId && !presence.IsConnected(userId)))
+            foreach (var userId in participants.Where(userId => userId != current.UserId))
             {
-                await pushNotifications.SendIncomingCallAsync(userId, call.ConversationId, call.Id, current.UserId, call.Type, cancellationToken);
+                await pushNotifications.SendIncomingCallAsync(userId, call.ConversationId, call.Id, current.UserId, callerName, call.Type, cancellationToken);
             }
 
             return Results.Created($"/calls/{call.Id}", response);
@@ -2603,6 +2604,14 @@ public static partial class EndpointExtensions
     private static CallResponse ToCallResponse(CallSession call)
     {
         return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt);
+    }
+
+    private static async Task<string> GetCallerNameAsync(INivraStore store, string callerUserId, CancellationToken cancellationToken)
+    {
+        var caller = await store.GetUserAsync(callerUserId, cancellationToken);
+        return string.IsNullOrWhiteSpace(caller?.DisplayName)
+            ? caller?.Alias ?? "un contacto"
+            : caller.DisplayName;
     }
 
     private static async Task<UserSummaryResponse> ToUserSummaryAsync(UserAccount user, string currentUserId, NivraDbContext db, CancellationToken cancellationToken)

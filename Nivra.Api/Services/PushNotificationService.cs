@@ -76,23 +76,27 @@ public sealed class PushNotificationService(
         string? conversationId,
         string callId,
         string callerUserId,
+        string callerName,
         CallType callType,
         CancellationToken cancellationToken)
     {
         await SendToUserAsync(
             userId,
             "Nivra",
-            callType == CallType.Video ? "Videollamada entrante" : "Llamada entrante",
+            callType == CallType.Video ? $"{callerName} te llama por video" : $"{callerName} te llama",
             new Dictionary<string, string>
             {
-                ["type"] = "call",
+                ["type"] = "incoming_call",
                 ["callId"] = callId,
+                ["callerId"] = callerUserId,
                 ["callerUserId"] = callerUserId,
+                ["callerName"] = callerName,
                 ["callType"] = callType.ToString(),
                 ["conversationId"] = conversationId ?? "",
                 ["tag"] = $"nivra-call-{callId}"
             },
-            cancellationToken);
+            cancellationToken,
+            includeNotificationPayloadOverride: false);
     }
 
     public async Task SendMissedCallAsync(
@@ -122,7 +126,8 @@ public sealed class PushNotificationService(
         string title,
         string body,
         Dictionary<string, string> data,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool? includeNotificationPayloadOverride = null)
     {
         var pushOptions = options.CurrentValue;
         if (!IsFcmConfigured(pushOptions))
@@ -133,7 +138,9 @@ public sealed class PushNotificationService(
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
         var tokens = await db.PushTokens
-            .Where(token => token.UserId == userId && token.RevokedAt == null)
+            .Where(token => token.UserId == userId &&
+                token.RevokedAt == null &&
+                (token.Provider == "fcm" || token.Provider == "Fcm" || token.Provider == "FCM"))
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
         {
@@ -141,6 +148,7 @@ public sealed class PushNotificationService(
         }
 
         var changed = false;
+        var includeNotificationPayload = includeNotificationPayloadOverride ?? pushOptions.IncludeNotificationPayload;
         foreach (var token in tokens)
         {
             var rawToken = TryUnprotectToken(token.TokenCiphertext);
@@ -149,7 +157,7 @@ public sealed class PushNotificationService(
                 continue;
             }
 
-            var result = await SendFcmAsync(pushOptions, rawToken, title, body, data, cancellationToken);
+            var result = await SendFcmAsync(pushOptions, rawToken, title, body, data, includeNotificationPayload, cancellationToken);
             if (result.InvalidToken)
             {
                 token.RevokedAt = DateTimeOffset.UtcNow;
@@ -169,6 +177,7 @@ public sealed class PushNotificationService(
         string title,
         string body,
         Dictionary<string, string> data,
+        bool includeNotificationPayload,
         CancellationToken cancellationToken)
     {
         try
@@ -180,7 +189,7 @@ public sealed class PushNotificationService(
                 $"https://fcm.googleapis.com/v1/projects/{Uri.EscapeDataString(pushOptions.Fcm.ProjectId)}/messages:send");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Content = new StringContent(
-                JsonSerializer.Serialize(new { message = CreateFcmMessage(token, title, body, data, pushOptions.IncludeNotificationPayload) }, JsonOptions),
+                JsonSerializer.Serialize(new { message = CreateFcmMessage(token, title, body, data, includeNotificationPayload) }, JsonOptions),
                 Encoding.UTF8,
                 "application/json");
 

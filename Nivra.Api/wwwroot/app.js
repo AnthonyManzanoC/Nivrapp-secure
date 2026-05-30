@@ -5215,7 +5215,7 @@ async function handleCallSignal(signal) {
     state.call.startedAt = new Date().toISOString();
     stopCallTones();
     startCallTicker();
-    await establishCallPeers(fromUserId);
+    await establishAcceptedCallPeer(fromUserId);
     render();
     return;
   }
@@ -5323,6 +5323,16 @@ async function establishCallPeers(onlyUserId = null) {
       await createAndSendOffer(userId);
     }
   }
+}
+
+async function establishAcceptedCallPeer(userId) {
+  const peer = state.call.peers.get(userId);
+  if (shouldCreateOfferTo(userId) && peer?.connection && !peer.connection.remoteDescription) {
+    peer.connection.close();
+    state.call.peers.delete(userId);
+    state.call.remoteStreams.delete(userId);
+  }
+  await establishCallPeers(userId);
 }
 
 function ensurePeerConnection(userId) {
@@ -6836,9 +6846,11 @@ async function handlePushNavigation(data = {}) {
 
 async function hydrateIncomingCallFromPushData(data = {}) {
   const callId = pushDataValue(data, "callId", "CallId");
-  const callerUserId = pushDataValue(data, "callerUserId", "CallerUserId", "initiatorUserId", "InitiatorUserId");
+  const callerUserId = pushDataValue(data, "callerId", "CallerId", "callerUserId", "CallerUserId", "initiatorUserId", "InitiatorUserId");
   if (!callId || !callerUserId || callerUserId === state.auth?.user?.id) return false;
   if (state.call.current?.id === callId) return true;
+  const callerName = pushDataValue(data, "callerName", "CallerName");
+  if (callerName) state.aliasByUserId.set(callerUserId, callerName);
 
   const call = {
     id: callId,

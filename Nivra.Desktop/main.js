@@ -20,7 +20,7 @@ function resolveWebRoot() {
 }
 
 function resolveApiBaseUrl(webRoot) {
-  return (process.env.NIVRA_API_BASE_URL || readBundledApiBaseUrl(webRoot) || "http://localhost:5055").replace(/\/+$/, "");
+  return (process.env.NIVRA_API_BASE_URL || readBundledApiBaseUrl(webRoot) || "https://nivra-webapp-secure.onrender.com").replace(/\/+$/, "");
 }
 
 function createWindow(webRoot, apiBaseUrl) {
