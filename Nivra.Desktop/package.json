@@ -1,0 +1,15 @@
+{
+  "name": "nivra-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Nivra desktop shell for Windows.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build-exe": "electron-packager . Nivra --platform=win32 --arch=x64 --out=dist --overwrite --asar --extra-resource=../Nivra.Api/wwwroot"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-packager": "latest"
+  }
+}

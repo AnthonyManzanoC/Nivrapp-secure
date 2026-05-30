@@ -1,0 +1,23 @@
+{
+  "name": "nivra-multiplatform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Capacitor shell for the Nivra SPA served from Nivra.Api/wwwroot.",
+  "scripts": {
+    "cap:init": "npx cap init Nivra com.nivra.app --web-dir Nivra.Api/wwwroot",
+    "cap:add:android": "npx cap add android",
+    "cap:add:ios": "npx cap add ios",
+    "cap:sync": "npx cap sync",
+    "cap:open:android": "npx cap open android",
+    "cap:open:ios": "npx cap open ios"
+  },
+  "dependencies": {
+    "@capacitor/android": "6.2.1",
+    "@capacitor/core": "6.2.1",
+    "@capacitor/ios": "6.2.1",
+    "@capacitor/push-notifications": "^6.0.5"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "6.2.1"
+  }
+}

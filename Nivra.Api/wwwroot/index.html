@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#09110f">
+  <meta name="description" content="Nivra private messaging and secure vault">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Nivra">
+  <meta name="format-detection" content="telephone=no">
+  <title>Nivra</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="assets/nivra-mark.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="assets/icon-192.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div id="app" class="app-shell">
+    <section class="boot-screen">
+      <img src="assets/nivra-mark.svg" alt="" class="boot-mark">
+      <div>
+        <h1>Nivra</h1>
+        <p>Preparando tu espacio privado...</p>
+      </div>
+    </section>
+  </div>
+
+  <div id="qrScannerPortal" class="qr-scanner-portal" aria-live="polite"></div>
+  <div id="toast" class="toast" aria-live="polite"></div>
+  <script src="native-config.js"></script>
+  <script src="vendor/signalr.min.js"></script>
+  <script src="vendor/qrcode-generator.js"></script>
+  <script src="vendor/html5-qrcode.min.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Nivra</string>
+    <string name="title_activity_main">Nivra</string>
+    <string name="package_name">com.nivra.app</string>
+    <string name="custom_url_scheme">com.nivra.app</string>
+</resources>

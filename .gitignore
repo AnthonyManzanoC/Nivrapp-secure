@@ -1,0 +1,23 @@
+bin/
+obj/
+.vs/
+.vscode/
+Nivra.Api/Data/
+Nivra.Api/appsettings.Development.json
+*.user
+*.suo
+node_modules/
+Nivra.Desktop/node_modules/
+Nivra.Desktop/dist/
+
+# Ignorar compilaciones y artefactos
+artifacts/
+bin/
+obj/
+*.dll
+*.exe
+*.exe
+*.zip
+*.apk
+artifacts/
+android/app/build/

@@ -1,0 +1,17 @@
+{
+  "appId": "com.nivra.app",
+  "appName": "Nivra",
+  "webDir": "Nivra.Api/wwwroot",
+  "backgroundColor": "#070b0d",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "backgroundColor": "#070b0d"
+  },
+  "ios": {
+    "backgroundColor": "#070b0d",
+    "contentInset": "never"
+  }
+}

@@ -1,0 +1,508 @@
+using System.Collections.Concurrent;
+using System.Text;
+using System.Text.Json;
+using Microsoft.AspNetCore.SignalR;
+using Microsoft.EntityFrameworkCore;
+using Nivra.Api.Contracts;
+using Nivra.Api.Domain;
+using Nivra.Api.Infrastructure;
+using Nivra.Api.Security;
+using Nivra.Api.Services;
+
+namespace Nivra.Api.Realtime;
+
+public sealed class NivraHub(
+    TokenService tokenService,
+    INivraStore store,
+    NivraDbContext db,
+    QrLoginService qrLogin,
+    RealtimePresence presence,
+    EncryptedFileStorage storage,
+    PushNotificationService pushNotifications,
+    TimeProvider timeProvider) : Hub
+{
+    public override async Task OnConnectedAsync()
+    {
+        var http = Context.GetHttpContext();
+        var token = http?.Request.Query["access_token"].FirstOrDefault();
+        var authorization = http?.Request.Headers.Authorization.ToString();
+        var qrId = http?.Request.Query["qr_login_id"].FirstOrDefault();
+        var qrCode = http?.Request.Query["qr_code"].FirstOrDefault();
+        var qrLink = http?.Request.Query["qr_link"].FirstOrDefault();
+
+        if (string.IsNullOrWhiteSpace(token) && authorization?.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) == true)
+        {
+            token = authorization["Bearer ".Length..].Trim();
+        }
+
+        if (string.IsNullOrWhiteSpace(token) &&
+            !string.IsNullOrWhiteSpace(qrId) &&
+            !string.IsNullOrWhiteSpace(qrCode) &&
+            qrLogin.IsValid(qrId, qrCode))
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, GroupsFor.QrLogin(qrId));
+            await base.OnConnectedAsync();
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(token) &&
+            string.Equals(qrLink, "1", StringComparison.Ordinal))
+        {
+            Context.Items["qr_link"] = true;
+            await Clients.Caller.SendAsync("qr.connection-ready", new { connectionId = Context.ConnectionId }, Context.ConnectionAborted);
+            await base.OnConnectedAsync();
+            return;
+        }
+
+        var currentUser = string.IsNullOrWhiteSpace(token)
+            ? null
+            : await tokenService.ValidateAccessTokenAsync(token, store, Context.ConnectionAborted);
+        if (currentUser is null)
+        {
+            Context.Abort();
+            return;
+        }
+
+        Context.Items["current_user"] = currentUser;
+        var now = timeProvider.GetUtcNow();
+        var device = await store.GetDeviceAsync(currentUser.DeviceId, Context.ConnectionAborted);
+        if (device is not null)
+        {
+            device.LastSeenAt = now;
+            await store.SaveChangesAsync(Context.ConnectionAborted);
+        }
+        await Groups.AddToGroupAsync(Context.ConnectionId, GroupsFor.User(currentUser.UserId));
+        await Groups.AddToGroupAsync(Context.ConnectionId, GroupsFor.Device(currentUser.DeviceId));
+        presence.Connect(currentUser.UserId, Context.ConnectionId);
+        await Clients.All.SendAsync("presence.changed", new PresenceResponse(currentUser.UserId, true, now), Context.ConnectionAborted);
+        await base.OnConnectedAsync();
+    }
+
+    public override async Task OnDisconnectedAsync(Exception? exception)
+    {
+        if (TryGetCurrentUser(out var currentUser))
+        {
+            presence.Disconnect(currentUser.UserId, Context.ConnectionId);
+            var now = timeProvider.GetUtcNow();
+            var device = await store.GetDeviceAsync(currentUser.DeviceId, CancellationToken.None);
+            if (device is not null && device.RevokedAt is null)
+            {
+                device.LastSeenAt = now;
+                await store.SaveChangesAsync(CancellationToken.None);
+            }
+            await Clients.All.SendAsync("presence.changed", new PresenceResponse(currentUser.UserId, presence.IsConnected(currentUser.UserId), now), CancellationToken.None);
+
+            if (Context.Items.TryGetValue("vault_rooms", out var value) &&
+                value is HashSet<string> roomIds)
+            {
+                foreach (var roomId in roomIds)
+                {
+                    var room = await db.VaultRooms.FirstOrDefaultAsync(candidate => candidate.Id == roomId && candidate.ClosedAt == null, CancellationToken.None);
+                    var member = await db.VaultRoomMembers.FirstOrDefaultAsync(candidate => candidate.VaultRoomId == roomId && candidate.UserId == currentUser.UserId, CancellationToken.None);
+                    if (room is null || member is null)
+                    {
+                        continue;
+                    }
+
+                    member.LastSeenAt = now;
+                    if (room.RetentionMode == VaultRetentionMode.BurnOnExit)
+                    {
+                        member.Status = VaultMemberStatus.Left;
+                        member.LeftAt = now;
+                        room.ClosedAt = now;
+                        room.UpdatedAt = now;
+                        await BurnVaultRoomFilesAsync(roomId, CancellationToken.None);
+                        await Clients.Group(GroupsFor.VaultRoom(roomId)).SendAsync("vault.closed", new
+                        {
+                            roomId,
+                            userId = currentUser.UserId,
+                            closedAt = now
+                        }, CancellationToken.None);
+                    }
+                }
+
+                await db.SaveChangesAsync(CancellationToken.None);
+            }
+        }
+
+        await base.OnDisconnectedAsync(exception);
+    }
+
+    public string GetConnectionId() => Context.ConnectionId;
+
+    public async Task<List<PresenceResponse>> Presence(List<string> userIds)
+    {
+        if (!TryGetCurrentUser(out _))
+        {
+            return [];
+        }
+
+        var ids = (userIds ?? [])
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .Take(80)
+            .ToList();
+        if (ids.Count == 0)
+        {
+            return [];
+        }
+
+        var lastSeen = await db.Devices
+            .AsNoTracking()
+            .Where(device => ids.Contains(device.UserId) && device.RevokedAt == null)
+            .GroupBy(device => device.UserId)
+            .Select(group => new { UserId = group.Key, LastSeenAt = group.Max(device => device.LastSeenAt) })
+            .ToDictionaryAsync(item => item.UserId, item => item.LastSeenAt, Context.ConnectionAborted);
+
+        return ids.Select(id =>
+            new PresenceResponse(id, presence.IsConnected(id), lastSeen.TryGetValue(id, out var seen) ? seen : null))
+            .ToList();
+    }
+
+    public async Task<CallResponse> CallUser(StartCallRequest request)
+    {
+        if (!TryGetCurrentUser(out var currentUser))
+        {
+            throw new HubException("No autenticado.");
+        }
+
+        var participants = (request.ParticipantUserIds ?? [])
+            .Append(currentUser.UserId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToHashSet(StringComparer.Ordinal);
+
+        ConversationRecord? conversation = null;
+        if (request.ConversationId is not null)
+        {
+            conversation = await store.GetConversationAsync(request.ConversationId, Context.ConnectionAborted);
+            if (conversation is null || !conversation.Participants.Any(participant => participant.UserId == currentUser.UserId && participant.RemovedAt is null))
+            {
+                throw new HubException("Chat no encontrado.");
+            }
+
+            participants = conversation.Participants
+                .Where(participant => participant.RemovedAt is null)
+                .Select(participant => participant.UserId)
+                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        if (participants.Count < 2 || !await store.UsersExistAsync(participants, Context.ConnectionAborted))
+        {
+            throw new HubException("La llamada necesita al menos dos usuarios validos.");
+        }
+
+        var callees = participants.Where(userId => userId != currentUser.UserId).ToList();
+        var offlineUserIds = callees.Where(userId => !presence.IsConnected(userId)).ToList();
+        if (offlineUserIds.Count > 0)
+        {
+            await InsertMissedCallMessagesAsync(request, currentUser, conversation, participants, offlineUserIds);
+            foreach (var userId in offlineUserIds)
+            {
+                await pushNotifications.SendMissedCallAsync(userId, conversation?.Id, currentUser.UserId, request.Type, Context.ConnectionAborted);
+            }
+
+            await Clients.Caller.SendAsync("call.failed", new
+            {
+                code = "user_offline",
+                message = "Usuario Offline",
+                offlineUserIds
+            }, Context.ConnectionAborted);
+            throw new HubException("Usuario Offline");
+        }
+
+        var call = new CallSession
+        {
+            Id = NivraIds.NewId("cal"),
+            ConversationId = request.ConversationId,
+            InitiatorUserId = currentUser.UserId,
+            Type = request.Type,
+            Status = CallStatus.Ringing,
+            ParticipantUserIds = participants,
+            StartedAt = timeProvider.GetUtcNow()
+        };
+
+        await store.AddCallAsync(call, Context.ConnectionAborted);
+        var response = ToCallResponse(call);
+        await NotifyUsersAsync(participants, "call.started", response);
+        return response;
+    }
+
+    public async Task Typing(string conversationId, string encryptedState)
+    {
+        if (!TryGetCurrentUser(out var currentUser) || !await store.IsActiveParticipantAsync(conversationId, currentUser.UserId, Context.ConnectionAborted))
+        {
+            return;
+        }
+
+        await Clients.Group(GroupsFor.Conversation(conversationId)).SendAsync("conversation.typing", new
+        {
+            conversationId,
+            senderUserId = currentUser.UserId,
+            senderDeviceId = currentUser.DeviceId,
+            encryptedState
+        });
+    }
+
+    public async Task JoinConversation(string conversationId)
+    {
+        if (TryGetCurrentUser(out var currentUser) && await store.IsActiveParticipantAsync(conversationId, currentUser.UserId, Context.ConnectionAborted))
+        {
+            await Groups.AddToGroupAsync(Context.ConnectionId, GroupsFor.Conversation(conversationId));
+        }
+    }
+
+    public async Task JoinVaultRoom(string roomId)
+    {
+        if (!TryGetCurrentUser(out var currentUser))
+        {
+            return;
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var canEnter = await db.VaultRooms.AnyAsync(room =>
+            room.Id == roomId &&
+            room.ClosedAt == null &&
+            (room.ExpiresAt == null || room.ExpiresAt > now) &&
+            db.VaultRoomMembers.Any(member =>
+                member.VaultRoomId == room.Id &&
+                member.UserId == currentUser.UserId &&
+                member.Status == VaultMemberStatus.Active),
+            Context.ConnectionAborted);
+        if (!canEnter)
+        {
+            return;
+        }
+
+        await Groups.AddToGroupAsync(Context.ConnectionId, GroupsFor.VaultRoom(roomId));
+        TrackVaultRoom(roomId);
+
+        var memberRecord = await db.VaultRoomMembers.FirstOrDefaultAsync(member => member.VaultRoomId == roomId && member.UserId == currentUser.UserId, Context.ConnectionAborted);
+        if (memberRecord is not null)
+        {
+            memberRecord.LastSeenAt = now;
+            await db.SaveChangesAsync(Context.ConnectionAborted);
+        }
+    }
+
+    public async Task SendVaultRoomMessage(string roomId, VaultRealtimeMessageRequest request)
+    {
+        if (!TryGetCurrentUser(out var currentUser) ||
+            request.Recipients is null ||
+            request.Recipients.Count == 0 ||
+            !await IsActiveVaultMemberAsync(roomId, currentUser.UserId))
+        {
+            return;
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var response = new VaultRealtimeMessageResponse(
+            NivraIds.NewId("vmsg"),
+            roomId,
+            string.IsNullOrWhiteSpace(request.ClientMessageId) ? $"hub-{Guid.NewGuid():N}" : request.ClientMessageId,
+            currentUser.UserId,
+            currentUser.DeviceId,
+            request.Kind,
+            request.Recipients,
+            request.FileObjectId,
+            now);
+
+        await Clients.Group(GroupsFor.VaultRoom(roomId)).SendAsync("vault.message", response, Context.ConnectionAborted);
+    }
+
+    private Task<bool> IsActiveVaultMemberAsync(string roomId, string userId)
+    {
+        var now = timeProvider.GetUtcNow();
+        return db.VaultRooms.AnyAsync(room =>
+            room.Id == roomId &&
+            room.ClosedAt == null &&
+            (room.ExpiresAt == null || room.ExpiresAt > now) &&
+            db.VaultRoomMembers.Any(member =>
+                member.VaultRoomId == room.Id &&
+                member.UserId == userId &&
+                member.Status == VaultMemberStatus.Active),
+            Context.ConnectionAborted);
+    }
+
+    private void TrackVaultRoom(string roomId)
+    {
+        if (!Context.Items.TryGetValue("vault_rooms", out var value) || value is not HashSet<string> rooms)
+        {
+            rooms = new HashSet<string>(StringComparer.Ordinal);
+            Context.Items["vault_rooms"] = rooms;
+        }
+
+        rooms.Add(roomId);
+    }
+
+    private async Task BurnVaultRoomFilesAsync(string roomId, CancellationToken cancellationToken)
+    {
+        var files = await db.Files
+            .Where(file => file.VaultRoomId == roomId && file.State != FileState.Deleted)
+            .ToListAsync(cancellationToken);
+        foreach (var file in files)
+        {
+            file.State = FileState.Deleted;
+            await storage.DeleteIfExistsAsync(file, cancellationToken);
+        }
+    }
+
+    private async Task InsertMissedCallMessagesAsync(
+        StartCallRequest request,
+        CurrentUser currentUser,
+        ConversationRecord? conversation,
+        HashSet<string> participants,
+        List<string> offlineUserIds)
+    {
+        if (conversation is null || offlineUserIds.Count == 0)
+        {
+            return;
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var caller = await db.Users
+            .AsNoTracking()
+            .Where(user => user.Id == currentUser.UserId)
+            .Select(user => new { user.Alias, user.DisplayName })
+            .FirstOrDefaultAsync(Context.ConnectionAborted);
+        var callerName = string.IsNullOrWhiteSpace(caller?.DisplayName) ? caller?.Alias ?? "un contacto" : caller.DisplayName;
+        var payload = new
+        {
+            type = "system",
+            @event = "missed-call",
+            title = "Llamada perdida",
+            text = $"{callerName} intento llamarte",
+            callType = request.Type.ToString(),
+            callerUserId = currentUser.UserId,
+            callerAlias = caller?.Alias,
+            conversationId = conversation.Id,
+            at = now
+        };
+        var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))));
+
+        var recipients = new List<RecipientCiphertext>();
+        foreach (var userId in offlineUserIds)
+        {
+            var devices = await store.ActiveDevicesForUserAsync(userId, Context.ConnectionAborted);
+            recipients.AddRange(devices.Select(device => new RecipientCiphertext
+            {
+                UserId = userId,
+                DeviceId = device.Id,
+                Ciphertext = encodedPayload,
+                Header = "system:missed-call"
+            }));
+        }
+
+        if (recipients.Count == 0)
+        {
+            return;
+        }
+
+        var message = new MessageEnvelope
+        {
+            Id = NivraIds.NewId("msg"),
+            ConversationId = conversation.Id,
+            ClientMessageId = $"system-missed-call-{Guid.NewGuid():N}",
+            SenderUserId = currentUser.UserId,
+            SenderDeviceId = currentUser.DeviceId,
+            Kind = MessageKind.System,
+            Recipients = recipients,
+            EncryptedPolicy = "system:missed-call",
+            ServerReceivedAt = now,
+            DeleteAfterRead = false
+        };
+        message.Receipts = recipients.Select(recipient => new DeliveryReceipt
+        {
+            UserId = recipient.UserId,
+            DeviceId = recipient.DeviceId
+        }).ToList();
+
+        conversation.LastMessageAt = now;
+        conversation.UpdatedAt = now;
+        db.Messages.Add(message);
+        await db.SaveChangesAsync(Context.ConnectionAborted);
+    }
+
+    private async Task NotifyUsersAsync(IEnumerable<string> userIds, string method, object payload)
+    {
+        foreach (var userId in userIds.Distinct(StringComparer.Ordinal))
+        {
+            await Clients.Group(GroupsFor.User(userId)).SendAsync(method, payload, Context.ConnectionAborted);
+        }
+    }
+
+    private static CallResponse ToCallResponse(CallSession call)
+    {
+        return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt);
+    }
+
+    private bool TryGetCurrentUser(out CurrentUser currentUser)
+    {
+        if (Context.Items.TryGetValue("current_user", out var value) && value is CurrentUser user)
+        {
+            currentUser = user;
+            return true;
+        }
+
+        currentUser = default!;
+        return false;
+    }
+}
+
+public static class GroupsFor
+{
+    public static string User(string userId) => $"user:{userId}";
+    public static string Device(string deviceId) => $"device:{deviceId}";
+    public static string Conversation(string conversationId) => $"conversation:{conversationId}";
+    public static string VaultRoom(string roomId) => $"vault-room:{roomId}";
+    public static string QrLogin(string qrId) => $"qr-login:{qrId}";
+}
+
+public sealed class RealtimePresence
+{
+    private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> connectionsByUser = new(StringComparer.Ordinal);
+
+    public void Connect(string userId, string connectionId)
+    {
+        var connections = connectionsByUser.GetOrAdd(userId, _ => new ConcurrentDictionary<string, byte>(StringComparer.Ordinal));
+        connections[connectionId] = 1;
+    }
+
+    public void Disconnect(string userId, string connectionId)
+    {
+        if (!connectionsByUser.TryGetValue(userId, out var connections))
+        {
+            return;
+        }
+
+        connections.TryRemove(connectionId, out _);
+        if (connections.IsEmpty)
+        {
+            connectionsByUser.TryRemove(userId, out _);
+        }
+    }
+
+    public bool IsConnected(string userId)
+    {
+        return connectionsByUser.TryGetValue(userId, out var connections) && !connections.IsEmpty;
+    }
+}
+
+public sealed record VaultRealtimeMessageRequest(
+    string? ClientMessageId,
+    MessageKind Kind,
+    List<RecipientCipherRequest> Recipients,
+    string? FileObjectId);
+
+public sealed record PresenceResponse(string UserId, bool Online, DateTimeOffset? LastSeenAt);
+
+public sealed record VaultRealtimeMessageResponse(
+    string Id,
+    string VaultRoomId,
+    string ClientMessageId,
+    string SenderUserId,
+    string SenderDeviceId,
+    MessageKind Kind,
+    List<RecipientCipherRequest> Recipients,
+    string? FileObjectId,
+    DateTimeOffset SentAt);

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1052459577646",
+    "project_id": "nivra-af67e",
+    "storage_bucket": "nivra-af67e.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1052459577646:android:8c65fccffb81af6eb10abf",
+        "android_client_info": {
+          "package_name": "com.nivra.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAEt5JSj2tZuX2BV56sgtFwpW4SHHt9zRQ"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

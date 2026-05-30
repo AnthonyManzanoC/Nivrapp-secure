@@ -1,0 +1,46 @@
+@host = http://localhost:5000
+
+### Health
+GET {{host}}/health
+
+### Register Alice
+POST {{host}}/auth/register
+Content-Type: application/json
+
+{
+  "alias": "alice",
+  "password": "super-secret-123",
+  "deviceName": "Alice Phone",
+  "displayName": "Alice",
+  "email": null,
+  "phone": null,
+  "keyBundle": {
+    "identityKey": "alice_identity_key_public",
+    "signedPreKey": "alice_signed_pre_key_public",
+    "preKeySignature": "alice_signature",
+    "oneTimePreKeys": ["alice_pre_key_1"]
+  }
+}
+
+### Register Bob
+POST {{host}}/auth/register
+Content-Type: application/json
+
+{
+  "alias": "bob",
+  "password": "super-secret-456",
+  "deviceName": "Bob Phone",
+  "displayName": "Bob",
+  "email": null,
+  "phone": null,
+  "keyBundle": {
+    "identityKey": "bob_identity_key_public",
+    "signedPreKey": "bob_signed_pre_key_public",
+    "preKeySignature": "bob_signature",
+    "oneTimePreKeys": ["bob_pre_key_1"]
+  }
+}
+
+### Me
+GET {{host}}/me
+Authorization: Bearer {{accessToken}}
