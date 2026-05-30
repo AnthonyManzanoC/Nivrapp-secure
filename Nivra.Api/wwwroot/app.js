@@ -22,6 +22,7 @@ const MESSAGE_SCROLL_DEBOUNCE_MS = 120;
 const SEARCH_DEBOUNCE_MS = 600;
 const SEARCH_MIN_CHARS = 2;
 const MAIN_THREAD_YIELD_EVERY = 8;
+const MAX_CALL_HISTORY = 80;
 const MESSAGE_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢"];
 const STORY_REACTIONS = [
   { key: "heart", value: "\u2764\uFE0F" },
@@ -53,7 +54,7 @@ class LocalStore {
         clearTimeout(timeout);
         resolve(value);
       };
-      const timeout = setTimeout(() => finish(null), 1800);
+      const timeout = setTimeout(() => finish(null), 5000);
       let request;
       try {
         request = indexedDB.open(this.dbName, this.version);
@@ -105,6 +106,9 @@ class LocalStore {
       request.onsuccess = () => finish(request.result);
       request.onerror = () => finish(null);
       request.onblocked = () => finish(null);
+    }).then((db) => {
+      if (!db) this.dbPromise = null;
+      return db;
     });
     return this.dbPromise;
   }
@@ -301,6 +305,14 @@ const state = {
   view: "chats",
   mobileChatOpen: false,
   query: "",
+  searchByView: {
+    chats: "",
+    world: "",
+    vault: "",
+    calls: "",
+    privacy: "",
+    account: ""
+  },
   contactPanel: {
     tab: "mine",
     query: "",
@@ -318,6 +330,7 @@ const state = {
   devices: [],
   vaultItems: [],
   vaultRooms: [],
+  callHistory: [],
   privacy: null,
   entitlements: null,
   selectedConversationId: loadJson("nivra.selectedConversationId"),
@@ -425,6 +438,10 @@ const state = {
   chatSearchRequestSeq: 0,
   vaultInviteSearchRequestSeq: 0,
   lastRenderedView: null,
+  viewEpoch: 0,
+  renderFrame: null,
+  messageLoadSeq: 0,
+  messageLoadSession: null,
   qrLogin: null,
   qrScanner: {
     reader: null,
@@ -689,6 +706,42 @@ function compareMessagesByTime(left, right) {
   return compareMessageAt(left?.at, right?.at);
 }
 
+function cancelActiveMessageLoad(reason = "cancelled") {
+  const session = state.messageLoadSession;
+  if (!session) return;
+  session.reason = reason;
+  session.controller?.abort?.();
+  state.messageLoadSession = null;
+}
+
+function beginMessageLoadSession(conversationId, reason = "history") {
+  cancelActiveMessageLoad("superseded");
+  const controller = new AbortController();
+  const session = {
+    id: ++state.messageLoadSeq,
+    conversationId,
+    controller,
+    signal: controller.signal,
+    reason
+  };
+  state.messageLoadSession = session;
+  return session;
+}
+
+function finishMessageLoadSession(session) {
+  if (state.messageLoadSession?.id === session?.id) {
+    state.messageLoadSession = null;
+  }
+}
+
+function isMessageLoadSessionActive(session) {
+  if (!session) return true;
+  return state.messageLoadSession?.id === session.id &&
+    !session.signal?.aborted &&
+    session.conversationId === state.selectedConversationId &&
+    state.view === "chats";
+}
+
 async function persistLocalMessage(conversationId, message) {
   const accountKey = localAccountKey();
   if (!accountKey || !conversationId || !message?.id) return;
@@ -726,19 +779,24 @@ function oldestLoadedMessageAt(conversationId) {
   return messages[0]?.at || null;
 }
 
-async function loadLocalConversationMessages(conversationId, shouldRender = true) {
+async function loadLocalConversationMessages(conversationId, shouldRender = true, options = {}) {
   const accountKey = localAccountKey();
   if (!accountKey || !conversationId) return;
+  const session = options.session || null;
   const messages = await localStore.conversationMessagesPage(accountKey, conversationId, { limit: MESSAGE_PAGE_SIZE });
-  state.messages.set(conversationId, []);
-  mergeConversationMessages(conversationId, messages);
+  if (!isMessageLoadSessionActive(session)) return;
+  if (messages.length) {
+    mergeConversationMessages(conversationId, messages);
+  } else if (!state.messages.has(conversationId)) {
+    state.messages.set(conversationId, []);
+  }
   const paging = messagePagingState(conversationId);
   if (paging) {
     paging.loading = false;
     paging.exhausted = messages.length < MESSAGE_PAGE_SIZE;
     paging.oldestAt = oldestLoadedMessageAt(conversationId);
   }
-  if (shouldRender && !renderConversationMessages(conversationId, { replace: true, scroll: "bottom" })) render();
+  if (shouldRender && isMessageLoadSessionActive(session) && !renderConversationMessages(conversationId, { replace: true, scroll: "bottom" })) render();
 }
 
 async function loadLocalAccountMessages(shouldRender = true) {
@@ -781,6 +839,7 @@ function registerServiceWorker() {
 
 async function bootstrap() {
   try {
+    state.callHistory = loadCallHistory();
     await loadLocalAccountMessages(false);
     if (state.selectedConversationId && state.messages.has(state.selectedConversationId)) {
       render();
@@ -870,8 +929,13 @@ function captureTransientInputs() {
     scrollTop: active?.scrollTop || 0,
     messages: captureMessagesScroll()
   };
+  const renderedView = state.lastRenderedView || state.view;
   document.querySelectorAll("input[id], textarea[id], select[id]").forEach((node) => {
     if (node.type === "file") return;
+    if (node.id === "globalSearch") {
+      setSearchQueryForView(renderedView, node.value);
+      return;
+    }
     state.drafts[node.id] = node.type === "checkbox" ? node.checked : node.value;
   });
   return snapshot;
@@ -879,7 +943,13 @@ function captureTransientInputs() {
 
 function restoreTransientInputs(snapshot = {}) {
   document.querySelectorAll("input[id], textarea[id], select[id]").forEach((node) => {
-    if (node.type === "file" || !(node.id in state.drafts)) return;
+    if (node.type === "file") return;
+    if (node.id === "globalSearch") {
+      const value = currentSearchQuery();
+      if (node.value !== value) node.value = value;
+      return;
+    }
+    if (!(node.id in state.drafts)) return;
     if (node.type === "checkbox") {
       node.checked = Boolean(state.drafts[node.id]);
     } else if (node.value !== state.drafts[node.id]) {
@@ -942,9 +1012,63 @@ function isTextEntryElement(node) {
   return node?.matches?.("input:not([type=file]):not([type=checkbox]), textarea, select");
 }
 
-function render() {
-  const transient = captureTransientInputs();
+function prepareDomForRender(previousView, nextView) {
   closeFloatingMenu();
+  clearTimeout(state.messageScrollTimer);
+  state.messageScrollTimer = null;
+  detachDomMediaNodes();
+
+  if (!previousView || previousView === nextView) return;
+  state.viewEpoch += 1;
+  state.searchRequestSeq += 1;
+  state.vaultInviteSearchRequestSeq += 1;
+
+  if (previousView === "chats") {
+    cancelActiveMessageLoad("view-change");
+    sendTypingState("stopped", { force: true });
+    resetVoiceRecordingState();
+    clearVoiceHoldHint();
+  }
+
+  if (previousView === "world" && nextView !== "world") {
+    clearTimeout(state.searchTimer);
+    state.searchTimer = null;
+  }
+
+  if (previousView === "vault" && nextView !== "vault") {
+    clearTimeout(state.vaultInviteTimer);
+    state.vaultInviteTimer = null;
+  }
+}
+
+function detachDomMediaNodes() {
+  document.querySelectorAll("video, audio").forEach((node) => {
+    try {
+      node.pause?.();
+      if ("srcObject" in node) node.srcObject = null;
+      node.removeAttribute("src");
+      node.load?.();
+    } catch {
+      // Detached media elements are best-effort cleanup before the DOM swap.
+    }
+  });
+}
+
+function scheduleRender() {
+  if (state.renderFrame) cancelAnimationFrame(state.renderFrame);
+  state.renderFrame = requestAnimationFrame(() => {
+    state.renderFrame = null;
+    render();
+  });
+}
+
+function render() {
+  if (state.renderFrame) {
+    cancelAnimationFrame(state.renderFrame);
+    state.renderFrame = null;
+  }
+  const transient = captureTransientInputs();
+  prepareDomForRender(state.lastRenderedView, state.view);
   syncShellClasses();
   if (!state.auth?.tokens?.accessToken) {
     renderAuth();
@@ -1119,6 +1243,158 @@ function navButton(view, iconName, title) {
   return `<button class="nav-btn ${state.view === view ? "active" : ""}" data-view="${view}" title="${title}" aria-label="${title}">${icon(iconName)}<span>${title}</span></button>`;
 }
 
+function searchPlaceholder(view = state.view) {
+  return {
+    chats: "Buscar chats, usuarios o grupos",
+    world: "Buscar personas o historias",
+    vault: "Buscar notas o archivos",
+    calls: "Buscar llamadas",
+    privacy: "Buscar privacidad",
+    account: "Buscar cuenta"
+  }[view] || "Buscar";
+}
+
+function searchQueryForView(view = state.view) {
+  return state.searchByView?.[view] ?? (view === state.view ? state.query || "" : "");
+}
+
+function currentSearchQuery() {
+  return searchQueryForView(state.view);
+}
+
+function setSearchQueryForView(view, query) {
+  const value = String(query || "");
+  if (!state.searchByView) state.searchByView = {};
+  state.searchByView[view || state.view] = value;
+  if ((view || state.view) === state.view) state.query = value;
+}
+
+function normalizedSearchQuery(view = state.view) {
+  return searchQueryForView(view).trim().toLowerCase();
+}
+
+function textMatchesSearch(value, query) {
+  return !query || String(value || "").toLowerCase().includes(query);
+}
+
+function activateView(view, options = {}) {
+  if (!view) return;
+  setSearchQueryForView(state.view, currentSearchQuery());
+  state.view = view;
+  state.query = searchQueryForView(view);
+  if (options.mobileChatOpen !== undefined) {
+    state.mobileChatOpen = Boolean(options.mobileChatOpen);
+  } else if (view !== "chats") {
+    state.mobileChatOpen = false;
+  }
+  if (options.renderAfter !== false) render();
+  if (view === "world" && isRemoteSearchQueryReady(searchQueryForView("world"))) {
+    scheduleDirectorySearch();
+  }
+}
+
+function handleGlobalSearchInput(event) {
+  const view = state.view;
+  setSearchQueryForView(view, event.target.value);
+  switch (view) {
+    case "world":
+      if (isRemoteSearchQueryReady(searchQueryForView("world"))) {
+        scheduleDirectorySearch();
+      } else {
+        state.searchRequestSeq += 1;
+        state.directoryResults = [];
+      }
+      scheduleRender();
+      break;
+    case "chats":
+    case "vault":
+    case "calls":
+    case "privacy":
+    case "account":
+    default:
+      scheduleRender();
+      break;
+  }
+}
+
+function personSearchText(person = {}) {
+  return [
+    displayPerson(person),
+    person.alias,
+    person.userAlias,
+    person.phone,
+    person.email,
+    person.bio
+  ].filter(Boolean).join(" ");
+}
+
+function conversationSearchText(conversation) {
+  const people = (conversation.participants || [])
+    .map((participant) => findKnownPerson(participant.userId) || state.profileByUserId.get(participant.userId) || { alias: state.aliasByUserId.get(participant.userId) })
+    .map(personSearchText)
+    .join(" ");
+  return [conversationTitle(conversation), conversation.type, conversationSubtitle(conversation, { archived: state.archivedConversationIds.has(conversation.id) }), people].join(" ");
+}
+
+function filteredConversations() {
+  const query = normalizedSearchQuery("chats");
+  return state.conversations.filter((conversation) => textMatchesSearch(conversationSearchText(conversation), query));
+}
+
+function filteredDirectoryPeople() {
+  const query = normalizedSearchQuery("world");
+  return state.directoryResults.filter((person) => textMatchesSearch(personSearchText(person), query));
+}
+
+function storySearchText(story = {}) {
+  const payload = decodeStoryPayload(story.encryptedPayload);
+  return [
+    story.caption,
+    story.visibility,
+    payload.text,
+    payload.media?.mime,
+    personSearchText(story.owner)
+  ].filter(Boolean).join(" ");
+}
+
+function filteredStories() {
+  const query = normalizedSearchQuery("world");
+  return state.stories.filter((story) => textMatchesSearch(storySearchText(story), query));
+}
+
+function vaultItemSearchText(item = {}) {
+  const meta = decryptVaultPreview(item.encryptedMetadata);
+  return [item.kind, meta.title, meta.body, item.updatedAt].filter(Boolean).join(" ");
+}
+
+function filteredVaultItems() {
+  const query = normalizedSearchQuery("vault");
+  return state.vaultItems.filter((item) => textMatchesSearch(vaultItemSearchText(item), query));
+}
+
+function vaultRoomSearchText(room = {}) {
+  const members = (room.members || []).map(personSearchText).join(" ");
+  return [room.name, room.accessMode, room.retentionMode, room.encryptedWelcome, members].filter(Boolean).join(" ");
+}
+
+function filteredVaultRooms() {
+  const query = normalizedSearchQuery("vault");
+  return state.vaultRooms.filter((room) => textMatchesSearch(vaultRoomSearchText(room), query));
+}
+
+function filteredCallHistory() {
+  const query = normalizedSearchQuery("calls");
+  const current = state.call.current ? [callHistoryRecord(state.call.current, { live: true })] : [];
+  const records = [...current, ...(state.callHistory || [])];
+  const deduped = [...new Map(records.filter(Boolean).map((record) => [record.id, record])).values()];
+  return deduped.filter((record) => textMatchesSearch(callSearchText(record), query));
+}
+
+function callSearchText(record = {}) {
+  const people = (record.participants || []).map(personSearchText).join(" ");
+  return [record.title, record.subtitle, record.type, record.status, record.direction, people, record.startedAt, record.endedAt].filter(Boolean).join(" ");
+}
+
 function renderSidebar() {
   const title = {
     chats: "Chats",
@@ -1143,7 +1419,7 @@ function renderSidebar() {
         ${action}
       </div>
       <div class="search-box">
-        <input class="input" id="globalSearch" placeholder="${state.view === "world" ? "Buscar personas publicas" : "Buscar"}" value="${escapeAttr(state.query)}">
+        <input class="input" id="globalSearch" placeholder="${escapeAttr(searchPlaceholder(state.view))}" value="${escapeAttr(currentSearchQuery())}">
       </div>
       <div class="list">${renderSideList()}</div>
     </aside>
@@ -1152,11 +1428,12 @@ function renderSidebar() {
 
 function renderSideList() {
   if (state.view === "chats") {
-    const query = state.query.toLowerCase();
-    const conversations = state.conversations.filter((conversation) => conversationTitle(conversation).toLowerCase().includes(query));
+    const query = normalizedSearchQuery("chats");
+    const rawQuery = searchQueryForView("chats");
+    const conversations = filteredConversations();
     if (!conversations.length) {
       const globalAction = query
-        ? `<button class="btn ghost full" data-global-person-search="${escapeAttr(state.query)}">${icon("globe")}<span>Buscar "${escapeHtml(state.query)}" en la red global</span></button>`
+        ? `<button class="btn ghost full" data-global-person-search="${escapeAttr(rawQuery)}">${icon("globe")}<span>Buscar "${escapeHtml(rawQuery)}" en la red global</span></button>`
         : `<button class="btn ghost full" id="contactsEmptyBtn">${icon("user")}<span>Ver contactos</span></button>`;
       return `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>${query ? "No esta en tus chats" : "Sin chats"}</h2><p>${query ? "El buscador de chats solo filtra conversaciones abiertas." : "Abre contactos o crea una conversacion nueva."}</p>${globalAction}</div>`;
     }
@@ -1168,31 +1445,37 @@ function renderSideList() {
       ...archivedConversations.map((conversation) => renderConversationListItem(conversation, { archived: true }))
     ].join("");
     const globalAction = query
-      ? `<button class="quick-create" data-global-person-search="${escapeAttr(state.query)}">${icon("globe")}<span>Buscar "${escapeHtml(state.query)}" en la red global</span></button>`
+      ? `<button class="quick-create" data-global-person-search="${escapeAttr(rawQuery)}">${icon("globe")}<span>Buscar "${escapeHtml(rawQuery)}" en la red global</span></button>`
       : "";
     return renderedConversations + globalAction;
   }
 
   if (state.view === "world") {
-    const people = state.directoryResults.slice(0, 12);
+    const people = filteredDirectoryPeople().slice(0, 12);
+    const stories = filteredStories().slice(0, 8);
     const incoming = state.friendRequests.filter((request) => request.status === "Pending" && request.to.id === state.auth.user.id);
-    if (!people.length && !incoming.length) {
+    if (!people.length && !stories.length && !incoming.length) {
       return `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>Mundo listo</h2><p>Busca personas publicas o publica una instantanea.</p></div>`;
     }
     return `
       ${incoming.length ? `<div class="side-section-title">Pendientes</div>${incoming.map(renderFriendRequestListItem).join("")}` : ""}
       ${people.length ? `<div class="side-section-title">Busquedas</div>${people.map(renderPersonListItem).join("")}` : ""}
+      ${stories.length ? `<div class="side-section-title">Historias</div>${stories.map(renderStoryListItem).join("")}` : ""}
     `;
   }
 
   if (state.view === "vault") {
-    return state.vaultItems.length
-      ? state.vaultItems.map((item) => `<div class="list-item"><div class="avatar">V</div><div><div class="item-title">${escapeHtml(item.kind)}</div><div class="item-sub">${formatTime(item.updatedAt)}</div></div></div>`).join("")
+    const items = filteredVaultItems();
+    return items.length
+      ? items.map(renderVaultSideItem).join("")
       : `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>Boveda vacia</h2><p>Crea notas o guarda archivos cifrados desde un chat.</p></div>`;
   }
 
   if (state.view === "calls") {
-    return `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>Lista limpia</h2><p>Las llamadas se inician desde un chat o desde el panel principal.</p></div>`;
+    const calls = filteredCallHistory();
+    return calls.length
+      ? calls.map(renderCallHistorySideItem).join("")
+      : `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>Lista limpia</h2><p>Las llamadas se inician desde un chat o desde el panel principal.</p></div>`;
   }
 
   return `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>Nivra</h2><p>Privacidad, cuenta y preferencias listas.</p></div>`;
@@ -1239,6 +1522,45 @@ function renderFriendRequestListItem(request) {
       <div>
         <div class="item-title">${escapeHtml(displayPerson(person))}</div>
         <div class="item-sub">${escapeHtml(request.status)} - @${escapeHtml(person.alias)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderStoryListItem(story) {
+  const payload = decodeStoryPayload(story.encryptedPayload);
+  const title = story.caption || payload.text || "Instantanea";
+  return `
+    <button class="list-item" data-view-story="${story.id}">
+      ${avatarNode(story.owner)}
+      <div>
+        <div class="item-title">${escapeHtml(title)}</div>
+        <div class="item-sub">@${escapeHtml(story.owner?.alias || "mundo")} - ${formatTime(story.expiresAt)}</div>
+      </div>
+    </button>
+  `;
+}
+
+function renderVaultSideItem(item) {
+  const meta = decryptVaultPreview(item.encryptedMetadata);
+  return `
+    <div class="list-item">
+      <div class="avatar">V</div>
+      <div>
+        <div class="item-title">${escapeHtml(meta.title || item.kind)}</div>
+        <div class="item-sub">${escapeHtml(item.kind)} - ${formatTime(item.updatedAt)}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderCallHistorySideItem(call) {
+  return `
+    <div class="list-item">
+      <div class="avatar">${call.type === "Video" ? "V" : "L"}</div>
+      <div>
+        <div class="item-title">${escapeHtml(call.title || "Llamada")}</div>
+        <div class="item-sub">${escapeHtml(call.status || "Finalizada")} - ${formatTime(call.startedAt)}</div>
       </div>
     </div>
   `;
@@ -1723,8 +2045,8 @@ function closeFloatingMenu() {
 function renderWorldView() {
   const incoming = state.friendRequests.filter((request) => request.status === "Pending" && request.to.id === state.auth.user.id);
   const outgoing = state.friendRequests.filter((request) => request.status === "Pending" && request.from.id === state.auth.user.id);
-  const people = state.directoryResults.slice(0, 16);
-  const stories = state.stories.slice(0, 24);
+  const people = filteredDirectoryPeople().slice(0, 16);
+  const stories = filteredStories().slice(0, 24);
   const storyDraftText = state.drafts.storyText || "";
   const pendingMedia = state.pendingStoryFile;
   const storyPublishing = Boolean(state.storyPublishing);
@@ -1859,6 +2181,7 @@ function renderVaultView() {
   if (lobbyRoom) return renderVaultRoomLobby(lobbyRoom);
 
   const favoriteContacts = state.contacts.slice(0, 8);
+  const rooms = filteredVaultRooms();
   return `
     <div class="panel-view">
       <div class="grid">
@@ -1908,7 +2231,7 @@ function renderVaultView() {
         </div>
         <div class="card span-7">
           <h3>Salas</h3>
-          <div class="stack">${renderVaultRooms()}</div>
+          <div class="stack">${renderVaultRooms(rooms)}</div>
         </div>
       </div>
     </div>
@@ -1916,16 +2239,17 @@ function renderVaultView() {
 }
 
 function renderVaultItems() {
-  if (!state.vaultItems.length) return `<p class="muted">Aun no hay elementos guardados.</p>`;
-  return state.vaultItems.map((item) => {
+  const items = filteredVaultItems();
+  if (!items.length) return `<p class="muted">Aun no hay elementos guardados.</p>`;
+  return items.map((item) => {
     const meta = decryptVaultPreview(item.encryptedMetadata);
     return `<div class="card"><strong>${escapeHtml(meta.title || item.kind)}</strong><p>${escapeHtml(meta.body || "Elemento cifrado")}</p><span class="muted">${formatTime(item.updatedAt)}</span></div>`;
   }).join("");
 }
 
-function renderVaultRooms() {
-  if (!state.vaultRooms.length) return `<p class="muted">Aun no hay salas compartidas.</p>`;
-  return state.vaultRooms.map((room) => `
+function renderVaultRooms(rooms = filteredVaultRooms()) {
+  if (!rooms.length) return `<p class="muted">Aun no hay salas compartidas.</p>`;
+  return rooms.map((room) => `
     <div class="person-card">
       <div class="avatar">B</div>
       <div>
@@ -2491,6 +2815,7 @@ function renderRemoteAudioElements(participants) {
 
 function renderCallsView() {
   const conversation = selectedConversation();
+  const callHistory = filteredCallHistory();
   const selectedPeople = conversation ? callParticipants({
     participantUserIds: conversation.participants.filter((participant) => !participant.removedAt).map((participant) => participant.userId),
     conversationId: conversation.id
@@ -2529,6 +2854,10 @@ function renderCallsView() {
           <h3>Participantes</h3>
           <div class="call-roster">${selectedPeople.length ? selectedPeople.map(renderCallRosterPerson).join("") : `<p class="muted">Selecciona un chat para ver a quien puedes llamar.</p>`}</div>
         </div>
+        <div class="card span-12">
+          <h3>Historial</h3>
+          <div class="call-roster">${callHistory.length ? callHistory.map(renderCallHistoryCard).join("") : `<p class="muted">Aun no hay llamadas registradas en este dispositivo.</p>`}</div>
+        </div>
       </div>
     </div>
   `;
@@ -2541,6 +2870,18 @@ function renderCallRosterPerson(person) {
       <div>
         <strong>${escapeHtml(displayPerson(person))}</strong>
         <span>${person.id === state.auth.user.id ? "Tu dispositivo" : `@${escapeHtml(person.alias || "contacto")}`}</span>
+      </div>
+    </div>
+  `;
+}
+
+function renderCallHistoryCard(call) {
+  return `
+    <div class="person-card compact-person">
+      <div class="avatar">${call.type === "Video" ? "V" : "L"}</div>
+      <div>
+        <strong>${escapeHtml(call.title || "Llamada")}</strong>
+        <span>${escapeHtml(call.subtitle || call.status || "Historial")} - ${formatTime(call.startedAt)}</span>
       </div>
     </div>
   `;
@@ -2687,27 +3028,15 @@ function renderAccountView() {
 function bindAppEvents() {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
-      state.view = button.dataset.view;
-      if (state.view !== "chats") state.mobileChatOpen = false;
-      render();
-      if (state.view === "world" && !state.directoryResults.length && isRemoteSearchQueryReady(state.query)) {
-        scheduleDirectorySearch();
-      }
+      activateView(button.dataset.view);
     });
   });
-  document.querySelector("#globalSearch")?.addEventListener("input", (event) => {
-    state.query = event.target.value;
-    if (state.view === "world") {
-      scheduleDirectorySearch();
-    } else {
-      render();
-    }
-  });
+  document.querySelector("#globalSearch")?.addEventListener("input", handleGlobalSearchInput);
   document.querySelector("#newChatBtn")?.addEventListener("click", openNewChatDialog);
   document.querySelector("#contactsBtn")?.addEventListener("click", () => openContactsDialog("mine"));
   document.querySelector("#contactsEmptyBtn")?.addEventListener("click", () => openContactsDialog("mine"));
   document.querySelectorAll("[data-global-person-search]").forEach((button) => {
-    button.addEventListener("click", () => openContactsDialog("discover", button.dataset.globalPersonSearch || state.query));
+    button.addEventListener("click", () => openContactsDialog("discover", button.dataset.globalPersonSearch || currentSearchQuery()));
   });
   document.querySelector("#openChatProfile")?.addEventListener("click", openChatProfile);
   document.querySelector("#closeChatProfile")?.addEventListener("click", closeChatProfile);
@@ -2756,14 +3085,7 @@ function bindAppEvents() {
   });
   document.querySelector("#createGroupChatBtn")?.addEventListener("click", createGroupChatFromSelection);
   document.querySelectorAll("[data-open-conversation]").forEach((button) => {
-    button.addEventListener("click", async () => {
-      selectConversation(button.dataset.openConversation);
-      state.view = "chats";
-      state.mobileChatOpen = true;
-      await loadConversationHistory(state.selectedConversationId, false);
-      await joinSelectedConversation();
-      render();
-    });
+    button.addEventListener("click", () => openConversationFromList(button.dataset.openConversation).catch(() => {}));
     button.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
@@ -2952,8 +3274,7 @@ function bindAppEvents() {
   document.querySelector("#toggleCameraBtn")?.addEventListener("click", toggleCallCamera);
   document.querySelector("#toggleSpeakerBtn")?.addEventListener("click", toggleCallSpeaker);
   document.querySelector("#minimizeCallBtn")?.addEventListener("click", () => {
-    state.view = "chats";
-    render();
+    activateView("chats");
   });
   markVisibleMessagesRead(state.selectedConversationId).catch(() => {});
   attachCallMedia();
@@ -3255,8 +3576,7 @@ async function createChatFromAliases(rawAliases) {
       }
     });
     selectConversation(conversation.id);
-    state.view = "chats";
-    state.mobileChatOpen = true;
+    activateView("chats", { mobileChatOpen: true, renderAfter: false });
     closeModal();
     await bootstrap();
     await joinSelectedConversation();
@@ -3272,19 +3592,20 @@ function scheduleDirectorySearch() {
 
 async function searchDirectory() {
   if (!state.auth?.tokens?.accessToken) return;
-  const query = (state.query || "").trim();
+  const query = searchQueryForView("world").trim();
   if (!isRemoteSearchQueryReady(query)) {
     state.directoryResults = [];
-    render();
+    if (state.view === "world") render();
     return;
   }
   const requestSeq = ++state.searchRequestSeq;
+  const viewEpoch = state.viewEpoch;
   try {
     const result = await request(`/directory/search?q=${encodeURIComponent(query)}`);
-    if (requestSeq !== state.searchRequestSeq) return;
+    if (requestSeq !== state.searchRequestSeq || state.viewEpoch !== viewEpoch) return;
     state.directoryResults = result.people || [];
     state.directoryResults.forEach((person) => state.aliasByUserId.set(person.id, person.alias));
-    render();
+    if (state.view === "world") render();
   } catch {
     // Search should never interrupt chat typing.
   }
@@ -3527,10 +3848,9 @@ async function startChatWithUser(userId) {
   try {
     const conversation = await ensureDirectConversationWithUser(userId);
     selectConversation(conversation.id);
-    state.view = "chats";
-    state.mobileChatOpen = true;
+    activateView("chats", { mobileChatOpen: true, renderAfter: false });
     closeModal();
-    await loadConversationHistory(conversation.id, false);
+    await loadConversationHistory(conversation.id, true);
     await joinSelectedConversation();
     render();
   } catch (error) {
@@ -3684,7 +4004,7 @@ async function handleStorySubmit(event) {
     state.pendingStoryFile = null;
     clearDraftValue("storyText");
     await bootstrap();
-    state.view = "world";
+    activateView("world", { renderAfter: false });
     render();
     toast("Instantanea publicada.");
   } catch (error) {
@@ -3762,9 +4082,11 @@ async function loadActiveStoryMedia() {
   const story = state.activeStory;
   const media = story?.payload?.media;
   if (!story?.id || !media?.fileKey || !media?.fileIv) return;
+  const viewEpoch = state.viewEpoch;
   const cacheKey = `story:${story.id}`;
   const cached = state.mediaCache.get(cacheKey);
   if (cached?.url) {
+    if (state.viewEpoch !== viewEpoch || state.activeStory?.id !== story.id) return;
     state.activeStory = { ...state.activeStory, mediaUrl: cached.url };
     render();
     return;
@@ -3772,9 +4094,10 @@ async function loadActiveStoryMedia() {
   const encrypted = await request(`/stories/${encodeURIComponent(story.id)}/media`, { rawResponse: true });
   const bytes = await encrypted.arrayBuffer();
   const plain = await decryptAttachment(bytes, media.fileKey, media.fileIv);
+  if (state.viewEpoch !== viewEpoch || state.activeStory?.id !== story.id) return;
   const blob = new Blob([plain], { type: media.mime || "application/octet-stream" });
   const url = rememberMediaPreview(cacheKey, blob, media.mime, media.fileName || "historia");
-  if (state.activeStory?.id === story.id) {
+  if (state.viewEpoch === viewEpoch && state.activeStory?.id === story.id) {
     state.activeStory = { ...state.activeStory, mediaUrl: url };
     render();
   }
@@ -3854,9 +4177,8 @@ async function sendStoryResponse({ reaction = null, text = "" } = {}) {
     await sendPayloadToConversation(conversation, payload, "Text", null, { deleteAfterRead: false });
     resetStoryResponseDraft();
     closeModal();
-    state.view = "chats";
     selectConversation(conversation.id);
-    state.mobileChatOpen = true;
+    activateView("chats", { mobileChatOpen: true, renderAfter: false });
     render();
     toast("Respuesta enviada al chat directo.");
   } catch (error) {
@@ -3898,7 +4220,7 @@ async function handleVaultRoom(event) {
       }
     });
     await bootstrap();
-    state.view = "vault";
+    activateView("vault", { renderAfter: false });
     state.vault.unlocked = true;
     state.vaultLobbyRoomId = room.id;
     render();
@@ -4877,27 +5199,37 @@ async function handleIncomingMessage(message) {
 
 async function loadConversationHistory(conversationId, shouldRender = true) {
   if (!conversationId || !state.auth?.tokens?.accessToken) return;
+  const session = beginMessageLoadSession(conversationId);
   try {
-    await loadLocalConversationMessages(conversationId, false);
-    const history = await request(`/conversations/${conversationId}/messages?take=${MESSAGE_PAGE_SIZE}`);
+    await loadLocalConversationMessages(conversationId, shouldRender, { session });
+    if (!isMessageLoadSessionActive(session)) return;
+    const history = await request(`/conversations/${conversationId}/messages?take=${MESSAGE_PAGE_SIZE}`, { signal: session.signal });
     let index = 0;
     for (const message of history || []) {
-      await applyMessageEnvelope(message, { markSeen: false, notifyReceipt: false, scroll: false });
+      if (!isMessageLoadSessionActive(session)) return;
+      await applyMessageEnvelope(message, { markSeen: false, notifyReceipt: false, scroll: false, session });
+      if (!isMessageLoadSessionActive(session)) return;
       await breatheMainThread(++index);
     }
     updateConversationPaging(conversationId, state.messages.get(conversationId) || []);
-    if (shouldRender) render();
-  } catch {
+    if (shouldRender && isMessageLoadSessionActive(session)) renderConversationMessages(conversationId, { replace: true, scroll: "bottom" }) || render();
+  } catch (error) {
+    if (error?.name === "AbortError") return;
     // History is best-effort; realtime and polling still keep the chat usable.
+  } finally {
+    finishMessageLoadSession(session);
   }
 }
 
-async function applyMessageEnvelope(message, { markSeen, notifyReceipt, scroll = true, persistSeen = true }) {
+async function applyMessageEnvelope(message, { markSeen, notifyReceipt, scroll = true, persistSeen = true, session = null }) {
+  if (!isMessageLoadSessionActive(session)) return false;
+  if (session && message.conversationId !== session.conversationId) return false;
   const recipient = message.recipients?.find((item) => item.deviceId === state.auth.device.id);
-  if (!recipient) return;
+  if (!recipient) return false;
   const payload = isServerSystemMessage(message, recipient)
     ? decodeServerSystemMessage(recipient)
     : await decryptEnvelope(recipient.header, recipient.ciphertext).catch(() => ({ type: "sealed", text: "Contenido cifrado no disponible en este dispositivo." }));
+  if (!isMessageLoadSessionActive(session)) return false;
   if (markSeen) {
     state.seenMessageIds.add(message.id);
     if (persistSeen) saveJson("nivra.seen", [...state.seenMessageIds]);
@@ -4947,6 +5279,7 @@ async function applyMessageEnvelope(message, { markSeen, notifyReceipt, scroll =
   if (notifyReceipt) {
     ackDeliveredMessages([message.id]).catch(() => {});
   }
+  return true;
 }
 
 async function handleMessageDeletedEvent(payload) {
@@ -5260,6 +5593,7 @@ async function handleVaultPin(event) {
   event.preventDefault();
   const pin = document.querySelector("#vaultPin").value;
   const meta = loadJson(vaultMetaKey());
+  const viewEpoch = state.viewEpoch;
   try {
     if (!meta) {
       const salt = crypto.getRandomValues(new Uint8Array(16));
@@ -5267,13 +5601,14 @@ async function handleVaultPin(event) {
       const verifier = await encryptWithKey(key, { ok: true, createdAt: new Date().toISOString() });
       saveJson(vaultMetaKey(), { salt: b64(salt), verifier });
       state.vault = { unlocked: true, key, decoded: new Map() };
-      await decodeVaultItems();
+      await decodeVaultItems(viewEpoch);
     } else {
       const key = await deriveVaultKey(pin, ub64(meta.salt));
       await decryptWithKey(key, meta.verifier);
       state.vault = { unlocked: true, key, decoded: new Map() };
-      await decodeVaultItems();
+      await decodeVaultItems(viewEpoch);
     }
+    if (state.viewEpoch !== viewEpoch) return;
     render();
   } catch {
     toast("PIN incorrecto.");
@@ -5291,8 +5626,10 @@ async function handleVaultNote(event) {
     body: { kind: "Note", encryptedMetadata, parentId: null, fileObjectId: null }
   });
   await bootstrap();
-  await decodeVaultItems();
-  state.view = "vault";
+  activateView("vault", { renderAfter: false });
+  const viewEpoch = state.viewEpoch;
+  await decodeVaultItems(viewEpoch);
+  if (state.viewEpoch !== viewEpoch) return;
   state.vault.unlocked = true;
   render();
 }
@@ -5301,11 +5638,12 @@ function decryptVaultPreview(encryptedMetadata) {
   return state.vault.decoded.get(encryptedMetadata) || { title: "Elemento cifrado", body: "Metadata protegida." };
 }
 
-async function decodeVaultItems() {
+async function decodeVaultItems(expectedEpoch = state.viewEpoch) {
   if (!state.vault.key) return;
   state.vault.decoded = new Map();
   let index = 0;
   for (const item of state.vaultItems) {
+    if (state.viewEpoch !== expectedEpoch) return;
     try {
       const envelope = JSON.parse(item.encryptedMetadata);
       const decoded = await decryptWithKey(state.vault.key, envelope);
@@ -5377,7 +5715,8 @@ async function startCall(type) {
     state.call.current = call;
     state.call.phase = "dialing";
     state.call.startedAt = new Date().toISOString();
-    state.view = "calls";
+    rememberCall(call, { status: "Llamando" });
+    activateView("calls", { renderAfter: false });
     startCallTicker();
     playCallTone("outgoing");
     render();
@@ -5402,6 +5741,7 @@ async function handleIncomingCall(call, options = {}) {
   state.call.current = call;
   state.call.phase = call.initiatorUserId === state.auth.user.id ? "dialing" : "incoming";
   state.call.startedAt = call.startedAt || new Date().toISOString();
+  rememberCall(call, { status: state.call.phase === "incoming" ? "Entrante" : "Llamando" });
   startCallTicker();
   if (state.call.phase === "incoming") {
     playCallTone("incoming");
@@ -5751,6 +6091,12 @@ function updateRemoteCallState(userId, key, value) {
 }
 
 function resetCallState() {
+  if (state.call.current) {
+    rememberCall(state.call.current, {
+      status: state.call.phase === "incoming" ? "Perdida" : "Finalizada",
+      endedAt: new Date().toISOString()
+    });
+  }
   stopCallTicker();
   stopCallTones();
   closePeerConnections();
@@ -5862,6 +6208,8 @@ function clearSession() {
   previous?.stop().catch(() => {});
   state.pushReady = false;
   state.syncInFlight = false;
+  state.callHistory = [];
+  cancelActiveMessageLoad("logout");
   clearInterval(state.polling);
   render();
 }
@@ -5875,7 +6223,8 @@ async function request(path, options = {}) {
   const response = await fetch(apiUrl(path), {
     method: options.method || "GET",
     headers,
-    body: options.rawBody || (options.body ? JSON.stringify(options.body) : undefined)
+    body: options.rawBody || (options.body ? JSON.stringify(options.body) : undefined),
+    signal: options.signal
   });
   if (response.status === 401 && !options.skipAuth && !options.skipAuthRefresh && !options.authRetried) {
     const refreshed = await refreshToken();
@@ -6175,8 +6524,22 @@ function selectedConversation() {
   return state.conversations.find((conversation) => conversation.id === state.selectedConversationId);
 }
 
+async function openConversationFromList(conversationId) {
+  if (!conversationId) return;
+  selectConversation(conversationId);
+  activateView("chats", { mobileChatOpen: true, renderAfter: false });
+  render();
+  loadConversationHistory(conversationId, true).catch(() => {});
+  await joinSelectedConversation();
+}
+
 function selectConversation(conversationId) {
-  state.selectedConversationId = conversationId || null;
+  const nextId = conversationId || null;
+  if (nextId !== state.selectedConversationId) {
+    cancelActiveMessageLoad("conversation-change");
+    state.replyTo = null;
+  }
+  state.selectedConversationId = nextId;
   if (state.selectedConversationId) {
     saveJson("nivra.selectedConversationId", state.selectedConversationId);
   } else {
@@ -6398,7 +6761,7 @@ function updateConversationPreview(conversationId) {
 }
 
 function viewTitle() {
-  return { chats: "Chats", vault: "Boveda privada", calls: "Llamadas", privacy: "Privacidad", account: "Cuenta" }[state.view] || "Nivra";
+  return { chats: "Chats", world: "Mundo", vault: "Boveda privada", calls: "Llamadas", privacy: "Privacidad", account: "Cuenta" }[state.view] || "Nivra";
 }
 
 function pushMessage(conversationId, message, { scroll = true } = {}) {
@@ -6540,6 +6903,54 @@ function callSubtitle(call) {
   const count = callParticipants(call).length;
   const type = call?.type === "Video" ? "Videollamada" : "Llamada de voz";
   return `${type} - ${count} participante${count === 1 ? "" : "s"}`;
+}
+
+function callHistoryStorageKey() {
+  return state.auth?.user?.id ? `nivra.callHistory.${state.auth.user.id}` : "nivra.callHistory";
+}
+
+function loadCallHistory() {
+  const scoped = loadJson(callHistoryStorageKey());
+  if (Array.isArray(scoped)) return scoped.slice(0, MAX_CALL_HISTORY);
+  const legacy = loadJson("nivra.callHistory");
+  return Array.isArray(legacy) ? legacy.slice(0, MAX_CALL_HISTORY) : [];
+}
+
+function saveCallHistory() {
+  if (!state.auth?.user?.id) return;
+  saveJson(callHistoryStorageKey(), (state.callHistory || []).slice(0, MAX_CALL_HISTORY));
+}
+
+function callHistoryRecord(call, patch = {}) {
+  if (!call?.id) return null;
+  const status = patch.status || call.status || (state.call.phase === "incoming" ? "Entrante" : state.call.phase === "dialing" ? "Llamando" : "Activa");
+  const startedAt = call.startedAt || state.call.startedAt || new Date().toISOString();
+  const participants = callParticipants(call);
+  return {
+    id: call.id,
+    conversationId: call.conversationId || null,
+    initiatorUserId: call.initiatorUserId || null,
+    type: call.type || "Voice",
+    status,
+    direction: call.initiatorUserId === state.auth?.user?.id ? "saliente" : "entrante",
+    participantUserIds: call.participantUserIds || participants.map((person) => person.id || person.userId).filter(Boolean),
+    participants,
+    title: callTitle(call),
+    subtitle: callSubtitle(call),
+    startedAt,
+    endedAt: patch.endedAt || call.endedAt || null,
+    live: Boolean(patch.live)
+  };
+}
+
+function rememberCall(call, patch = {}) {
+  const record = callHistoryRecord(call, patch);
+  if (!record) return;
+  const next = [record, ...(state.callHistory || []).filter((item) => item.id !== record.id)]
+    .sort((left, right) => Date.parse(right.startedAt || 0) - Date.parse(left.startedAt || 0))
+    .slice(0, MAX_CALL_HISTORY);
+  state.callHistory = next;
+  saveCallHistory();
 }
 
 function callStatusText() {
@@ -7136,8 +7547,7 @@ async function handleForegroundPushNotification(notification = {}) {
 
 async function handlePushNavigation(data = {}) {
   if (isIncomingCallPushData(data)) {
-    state.view = "calls";
-    state.mobileChatOpen = false;
+    activateView("calls", { mobileChatOpen: false, renderAfter: false });
     await hydrateIncomingCallFromPushData(data).catch(() => {});
     return;
   }
@@ -7145,9 +7555,8 @@ async function handlePushNavigation(data = {}) {
   const conversationId = pushDataValue(data, "conversationId", "ConversationId");
   if (!conversationId) return;
 
-  state.selectedConversationId = conversationId;
-  state.mobileChatOpen = true;
-  state.view = "chats";
+  selectConversation(conversationId);
+  activateView("chats", { mobileChatOpen: true, renderAfter: false });
   saveJson("nivra.selectedConversationId", state.selectedConversationId);
 }
 
@@ -7169,7 +7578,7 @@ async function hydrateIncomingCallFromPushData(data = {}) {
     startedAt: new Date().toISOString()
   };
 
-  state.view = "calls";
+  activateView("calls", { mobileChatOpen: false, renderAfter: false });
   await handleIncomingCall(call, { notify: false });
   return true;
 }
