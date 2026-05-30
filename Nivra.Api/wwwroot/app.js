@@ -19,6 +19,9 @@ const SYNC_MIN_INTERVAL_MS = 1200;
 const MESSAGE_PAGE_SIZE = 50;
 const MESSAGE_BOTTOM_THRESHOLD_PX = 100;
 const MESSAGE_SCROLL_DEBOUNCE_MS = 120;
+const SEARCH_DEBOUNCE_MS = 600;
+const SEARCH_MIN_CHARS = 2;
+const MAIN_THREAD_YIELD_EVERY = 8;
 const MESSAGE_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢"];
 const STORY_REACTIONS = [
   { key: "heart", value: "\u2764\uFE0F" },
@@ -395,6 +398,7 @@ const state = {
   messages: new Map(),
   messagePaging: new Map(),
   mediaCache: new Map(),
+  objectUrls: new Set(),
   seenMessageIds: new Set(loadJson("nivra.seen") || []),
   keyDirectory: new Map(),
   aliasByUserId: new Map(),
@@ -414,6 +418,13 @@ const state = {
   retentionTimer: null,
   searchTimer: null,
   contactSearchTimer: null,
+  chatSearchTimer: null,
+  vaultInviteTimer: null,
+  searchRequestSeq: 0,
+  contactSearchRequestSeq: 0,
+  chatSearchRequestSeq: 0,
+  vaultInviteSearchRequestSeq: 0,
+  lastRenderedView: null,
   qrLogin: null,
   qrScanner: {
     reader: null,
@@ -428,6 +439,23 @@ const state = {
     decoded: new Map()
   }
 };
+
+let authRefreshPromise = null;
+let qrLoginStartPromise = null;
+
+function debounce(func, delay) {
+  let timer = null;
+  return function debounced(...args) {
+    clearTimeout(timer);
+    timer = setTimeout(() => func.apply(this, args), delay);
+    return timer;
+  };
+}
+
+const debouncedDirectorySearch = debounce(() => searchDirectory(), SEARCH_DEBOUNCE_MS);
+const debouncedContactsPanelSearch = debounce(() => searchContactsPanel(), SEARCH_DEBOUNCE_MS);
+const debouncedChatModalSearch = debounce(() => searchChatModal(), SEARCH_DEBOUNCE_MS);
+const debouncedVaultInviteSearch = debounce(() => searchVaultInviteModal(), SEARCH_DEBOUNCE_MS);
 
 document.documentElement.dataset.platform = PLATFORM.name;
 window.addEventListener("beforeunload", revokeCachedMediaPreviews);
@@ -921,6 +949,8 @@ function render() {
   if (!state.auth?.tokens?.accessToken) {
     renderAuth();
     restoreTransientInputs(transient);
+    cleanupObjectUrls({ keepVisible: false });
+    state.lastRenderedView = null;
     return;
   }
 
@@ -952,6 +982,8 @@ function render() {
 
   bindAppEvents();
   restoreTransientInputs(transient);
+  cleanupObjectUrls({ keepVisible: true });
+  state.lastRenderedView = state.view;
 }
 
 function renderAuth() {
@@ -2286,7 +2318,7 @@ function renderStoryModal() {
   `).join("");
   const mediaHtml = media
     ? story.mediaUrl
-      ? renderStoryMedia(story.mediaUrl, media)
+      ? renderStoryMedia(story.mediaUrl, media, `story:${story.id}`)
       : `<div class="story-media-loading">${icon("sync")}<span>Cargando ${escapeHtml(fileTypeLabel(media.mime).toLowerCase())}</span></div>`
     : "";
   return `
@@ -2658,8 +2690,8 @@ function bindAppEvents() {
       state.view = button.dataset.view;
       if (state.view !== "chats") state.mobileChatOpen = false;
       render();
-      if (state.view === "world" && !state.directoryResults.length) {
-        searchDirectory();
+      if (state.view === "world" && !state.directoryResults.length && isRemoteSearchQueryReady(state.query)) {
+        scheduleDirectorySearch();
       }
     });
   });
@@ -2998,6 +3030,14 @@ async function verifyPhoneOtp() {
 }
 
 async function startQrLogin() {
+  if (qrLoginStartPromise) return qrLoginStartPromise;
+  qrLoginStartPromise = startQrLoginInternal().finally(() => {
+    qrLoginStartPromise = null;
+  });
+  return qrLoginStartPromise;
+}
+
+async function startQrLoginInternal() {
   if (state.qrLogin?.active && state.qrLogin?.connection?.state === window.signalR?.HubConnectionState.Connected) {
     renderQrChallenge(state.qrLogin);
     return;
@@ -3009,6 +3049,7 @@ async function startQrLogin() {
     .withUrl(apiUrl("/hubs/realtime?qr_link=1"), { withCredentials: false })
     .withAutomaticReconnect()
     .build();
+  detachQrLoginHandlers(connection);
   connection.on("qr-login-success", async (encryptedPayload) => {
     await handleQrLoginSuccess(encryptedPayload, ephemeral, connection);
   });
@@ -3070,7 +3111,14 @@ async function stopQrLogin() {
   clearTimeout(state.qrLogin?.expiresTimer);
   const connection = state.qrLogin?.connection;
   state.qrLogin = null;
-  if (connection) await connection.stop().catch(() => {});
+  if (connection) {
+    detachQrLoginHandlers(connection);
+    await connection.stop().catch(() => {});
+  }
+}
+
+function detachQrLoginHandlers(connection) {
+  connection?.off?.("qr-login-success");
 }
 
 function buildQrLinkChallenge(connectionId, publicJwk) {
@@ -3109,6 +3157,7 @@ async function handleQrLoginSuccess(encryptedPayload, ephemeral, connection) {
     if (!payload?.auth?.tokens?.accessToken || !payload?.keyMaterial?.privateJwk) {
       throw new Error("El paquete QR no contiene una sesion valida.");
     }
+    detachQrLoginHandlers(connection);
     await connection.stop().catch(() => {});
     state.qrLogin = null;
     state.auth = payload.auth;
@@ -3154,8 +3203,7 @@ function openContactsDialog(tab = "mine", query = "") {
 }
 
 function scheduleContactsPanelSearch() {
-  clearTimeout(state.contactSearchTimer);
-  state.contactSearchTimer = setTimeout(searchContactsPanel, 260);
+  state.contactSearchTimer = debouncedContactsPanelSearch();
 }
 
 async function searchContactsPanel() {
@@ -3169,8 +3217,15 @@ async function searchContactsPanel() {
     render();
     return;
   }
+  if (!isRemoteSearchQueryReady(query)) {
+    state.contactPanel.results = [];
+    render();
+    return;
+  }
+  const requestSeq = ++state.contactSearchRequestSeq;
   try {
     const result = await request(`/directory/search?q=${encodeURIComponent(query)}`);
+    if (requestSeq !== state.contactSearchRequestSeq) return;
     state.contactPanel.results = result.people || [];
     state.contactPanel.results.forEach((person) => state.aliasByUserId.set(person.id, person.alias));
     render();
@@ -3212,14 +3267,21 @@ async function createChatFromAliases(rawAliases) {
 }
 
 function scheduleDirectorySearch() {
-  clearTimeout(state.searchTimer);
-  state.searchTimer = setTimeout(searchDirectory, 260);
+  state.searchTimer = debouncedDirectorySearch();
 }
 
 async function searchDirectory() {
   if (!state.auth?.tokens?.accessToken) return;
+  const query = (state.query || "").trim();
+  if (!isRemoteSearchQueryReady(query)) {
+    state.directoryResults = [];
+    render();
+    return;
+  }
+  const requestSeq = ++state.searchRequestSeq;
   try {
-    const result = await request(`/directory/search?q=${encodeURIComponent(state.query || "")}`);
+    const result = await request(`/directory/search?q=${encodeURIComponent(query)}`);
+    if (requestSeq !== state.searchRequestSeq) return;
     state.directoryResults = result.people || [];
     state.directoryResults.forEach((person) => state.aliasByUserId.set(person.id, person.alias));
     render();
@@ -3229,25 +3291,30 @@ async function searchDirectory() {
 }
 
 function scheduleChatModalSearch() {
-  clearTimeout(state.chatSearchTimer);
-  state.chatSearchTimer = setTimeout(searchChatModal, 300);
+  state.chatSearchTimer = debouncedChatModalSearch();
 }
 
 async function searchChatModal() {
   if (!state.auth?.tokens?.accessToken || state.modal !== "newChat") return;
   try {
     const query = state.chatSearch.query.trim();
+    const requestSeq = ++state.chatSearchRequestSeq;
     const contacts = state.contacts
       .filter((contact) => !query || displayPerson(contact).toLowerCase().includes(query.toLowerCase()) || contact.alias.toLowerCase().includes(query.toLowerCase()))
       .map((contact) => ({ ...contact, id: contact.userId, friendshipState: "friends" }));
-    const remote = query
+    const remote = isRemoteSearchQueryReady(query)
       ? (await request(`/directory/search?q=${encodeURIComponent(query)}`)).people || []
       : [];
+    if (requestSeq !== state.chatSearchRequestSeq) return;
     state.chatSearch.results = mergePeople(contacts, remote);
     render();
   } catch {
     // Modal search should stay soft while the user types.
   }
+}
+
+function isRemoteSearchQueryReady(query) {
+  return String(query || "").trim().length >= SEARCH_MIN_CHARS;
 }
 
 function toggleGroupSelection(userId) {
@@ -3621,7 +3688,13 @@ async function handleStorySubmit(event) {
     render();
     toast("Instantanea publicada.");
   } catch (error) {
-    toast(error.message || "No se pudo publicar.");
+    if (error.status >= 500) {
+      toast("El servidor esta muy ocupado. Intenta publicar otra vez en unos segundos.");
+    } else if (error.status === 401) {
+      toast("Sesion renovada o cerrada. Vuelve a intentar si sigues conectado.");
+    } else {
+      toast(error.message || "No se pudo publicar.");
+    }
   } finally {
     state.storyPublishing = false;
     setStoryPublishBusy(false);
@@ -3643,6 +3716,14 @@ function setStoryPublishBusy(busy, label = "Publicar") {
 
 function waitForPaint() {
   return new Promise((resolve) => requestAnimationFrame(() => resolve()));
+}
+
+function yieldToMainThread() {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function breatheMainThread(index, every = MAIN_THREAD_YIELD_EVERY) {
+  if (index > 0 && index % every === 0) await yieldToMainThread();
 }
 
 async function viewStory(storyId) {
@@ -3699,16 +3780,17 @@ async function loadActiveStoryMedia() {
   }
 }
 
-function renderStoryMedia(url, media = {}) {
+function renderStoryMedia(url, media = {}, cacheKey = "") {
   const mime = media.mime || "application/octet-stream";
   const name = media.fileName || "instantanea";
+  const cacheAttr = cacheKey ? ` data-media-preview="${escapeAttr(cacheKey)}"` : "";
   if (mime.startsWith("image/")) {
-    return `<img class="story-media" src="${escapeAttr(url)}" alt="${escapeAttr(name)}">`;
+    return `<img class="story-media"${cacheAttr} src="${escapeAttr(url)}" alt="${escapeAttr(name)}">`;
   }
   if (mime.startsWith("video/")) {
-    return `<video class="story-media" src="${escapeAttr(url)}" controls playsinline></video>`;
+    return `<video class="story-media"${cacheAttr} src="${escapeAttr(url)}" controls playsinline></video>`;
   }
-  return `<audio class="story-audio" src="${escapeAttr(url)}" controls></audio>`;
+  return `<audio class="story-audio"${cacheAttr} src="${escapeAttr(url)}" controls></audio>`;
 }
 
 function toggleStoryReactions(event) {
@@ -3839,20 +3921,21 @@ function openVaultInviteDialog(roomId) {
 }
 
 function scheduleVaultInviteSearch() {
-  clearTimeout(state.vaultInviteTimer);
-  state.vaultInviteTimer = setTimeout(searchVaultInviteModal, 300);
+  state.vaultInviteTimer = debouncedVaultInviteSearch();
 }
 
 async function searchVaultInviteModal() {
   if (!state.auth?.tokens?.accessToken || state.modal !== "vaultInvite") return;
   try {
     const query = state.vaultInvite.query.trim();
+    const requestSeq = ++state.vaultInviteSearchRequestSeq;
     const contacts = state.contacts
       .filter((contact) => !query || displayPerson(contact).toLowerCase().includes(query.toLowerCase()) || contact.alias.toLowerCase().includes(query.toLowerCase()))
       .map((contact) => ({ ...contact, id: contact.userId, friendshipState: "friends" }));
-    const remote = query
+    const remote = isRemoteSearchQueryReady(query)
       ? (await request(`/directory/search?q=${encodeURIComponent(query)}`)).people || []
       : [];
+    if (requestSeq !== state.vaultInviteSearchRequestSeq) return;
     state.vaultInvite.results = mergePeople(contacts, remote);
     render();
   } catch {
@@ -4019,6 +4102,7 @@ async function sendVaultPayload(payload, kind = "Text", fileObjectId = null) {
 
 async function vaultEncryptedRecipients(room, payload, fileObjectId) {
   const recipients = [];
+  let index = 0;
   for (const member of room.members || []) {
     if (member.status !== "Active") continue;
     if (member.userId === state.auth.user.id) {
@@ -4030,6 +4114,7 @@ async function vaultEncryptedRecipients(room, payload, fileObjectId) {
         header: own.header,
         fileObjectId
       });
+      await breatheMainThread(++index);
       continue;
     }
 
@@ -4045,6 +4130,7 @@ async function vaultEncryptedRecipients(room, payload, fileObjectId) {
         header: sealed.header,
         fileObjectId
       });
+      await breatheMainThread(++index);
     }
   }
   return recipients;
@@ -4201,6 +4287,7 @@ function forwardingAllowedForConversation(conversation) {
 
 async function encryptedRecipients(conversation, payload, fileObjectId) {
   const recipients = [];
+  let index = 0;
   for (const participant of conversation.participants) {
     if (participant.removedAt) continue;
     if (participant.userId === state.auth.user.id) {
@@ -4212,6 +4299,7 @@ async function encryptedRecipients(conversation, payload, fileObjectId) {
         header: own.header,
         fileObjectId
       });
+      await breatheMainThread(++index);
       continue;
     }
 
@@ -4227,6 +4315,7 @@ async function encryptedRecipients(conversation, payload, fileObjectId) {
         header: sealed.header,
         fileObjectId
       });
+      await breatheMainThread(++index);
     }
   }
   return recipients;
@@ -4236,8 +4325,10 @@ async function handleFileSelected(event) {
   const files = [...(event.target.files || [])];
   event.target.value = "";
   if (!files.length || !selectedConversation()) return;
+  let index = 0;
   for (const file of files) {
     await sendFileAttachment(file);
+    await breatheMainThread(++index, 1);
   }
 }
 
@@ -4302,12 +4393,12 @@ async function downloadFile(data) {
     const encrypted = await request(`/files/${data.downloadFile}/blob`, { rawResponse: true });
     const bytes = await encrypted.arrayBuffer();
     const plain = await decryptAttachment(bytes, data.fileKey, data.fileIv);
-    const url = URL.createObjectURL(new Blob([plain]));
+    const url = createTrackedObjectUrl(new Blob([plain]));
     const link = document.createElement("a");
     link.href = url;
     link.download = data.fileName || "nivra-file.bin";
     link.click();
-    URL.revokeObjectURL(url);
+    revokeTrackedObjectUrl(url);
   } catch (error) {
     toast("No se pudo descargar el archivo.");
   }
@@ -4351,21 +4442,65 @@ function rememberMediaPreview(fileId, fileOrBlob, mime = "", name = "") {
     ? fileOrBlob
     : new Blob([fileOrBlob], { type: mime || "application/octet-stream" });
   const previous = state.mediaCache.get(fileId);
-  if (previous?.url) URL.revokeObjectURL(previous.url);
-  const url = URL.createObjectURL(blob);
+  if (previous?.url) revokeTrackedObjectUrl(previous.url);
+  const url = createTrackedObjectUrl(blob);
   state.mediaCache.set(fileId, {
     url,
     mime: mime || blob.type || "application/octet-stream",
-    name
+    name,
+    createdAt: Date.now()
   });
   return url;
 }
 
-function revokeCachedMediaPreviews() {
-  for (const item of state.mediaCache.values()) {
-    if (item?.url) URL.revokeObjectURL(item.url);
+function createTrackedObjectUrl(blob) {
+  const url = URL.createObjectURL(blob);
+  state.objectUrls.add(url);
+  return url;
+}
+
+function revokeTrackedObjectUrl(url) {
+  if (!url) return;
+  URL.revokeObjectURL(url);
+  state.objectUrls.delete(url);
+}
+
+function cleanupObjectUrls({ keepVisible = true } = {}) {
+  const keepKeys = keepVisible ? visibleMediaCacheKeys() : new Set();
+  if (keepVisible && state.activeStory?.id) keepKeys.add(`story:${state.activeStory.id}`);
+  for (const [key, item] of state.mediaCache.entries()) {
+    if (keepKeys.has(key)) continue;
+    revokeTrackedObjectUrl(item?.url);
+    state.mediaCache.delete(key);
   }
-  state.mediaCache.clear();
+  if (!keepVisible) {
+    for (const url of [...state.objectUrls]) revokeTrackedObjectUrl(url);
+  }
+}
+
+function visibleMediaCacheKeys() {
+  const keys = new Set();
+  const activeUrls = new Set();
+  document.querySelectorAll("[data-media-preview]").forEach((node) => {
+    const key = node.dataset.mediaPreview;
+    if (key) keys.add(key);
+    const url = node.currentSrc || node.src;
+    if (url) activeUrls.add(url);
+  });
+  document.querySelectorAll("img[src^='blob:'], video[src^='blob:'], audio[src^='blob:']").forEach((node) => {
+    const url = node.currentSrc || node.src;
+    if (url) activeUrls.add(url);
+  });
+  if (activeUrls.size) {
+    for (const [key, item] of state.mediaCache.entries()) {
+      if (item?.url && activeUrls.has(item.url)) keys.add(key);
+    }
+  }
+  return keys;
+}
+
+function revokeCachedMediaPreviews() {
+  cleanupObjectUrls({ keepVisible: false });
 }
 
 async function openCameraModal() {
@@ -4745,8 +4880,10 @@ async function loadConversationHistory(conversationId, shouldRender = true) {
   try {
     await loadLocalConversationMessages(conversationId, false);
     const history = await request(`/conversations/${conversationId}/messages?take=${MESSAGE_PAGE_SIZE}`);
+    let index = 0;
     for (const message of history || []) {
       await applyMessageEnvelope(message, { markSeen: false, notifyReceipt: false, scroll: false });
+      await breatheMainThread(++index);
     }
     updateConversationPaging(conversationId, state.messages.get(conversationId) || []);
     if (shouldRender) render();
@@ -4755,7 +4892,7 @@ async function loadConversationHistory(conversationId, shouldRender = true) {
   }
 }
 
-async function applyMessageEnvelope(message, { markSeen, notifyReceipt, scroll = true }) {
+async function applyMessageEnvelope(message, { markSeen, notifyReceipt, scroll = true, persistSeen = true }) {
   const recipient = message.recipients?.find((item) => item.deviceId === state.auth.device.id);
   if (!recipient) return;
   const payload = isServerSystemMessage(message, recipient)
@@ -4763,7 +4900,7 @@ async function applyMessageEnvelope(message, { markSeen, notifyReceipt, scroll =
     : await decryptEnvelope(recipient.header, recipient.ciphertext).catch(() => ({ type: "sealed", text: "Contenido cifrado no disponible en este dispositivo." }));
   if (markSeen) {
     state.seenMessageIds.add(message.id);
-    saveJson("nivra.seen", [...state.seenMessageIds]);
+    if (persistSeen) saveJson("nivra.seen", [...state.seenMessageIds]);
   }
 
   if (payload.type === "reaction") {
@@ -4853,14 +4990,17 @@ async function syncPendingMessages(reason = "manual", options = {}) {
     const pending = Array.isArray(packet) ? packet : packet?.messages || [];
     const deliveredIds = [];
     let changed = false;
+    let index = 0;
     for (const message of pending) {
       if (!message?.id) continue;
       if (!state.seenMessageIds.has(message.id) || !findMessage(message.id)) {
-        await applyMessageEnvelope(message, { markSeen: true, notifyReceipt: false });
+        await applyMessageEnvelope(message, { markSeen: true, notifyReceipt: false, scroll: false, persistSeen: false });
         changed = true;
       }
       deliveredIds.push(message.id);
+      await breatheMainThread(++index);
     }
+    if (pending.length) saveJson("nivra.seen", [...state.seenMessageIds]);
     if (deliveredIds.length) {
       await ackDeliveredMessages(deliveredIds);
     }
@@ -4875,8 +5015,10 @@ async function syncPendingMessages(reason = "manual", options = {}) {
 async function ackDeliveredMessages(messageIds) {
   const ids = [...new Set((messageIds || []).filter(Boolean))];
   if (!ids.length || !state.auth?.tokens?.accessToken) return;
+  let index = 0;
   for (const id of ids) {
     await request(`/messages/${id}/receipt`, { method: "POST", body: { kind: "Delivered" } }).catch(() => {});
+    await breatheMainThread(++index);
   }
 }
 
@@ -4887,6 +5029,7 @@ async function markVisibleMessagesRead(conversationId = state.selectedConversati
     !message.mine &&
     !message.deleteAfterRead &&
     !state.readReceiptSentIds.has(message.id));
+  let index = 0;
   for (const message of unread) {
     state.readReceiptSentIds.add(message.id);
     message.readAt = message.readAt || new Date().toISOString();
@@ -4894,6 +5037,7 @@ async function markVisibleMessagesRead(conversationId = state.selectedConversati
     request(`/messages/${message.id}/receipt`, { method: "POST", body: { kind: "Read" } }).catch(() => {
       state.readReceiptSentIds.delete(message.id);
     });
+    await breatheMainThread(++index);
   }
 }
 
@@ -4947,6 +5091,33 @@ function scheduleRealtimeReconnect(reason = "closed", delay = navigator.onLine =
   }, delay);
 }
 
+function detachRealtimeHandlers(connection) {
+  [
+    "message.received",
+    "message.receipt",
+    "conversation.typing",
+    "presence.changed",
+    "MessageDeleted",
+    "ChatCleared",
+    "conversation.created",
+    "friend.requested",
+    "friend.updated",
+    "story.created",
+    "story.worldCreated",
+    "vault.invited",
+    "vault.approved",
+    "vault.message",
+    "vault.closed",
+    "vault.left",
+    "call.started",
+    "call.signal",
+    "call.ended",
+    "call.failed",
+    "device.revoked",
+    "device.listChanged"
+  ].forEach((eventName) => connection?.off?.(eventName));
+}
+
 async function connectRealtime() {
   const hubState = window.signalR?.HubConnectionState || {};
   if ([hubState.Connected, hubState.Connecting, hubState.Reconnecting].includes(state.connection?.state)) {
@@ -4955,6 +5126,7 @@ async function connectRealtime() {
   if (state.connection) {
     const previous = state.connection;
     state.connection = null;
+    detachRealtimeHandlers(previous);
     await previous.stop().catch(() => {});
   }
   if (!window.signalR || !state.auth?.tokens?.accessToken) return;
@@ -4968,6 +5140,7 @@ async function connectRealtime() {
   }
   const connection = builder.build();
 
+  detachRealtimeHandlers(connection);
   connection.on("message.received", realtimeHandler("message.received", handleIncomingMessage));
   connection.on("message.receipt", realtimeHandler("message.receipt", handleMessageReceipt));
   connection.on("conversation.typing", realtimeHandler("conversation.typing", handleConversationTyping));
@@ -5059,6 +5232,8 @@ async function connectRealtime() {
     await syncPendingMessages("connected", { force: true }).catch(() => {});
   } catch (error) {
     state.connection = null;
+    detachRealtimeHandlers(connection);
+    await connection.stop().catch(() => {});
     console.warn("Realtime start deferred.", error);
     scheduleRealtimeReconnect("start", navigator.onLine === false ? 6000 : 2500);
   }
@@ -5129,6 +5304,7 @@ function decryptVaultPreview(encryptedMetadata) {
 async function decodeVaultItems() {
   if (!state.vault.key) return;
   state.vault.decoded = new Map();
+  let index = 0;
   for (const item of state.vaultItems) {
     try {
       const envelope = JSON.parse(item.encryptedMetadata);
@@ -5137,6 +5313,7 @@ async function decodeVaultItems() {
     } catch {
       state.vault.decoded.set(item.encryptedMetadata, { title: item.kind, body: "No se pudo descifrar en este dispositivo." });
     }
+    await breatheMainThread(++index);
   }
 }
 
@@ -5624,9 +5801,8 @@ function stopCallTicker() {
 
 async function refreshSession() {
   try {
-    const tokens = await request("/auth/refresh", { method: "POST", body: { refreshToken: state.auth.tokens.refreshToken }, skipAuth: true });
-    state.auth.tokens = tokens;
-    saveJson("nivra.auth", state.auth);
+    const refreshed = await refreshToken();
+    if (!refreshed) throw new Error("No se pudo renovar.");
     await connectRealtime();
     toast("Sesion renovada.");
   } catch {
@@ -5634,8 +5810,11 @@ async function refreshSession() {
   }
 }
 
-async function logout() {
-  await request("/auth/logout", { method: "POST" }).catch(() => {});
+async function logout(options = {}) {
+  const skipServer = Boolean(options?.skipServer);
+  if (!skipServer) {
+    await request("/auth/logout", { method: "POST", skipAuthRefresh: true }).catch(() => {});
+  }
   clearSession();
 }
 
@@ -5670,10 +5849,16 @@ async function handleDeleteAccountSubmit(event) {
 
 function clearSession() {
   resetCallState();
+  cleanupObjectUrls({ keepVisible: false });
+  clearTimeout(state.searchTimer);
+  clearTimeout(state.contactSearchTimer);
+  clearTimeout(state.chatSearchTimer);
+  clearTimeout(state.vaultInviteTimer);
   localStorage.removeItem("nivra.auth");
   state.auth = null;
   const previous = state.connection;
   state.connection = null;
+  detachRealtimeHandlers(previous);
   previous?.stop().catch(() => {});
   state.pushReady = false;
   state.syncInFlight = false;
@@ -5692,19 +5877,16 @@ async function request(path, options = {}) {
     headers,
     body: options.rawBody || (options.body ? JSON.stringify(options.body) : undefined)
   });
-  if (options.rawResponse && response.ok) return response;
-  if (response.status === 401 && !options.skipAuth && state.auth?.tokens?.refreshToken) {
-    const refreshed = await fetch(apiUrl("/auth/refresh"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ refreshToken: state.auth.tokens.refreshToken })
-    });
-    if (refreshed.ok) {
-      state.auth.tokens = await refreshed.json();
-      saveJson("nivra.auth", state.auth);
-      return request(path, options);
-    }
+  if (response.status === 401 && !options.skipAuth && !options.skipAuthRefresh && !options.authRetried) {
+    const refreshed = await refreshToken();
+    if (refreshed) return request(path, { ...options, authRetried: true });
+    await logout({ silent: true, skipServer: true });
+    const exception = new Error("Sesion expirada. Entra de nuevo.");
+    exception.status = 401;
+    exception.recovered = true;
+    throw exception;
   }
+  if (options.rawResponse && response.ok) return response;
   if (!response.ok) {
     let error = { message: `HTTP ${response.status}` };
     try {
@@ -5721,6 +5903,30 @@ async function request(path, options = {}) {
   const contentType = response.headers.get("Content-Type") || "";
   if (contentType.includes("application/json")) return JSON.parse(text);
   try { return JSON.parse(text); } catch { return text; }
+}
+
+async function refreshToken() {
+  const refreshTokenValue = state.auth?.tokens?.refreshToken;
+  if (!refreshTokenValue) return false;
+  if (!authRefreshPromise) {
+    authRefreshPromise = (async () => {
+      const response = await fetch(apiUrl("/auth/refresh"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken: refreshTokenValue })
+      }).catch(() => null);
+      if (!response?.ok) return false;
+      const tokens = await response.json().catch(() => null);
+      if (!tokens?.accessToken) return false;
+      if (!state.auth?.tokens) return false;
+      state.auth.tokens = tokens;
+      saveJson("nivra.auth", state.auth);
+      return true;
+    })().finally(() => {
+      authRefreshPromise = null;
+    });
+  }
+  return authRefreshPromise;
 }
 
 async function prepareDeviceKeys({ alias = null, registration = false } = {}) {
@@ -5873,8 +6079,10 @@ async function decryptQrPayload(encryptedPayload, privateKey) {
 
 async function migrateLegacyKeyMaterial() {
   const records = allLegacyKeyMaterial();
+  let index = 0;
   for (const record of records) {
     await localStore.putDeviceKeys(record).catch(() => {});
+    await breatheMainThread(++index);
   }
 }
 
@@ -6597,9 +6805,11 @@ async function forwardMessageToSelectedConversations() {
   state.forwardPicker.busy = true;
   render();
   let sent = 0;
+  let index = 0;
   for (const conversationId of targetIds) {
     const ok = await forwardMessageToConversation(messageId, conversationId, { quiet: true });
     if (ok) sent += 1;
+    await breatheMainThread(++index, 2);
   }
   closeModal();
   toast(sent ? `Mensaje reenviado a ${sent} chat${sent === 1 ? "" : "s"}.` : "No se pudo reenviar.");
