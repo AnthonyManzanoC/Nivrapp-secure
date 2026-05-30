@@ -20,6 +20,13 @@ const MESSAGE_PAGE_SIZE = 50;
 const MESSAGE_BOTTOM_THRESHOLD_PX = 100;
 const MESSAGE_SCROLL_DEBOUNCE_MS = 120;
 const MESSAGE_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢"];
+const STORY_REACTIONS = [
+  { key: "heart", value: "\u2764\uFE0F" },
+  { key: "laugh", value: "\uD83D\uDE02" },
+  { key: "wow", value: "\uD83D\uDE2E" },
+  { key: "sad", value: "\uD83D\uDE22" },
+  { key: "fire", value: "\uD83D\uDD25" }
+];
 const LONG_PRESS_MS = 520;
 const VOICE_NOTE_MIN_DURATION_MS = 500;
 const PUSH_TOKEN_ENDPOINT = "/push-tokens";
@@ -368,6 +375,12 @@ const state = {
   },
   drafts: {},
   pendingStoryFile: null,
+  storyPublishing: false,
+  storyResponse: {
+    reaction: null,
+    reactionsOpen: false,
+    sending: false
+  },
   typingByConversation: new Map(),
   typingStopTimer: null,
   lastTypingSentAt: 0,
@@ -1682,6 +1695,8 @@ function renderWorldView() {
   const stories = state.stories.slice(0, 24);
   const storyDraftText = state.drafts.storyText || "";
   const pendingMedia = state.pendingStoryFile;
+  const storyPublishing = Boolean(state.storyPublishing);
+  const publishLabel = storyPublishing ? (pendingMedia ? "Cifrando..." : "Publicando...") : "Publicar";
 
   return `
     <div class="panel-view">
@@ -1710,7 +1725,7 @@ function renderWorldView() {
                 <option value="604800">7 dias</option>
               </select>
               <label class="check-row"><input type="checkbox" id="storyViewOnce"> Ver una vez</label>
-              <button class="btn primary">Publicar</button>
+              <button class="btn primary" type="button" id="storyPublishBtn" ${storyPublishing ? `disabled aria-busy="true"` : ""}>${storyPublishing ? `${icon("sync")}<span>${publishLabel}</span>` : publishLabel}</button>
             </div>
           </form>
         </div>
@@ -2262,6 +2277,13 @@ function renderStoryModal() {
   const story = state.activeStory;
   const payload = story?.payload || decodeStoryPayload(story?.encryptedPayload);
   const media = payload?.media;
+  const responseState = state.storyResponse || {};
+  const selectedReaction = responseState.reaction;
+  const responseBusy = Boolean(responseState.sending);
+  const replyText = state.drafts.storyReplyInput || "";
+  const reactionOptions = STORY_REACTIONS.map((item) => `
+    <button class="story-reaction-option ${item.value === selectedReaction ? "selected" : ""}" type="button" data-story-reaction="${escapeAttr(item.key)}" aria-label="${escapeAttr(item.key)}">${escapeHtml(item.value)}</button>
+  `).join("");
   const mediaHtml = media
     ? story.mediaUrl
       ? renderStoryMedia(story.mediaUrl, media)
@@ -2269,7 +2291,7 @@ function renderStoryModal() {
     : "";
   return `
     <div class="modal-backdrop show story-backdrop">
-      <section class="story-viewer">
+      <section class="story-viewer ${story.owner?.id !== state.auth.user.id ? "can-respond" : ""}">
         <div class="story-viewer-head">
           ${avatarNode(story.owner, "mini-avatar")}
           <div><strong>${escapeHtml(displayPerson(story.owner))}</strong><span>${formatTime(story.expiresAt)}</span></div>
@@ -2281,13 +2303,11 @@ function renderStoryModal() {
         </div>
         ${story.owner?.id !== state.auth.user.id ? `
           <div class="story-response-bar">
-            <div class="story-reactions">
-              <button class="btn ghost" data-story-reaction="love">Me encanta</button>
-              <button class="btn ghost" data-story-reaction="fire">Intenso</button>
-            </div>
             <form id="storyReplyForm" class="story-reply-form">
-              <input class="input" id="storyReplyInput" placeholder="Responder por mensaje directo">
-              <button class="btn primary" type="submit">${icon("send")}<span>Enviar</span></button>
+              <input class="input" id="storyReplyInput" type="text" placeholder="Responder..." value="${escapeAttr(replyText)}" autocomplete="off" ${responseBusy ? "disabled" : ""}>
+              <button class="btn icon story-reaction-toggle ${selectedReaction ? "active" : ""}" type="button" id="storyReactionToggle" aria-label="Reacciones rapidas" aria-expanded="${responseState.reactionsOpen ? "true" : "false"}" ${responseBusy ? "disabled" : ""}>${selectedReaction ? escapeHtml(selectedReaction) : "&hearts;"}</button>
+              <button class="btn primary story-send-btn" type="submit" ${responseBusy ? `disabled aria-busy="true"` : ""}>${responseBusy ? `${icon("sync")}<span>Enviando...</span>` : `${icon("send")}<span>Enviar</span>`}</button>
+              ${responseState.reactionsOpen ? `<div class="story-reaction-menu" role="menu" aria-label="Reacciones rapidas">${reactionOptions}</div>` : ""}
             </form>
           </div>
         ` : ""}
@@ -2869,9 +2889,12 @@ function bindAppEvents() {
     state.pendingStoryFile = null;
     render();
   });
+  document.querySelector("#storyPublishBtn")?.addEventListener("click", handleStorySubmit);
   document.querySelector("#storyForm")?.addEventListener("submit", handleStorySubmit);
+  document.querySelector("#storyReplyInput")?.addEventListener("input", (event) => setDraftValue("storyReplyInput", event.target.value));
+  document.querySelector("#storyReactionToggle")?.addEventListener("click", toggleStoryReactions);
   document.querySelectorAll("[data-story-reaction]").forEach((button) => {
-    button.addEventListener("click", () => sendStoryReaction(button.dataset.storyReaction));
+    button.addEventListener("click", (event) => selectStoryReaction(event, button.dataset.storyReaction));
   });
   document.querySelector("#storyReplyForm")?.addEventListener("submit", handleStoryReplySubmit);
   document.querySelector("#logoutBtn")?.addEventListener("click", logout);
@@ -3254,6 +3277,7 @@ function closeModal() {
   if (modalType === "qrScanner") {
     stopQrScanner().catch(() => {});
   }
+  if (state.activeStory) resetStoryResponseDraft();
   state.modal = null;
   state.activeStory = null;
   state.chatSearch.selectedIds?.clear?.();
@@ -3533,16 +3557,23 @@ async function respondFriendRequest(requestId, action) {
 
 async function handleStorySubmit(event) {
   event.preventDefault();
+  if (state.storyPublishing) return;
   const text = document.querySelector("#storyText")?.value.trim() || "";
   const file = state.pendingStoryFile;
   if (!text && !file) return;
-  const visibility = document.querySelector("#storyVisibility").value;
-  const durationSeconds = Number(document.querySelector("#storyDuration").value);
+  const visibility = document.querySelector("#storyVisibility")?.value || "PublicWorld";
+  const durationSeconds = Number(document.querySelector("#storyDuration")?.value || 86400);
+  const viewOnce = Boolean(document.querySelector("#storyViewOnce")?.checked);
+  state.storyPublishing = true;
+  setStoryPublishBusy(true, file ? "Cifrando..." : "Publicando...");
   try {
     let media = null;
     let mediaFileObjectId = null;
     if (file) {
-      const encrypted = await encryptAttachment(await file.arrayBuffer());
+      await waitForPaint();
+      const buffer = await file.arrayBuffer();
+      const encrypted = await encryptAttachment(buffer);
+      setStoryPublishBusy(true, "Subiendo...");
       const fileRecord = await request("/files", {
         method: "POST",
         body: {
@@ -3570,6 +3601,7 @@ async function handleStorySubmit(event) {
       rememberMediaPreview(`story:${fileRecord.id}`, file, media.mime, file.name);
     }
 
+    setStoryPublishBusy(true, "Publicando...");
     await request("/stories", {
       method: "POST",
       body: {
@@ -3578,7 +3610,7 @@ async function handleStorySubmit(event) {
         caption: text.slice(0, 180),
         mediaFileObjectId,
         allowedUserIds: visibility === "SelectedUsers" ? state.contacts.map((contact) => contact.userId) : [],
-        viewOnce: document.querySelector("#storyViewOnce").checked,
+        viewOnce,
         durationSeconds
       }
     });
@@ -3590,7 +3622,27 @@ async function handleStorySubmit(event) {
     toast("Instantanea publicada.");
   } catch (error) {
     toast(error.message || "No se pudo publicar.");
+  } finally {
+    state.storyPublishing = false;
+    setStoryPublishBusy(false);
   }
+}
+
+function setStoryPublishBusy(busy, label = "Publicar") {
+  const button = document.querySelector("#storyPublishBtn");
+  if (!button) return;
+  button.disabled = busy;
+  if (busy) {
+    button.setAttribute("aria-busy", "true");
+    button.innerHTML = `${icon("sync")}<span>${escapeHtml(label)}</span>`;
+  } else {
+    button.removeAttribute("aria-busy");
+    button.textContent = "Publicar";
+  }
+}
+
+function waitForPaint() {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()));
 }
 
 async function viewStory(storyId) {
@@ -3598,6 +3650,7 @@ async function viewStory(storyId) {
     const story = await request(`/stories/${storyId}/view`, { method: "POST" });
     const payload = decodeStoryPayload(story.encryptedPayload);
     const text = payload.text || story.caption || "Instantanea";
+    resetStoryResponseDraft();
     state.activeStory = { ...story, payload, text };
     await bootstrap();
     state.activeStory = { ...story, payload, text };
@@ -3658,35 +3711,66 @@ function renderStoryMedia(url, media = {}) {
   return `<audio class="story-audio" src="${escapeAttr(url)}" controls></audio>`;
 }
 
-async function sendStoryReaction(reaction) {
-  if (!state.activeStory) return;
-  await sendStoryResponse({ reaction });
+function toggleStoryReactions(event) {
+  event.preventDefault();
+  if (!state.activeStory || state.storyResponse.sending) return;
+  state.storyResponse.reactionsOpen = !state.storyResponse.reactionsOpen;
+  render();
+  requestAnimationFrame(() => document.querySelector("#storyReplyInput")?.focus());
+}
+
+function selectStoryReaction(event, reactionKey) {
+  event.preventDefault();
+  if (!state.activeStory || state.storyResponse.sending) return;
+  const reaction = STORY_REACTIONS.find((item) => item.key === reactionKey)?.value;
+  if (!reaction) return;
+  state.storyResponse.reaction = reaction;
+  state.storyResponse.reactionsOpen = false;
+  render();
+  requestAnimationFrame(() => document.querySelector("#storyReplyInput")?.focus());
 }
 
 async function handleStoryReplySubmit(event) {
   event.preventDefault();
+  if (state.storyResponse.sending) return;
   const text = document.querySelector("#storyReplyInput")?.value.trim();
-  if (!text || !state.activeStory) return;
-  await sendStoryResponse({ text });
+  const reaction = state.storyResponse.reaction;
+  if ((!text && !reaction) || !state.activeStory) return;
+  await sendStoryResponse({ reaction, text });
 }
 
 async function sendStoryResponse({ reaction = null, text = "" } = {}) {
   const story = state.activeStory;
   const ownerId = story?.owner?.id;
   if (!story || !ownerId || ownerId === state.auth.user.id) return;
+  state.storyResponse.sending = true;
+  render();
   try {
     const conversation = await ensureDirectConversationWithUser(ownerId);
+    const storyPreview = story.caption || story.payload?.text || "Historia";
     const payload = {
       type: "story-response",
       storyId: story.id,
       storyOwnerId: ownerId,
-      storyPreview: story.caption || story.payload?.text || "Historia",
+      storyPreview,
       storyMediaType: story.payload?.media?.mime || null,
+      replyTo: {
+        type: "story",
+        id: story.id,
+        storyId: story.id,
+        preview: "Respuesta a tu historia",
+        storyPreview
+      },
+      metadata: {
+        source: "story",
+        storyId: story.id,
+        storyOwnerId: ownerId
+      },
       reaction,
       text
     };
     await sendPayloadToConversation(conversation, payload, "Text", null, { deleteAfterRead: false });
-    clearDraftValue("storyReplyInput");
+    resetStoryResponseDraft();
     closeModal();
     state.view = "chats";
     selectConversation(conversation.id);
@@ -3695,7 +3779,20 @@ async function sendStoryResponse({ reaction = null, text = "" } = {}) {
     toast("Respuesta enviada al chat directo.");
   } catch (error) {
     toast(error.message || "No se pudo responder la historia.");
+  } finally {
+    state.storyResponse.sending = false;
+    state.storyResponse.reactionsOpen = false;
+    render();
   }
+}
+
+function resetStoryResponseDraft() {
+  clearDraftValue("storyReplyInput");
+  state.storyResponse = {
+    reaction: null,
+    reactionsOpen: false,
+    sending: false
+  };
 }
 
 async function handleVaultRoom(event) {
@@ -6297,7 +6394,7 @@ function messageDisplayText(payload = {}) {
     return `Reaccion: ${payload.emoji || "+"}`;
   }
   if (payload.type === "story-response") {
-    const reaction = payload.reaction ? `Me encanta ${payload.reaction}` : "";
+    const reaction = payload.reaction ? `Reaccion ${payload.reaction}` : "";
     const text = payload.text || "";
     return [reaction, text].filter(Boolean).join(" - ") || "Respondio a tu historia";
   }
