@@ -28,6 +28,18 @@
   </div>
 
   <div id="qrScannerPortal" class="qr-scanner-portal" aria-live="polite"></div>
+  <div id="incomingCallOverlay" class="incoming-call-overlay hidden" aria-live="assertive" aria-modal="true" role="dialog">
+    <div class="incoming-call-card">
+      <div class="incoming-call-kicker" id="incomingCallType">Llamada entrante</div>
+      <div class="incoming-call-avatar" id="incomingCallAvatar">N</div>
+      <h2 id="incomingCallName">Contacto Nivra</h2>
+      <p id="incomingCallStatus">Quiere hablar contigo ahora</p>
+      <div class="incoming-call-actions">
+        <button class="incoming-call-btn accept" id="incomingAcceptBtn" type="button">Contestar</button>
+        <button class="incoming-call-btn decline" id="incomingDeclineBtn" type="button">Rechazar</button>
+      </div>
+    </div>
+  </div>
   <div id="toast" class="toast" aria-live="polite"></div>
   <script src="native-config.js"></script>
   <script src="vendor/signalr.min.js"></script>

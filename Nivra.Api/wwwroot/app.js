@@ -555,6 +555,7 @@ async function init() {
   await migrateLegacyKeyMaterial().catch(() => {});
   applyLaunchParams();
   registerServiceWorker();
+  bindIncomingCallOverlayEvents();
   listenForServiceWorkerMessages();
   setupConnectivityListeners();
   startLocalMessageRetention();
@@ -579,7 +580,7 @@ function listenForServiceWorkerMessages() {
   if (!("serviceWorker" in navigator)) return;
   navigator.serviceWorker.addEventListener("message", (event) => {
     if (event.data?.type !== "nivra.push-click") return;
-    handlePushNavigation(event.data?.data || {})
+    handlePushNavigation(event.data?.data || {}, { action: event.data?.action || "" })
       .catch(() => {})
       .finally(() => {
         syncPendingMessages("push-click", { force: true }).catch(() => {});
@@ -832,9 +833,12 @@ function startLocalMessageRetention() {
 
 function registerServiceWorker() {
   if (!("serviceWorker" in navigator) || !["http:", "https:"].includes(window.location.protocol)) return;
-  window.addEventListener("load", () => {
-    navigator.serviceWorker.register("/sw.js").catch(() => {});
-  }, { once: true });
+  const register = () => navigator.serviceWorker.register("/sw.js").catch(() => {});
+  if (document.readyState === "complete") {
+    register();
+    return;
+  }
+  window.addEventListener("load", register, { once: true });
 }
 
 async function bootstrap() {
@@ -1104,6 +1108,7 @@ function render() {
     ${renderModalLayer()}
   `;
 
+  syncIncomingCallOverlay();
   bindAppEvents();
   restoreTransientInputs(transient);
   cleanupObjectUrls({ keepVisible: true });
@@ -2769,6 +2774,44 @@ function renderCallLayer() {
       </div>
     </section>
   `;
+}
+
+function bindIncomingCallOverlayEvents() {
+  const overlay = document.querySelector("#incomingCallOverlay");
+  if (!overlay || overlay.dataset.bound === "true") return;
+  overlay.dataset.bound = "true";
+  document.querySelector("#incomingAcceptBtn")?.addEventListener("click", () => {
+    acceptCall().catch((error) => toast(error.message || "No se pudo contestar."));
+  });
+  document.querySelector("#incomingDeclineBtn")?.addEventListener("click", () => {
+    declineCall().catch((error) => toast(error.message || "No se pudo rechazar."));
+  });
+}
+
+function syncIncomingCallOverlay() {
+  const overlay = document.querySelector("#incomingCallOverlay");
+  if (!overlay) return;
+  const call = state.call.current;
+  const visible = Boolean(call && state.call.phase === "incoming");
+  overlay.classList.toggle("hidden", !visible);
+  overlay.setAttribute("aria-hidden", visible ? "false" : "true");
+  if (!visible) return;
+
+  const participants = callParticipants(call);
+  const caller = participants.find((person) => person.id !== state.auth?.user?.id) || participants[0] || {};
+  const name = displayPerson(caller);
+  const type = call.type === "Video" ? "Videollamada entrante" : "Llamada entrante";
+  const avatar = document.querySelector("#incomingCallAvatar");
+  document.querySelector("#incomingCallType").textContent = type;
+  document.querySelector("#incomingCallName").textContent = name;
+  document.querySelector("#incomingCallStatus").textContent = "Quiere hablar contigo ahora.";
+  if (avatar) {
+    if (caller.profilePhotoDataUrl) {
+      avatar.innerHTML = `<img src="${escapeAttr(caller.profilePhotoDataUrl)}" alt="">`;
+    } else {
+      avatar.textContent = initials(name);
+    }
+  }
 }
 
 function renderVoiceCallStage(participants, title) {
@@ -5442,6 +5485,7 @@ function detachRealtimeHandlers(connection) {
     "vault.message",
     "vault.closed",
     "vault.left",
+    "incomingCall",
     "call.started",
     "call.signal",
     "call.ended",
@@ -5516,6 +5560,7 @@ async function connectRealtime() {
     await bootstrap();
     render();
   }));
+  connection.on("incomingCall", realtimeHandler("incomingCall", handleIncomingCall));
   connection.on("call.started", realtimeHandler("call.started", handleIncomingCall));
   connection.on("call.signal", realtimeHandler("call.signal", handleCallSignal));
   connection.on("call.ended", realtimeHandler("call.ended", handleCallEnded));
@@ -5745,10 +5790,12 @@ async function handleIncomingCall(call, options = {}) {
   startCallTicker();
   if (state.call.phase === "incoming") {
     playCallTone("incoming");
+    navigator.vibrate?.([320, 140, 320]);
     if (options.notify !== false) notifyIncomingCall(call);
   } else {
     playCallTone("outgoing");
   }
+  syncIncomingCallOverlay();
   render();
   if (state.call.phase !== "incoming") {
     flushPendingCallSignals().catch(() => {});
@@ -5763,6 +5810,7 @@ async function acceptCall() {
     state.call.phase = "active";
     state.call.startedAt = new Date().toISOString();
     stopCallTones();
+    syncIncomingCallOverlay();
     startCallTicker();
     await Promise.all(call.participantUserIds
       .filter((userId) => userId !== state.auth.user.id)
@@ -5783,6 +5831,7 @@ async function declineCall() {
     await request(`/calls/${call.id}/end`, { method: "POST" }).catch(() => {});
   } finally {
     resetCallState();
+    syncIncomingCallOverlay();
     render();
   }
 }
@@ -5796,6 +5845,7 @@ async function endCurrentCall() {
     // Ending locally should still close the UI.
   }
   resetCallState();
+  syncIncomingCallOverlay();
   render();
 }
 
@@ -5858,6 +5908,7 @@ async function handleCallEnded(call) {
   if (state.call.current?.id !== call.id) return;
   stopCallTones();
   resetCallState();
+  syncIncomingCallOverlay();
   render();
   toast("Llamada finalizada.");
 }
@@ -6012,18 +6063,14 @@ async function handleWebRtcSignal(signal) {
   if (!state.call.localStream) await prepareCallMedia(state.call.current?.type === "Video");
   const connection = ensurePeerConnection(fromUserId);
   if (!connection) return;
-  const peer = state.call.peers.get(fromUserId);
 
   if (signalType === "offer") {
     if (connection.signalingState !== "stable") {
-      await Promise.all([
-        connection.setLocalDescription({ type: "rollback" }).catch(() => {}),
-        connection.setRemoteDescription(new RTCSessionDescription(payload.description))
-      ]);
+      await connection.setLocalDescription({ type: "rollback" }).catch(() => {});
+      await setRemoteDescriptionAndFlush(fromUserId, connection, payload.description);
     } else {
-      await connection.setRemoteDescription(new RTCSessionDescription(payload.description));
+      await setRemoteDescriptionAndFlush(fromUserId, connection, payload.description);
     }
-    await flushPeerIce(fromUserId);
     const answer = await connection.createAnswer();
     await connection.setLocalDescription(answer);
     await sendCallSignal(state.call.current, fromUserId, "answer", { description: connection.localDescription });
@@ -6035,8 +6082,7 @@ async function handleWebRtcSignal(signal) {
 
   if (signalType === "answer") {
     if (payload.description && connection.signalingState !== "stable") {
-      await connection.setRemoteDescription(new RTCSessionDescription(payload.description));
-      await flushPeerIce(fromUserId);
+      await setRemoteDescriptionAndFlush(fromUserId, connection, payload.description);
     }
     state.call.phase = "active";
     startCallTicker();
@@ -6045,18 +6091,43 @@ async function handleWebRtcSignal(signal) {
   }
 
   if (signalType === "ice" && payload.candidate) {
-    const candidate = new RTCIceCandidate(payload.candidate);
-    if (connection.remoteDescription) {
-      await connection.addIceCandidate(candidate).catch(() => {});
-    } else {
+    await addOrQueueRemoteIceCandidate(fromUserId, payload.candidate);
+  }
+}
+
+async function setRemoteDescriptionAndFlush(userId, connection, description) {
+  if (!connection || !description) return;
+  await connection.setRemoteDescription(new RTCSessionDescription(description));
+  await flushPeerIce(userId);
+}
+
+function hasRemoteDescription(connection) {
+  return Boolean(connection?.remoteDescription?.type);
+}
+
+async function addOrQueueRemoteIceCandidate(userId, candidateInit) {
+  const peer = state.call.peers.get(userId);
+  if (!peer?.connection || !candidateInit) return;
+  const candidate = new RTCIceCandidate(candidateInit);
+  if (!hasRemoteDescription(peer.connection)) {
+    peer.pendingIce.push(candidate);
+    return;
+  }
+  try {
+    await peer.connection.addIceCandidate(candidate);
+  } catch (error) {
+    if (!hasRemoteDescription(peer.connection)) {
       peer.pendingIce.push(candidate);
+      return;
     }
+    console.warn("Remote ICE candidate could not be added.", error);
   }
 }
 
 async function flushPeerIce(userId) {
   const peer = state.call.peers.get(userId);
   if (!peer?.pendingIce.length) return;
+  if (!hasRemoteDescription(peer.connection)) return;
   const candidates = peer.pendingIce.splice(0);
   for (const candidate of candidates) {
     await peer.connection.addIceCandidate(candidate).catch(() => {});
@@ -6099,8 +6170,8 @@ function resetCallState() {
   }
   stopCallTicker();
   stopCallTones();
-  closePeerConnections();
   stopCallMedia();
+  closePeerConnections();
   state.call.current = null;
   state.call.phase = "idle";
   state.call.muted = false;
@@ -6109,16 +6180,61 @@ function resetCallState() {
   state.call.startedAt = null;
   state.call.pendingSignals = [];
   state.call.remoteStates = new Map();
+  syncIncomingCallOverlay();
+}
+
+function stopMediaStream(stream) {
+  stream?.getTracks?.().forEach((track) => {
+    try {
+      track.stop();
+    } catch {
+      // Media tracks can already be ended by the browser.
+    }
+  });
+}
+
+function detachCallMediaNodes() {
+  document.querySelectorAll("#localCallVideo, [data-remote-video], [data-remote-audio]").forEach((node) => {
+    try {
+      node.pause?.();
+      if ("srcObject" in node) node.srcObject = null;
+      node.removeAttribute("src");
+      node.load?.();
+    } catch {
+      // Best effort: some mobile WebViews throw while tearing down media nodes.
+    }
+  });
 }
 
 function stopCallMedia() {
-  state.call.localStream?.getTracks().forEach((track) => track.stop());
+  stopMediaStream(state.call.localStream);
+  for (const stream of state.call.remoteStreams.values()) {
+    stopMediaStream(stream);
+  }
   state.call.localStream = null;
+  state.call.remoteStreams = new Map();
+  detachCallMediaNodes();
 }
 
 function closePeerConnections() {
   for (const peer of state.call.peers.values()) {
-    peer.connection?.close?.();
+    const connection = peer.connection;
+    if (!connection) continue;
+    try {
+      connection.onicecandidate = null;
+      connection.ontrack = null;
+      connection.onconnectionstatechange = null;
+      connection.getSenders?.().forEach((sender) => {
+        try { sender.track?.stop?.(); } catch {}
+      });
+      connection.getReceivers?.().forEach((receiver) => {
+        try { receiver.track?.stop?.(); } catch {}
+      });
+      connection.close?.();
+    } catch {
+      // Closing a peer is local cleanup; the server end signal is sent before this path.
+    }
+    peer.pendingIce = [];
   }
   state.call.peers = new Map();
   state.call.remoteStreams = new Map();
@@ -7540,15 +7656,36 @@ async function handleForegroundPushNotification(notification = {}) {
     toast("Llamada entrante");
     await hydrateIncomingCallFromPushData(data).catch(() => {});
   } else {
+    notifyForegroundPushMessage(data, notification);
     toast("Nuevo mensaje");
   }
   await syncPendingMessages("push-foreground", { force: true }).catch(() => {});
 }
 
-async function handlePushNavigation(data = {}) {
+function notifyForegroundPushMessage(data = {}, notification = {}) {
+  const conversationId = pushDataValue(data, "conversationId", "ConversationId");
+  const body = state.privacy?.hideNotificationContent
+    ? "Nuevo mensaje privado"
+    : notification?.body || notification?.notification?.body || "Nuevo mensaje privado";
+  if (appIsBackgrounded()) {
+    showRealtimeNotification("Nivra", {
+      body,
+      tag: conversationId ? `nivra-message-${conversationId}` : "nivra-message",
+      data
+    });
+  }
+}
+
+async function handlePushNavigation(data = {}, options = {}) {
   if (isIncomingCallPushData(data)) {
     activateView("calls", { mobileChatOpen: false, renderAfter: false });
-    await hydrateIncomingCallFromPushData(data).catch(() => {});
+    const hydrated = await hydrateIncomingCallFromPushData(data).catch(() => false);
+    if (hydrated && options.action === "accept") {
+      window.setTimeout(() => acceptCall().catch(() => {}), 0);
+    }
+    if (hydrated && options.action === "decline") {
+      window.setTimeout(() => declineCall().catch(() => {}), 0);
+    }
     return;
   }
 
@@ -7641,6 +7778,12 @@ function notifyIncomingMessage(message, payload) {
     : payload.type === "system"
       ? payload.text || "Nuevo evento de sistema"
       : `Nuevo mensaje de ${alias}`;
+  if (!appIsBackgrounded()) {
+    if (state.view !== "chats" || state.selectedConversationId !== message.conversationId) {
+      toast(body);
+    }
+    return;
+  }
   showRealtimeNotification("Nivra", {
     body,
     tag: `nivra-message-${message.conversationId}`,

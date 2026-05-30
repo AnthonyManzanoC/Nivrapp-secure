@@ -1,10 +1,11 @@
-const CACHE_NAME = "nivra-shell-v6";
+const CACHE_NAME = "nivra-shell-v7";
 const SHELL_ASSETS = [
   "/",
   "/index.html",
   "/styles.css",
   "/app.js",
   "/native-config.js",
+  "/firebase-messaging-sw.js",
   "/vendor/signalr.min.js",
   "/vendor/qrcode-generator.js",
   "/vendor/html5-qrcode.min.js",
@@ -76,9 +77,11 @@ self.addEventListener("fetch", (event) => {
 
 self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
-  const title = payload.title || payload.notification?.title || "Nivra";
-  const body = payload.body || payload.notification?.body || "Nuevo evento privado";
+  const notification = payload.notification || payload.webpush?.notification || {};
   const data = payload.data || payload;
+  const title = payload.title || notification.title || "Nivra";
+  const body = payload.body || notification.body || "Nuevo evento privado";
+  const isCall = isIncomingCallData(data);
 
   event.waitUntil(
     self.registration.showNotification(title, {
@@ -86,7 +89,14 @@ self.addEventListener("push", (event) => {
       icon: "/assets/icon-192.png",
       badge: "/assets/icon-192.png",
       tag: data.tag || data.conversationId || "nivra-event",
-      data
+      data,
+      requireInteraction: isCall,
+      actions: isCall
+        ? [
+            { action: "accept", title: "Contestar" },
+            { action: "decline", title: "Rechazar" }
+          ]
+        : []
     })
   );
 });
@@ -94,6 +104,7 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
+  const action = event.action || "";
   const targetUrl = data.conversationId
     ? `/?conversationId=${encodeURIComponent(data.conversationId)}`
     : "/";
@@ -102,7 +113,7 @@ self.addEventListener("notificationclick", (event) => {
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
       const client = clientList.find((item) => "focus" in item);
       if (client) {
-        client.postMessage({ type: "nivra.push-click", data });
+        client.postMessage({ type: "nivra.push-click", data, action });
         return client.focus();
       }
       if (clients.openWindow) {
@@ -130,7 +141,13 @@ function isFreshShellAsset(pathname) {
   return pathname === "/app.js" ||
     pathname === "/styles.css" ||
     pathname === "/native-config.js" ||
+    pathname === "/firebase-messaging-sw.js" ||
     pathname === "/sw.js";
+}
+
+function isIncomingCallData(data = {}) {
+  const type = String(data.type || data.Type || "").toLowerCase();
+  return Boolean(data.callId || data.CallId) && type !== "missed-call" && (type.includes("call") || type === "");
 }
 
 function isLiveEndpoint(pathname) {
