@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Nivra.Api.Endpoints;
@@ -32,7 +33,11 @@ builder.Services.AddDbContext<NivraDbContext>(options =>
         ?? throw new InvalidOperationException("ConnectionStrings:Supabase is required.");
     options.UseNpgsql(
         PostgresConnection.ToNpgsqlConnectionString(rawConnectionString),
-        npgsql => npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery));
+        npgsql =>
+        {
+            npgsql.UseQuerySplittingBehavior(QuerySplittingBehavior.SplitQuery);
+            npgsql.EnableRetryOnFailure(3, TimeSpan.FromSeconds(2), null);
+        });
 });
 builder.Services.AddScoped<INivraStore, PgSqlNivraStore>();
 builder.Services.AddSingleton<PasswordHasher>();
@@ -43,7 +48,12 @@ builder.Services.AddSingleton<QrLoginService>();
 builder.Services.AddSingleton<RealtimePresence>();
 builder.Services.AddSingleton<PushNotificationService>();
 builder.Services.AddHostedService<SessionCleanupService>();
-builder.Services.AddSignalR().AddJsonProtocol(options =>
+builder.Services.AddSignalR(options =>
+{
+    options.MaximumReceiveMessageSize = 512 * 1024;
+    options.ClientTimeoutInterval = TimeSpan.FromSeconds(45);
+    options.KeepAliveInterval = TimeSpan.FromSeconds(15);
+}).AddJsonProtocol(options =>
 {
     options.PayloadSerializerOptions.Converters.Add(new JsonStringEnumConverter());
 });
@@ -111,12 +121,16 @@ app.UseExceptionHandler(exceptionApp =>
 {
     exceptionApp.Run(async context =>
     {
-        context.Response.StatusCode = StatusCodes.Status500InternalServerError;
+        var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+        var isBadRequest = exception is BadHttpRequestException;
+        context.Response.StatusCode = isBadRequest
+            ? StatusCodes.Status400BadRequest
+            : StatusCodes.Status500InternalServerError;
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsJsonAsync(new
         {
-            code = "server_error",
-            message = "Nivra could not complete the request.",
+            code = isBadRequest ? "invalid_request" : "server_error",
+            message = isBadRequest ? "Nivra could not read that request." : "Nivra could not complete the request.",
             traceId = context.TraceIdentifier
         });
     });

@@ -400,6 +400,58 @@ public static partial class EndpointExtensions
             return Results.Ok(new PublicKeyDirectoryResponse(user.Id, user.Alias, publicDevices));
         });
 
+        keys.MapPost("/batch", async Task<IResult> (PublicKeyBatchRequest request, HttpContext http, NivraDbContext db, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var userIds = (request.UserIds ?? [])
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .Take(128)
+                .ToList();
+            var aliases = (request.Aliases ?? [])
+                .Where(alias => !string.IsNullOrWhiteSpace(alias))
+                .Select(PgSqlNivraStore.NormalizeAlias)
+                .Distinct(StringComparer.Ordinal)
+                .Take(128)
+                .ToList();
+
+            if (userIds.Count == 0 && aliases.Count == 0)
+            {
+                return Results.Ok(Array.Empty<PublicKeyDirectoryResponse>());
+            }
+
+            var users = await db.Users
+                .AsNoTracking()
+                .Where(user => user.DisabledAt == null && (userIds.Contains(user.Id) || aliases.Contains(user.Alias)))
+                .OrderBy(user => user.Alias)
+                .Take(128)
+                .ToListAsync(cancellationToken);
+
+            var ids = users.Select(user => user.Id).ToList();
+            var devices = await db.Devices
+                .AsNoTracking()
+                .Where(device => ids.Contains(device.UserId) && device.RevokedAt == null && device.IsTrusted)
+                .OrderBy(device => device.CreatedAt)
+                .ToListAsync(cancellationToken);
+            var devicesByUser = devices
+                .GroupBy(device => device.UserId)
+                .ToDictionary(group => group.Key, group => group.Select(device =>
+                    new PublicDeviceKeyResponse(device.Id, device.Name, device.KeyBundle, device.KeyBundle.LastRotatedAt)).ToList());
+
+            var response = users
+                .Select(user => new PublicKeyDirectoryResponse(
+                    user.Id,
+                    user.Alias,
+                    devicesByUser.TryGetValue(user.Id, out var publicDevices) ? publicDevices : []))
+                .ToList();
+            return Results.Ok(response);
+        });
+
         keys.MapPost("/prekeys", async Task<IResult> (KeyBundleRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
@@ -869,7 +921,7 @@ public static partial class EndpointExtensions
                 .ToListAsync(cancellationToken);
 
             messages.Reverse();
-            return Results.Ok(messages.Select(ToMessageResponse).ToList());
+            return Results.Ok(messages.Select(message => ToMessageResponseForDevice(message, current.UserId, current.DeviceId)).ToList());
         });
 
         conversations.MapPatch("/{conversationId}", async Task<IResult> (string conversationId, PatchConversationRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
@@ -905,7 +957,7 @@ public static partial class EndpointExtensions
             return Results.Ok(ToConversationResponse(conversation));
         });
 
-        conversations.MapPost("/{conversationId}/messages", async Task<IResult> (string conversationId, SendMessageRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        conversations.MapPost("/{conversationId}/messages", async Task<IResult> (string conversationId, SendMessageRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -929,9 +981,19 @@ public static partial class EndpointExtensions
                 .Select(participant => participant.UserId)
                 .ToHashSet(StringComparer.Ordinal);
 
+            var recipientDeviceIds = request.Recipients
+                .Select(recipient => recipient.DeviceId)
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .ToList();
+            var devicesById = await db.Devices
+                .AsNoTracking()
+                .Where(device => recipientDeviceIds.Contains(device.Id))
+                .ToDictionaryAsync(device => device.Id, cancellationToken);
+
             foreach (var recipient in request.Recipients)
             {
-                var device = await store.GetDeviceAsync(recipient.DeviceId, cancellationToken);
+                devicesById.TryGetValue(recipient.DeviceId, out var device);
                 if (!activeParticipantIds.Contains(recipient.UserId) ||
                     device is null ||
                     device.UserId != recipient.UserId ||
@@ -970,7 +1032,10 @@ public static partial class EndpointExtensions
 
             foreach (var recipient in message.Recipients)
             {
-                await hub.Clients.Group(GroupsFor.Device(recipient.DeviceId)).SendAsync("message.received", ToMessageResponse(message), cancellationToken);
+                await hub.Clients.Group(GroupsFor.Device(recipient.DeviceId)).SendAsync(
+                    "message.received",
+                    ToMessageResponseForDevice(message, recipient.UserId, recipient.DeviceId),
+                    cancellationToken);
             }
 
             var pushUserIds = message.Recipients
@@ -1220,7 +1285,7 @@ public static partial class EndpointExtensions
             }
 
             var pending = (await store.PendingMessagesForDeviceAsync(current.UserId, current.DeviceId, timeProvider.GetUtcNow(), cancellationToken))
-                .Select(ToMessageResponse)
+                .Select(message => ToMessageResponseForDevice(message, current.UserId, current.DeviceId))
                 .ToList();
             return Results.Ok(pending);
         });
@@ -1237,12 +1302,12 @@ public static partial class EndpointExtensions
             var limit = Math.Clamp(take ?? 200, 1, 500);
             var pending = (await store.PendingMessagesForDeviceAsync(current.UserId, current.DeviceId, now, cancellationToken))
                 .Take(limit)
-                .Select(ToMessageResponse)
+                .Select(message => ToMessageResponseForDevice(message, current.UserId, current.DeviceId))
                 .ToList();
             return Results.Ok(new MessageSyncResponse(pending, now));
         });
 
-        messages.MapPost("/sync/ack", async Task<IResult> (MessageSyncAckRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        messages.MapPost("/sync/ack", async Task<IResult> (MessageSyncAckRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1251,12 +1316,57 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var acknowledged = await store.MarkMessagesDeliveredAsync(
-                current.UserId,
-                current.DeviceId,
-                request.MessageIds ?? [],
-                now,
-                cancellationToken);
+            var ids = (request.MessageIds ?? [])
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Distinct(StringComparer.Ordinal)
+                .Take(500)
+                .ToList();
+            if (ids.Count == 0)
+            {
+                return Results.Ok(new MessageSyncAckResponse(0, now));
+            }
+
+            var messagesToAck = await db.Messages
+                .Where(message => ids.Contains(message.Id))
+                .Where(message => message.Receipts.Any(receipt =>
+                    receipt.UserId == current.UserId &&
+                    receipt.DeviceId == current.DeviceId &&
+                    receipt.DeletedAt == null))
+                .ToListAsync(cancellationToken);
+
+            var acknowledged = 0;
+            var receiptEvents = new List<(string SenderUserId, string MessageId)>();
+            foreach (var message in messagesToAck)
+            {
+                var receipt = message.Receipts.FirstOrDefault(candidate =>
+                    candidate.UserId == current.UserId &&
+                    candidate.DeviceId == current.DeviceId);
+                if (receipt is null || receipt.DeletedAt is not null || receipt.DeliveredAt is not null)
+                {
+                    continue;
+                }
+
+                receipt.DeliveredAt = now;
+                acknowledged++;
+                receiptEvents.Add((message.SenderUserId, message.Id));
+            }
+
+            if (acknowledged > 0)
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                foreach (var receiptEvent in receiptEvents)
+                {
+                    await hub.Clients.Group(GroupsFor.User(receiptEvent.SenderUserId)).SendAsync("message.receipt", new
+                    {
+                        messageId = receiptEvent.MessageId,
+                        userId = current.UserId,
+                        deviceId = current.DeviceId,
+                        kind = ReceiptKind.Delivered,
+                        at = now
+                    }, cancellationToken);
+                }
+            }
+
             return Results.Ok(new MessageSyncAckResponse(acknowledged, now));
         });
 
@@ -2208,7 +2318,7 @@ public static partial class EndpointExtensions
             return Results.Accepted();
         });
 
-        group.MapPost("/{callId}/end", async Task<IResult> (string callId, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/{callId}/end", async Task<IResult> (string callId, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2225,8 +2335,14 @@ public static partial class EndpointExtensions
             call.Status = CallStatus.Ended;
             call.EndedAt = timeProvider.GetUtcNow();
             await store.SaveChangesAsync(cancellationToken);
-            await NotifyUsers(hub, call.ParticipantUserIds, "call.ended", ToCallResponse(call));
-            return Results.Ok(ToCallResponse(call));
+            var response = ToCallResponse(call);
+            await NotifyUsers(hub, call.ParticipantUserIds, "call.ended", response);
+            foreach (var userId in call.ParticipantUserIds.Distinct(StringComparer.Ordinal))
+            {
+                await pushNotifications.SendCallEndedAsync(userId, call.ConversationId, call.Id, current.UserId, call.Type, cancellationToken);
+            }
+
+            return Results.Ok(response);
         });
     }
 
@@ -2644,6 +2760,25 @@ public static partial class EndpointExtensions
             message.SenderDeviceId,
             message.Kind,
             message.Recipients,
+            message.EncryptedPolicy,
+            message.ServerReceivedAt,
+            message.ExpiresAt,
+            message.DeleteAfterRead,
+            message.Receipts);
+    }
+
+    private static MessageResponse ToMessageResponseForDevice(MessageEnvelope message, string userId, string deviceId)
+    {
+        return new MessageResponse(
+            message.Id,
+            message.ConversationId,
+            message.ClientMessageId,
+            message.SenderUserId,
+            message.SenderDeviceId,
+            message.Kind,
+            message.Recipients
+                .Where(recipient => recipient.UserId == userId && recipient.DeviceId == deviceId)
+                .ToList(),
             message.EncryptedPolicy,
             message.ServerReceivedAt,
             message.ExpiresAt,

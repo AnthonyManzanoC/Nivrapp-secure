@@ -93,6 +93,8 @@ public sealed record PublicDeviceKeyResponse(
 
 public sealed record PublicKeyDirectoryResponse(string UserId, string Alias, List<PublicDeviceKeyResponse> Devices);
 
+public sealed record PublicKeyBatchRequest(List<string>? UserIds, List<string>? Aliases);
+
 public sealed record CreateContactRequest(string Alias, string? NicknameCiphertext);
 
 public sealed record ContactResponse(

@@ -5,7 +5,7 @@ const TOAST = document.querySelector("#toast");
 const TEXT = new TextEncoder();
 const READ = new TextDecoder();
 const LOCAL_DB_NAME = "NivraDB";
-const LOCAL_DB_VERSION = 4;
+const LOCAL_DB_VERSION = 5;
 const LOCAL_MESSAGE_STORE = "messages";
 const LOCAL_KEY_STORE = "deviceKeys";
 const LOCAL_PROFILE_STORE = "profilesStore";
@@ -18,6 +18,9 @@ const SYNC_POLL_MS = 7000;
 const SYNC_MIN_INTERVAL_MS = 1200;
 const MESSAGE_PAGE_SIZE = 50;
 const CHAT_DOM_LIMIT = 50;
+const LOCAL_PURGE_LIMIT = 500;
+const ACK_BATCH_SIZE = 200;
+const MAX_SEEN_MESSAGE_IDS = 5000;
 const MESSAGE_BOTTOM_THRESHOLD_PX = 100;
 const MESSAGE_SCROLL_DEBOUNCE_MS = 120;
 const SEARCH_DEBOUNCE_MS = 600;
@@ -42,6 +45,7 @@ const REQUEST_TIMEOUT_MS = 20000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 120000;
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [5000, 15000, 60000, 180000];
 const PUSH_PROMPT_DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
+const TERMINAL_CALL_PUSH_TYPES = new Set(["end-call", "missed-call", "call-ended"]);
 
 class LocalStore {
   constructor(dbName = LOCAL_DB_NAME, version = LOCAL_DB_VERSION) {
@@ -85,6 +89,12 @@ class LocalStore {
         }
         if (!messageStore.indexNames.contains("byExpiry")) {
           messageStore.createIndex("byExpiry", "expiresAtMs");
+        }
+        if (!messageStore.indexNames.contains("byAccountExpiry")) {
+          messageStore.createIndex("byAccountExpiry", ["accountKey", "expiresAtMs"]);
+        }
+        if (!messageStore.indexNames.contains("byAccountOpenedAt")) {
+          messageStore.createIndex("byAccountOpenedAt", ["accountKey", "openedAtMs"]);
         }
 
         const keyStore = db.objectStoreNames.contains(LOCAL_KEY_STORE)
@@ -199,14 +209,32 @@ class LocalStore {
     const db = await this.open();
     if (!db) return [];
     const now = Date.now();
-    const records = await idbRequest(db.transaction(LOCAL_MESSAGE_STORE, "readonly").objectStore(LOCAL_MESSAGE_STORE).getAll());
-    const expired = (records || []).filter((record) => {
-      if (record.accountKey !== accountKey) return false;
-      return this.isExpired(record, now);
-    });
-    for (const record of expired) {
-      await idbRequest(db.transaction(LOCAL_MESSAGE_STORE, "readwrite").objectStore(LOCAL_MESSAGE_STORE).delete(record.key));
+    const recordsByKey = new Map();
+    const addRecords = (records = []) => {
+      for (const record of records || []) {
+        if (record?.key && record.accountKey === accountKey) recordsByKey.set(record.key, record);
+      }
+    };
+
+    const readStore = () => db.transaction(LOCAL_MESSAGE_STORE, "readonly").objectStore(LOCAL_MESSAGE_STORE);
+    const indexNames = readStore().indexNames;
+    if (indexNames.contains("byAccountExpiry")) {
+      const expiryRange = IDBKeyRange.bound([accountKey, 0], [accountKey, now]);
+      addRecords(await idbCursorRecords(readStore().index("byAccountExpiry"), expiryRange, "next", LOCAL_PURGE_LIMIT));
     }
+    if (indexNames.contains("byAccountOpenedAt") && recordsByKey.size < LOCAL_PURGE_LIMIT) {
+      const openedCutoff = Math.max(0, now - VIEW_ONCE_DELETE_DELAY_MS);
+      const openedRange = IDBKeyRange.bound([accountKey, 0], [accountKey, openedCutoff]);
+      addRecords(await idbCursorRecords(readStore().index("byAccountOpenedAt"), openedRange, "next", LOCAL_PURGE_LIMIT - recordsByKey.size));
+    }
+    if (!indexNames.contains("byAccountExpiry") || !indexNames.contains("byAccountOpenedAt")) {
+      addRecords(await idbRequest(readStore().index("byAccount").getAll(accountKey)));
+    }
+
+    const expired = [...recordsByKey.values()].filter((record) => this.isExpired(record, now)).slice(0, LOCAL_PURGE_LIMIT);
+    if (!expired.length) return [];
+    const writeStore = db.transaction(LOCAL_MESSAGE_STORE, "readwrite").objectStore(LOCAL_MESSAGE_STORE);
+    await Promise.all(expired.map((record) => idbRequest(writeStore.delete(record.key))));
     return expired;
   }
 
@@ -373,6 +401,7 @@ const state = {
     minimized: false,
     ticker: null
   },
+  endedCallIds: new Set(),
   camera: {
     stream: null,
     recorder: null,
@@ -433,7 +462,7 @@ const state = {
   messageDomWindows: new Map(),
   mediaCache: new Map(),
   objectUrls: new Set(),
-  seenMessageIds: new Set(loadJson("nivra.seen") || []),
+  seenMessageIds: new Set((loadJson("nivra.seen") || []).slice(-MAX_SEEN_MESSAGE_IDS)),
   keyDirectory: new Map(),
   aliasByUserId: new Map(),
   profileByUserId: new Map(),
@@ -443,6 +472,8 @@ const state = {
   connection: null,
   polling: null,
   syncInFlight: false,
+  bootstrapPromise: null,
+  bootstrapQueued: false,
   lastSyncAt: 0,
   messageScrollTimer: null,
   realtimeReconnectTimer: null,
@@ -797,6 +828,27 @@ function compareMessagesByTime(left, right) {
   return compareMessageAt(left?.at, right?.at);
 }
 
+function trimSeenMessageIds() {
+  while (state.seenMessageIds.size > MAX_SEEN_MESSAGE_IDS) {
+    const oldest = state.seenMessageIds.values().next().value;
+    state.seenMessageIds.delete(oldest);
+  }
+}
+
+function persistSeenMessages() {
+  trimSeenMessageIds();
+  saveJson("nivra.seen", [...state.seenMessageIds]);
+}
+
+function rememberSeenMessage(messageId, { persist = true } = {}) {
+  if (!messageId) return false;
+  if (state.seenMessageIds.has(messageId)) return false;
+  state.seenMessageIds.add(messageId);
+  trimSeenMessageIds();
+  if (persist) persistSeenMessages();
+  return true;
+}
+
 function cancelActiveMessageLoad(reason = "cancelled") {
   const session = state.messageLoadSession;
   if (!session) return;
@@ -941,20 +993,41 @@ function registerServiceWorker() {
   });
 }
 
-async function bootstrap() {
+async function bootstrap(options = {}) {
+  if (state.bootstrapPromise) {
+    state.bootstrapQueued = true;
+    return state.bootstrapPromise;
+  }
+
+  state.bootstrapPromise = bootstrapCore(options).finally(() => {
+    state.bootstrapPromise = null;
+    const runQueued = state.bootstrapQueued && state.auth?.tokens?.accessToken;
+    state.bootstrapQueued = false;
+    if (runQueued) {
+      setTimeout(() => bootstrap({ reason: "queued" }).catch(() => {}), 250);
+    }
+  });
+  return state.bootstrapPromise;
+}
+
+async function bootstrapCore(_options = {}) {
   try {
     state.callHistory = loadCallHistory();
     await loadLocalAccountMessages(false);
     if (state.selectedConversationId && state.messages.has(state.selectedConversationId)) {
       render();
     }
-    const data = await request("/sync/bootstrap");
+    const [data, entitlements] = await Promise.all([
+      request("/sync/bootstrap"),
+      request("/monetization/entitlements").catch(() => null)
+    ]);
     state.conversations = data.conversations || [];
     state.contacts = data.contacts || [];
     state.friendRequests = data.friendRequests || [];
     state.stories = data.stories || [];
     state.devices = data.devices || [];
     state.privacy = data.privacySettings || data.privacy || data.user?.privacySettings || null;
+    if (entitlements) state.entitlements = entitlements;
     rememberProfile(state.auth.user, { persist: true });
     rememberProfiles(state.contacts, { persist: true });
     state.contacts.forEach((contact) => {
@@ -963,7 +1036,6 @@ async function bootstrap() {
     state.stories.forEach((story) => {
       if (story.owner?.id && story.owner?.alias) rememberProfile(story.owner, { persist: true });
     });
-    state.entitlements = await request("/monetization/entitlements");
     state.vaultItems = data.vaultItems || [];
     state.vaultRooms = data.vaultRooms || [];
     state.vaultRooms.forEach((room) => {
@@ -5045,8 +5117,9 @@ async function sendVaultPayload(payload, kind = "Text", fileObjectId = null) {
 async function vaultEncryptedRecipients(room, payload, fileObjectId) {
   const recipients = [];
   let index = 0;
-  for (const member of room.members || []) {
-    if (member.status !== "Active") continue;
+  const activeMembers = (room.members || []).filter((member) => member.status === "Active");
+  const directories = await directoriesForUsers(activeMembers.map((member) => member.userId));
+  for (const member of activeMembers) {
     if (member.userId === state.auth.user.id) {
       const own = await encryptForPublicKey(await currentPublicKey(), payload);
       recipients.push({
@@ -5060,7 +5133,7 @@ async function vaultEncryptedRecipients(room, payload, fileObjectId) {
       continue;
     }
 
-    const directory = await directoryForVaultMember(member);
+    const directory = directories.get(member.userId) || await directoryForVaultMember(member).catch(() => null);
     for (const device of directory?.devices || []) {
       const publicKey = parsePublicJwk(device.keyBundle?.identityKey);
       if (!publicKey) continue;
@@ -5195,8 +5268,7 @@ async function sendPayloadToConversation(conversation, payload, kind = "Text", f
       }
     });
 
-    state.seenMessageIds.add(response.id);
-    saveJson("nivra.seen", [...state.seenMessageIds]);
+    rememberSeenMessage(response.id);
     pushMessage(conversation.id, {
       id: response.id,
       payload: outgoingPayload,
@@ -5230,8 +5302,9 @@ function forwardingAllowedForConversation(conversation) {
 async function encryptedRecipients(conversation, payload, fileObjectId) {
   const recipients = [];
   let index = 0;
-  for (const participant of conversation.participants) {
-    if (participant.removedAt) continue;
+  const activeParticipants = (conversation.participants || []).filter((participant) => !participant.removedAt);
+  const directories = await directoriesForUsers(activeParticipants.map((participant) => participant.userId));
+  for (const participant of activeParticipants) {
     if (participant.userId === state.auth.user.id) {
       const own = await encryptForPublicKey(await currentPublicKey(), payload);
       recipients.push({
@@ -5245,7 +5318,7 @@ async function encryptedRecipients(conversation, payload, fileObjectId) {
       continue;
     }
 
-    const directory = await directoryForUser(participant.userId);
+    const directory = directories.get(participant.userId) || await directoryForUser(participant.userId).catch(() => null);
     for (const device of directory?.devices || []) {
       const publicKey = parsePublicJwk(device.keyBundle?.identityKey);
       if (!publicKey) continue;
@@ -5851,8 +5924,7 @@ async function applyMessageEnvelope(message, { markSeen, notifyReceipt, scroll =
     : await decryptEnvelope(recipient.header, recipient.ciphertext).catch(() => ({ type: "sealed", text: "Contenido cifrado no disponible en este dispositivo." }));
   if (!isMessageLoadSessionActive(session)) return false;
   if (markSeen) {
-    state.seenMessageIds.add(message.id);
-    if (persistSeen) saveJson("nivra.seen", [...state.seenMessageIds]);
+    rememberSeenMessage(message.id, { persist: persistSeen });
   }
 
   if (payload.type === "reaction") {
@@ -5953,7 +6025,7 @@ async function syncPendingMessages(reason = "manual", options = {}) {
       deliveredIds.push(message.id);
       await breatheMainThread(++index);
     }
-    if (pending.length) saveJson("nivra.seen", [...state.seenMessageIds]);
+    if (pending.length) persistSeenMessages();
     if (deliveredIds.length) {
       await ackDeliveredMessages(deliveredIds);
     }
@@ -5968,10 +6040,19 @@ async function syncPendingMessages(reason = "manual", options = {}) {
 async function ackDeliveredMessages(messageIds) {
   const ids = [...new Set((messageIds || []).filter(Boolean))];
   if (!ids.length || !state.auth?.tokens?.accessToken) return;
-  let index = 0;
-  for (const id of ids) {
-    await request(`/messages/${id}/receipt`, { method: "POST", body: { kind: "Delivered" } }).catch(() => {});
-    await breatheMainThread(++index);
+  for (let offset = 0; offset < ids.length; offset += ACK_BATCH_SIZE) {
+    const batch = ids.slice(offset, offset + ACK_BATCH_SIZE);
+    await request("/messages/sync/ack", {
+      method: "POST",
+      body: { messageIds: batch }
+    }).catch(async () => {
+      let index = 0;
+      for (const id of batch) {
+        await request(`/messages/${id}/receipt`, { method: "POST", body: { kind: "Delivered" } }).catch(() => {});
+        await breatheMainThread(++index);
+      }
+    });
+    await yieldToMainThread();
   }
 }
 
@@ -6504,6 +6585,8 @@ async function declineCall() {
       await request(`/calls/${call.id}/end`, { method: "POST" }).catch(() => {});
     }
   } finally {
+    rememberEndedCallId(call.id);
+    await clearCallNotificationByData({ callId: call.id, tag: `nivra-call-${call.id}` }).catch(() => {});
     resetCallState({ historyStatus: "Rechazada" });
     syncIncomingCallOverlay();
     render();
@@ -6522,6 +6605,8 @@ async function endCurrentCall() {
   } catch {
     // Ending locally should still close the UI.
   }
+  rememberEndedCallId(call.id);
+  await clearCallNotificationByData({ callId: call.id, tag: `nivra-call-${call.id}` }).catch(() => {});
   resetCallState();
   syncIncomingCallOverlay();
   render();
@@ -6611,7 +6696,15 @@ async function handleCallSignal(signal) {
 }
 
 async function handleCallEnded(call) {
-  if (state.call.current?.id !== call.id) return;
+  const callId = call?.id || call?.Id;
+  if (!callId) return;
+  rememberEndedCallId(callId);
+  await clearCallNotificationByData({ callId, tag: `nivra-call-${callId}` }).catch(() => {});
+  if (state.call.current?.id !== callId) {
+    markCallHistoryEnded(callId);
+    render();
+    return;
+  }
   stopCallTones();
   resetCallState();
   syncIncomingCallOverlay();
@@ -7430,7 +7523,23 @@ async function directoryForUser(userId) {
   return directory;
 }
 
+async function directoriesForUsers(userIds = []) {
+  const ids = [...new Set((userIds || []).filter((id) => id && id !== state.auth?.user?.id))];
+  const missing = ids.filter((id) => !state.keyDirectory.has(id));
+  if (missing.length) {
+    const directories = await request("/keys/batch", {
+      method: "POST",
+      body: { userIds: missing }
+    }).catch(() => null);
+    (directories || []).forEach(cacheKeyDirectory);
+  }
+  return new Map(ids
+    .map((id) => [id, state.keyDirectory.get(id)])
+    .filter(([, directory]) => directory));
+}
+
 function cacheKeyDirectory(directory) {
+  if (!directory?.userId) return;
   state.keyDirectory.set(directory.userId, directory);
   state.aliasByUserId.set(directory.userId, directory.alias);
 }
@@ -7867,6 +7976,22 @@ function rememberCall(call, patch = {}) {
     .slice(0, MAX_CALL_HISTORY);
   state.callHistory = next;
   saveCallHistory();
+}
+
+function markCallHistoryEnded(callId, status = "Finalizada") {
+  if (!callId) return;
+  let changed = false;
+  state.callHistory = (state.callHistory || []).map((item) => {
+    if (item.id !== callId) return item;
+    changed = true;
+    return {
+      ...item,
+      status,
+      live: false,
+      endedAt: item.endedAt || new Date().toISOString()
+    };
+  });
+  if (changed) saveCallHistory();
 }
 
 function callStatusText() {
@@ -8503,6 +8628,10 @@ async function showCapacitorLocalNotification(notification = {}) {
   const local = window.Capacitor?.Plugins?.LocalNotifications;
   if (!local) return;
   const data = extractPushData(notification);
+  if (isTerminalCallPushData(data)) {
+    await handleTerminalCallPush(data, { toast: false }).catch(() => {});
+    return;
+  }
   const isCall = isIncomingCallPushData(data);
   const title = notification.title || notification?.notification?.title || "Nivra";
   const body = notification.body ||
@@ -8529,6 +8658,56 @@ function notificationNumericId(value) {
     hash = (Math.imul(31, hash) + text.charCodeAt(index)) | 0;
   }
   return Math.max(1, Math.abs(hash));
+}
+
+function rememberEndedCallId(callId) {
+  if (!callId) return;
+  state.endedCallIds.add(String(callId));
+  if (state.endedCallIds.size <= 300) return;
+  const oldest = state.endedCallIds.values().next().value;
+  if (oldest) state.endedCallIds.delete(oldest);
+}
+
+async function handleTerminalCallPush(data = {}, options = {}) {
+  const callId = pushDataValue(data, "callId", "CallId");
+  if (!callId) return;
+  rememberEndedCallId(callId);
+  await clearCallNotificationByData(data).catch(() => {});
+  markCallHistoryEnded(callId, normalizePushType(pushDataValue(data, "type", "Type")) === "missed-call" ? "Perdida" : "Finalizada");
+  if (state.call.current?.id !== callId) return;
+  stopCallTones();
+  resetCallState({ historyStatus: options.historyStatus || "Finalizada" });
+  syncIncomingCallOverlay();
+  if (options.toast !== false) toast("Llamada finalizada.");
+  render();
+}
+
+async function clearCallNotificationByData(data = {}) {
+  const callId = pushDataValue(data, "callId", "CallId");
+  if (!callId) return;
+  const tag = pushDataValue(data, "tag", "Tag");
+  const tags = new Set([tag, `nivra-call-${callId}`, `nivra-missed-call-${callId}`].filter(Boolean));
+  const local = window.Capacitor?.Plugins?.LocalNotifications;
+  if (local) {
+    const id = notificationNumericId(callId);
+    await Promise.all([
+      local.cancel?.({ notifications: [{ id }] }).catch(() => {}),
+      local.removeDeliveredNotifications?.({ notifications: [{ id }] }).catch(() => {})
+    ]);
+  }
+
+  if (!("serviceWorker" in navigator)) return;
+  const registration = await navigator.serviceWorker.ready.catch(() => null);
+  if (!registration?.getNotifications) return;
+  let notifications = await registration.getNotifications({ includeTriggered: true }).catch(() => null);
+  if (!notifications) notifications = await registration.getNotifications().catch(() => []);
+  for (const notification of notifications || []) {
+    const notificationData = notification.data || {};
+    const notificationCallId = pushDataValue(notificationData, "callId", "CallId");
+    if (notificationCallId === callId || tags.has(notification.tag)) {
+      notification.close();
+    }
+  }
 }
 
 function waitForPushReady(timeoutMs = 8000) {
@@ -8607,8 +8786,12 @@ async function initializeWebPushNotifications(options = {}) {
 async function getFirebaseMessagingToken(serviceWorkerRegistration, options = {}) {
   if (!options.force && state.pushTokenRetryAfter && Date.now() < state.pushTokenRetryAfter) return null;
   const firebaseConfig = window.NIVRA_FIREBASE_CONFIG;
-  const vapidKey = window.NIVRA_FIREBASE_VAPID_KEY;
+  const vapidKey = String(window.NIVRA_FIREBASE_VAPID_KEY || "").trim();
   if (!isFirebaseWebConfigReady(firebaseConfig, vapidKey)) return null;
+
+  // VAPID publica de Firebase Console > Cloud Messaging > Certificados push web.
+  // Nunca uses aqui el JSON Admin SDK: esa llave privada vive solo en backend.
+  const tokenOptions = firebaseMessagingTokenOptions(serviceWorkerRegistration, vapidKey);
 
   if (window.firebase?.messaging) {
     const app = window.firebase.apps?.length ? window.firebase.app() : window.firebase.initializeApp(firebaseConfig);
@@ -8616,7 +8799,7 @@ async function getFirebaseMessagingToken(serviceWorkerRegistration, options = {}
     if (messaging.useServiceWorker) messaging.useServiceWorker(serviceWorkerRegistration);
     if (messaging.usePublicVapidKey) messaging.usePublicVapidKey(vapidKey);
     bindWebForegroundMessaging(null, messaging);
-    return await messaging.getToken({ vapidKey, serviceWorkerRegistration });
+    return await messaging.getToken(tokenOptions);
   }
 
   const appModule = await import(firebaseSdkUrl("firebase-app.js"));
@@ -8628,7 +8811,14 @@ async function getFirebaseMessagingToken(serviceWorkerRegistration, options = {}
   const app = appModule.getApps().length ? appModule.getApps()[0] : appModule.initializeApp(firebaseConfig);
   const messaging = messagingModule.getMessaging(app);
   bindWebForegroundMessaging(messagingModule, messaging);
-  return await messagingModule.getToken(messaging, { vapidKey, serviceWorkerRegistration });
+  return await messagingModule.getToken(messaging, tokenOptions);
+}
+
+function firebaseMessagingTokenOptions(serviceWorkerRegistration, vapidKey) {
+  return {
+    vapidKey,
+    serviceWorkerRegistration
+  };
 }
 
 function isFirebaseWebConfigReady(firebaseConfig, vapidKey) {
@@ -8636,14 +8826,14 @@ function isFirebaseWebConfigReady(firebaseConfig, vapidKey) {
     firebaseConfig?.projectId &&
     firebaseConfig?.messagingSenderId &&
     firebaseConfig?.appId &&
-    vapidKey);
+    String(vapidKey || "").trim().length > 20);
 }
 
 function firebaseMessagingErrorMessage(error) {
   const text = `${error?.code || ""} ${error?.message || error || ""}`.toLowerCase();
   if (text.includes("permission")) return "Permiso activo, pero el navegador no autorizo el token FCM.";
   if (text.includes("401") || text.includes("unauthorized") || text.includes("authentication credential") || text.includes("token-subscribe-failed")) {
-    return "Avisos locales activos. Firebase rechazo el token web (401); revisa API key, VAPID y origen autorizado para avisos con la app cerrada.";
+    return "Avisos locales activos. Firebase rechazo el token web (401); revisa API key web, VAPID publica y dominio autorizado para avisos con la app cerrada.";
   }
   if (text.includes("not-supported") || text.includes("unsupported")) return "Avisos locales activos. Este navegador no soporta FCM Web Push remoto.";
   return "Avisos locales activos; no se obtuvo token remoto FCM/Web Push.";
@@ -8709,9 +8899,15 @@ function base64UrlToUint8Array(value) {
 
 async function handleForegroundPushNotification(notification = {}) {
   const data = extractPushData(notification);
+  if (isTerminalCallPushData(data)) {
+    await handleTerminalCallPush(data).catch(() => {});
+    await syncPendingMessages("push-call-ended", { force: true }).catch(() => {});
+    return;
+  }
   if (isIncomingCallPushData(data)) {
     toast("Llamada entrante");
-    await hydrateIncomingCallFromPushData(data).catch(() => {});
+    const hydrated = await hydrateIncomingCallFromPushData(data).catch(() => false);
+    if (!hydrated) toast("Esa llamada ya finalizo.");
   } else {
     notifyForegroundPushMessage(data, notification);
     toast("Nuevo mensaje");
@@ -8734,9 +8930,19 @@ function notifyForegroundPushMessage(data = {}, notification = {}) {
 }
 
 async function handlePushNavigation(data = {}, options = {}) {
+  if (isTerminalCallPushData(data)) {
+    await handleTerminalCallPush(data, { toast: false }).catch(() => {});
+    return;
+  }
+
   if (isIncomingCallPushData(data)) {
-    activateView("calls", { mobileChatOpen: false, renderAfter: false });
     const hydrated = await hydrateIncomingCallFromPushData(data).catch(() => false);
+    if (!hydrated) {
+      await clearCallNotificationByData(data).catch(() => {});
+      toast("Esa llamada ya finalizo.");
+      return;
+    }
+    activateView("calls", { mobileChatOpen: false, renderAfter: false });
     if (hydrated && options.action === "accept") {
       window.setTimeout(() => acceptCall().catch(() => {}), 0);
     }
@@ -8759,7 +8965,8 @@ async function handlePushNavigation(data = {}, options = {}) {
 }
 
 function pushDataTargetView(data = {}) {
-  const type = String(pushDataValue(data, "type", "Type") || "").toLowerCase();
+  if (isTerminalCallPushData(data)) return "";
+  const type = normalizePushType(pushDataValue(data, "type", "Type"));
   if (type.includes("story") || type.includes("friend")) return "world";
   if (type.includes("vault")) return "vault";
   if (type.includes("call")) return "calls";
@@ -8768,20 +8975,46 @@ function pushDataTargetView(data = {}) {
 
 async function hydrateIncomingCallFromPushData(data = {}) {
   const callId = pushDataValue(data, "callId", "CallId");
+  if (!callId || state.endedCallIds.has(String(callId))) {
+    await clearCallNotificationByData(data).catch(() => {});
+    return false;
+  }
+
+  const serverCall = await fetchActiveCallForPush(callId);
+  if (!serverCall) {
+    rememberEndedCallId(callId);
+    await clearCallNotificationByData(data).catch(() => {});
+    markCallHistoryEnded(callId);
+    return false;
+  }
+
   if (state.call.current?.id === callId) return true;
-  const callerUserId = pushDataValue(data, "callerId", "CallerId", "callerUserId", "CallerUserId", "initiatorUserId", "InitiatorUserId");
-  if (!callId || !callerUserId || callerUserId === state.auth?.user?.id) return false;
+
+  const callerUserId = pushDataValue(
+    serverCall,
+    "initiatorUserId",
+    "InitiatorUserId",
+    "callerId",
+    "CallerId",
+    "callerUserId",
+    "CallerUserId"
+  ) || pushDataValue(data, "callerId", "CallerId", "callerUserId", "CallerUserId", "initiatorUserId", "InitiatorUserId");
+  if (!callerUserId || callerUserId === state.auth?.user?.id) return false;
+
+  const participantUserIds = serverCall.participantUserIds || serverCall.ParticipantUserIds || [callerUserId, state.auth?.user?.id].filter(Boolean);
+  if (state.auth?.user?.id && !participantUserIds.includes(state.auth.user.id)) return false;
+
   const callerName = pushDataValue(data, "callerName", "CallerName");
   if (callerName) state.aliasByUserId.set(callerUserId, callerName);
 
   const call = {
     id: callId,
-    conversationId: pushDataValue(data, "conversationId", "ConversationId") || null,
+    conversationId: pushDataValue(serverCall, "conversationId", "ConversationId") || pushDataValue(data, "conversationId", "ConversationId") || null,
     initiatorUserId: callerUserId,
-    type: normalizeCallType(pushDataValue(data, "callType", "CallType", "type", "Type")),
-    status: "Ringing",
-    participantUserIds: [callerUserId, state.auth?.user?.id].filter(Boolean),
-    startedAt: new Date().toISOString()
+    type: normalizeCallType(pushDataValue(serverCall, "type", "Type") || pushDataValue(data, "callType", "CallType", "type", "Type")),
+    status: pushDataValue(serverCall, "status", "Status") || "Ringing",
+    participantUserIds,
+    startedAt: pushDataValue(serverCall, "startedAt", "StartedAt") || new Date().toISOString()
   };
 
   activateView("calls", { mobileChatOpen: false, renderAfter: false });
@@ -8790,9 +9023,34 @@ async function hydrateIncomingCallFromPushData(data = {}) {
 }
 
 function isIncomingCallPushData(data = {}) {
-  const type = String(pushDataValue(data, "type", "Type") || "").toLowerCase();
+  const type = normalizePushType(pushDataValue(data, "type", "Type"));
   const callId = pushDataValue(data, "callId", "CallId");
-  return Boolean(callId) && type !== "missed-call" && (type === "call" || !type || type.includes("call"));
+  return Boolean(callId) && !TERMINAL_CALL_PUSH_TYPES.has(type) && (type === "call" || !type || type.includes("call"));
+}
+
+function isTerminalCallPushData(data = {}) {
+  const type = normalizePushType(pushDataValue(data, "type", "Type"));
+  const callId = pushDataValue(data, "callId", "CallId");
+  return Boolean(callId) && TERMINAL_CALL_PUSH_TYPES.has(type);
+}
+
+function normalizePushType(value) {
+  return String(value || "").trim().toLowerCase().replace(/_/g, "-");
+}
+
+async function fetchActiveCallForPush(callId) {
+  try {
+    const call = await request(`/calls/${encodeURIComponent(callId)}`);
+    return isEndedCallResponse(call) ? null : call;
+  } catch (error) {
+    console.warn("Incoming call push verification failed.", error);
+    return null;
+  }
+}
+
+function isEndedCallResponse(call) {
+  const status = String(call?.status || call?.Status || "").toLowerCase();
+  return !call || status === "ended" || status === "finalizada" || Boolean(call.endedAt || call.EndedAt);
 }
 
 function normalizeCallType(value) {
@@ -9280,7 +9538,11 @@ function loadJson(key) {
 }
 
 function saveJson(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch (error) {
+    console.warn(`Could not persist ${key}.`, error);
+  }
 }
 
 function base64UrlJson(value) {

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -31,10 +32,13 @@ internal sealed record AccessTokenPayload(
 
 public sealed class TokenService
 {
+    private static readonly TimeSpan AccessTokenValidationCacheDuration = TimeSpan.FromSeconds(15);
+
     private readonly byte[] _signingKey;
     private readonly TimeProvider _timeProvider;
     private readonly NivraSecurityOptions _options;
     private readonly ILogger<TokenService> _logger;
+    private readonly ConcurrentDictionary<string, CachedAccessToken> _validatedAccessTokens = new(StringComparer.Ordinal);
 
     public TokenService(IOptions<NivraSecurityOptions> options, TimeProvider timeProvider, ILogger<TokenService> logger)
     {
@@ -98,6 +102,15 @@ public sealed class TokenService
     {
         try
         {
+            var cacheKey = HashOpaqueToken(token);
+            var now = _timeProvider.GetUtcNow();
+            if (_validatedAccessTokens.TryGetValue(cacheKey, out var cached) &&
+                cached.ExpiresAt > now &&
+                cached.CachedUntil > now)
+            {
+                return cached.User;
+            }
+
             var parts = token.Split('.', 2);
             if (parts.Length != 2)
             {
@@ -115,10 +128,12 @@ public sealed class TokenService
             }
 
             var payload = JsonSerializer.Deserialize<AccessTokenPayload>(payloadBytes);
-            if (payload is null || payload.ExpiresUnixSeconds <= _timeProvider.GetUtcNow().ToUnixTimeSeconds())
+            if (payload is null || payload.ExpiresUnixSeconds <= now.ToUnixTimeSeconds())
             {
+                _validatedAccessTokens.TryRemove(cacheKey, out _);
                 return null;
             }
+            var tokenExpiresAt = DateTimeOffset.FromUnixTimeSeconds(payload.ExpiresUnixSeconds);
 
             var session = await store.GetSessionAsync(payload.SessionId, cancellationToken);
             if (session is null ||
@@ -126,22 +141,31 @@ public sealed class TokenService
                 session.UserId != payload.UserId ||
                 session.DeviceId != payload.DeviceId)
             {
+                _validatedAccessTokens.TryRemove(cacheKey, out _);
                 return null;
             }
 
             var user = await store.GetUserAsync(payload.UserId, cancellationToken);
             if (user is null || user.DisabledAt is not null)
             {
+                _validatedAccessTokens.TryRemove(cacheKey, out _);
                 return null;
             }
 
             var device = await store.GetDeviceAsync(payload.DeviceId, cancellationToken);
             if (device is null || device.RevokedAt is not null)
             {
+                _validatedAccessTokens.TryRemove(cacheKey, out _);
                 return null;
             }
 
-            return new CurrentUser(payload.UserId, payload.DeviceId, payload.SessionId);
+            var currentUser = new CurrentUser(payload.UserId, payload.DeviceId, payload.SessionId);
+            var cachedUntil = now.Add(AccessTokenValidationCacheDuration);
+            _validatedAccessTokens[cacheKey] = new CachedAccessToken(
+                currentUser,
+                tokenExpiresAt,
+                cachedUntil < tokenExpiresAt ? cachedUntil : tokenExpiresAt);
+            return currentUser;
         }
         catch (FormatException)
         {
@@ -201,4 +225,6 @@ public sealed class TokenService
         padded = padded.PadRight(padded.Length + (4 - padded.Length % 4) % 4, '=');
         return Convert.FromBase64String(padded);
     }
+
+    private sealed record CachedAccessToken(CurrentUser User, DateTimeOffset ExpiresAt, DateTimeOffset CachedUntil);
 }

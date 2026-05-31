@@ -100,6 +100,31 @@ public sealed class PushNotificationService(
             cancellationToken);
     }
 
+    public async Task SendCallEndedAsync(
+        string userId,
+        string? conversationId,
+        string callId,
+        string endedByUserId,
+        CallType callType,
+        CancellationToken cancellationToken)
+    {
+        await SendToUserAsync(
+            userId,
+            "Nivra",
+            "Llamada finalizada",
+            new Dictionary<string, string>
+            {
+                ["type"] = "end_call",
+                ["callId"] = callId,
+                ["endedByUserId"] = endedByUserId,
+                ["callType"] = callType.ToString(),
+                ["conversationId"] = conversationId ?? "",
+                ["tag"] = $"nivra-call-{callId}"
+            },
+            cancellationToken,
+            includeNotificationPayloadOverride: true);
+    }
+
     public async Task SendMissedCallAsync(
         string userId,
         string? conversationId,
@@ -113,7 +138,7 @@ public sealed class PushNotificationService(
             callType == CallType.Video ? "Videollamada perdida" : "Llamada perdida",
             new Dictionary<string, string>
             {
-                ["type"] = "missed-call",
+                ["type"] = "missed_call",
                 ["callerUserId"] = callerUserId,
                 ["callType"] = callType.ToString(),
                 ["conversationId"] = conversationId ?? "",
@@ -241,10 +266,13 @@ public sealed class PushNotificationService(
         bool includeNotificationPayload)
     {
         var tag = data.TryGetValue("tag", out var value) ? value : "nivra-event";
-        var isIncomingCall = data.TryGetValue("type", out var type) &&
-            type.Contains("call", StringComparison.OrdinalIgnoreCase) &&
-            !type.Contains("missed", StringComparison.OrdinalIgnoreCase);
-        var channelId = isIncomingCall ? "nivra_calls" : "nivra_messages";
+        var normalizedType = data.TryGetValue("type", out var type)
+            ? type.Replace('_', '-').ToLowerInvariant()
+            : "";
+        var isTerminalCall = normalizedType is "end-call" or "missed-call" or "call-ended";
+        var isIncomingCall = normalizedType.Contains("call", StringComparison.Ordinal) && !isTerminalCall;
+        var isCall = isIncomingCall || isTerminalCall;
+        var channelId = isCall ? "nivra_calls" : "nivra_messages";
         var pushData = data.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal);
         pushData["title"] = title;
         pushData["body"] = body;
@@ -255,7 +283,7 @@ public sealed class PushNotificationService(
             ["android"] = new Dictionary<string, object?>
             {
                 ["priority"] = "HIGH",
-                ["ttl"] = isIncomingCall ? "30s" : "86400s",
+                ["ttl"] = isCall ? "0s" : "86400s",
                 ["collapse_key"] = tag,
                 ["notification"] = new Dictionary<string, object?>
                 {
@@ -287,8 +315,8 @@ public sealed class PushNotificationService(
             {
                 ["headers"] = new Dictionary<string, string>
                 {
-                    ["Urgency"] = isIncomingCall ? "high" : "normal",
-                    ["TTL"] = isIncomingCall ? "30" : "86400"
+                    ["Urgency"] = isCall ? "high" : "normal",
+                    ["TTL"] = isCall ? "0" : "86400"
                 },
                 ["notification"] = new Dictionary<string, object?>
                 {
@@ -311,7 +339,7 @@ public sealed class PushNotificationService(
             }
         };
 
-        if (includeNotificationPayload)
+        if (includeNotificationPayload || isCall)
         {
             message["notification"] = new Dictionary<string, string>
             {

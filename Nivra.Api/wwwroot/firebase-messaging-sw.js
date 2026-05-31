@@ -22,6 +22,9 @@ if (FIREBASE_CONFIG) {
 
     messaging.onBackgroundMessage((payload) => {
       const data = normalizePushData(payload);
+      if (isTerminalCallData(data)) {
+        return closeCallNotifications(data);
+      }
       const notification = payload?.notification || {};
       const title = data.title || notification.title || "Nivra";
       const body = data.body || notification.body || (isIncomingCallData(data) ? "Llamada entrante" : "Nuevo evento privado");
@@ -36,6 +39,10 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const action = event.action || "";
+  if (isTerminalCallData(data)) {
+    event.waitUntil(closeCallNotifications(data));
+    return;
+  }
   const targetUrl = pushTargetUrl(data, action);
 
   event.waitUntil(
@@ -85,6 +92,31 @@ function notificationOptions(body, data = {}) {
   };
 }
 
+async function closeCallNotifications(data = {}) {
+  const callId = data.callId || data.CallId || "";
+  const tags = new Set([
+    data.tag,
+    data.Tag,
+    callId ? `nivra-call-${callId}` : "",
+    callId ? `nivra-missed-call-${callId}` : "",
+    callId
+  ].filter(Boolean).map(String));
+  let notifications = await self.registration.getNotifications({ includeTriggered: true }).catch(() => null);
+  if (!notifications) notifications = await self.registration.getNotifications().catch(() => []);
+  notifications
+    .filter((notification) => {
+      const item = notification.data || {};
+      const itemCallId = item.callId || item.CallId || "";
+      return tags.has(notification.tag) || (callId && itemCallId === callId);
+    })
+    .forEach((notification) => notification.close());
+}
+
+function isTerminalCallData(data = {}) {
+  const type = normalizePushType(data.type || data.Type);
+  return Boolean(data.callId || data.CallId) && (type === "end-call" || type === "missed-call" || type === "call-ended");
+}
+
 function pushTargetUrl(data = {}, action = "") {
   const params = new URLSearchParams();
   if (data.conversationId) params.set("conversationId", data.conversationId);
@@ -102,7 +134,8 @@ function pushTargetUrl(data = {}, action = "") {
 }
 
 function pushTargetView(data = {}) {
-  const type = String(data.type || data.Type || "").toLowerCase();
+  if (isTerminalCallData(data)) return "";
+  const type = normalizePushType(data.type || data.Type);
   if (type.includes("story") || type.includes("friend")) return "world";
   if (type.includes("vault")) return "vault";
   if (type.includes("call")) return "calls";
@@ -110,6 +143,14 @@ function pushTargetView(data = {}) {
 }
 
 function isIncomingCallData(data = {}) {
-  const type = String(data.type || data.Type || "").toLowerCase();
-  return Boolean(data.callId || data.CallId) && type !== "missed-call" && (type.includes("call") || type === "");
+  const type = normalizePushType(data.type || data.Type);
+  return Boolean(data.callId || data.CallId) &&
+    type !== "missed-call" &&
+    type !== "end-call" &&
+    type !== "call-ended" &&
+    (type.includes("call") || type === "");
+}
+
+function normalizePushType(value) {
+  return String(value || "").trim().toLowerCase().replace(/_/g, "-");
 }

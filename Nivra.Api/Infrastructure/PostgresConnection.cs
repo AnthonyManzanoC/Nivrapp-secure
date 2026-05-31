@@ -20,8 +20,10 @@ public static class PostgresConnection
                 Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : string.Empty,
                 SslMode = SslMode.Require,
                 Pooling = true,
-                Timeout = 15,
-                CommandTimeout = 30,
+                Timeout = 5,
+                CommandTimeout = 20,
+                MaxPoolSize = 200,
+                KeepAlive = 30,
                 IncludeErrorDetail = false
             };
 
@@ -30,7 +32,12 @@ public static class PostgresConnection
 
         var npgsqlBuilder = new NpgsqlConnectionStringBuilder(rawConnectionString)
         {
-            SslMode = SslMode.Require
+            SslMode = SslMode.Require,
+            Pooling = true,
+            Timeout = 5,
+            CommandTimeout = 20,
+            MaxPoolSize = 200,
+            KeepAlive = 30
         };
         return npgsqlBuilder.ConnectionString;
     }

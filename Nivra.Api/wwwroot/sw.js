@@ -1,4 +1,4 @@
-const CACHE_NAME = "nivra-shell-v11";
+const CACHE_NAME = "nivra-shell-v12";
 const SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -79,6 +79,11 @@ self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
   const notification = payload.notification || payload.webpush?.notification || {};
   const data = normalizePushData(payload);
+  if (isTerminalCallData(data)) {
+    event.waitUntil(closeCallNotifications(data));
+    return;
+  }
+
   const title = data.title || payload.title || notification.title || "Nivra";
   const body = data.body || payload.body || notification.body || "Nuevo evento privado";
 
@@ -91,6 +96,10 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const action = event.action || "";
+  if (isTerminalCallData(data)) {
+    event.waitUntil(closeCallNotifications(data));
+    return;
+  }
   const targetUrl = pushTargetUrl(data, action);
 
   event.waitUntil(
@@ -132,6 +141,31 @@ function normalizePushData(payload = {}) {
     data[key] = String(value);
   }
   return data;
+}
+
+async function closeCallNotifications(data = {}) {
+  const callId = data.callId || data.CallId || "";
+  const tags = new Set([
+    data.tag,
+    data.Tag,
+    callId ? `nivra-call-${callId}` : "",
+    callId ? `nivra-missed-call-${callId}` : "",
+    callId
+  ].filter(Boolean).map(String));
+  let notifications = await self.registration.getNotifications({ includeTriggered: true }).catch(() => null);
+  if (!notifications) notifications = await self.registration.getNotifications().catch(() => []);
+  notifications
+    .filter((notification) => {
+      const item = notification.data || {};
+      const itemCallId = item.callId || item.CallId || "";
+      return tags.has(notification.tag) || (callId && itemCallId === callId);
+    })
+    .forEach((notification) => notification.close());
+}
+
+function isTerminalCallData(data = {}) {
+  const type = normalizePushType(data.type || data.Type);
+  return Boolean(data.callId || data.CallId) && (type === "end-call" || type === "missed-call" || type === "call-ended");
 }
 
 function isFreshShellAsset(pathname) {
@@ -189,8 +223,16 @@ function pushTargetView(data = {}) {
 }
 
 function isIncomingCallData(data = {}) {
-  const type = String(data.type || data.Type || "").toLowerCase();
-  return Boolean(data.callId || data.CallId) && type !== "missed-call" && (type.includes("call") || type === "");
+  const normalized = normalizePushType(data.type || data.Type);
+  return Boolean(data.callId || data.CallId) &&
+    normalized !== "missed-call" &&
+    normalized !== "end-call" &&
+    normalized !== "call-ended" &&
+    (normalized.includes("call") || normalized === "");
+}
+
+function normalizePushType(value) {
+  return String(value || "").trim().toLowerCase().replace(/_/g, "-");
 }
 
 function isLiveEndpoint(pathname) {
