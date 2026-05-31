@@ -40,7 +40,9 @@ const STORY_MEDIA_DURATION_MS = 15000;
 const LONG_PRESS_MS = 520;
 const VOICE_NOTE_MIN_DURATION_MS = 500;
 const PUSH_TOKEN_ENDPOINT = "/push-tokens";
-const FIREBASE_SDK_VERSION = window.NIVRA_FIREBASE_SDK_VERSION || "10.13.2";
+const FIREBASE_SDK_VERSION = window.NIVRA_FIREBASE_SDK_VERSION || "12.14.0";
+const FIREBASE_APP_NAME = "nivra-web-push";
+const FIREBASE_RESETTABLE_IDB_NAMES = ["fcm_token_details_db", "firebase-installations-database"];
 const REQUEST_TIMEOUT_MS = 20000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 120000;
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [5000, 15000, 60000, 180000];
@@ -8792,12 +8794,24 @@ async function getFirebaseMessagingToken(serviceWorkerRegistration, options = {}
   // VAPID publica de Firebase Console > Cloud Messaging > Certificados push web.
   // Nunca uses aqui el JSON Admin SDK: esa llave privada vive solo en backend.
   const tokenOptions = firebaseMessagingTokenOptions(serviceWorkerRegistration, vapidKey);
+  try {
+    return await requestFirebaseMessagingToken(firebaseConfig, tokenOptions, serviceWorkerRegistration);
+  } catch (error) {
+    if (!shouldResetFirebaseMessagingState(error)) throw error;
+    console.warn("Firebase web push registration failed; resetting local messaging state before one clean retry.", error);
+    await resetFirebaseMessagingState(serviceWorkerRegistration).catch((resetError) => {
+      console.warn("Firebase messaging state reset did not complete.", resetError);
+    });
+    return await requestFirebaseMessagingToken(firebaseConfig, tokenOptions, serviceWorkerRegistration);
+  }
+}
 
+async function requestFirebaseMessagingToken(firebaseConfig, tokenOptions, serviceWorkerRegistration) {
   if (window.firebase?.messaging) {
-    const app = window.firebase.apps?.length ? window.firebase.app() : window.firebase.initializeApp(firebaseConfig);
+    const app = await getCompatFirebaseApp(firebaseConfig);
     const messaging = window.firebase.messaging(app);
     if (messaging.useServiceWorker) messaging.useServiceWorker(serviceWorkerRegistration);
-    if (messaging.usePublicVapidKey) messaging.usePublicVapidKey(vapidKey);
+    if (messaging.usePublicVapidKey) messaging.usePublicVapidKey(tokenOptions.vapidKey);
     bindWebForegroundMessaging(null, messaging);
     return await messaging.getToken(tokenOptions);
   }
@@ -8808,10 +8822,76 @@ async function getFirebaseMessagingToken(serviceWorkerRegistration, options = {}
     const supported = await messagingModule.isSupported();
     if (!supported) return null;
   }
-  const app = appModule.getApps().length ? appModule.getApps()[0] : appModule.initializeApp(firebaseConfig);
+  const app = await getModularFirebaseApp(appModule, firebaseConfig);
   const messaging = messagingModule.getMessaging(app);
   bindWebForegroundMessaging(messagingModule, messaging);
   return await messagingModule.getToken(messaging, tokenOptions);
+}
+
+async function getCompatFirebaseApp(firebaseConfig) {
+  const firebase = window.firebase;
+  const existing = (firebase.apps || []).find((app) => app.name === FIREBASE_APP_NAME);
+  if (existing && firebaseOptionsMatch(existing.options || {}, firebaseConfig)) return existing;
+  if (existing?.delete) {
+    await existing.delete().catch(() => {});
+  }
+  const stillExisting = (firebase.apps || []).find((app) => app.name === FIREBASE_APP_NAME);
+  if (stillExisting && firebaseOptionsMatch(stillExisting.options || {}, firebaseConfig)) return stillExisting;
+  return firebase.initializeApp(firebaseConfig, stillExisting ? `${FIREBASE_APP_NAME}-${Date.now()}` : FIREBASE_APP_NAME);
+}
+
+async function getModularFirebaseApp(appModule, firebaseConfig) {
+  const existing = appModule.getApps().find((app) => app.name === FIREBASE_APP_NAME);
+  if (existing && firebaseOptionsMatch(existing.options || {}, firebaseConfig)) return existing;
+  if (existing && appModule.deleteApp) {
+    await appModule.deleteApp(existing).catch(() => {});
+  }
+  const stillExisting = appModule.getApps().find((app) => app.name === FIREBASE_APP_NAME);
+  if (stillExisting && firebaseOptionsMatch(stillExisting.options || {}, firebaseConfig)) return stillExisting;
+  return appModule.initializeApp(firebaseConfig, stillExisting ? `${FIREBASE_APP_NAME}-${Date.now()}` : FIREBASE_APP_NAME);
+}
+
+function firebaseOptionsMatch(current, expected) {
+  return ["apiKey", "projectId", "messagingSenderId", "appId"].every((key) =>
+    String(current?.[key] || "") === String(expected?.[key] || "")
+  );
+}
+
+function shouldResetFirebaseMessagingState(error) {
+  return shouldBackoffFirebaseTokenRequest(error);
+}
+
+async function resetFirebaseMessagingState(serviceWorkerRegistration) {
+  const subscription = await serviceWorkerRegistration?.pushManager?.getSubscription?.().catch(() => null);
+  if (subscription) {
+    await subscription.unsubscribe().catch(() => false);
+  }
+  await Promise.all(FIREBASE_RESETTABLE_IDB_NAMES.map((name) => deleteIndexedDbDatabase(name)));
+}
+
+function deleteIndexedDbDatabase(name) {
+  return new Promise((resolve) => {
+    if (!window.indexedDB?.deleteDatabase) {
+      resolve(false);
+      return;
+    }
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      resolve(value);
+    };
+    const timeout = setTimeout(() => finish(false), 3000);
+    try {
+      const request = indexedDB.deleteDatabase(name);
+      request.onsuccess = () => finish(true);
+      request.onerror = () => finish(false);
+      request.onblocked = () => finish(false);
+    } catch {
+      finish(false);
+    }
+  });
 }
 
 function firebaseMessagingTokenOptions(serviceWorkerRegistration, vapidKey) {

@@ -1,5 +1,6 @@
 window.NIVRA_NATIVE_API_BASE_URL = "https://nivra-webapp-secure.onrender.com";
 window.NIVRA_PUSH_TOKEN = window.NIVRA_PUSH_TOKEN || "";
+window.NIVRA_FIREBASE_SDK_VERSION = "12.14.0";
 
 window.NIVRA_FIREBASE_VAPID_KEY = "BI-QXrOQJ14bj9GWZ5_ZniwQ63HxBW1E2n0qOLCe-fHME72yyuXQz2nRdEjSqstpw7IQNOE9U8fx8l9tGrbYHBY";
 

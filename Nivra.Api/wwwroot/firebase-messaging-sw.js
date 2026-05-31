@@ -10,7 +10,7 @@ try {
   // The foreground app can still pass an explicit service worker registration.
 }
 
-const FIREBASE_SDK_VERSION = self.NIVRA_FIREBASE_SDK_VERSION || "10.13.2";
+const FIREBASE_SDK_VERSION = self.NIVRA_FIREBASE_SDK_VERSION || "12.14.0";
 const FIREBASE_CONFIG = self.NIVRA_FIREBASE_CONFIG || null;
 
 if (FIREBASE_CONFIG) {
