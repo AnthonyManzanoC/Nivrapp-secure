@@ -185,7 +185,12 @@ public sealed class PushNotificationService(
         var tokens = await db.PushTokens
             .Where(token => token.UserId == userId &&
                 token.RevokedAt == null &&
-                (token.Provider == "fcm" || token.Provider == "Fcm" || token.Provider == "FCM"))
+                (token.Provider == "fcm" ||
+                 token.Provider == "Fcm" ||
+                 token.Provider == "FCM" ||
+                 token.Provider == "fcm-fid" ||
+                 token.Provider == "FcmFid" ||
+                 token.Provider == "FCM-FID"))
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
         {
@@ -465,7 +470,9 @@ public sealed class PushNotificationService(
         public static FcmSendResult FromError(string responseBody)
         {
             var invalid = responseBody.Contains("UNREGISTERED", StringComparison.OrdinalIgnoreCase) ||
-                responseBody.Contains("registration-token-not-registered", StringComparison.OrdinalIgnoreCase);
+                responseBody.Contains("registration-token-not-registered", StringComparison.OrdinalIgnoreCase) ||
+                responseBody.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase) ||
+                responseBody.Contains("Requested entity was not found", StringComparison.OrdinalIgnoreCase);
             return new FcmSendResult(invalid);
         }
     }

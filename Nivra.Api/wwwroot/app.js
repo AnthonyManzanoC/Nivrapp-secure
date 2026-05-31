@@ -8758,16 +8758,16 @@ async function initializeWebPushNotifications(options = {}) {
   state.pushLocalReady = true;
   state.pushError = "";
 
-  const fcmToken = await getFirebaseMessagingToken(registration, { force: options.force }).catch((error) => {
-    console.warn("Firebase web push token unavailable.", error);
+  const fcmRegistration = await getFirebaseMessagingRegistration(registration, { force: options.force }).catch((error) => {
+    console.warn("Firebase web push registration unavailable.", error);
     state.pushTokenError = firebaseMessagingErrorMessage(error);
     state.pushTokenRetryAfter = shouldBackoffFirebaseTokenRequest(error) ? Date.now() + 5 * 60 * 1000 : 0;
     return null;
   });
-  if (fcmToken) {
+  if (fcmRegistration?.token) {
     state.pushTokenError = "";
     state.pushTokenRetryAfter = 0;
-    return await queuePushTokenRegistration("fcm", fcmToken);
+    return await queuePushTokenRegistration(fcmRegistration.provider, fcmRegistration.token);
   }
 
   const subscription = await getStandardWebPushSubscription(registration).catch((error) => {
@@ -8785,7 +8785,7 @@ async function initializeWebPushNotifications(options = {}) {
   return await queuePushTokenRegistration("webpush", serializePushSubscription(subscription));
 }
 
-async function getFirebaseMessagingToken(serviceWorkerRegistration, options = {}) {
+async function getFirebaseMessagingRegistration(serviceWorkerRegistration, options = {}) {
   if (!options.force && state.pushTokenRetryAfter && Date.now() < state.pushTokenRetryAfter) return null;
   const firebaseConfig = window.NIVRA_FIREBASE_CONFIG;
   const vapidKey = String(window.NIVRA_FIREBASE_VAPID_KEY || "").trim();
@@ -8795,25 +8795,26 @@ async function getFirebaseMessagingToken(serviceWorkerRegistration, options = {}
   // Nunca uses aqui el JSON Admin SDK: esa llave privada vive solo en backend.
   const tokenOptions = firebaseMessagingTokenOptions(serviceWorkerRegistration, vapidKey);
   try {
-    return await requestFirebaseMessagingToken(firebaseConfig, tokenOptions, serviceWorkerRegistration);
+    return await requestFirebaseMessagingRegistration(firebaseConfig, tokenOptions, serviceWorkerRegistration);
   } catch (error) {
     if (!shouldResetFirebaseMessagingState(error)) throw error;
     console.warn("Firebase web push registration failed; resetting local messaging state before one clean retry.", error);
     await resetFirebaseMessagingState(serviceWorkerRegistration).catch((resetError) => {
       console.warn("Firebase messaging state reset did not complete.", resetError);
     });
-    return await requestFirebaseMessagingToken(firebaseConfig, tokenOptions, serviceWorkerRegistration);
+    return await requestFirebaseMessagingRegistration(firebaseConfig, tokenOptions, serviceWorkerRegistration);
   }
 }
 
-async function requestFirebaseMessagingToken(firebaseConfig, tokenOptions, serviceWorkerRegistration) {
+async function requestFirebaseMessagingRegistration(firebaseConfig, tokenOptions, serviceWorkerRegistration) {
   if (window.firebase?.messaging) {
     const app = await getCompatFirebaseApp(firebaseConfig);
     const messaging = window.firebase.messaging(app);
     if (messaging.useServiceWorker) messaging.useServiceWorker(serviceWorkerRegistration);
     if (messaging.usePublicVapidKey) messaging.usePublicVapidKey(tokenOptions.vapidKey);
     bindWebForegroundMessaging(null, messaging);
-    return await messaging.getToken(tokenOptions);
+    const token = await messaging.getToken(tokenOptions);
+    return token ? { provider: "fcm", token } : null;
   }
 
   const appModule = await import(firebaseSdkUrl("firebase-app.js"));
@@ -8825,7 +8826,38 @@ async function requestFirebaseMessagingToken(firebaseConfig, tokenOptions, servi
   const app = await getModularFirebaseApp(appModule, firebaseConfig);
   const messaging = messagingModule.getMessaging(app);
   bindWebForegroundMessaging(messagingModule, messaging);
-  return await messagingModule.getToken(messaging, tokenOptions);
+  const fidRegistration = await registerFirebaseMessagingFid(messagingModule, messaging, tokenOptions);
+  if (fidRegistration) return fidRegistration;
+  const token = await messagingModule.getToken(messaging, tokenOptions);
+  return token ? { provider: "fcm", token } : null;
+}
+
+async function registerFirebaseMessagingFid(messagingModule, messaging, tokenOptions) {
+  if (!messagingModule.register || !messagingModule.onRegistered) return null;
+  return await new Promise((resolve, reject) => {
+    let unsubscribe = null;
+    let timeout = null;
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      try {
+        unsubscribe?.();
+      } catch {}
+      callback(value);
+    };
+    timeout = setTimeout(() => finish(reject, new Error("Firebase FID registration timed out.")), 30000);
+    try {
+      unsubscribe = messagingModule.onRegistered(messaging, (fid) => {
+        const token = String(fid || "").trim();
+        if (token) finish(resolve, { provider: "fcm-fid", token });
+      });
+      messagingModule.register(messaging, tokenOptions).catch((error) => finish(reject, error));
+    } catch (error) {
+      finish(reject, error);
+    }
+  });
 }
 
 async function getCompatFirebaseApp(firebaseConfig) {
@@ -8914,7 +8946,7 @@ function firebaseMessagingErrorMessage(error) {
   const text = `${error?.code || ""} ${error?.message || error || ""}`.toLowerCase();
   if (text.includes("permission")) return "Permiso activo, pero el navegador no autorizo el token FCM.";
   if (text.includes("401") || text.includes("unauthorized") || text.includes("authentication credential") || text.includes("token-subscribe-failed")) {
-    return "Avisos locales activos. Firebase rechazo el token web (401); revisa API key web, VAPID publica y dominio autorizado para avisos con la app cerrada.";
+    return "Avisos locales activos. Firebase rechazo el registro web (401); revisa API key web, VAPID publica y dominio autorizado para avisos con la app cerrada.";
   }
   if (text.includes("not-supported") || text.includes("unsupported")) return "Avisos locales activos. Este navegador no soporta FCM Web Push remoto.";
   return "Avisos locales activos; no se obtuvo token remoto FCM/Web Push.";
