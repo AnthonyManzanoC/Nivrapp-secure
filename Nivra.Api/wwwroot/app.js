@@ -8887,8 +8887,41 @@ async function requestFirebaseMessagingRegistration(firebaseConfig, tokenOptions
   const app = await getModularFirebaseApp(appModule, firebaseConfig);
   const messaging = messagingModule.getMessaging(app);
   bindWebForegroundMessaging(messagingModule, messaging);
+  const fidRegistration = await registerFirebaseMessagingFid(messagingModule, messaging, tokenOptions).catch((error) => {
+    console.warn("Firebase FID registration fallback unavailable.", error);
+    return null;
+  });
+  if (fidRegistration) return fidRegistration;
   const token = await messagingModule.getToken(messaging, tokenOptions);
   return token ? { provider: "fcm", token } : null;
+}
+
+async function registerFirebaseMessagingFid(messagingModule, messaging, tokenOptions) {
+  if (!messagingModule.register || !messagingModule.onRegistered) return null;
+  return await new Promise((resolve, reject) => {
+    let unsubscribe = null;
+    let timeout = null;
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      try {
+        unsubscribe?.();
+      } catch {}
+      callback(value);
+    };
+    timeout = setTimeout(() => finish(reject, new Error("Firebase FID registration timed out.")), 30000);
+    try {
+      unsubscribe = messagingModule.onRegistered(messaging, (fid) => {
+        const token = String(fid || "").trim();
+        if (token) finish(resolve, { provider: "fcm-fid", token });
+      });
+      messagingModule.register(messaging, tokenOptions).catch((error) => finish(reject, error));
+    } catch (error) {
+      finish(reject, error);
+    }
+  });
 }
 
 async function getCompatFirebaseApp(firebaseConfig) {

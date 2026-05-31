@@ -217,7 +217,10 @@ public sealed class PushNotificationService(
                 token.RevokedAt == null &&
                 (token.Provider == "fcm" ||
                  token.Provider == "Fcm" ||
-                 token.Provider == "FCM"))
+                 token.Provider == "FCM" ||
+                 token.Provider == "fcm-fid" ||
+                 token.Provider == "FcmFid" ||
+                 token.Provider == "FCM-FID"))
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
         {

@@ -1,4 +1,4 @@
-const CACHE_NAME = "nivra-shell-v18";
+const CACHE_NAME = "nivra-shell-v19";
 const SHELL_ASSETS = [
   "/",
   "/index.html",
