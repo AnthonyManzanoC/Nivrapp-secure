@@ -122,6 +122,24 @@ public sealed class PushNotificationService(
             cancellationToken);
     }
 
+    public async Task SendEventAsync(
+        string userId,
+        string title,
+        string body,
+        string type,
+        string tag,
+        Dictionary<string, string>? data,
+        CancellationToken cancellationToken)
+    {
+        var payload = data is null
+            ? new Dictionary<string, string>(StringComparer.Ordinal)
+            : new Dictionary<string, string>(data, StringComparer.Ordinal);
+        payload["type"] = type;
+        payload["tag"] = tag;
+
+        await SendToUserAsync(userId, title, body, payload, cancellationToken);
+    }
+
     private async Task SendToUserAsync(
         string userId,
         string title,
@@ -226,6 +244,7 @@ public sealed class PushNotificationService(
         var isIncomingCall = data.TryGetValue("type", out var type) &&
             type.Contains("call", StringComparison.OrdinalIgnoreCase) &&
             !type.Contains("missed", StringComparison.OrdinalIgnoreCase);
+        var channelId = isIncomingCall ? "nivra_calls" : "nivra_messages";
         var pushData = data.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal);
         pushData["title"] = title;
         pushData["body"] = body;
@@ -242,7 +261,7 @@ public sealed class PushNotificationService(
                 {
                     ["title"] = title,
                     ["body"] = body,
-                    ["channel_id"] = "nivra_messages",
+                    ["channel_id"] = channelId,
                     ["tag"] = tag,
                     ["sound"] = "default",
                     ["default_sound"] = true,

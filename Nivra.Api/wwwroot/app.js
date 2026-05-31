@@ -447,12 +447,15 @@ const state = {
   messageScrollTimer: null,
   realtimeReconnectTimer: null,
   pushReady: false,
+  pushLocalReady: false,
   pushRegistering: false,
   pushListenersReady: false,
   webPushForegroundReady: false,
   pushPermission: "unknown",
   pushServerReady: null,
   pushError: "",
+  pushTokenError: "",
+  pushTokenRetryAfter: 0,
   localNotificationsReady: false,
   pushRegistration: null,
   pushRetryTimer: null,
@@ -608,14 +611,20 @@ async function init() {
 
 function applyLaunchParams() {
   const params = new URLSearchParams(window.location.search);
+  const view = params.get("view");
   const conversationId = params.get("conversationId");
   const callId = params.get("callId");
+  if (view && ["chats", "world", "vault", "calls", "privacy", "account"].includes(view)) {
+    state.view = view;
+  }
   if (conversationId) {
+    state.view = "chats";
     state.selectedConversationId = conversationId;
     state.mobileChatOpen = true;
     saveJson("nivra.selectedConversationId", conversationId);
   }
   if (callId) {
+    state.view = "calls";
     state.launchPush = {
       type: params.get("type") || "incoming_call",
       callId,
@@ -1763,6 +1772,7 @@ function renderNotificationPrompt() {
 
 function shouldShowNotificationPrompt(capability = notificationCapabilityStatus()) {
   if (!state.auth?.tokens?.accessToken || !capability.supported || state.pushReady) return false;
+  if (state.pushLocalReady && !state.pushError) return false;
   if (capability.permission === "granted" && !state.pushError && !state.pushRegistration) return false;
   if (isNotificationPromptDismissed() && !state.pushError) return false;
   return true;
@@ -1800,6 +1810,8 @@ function pushStatusLabel() {
   if (state.pushRegistering) return "Activando notificaciones...";
   if (state.pushReady && state.pushServerReady === false) return "Dispositivo registrado; falta configurar FCM en el servidor.";
   if (state.pushReady) return "Activas en este dispositivo.";
+  if (state.pushLocalReady && state.pushTokenError) return state.pushTokenError;
+  if (state.pushLocalReady) return "Avisos locales activos; falta registrar FCM para recibir con la app cerrada.";
   if (capability.permission === "denied") return "Bloqueadas por el navegador o el sistema.";
   if (capability.permission === "granted") return "Permiso concedido; pendiente registrar el token.";
   return "Pendientes de permiso.";
@@ -3378,9 +3390,9 @@ function renderAccountView() {
         <div class="card span-5">
           <h3>Notificaciones</h3>
           <p>${escapeHtml(pushStatusLabel())}</p>
-          ${state.pushError ? `<p class="notification-error">${escapeHtml(state.pushError)}</p>` : ""}
+          ${state.pushError || state.pushTokenError ? `<p class="notification-error">${escapeHtml(state.pushError || state.pushTokenError)}</p>` : ""}
           <div class="stack">
-            <button class="btn primary" id="enableNotificationsAccountBtn" ${state.pushRegistering ? `disabled aria-busy="true"` : ""}>${icon(state.pushRegistering ? "sync" : "bell")}<span>${state.pushReady ? "Reparar registro" : "Activar notificaciones"}</span></button>
+            <button class="btn primary" id="enableNotificationsAccountBtn" ${state.pushRegistering ? `disabled aria-busy="true"` : ""}>${icon(state.pushRegistering ? "sync" : "bell")}<span>${state.pushReady ? "Reparar registro" : state.pushLocalReady ? "Reintentar FCM" : "Activar notificaciones"}</span></button>
             <button class="btn ghost" id="testNotificationBtn" ${state.pushReady || notificationCapabilityStatus().permission === "granted" ? "" : "disabled"}>${icon("bell")}<span>Probar aviso</span></button>
           </div>
         </div>
@@ -6091,29 +6103,57 @@ async function connectRealtime() {
   connection.on("presence.changed", realtimeHandler("presence.changed", handlePresenceChanged));
   connection.on("MessageDeleted", realtimeHandler("MessageDeleted", handleMessageDeletedEvent));
   connection.on("ChatCleared", realtimeHandler("ChatCleared", handleChatClearedEvent));
-  connection.on("conversation.created", realtimeHandler("conversation.created", async () => {
+  connection.on("conversation.created", realtimeHandler("conversation.created", async (payload) => {
     await bootstrap();
+    notifyRealtimeUpdate("Nuevo chat disponible.", {
+      type: "conversation",
+      conversationId: payload?.id || "",
+      tag: "nivra-conversation"
+    }, { foregroundToast: false });
   }));
   connection.on("friend.requested", realtimeHandler("friend.requested", async () => {
     await bootstrap();
-    toast("Nueva solicitud de amistad.");
+    notifyRealtimeUpdate("Nueva solicitud de amistad.", {
+      type: "friend_request",
+      tag: "nivra-friend-request"
+    });
   }));
   connection.on("friend.updated", realtimeHandler("friend.updated", async () => {
     await bootstrap();
   }));
-  connection.on("story.created", realtimeHandler("story.created", async () => {
+  connection.on("story.created", realtimeHandler("story.created", async (payload) => {
     await bootstrap();
+    if (payload?.owner?.id !== state.auth?.user?.id) {
+      notifyRealtimeUpdate("Nueva historia disponible.", {
+        type: "story",
+        storyId: payload?.id || "",
+        tag: "nivra-story"
+      }, { foregroundToast: false });
+    }
   }));
-  connection.on("story.worldCreated", realtimeHandler("story.worldCreated", async () => {
+  connection.on("story.worldCreated", realtimeHandler("story.worldCreated", async (payload) => {
     await bootstrap();
+    if (payload?.owner?.id !== state.auth?.user?.id) {
+      notifyRealtimeUpdate("Nueva historia en Mundo.", {
+        type: "story",
+        storyId: payload?.id || "",
+        tag: "nivra-story-world"
+      }, { foregroundToast: false });
+    }
   }));
   connection.on("vault.invited", realtimeHandler("vault.invited", async () => {
     await bootstrap();
-    toast("Te invitaron a una boveda.");
+    notifyRealtimeUpdate("Te invitaron a una boveda.", {
+      type: "vault_invited",
+      tag: "nivra-vault"
+    });
   }));
   connection.on("vault.approved", realtimeHandler("vault.approved", async () => {
     await bootstrap();
-    toast("Entrada a boveda aprobada.");
+    notifyRealtimeUpdate("Entrada a boveda aprobada.", {
+      type: "vault_approved",
+      tag: "nivra-vault"
+    });
   }));
   connection.on("vault.message", realtimeHandler("vault.message", handleVaultRealtimeMessage));
   connection.on("vault.closed", realtimeHandler("vault.closed", async (payload) => {
@@ -7035,9 +7075,12 @@ function clearSession() {
   state.pushRetryTimer = null;
   state.pushRetryAttempt = 0;
   state.pushReady = false;
+  state.pushLocalReady = false;
   state.pushPermission = "unknown";
   state.pushServerReady = null;
   state.pushError = "";
+  state.pushTokenError = "";
+  state.pushTokenRetryAfter = 0;
   state.webPushForegroundReady = false;
   state.syncInFlight = false;
   state.callHistory = [];
@@ -8276,7 +8319,7 @@ async function initializePushNotifications(options = {}) {
       return await initializeCapacitorPushNotifications({ requestPermission });
     }
 
-    return await initializeWebPushNotifications({ requestPermission });
+    return await initializeWebPushNotifications({ requestPermission, force });
   } catch (error) {
     state.pushReady = false;
     state.pushError = error?.message || "No se pudieron activar las notificaciones.";
@@ -8300,12 +8343,17 @@ async function enableNotificationsFromUserAction() {
   await refreshPushPermissionState().catch(() => {});
   render();
   if (ok) {
-    toast(state.pushServerReady === false
-      ? "Permiso listo. Falta configurar FCM en el servidor."
-      : "Notificaciones activadas.");
+    toast(pushActivationSuccessMessage());
   } else {
     toast(pushActivationFailureMessage());
   }
+}
+
+function pushActivationSuccessMessage() {
+  if (state.pushReady && state.pushServerReady === false) return "Permiso listo. Falta configurar FCM en el servidor.";
+  if (state.pushReady) return "Notificaciones activadas.";
+  if (state.pushLocalReady) return "Avisos locales listos. FCM remoto queda pendiente.";
+  return "Permiso de notificaciones listo.";
 }
 
 function pushActivationFailureMessage() {
@@ -8367,8 +8415,14 @@ async function initializeCapacitorPushNotifications(options = {}) {
   state.pushPermission = normalizePushPermission(permission?.receive);
   if (!permission || permission.receive !== "granted") return false;
 
+  state.pushLocalReady = true;
+  state.pushError = "";
   await push.register();
-  return await waitForPushReady();
+  const ready = await waitForPushReady();
+  if (!ready && !state.pushTokenError) {
+    state.pushTokenError = "Permiso activo; token FCM nativo pendiente.";
+  }
+  return ready || state.pushLocalReady;
 }
 
 async function bindCapacitorPushListeners(push) {
@@ -8376,11 +8430,13 @@ async function bindCapacitorPushListeners(push) {
 
   await push.addListener("registration", async (token) => {
     if (!token?.value) return;
+    state.pushTokenError = "";
     await queuePushTokenRegistration("fcm", token.value);
   });
 
   await push.addListener("registrationError", (error) => {
     state.pushReady = false;
+    state.pushTokenError = error?.message || "No se pudo obtener token FCM nativo.";
     console.warn("Push registration failed.", error);
   });
 
@@ -8410,6 +8466,15 @@ async function initializeCapacitorLocalNotifications() {
     id: "nivra_messages",
     name: "Nivra",
     description: "Mensajes y llamadas privadas",
+    importance: 5,
+    visibility: 1,
+    sound: "default",
+    vibration: true
+  }).catch(() => {});
+  await local.createChannel?.({
+    id: "nivra_calls",
+    name: "Llamadas Nivra",
+    description: "Llamadas y videollamadas entrantes",
     importance: 5,
     visibility: 1,
     sound: "default",
@@ -8448,7 +8513,7 @@ async function showCapacitorLocalNotification(notification = {}) {
       id: notificationNumericId(pushDataValue(data, "callId", "messageId", "conversationId") || Date.now()),
       title,
       body,
-      channelId: "nivra_messages",
+      channelId: isCall ? "nivra_calls" : "nivra_messages",
       sound: "default",
       actionTypeId: isCall ? "NIVRA_INCOMING_CALL" : "",
       extra: data,
@@ -8509,11 +8574,18 @@ async function initializeWebPushNotifications(options = {}) {
     return false;
   }
 
-  const fcmToken = await getFirebaseMessagingToken(registration).catch((error) => {
+  state.pushLocalReady = true;
+  state.pushError = "";
+
+  const fcmToken = await getFirebaseMessagingToken(registration, { force: options.force }).catch((error) => {
     console.warn("Firebase web push token unavailable.", error);
+    state.pushTokenError = firebaseMessagingErrorMessage(error);
+    state.pushTokenRetryAfter = shouldBackoffFirebaseTokenRequest(error) ? Date.now() + 5 * 60 * 1000 : 0;
     return null;
   });
   if (fcmToken) {
+    state.pushTokenError = "";
+    state.pushTokenRetryAfter = 0;
     return await queuePushTokenRegistration("fcm", fcmToken);
   }
 
@@ -8522,17 +8594,21 @@ async function initializeWebPushNotifications(options = {}) {
     return null;
   });
   if (!subscription) {
-    state.pushError = "No se pudo obtener token FCM/Web Push.";
-    return false;
+    if (!state.pushTokenError) {
+      state.pushTokenError = "Avisos locales activos; falta token FCM/Web Push para recibir con la app cerrada.";
+    }
+    return true;
   }
 
+  state.pushTokenError = "";
   return await queuePushTokenRegistration("webpush", serializePushSubscription(subscription));
 }
 
-async function getFirebaseMessagingToken(serviceWorkerRegistration) {
+async function getFirebaseMessagingToken(serviceWorkerRegistration, options = {}) {
+  if (!options.force && state.pushTokenRetryAfter && Date.now() < state.pushTokenRetryAfter) return null;
   const firebaseConfig = window.NIVRA_FIREBASE_CONFIG;
   const vapidKey = window.NIVRA_FIREBASE_VAPID_KEY;
-  if (!firebaseConfig || !vapidKey) return null;
+  if (!isFirebaseWebConfigReady(firebaseConfig, vapidKey)) return null;
 
   if (window.firebase?.messaging) {
     const app = window.firebase.apps?.length ? window.firebase.app() : window.firebase.initializeApp(firebaseConfig);
@@ -8553,6 +8629,32 @@ async function getFirebaseMessagingToken(serviceWorkerRegistration) {
   const messaging = messagingModule.getMessaging(app);
   bindWebForegroundMessaging(messagingModule, messaging);
   return await messagingModule.getToken(messaging, { vapidKey, serviceWorkerRegistration });
+}
+
+function isFirebaseWebConfigReady(firebaseConfig, vapidKey) {
+  return Boolean(firebaseConfig?.apiKey &&
+    firebaseConfig?.projectId &&
+    firebaseConfig?.messagingSenderId &&
+    firebaseConfig?.appId &&
+    vapidKey);
+}
+
+function firebaseMessagingErrorMessage(error) {
+  const text = `${error?.code || ""} ${error?.message || error || ""}`.toLowerCase();
+  if (text.includes("permission")) return "Permiso activo, pero el navegador no autorizo el token FCM.";
+  if (text.includes("401") || text.includes("unauthorized") || text.includes("authentication credential") || text.includes("token-subscribe-failed")) {
+    return "Avisos locales activos. Firebase rechazo el token web (401); revisa API key, VAPID y origen autorizado para avisos con la app cerrada.";
+  }
+  if (text.includes("not-supported") || text.includes("unsupported")) return "Avisos locales activos. Este navegador no soporta FCM Web Push remoto.";
+  return "Avisos locales activos; no se obtuvo token remoto FCM/Web Push.";
+}
+
+function shouldBackoffFirebaseTokenRequest(error) {
+  const text = `${error?.code || ""} ${error?.message || error || ""}`.toLowerCase();
+  return text.includes("401") ||
+    text.includes("unauthorized") ||
+    text.includes("authentication credential") ||
+    text.includes("token-subscribe-failed");
 }
 
 function firebaseSdkUrl(file) {
@@ -8645,11 +8747,23 @@ async function handlePushNavigation(data = {}, options = {}) {
   }
 
   const conversationId = pushDataValue(data, "conversationId", "ConversationId");
-  if (!conversationId) return;
+  if (!conversationId) {
+    const targetView = pushDataTargetView(data);
+    if (targetView) activateView(targetView, { mobileChatOpen: false, renderAfter: false });
+    return;
+  }
 
   selectConversation(conversationId);
   activateView("chats", { mobileChatOpen: true, renderAfter: false });
   saveJson("nivra.selectedConversationId", state.selectedConversationId);
+}
+
+function pushDataTargetView(data = {}) {
+  const type = String(pushDataValue(data, "type", "Type") || "").toLowerCase();
+  if (type.includes("story") || type.includes("friend")) return "world";
+  if (type.includes("vault")) return "vault";
+  if (type.includes("call")) return "calls";
+  return "";
 }
 
 async function hydrateIncomingCallFromPushData(data = {}) {
@@ -8729,6 +8843,7 @@ async function flushPushTokenRegistration() {
     await registerPushToken(state.pushRegistration.provider, state.pushRegistration.token);
     state.pushReady = true;
     state.pushError = "";
+    state.pushTokenError = "";
     state.pushRetryAttempt = 0;
     state.pushRegistration = null;
     scheduleRender();
@@ -8761,12 +8876,29 @@ function appIsBackgrounded() {
 
 function showRealtimeNotification(title, options = {}) {
   if (!("Notification" in window) || Notification.permission !== "granted" || !appIsBackgrounded()) return;
+  const notificationOptions = {
+    icon: "/assets/icon-192.png",
+    badge: "/assets/icon-192.png",
+    silent: false,
+    ...options
+  };
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.ready
+      .then((registration) => {
+        if (registration?.showNotification) return registration.showNotification(title, notificationOptions);
+        return showWindowNotification(title, notificationOptions);
+      })
+      .catch(() => showWindowNotification(title, notificationOptions));
+    return;
+  }
+  showWindowNotification(title, notificationOptions);
+}
+
+function showWindowNotification(title, options = {}) {
   try {
+    const { actions: _actions, vibrate: _vibrate, ...windowOptions } = options;
     const notification = new Notification(title, {
-      icon: "/assets/icon-192.png",
-      badge: "/assets/icon-192.png",
-      silent: false,
-      ...options
+      ...windowOptions
     });
     notification.onclick = () => {
       window.focus();
@@ -8776,6 +8908,18 @@ function showRealtimeNotification(title, options = {}) {
   } catch {
     // Browsers can reject notifications outside secure contexts.
   }
+}
+
+function notifyRealtimeUpdate(body, data = {}, options = {}) {
+  if (appIsBackgrounded()) {
+    showRealtimeNotification("Nivra", {
+      body,
+      tag: data.tag || "nivra-update",
+      data
+    });
+    return;
+  }
+  if (options.foregroundToast !== false) toast(body);
 }
 
 async function testNotificationDelivery() {
@@ -8833,12 +8977,7 @@ async function testNotificationDelivery() {
 function notifyIncomingMessage(message, payload) {
   if (message.senderUserId === state.auth.user.id) return;
   const alias = state.aliasByUserId.get(message.senderUserId) || payload.senderAlias || "un contacto";
-  const hidden = state.privacy?.hideNotificationContent;
-  const body = hidden
-    ? "Nuevo mensaje privado"
-    : payload.type === "system"
-      ? payload.text || "Nuevo evento de sistema"
-      : `Nuevo mensaje de ${alias}`;
+  const body = incomingMessageNotificationBody(message, payload, alias);
   if (!appIsBackgrounded()) {
     if (state.view !== "chats" || state.selectedConversationId !== message.conversationId) {
       toast(body);
@@ -8848,8 +8987,26 @@ function notifyIncomingMessage(message, payload) {
   showRealtimeNotification("Nivra", {
     body,
     tag: `nivra-message-${message.conversationId}`,
-    data: { conversationId: message.conversationId }
+    data: {
+      type: "message",
+      conversationId: message.conversationId,
+      messageId: message.id || "",
+      senderUserId: message.senderUserId || "",
+      tag: `nivra-message-${message.conversationId}`
+    }
   });
+}
+
+function incomingMessageNotificationBody(message, payload = {}, alias = "un contacto") {
+  if (state.privacy?.hideNotificationContent) return "Nuevo mensaje privado";
+  if (payload.type === "system") return payload.text || "Nuevo evento de sistema";
+  if (payload.type === "reaction") return `${alias} reacciono ${payload.emoji || ""}`.trim();
+  if (payload.type === "story-response") return `${alias} respondio a tu historia`;
+  if (payload.type === "file") {
+    if (payload.voiceNote) return `${alias} envio una nota de voz`;
+    return `${alias} envio ${fileTypeLabel(payload.mime).toLowerCase()}`;
+  }
+  return `Nuevo mensaje de ${alias}`;
 }
 
 function notifyIncomingCall(call) {
@@ -8859,6 +9016,12 @@ function notifyIncomingCall(call) {
     body: `${call.type === "Video" ? "Videollamada" : "Llamada"} entrante de ${alias}`,
     tag: `nivra-call-${call.id}`,
     requireInteraction: true,
+    renotify: true,
+    actions: [
+      { action: "accept", title: "Contestar" },
+      { action: "decline", title: "Rechazar" }
+    ],
+    vibrate: [320, 140, 320, 140, 480],
     data: {
       type: "incoming_call",
       callId: call.id,

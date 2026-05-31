@@ -604,7 +604,7 @@ public static partial class EndpointExtensions
             return Results.Ok(result);
         });
 
-        friends.MapPost("/requests", async Task<IResult> (CreateFriendRequestRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        friends.MapPost("/requests", async Task<IResult> (CreateFriendRequestRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -660,6 +660,11 @@ public static partial class EndpointExtensions
             await db.SaveChangesAsync(cancellationToken);
             var response = await ToFriendRequestResponseAsync(friendRequest, current.UserId, db, cancellationToken);
             await hub.Clients.Group(GroupsFor.User(target.Id)).SendAsync("friend.requested", response, cancellationToken);
+            await pushNotifications.SendEventAsync(target.Id, "Nivra", "Nueva solicitud de amistad", "friend_request", $"nivra-friend-request-{friendRequest.Id}", new Dictionary<string, string>
+            {
+                ["requestId"] = friendRequest.Id,
+                ["senderUserId"] = current.UserId
+            }, cancellationToken);
             return Results.Created($"/friends/requests/{friendRequest.Id}", response);
         });
 
@@ -754,7 +759,7 @@ public static partial class EndpointExtensions
             return Results.Ok(result);
         });
 
-        conversations.MapPost("/", async Task<IResult> (CreateConversationRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        conversations.MapPost("/", async Task<IResult> (CreateConversationRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -804,6 +809,14 @@ public static partial class EndpointExtensions
 
             await store.AddConversationAsync(conversation, cancellationToken);
             await NotifyUsers(hub, participantIds, "conversation.created", ToConversationResponse(conversation));
+            foreach (var userId in participantIds.Where(userId => userId != current.UserId).Distinct(StringComparer.Ordinal))
+            {
+                await pushNotifications.SendEventAsync(userId, "Nivra", "Nuevo chat disponible", "conversation", $"nivra-conversation-{conversation.Id}", new Dictionary<string, string>
+                {
+                    ["conversationId"] = conversation.Id,
+                    ["senderUserId"] = current.UserId
+                }, cancellationToken);
+            }
             return Results.Created($"/conversations/{conversation.Id}", ToConversationResponse(conversation));
         });
 
@@ -1360,7 +1373,7 @@ public static partial class EndpointExtensions
             return Results.Ok(result.Take(80).ToList());
         });
 
-        group.MapPost("/", async Task<IResult> (CreateStoryRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/", async Task<IResult> (CreateStoryRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1429,7 +1442,16 @@ public static partial class EndpointExtensions
             }
             else
             {
-                await NotifyUsers(hub, await StoryAudienceAsync(db, story, cancellationToken), "story.created", response);
+                var audience = await StoryAudienceAsync(db, story, cancellationToken);
+                await NotifyUsers(hub, audience, "story.created", response);
+                foreach (var userId in audience.Where(userId => userId != current.UserId).Distinct(StringComparer.Ordinal))
+                {
+                    await pushNotifications.SendEventAsync(userId, "Nivra", "Nueva historia disponible", "story", $"nivra-story-{story.Id}", new Dictionary<string, string>
+                    {
+                        ["storyId"] = story.Id,
+                        ["ownerUserId"] = current.UserId
+                    }, cancellationToken);
+                }
             }
 
             return Results.Created($"/stories/{story.Id}", response);
@@ -1790,7 +1812,7 @@ public static partial class EndpointExtensions
             return Results.Ok(result);
         });
 
-        group.MapPost("/", async Task<IResult> (CreateVaultRoomRequest request, HttpContext http, NivraDbContext db, PasswordHasher hasher, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/", async Task<IResult> (CreateVaultRoomRequest request, HttpContext http, NivraDbContext db, PasswordHasher hasher, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1866,10 +1888,18 @@ public static partial class EndpointExtensions
             await db.SaveChangesAsync(cancellationToken);
             var response = await ToVaultRoomResponseAsync(room, current.UserId, db, cancellationToken);
             await NotifyUsers(hub, invited, "vault.invited", response);
+            foreach (var userId in invited)
+            {
+                await pushNotifications.SendEventAsync(userId, "Nivra", "Te invitaron a una boveda", "vault_invited", $"nivra-vault-{room.Id}", new Dictionary<string, string>
+                {
+                    ["roomId"] = room.Id,
+                    ["ownerUserId"] = current.UserId
+                }, cancellationToken);
+            }
             return Results.Created($"/vault/rooms/{room.Id}", response);
         });
 
-        group.MapPost("/{roomId}/invite", async Task<IResult> (string roomId, InviteVaultRoomRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/{roomId}/invite", async Task<IResult> (string roomId, InviteVaultRoomRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1925,6 +1955,14 @@ public static partial class EndpointExtensions
             await db.SaveChangesAsync(cancellationToken);
             var response = await ToVaultRoomResponseAsync(room, current.UserId, db, cancellationToken);
             await NotifyUsers(hub, invited, "vault.invited", response);
+            foreach (var userId in invited)
+            {
+                await pushNotifications.SendEventAsync(userId, "Nivra", "Te invitaron a una boveda", "vault_invited", $"nivra-vault-{room.Id}", new Dictionary<string, string>
+                {
+                    ["roomId"] = room.Id,
+                    ["ownerUserId"] = current.UserId
+                }, cancellationToken);
+            }
             return Results.Ok(response);
         });
 
@@ -1991,7 +2029,7 @@ public static partial class EndpointExtensions
             return Results.Ok(response);
         });
 
-        group.MapPost("/{roomId}/members/{memberUserId}/approve", async Task<IResult> (string roomId, string memberUserId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/{roomId}/members/{memberUserId}/approve", async Task<IResult> (string roomId, string memberUserId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2020,6 +2058,11 @@ public static partial class EndpointExtensions
 
             var response = await ToVaultRoomResponseAsync(room, current.UserId, db, cancellationToken);
             await hub.Clients.Group(GroupsFor.User(memberUserId)).SendAsync("vault.approved", response, cancellationToken);
+            await pushNotifications.SendEventAsync(memberUserId, "Nivra", "Entrada a boveda aprobada", "vault_approved", $"nivra-vault-{room.Id}", new Dictionary<string, string>
+            {
+                ["roomId"] = room.Id,
+                ["ownerUserId"] = current.UserId
+            }, cancellationToken);
             return Results.Ok(response);
         });
 

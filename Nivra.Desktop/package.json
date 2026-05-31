@@ -6,7 +6,7 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build-exe": "electron-packager . Nivra --platform=win32 --arch=x64 --out=dist --overwrite --asar --extra-resource=../Nivra.Api/wwwroot"
+    "build-exe": "electron-packager . Nivra --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=icon.ico --extra-resource=../Nivra.Api/wwwroot"
   },
   "devDependencies": {
     "electron": "latest",

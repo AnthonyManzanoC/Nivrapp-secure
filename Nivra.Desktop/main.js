@@ -19,6 +19,10 @@ function resolveWebRoot() {
     : path.join(__dirname, "..", "Nivra.Api", "wwwroot");
 }
 
+function resolveWindowIcon() {
+  return path.join(__dirname, "icon.ico");
+}
+
 function resolveApiBaseUrl(webRoot) {
   return (process.env.NIVRA_API_BASE_URL || readBundledApiBaseUrl(webRoot) || "https://nivra-webapp-secure.onrender.com").replace(/\/+$/, "");
 }
@@ -30,6 +34,7 @@ function createWindow(webRoot, apiBaseUrl) {
     minWidth: 940,
     minHeight: 680,
     title: "Nivra",
+    icon: resolveWindowIcon(),
     backgroundColor: "#070b0d",
     autoHideMenuBar: true,
     webPreferences: {

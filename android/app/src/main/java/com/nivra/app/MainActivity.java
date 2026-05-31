@@ -29,9 +29,20 @@ public class MainActivity extends BridgeActivity {
         messages.enableVibration(true);
         messages.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
 
+        NotificationChannel calls = new NotificationChannel(
+            "nivra_calls",
+            "Llamadas Nivra",
+            NotificationManager.IMPORTANCE_HIGH
+        );
+        calls.setDescription("Llamadas y videollamadas entrantes");
+        calls.enableVibration(true);
+        calls.setVibrationPattern(new long[] { 320, 140, 320, 140, 480 });
+        calls.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) {
             manager.createNotificationChannel(messages);
+            manager.createNotificationChannel(calls);
         }
     }
 }

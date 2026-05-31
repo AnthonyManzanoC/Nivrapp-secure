@@ -94,9 +94,19 @@ function pushTargetUrl(data = {}, action = "") {
   if (data.callerName) params.set("callerName", data.callerName);
   if (data.callType) params.set("callType", data.callType);
   if (data.type) params.set("type", data.type);
+  const view = pushTargetView(data);
+  if (view) params.set("view", view);
   if (action) params.set("pushAction", action);
   const query = params.toString();
   return query ? `/?${query}` : "/";
+}
+
+function pushTargetView(data = {}) {
+  const type = String(data.type || data.Type || "").toLowerCase();
+  if (type.includes("story") || type.includes("friend")) return "world";
+  if (type.includes("vault")) return "vault";
+  if (type.includes("call")) return "calls";
+  return "";
 }
 
 function isIncomingCallData(data = {}) {
