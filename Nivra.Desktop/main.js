@@ -2,6 +2,8 @@ const { app, BrowserWindow, Menu, shell, session } = require("electron");
 const fs = require("fs");
 const path = require("path");
 
+let mainWindow = null;
+
 function readBundledApiBaseUrl(webRoot) {
   try {
     const config = fs.readFileSync(path.join(webRoot, "native-config.js"), "utf8");
@@ -28,7 +30,7 @@ function resolveApiBaseUrl(webRoot) {
 }
 
 function createWindow(webRoot, apiBaseUrl) {
-  const mainWindow = new BrowserWindow({
+  mainWindow = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 940,
@@ -41,7 +43,8 @@ function createWindow(webRoot, apiBaseUrl) {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      webSecurity: true
+      webSecurity: true,
+      backgroundThrottling: false
     }
   });
 
@@ -58,6 +61,10 @@ function createWindow(webRoot, apiBaseUrl) {
   const query = apiBaseUrl
     ? { electron: "1", apiBaseUrl }
     : { electron: "1" };
+
+  mainWindow.on("closed", () => {
+    mainWindow = null;
+  });
 
   mainWindow.loadFile(indexPath, { query });
 }
@@ -80,19 +87,33 @@ function installApiCorsBridge(apiBaseUrl) {
   }
 }
 
-app.whenReady().then(() => {
-  Menu.setApplicationMenu(null);
-  const webRoot = resolveWebRoot();
-  const apiBaseUrl = resolveApiBaseUrl(webRoot);
-
-  installApiCorsBridge(apiBaseUrl);
-
-  createWindow(webRoot, apiBaseUrl);
-
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow(webRoot, apiBaseUrl);
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
   });
-});
+
+  app.whenReady().then(() => {
+    Menu.setApplicationMenu(null);
+    const webRoot = resolveWebRoot();
+    const apiBaseUrl = resolveApiBaseUrl(webRoot);
+
+    installApiCorsBridge(apiBaseUrl);
+    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+      callback(["media", "notifications", "camera", "microphone"].includes(permission));
+    });
+
+    createWindow(webRoot, apiBaseUrl);
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow(webRoot, apiBaseUrl);
+    });
+  });
+}
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

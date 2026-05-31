@@ -57,6 +57,8 @@ public sealed class SessionCleanupService(
                 await db.SaveChangesAsync(cancellationToken);
                 logger.LogInformation("Session cleanup revoked {SessionCount} expired sessions and {DeviceCount} stale devices.", expiredSessions.Count, staleDevices.Count);
             }
+
+            await new PgSqlNivraStore(db).PurgeExpiredAsync(now, cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

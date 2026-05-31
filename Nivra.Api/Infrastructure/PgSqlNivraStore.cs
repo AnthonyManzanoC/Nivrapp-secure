@@ -228,8 +228,6 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
 
     public async Task<List<MessageEnvelope>> PendingMessagesForDeviceAsync(string userId, string deviceId, DateTimeOffset now, CancellationToken cancellationToken = default)
     {
-        await PurgeExpiredAsync(now, cancellationToken);
-
         return await db.Messages
             .Where(message => message.Recipients.Any(recipient => recipient.UserId == userId && recipient.DeviceId == deviceId))
             .Where(message => message.Receipts.Any(receipt =>

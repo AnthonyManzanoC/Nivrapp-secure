@@ -14,8 +14,12 @@ const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const SYSTEM_MISSED_CALL_POLICY = "system:missed-call";
 const RINGTONE_SRC = "";
 const QR_LOGIN_TTL_MS = 2 * 60 * 1000;
-const SYNC_POLL_MS = 7000;
+const SYNC_POLL_VISIBLE_MS = 9000;
+const SYNC_POLL_BACKGROUND_MS = 45000;
 const SYNC_MIN_INTERVAL_MS = 1200;
+const BOOTSTRAP_QUEUE_DELAY_MS = 650;
+const BOOTSTRAP_VISIBLE_MIN_INTERVAL_MS = 1800;
+const BOOTSTRAP_BACKGROUND_MIN_INTERVAL_MS = 12000;
 const MESSAGE_PAGE_SIZE = 50;
 const CHAT_DOM_LIMIT = 50;
 const LOCAL_PURGE_LIMIT = 500;
@@ -45,6 +49,7 @@ const FIREBASE_APP_NAME = "nivra-web-push";
 const FIREBASE_RESETTABLE_IDB_NAMES = ["fcm_token_details_db", "firebase-installations-database"];
 const REQUEST_TIMEOUT_MS = 20000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 120000;
+const PROFILE_REFRESH_MIN_MS = 5 * 60 * 1000;
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [5000, 15000, 60000, 180000];
 const PUSH_PROMPT_DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
 const TERMINAL_CALL_PUSH_TYPES = new Set(["end-call", "missed-call", "call-ended"]);
@@ -468,6 +473,7 @@ const state = {
   keyDirectory: new Map(),
   aliasByUserId: new Map(),
   profileByUserId: new Map(),
+  profileRefreshAtByUserId: new Map(),
   archivedConversationIds: new Set(loadJson("nivra.archivedConversations") || []),
   replyTo: null,
   contextMenu: null,
@@ -476,6 +482,9 @@ const state = {
   syncInFlight: false,
   bootstrapPromise: null,
   bootstrapQueued: false,
+  bootstrapTimer: null,
+  bootstrapPendingReason: "",
+  lastBootstrapCompletedAt: 0,
   lastSyncAt: 0,
   messageScrollTimer: null,
   realtimeReconnectTimer: null,
@@ -709,6 +718,7 @@ function listenForServiceWorkerMessages() {
 function setupConnectivityListeners() {
   window.addEventListener("online", () => {
     toast("Conexion recuperada. Sincronizando...");
+    startPolling();
     connectRealtime().catch(() => {});
     refreshPushPermissionState().catch(() => {});
     initializePushNotifications({ requestPermission: false }).catch(() => {});
@@ -716,9 +726,11 @@ function setupConnectivityListeners() {
     syncPendingMessages("online", { force: true }).catch(() => {});
   });
   window.addEventListener("offline", () => {
+    startPolling();
     toast("Sin conexion. Nivra guardara lo recibido localmente.");
   });
   document.addEventListener("visibilitychange", () => {
+    startPolling();
     if (document.visibilityState === "visible" && state.auth?.tokens?.accessToken) {
       connectRealtime().catch(() => {});
       refreshPushPermissionState().catch(() => render());
@@ -995,18 +1007,43 @@ function registerServiceWorker() {
   });
 }
 
+function bootstrapDelayMs(options = {}) {
+  if (options.force) return 0;
+  const minInterval = document.visibilityState === "visible"
+    ? BOOTSTRAP_VISIBLE_MIN_INTERVAL_MS
+    : BOOTSTRAP_BACKGROUND_MIN_INTERVAL_MS;
+  const elapsed = Date.now() - (state.lastBootstrapCompletedAt || 0);
+  return Math.max(BOOTSTRAP_QUEUE_DELAY_MS, minInterval - elapsed);
+}
+
+function scheduleBootstrap(reason = "scheduled", options = {}) {
+  if (!state.auth?.tokens?.accessToken) return;
+  state.bootstrapPendingReason = reason;
+  clearTimeout(state.bootstrapTimer);
+  state.bootstrapTimer = setTimeout(() => {
+    state.bootstrapTimer = null;
+    const nextReason = state.bootstrapPendingReason || reason;
+    state.bootstrapPendingReason = "";
+    bootstrap({ reason: nextReason }).catch(() => {});
+  }, options.delayMs ?? bootstrapDelayMs(options));
+}
+
 async function bootstrap(options = {}) {
   if (state.bootstrapPromise) {
     state.bootstrapQueued = true;
     return state.bootstrapPromise;
   }
 
+  clearTimeout(state.bootstrapTimer);
+  state.bootstrapTimer = null;
+  state.bootstrapPendingReason = "";
   state.bootstrapPromise = bootstrapCore(options).finally(() => {
     state.bootstrapPromise = null;
+    state.lastBootstrapCompletedAt = Date.now();
     const runQueued = state.bootstrapQueued && state.auth?.tokens?.accessToken;
     state.bootstrapQueued = false;
     if (runQueued) {
-      setTimeout(() => bootstrap({ reason: "queued" }).catch(() => {}), 250);
+      scheduleBootstrap("queued", { delayMs: BOOTSTRAP_QUEUE_DELAY_MS });
     }
   });
   return state.bootstrapPromise;
@@ -1085,7 +1122,11 @@ async function hydrateConversationProfilesFromCache() {
 function refreshConversationProfilesInBackground() {
   const ids = conversationParticipantUserIds();
   if (!ids.length || !state.auth?.tokens?.accessToken) return;
+  const now = Date.now();
   ids.forEach((userId) => {
+    const lastRefreshAt = state.profileRefreshAtByUserId.get(userId) || 0;
+    if (now - lastRefreshAt < PROFILE_REFRESH_MIN_MS) return;
+    state.profileRefreshAtByUserId.set(userId, now);
     request(`/directory/users/${encodeURIComponent(userId)}`)
       .then((profile) => {
         const before = JSON.stringify(state.profileByUserId.get(userId) || {});
@@ -1094,7 +1135,9 @@ function refreshConversationProfilesInBackground() {
           updateConversationProfileNodes(userId);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        state.profileRefreshAtByUserId.delete(userId);
+      });
   });
 }
 
@@ -6108,10 +6151,21 @@ function handleMessageReceipt(payload = {}) {
   upsertMessageNode(location.conversationId, message.id, { scroll: false });
 }
 
-function startPolling() {
+function startPolling(options = {}) {
   clearInterval(state.polling);
-  state.polling = setInterval(pollPending, SYNC_POLL_MS);
-  syncPendingMessages("start", { force: true }).catch(() => {});
+  state.polling = null;
+  const interval = pollingIntervalMs();
+  if (!interval) return;
+  state.polling = setInterval(pollPending, interval);
+  const shouldSyncNow = options.immediate ?? document.visibilityState === "visible";
+  if (shouldSyncNow) syncPendingMessages("start", { force: true }).catch(() => {});
+}
+
+function pollingIntervalMs() {
+  if (!state.auth?.tokens?.accessToken || navigator.onLine === false) return 0;
+  return document.visibilityState === "visible"
+    ? SYNC_POLL_VISIBLE_MS
+    : SYNC_POLL_BACKGROUND_MS;
 }
 
 function realtimeHandler(label, handler) {
@@ -6186,26 +6240,26 @@ async function connectRealtime() {
   connection.on("presence.changed", realtimeHandler("presence.changed", handlePresenceChanged));
   connection.on("MessageDeleted", realtimeHandler("MessageDeleted", handleMessageDeletedEvent));
   connection.on("ChatCleared", realtimeHandler("ChatCleared", handleChatClearedEvent));
-  connection.on("conversation.created", realtimeHandler("conversation.created", async (payload) => {
-    await bootstrap();
+  connection.on("conversation.created", realtimeHandler("conversation.created", (payload) => {
+    scheduleBootstrap("conversation-created");
     notifyRealtimeUpdate("Nuevo chat disponible.", {
       type: "conversation",
       conversationId: payload?.id || "",
       tag: "nivra-conversation"
     }, { foregroundToast: false });
   }));
-  connection.on("friend.requested", realtimeHandler("friend.requested", async () => {
-    await bootstrap();
+  connection.on("friend.requested", realtimeHandler("friend.requested", () => {
+    scheduleBootstrap("friend-requested");
     notifyRealtimeUpdate("Nueva solicitud de amistad.", {
       type: "friend_request",
       tag: "nivra-friend-request"
     });
   }));
-  connection.on("friend.updated", realtimeHandler("friend.updated", async () => {
-    await bootstrap();
+  connection.on("friend.updated", realtimeHandler("friend.updated", () => {
+    scheduleBootstrap("friend-updated");
   }));
-  connection.on("story.created", realtimeHandler("story.created", async (payload) => {
-    await bootstrap();
+  connection.on("story.created", realtimeHandler("story.created", (payload) => {
+    scheduleBootstrap("story-created");
     if (payload?.owner?.id !== state.auth?.user?.id) {
       notifyRealtimeUpdate("Nueva historia disponible.", {
         type: "story",
@@ -6214,8 +6268,8 @@ async function connectRealtime() {
       }, { foregroundToast: false });
     }
   }));
-  connection.on("story.worldCreated", realtimeHandler("story.worldCreated", async (payload) => {
-    await bootstrap();
+  connection.on("story.worldCreated", realtimeHandler("story.worldCreated", (payload) => {
+    scheduleBootstrap("story-world-created");
     if (payload?.owner?.id !== state.auth?.user?.id) {
       notifyRealtimeUpdate("Nueva historia en Mundo.", {
         type: "story",
@@ -6224,15 +6278,15 @@ async function connectRealtime() {
       }, { foregroundToast: false });
     }
   }));
-  connection.on("vault.invited", realtimeHandler("vault.invited", async () => {
-    await bootstrap();
+  connection.on("vault.invited", realtimeHandler("vault.invited", () => {
+    scheduleBootstrap("vault-invited");
     notifyRealtimeUpdate("Te invitaron a una boveda.", {
       type: "vault_invited",
       tag: "nivra-vault"
     });
   }));
-  connection.on("vault.approved", realtimeHandler("vault.approved", async () => {
-    await bootstrap();
+  connection.on("vault.approved", realtimeHandler("vault.approved", () => {
+    scheduleBootstrap("vault-approved");
     notifyRealtimeUpdate("Entrada a boveda aprobada.", {
       type: "vault_approved",
       tag: "nivra-vault"
@@ -6242,12 +6296,12 @@ async function connectRealtime() {
   connection.on("vault.closed", realtimeHandler("vault.closed", async (payload) => {
     state.vaultActiveRoomId = state.vaultActiveRoomId === payload.roomId ? null : state.vaultActiveRoomId;
     state.vaultLobbyRoomId = state.vaultLobbyRoomId === payload.roomId ? null : state.vaultLobbyRoomId;
-    await bootstrap();
+    scheduleBootstrap("vault-closed", { delayMs: 0 });
     render();
     toast("La boveda se cerro al salir un participante.");
   }));
-  connection.on("vault.left", realtimeHandler("vault.left", async () => {
-    await bootstrap();
+  connection.on("vault.left", realtimeHandler("vault.left", () => {
+    scheduleBootstrap("vault-left", { delayMs: 0 });
     render();
   }));
   connection.on("incomingCall", realtimeHandler("incomingCall", handleIncomingCall));
@@ -6266,10 +6320,10 @@ async function connectRealtime() {
       clearSession();
       return;
     }
-    bootstrap();
+    scheduleBootstrap("device-revoked");
   }));
-  connection.on("device.listChanged", realtimeHandler("device.listChanged", async () => {
-    await bootstrap();
+  connection.on("device.listChanged", realtimeHandler("device.listChanged", () => {
+    scheduleBootstrap("device-list-changed");
   }));
   connection.onreconnecting((error) => {
     if (error) console.warn("Realtime reconnecting.", error);
@@ -6277,6 +6331,7 @@ async function connectRealtime() {
   });
   connection.onreconnected(realtimeHandler("reconnected", async () => {
     state.connection = connection;
+    startPolling();
     await joinSelectedConversation();
     await joinVaultRoomRealtime(state.vaultActiveRoomId);
     await refreshPresence();
@@ -6288,12 +6343,14 @@ async function connectRealtime() {
     if (error) console.warn("Realtime closed.", error);
     if (state.connection !== connection) return;
     state.connection = null;
+    startPolling();
     scheduleRealtimeReconnect("closed");
   });
 
   try {
     await connection.start();
     state.connection = connection;
+    startPolling();
     await joinSelectedConversation();
     await joinVaultRoomRealtime(state.vaultActiveRoomId);
     await refreshPresence();
@@ -7157,6 +7214,10 @@ function clearSession() {
   state.messageScrollTimer = null;
   clearTimeout(state.realtimeReconnectTimer);
   state.realtimeReconnectTimer = null;
+  clearTimeout(state.bootstrapTimer);
+  state.bootstrapTimer = null;
+  state.bootstrapQueued = false;
+  state.bootstrapPendingReason = "";
   clearTimeout(state.typingStopTimer);
   state.typingStopTimer = null;
   localStorage.removeItem("nivra.auth");
@@ -8826,38 +8887,8 @@ async function requestFirebaseMessagingRegistration(firebaseConfig, tokenOptions
   const app = await getModularFirebaseApp(appModule, firebaseConfig);
   const messaging = messagingModule.getMessaging(app);
   bindWebForegroundMessaging(messagingModule, messaging);
-  const fidRegistration = await registerFirebaseMessagingFid(messagingModule, messaging, tokenOptions);
-  if (fidRegistration) return fidRegistration;
   const token = await messagingModule.getToken(messaging, tokenOptions);
   return token ? { provider: "fcm", token } : null;
-}
-
-async function registerFirebaseMessagingFid(messagingModule, messaging, tokenOptions) {
-  if (!messagingModule.register || !messagingModule.onRegistered) return null;
-  return await new Promise((resolve, reject) => {
-    let unsubscribe = null;
-    let timeout = null;
-    let settled = false;
-    const finish = (callback, value) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      try {
-        unsubscribe?.();
-      } catch {}
-      callback(value);
-    };
-    timeout = setTimeout(() => finish(reject, new Error("Firebase FID registration timed out.")), 30000);
-    try {
-      unsubscribe = messagingModule.onRegistered(messaging, (fid) => {
-        const token = String(fid || "").trim();
-        if (token) finish(resolve, { provider: "fcm-fid", token });
-      });
-      messagingModule.register(messaging, tokenOptions).catch((error) => finish(reject, error));
-    } catch (error) {
-      finish(reject, error);
-    }
-  });
 }
 
 async function getCompatFirebaseApp(firebaseConfig) {

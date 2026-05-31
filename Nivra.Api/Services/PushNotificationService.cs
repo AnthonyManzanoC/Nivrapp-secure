@@ -3,8 +3,11 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using FirebaseAdmin;
+using Google.Apis.Auth.OAuth2;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 using Nivra.Api.Domain;
 using Nivra.Api.Infrastructure;
@@ -32,9 +35,11 @@ public sealed class PushNotificationService(
     IServiceScopeFactory scopeFactory,
     IHttpClientFactory httpClientFactory,
     IDataProtectionProvider dataProtectionProvider,
+    IConfiguration configuration,
     IOptionsMonitor<NivraPushOptions> options,
     ILogger<PushNotificationService> logger)
 {
+    private static readonly object FirebaseAppLock = new();
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
     {
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
@@ -43,9 +48,23 @@ public sealed class PushNotificationService(
     private readonly IDataProtector _tokenProtector = dataProtectionProvider.CreateProtector("Nivra.PushTokens.v1");
     private readonly SemaphoreSlim _accessTokenLock = new(1, 1);
     private string? _accessToken;
+    private string? _accessTokenCredentialKey;
     private DateTimeOffset _accessTokenExpiresAt;
 
-    public bool IsConfigured => IsFcmConfigured(options.CurrentValue);
+    public bool IsConfigured
+    {
+        get
+        {
+            try
+            {
+                return ResolveFcmRuntimeConfig(options.CurrentValue, initializeFirebaseApp: true) is not null;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+    }
 
     public string ProtectToken(string token)
     {
@@ -175,7 +194,18 @@ public sealed class PushNotificationService(
         bool? includeNotificationPayloadOverride = null)
     {
         var pushOptions = options.CurrentValue;
-        if (!IsFcmConfigured(pushOptions))
+        FcmRuntimeConfig? fcmConfig;
+        try
+        {
+            fcmConfig = ResolveFcmRuntimeConfig(pushOptions, initializeFirebaseApp: true);
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Push notification skipped because FCM is not ready.");
+            return;
+        }
+
+        if (fcmConfig is null)
         {
             return;
         }
@@ -187,10 +217,7 @@ public sealed class PushNotificationService(
                 token.RevokedAt == null &&
                 (token.Provider == "fcm" ||
                  token.Provider == "Fcm" ||
-                 token.Provider == "FCM" ||
-                 token.Provider == "fcm-fid" ||
-                 token.Provider == "FcmFid" ||
-                 token.Provider == "FCM-FID"))
+                 token.Provider == "FCM"))
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
         {
@@ -207,7 +234,7 @@ public sealed class PushNotificationService(
                 continue;
             }
 
-            var result = await SendFcmAsync(pushOptions, rawToken, title, body, data, includeNotificationPayload, cancellationToken);
+            var result = await SendFcmAsync(fcmConfig, rawToken, title, body, data, includeNotificationPayload, cancellationToken);
             if (result.InvalidToken)
             {
                 token.RevokedAt = DateTimeOffset.UtcNow;
@@ -222,7 +249,7 @@ public sealed class PushNotificationService(
     }
 
     private async Task<FcmSendResult> SendFcmAsync(
-        NivraPushOptions pushOptions,
+        FcmRuntimeConfig fcmConfig,
         string token,
         string title,
         string body,
@@ -232,11 +259,11 @@ public sealed class PushNotificationService(
     {
         try
         {
-            var accessToken = await GetAccessTokenAsync(pushOptions.Fcm, cancellationToken);
+            var accessToken = await GetAccessTokenAsync(fcmConfig, cancellationToken);
             var client = httpClientFactory.CreateClient();
             using var request = new HttpRequestMessage(
                 HttpMethod.Post,
-                $"https://fcm.googleapis.com/v1/projects/{Uri.EscapeDataString(pushOptions.Fcm.ProjectId)}/messages:send");
+                $"https://fcm.googleapis.com/v1/projects/{Uri.EscapeDataString(fcmConfig.ProjectId)}/messages:send");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Content = new StringContent(
                 JsonSerializer.Serialize(new { message = CreateFcmMessage(token, title, body, data, includeNotificationPayload) }, JsonOptions),
@@ -279,6 +306,8 @@ public sealed class PushNotificationService(
         var isIncomingCall = normalizedType.Contains("call", StringComparison.Ordinal) && !isTerminalCall;
         var isCall = isIncomingCall || isTerminalCall;
         var channelId = isCall ? "nivra_calls" : "nivra_messages";
+        var androidTtl = isIncomingCall ? "75s" : isTerminalCall ? "300s" : "86400s";
+        var webTtl = isIncomingCall ? "75" : isTerminalCall ? "300" : "86400";
         var pushData = data.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal);
         pushData["title"] = title;
         pushData["body"] = body;
@@ -289,7 +318,7 @@ public sealed class PushNotificationService(
             ["android"] = new Dictionary<string, object?>
             {
                 ["priority"] = "HIGH",
-                ["ttl"] = "0s",
+                ["ttl"] = androidTtl,
                 ["collapse_key"] = tag,
                 ["notification"] = new Dictionary<string, object?>
                 {
@@ -306,7 +335,11 @@ public sealed class PushNotificationService(
             {
                 ["headers"] = new Dictionary<string, string>
                 {
-                    ["apns-priority"] = "10"
+                    ["apns-priority"] = "10",
+                    ["apns-expiration"] = DateTimeOffset.UtcNow
+                        .AddSeconds(int.Parse(webTtl, System.Globalization.CultureInfo.InvariantCulture))
+                        .ToUnixTimeSeconds()
+                        .ToString(System.Globalization.CultureInfo.InvariantCulture)
                 },
                 ["payload"] = new Dictionary<string, object?>
                 {
@@ -322,7 +355,7 @@ public sealed class PushNotificationService(
                 ["headers"] = new Dictionary<string, string>
                 {
                     ["Urgency"] = "high",
-                    ["TTL"] = "0"
+                    ["TTL"] = webTtl
                 },
                 ["notification"] = new Dictionary<string, object?>
                 {
@@ -357,10 +390,71 @@ public sealed class PushNotificationService(
         return message;
     }
 
-    private async Task<string> GetAccessTokenAsync(FcmPushOptions fcmOptions, CancellationToken cancellationToken)
+    private FcmRuntimeConfig? ResolveFcmRuntimeConfig(NivraPushOptions pushOptions, bool initializeFirebaseApp)
+    {
+        if (!pushOptions.Enabled)
+        {
+            return null;
+        }
+
+        if (!string.Equals(pushOptions.Provider, "Fcm", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        try
+        {
+            var fcmOptions = EffectiveFcmOptions(pushOptions.Fcm);
+            if (!HasFcmCredentialSource(fcmOptions))
+            {
+                throw new InvalidOperationException(
+                    "FCM is enabled but no service account credentials were configured. Set Push__Fcm__ServiceAccountPath to the Render secret file path, for example /etc/secrets/firebase-key.json.");
+            }
+
+            var account = FcmServiceAccount.FromOptions(fcmOptions, initializeFirebaseApp);
+            var projectId = FirstNonBlank(fcmOptions.ProjectId, account.ProjectId);
+            if (string.IsNullOrWhiteSpace(projectId))
+            {
+                throw new InvalidOperationException(
+                    "FCM project id is missing. Set Push__Fcm__ProjectId or include project_id in the Firebase service account JSON.");
+            }
+
+            if (string.IsNullOrWhiteSpace(account.ClientEmail) || string.IsNullOrWhiteSpace(account.PrivateKey))
+            {
+                throw new InvalidOperationException(
+                    "FCM service account JSON is missing client_email or private_key.");
+            }
+
+            return new FcmRuntimeConfig(projectId, fcmOptions, account);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "FCM could not be configured. Check Push__Fcm__ServiceAccountPath and the Render secret file.");
+            throw new InvalidOperationException(
+                "FCM could not be configured. Check Push__Fcm__ServiceAccountPath and the Render secret file.",
+                exception);
+        }
+    }
+
+    private FcmPushOptions EffectiveFcmOptions(FcmPushOptions fcmOptions)
+    {
+        return new FcmPushOptions
+        {
+            ProjectId = FirstNonBlank(fcmOptions.ProjectId, configuration["Push:Fcm:ProjectId"], configuration["Push__Fcm__ProjectId"]),
+            ServiceAccountPath = FirstNonBlank(fcmOptions.ServiceAccountPath, configuration["Push:Fcm:ServiceAccountPath"], configuration["Push__Fcm__ServiceAccountPath"]),
+            ServiceAccountJson = FirstNonBlank(fcmOptions.ServiceAccountJson, configuration["Push:Fcm:ServiceAccountJson"], configuration["Push__Fcm__ServiceAccountJson"]),
+            ServiceAccountJsonBase64 = FirstNonBlank(fcmOptions.ServiceAccountJsonBase64, configuration["Push:Fcm:ServiceAccountJsonBase64"], configuration["Push__Fcm__ServiceAccountJsonBase64"]),
+            TokenUri = FirstNonBlank(fcmOptions.TokenUri, configuration["Push:Fcm:TokenUri"], configuration["Push__Fcm__TokenUri"], "https://oauth2.googleapis.com/token")
+        };
+    }
+
+    private async Task<string> GetAccessTokenAsync(FcmRuntimeConfig fcmConfig, CancellationToken cancellationToken)
     {
         var now = DateTimeOffset.UtcNow;
-        if (!string.IsNullOrWhiteSpace(_accessToken) && _accessTokenExpiresAt > now.AddMinutes(5))
+        var credentialKey = $"{fcmConfig.ProjectId}:{fcmConfig.Account.ClientEmail}";
+        if (_accessTokenCredentialKey == credentialKey &&
+            !string.IsNullOrWhiteSpace(_accessToken) &&
+            _accessTokenExpiresAt > now.AddMinutes(5))
         {
             return _accessToken;
         }
@@ -369,13 +463,14 @@ public sealed class PushNotificationService(
         try
         {
             now = DateTimeOffset.UtcNow;
-            if (!string.IsNullOrWhiteSpace(_accessToken) && _accessTokenExpiresAt > now.AddMinutes(5))
+            if (_accessTokenCredentialKey == credentialKey &&
+                !string.IsNullOrWhiteSpace(_accessToken) &&
+                _accessTokenExpiresAt > now.AddMinutes(5))
             {
                 return _accessToken;
             }
 
-            var account = FcmServiceAccount.FromOptions(fcmOptions);
-            var assertion = CreateJwtAssertion(account, fcmOptions.TokenUri, now);
+            var assertion = CreateJwtAssertion(fcmConfig.Account, fcmConfig.Options.TokenUri, now);
             using var content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
                 ["grant_type"] = "urn:ietf:params:oauth:grant-type:jwt-bearer",
@@ -383,13 +478,14 @@ public sealed class PushNotificationService(
             });
 
             var client = httpClientFactory.CreateClient();
-            using var response = await client.PostAsync(fcmOptions.TokenUri, content, cancellationToken);
+            using var response = await client.PostAsync(fcmConfig.Options.TokenUri, content, cancellationToken);
             var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
             response.EnsureSuccessStatusCode();
             var token = JsonSerializer.Deserialize<OAuthTokenResponse>(responseBody, JsonOptions)
                 ?? throw new InvalidOperationException("FCM OAuth response did not include an access token.");
 
             _accessToken = token.AccessToken;
+            _accessTokenCredentialKey = credentialKey;
             _accessTokenExpiresAt = now.AddSeconds(Math.Max(token.ExpiresIn - 60, 60));
             return _accessToken;
         }
@@ -440,14 +536,70 @@ public sealed class PushNotificationService(
         }
     }
 
-    private static bool IsFcmConfigured(NivraPushOptions pushOptions)
+    private static bool HasFcmCredentialSource(FcmPushOptions fcmOptions)
     {
-        return pushOptions.Enabled &&
-            string.Equals(pushOptions.Provider, "Fcm", StringComparison.OrdinalIgnoreCase) &&
-            !string.IsNullOrWhiteSpace(pushOptions.Fcm.ProjectId) &&
-            (!string.IsNullOrWhiteSpace(pushOptions.Fcm.ServiceAccountPath) ||
-             !string.IsNullOrWhiteSpace(pushOptions.Fcm.ServiceAccountJson) ||
-             !string.IsNullOrWhiteSpace(pushOptions.Fcm.ServiceAccountJsonBase64));
+        return !string.IsNullOrWhiteSpace(fcmOptions.ServiceAccountPath) ||
+            !string.IsNullOrWhiteSpace(fcmOptions.ServiceAccountJson) ||
+            !string.IsNullOrWhiteSpace(fcmOptions.ServiceAccountJsonBase64);
+    }
+
+    private static string FirstNonBlank(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            var clean = CleanConfigValue(value);
+            if (!string.IsNullOrWhiteSpace(clean))
+            {
+                return clean;
+            }
+        }
+
+        return "";
+    }
+
+    private static string CleanConfigValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? ""
+            : value.Trim().Trim('"', '\'').Trim();
+    }
+
+    private static void EnsureDefaultFirebaseAppFromFile(string path)
+    {
+        if (FirebaseApp.DefaultInstance == null)
+        {
+            lock (FirebaseAppLock)
+            {
+                if (FirebaseApp.DefaultInstance == null)
+                {
+#pragma warning disable CS0618
+                    FirebaseApp.Create(new AppOptions()
+                    {
+                        Credential = GoogleCredential.FromFile(path)
+                    });
+#pragma warning restore CS0618
+                }
+            }
+        }
+    }
+
+    private static void EnsureDefaultFirebaseAppFromJson(string json)
+    {
+        if (FirebaseApp.DefaultInstance == null)
+        {
+            lock (FirebaseAppLock)
+            {
+                if (FirebaseApp.DefaultInstance == null)
+                {
+#pragma warning disable CS0618
+                    FirebaseApp.Create(new AppOptions
+                    {
+                        Credential = GoogleCredential.FromJson(json)
+                    });
+#pragma warning restore CS0618
+                }
+            }
+        }
     }
 
     private static string Base64Url(byte[] value)
@@ -461,6 +613,11 @@ public sealed class PushNotificationService(
     private sealed record OAuthTokenResponse(
         [property: JsonPropertyName("access_token")] string AccessToken,
         [property: JsonPropertyName("expires_in")] int ExpiresIn);
+
+    private sealed record FcmRuntimeConfig(
+        string ProjectId,
+        FcmPushOptions Options,
+        FcmServiceAccount Account);
 
     private sealed record FcmSendResult(bool InvalidToken)
     {
@@ -479,16 +636,37 @@ public sealed class PushNotificationService(
 
     private sealed record FcmServiceAccount(string ProjectId, string ClientEmail, string PrivateKey)
     {
-        public static FcmServiceAccount FromOptions(FcmPushOptions options)
+        public static FcmServiceAccount FromOptions(FcmPushOptions options, bool initializeFirebaseApp)
         {
             var json = options.ServiceAccountJson;
             if (string.IsNullOrWhiteSpace(json) && !string.IsNullOrWhiteSpace(options.ServiceAccountJsonBase64))
             {
                 json = Encoding.UTF8.GetString(Convert.FromBase64String(options.ServiceAccountJsonBase64));
+                if (initializeFirebaseApp)
+                {
+                    EnsureDefaultFirebaseAppFromJson(json);
+                }
             }
             if (string.IsNullOrWhiteSpace(json) && !string.IsNullOrWhiteSpace(options.ServiceAccountPath))
             {
-                json = File.ReadAllText(ResolveConfiguredPath(options.ServiceAccountPath));
+                var path = ResolveConfiguredPath(options.ServiceAccountPath);
+                if (!File.Exists(path))
+                {
+                    throw new FileNotFoundException(
+                        $"FCM service account file was not found at '{path}'. Check Render Secret Files and Push__Fcm__ServiceAccountPath.",
+                        path);
+                }
+
+                if (initializeFirebaseApp)
+                {
+                    EnsureDefaultFirebaseAppFromFile(path);
+                }
+
+                json = File.ReadAllText(path);
+            }
+            else if (initializeFirebaseApp && !string.IsNullOrWhiteSpace(json))
+            {
+                EnsureDefaultFirebaseAppFromJson(json);
             }
 
             if (string.IsNullOrWhiteSpace(json))

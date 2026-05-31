@@ -1,4 +1,4 @@
-const CACHE_NAME = "nivra-shell-v15";
+const CACHE_NAME = "nivra-shell-v18";
 const SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -14,6 +14,31 @@ const SHELL_ASSETS = [
   "/assets/icon-192.png",
   "/assets/icon-512.png"
 ];
+const RECENT_NOTIFICATION_WINDOW_MS = 2500;
+const recentNotificationKeys = new Map();
+
+self.window = self;
+
+try {
+  importScripts("/native-config.js");
+} catch {
+  // The shell still works offline; foreground code can retry push setup.
+}
+
+const FIREBASE_SDK_VERSION = self.NIVRA_FIREBASE_SDK_VERSION || "12.14.0";
+const FIREBASE_CONFIG = self.NIVRA_FIREBASE_CONFIG || null;
+
+if (FIREBASE_CONFIG) {
+  try {
+    importScripts(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app-compat.js`);
+    importScripts(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-messaging-compat.js`);
+    self.firebase.initializeApp(FIREBASE_CONFIG);
+    const messaging = self.firebase.messaging();
+    messaging.onBackgroundMessage((payload) => handlePushPayload(payload, "firebase"));
+  } catch (error) {
+    console.warn("Firebase messaging could not initialize in the app worker.", error);
+  }
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -76,20 +101,7 @@ self.addEventListener("fetch", (event) => {
 });
 
 self.addEventListener("push", (event) => {
-  const payload = readPushPayload(event);
-  const notification = payload.notification || payload.webpush?.notification || {};
-  const data = normalizePushData(payload);
-  if (isTerminalCallData(data)) {
-    event.waitUntil(closeCallNotifications(data));
-    return;
-  }
-
-  const title = data.title || payload.title || notification.title || "Nivra";
-  const body = data.body || payload.body || notification.body || "Nuevo evento privado";
-
-  event.waitUntil(
-    self.registration.showNotification(title, notificationOptions(body, data, notification))
-  );
+  event.waitUntil(handlePushPayload(readPushPayload(event), "push"));
 });
 
 self.addEventListener("notificationclick", (event) => {
@@ -128,6 +140,44 @@ function readPushPayload(event) {
       return {};
     }
   }
+}
+
+async function handlePushPayload(payload = {}, source = "push") {
+  const notification = payload.notification || payload.webpush?.notification || {};
+  const data = normalizePushData(payload);
+  if (isTerminalCallData(data)) {
+    return closeCallNotifications(data);
+  }
+
+  const title = data.title || payload.title || notification.title || "Nivra";
+  const body = data.body || payload.body || notification.body || "Nuevo evento privado";
+  const key = notificationDedupeKey(title, body, data);
+  if (!rememberNotificationKey(key)) return;
+
+  return self.registration.showNotification(title, notificationOptions(body, data, notification));
+}
+
+function notificationDedupeKey(title, body, data = {}) {
+  return [
+    data.tag,
+    data.callId,
+    data.messageId,
+    data.conversationId,
+    title,
+    body
+  ].filter(Boolean).map(String).join(":") || "nivra-event";
+}
+
+function rememberNotificationKey(key) {
+  const now = Date.now();
+  for (const [itemKey, seenAt] of recentNotificationKeys.entries()) {
+    if (now - seenAt > RECENT_NOTIFICATION_WINDOW_MS) {
+      recentNotificationKeys.delete(itemKey);
+    }
+  }
+  const lastSeenAt = recentNotificationKeys.get(key) || 0;
+  recentNotificationKeys.set(key, now);
+  return now - lastSeenAt > RECENT_NOTIFICATION_WINDOW_MS;
 }
 
 function normalizePushData(payload = {}) {

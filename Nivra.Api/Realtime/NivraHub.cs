@@ -75,7 +75,7 @@ public sealed class NivraHub(
         await Groups.AddToGroupAsync(Context.ConnectionId, GroupsFor.User(currentUser.UserId));
         await Groups.AddToGroupAsync(Context.ConnectionId, GroupsFor.Device(currentUser.DeviceId));
         presence.Connect(currentUser.UserId, Context.ConnectionId);
-        await Clients.All.SendAsync("presence.changed", new PresenceResponse(currentUser.UserId, true, now), Context.ConnectionAborted);
+        await BroadcastPresenceAsync(currentUser.UserId, true, now, Context.ConnectionAborted);
         await base.OnConnectedAsync();
     }
 
@@ -91,7 +91,7 @@ public sealed class NivraHub(
                 device.LastSeenAt = now;
                 await store.SaveChangesAsync(CancellationToken.None);
             }
-            await Clients.All.SendAsync("presence.changed", new PresenceResponse(currentUser.UserId, presence.IsConnected(currentUser.UserId), now), CancellationToken.None);
+            await BroadcastPresenceAsync(currentUser.UserId, presence.IsConnected(currentUser.UserId), now, CancellationToken.None);
 
             if (Context.Items.TryGetValue("vault_rooms", out var value) &&
                 value is HashSet<string> roomIds)
@@ -134,6 +134,53 @@ public sealed class NivraHub(
         }
 
         await base.OnDisconnectedAsync(exception);
+    }
+
+    private async Task BroadcastPresenceAsync(string userId, bool online, DateTimeOffset at, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var audience = new HashSet<string>(StringComparer.Ordinal) { userId };
+            var conversations = await db.Conversations
+                .AsNoTracking()
+                .Where(conversation => conversation.Participants.Any(participant => participant.UserId == userId && participant.RemovedAt == null))
+                .OrderByDescending(conversation => conversation.LastMessageAt ?? conversation.UpdatedAt)
+                .Take(300)
+                .ToListAsync(cancellationToken);
+
+            foreach (var participant in conversations.SelectMany(conversation => conversation.Participants))
+            {
+                if (participant.RemovedAt is null && !string.IsNullOrWhiteSpace(participant.UserId))
+                {
+                    audience.Add(participant.UserId);
+                }
+            }
+
+            var contacts = await db.Contacts
+                .AsNoTracking()
+                .Where(contact => contact.OwnerUserId == userId || contact.ContactUserId == userId)
+                .Select(contact => new { contact.OwnerUserId, contact.ContactUserId })
+                .Take(1000)
+                .ToListAsync(cancellationToken);
+
+            foreach (var contact in contacts)
+            {
+                audience.Add(contact.OwnerUserId == userId ? contact.ContactUserId : contact.OwnerUserId);
+            }
+
+            var response = new PresenceResponse(userId, online, at);
+            foreach (var targetUserId in audience)
+            {
+                await Clients.Group(GroupsFor.User(targetUserId)).SendAsync("presence.changed", response, cancellationToken);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        catch (Exception broadcastException)
+        {
+            logger.LogWarning(broadcastException, "Presence broadcast could not complete for user {UserId}.", userId);
+        }
     }
 
     public string GetConnectionId() => Context.ConnectionId;
