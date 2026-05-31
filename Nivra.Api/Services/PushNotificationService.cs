@@ -22,6 +22,7 @@ public sealed class NivraPushOptions
 public sealed class FcmPushOptions
 {
     public string ProjectId { get; init; } = "";
+    public string ServiceAccountPath { get; init; } = "";
     public string ServiceAccountJson { get; init; } = "";
     public string ServiceAccountJsonBase64 { get; init; } = "";
     public string TokenUri { get; init; } = "https://oauth2.googleapis.com/token";
@@ -283,7 +284,7 @@ public sealed class PushNotificationService(
             ["android"] = new Dictionary<string, object?>
             {
                 ["priority"] = "HIGH",
-                ["ttl"] = isCall ? "0s" : "86400s",
+                ["ttl"] = "0s",
                 ["collapse_key"] = tag,
                 ["notification"] = new Dictionary<string, object?>
                 {
@@ -315,8 +316,8 @@ public sealed class PushNotificationService(
             {
                 ["headers"] = new Dictionary<string, string>
                 {
-                    ["Urgency"] = isCall ? "high" : "normal",
-                    ["TTL"] = isCall ? "0" : "86400"
+                    ["Urgency"] = "high",
+                    ["TTL"] = "0"
                 },
                 ["notification"] = new Dictionary<string, object?>
                 {
@@ -439,7 +440,8 @@ public sealed class PushNotificationService(
         return pushOptions.Enabled &&
             string.Equals(pushOptions.Provider, "Fcm", StringComparison.OrdinalIgnoreCase) &&
             !string.IsNullOrWhiteSpace(pushOptions.Fcm.ProjectId) &&
-            (!string.IsNullOrWhiteSpace(pushOptions.Fcm.ServiceAccountJson) ||
+            (!string.IsNullOrWhiteSpace(pushOptions.Fcm.ServiceAccountPath) ||
+             !string.IsNullOrWhiteSpace(pushOptions.Fcm.ServiceAccountJson) ||
              !string.IsNullOrWhiteSpace(pushOptions.Fcm.ServiceAccountJsonBase64));
     }
 
@@ -477,6 +479,15 @@ public sealed class PushNotificationService(
             {
                 json = Encoding.UTF8.GetString(Convert.FromBase64String(options.ServiceAccountJsonBase64));
             }
+            if (string.IsNullOrWhiteSpace(json) && !string.IsNullOrWhiteSpace(options.ServiceAccountPath))
+            {
+                json = File.ReadAllText(ResolveConfiguredPath(options.ServiceAccountPath));
+            }
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                throw new InvalidOperationException("Push:Fcm service account credentials are not configured.");
+            }
 
             using var document = JsonDocument.Parse(json);
             var root = document.RootElement;
@@ -484,6 +495,19 @@ public sealed class PushNotificationService(
                 root.TryGetProperty("project_id", out var projectId) ? projectId.GetString() ?? options.ProjectId : options.ProjectId,
                 root.GetProperty("client_email").GetString() ?? "",
                 root.GetProperty("private_key").GetString() ?? "");
+        }
+
+        private static string ResolveConfiguredPath(string path)
+        {
+            var expanded = Environment.ExpandEnvironmentVariables(path.Trim());
+            if (expanded.StartsWith("~/", StringComparison.Ordinal) ||
+                expanded.StartsWith("~\\", StringComparison.Ordinal))
+            {
+                var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+                expanded = Path.Combine(home, expanded[2..]);
+            }
+
+            return Path.GetFullPath(expanded);
         }
     }
 }

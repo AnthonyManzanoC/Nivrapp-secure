@@ -8826,6 +8826,7 @@ function isFirebaseWebConfigReady(firebaseConfig, vapidKey) {
     firebaseConfig?.projectId &&
     firebaseConfig?.messagingSenderId &&
     firebaseConfig?.appId &&
+    String(firebaseConfig.appId).includes(":web:") &&
     String(vapidKey || "").trim().length > 20);
 }
 

@@ -9,7 +9,7 @@ window.NIVRA_PUSH_TOKEN = window.NIVRA_PUSH_TOKEN || "";
 window.NIVRA_FIREBASE_VAPID_KEY = "BI-QXrOQJ14bj9GWZ5_ZniwQ63HxBW1E2nOq0LCe-fHME72yyuXQz2nRdEjSqstpw7IQNOE9U8fx8l9tGrbYHBY";
 
 window.NIVRA_FIREBASE_CONFIG = {
-  apiKey: "AIzaSyAEt5JSj2tZuX2BV56sgtFwpW4SHHt9zRQ",
+  apiKey: "AIzaSyC4TZyBBy6Hj_2vgAngbuN8QD6ND48GEyg",
   authDomain: "nivra-af67e.firebaseapp.com",
   projectId: "nivra-af67e",
   storageBucket: "nivra-af67e.firebasestorage.app",
