@@ -95,8 +95,7 @@ public sealed class PushNotificationService(
                 ["conversationId"] = conversationId ?? "",
                 ["tag"] = $"nivra-call-{callId}"
             },
-            cancellationToken,
-            includeNotificationPayloadOverride: false);
+            cancellationToken);
     }
 
     public async Task SendMissedCallAsync(
@@ -222,6 +221,9 @@ public sealed class PushNotificationService(
         bool includeNotificationPayload)
     {
         var tag = data.TryGetValue("tag", out var value) ? value : "nivra-event";
+        var isIncomingCall = data.TryGetValue("type", out var type) &&
+            type.Contains("call", StringComparison.OrdinalIgnoreCase) &&
+            !type.Contains("missed", StringComparison.OrdinalIgnoreCase);
         var message = new Dictionary<string, object?>
         {
             ["token"] = token,
@@ -229,13 +231,16 @@ public sealed class PushNotificationService(
             ["android"] = new Dictionary<string, object?>
             {
                 ["priority"] = "HIGH",
-                ["notification"] = includeNotificationPayload
-                    ? new Dictionary<string, object?>
-                    {
-                        ["channel_id"] = "nivra_messages",
-                        ["tag"] = tag
-                    }
-                    : null
+                ["notification"] = new Dictionary<string, object?>
+                {
+                    ["title"] = title,
+                    ["body"] = body,
+                    ["channel_id"] = "nivra_messages",
+                    ["tag"] = tag,
+                    ["sound"] = "default",
+                    ["default_sound"] = true,
+                    ["notification_priority"] = isIncomingCall ? "PRIORITY_MAX" : "PRIORITY_HIGH"
+                }
             },
             ["apns"] = new Dictionary<string, object?>
             {
@@ -260,7 +265,17 @@ public sealed class PushNotificationService(
                     ["body"] = body,
                     ["icon"] = "/assets/icon-192.png",
                     ["badge"] = "/assets/icon-192.png",
-                    ["tag"] = tag
+                    ["tag"] = tag,
+                    ["requireInteraction"] = isIncomingCall,
+                    ["renotify"] = isIncomingCall,
+                    ["silent"] = false,
+                    ["actions"] = isIncomingCall
+                        ? new[]
+                        {
+                            new Dictionary<string, string> { ["action"] = "accept", ["title"] = "Contestar" },
+                            new Dictionary<string, string> { ["action"] = "decline", ["title"] = "Rechazar" }
+                        }
+                        : Array.Empty<Dictionary<string, string>>()
                 }
             }
         };

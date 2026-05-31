@@ -960,13 +960,12 @@ public static partial class EndpointExtensions
                 await hub.Clients.Group(GroupsFor.Device(recipient.DeviceId)).SendAsync("message.received", ToMessageResponse(message), cancellationToken);
             }
 
-            var offlineUserIds = message.Recipients
+            var pushUserIds = message.Recipients
                 .Where(recipient => recipient.UserId != current.UserId)
                 .Select(recipient => recipient.UserId)
                 .Distinct(StringComparer.Ordinal)
-                .Where(userId => !presence.IsConnected(userId))
                 .ToList();
-            foreach (var userId in offlineUserIds)
+            foreach (var userId in pushUserIds)
             {
                 await pushNotifications.SendMessageAsync(userId, conversation.Id, message.Id, current.UserId, cancellationToken);
             }

@@ -1,4 +1,4 @@
-const CACHE_NAME = "nivra-shell-v7";
+const CACHE_NAME = "nivra-shell-v9";
 const SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -81,23 +81,9 @@ self.addEventListener("push", (event) => {
   const data = payload.data || payload;
   const title = payload.title || notification.title || "Nivra";
   const body = payload.body || notification.body || "Nuevo evento privado";
-  const isCall = isIncomingCallData(data);
 
   event.waitUntil(
-    self.registration.showNotification(title, {
-      body,
-      icon: "/assets/icon-192.png",
-      badge: "/assets/icon-192.png",
-      tag: data.tag || data.conversationId || "nivra-event",
-      data,
-      requireInteraction: isCall,
-      actions: isCall
-        ? [
-            { action: "accept", title: "Contestar" },
-            { action: "decline", title: "Rechazar" }
-          ]
-        : []
-    })
+    self.registration.showNotification(title, notificationOptions(title, body, data))
   );
 });
 
@@ -105,9 +91,7 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const action = event.action || "";
-  const targetUrl = data.conversationId
-    ? `/?conversationId=${encodeURIComponent(data.conversationId)}`
-    : "/";
+  const targetUrl = pushTargetUrl(data, action);
 
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
@@ -143,6 +127,42 @@ function isFreshShellAsset(pathname) {
     pathname === "/native-config.js" ||
     pathname === "/firebase-messaging-sw.js" ||
     pathname === "/sw.js";
+}
+
+function notificationOptions(title, body, data = {}) {
+  const isCall = isIncomingCallData(data);
+  return {
+    body,
+    icon: "/assets/icon-192.png",
+    badge: "/assets/icon-192.png",
+    tag: data.tag || data.conversationId || data.callId || "nivra-event",
+    data,
+    requireInteraction: isCall,
+    renotify: isCall,
+    silent: false,
+    vibrate: isCall ? [320, 140, 320, 140, 480] : [80, 40, 80],
+    timestamp: Date.now(),
+    actions: isCall
+      ? [
+          { action: "accept", title: "Contestar" },
+          { action: "decline", title: "Rechazar" }
+        ]
+      : []
+  };
+}
+
+function pushTargetUrl(data = {}, action = "") {
+  const params = new URLSearchParams();
+  if (data.conversationId) params.set("conversationId", data.conversationId);
+  if (data.callId) params.set("callId", data.callId);
+  if (data.callerId) params.set("callerId", data.callerId);
+  if (data.callerUserId) params.set("callerUserId", data.callerUserId);
+  if (data.callerName) params.set("callerName", data.callerName);
+  if (data.callType) params.set("callType", data.callType);
+  if (data.type) params.set("type", data.type);
+  if (action) params.set("pushAction", action);
+  const query = params.toString();
+  return query ? `/?${query}` : "/";
 }
 
 function isIncomingCallData(data = {}) {

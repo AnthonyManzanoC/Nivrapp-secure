@@ -23,21 +23,9 @@ if (FIREBASE_CONFIG) {
     messaging.onBackgroundMessage((payload) => {
       const data = payload?.data || {};
       const notification = payload?.notification || {};
-      const isCall = isIncomingCallData(data);
-      self.registration.showNotification(notification.title || "Nivra", {
-        body: notification.body || (isCall ? "Llamada entrante" : "Nuevo evento privado"),
-        icon: "/assets/icon-192.png",
-        badge: "/assets/icon-192.png",
-        tag: data.tag || data.conversationId || data.callId || "nivra-event",
-        data,
-        requireInteraction: isCall,
-        actions: isCall
-          ? [
-              { action: "accept", title: "Contestar" },
-              { action: "decline", title: "Rechazar" }
-            ]
-          : []
-      });
+      const title = notification.title || "Nivra";
+      const body = notification.body || (isIncomingCallData(data) ? "Llamada entrante" : "Nuevo evento privado");
+      return self.registration.showNotification(title, notificationOptions(body, data));
     });
   } catch (error) {
     console.warn("Firebase messaging worker could not initialize.", error);
@@ -48,9 +36,7 @@ self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const data = event.notification.data || {};
   const action = event.action || "";
-  const targetUrl = data.conversationId
-    ? `/?conversationId=${encodeURIComponent(data.conversationId)}`
-    : "/";
+  const targetUrl = pushTargetUrl(data, action);
 
   event.waitUntil(
     clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
@@ -63,6 +49,42 @@ self.addEventListener("notificationclick", (event) => {
     })
   );
 });
+
+function notificationOptions(body, data = {}) {
+  const isCall = isIncomingCallData(data);
+  return {
+    body,
+    icon: "/assets/icon-192.png",
+    badge: "/assets/icon-192.png",
+    tag: data.tag || data.conversationId || data.callId || "nivra-event",
+    data,
+    requireInteraction: isCall,
+    renotify: isCall,
+    silent: false,
+    vibrate: isCall ? [320, 140, 320, 140, 480] : [80, 40, 80],
+    timestamp: Date.now(),
+    actions: isCall
+      ? [
+          { action: "accept", title: "Contestar" },
+          { action: "decline", title: "Rechazar" }
+        ]
+      : []
+  };
+}
+
+function pushTargetUrl(data = {}, action = "") {
+  const params = new URLSearchParams();
+  if (data.conversationId) params.set("conversationId", data.conversationId);
+  if (data.callId) params.set("callId", data.callId);
+  if (data.callerId) params.set("callerId", data.callerId);
+  if (data.callerUserId) params.set("callerUserId", data.callerUserId);
+  if (data.callerName) params.set("callerName", data.callerName);
+  if (data.callType) params.set("callType", data.callType);
+  if (data.type) params.set("type", data.type);
+  if (action) params.set("pushAction", action);
+  const query = params.toString();
+  return query ? `/?${query}` : "/";
+}
 
 function isIncomingCallData(data = {}) {
   const type = String(data.type || data.Type || "").toLowerCase();

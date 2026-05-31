@@ -68,10 +68,14 @@ builder.Services.AddRateLimiter(options =>
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
-        var key = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var current = context.GetCurrentUser();
+        var key = current is not null
+            ? $"user:{current.UserId}"
+            : $"ip:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+        var permitLimit = current is not null ? 1200 : 240;
         return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
         {
-            PermitLimit = 240,
+            PermitLimit = permitLimit,
             Window = TimeSpan.FromMinutes(1),
             QueueLimit = 0,
             AutoReplenishment = true
@@ -130,8 +134,8 @@ app.Use(async (context, next) =>
 });
 
 app.UseCors("NivraClients");
-app.UseRateLimiter();
 app.UseNivraAuth();
+app.UseRateLimiter();
 
 app.UseDefaultFiles();
 app.UseStaticFiles();

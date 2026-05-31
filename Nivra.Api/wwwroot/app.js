@@ -17,6 +17,7 @@ const QR_LOGIN_TTL_MS = 2 * 60 * 1000;
 const SYNC_POLL_MS = 7000;
 const SYNC_MIN_INTERVAL_MS = 1200;
 const MESSAGE_PAGE_SIZE = 50;
+const CHAT_DOM_LIMIT = 50;
 const MESSAGE_BOTTOM_THRESHOLD_PX = 100;
 const MESSAGE_SCROLL_DEBOUNCE_MS = 120;
 const SEARCH_DEBOUNCE_MS = 600;
@@ -35,6 +36,9 @@ const LONG_PRESS_MS = 520;
 const VOICE_NOTE_MIN_DURATION_MS = 500;
 const PUSH_TOKEN_ENDPOINT = "/push-tokens";
 const FIREBASE_SDK_VERSION = window.NIVRA_FIREBASE_SDK_VERSION || "10.13.2";
+const REQUEST_TIMEOUT_MS = 20000;
+const UPLOAD_REQUEST_TIMEOUT_MS = 120000;
+const PUSH_REGISTRATION_RETRY_DELAYS_MS = [5000, 15000, 60000, 180000];
 
 class LocalStore {
   constructor(dbName = LOCAL_DB_NAME, version = LOCAL_DB_VERSION) {
@@ -362,7 +366,8 @@ const state = {
     remoteStreams: new Map(),
     remoteStates: new Map(),
     pendingSignals: [],
-    startedAt: null
+    startedAt: null,
+    minimized: false
   },
   camera: {
     stream: null,
@@ -410,6 +415,7 @@ const state = {
   vaultMessages: new Map(),
   messages: new Map(),
   messagePaging: new Map(),
+  messageDomWindows: new Map(),
   mediaCache: new Map(),
   objectUrls: new Set(),
   seenMessageIds: new Set(loadJson("nivra.seen") || []),
@@ -428,6 +434,11 @@ const state = {
   pushReady: false,
   pushRegistering: false,
   pushListenersReady: false,
+  localNotificationsReady: false,
+  pushRegistration: null,
+  pushRetryTimer: null,
+  pushRetryAttempt: 0,
+  launchPush: null,
   retentionTimer: null,
   searchTimer: null,
   contactSearchTimer: null,
@@ -553,6 +564,7 @@ function syncShellClasses() {
 async function init() {
   await localStore.open().catch(() => null);
   await migrateLegacyKeyMaterial().catch(() => {});
+  setupVisualViewportKeyboard();
   applyLaunchParams();
   registerServiceWorker();
   bindIncomingCallOverlayEvents();
@@ -562,6 +574,11 @@ async function init() {
   render();
   if (state.auth?.tokens?.accessToken) {
     await bootstrap();
+    if (state.launchPush) {
+      const launchPush = state.launchPush;
+      state.launchPush = null;
+      await handlePushNavigation(launchPush, { action: launchPush.pushAction || "" }).catch(() => {});
+    }
     await initializePushNotifications().catch(() => {});
     await connectRealtime();
     startPolling();
@@ -569,11 +586,48 @@ async function init() {
 }
 
 function applyLaunchParams() {
-  const conversationId = new URLSearchParams(window.location.search).get("conversationId");
-  if (!conversationId) return;
-  state.selectedConversationId = conversationId;
-  state.mobileChatOpen = true;
-  saveJson("nivra.selectedConversationId", conversationId);
+  const params = new URLSearchParams(window.location.search);
+  const conversationId = params.get("conversationId");
+  const callId = params.get("callId");
+  if (conversationId) {
+    state.selectedConversationId = conversationId;
+    state.mobileChatOpen = true;
+    saveJson("nivra.selectedConversationId", conversationId);
+  }
+  if (callId) {
+    state.launchPush = {
+      type: params.get("type") || "incoming_call",
+      callId,
+      conversationId: conversationId || "",
+      callerId: params.get("callerId") || params.get("callerUserId") || "",
+      callerUserId: params.get("callerUserId") || params.get("callerId") || "",
+      callerName: params.get("callerName") || "",
+      callType: params.get("callType") || params.get("type") || "",
+      pushAction: params.get("pushAction") || ""
+    };
+  }
+}
+
+function setupVisualViewportKeyboard() {
+  if (setupVisualViewportKeyboard.ready) return;
+  setupVisualViewportKeyboard.ready = true;
+  const root = document.documentElement;
+  const apply = () => {
+    const viewport = window.visualViewport;
+    const height = Math.max(320, Math.round(viewport?.height || window.innerHeight || document.documentElement.clientHeight));
+    const layoutHeight = window.innerHeight || height;
+    const keyboardBottom = viewport
+      ? Math.max(0, Math.round(layoutHeight - viewport.height - viewport.offsetTop))
+      : 0;
+    root.style.setProperty("--app-viewport-height", `${height}px`);
+    root.style.setProperty("--keyboard-bottom", `${keyboardBottom}px`);
+    document.body.classList.toggle("keyboard-open", keyboardBottom > 80);
+  };
+  window.visualViewport?.addEventListener("resize", apply, { passive: true });
+  window.visualViewport?.addEventListener("scroll", apply, { passive: true });
+  window.addEventListener("resize", apply, { passive: true });
+  window.addEventListener("orientationchange", () => setTimeout(apply, 80), { passive: true });
+  apply();
 }
 
 function listenForServiceWorkerMessages() {
@@ -593,6 +647,7 @@ function setupConnectivityListeners() {
   window.addEventListener("online", () => {
     toast("Conexion recuperada. Sincronizando...");
     connectRealtime().catch(() => {});
+    flushPushTokenRegistration().catch(() => {});
     syncPendingMessages("online", { force: true }).catch(() => {});
   });
   window.addEventListener("offline", () => {
@@ -601,6 +656,7 @@ function setupConnectivityListeners() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.auth?.tokens?.accessToken) {
       connectRealtime().catch(() => {});
+      flushPushTokenRegistration().catch(() => {});
       syncPendingMessages("visible", { force: true }).catch(() => {});
     }
   });
@@ -1618,7 +1674,7 @@ function renderChatView() {
     return `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>Elige o crea un chat</h2><p>Los mensajes se cifran en el cliente y viajan como paquetes opacos al backend.</p></div>`;
   }
 
-  const messages = state.messages.get(conversation.id) || [];
+  const messages = visibleChatMessages(conversation.id);
   return `
     <div class="chat-view" data-chat-view style="position: relative;">
       <div class="messages" id="messages">
@@ -1752,38 +1808,79 @@ function emptyChatHtml() {
   return `<div class="empty" data-empty-chat><img src="assets/nivra-mark.svg" alt=""><h2>Chat listo</h2><p>Escribe el primer mensaje, adjunta un archivo o inicia una llamada.</p></div>`;
 }
 
+function chatDomWindowState(conversationId) {
+  if (!conversationId) return null;
+  let windowState = state.messageDomWindows.get(conversationId);
+  if (!windowState) {
+    windowState = { start: null };
+    state.messageDomWindows.set(conversationId, windowState);
+  }
+  return windowState;
+}
+
+function clampChatDomWindow(conversationId, { stickToBottom = false } = {}) {
+  const messages = state.messages.get(conversationId) || [];
+  const windowState = chatDomWindowState(conversationId);
+  if (!windowState) return null;
+  const maxStart = Math.max(0, messages.length - CHAT_DOM_LIMIT);
+  if (stickToBottom || windowState.start === null || windowState.start === undefined) {
+    windowState.start = maxStart;
+  } else {
+    windowState.start = Math.max(0, Math.min(windowState.start, maxStart));
+  }
+  return windowState;
+}
+
+function visibleChatMessages(conversationId, options = {}) {
+  const messages = state.messages.get(conversationId) || [];
+  const windowState = clampChatDomWindow(conversationId, options);
+  const start = windowState?.start || 0;
+  return messages.slice(start, start + CHAT_DOM_LIMIT);
+}
+
+function isLatestChatDomWindow(conversationId) {
+  const messages = state.messages.get(conversationId) || [];
+  const windowState = clampChatDomWindow(conversationId);
+  return !windowState || windowState.start >= Math.max(0, messages.length - CHAT_DOM_LIMIT);
+}
+
+function resetChatDomWindow(conversationId) {
+  if (!conversationId) return;
+  state.messageDomWindows.set(conversationId, { start: null });
+  clampChatDomWindow(conversationId, { stickToBottom: true });
+}
+
+function renderMessageWindowNodes(container, messages) {
+  container.replaceChildren();
+  if (!messages.length) {
+    container.insertAdjacentHTML("beforeend", emptyChatHtml());
+    return;
+  }
+  const fragment = document.createDocumentFragment();
+  for (const message of messages) {
+    fragment.appendChild(htmlToNode(renderMessage(message)));
+  }
+  container.appendChild(fragment);
+}
+
 function renderConversationMessages(conversationId, { replace = false, scroll = true } = {}) {
   if (!conversationId || conversationId !== state.selectedConversationId) return false;
   const container = document.querySelector("#messages");
   if (!container) return false;
-  const messages = state.messages.get(conversationId) || [];
   const wasNearBottom = isNearMessagesBottom(container);
   const oldTop = container.scrollTop;
   const oldHeight = container.scrollHeight;
-  if (replace) {
-    container.replaceChildren();
-    if (!messages.length) {
-      container.insertAdjacentHTML("beforeend", emptyChatHtml());
-    } else {
-      for (const message of messages) {
-        container.insertAdjacentHTML("beforeend", renderMessage(message));
-      }
-    }
-    bindMessageGestureMenu();
-    if (scroll === "bottom") {
-      scrollMessages({ force: true });
-    } else if (scroll && wasNearBottom) {
-      scrollMessages({ force: true });
-    } else if (scroll) {
-      container.scrollTop = Math.min(oldTop + Math.max(0, container.scrollHeight - oldHeight), container.scrollHeight);
-    }
-    markVisibleMessagesRead(conversationId).catch(() => {});
-    return true;
+  const stickToBottom = scroll === "bottom" || (scroll && wasNearBottom && isLatestChatDomWindow(conversationId));
+  const messages = visibleChatMessages(conversationId, { stickToBottom });
+  renderMessageWindowNodes(container, messages);
+  bindMessageGestureMenu();
+  if (scroll === "bottom" || (scroll && wasNearBottom && isLatestChatDomWindow(conversationId))) {
+    scrollMessages({ node: container, force: true });
+    hideNewMessagesBadge();
+  } else if (scroll) {
+    container.scrollTop = Math.min(oldTop + Math.max(0, container.scrollHeight - oldHeight), container.scrollHeight);
   }
-  for (const message of messages) {
-    upsertMessageNode(conversationId, message.id, { scroll: false });
-  }
-  if (scroll) smartScrollMessages(container, { wasNearBottom, conversationId });
+  if (!replace && scroll && !wasNearBottom) showNewMessagesBadge();
   markVisibleMessagesRead(conversationId).catch(() => {});
   return true;
 }
@@ -1795,43 +1892,29 @@ function upsertMessageNode(conversationId, messageId, { scroll = true } = {}) {
   const wasNearBottom = isNearMessagesBottom(container);
   const message = (state.messages.get(conversationId) || []).find((item) => item.id === messageId);
   if (!message) {
-    const existing = container.querySelector(`[data-message-id="${cssEscape(messageId)}"]`);
-    existing?.remove();
-    if (!container.querySelector("[data-message-id]")) container.insertAdjacentHTML("beforeend", emptyChatHtml());
+    renderConversationMessages(conversationId, { replace: true, scroll: false });
     return true;
   }
-  container.querySelector("[data-empty-chat]")?.remove();
-  const existing = container.querySelector(`[data-message-id="${cssEscape(messageId)}"]`);
-  let appended = false;
-  if (existing) {
-    existing.insertAdjacentHTML("afterend", renderMessage(message));
-    existing.remove();
-  } else {
-    const messages = state.messages.get(conversationId) || [];
-    const index = messages.findIndex((item) => item.id === messageId);
-    const next = messages.slice(index + 1).find((item) => container.querySelector(`[data-message-id="${cssEscape(item.id)}"]`));
-    const nextNode = next ? container.querySelector(`[data-message-id="${cssEscape(next.id)}"]`) : null;
-    if (nextNode) {
-      nextNode.insertAdjacentHTML("beforebegin", renderMessage(message));
-    } else {
-      container.insertAdjacentHTML("beforeend", renderMessage(message));
-      appended = true;
-    }
+  const messages = state.messages.get(conversationId) || [];
+  const index = messages.findIndex((item) => item.id === messageId);
+  const windowState = clampChatDomWindow(conversationId, { stickToBottom: scroll && wasNearBottom });
+  const inWindow = index >= (windowState?.start || 0) && index < (windowState?.start || 0) + CHAT_DOM_LIMIT;
+  if (!inWindow) {
+    if (scroll) showNewMessagesBadge();
+    return false;
   }
-  if (scroll) smartScrollMessages(container, { wasNearBottom, conversationId, showBadge: appended });
-  return true;
+  return renderConversationMessages(conversationId, {
+    replace: true,
+    scroll: scroll && wasNearBottom ? "bottom" : false
+  });
 }
 
 function removeMessageNode(conversationId, messageId) {
   if (!conversationId || conversationId !== state.selectedConversationId || !messageId) return false;
-  const container = document.querySelector("#messages");
-  if (!container) return false;
-  container.querySelector(`[data-message-id="${cssEscape(messageId)}"]`)?.remove();
-  if (!container.querySelector("[data-message-id]")) container.insertAdjacentHTML("beforeend", emptyChatHtml());
-  return true;
+  return renderConversationMessages(conversationId, { replace: true, scroll: false });
 }
 
-async function loadOlderConversationMessages(conversationId) {
+async function loadOlderConversationMessages(conversationId, { renderAfter = true } = {}) {
   if (!conversationId || conversationId !== state.selectedConversationId) return;
   const paging = messagePagingState(conversationId);
   const accountKey = localAccountKey();
@@ -1849,32 +1932,61 @@ async function loadOlderConversationMessages(conversationId) {
       return;
     }
     mergeConversationMessages(conversationId, older);
-    prependMessageNodes(conversationId, older);
     updateConversationPaging(conversationId, page);
+    if (renderAfter) renderConversationMessages(conversationId, { replace: true, scroll: false });
     markVisibleMessagesRead(conversationId).catch(() => {});
+    return older.length;
   } catch (error) {
     console.warn("No se pudo cargar mas historial local.", error);
   } finally {
     paging.loading = false;
   }
+  return 0;
 }
 
 function prependMessageNodes(conversationId, messages) {
   if (!conversationId || conversationId !== state.selectedConversationId || !messages?.length) return false;
-  const container = document.querySelector("#messages");
-  if (!container) return false;
-  const oldHeight = container.scrollHeight;
-  const oldTop = container.scrollTop;
-  container.querySelector("[data-empty-chat]")?.remove();
-  const fragment = document.createDocumentFragment();
-  for (const message of [...messages].sort(compareMessagesByTime)) {
-    fragment.appendChild(htmlToNode(renderMessage(message)));
+  mergeConversationMessages(conversationId, messages);
+  const windowState = clampChatDomWindow(conversationId);
+  if (windowState) windowState.start = Math.max(0, (windowState.start || 0) - CHAT_DOM_LIMIT);
+  return renderConversationMessages(conversationId, { replace: true, scroll: false });
+}
+
+async function showPreviousMessageWindow(conversationId) {
+  if (!conversationId || conversationId !== state.selectedConversationId) return;
+  const windowState = clampChatDomWindow(conversationId);
+  if (!windowState) return;
+  if (windowState.start > 0) {
+    windowState.start = Math.max(0, windowState.start - CHAT_DOM_LIMIT);
+    renderConversationMessages(conversationId, { replace: true, scroll: false });
+    const container = document.querySelector("#messages");
+    if (container) container.scrollTop = 8;
+    return;
   }
-  const firstMessage = container.querySelector("[data-message-id]");
-  container.insertBefore(fragment, firstMessage || null);
-  container.scrollTop = container.scrollHeight - oldHeight + oldTop;
-  bindMessageGestureMenu();
-  return true;
+  const loaded = await loadOlderConversationMessages(conversationId, { renderAfter: false });
+  if (loaded > 0) {
+    windowState.start = 0;
+    renderConversationMessages(conversationId, { replace: true, scroll: false });
+    const container = document.querySelector("#messages");
+    if (container) container.scrollTop = 8;
+  }
+}
+
+function showNextMessageWindow(conversationId) {
+  if (!conversationId || conversationId !== state.selectedConversationId) return;
+  const messages = state.messages.get(conversationId) || [];
+  const windowState = clampChatDomWindow(conversationId);
+  if (!windowState) return;
+  const maxStart = Math.max(0, messages.length - CHAT_DOM_LIMIT);
+  if (windowState.start >= maxStart) {
+    hideNewMessagesBadge();
+    return;
+  }
+  windowState.start = Math.min(maxStart, windowState.start + CHAT_DOM_LIMIT);
+  renderConversationMessages(conversationId, { replace: true, scroll: false });
+  const container = document.querySelector("#messages");
+  if (container) container.scrollTop = 8;
+  if (windowState.start >= maxStart) hideNewMessagesBadge();
 }
 
 function bindMessagesScrollLoader() {
@@ -1882,11 +1994,13 @@ function bindMessagesScrollLoader() {
   if (!container || container.dataset.scrollLoaderBound === "1") return;
   container.dataset.scrollLoaderBound = "1";
   container.addEventListener("scroll", () => {
-    if (isNearMessagesBottom(container)) hideNewMessagesBadge();
+    if (isNearMessagesBottom(container) && isLatestChatDomWindow(state.selectedConversationId)) hideNewMessagesBadge();
     clearTimeout(state.messageScrollTimer);
     state.messageScrollTimer = setTimeout(() => {
       if (container.scrollTop <= 4) {
-        loadOlderConversationMessages(state.selectedConversationId).catch(() => {});
+        showPreviousMessageWindow(state.selectedConversationId).catch(() => {});
+      } else if (isNearMessagesBottom(container)) {
+        showNextMessageWindow(state.selectedConversationId);
       }
     }, MESSAGE_SCROLL_DEBOUNCE_MS);
   }, { passive: true });
@@ -2642,6 +2756,9 @@ function renderStoryModal() {
   const selectedReaction = responseState.reaction;
   const responseBusy = Boolean(responseState.sending);
   const replyText = state.drafts.storyReplyInput || "";
+  const quickReactionButtons = STORY_REACTIONS.map((item) => `
+    <button class="story-quick-reaction ${item.value === selectedReaction ? "selected" : ""}" type="button" data-story-quick-reaction="${escapeAttr(item.key)}" aria-label="Responder con reaccion" ${responseBusy ? "disabled" : ""}>${escapeHtml(item.value)}</button>
+  `).join("");
   const reactionOptions = STORY_REACTIONS.map((item) => `
     <button class="story-reaction-option ${item.value === selectedReaction ? "selected" : ""}" type="button" data-story-reaction="${escapeAttr(item.key)}" aria-label="${escapeAttr(item.key)}">${escapeHtml(item.value)}</button>
   `).join("");
@@ -2664,6 +2781,9 @@ function renderStoryModal() {
         </div>
         ${story.owner?.id !== state.auth.user.id ? `
           <div class="story-response-bar">
+            <div class="story-quick-reactions" role="group" aria-label="Reacciones rapidas">
+              ${quickReactionButtons}
+            </div>
             <form id="storyReplyForm" class="story-reply-form">
               <input class="input" id="storyReplyInput" type="text" placeholder="Responder..." value="${escapeAttr(replyText)}" autocomplete="off" ${responseBusy ? "disabled" : ""}>
               <button class="btn icon story-reaction-toggle ${selectedReaction ? "active" : ""}" type="button" id="storyReactionToggle" aria-label="Reacciones rapidas" aria-expanded="${responseState.reactionsOpen ? "true" : "false"}" ${responseBusy ? "disabled" : ""}>${selectedReaction ? escapeHtml(selectedReaction) : "&hearts;"}</button>
@@ -2746,7 +2866,7 @@ function renderCallLayer() {
   const subtitle = callSubtitle(call);
   const status = callStatusText();
   return `
-    <section class="call-layer ${isVideo ? "video" : "voice"} ${isIncoming ? "incoming" : ""}" aria-label="Llamada">
+    <section class="call-layer ${isVideo ? "video" : "voice"} ${isIncoming ? "incoming" : ""} ${state.call.minimized ? "call-minimized" : ""}" aria-label="Llamada">
       <div class="call-shell">
         <div class="call-ambient"></div>
         <header class="call-header">
@@ -2794,6 +2914,7 @@ function syncIncomingCallOverlay() {
   const call = state.call.current;
   const visible = Boolean(call && state.call.phase === "incoming");
   overlay.classList.toggle("hidden", !visible);
+  overlay.classList.toggle("call-minimized", visible && state.call.minimized);
   overlay.setAttribute("aria-hidden", visible ? "false" : "true");
   if (!visible) return;
 
@@ -3293,6 +3414,9 @@ function bindAppEvents() {
   document.querySelectorAll("[data-story-reaction]").forEach((button) => {
     button.addEventListener("click", (event) => selectStoryReaction(event, button.dataset.storyReaction));
   });
+  document.querySelectorAll("[data-story-quick-reaction]").forEach((button) => {
+    button.addEventListener("click", (event) => sendQuickStoryReaction(event, button.dataset.storyQuickReaction));
+  });
   document.querySelector("#storyReplyForm")?.addEventListener("submit", handleStoryReplySubmit);
   document.querySelector("#logoutBtn")?.addEventListener("click", logout);
   document.querySelector("#refreshBtn")?.addEventListener("click", refreshSession);
@@ -3317,7 +3441,11 @@ function bindAppEvents() {
   document.querySelector("#toggleCameraBtn")?.addEventListener("click", toggleCallCamera);
   document.querySelector("#toggleSpeakerBtn")?.addEventListener("click", toggleCallSpeaker);
   document.querySelector("#minimizeCallBtn")?.addEventListener("click", () => {
-    activateView("chats");
+    minimizeActiveCallToChat();
+  });
+  document.querySelector(".call-layer.call-minimized")?.addEventListener("click", (event) => {
+    if (event.target.closest("button")) return;
+    restoreActiveCallLayer();
   });
   markVisibleMessagesRead(state.selectedConversationId).catch(() => {});
   attachCallMedia();
@@ -3429,6 +3557,11 @@ async function completeAuth(auth, keys) {
   saveJson("nivra.auth", auth);
   await saveDeviceKeys(auth.user.alias, auth.device.id, keys.privateJwk, keys.publicJwk, { userId: auth.user.id });
   await bootstrap();
+  if (state.launchPush) {
+    const launchPush = state.launchPush;
+    state.launchPush = null;
+    await handlePushNavigation(launchPush, { action: launchPush.pushAction || "" }).catch(() => {});
+  }
   await initializePushNotifications().catch(() => {});
   await connectRealtime();
   await syncPendingMessages("auth", { force: true }).catch(() => {});
@@ -4094,12 +4227,24 @@ async function viewStory(storyId) {
     const story = await request(`/stories/${storyId}/view`, { method: "POST" });
     const payload = decodeStoryPayload(story.encryptedPayload);
     const text = payload.text || story.caption || "Instantanea";
+    const openedStory = { ...story, payload, text };
     resetStoryResponseDraft();
-    state.activeStory = { ...story, payload, text };
-    await bootstrap();
-    state.activeStory = { ...story, payload, text };
+    state.stories = [openedStory, ...state.stories.filter((item) => item.id !== story.id)];
+    state.activeStory = openedStory;
     render();
     loadActiveStoryMedia().catch(() => {});
+    bootstrap().then(() => {
+      if (state.activeStory?.id !== story.id) return;
+      const freshStory = state.stories.find((item) => item.id === story.id) || story;
+      state.activeStory = {
+        ...freshStory,
+        payload,
+        text: payload.text || freshStory.caption || text,
+        mediaUrl: state.activeStory.mediaUrl
+      };
+      render();
+      loadActiveStoryMedia().catch(() => {});
+    }).catch(() => {});
   } catch (error) {
     toast(error.message || "No se pudo abrir historia.");
   }
@@ -4176,6 +4321,16 @@ function selectStoryReaction(event, reactionKey) {
   state.storyResponse.reactionsOpen = false;
   render();
   requestAnimationFrame(() => document.querySelector("#storyReplyInput")?.focus());
+}
+
+async function sendQuickStoryReaction(event, reactionKey) {
+  event.preventDefault();
+  if (!state.activeStory || state.storyResponse.sending) return;
+  const reaction = STORY_REACTIONS.find((item) => item.key === reactionKey)?.value;
+  if (!reaction) return;
+  state.storyResponse.reaction = reaction;
+  state.storyResponse.reactionsOpen = false;
+  await sendStoryResponse({ reaction, text: "" });
 }
 
 async function handleStoryReplySubmit(event) {
@@ -5401,9 +5556,11 @@ async function ackDeliveredMessages(messageIds) {
 async function markVisibleMessagesRead(conversationId = state.selectedConversationId) {
   if (!conversationId || state.privacy?.readReceipts === false || document.visibilityState === "hidden") return;
   const messages = state.messages.get(conversationId) || [];
+  const visibleIds = new Set([...document.querySelectorAll("#messages [data-message-id]")].map((node) => node.dataset.messageId).filter(Boolean));
   const unread = messages.filter((message) =>
     !message.mine &&
     !message.deleteAfterRead &&
+    (!visibleIds.size || visibleIds.has(message.id)) &&
     !state.readReceiptSentIds.has(message.id));
   let index = 0;
   for (const message of unread) {
@@ -5760,6 +5917,7 @@ async function startCall(type) {
     state.call.current = call;
     state.call.phase = "dialing";
     state.call.startedAt = new Date().toISOString();
+    state.call.minimized = false;
     rememberCall(call, { status: "Llamando" });
     activateView("calls", { renderAfter: false });
     startCallTicker();
@@ -5786,6 +5944,7 @@ async function handleIncomingCall(call, options = {}) {
   state.call.current = call;
   state.call.phase = call.initiatorUserId === state.auth.user.id ? "dialing" : "incoming";
   state.call.startedAt = call.startedAt || new Date().toISOString();
+  state.call.minimized = false;
   rememberCall(call, { status: state.call.phase === "incoming" ? "Entrante" : "Llamando" });
   startCallTicker();
   if (state.call.phase === "incoming") {
@@ -5809,6 +5968,7 @@ async function acceptCall() {
     await prepareCallMedia(call.type === "Video");
     state.call.phase = "active";
     state.call.startedAt = new Date().toISOString();
+    state.call.minimized = false;
     stopCallTones();
     syncIncomingCallOverlay();
     startCallTicker();
@@ -5821,6 +5981,25 @@ async function acceptCall() {
   } catch (error) {
     toast(error.message || "No se pudo aceptar la llamada.");
   }
+}
+
+function minimizeActiveCallToChat() {
+  const call = state.call.current;
+  if (!call) return;
+  state.call.minimized = true;
+  if (call.conversationId) {
+    selectConversation(call.conversationId);
+  }
+  activateView("chats", { mobileChatOpen: true, renderAfter: false });
+  render();
+  requestAnimationFrame(() => document.querySelector("#messageInput")?.focus?.());
+}
+
+function restoreActiveCallLayer() {
+  if (!state.call.current) return;
+  state.call.minimized = false;
+  activateView("calls", { mobileChatOpen: false, renderAfter: false });
+  render();
 }
 
 async function declineCall() {
@@ -6178,6 +6357,7 @@ function resetCallState() {
   state.call.cameraOff = false;
   state.call.speaker = true;
   state.call.startedAt = null;
+  state.call.minimized = false;
   state.call.pendingSignals = [];
   state.call.remoteStates = new Map();
   syncIncomingCallOverlay();
@@ -6322,6 +6502,10 @@ function clearSession() {
   state.connection = null;
   detachRealtimeHandlers(previous);
   previous?.stop().catch(() => {});
+  clearTimeout(state.pushRetryTimer);
+  state.pushRegistration = null;
+  state.pushRetryTimer = null;
+  state.pushRetryAttempt = 0;
   state.pushReady = false;
   state.syncInFlight = false;
   state.callHistory = [];
@@ -6336,12 +6520,36 @@ async function request(path, options = {}) {
   if (!options.skipAuth && state.auth?.tokens?.accessToken) {
     headers.Authorization = `Bearer ${state.auth.tokens.accessToken}`;
   }
-  const response = await fetch(apiUrl(path), {
-    method: options.method || "GET",
-    headers,
-    body: options.rawBody || (options.body ? JSON.stringify(options.body) : undefined),
-    signal: options.signal
-  });
+  const timeoutMs = options.timeoutMs ?? (options.rawBody ? UPLOAD_REQUEST_TIMEOUT_MS : REQUEST_TIMEOUT_MS);
+  let timeoutId = null;
+  let controller = null;
+  let signal = options.signal;
+  if (!signal && timeoutMs > 0) {
+    controller = new AbortController();
+    signal = controller.signal;
+    timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  }
+  let response;
+  try {
+    response = await fetch(apiUrl(path), {
+      method: options.method || "GET",
+      headers,
+      body: options.rawBody || (options.body ? JSON.stringify(options.body) : undefined),
+      signal
+    });
+  } catch (error) {
+    if (error?.name === "AbortError" && controller) {
+      const exception = new Error("La conexion tardo demasiado. Reintentando cuando vuelva la red.");
+      exception.status = 408;
+      throw exception;
+    }
+    if (error?.name === "AbortError") throw error;
+    const exception = new Error(navigator.onLine === false ? "Sin conexion. Reintentaremos al volver la red." : "No se pudo conectar con Nivra.");
+    exception.cause = error;
+    throw exception;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   if (response.status === 401 && !options.skipAuth && !options.skipAuthRefresh && !options.authRetried) {
     const refreshed = await refreshToken();
     if (refreshed) return request(path, { ...options, authRetried: true });
@@ -6476,11 +6684,13 @@ function parsePublicJwk(value) {
 }
 
 async function encryptForPublicKey(publicJwk, payload) {
+  await yieldToMainThread();
   const own = await currentKeyMaterial();
   if (!own?.privateJwk || !own?.publicJwk) throw new Error("No hay llave privada local para cifrar.");
   const privateKey = await crypto.subtle.importKey("jwk", own.privateJwk, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveKey"]);
   const publicKey = await crypto.subtle.importKey("jwk", publicJwk, { name: "ECDH", namedCurve: "P-256" }, false, []);
   const key = await crypto.subtle.deriveKey({ name: "ECDH", public: publicKey }, privateKey, { name: "AES-GCM", length: 256 }, false, ["encrypt"]);
+  await yieldToMainThread();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, TEXT.encode(JSON.stringify(payload)));
   return {
@@ -6490,12 +6700,14 @@ async function encryptForPublicKey(publicJwk, payload) {
 }
 
 async function decryptEnvelope(header, ciphertext) {
+  await yieldToMainThread();
   const meta = JSON.parse(header || "{}");
   const own = await currentKeyMaterial();
   if (!own?.privateJwk) throw new Error("No hay llave privada local para descifrar.");
   const privateKey = await crypto.subtle.importKey("jwk", own.privateJwk, { name: "ECDH", namedCurve: "P-256" }, false, ["deriveKey"]);
   const senderPublic = await crypto.subtle.importKey("jwk", meta.senderPublicKey, { name: "ECDH", namedCurve: "P-256" }, false, []);
   const key = await crypto.subtle.deriveKey({ name: "ECDH", public: senderPublic }, privateKey, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  await yieldToMainThread();
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ub64(meta.iv) }, key, ub64(ciphertext));
   return JSON.parse(READ.decode(plain));
 }
@@ -6586,30 +6798,38 @@ function allLegacyKeyMaterial() {
 }
 
 async function encryptAttachment(buffer) {
+  await yieldToMainThread();
   const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const encrypted = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, buffer);
+  await yieldToMainThread();
   const rawKey = await crypto.subtle.exportKey("raw", key);
   return { bytes: encrypted, key: b64(new Uint8Array(rawKey)), iv: b64(iv) };
 }
 
 async function decryptAttachment(buffer, rawKey, iv) {
+  await yieldToMainThread();
   const key = await crypto.subtle.importKey("raw", ub64(rawKey), { name: "AES-GCM" }, false, ["decrypt"]);
+  await yieldToMainThread();
   return crypto.subtle.decrypt({ name: "AES-GCM", iv: ub64(iv) }, key, buffer);
 }
 
 async function deriveVaultKey(pin, salt) {
+  await yieldToMainThread();
   const baseKey = await crypto.subtle.importKey("raw", TEXT.encode(pin), "PBKDF2", false, ["deriveKey"]);
+  await yieldToMainThread();
   return crypto.subtle.deriveKey({ name: "PBKDF2", salt, iterations: 210000, hash: "SHA-256" }, baseKey, { name: "AES-GCM", length: 256 }, false, ["encrypt", "decrypt"]);
 }
 
 async function encryptWithKey(key, value) {
+  await yieldToMainThread();
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, TEXT.encode(JSON.stringify(value)));
   return { iv: b64(iv), ciphertext: b64(new Uint8Array(ciphertext)) };
 }
 
 async function decryptWithKey(key, envelope) {
+  await yieldToMainThread();
   const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: ub64(envelope.iv) }, key, ub64(envelope.ciphertext));
   return JSON.parse(READ.decode(plain));
 }
@@ -6654,6 +6874,7 @@ function selectConversation(conversationId) {
   if (nextId !== state.selectedConversationId) {
     cancelActiveMessageLoad("conversation-change");
     state.replyTo = null;
+    resetChatDomWindow(nextId);
   }
   state.selectedConversationId = nextId;
   if (state.selectedConversationId) {
@@ -7495,12 +7716,16 @@ function decodeServerSystemMessage(recipient) {
 }
 
 async function initializePushNotifications() {
-  if (state.pushReady || state.pushRegistering || !state.auth?.tokens?.accessToken) return;
+  if (!state.auth?.tokens?.accessToken) return;
+  if (state.pushRegistration && !state.pushRegistering) {
+    await flushPushTokenRegistration().catch(() => {});
+    if (state.pushReady) return;
+  }
+  if (state.pushReady || state.pushRegistering) return;
   state.pushRegistering = true;
   try {
     if (window.NIVRA_PUSH_TOKEN) {
-      await registerPushToken("fcm", String(window.NIVRA_PUSH_TOKEN).trim());
-      state.pushReady = true;
+      await queuePushTokenRegistration("fcm", String(window.NIVRA_PUSH_TOKEN).trim());
       return;
     }
 
@@ -7529,6 +7754,7 @@ async function initializeCapacitorPushNotifications() {
     return;
   }
 
+  await initializeCapacitorLocalNotifications();
   await bindCapacitorPushListeners(push);
 
   let permission = await push.checkPermissions?.().catch(() => null);
@@ -7545,26 +7771,94 @@ async function bindCapacitorPushListeners(push) {
 
   await push.addListener("registration", async (token) => {
     if (!token?.value) return;
-    await registerPushToken("fcm", token.value).catch(() => {});
-    state.pushReady = true;
+    await queuePushTokenRegistration("fcm", token.value);
   });
 
   await push.addListener("registrationError", (error) => {
+    state.pushReady = false;
     console.warn("Push registration failed.", error);
   });
 
   await push.addListener("pushNotificationReceived", async (notification) => {
+    if (appIsBackgrounded()) {
+      await showCapacitorLocalNotification(notification).catch(() => {});
+    }
     await handleForegroundPushNotification(notification).catch(() => {});
   });
 
   await push.addListener("pushNotificationActionPerformed", async (event) => {
     const data = event?.notification?.data || {};
-    await handlePushNavigation(data).catch(() => {});
+    const action = event?.actionId || event?.action || "";
+    await handlePushNavigation(data, { action }).catch(() => {});
     await syncPendingMessages("push-action", { force: true }).catch(() => {});
     render();
   });
 
   state.pushListenersReady = true;
+}
+
+async function initializeCapacitorLocalNotifications() {
+  const local = window.Capacitor?.Plugins?.LocalNotifications;
+  if (!local || state.localNotificationsReady) return;
+  await local.requestPermissions?.().catch(() => null);
+  await local.createChannel?.({
+    id: "nivra_messages",
+    name: "Nivra",
+    description: "Mensajes y llamadas privadas",
+    importance: 5,
+    visibility: 1,
+    sound: "default",
+    vibration: true
+  }).catch(() => {});
+  await local.registerActionTypes?.({
+    types: [{
+      id: "NIVRA_INCOMING_CALL",
+      actions: [
+        { id: "accept", title: "Contestar" },
+        { id: "decline", title: "Rechazar", destructive: true }
+      ]
+    }]
+  }).catch(() => {});
+  await local.addListener?.("localNotificationActionPerformed", async (event) => {
+    const data = event?.notification?.extra || {};
+    const action = event?.actionId || event?.action || "";
+    await handlePushNavigation(data, { action }).catch(() => {});
+    await syncPendingMessages("local-notification-action", { force: true }).catch(() => {});
+    render();
+  });
+  state.localNotificationsReady = true;
+}
+
+async function showCapacitorLocalNotification(notification = {}) {
+  const local = window.Capacitor?.Plugins?.LocalNotifications;
+  if (!local) return;
+  const data = notification?.data || notification?.notification?.data || {};
+  const isCall = isIncomingCallPushData(data);
+  const title = notification.title || notification?.notification?.title || "Nivra";
+  const body = notification.body ||
+    notification?.notification?.body ||
+    (isCall ? "Llamada entrante" : "Nuevo mensaje privado");
+  await local.schedule({
+    notifications: [{
+      id: notificationNumericId(pushDataValue(data, "callId", "messageId", "conversationId") || Date.now()),
+      title,
+      body,
+      channelId: "nivra_messages",
+      sound: "default",
+      actionTypeId: isCall ? "NIVRA_INCOMING_CALL" : "",
+      extra: data,
+      schedule: { at: new Date(Date.now() + 1) }
+    }]
+  });
+}
+
+function notificationNumericId(value) {
+  const text = String(value || Date.now());
+  let hash = 0;
+  for (let index = 0; index < text.length; index++) {
+    hash = (Math.imul(31, hash) + text.charCodeAt(index)) | 0;
+  }
+  return Math.max(1, Math.abs(hash));
 }
 
 async function initializeWebPushNotifications() {
@@ -7582,8 +7876,7 @@ async function initializeWebPushNotifications() {
     return null;
   });
   if (fcmToken) {
-    await registerPushToken("fcm", fcmToken);
-    state.pushReady = true;
+    await queuePushTokenRegistration("fcm", fcmToken);
     return;
   }
 
@@ -7593,8 +7886,7 @@ async function initializeWebPushNotifications() {
   });
   if (!subscription) return;
 
-  await registerPushToken("webpush", serializePushSubscription(subscription));
-  state.pushReady = true;
+  await queuePushTokenRegistration("webpush", serializePushSubscription(subscription));
 }
 
 async function getFirebaseMessagingToken(serviceWorkerRegistration) {
@@ -7699,9 +7991,9 @@ async function handlePushNavigation(data = {}, options = {}) {
 
 async function hydrateIncomingCallFromPushData(data = {}) {
   const callId = pushDataValue(data, "callId", "CallId");
+  if (state.call.current?.id === callId) return true;
   const callerUserId = pushDataValue(data, "callerId", "CallerId", "callerUserId", "CallerUserId", "initiatorUserId", "InitiatorUserId");
   if (!callId || !callerUserId || callerUserId === state.auth?.user?.id) return false;
-  if (state.call.current?.id === callId) return true;
   const callerName = pushDataValue(data, "callerName", "CallerName");
   if (callerName) state.aliasByUserId.set(callerUserId, callerName);
 
@@ -7744,6 +8036,44 @@ async function registerPushToken(provider, token) {
     method: "POST",
     body: { provider, token }
   });
+}
+
+async function queuePushTokenRegistration(provider, token) {
+  const normalizedToken = String(token || "").trim();
+  const normalizedProvider = String(provider || "").trim();
+  if (!normalizedProvider || !normalizedToken || !state.auth?.tokens?.accessToken) return false;
+  state.pushRegistration = { provider: normalizedProvider, token: normalizedToken };
+  return flushPushTokenRegistration();
+}
+
+async function flushPushTokenRegistration() {
+  if (!state.auth?.tokens?.accessToken || !state.pushRegistration) return false;
+  clearTimeout(state.pushRetryTimer);
+  state.pushRetryTimer = null;
+  try {
+    await registerPushToken(state.pushRegistration.provider, state.pushRegistration.token);
+    state.pushReady = true;
+    state.pushRetryAttempt = 0;
+    state.pushRegistration = null;
+    return true;
+  } catch (error) {
+    state.pushReady = false;
+    schedulePushTokenRegistrationRetry(error);
+    return false;
+  }
+}
+
+function schedulePushTokenRegistrationRetry(error) {
+  if (!state.auth?.tokens?.accessToken || !state.pushRegistration) return;
+  clearTimeout(state.pushRetryTimer);
+  const index = Math.min(state.pushRetryAttempt, PUSH_REGISTRATION_RETRY_DELAYS_MS.length - 1);
+  const delay = PUSH_REGISTRATION_RETRY_DELAYS_MS[index];
+  state.pushRetryAttempt = Math.min(state.pushRetryAttempt + 1, PUSH_REGISTRATION_RETRY_DELAYS_MS.length - 1);
+  console.warn("Push token registration deferred.", error);
+  state.pushRetryTimer = setTimeout(() => {
+    state.pushRetryTimer = null;
+    flushPushTokenRegistration().catch(() => {});
+  }, delay);
 }
 
 function appIsBackgrounded() {
@@ -7798,7 +8128,15 @@ function notifyIncomingCall(call) {
     body: `${call.type === "Video" ? "Videollamada" : "Llamada"} entrante de ${alias}`,
     tag: `nivra-call-${call.id}`,
     requireInteraction: true,
-    data: { callId: call.id, conversationId: call.conversationId }
+    data: {
+      type: "incoming_call",
+      callId: call.id,
+      conversationId: call.conversationId || "",
+      callerId: call.initiatorUserId,
+      callerUserId: call.initiatorUserId,
+      callerName: alias,
+      callType: call.type
+    }
   });
 }
 
