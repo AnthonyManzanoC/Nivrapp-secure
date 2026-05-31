@@ -21,10 +21,10 @@ if (FIREBASE_CONFIG) {
     const messaging = firebase.messaging();
 
     messaging.onBackgroundMessage((payload) => {
-      const data = payload?.data || {};
+      const data = normalizePushData(payload);
       const notification = payload?.notification || {};
-      const title = notification.title || "Nivra";
-      const body = notification.body || (isIncomingCallData(data) ? "Llamada entrante" : "Nuevo evento privado");
+      const title = data.title || notification.title || "Nivra";
+      const body = data.body || notification.body || (isIncomingCallData(data) ? "Llamada entrante" : "Nuevo evento privado");
       return self.registration.showNotification(title, notificationOptions(body, data));
     });
   } catch (error) {
@@ -49,6 +49,19 @@ self.addEventListener("notificationclick", (event) => {
     })
   );
 });
+
+function normalizePushData(payload = {}) {
+  const data = {
+    ...(payload.data || {}),
+    ...(payload.notification?.data || {}),
+    ...(payload.webpush?.data || {})
+  };
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === null || typeof value === "object" || data[key] !== undefined) continue;
+    data[key] = String(value);
+  }
+  return data;
+}
 
 function notificationOptions(body, data = {}) {
   const isCall = isIncomingCallData(data);

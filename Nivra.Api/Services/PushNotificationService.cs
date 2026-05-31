@@ -44,6 +44,8 @@ public sealed class PushNotificationService(
     private string? _accessToken;
     private DateTimeOffset _accessTokenExpiresAt;
 
+    public bool IsConfigured => IsFcmConfigured(options.CurrentValue);
+
     public string ProtectToken(string token)
     {
         return _tokenProtector.Protect(token);
@@ -224,13 +226,18 @@ public sealed class PushNotificationService(
         var isIncomingCall = data.TryGetValue("type", out var type) &&
             type.Contains("call", StringComparison.OrdinalIgnoreCase) &&
             !type.Contains("missed", StringComparison.OrdinalIgnoreCase);
+        var pushData = data.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal);
+        pushData["title"] = title;
+        pushData["body"] = body;
         var message = new Dictionary<string, object?>
         {
             ["token"] = token,
-            ["data"] = data.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal),
+            ["data"] = pushData,
             ["android"] = new Dictionary<string, object?>
             {
                 ["priority"] = "HIGH",
+                ["ttl"] = isIncomingCall ? "30s" : "86400s",
+                ["collapse_key"] = tag,
                 ["notification"] = new Dictionary<string, object?>
                 {
                     ["title"] = title,
@@ -259,6 +266,11 @@ public sealed class PushNotificationService(
             },
             ["webpush"] = new Dictionary<string, object?>
             {
+                ["headers"] = new Dictionary<string, string>
+                {
+                    ["Urgency"] = isIncomingCall ? "high" : "normal",
+                    ["TTL"] = isIncomingCall ? "30" : "86400"
+                },
                 ["notification"] = new Dictionary<string, object?>
                 {
                     ["title"] = title,

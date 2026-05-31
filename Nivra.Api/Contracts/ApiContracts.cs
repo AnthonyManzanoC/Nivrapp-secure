@@ -319,7 +319,7 @@ public sealed record PatchPrivacyRequest(
 
 public sealed record RegisterPushTokenRequest(string Provider, string Token);
 
-public sealed record PushTokenResponse(string Id, string Provider, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt);
+public sealed record PushTokenResponse(string Id, string Provider, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt, bool ServerReady);
 
 public sealed record EntitlementsResponse(
     string PlanCode,

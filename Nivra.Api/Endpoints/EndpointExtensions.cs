@@ -2113,6 +2113,23 @@ public static partial class EndpointExtensions
             return Results.Created($"/calls/{call.Id}", response);
         });
 
+        group.MapGet("/{callId}", async Task<IResult> (string callId, HttpContext http, INivraStore store, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var call = await store.GetCallAsync(callId, cancellationToken);
+            if (call is null || !call.ParticipantUserIds.Contains(current.UserId))
+            {
+                return Results.NotFound();
+            }
+
+            return Results.Ok(ToCallResponse(call));
+        });
+
         group.MapPost("/{callId}/signal", async Task<IResult> (string callId, CallSignalRequest request, HttpContext http, INivraStore store, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
@@ -2127,6 +2144,11 @@ public static partial class EndpointExtensions
                 !call.ParticipantUserIds.Contains(request.TargetUserId))
             {
                 return Results.NotFound();
+            }
+
+            if (call.Status == CallStatus.Ended || call.EndedAt is not null)
+            {
+                return Error("call_ended", "La llamada ya finalizo.", StatusCodes.Status409Conflict);
             }
 
             call.Status = CallStatus.Active;
@@ -2229,7 +2251,15 @@ public static partial class EndpointExtensions
             };
 
             await store.AddPushTokenAsync(push, cancellationToken);
-            return Results.Created($"/push-tokens/{push.Id}", new PushTokenResponse(push.Id, push.Provider, push.CreatedAt, push.RevokedAt));
+            return Results.Created($"/push-tokens/{push.Id}", new PushTokenResponse(push.Id, push.Provider, push.CreatedAt, push.RevokedAt, pushNotifications.IsConfigured));
+        });
+
+        group.MapGet("/status", (HttpContext http, PushNotificationService pushNotifications) =>
+        {
+            var current = http.GetCurrentUser();
+            return current is null
+                ? Results.Unauthorized()
+                : Results.Ok(new { serverReady = pushNotifications.IsConfigured, provider = "Fcm" });
         });
 
         group.MapDelete("/{pushTokenId}", async Task<IResult> (string pushTokenId, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>

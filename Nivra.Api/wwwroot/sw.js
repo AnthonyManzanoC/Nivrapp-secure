@@ -1,4 +1,4 @@
-const CACHE_NAME = "nivra-shell-v9";
+const CACHE_NAME = "nivra-shell-v10";
 const SHELL_ASSETS = [
   "/",
   "/index.html",
@@ -78,12 +78,12 @@ self.addEventListener("fetch", (event) => {
 self.addEventListener("push", (event) => {
   const payload = readPushPayload(event);
   const notification = payload.notification || payload.webpush?.notification || {};
-  const data = payload.data || payload;
-  const title = payload.title || notification.title || "Nivra";
-  const body = payload.body || notification.body || "Nuevo evento privado";
+  const data = normalizePushData(payload);
+  const title = data.title || payload.title || notification.title || "Nivra";
+  const body = data.body || payload.body || notification.body || "Nuevo evento privado";
 
   event.waitUntil(
-    self.registration.showNotification(title, notificationOptions(title, body, data))
+    self.registration.showNotification(title, notificationOptions(body, data, notification))
   );
 });
 
@@ -121,6 +121,19 @@ function readPushPayload(event) {
   }
 }
 
+function normalizePushData(payload = {}) {
+  const data = {
+    ...(payload.data || {}),
+    ...(payload.notification?.data || {}),
+    ...(payload.webpush?.data || {})
+  };
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === null || typeof value === "object" || data[key] !== undefined) continue;
+    data[key] = String(value);
+  }
+  return data;
+}
+
 function isFreshShellAsset(pathname) {
   return pathname === "/app.js" ||
     pathname === "/styles.css" ||
@@ -129,7 +142,7 @@ function isFreshShellAsset(pathname) {
     pathname === "/sw.js";
 }
 
-function notificationOptions(title, body, data = {}) {
+function notificationOptions(body, data = {}, notification = {}) {
   const isCall = isIncomingCallData(data);
   return {
     body,
@@ -137,17 +150,17 @@ function notificationOptions(title, body, data = {}) {
     badge: "/assets/icon-192.png",
     tag: data.tag || data.conversationId || data.callId || "nivra-event",
     data,
-    requireInteraction: isCall,
-    renotify: isCall,
-    silent: false,
-    vibrate: isCall ? [320, 140, 320, 140, 480] : [80, 40, 80],
-    timestamp: Date.now(),
     actions: isCall
       ? [
           { action: "accept", title: "Contestar" },
           { action: "decline", title: "Rechazar" }
         ]
-      : []
+      : (notification.actions || []),
+    requireInteraction: isCall,
+    renotify: isCall,
+    silent: false,
+    vibrate: isCall ? [320, 140, 320, 140, 480] : [80, 40, 80],
+    timestamp: Date.now()
   };
 }
 

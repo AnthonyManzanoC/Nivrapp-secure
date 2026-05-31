@@ -32,6 +32,8 @@ const STORY_REACTIONS = [
   { key: "sad", value: "\uD83D\uDE22" },
   { key: "fire", value: "\uD83D\uDD25" }
 ];
+const STORY_TEXT_DURATION_MS = 7000;
+const STORY_MEDIA_DURATION_MS = 15000;
 const LONG_PRESS_MS = 520;
 const VOICE_NOTE_MIN_DURATION_MS = 500;
 const PUSH_TOKEN_ENDPOINT = "/push-tokens";
@@ -39,6 +41,7 @@ const FIREBASE_SDK_VERSION = window.NIVRA_FIREBASE_SDK_VERSION || "10.13.2";
 const REQUEST_TIMEOUT_MS = 20000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 120000;
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [5000, 15000, 60000, 180000];
+const PUSH_PROMPT_DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
 
 class LocalStore {
   constructor(dbName = LOCAL_DB_NAME, version = LOCAL_DB_VERSION) {
@@ -367,7 +370,8 @@ const state = {
     remoteStates: new Map(),
     pendingSignals: [],
     startedAt: null,
-    minimized: false
+    minimized: false,
+    ticker: null
   },
   camera: {
     stream: null,
@@ -397,6 +401,17 @@ const state = {
   drafts: {},
   pendingStoryFile: null,
   storyPublishing: false,
+  storyPlayback: {
+    ownerId: null,
+    storyIds: [],
+    index: 0,
+    paused: false,
+    timer: null,
+    ticker: null,
+    startedAt: 0,
+    remainingMs: 0,
+    durationMs: 0
+  },
   storyResponse: {
     reaction: null,
     reactionsOpen: false,
@@ -434,6 +449,10 @@ const state = {
   pushReady: false,
   pushRegistering: false,
   pushListenersReady: false,
+  webPushForegroundReady: false,
+  pushPermission: "unknown",
+  pushServerReady: null,
+  pushError: "",
   localNotificationsReady: false,
   pushRegistration: null,
   pushRetryTimer: null,
@@ -559,6 +578,7 @@ function syncShellClasses() {
   document.body.dataset.platform = PLATFORM.name;
   document.body.classList.toggle("chat-abierto", chatPanelOpen);
   document.body.classList.toggle("chat-open", chatPanelOpen);
+  document.body.classList.toggle("modal-open", Boolean(state.modal || state.activeStory));
 }
 
 async function init() {
@@ -566,7 +586,7 @@ async function init() {
   await migrateLegacyKeyMaterial().catch(() => {});
   setupVisualViewportKeyboard();
   applyLaunchParams();
-  registerServiceWorker();
+  registerServiceWorker().catch(() => {});
   bindIncomingCallOverlayEvents();
   listenForServiceWorkerMessages();
   setupConnectivityListeners();
@@ -574,12 +594,13 @@ async function init() {
   render();
   if (state.auth?.tokens?.accessToken) {
     await bootstrap();
+    await refreshPushPermissionState().catch(() => {});
     if (state.launchPush) {
       const launchPush = state.launchPush;
       state.launchPush = null;
       await handlePushNavigation(launchPush, { action: launchPush.pushAction || "" }).catch(() => {});
     }
-    await initializePushNotifications().catch(() => {});
+    await initializePushNotifications({ requestPermission: false }).catch(() => {});
     await connectRealtime();
     startPolling();
   }
@@ -647,6 +668,8 @@ function setupConnectivityListeners() {
   window.addEventListener("online", () => {
     toast("Conexion recuperada. Sincronizando...");
     connectRealtime().catch(() => {});
+    refreshPushPermissionState().catch(() => {});
+    initializePushNotifications({ requestPermission: false }).catch(() => {});
     flushPushTokenRegistration().catch(() => {});
     syncPendingMessages("online", { force: true }).catch(() => {});
   });
@@ -656,6 +679,8 @@ function setupConnectivityListeners() {
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.auth?.tokens?.accessToken) {
       connectRealtime().catch(() => {});
+      refreshPushPermissionState().catch(() => render());
+      initializePushNotifications({ requestPermission: false }).catch(() => {});
       flushPushTokenRegistration().catch(() => {});
       syncPendingMessages("visible", { force: true }).catch(() => {});
     }
@@ -888,13 +913,23 @@ function startLocalMessageRetention() {
 }
 
 function registerServiceWorker() {
-  if (!("serviceWorker" in navigator) || !["http:", "https:"].includes(window.location.protocol)) return;
-  const register = () => navigator.serviceWorker.register("/sw.js").catch(() => {});
-  if (document.readyState === "complete") {
-    register();
-    return;
+  if (!("serviceWorker" in navigator) || !["http:", "https:"].includes(window.location.protocol)) {
+    return Promise.resolve(null);
   }
-  window.addEventListener("load", register, { once: true });
+  const register = () => navigator.serviceWorker
+    .register("/sw.js", { scope: "/" })
+    .then((registration) => {
+      registration.update?.().catch?.(() => {});
+      return registration;
+    })
+    .catch((error) => {
+      console.warn("Service worker registration failed.", error);
+      return null;
+    });
+  if (document.readyState === "complete") return register();
+  return new Promise((resolve) => {
+    window.addEventListener("load", () => register().then(resolve), { once: true });
+  });
 }
 
 async function bootstrap() {
@@ -1138,6 +1173,7 @@ function render() {
     return;
   }
 
+  const notificationPrompt = renderNotificationPrompt();
   APP.innerHTML = `
     <div class="workspace">
       <nav class="rail" aria-label="Nivra">
@@ -1151,8 +1187,9 @@ function render() {
         ${navButton("account", "user", "Cuenta")}
       </nav>
       ${renderSidebar()}
-      <main class="main">
+      <main class="main ${notificationPrompt ? "has-notification-prompt" : ""}">
         ${renderTopbar()}
+        ${notificationPrompt}
         <section class="view">${renderMainView()}</section>
       </main>
     </div>
@@ -1166,6 +1203,7 @@ function render() {
 
   syncIncomingCallOverlay();
   bindAppEvents();
+  syncStoryPlaybackUi();
   restoreTransientInputs(transient);
   cleanupObjectUrls({ keepVisible: true });
   state.lastRenderedView = state.view;
@@ -1423,6 +1461,37 @@ function filteredStories() {
   return state.stories.filter((story) => textMatchesSearch(storySearchText(story), query));
 }
 
+function storyOwnerId(story = {}) {
+  return story.owner?.id || story.ownerId || story.ownerUserId || "";
+}
+
+function groupStoriesByOwner(stories = []) {
+  const groups = new Map();
+  for (const story of stories || []) {
+    const ownerId = storyOwnerId(story);
+    if (!ownerId) continue;
+    const group = groups.get(ownerId) || {
+      ownerId,
+      owner: story.owner,
+      stories: []
+    };
+    group.owner = { ...(group.owner || {}), ...(story.owner || {}) };
+    group.stories.push(story);
+    groups.set(ownerId, group);
+  }
+
+  return [...groups.values()]
+    .map((group) => {
+      group.stories = group.stories
+        .slice()
+        .sort((left, right) => Date.parse(left.createdAt || 0) - Date.parse(right.createdAt || 0));
+      group.latest = group.stories[group.stories.length - 1];
+      group.unviewedCount = group.stories.filter((story) => !story.viewedByMe && storyOwnerId(story) !== state.auth?.user?.id).length;
+      return group;
+    })
+    .sort((left, right) => Date.parse(right.latest?.createdAt || 0) - Date.parse(left.latest?.createdAt || 0));
+}
+
 function vaultItemSearchText(item = {}) {
   const meta = decryptVaultPreview(item.encryptedMetadata);
   return [item.kind, meta.title, meta.body, item.updatedAt].filter(Boolean).join(" ");
@@ -1657,6 +1726,104 @@ function renderTopbar() {
       </div>
     </header>
   `;
+}
+
+function renderNotificationPrompt() {
+  const capability = notificationCapabilityStatus();
+  if (!shouldShowNotificationPrompt(capability)) return "";
+
+  const denied = capability.permission === "denied";
+  const busy = state.pushRegistering;
+  const title = denied ? "Notificaciones bloqueadas" : "Activar notificaciones";
+  const detail = denied
+    ? "Permitelas en los ajustes del navegador o del sistema para recibir llamadas y mensajes fuera de Nivra."
+    : capability.native
+      ? "Recibe llamadas y mensajes aunque la app este en segundo plano o cerrada."
+      : "Recibe mensajes y llamadas aunque esta ventana no este abierta.";
+  const error = state.pushError ? `<span class="notification-error">${escapeHtml(state.pushError)}</span>` : "";
+  const action = denied
+    ? ""
+    : `<button class="btn primary" id="enableNotificationsBtn" ${busy ? `disabled aria-busy="true"` : ""}>${icon(busy ? "sync" : "bell")}<span>${busy ? "Activando" : "Activar"}</span></button>`;
+
+  return `
+    <section class="notification-prompt" role="status">
+      <div class="notification-icon">${icon(denied ? "shield" : "bell")}</div>
+      <div>
+        <strong>${title}</strong>
+        <span>${detail}</span>
+        ${error}
+      </div>
+      <div class="notification-actions">
+        ${action}
+        <button class="btn ghost" id="dismissNotificationsBtn">Ahora no</button>
+      </div>
+    </section>
+  `;
+}
+
+function shouldShowNotificationPrompt(capability = notificationCapabilityStatus()) {
+  if (!state.auth?.tokens?.accessToken || !capability.supported || state.pushReady) return false;
+  if (capability.permission === "granted" && !state.pushError && !state.pushRegistration) return false;
+  if (isNotificationPromptDismissed() && !state.pushError) return false;
+  return true;
+}
+
+function notificationCapabilityStatus() {
+  if (window.NIVRA_PUSH_TOKEN) {
+    return { supported: true, native: true, permission: "granted", reason: "" };
+  }
+  if (isNativeCapacitor()) {
+    const supported = Boolean(window.Capacitor?.Plugins?.PushNotifications);
+    return {
+      supported,
+      native: true,
+      permission: normalizePushPermission(state.pushPermission),
+      reason: supported ? "" : "El plugin nativo de push no esta instalado."
+    };
+  }
+
+  const hasNotification = "Notification" in window;
+  const hasServiceWorker = "serviceWorker" in navigator;
+  const secureEnough = window.isSecureContext || PLATFORM.isLocalhost;
+  const supported = hasNotification && hasServiceWorker && ["http:", "https:"].includes(window.location.protocol) && secureEnough;
+  return {
+    supported,
+    native: false,
+    permission: hasNotification ? Notification.permission : "unsupported",
+    reason: supported ? "" : "Este navegador necesita HTTPS y service worker para push."
+  };
+}
+
+function pushStatusLabel() {
+  const capability = notificationCapabilityStatus();
+  if (!capability.supported) return capability.reason || "No disponible en este dispositivo.";
+  if (state.pushRegistering) return "Activando notificaciones...";
+  if (state.pushReady && state.pushServerReady === false) return "Dispositivo registrado; falta configurar FCM en el servidor.";
+  if (state.pushReady) return "Activas en este dispositivo.";
+  if (capability.permission === "denied") return "Bloqueadas por el navegador o el sistema.";
+  if (capability.permission === "granted") return "Permiso concedido; pendiente registrar el token.";
+  return "Pendientes de permiso.";
+}
+
+function pushPromptDismissKey() {
+  const userId = state.auth?.user?.id || "anon";
+  const deviceId = state.auth?.device?.id || "device";
+  return `nivra.pushPromptDismissed.${userId}.${deviceId}`;
+}
+
+function isNotificationPromptDismissed() {
+  const dismissedAt = Number(loadJson(pushPromptDismissKey()) || 0);
+  return dismissedAt > 0 && Date.now() - dismissedAt < PUSH_PROMPT_DISMISS_MS;
+}
+
+function dismissNotificationPrompt() {
+  saveJson(pushPromptDismissKey(), Date.now());
+  state.pushError = "";
+  render();
+}
+
+function clearNotificationPromptDismissal() {
+  localStorage.removeItem(pushPromptDismissKey());
 }
 
 function renderMainView() {
@@ -2165,7 +2332,7 @@ function renderWorldView() {
   const incoming = state.friendRequests.filter((request) => request.status === "Pending" && request.to.id === state.auth.user.id);
   const outgoing = state.friendRequests.filter((request) => request.status === "Pending" && request.from.id === state.auth.user.id);
   const people = filteredDirectoryPeople().slice(0, 16);
-  const stories = filteredStories().slice(0, 24);
+  const storyGroups = groupStoriesByOwner(filteredStories()).slice(0, 24);
   const storyDraftText = state.drafts.storyText || "";
   const pendingMedia = state.pendingStoryFile;
   const storyPublishing = Boolean(state.storyPublishing);
@@ -2215,7 +2382,7 @@ function renderWorldView() {
         </div>
         <div class="card span-6">
           <h3>Mundo</h3>
-          <div class="story-grid">${stories.length ? stories.map(renderStoryCard).join("") : `<p class="muted">Aun no hay instantaneas visibles.</p>`}</div>
+          <div class="story-grid story-group-grid">${storyGroups.length ? storyGroups.map(renderStoryGroupCard).join("") : `<p class="muted">Aun no hay instantaneas visibles.</p>`}</div>
         </div>
       </div>
     </div>
@@ -2265,6 +2432,31 @@ function renderStoryCard(story) {
       </div>
       <p>${escapeHtml(story.caption || payload.text || "Instantanea")}</p>
       <div class="story-meta"><span>${mediaLabel || (story.viewOnce ? "Una vez" : "Normal")}</span><span>${story.viewCount} vistas</span></div>
+    </button>
+  `;
+}
+
+function renderStoryGroupCard(group) {
+  const latest = group.latest || group.stories?.[group.stories.length - 1];
+  const payload = decodeStoryPayload(latest?.encryptedPayload);
+  const mediaLabel = payload.media ? fileTypeLabel(payload.media.mime) : null;
+  const firstUnseen = group.stories.find((story) => !story.viewedByMe) || group.stories[0] || latest;
+  const total = group.stories.length;
+  const unread = group.unviewedCount;
+  return `
+    <button class="story-card story-group-card ${unread ? "unread" : ""}" data-view-story-group="${escapeAttr(group.ownerId)}" data-story-id="${escapeAttr(firstUnseen?.id || latest?.id || "")}">
+      <div class="story-head">
+        <div class="story-avatar-stack">
+          ${avatarNode(group.owner)}
+          ${total > 1 ? `<span>${total}</span>` : ""}
+        </div>
+        <div>
+          <strong>${escapeHtml(displayPerson(group.owner))}</strong>
+          <span>${unread ? `${unread} nueva${unread === 1 ? "" : "s"}` : "Vistas"} - ${formatTime(latest?.expiresAt)}</span>
+        </div>
+      </div>
+      <p>${escapeHtml(latest?.caption || payload.text || "Instantanea")}</p>
+      <div class="story-meta"><span>${mediaLabel || (latest?.viewOnce ? "Una vez" : "Normal")}</span><span>${latest?.viewCount || 0} vistas</span></div>
     </button>
   `;
 }
@@ -2638,7 +2830,7 @@ function renderNewChatModal() {
       <div class="modal-list">
         ${results.length ? results.map((person) => renderChatSearchResult(person, mode)).join("") : `<div class="empty compact"><img src="assets/nivra-mark.svg" alt=""><h2>Busca personas</h2><p>Respeta la configuracion publica de cada cuenta.</p></div>`}
       </div>
-      ${mode === "group" ? `<button class="btn primary full" id="createGroupChatBtn" ${state.chatSearch.selectedIds.size ? "" : "disabled"}>Crear grupo (${state.chatSearch.selectedIds.size})</button>` : ""}
+      ${mode === "group" ? `<div class="modal-actions"><button class="btn primary full" id="createGroupChatBtn" ${state.chatSearch.selectedIds.size ? "" : "disabled"}>Crear grupo (${state.chatSearch.selectedIds.size})</button></div>` : ""}
     </section>
   `;
 }
@@ -2756,6 +2948,16 @@ function renderStoryModal() {
   const selectedReaction = responseState.reaction;
   const responseBusy = Boolean(responseState.sending);
   const replyText = state.drafts.storyReplyInput || "";
+  const playback = state.storyPlayback || {};
+  const storyIds = playback.storyIds?.length ? playback.storyIds : (story?.id ? [story.id] : []);
+  const playbackIndex = Math.max(0, storyIds.indexOf(story?.id));
+  const canGoPrev = playbackIndex > 0;
+  const canGoNext = playbackIndex >= 0 && playbackIndex < storyIds.length - 1;
+  const progressBars = storyIds.map((storyId, index) => `
+    <span class="story-progress-segment ${index < playbackIndex ? "done" : ""} ${index === playbackIndex ? "active" : ""}">
+      <span data-story-progress="${index}" style="width:${index < playbackIndex ? 100 : 0}%"></span>
+    </span>
+  `).join("");
   const quickReactionButtons = STORY_REACTIONS.map((item) => `
     <button class="story-quick-reaction ${item.value === selectedReaction ? "selected" : ""}" type="button" data-story-quick-reaction="${escapeAttr(item.key)}" aria-label="Responder con reaccion" ${responseBusy ? "disabled" : ""}>${escapeHtml(item.value)}</button>
   `).join("");
@@ -2770,9 +2972,15 @@ function renderStoryModal() {
   return `
     <div class="modal-backdrop show story-backdrop">
       <section class="story-viewer ${story.owner?.id !== state.auth.user.id ? "can-respond" : ""}">
+        <div class="story-progress">${progressBars}</div>
         <div class="story-viewer-head">
           ${avatarNode(story.owner, "mini-avatar")}
           <div><strong>${escapeHtml(displayPerson(story.owner))}</strong><span>${formatTime(story.expiresAt)}</span></div>
+          <div class="story-viewer-controls">
+            <button class="btn icon" type="button" id="storyPrevBtn" title="Anterior" aria-label="Anterior" ${canGoPrev ? "" : "disabled"}>${icon("chevron-left")}</button>
+            <button class="btn icon" type="button" id="storyPauseBtn" title="${playback.paused ? "Continuar" : "Pausar"}" aria-label="${playback.paused ? "Continuar" : "Pausar"}">${icon(playback.paused ? "play" : "pause")}</button>
+            <button class="btn icon" type="button" id="storyNextBtn" title="Siguiente" aria-label="Siguiente" ${canGoNext ? "" : "disabled"}>${icon("chevron-right")}</button>
+          </div>
           <button class="btn icon" data-close-modal title="Cerrar" aria-label="Cerrar">${icon("x")}</button>
         </div>
         <div class="story-viewer-body">
@@ -2865,6 +3073,7 @@ function renderCallLayer() {
   const title = callTitle(call);
   const subtitle = callSubtitle(call);
   const status = callStatusText();
+  const endLabel = isGroupCall(call) && call.initiatorUserId !== state.auth.user.id ? "Salir" : "Colgar";
   return `
     <section class="call-layer ${isVideo ? "video" : "voice"} ${isIncoming ? "incoming" : ""} ${state.call.minimized ? "call-minimized" : ""}" aria-label="Llamada">
       <div class="call-shell">
@@ -2875,7 +3084,7 @@ function renderCallLayer() {
             <strong data-call-status>${escapeHtml(status)}</strong>
             <span>${escapeHtml(subtitle)}</span>
           </div>
-          <button class="btn danger" id="endCallTopBtn">${icon("phone-off")}<span>Colgar</span></button>
+          <button class="btn danger" id="endCallTopBtn">${icon("phone-off")}<span>${endLabel}</span></button>
         </header>
         <div class="call-stage ${isVideo ? "video-stage" : "voice-stage"}">
           ${isVideo ? renderVideoCallStage(participants) : renderVoiceCallStage(participants, title)}
@@ -2888,7 +3097,7 @@ function renderCallLayer() {
             <button class="call-action ${state.call.muted ? "active" : ""}" id="toggleMuteBtn">${icon(state.call.muted ? "mic-off" : "mic")}<span>${state.call.muted ? "Silenciado" : "Micro"}</span></button>
             ${isVideo ? `<button class="call-action ${state.call.cameraOff ? "active" : ""}" id="toggleCameraBtn">${icon(state.call.cameraOff ? "video-off" : "video")}<span>${state.call.cameraOff ? "Camara off" : "Camara"}</span></button>` : ""}
             <button class="call-action ${state.call.speaker ? "active" : ""}" id="toggleSpeakerBtn">${icon("volume")}<span>Audio</span></button>
-            <button class="call-action decline" id="endCallBtn">${icon("phone-off")}<span>Colgar</span></button>
+            <button class="call-action decline" id="endCallBtn">${icon("phone-off")}<span>${endLabel}</span></button>
           `}
         </footer>
       </div>
@@ -3040,6 +3249,7 @@ function renderCallRosterPerson(person) {
 }
 
 function renderCallHistoryCard(call) {
+  const canRejoin = canRejoinCall(call);
   return `
     <div class="person-card compact-person">
       <div class="avatar">${call.type === "Video" ? "V" : "L"}</div>
@@ -3047,6 +3257,7 @@ function renderCallHistoryCard(call) {
         <strong>${escapeHtml(call.title || "Llamada")}</strong>
         <span>${escapeHtml(call.subtitle || call.status || "Historial")} - ${formatTime(call.startedAt)}</span>
       </div>
+      ${canRejoin ? `<button class="btn primary" data-rejoin-call="${escapeAttr(call.id)}">${icon("phone")}<span>Reentrar</span></button>` : ""}
     </div>
   `;
 }
@@ -3096,6 +3307,7 @@ function icon(name) {
     video: '<path d="M4 6h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"/><path d="m16 10 6-3v10l-6-3z"/>',
     "video-off": '<path d="m2 2 20 20"/><path d="M10.7 6H14a2 2 0 0 1 2 2v3.3"/><path d="M16 16.7V18H4a2 2 0 0 1-2-2V8c0-.7.4-1.4 1-1.7"/><path d="m16 10 6-3v10l-4.2-2.1"/>',
     shield: '<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><path d="m9 12 2 2 4-5"/>',
+    bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/>',
     user: '<path d="M20 21a8 8 0 0 0-16 0"/><path d="M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/>',
     "user-plus": '<path d="M16 21a6 6 0 0 0-12 0"/><path d="M10 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/><path d="M19 8v6"/><path d="M16 11h6"/>',
     globe: '<path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z"/><path d="M2 12h20"/><path d="M12 2a15.3 15.3 0 0 1 0 20"/><path d="M12 2a15.3 15.3 0 0 0 0 20"/>',
@@ -3118,6 +3330,9 @@ function icon(name) {
     reply: '<path d="m9 17-5-5 5-5"/><path d="M4 12h11a5 5 0 0 1 5 5v1"/>',
     forward: '<path d="m15 17 5-5-5-5"/><path d="M4 18v-1a5 5 0 0 1 5-5h11"/>',
     play: '<path d="M8 5v14l11-7z"/>',
+    pause: '<path d="M8 5v14"/><path d="M16 5v14"/>',
+    "chevron-left": '<path d="m15 18-6-6 6-6"/>',
+    "chevron-right": '<path d="m9 18 6-6-6-6"/>',
     square: '<path d="M6 6h12v12H6z"/>',
     send: '<path d="m22 2-7 20-4-9-9-4 20-7z"/><path d="M22 2 11 13"/>'
   };
@@ -3159,6 +3374,15 @@ function renderAccountView() {
           <h3>Plan</h3>
           <p>Gratis en lo importante. Monetizacion suave con anuncios sin leer contenido.</p>
           <div class="metric">${escapeHtml(state.entitlements?.planCode || "free")}</div>
+        </div>
+        <div class="card span-5">
+          <h3>Notificaciones</h3>
+          <p>${escapeHtml(pushStatusLabel())}</p>
+          ${state.pushError ? `<p class="notification-error">${escapeHtml(state.pushError)}</p>` : ""}
+          <div class="stack">
+            <button class="btn primary" id="enableNotificationsAccountBtn" ${state.pushRegistering ? `disabled aria-busy="true"` : ""}>${icon(state.pushRegistering ? "sync" : "bell")}<span>${state.pushReady ? "Reparar registro" : "Activar notificaciones"}</span></button>
+            <button class="btn ghost" id="testNotificationBtn" ${state.pushReady || notificationCapabilityStatus().permission === "granted" ? "" : "disabled"}>${icon("bell")}<span>Probar aviso</span></button>
+          </div>
         </div>
         <div class="card span-7">
           <h3>Dispositivos</h3>
@@ -3278,11 +3502,18 @@ function bindAppEvents() {
   document.querySelectorAll("[data-view-story]").forEach((button) => {
     button.addEventListener("click", () => viewStory(button.dataset.viewStory));
   });
+  document.querySelectorAll("[data-view-story-group]").forEach((button) => {
+    button.addEventListener("click", () => openStoryGroup(button.dataset.viewStoryGroup, button.dataset.storyId).catch((error) => toast(error.message || "No se pudo abrir historia.")));
+  });
   document.querySelector("#syncBtn")?.addEventListener("click", async () => {
     await bootstrap();
     await pollPending();
     toast("Sincronizado.");
   });
+  document.querySelector("#enableNotificationsBtn")?.addEventListener("click", enableNotificationsFromUserAction);
+  document.querySelector("#enableNotificationsAccountBtn")?.addEventListener("click", enableNotificationsFromUserAction);
+  document.querySelector("#dismissNotificationsBtn")?.addEventListener("click", dismissNotificationPrompt);
+  document.querySelector("#testNotificationBtn")?.addEventListener("click", testNotificationDelivery);
   document.querySelector("#sendBtn")?.addEventListener("click", sendTextMessage);
   const messageInput = document.querySelector("#messageInput");
   messageInput?.addEventListener("input", (event) => {
@@ -3417,6 +3648,10 @@ function bindAppEvents() {
   document.querySelectorAll("[data-story-quick-reaction]").forEach((button) => {
     button.addEventListener("click", (event) => sendQuickStoryReaction(event, button.dataset.storyQuickReaction));
   });
+  document.querySelector("#storyPrevBtn")?.addEventListener("click", () => openAdjacentStory(-1).catch(() => {}));
+  document.querySelector("#storyPauseBtn")?.addEventListener("click", toggleStoryPlayback);
+  document.querySelector("#storyNextBtn")?.addEventListener("click", () => openAdjacentStory(1).catch(() => {}));
+  bindStoryMediaEvents();
   document.querySelector("#storyReplyForm")?.addEventListener("submit", handleStoryReplySubmit);
   document.querySelector("#logoutBtn")?.addEventListener("click", logout);
   document.querySelector("#refreshBtn")?.addEventListener("click", refreshSession);
@@ -3433,6 +3668,9 @@ function bindAppEvents() {
   document.querySelector("#videoCallBtn")?.addEventListener("click", () => startCall("Video"));
   document.querySelector("#startVoicePanel")?.addEventListener("click", () => startCall("Voice"));
   document.querySelector("#startVideoPanel")?.addEventListener("click", () => startCall("Video"));
+  document.querySelectorAll("[data-rejoin-call]").forEach((button) => {
+    button.addEventListener("click", () => rejoinCall(button.dataset.rejoinCall));
+  });
   document.querySelector("#acceptCallBtn")?.addEventListener("click", acceptCall);
   document.querySelector("#declineCallBtn")?.addEventListener("click", declineCall);
   document.querySelector("#endCallBtn")?.addEventListener("click", endCurrentCall);
@@ -3562,10 +3800,12 @@ async function completeAuth(auth, keys) {
     state.launchPush = null;
     await handlePushNavigation(launchPush, { action: launchPush.pushAction || "" }).catch(() => {});
   }
-  await initializePushNotifications().catch(() => {});
+  await refreshPushPermissionState().catch(() => {});
+  await initializePushNotifications({ requestPermission: false }).catch(() => {});
   await connectRealtime();
   await syncPendingMessages("auth", { force: true }).catch(() => {});
   startPolling();
+  render();
   toast("Bienvenido a Nivra.");
 }
 
@@ -3667,9 +3907,11 @@ async function handleQrLoginSuccess(encryptedPayload, ephemeral, connection) {
       { userId: payload.auth.user.id, importedFromQr: true }
     );
     await bootstrap();
-    await initializePushNotifications().catch(() => {});
+    await refreshPushPermissionState().catch(() => {});
+    await initializePushNotifications({ requestPermission: false }).catch(() => {});
     await connectRealtime();
     startPolling();
+    render();
     toast("Dispositivo vinculado.");
   } catch (error) {
     toast(error.message || "No se pudo desbloquear el QR.");
@@ -3842,6 +4084,7 @@ function closeModal() {
     stopQrScanner().catch(() => {});
   }
   if (state.activeStory) resetStoryResponseDraft();
+  if (state.activeStory) resetStoryPlayback();
   state.modal = null;
   state.activeStory = null;
   state.chatSearch.selectedIds?.clear?.();
@@ -4222,8 +4465,43 @@ async function breatheMainThread(index, every = MAIN_THREAD_YIELD_EVERY) {
   if (index > 0 && index % every === 0) await yieldToMainThread();
 }
 
-async function viewStory(storyId) {
+async function openStoryGroup(ownerId, storyId = null) {
+  const groups = groupStoriesByOwner(filteredStories().length ? filteredStories() : state.stories);
+  const group = groups.find((item) => item.ownerId === ownerId);
+  if (!group?.stories?.length) return;
+  clearStoryPlaybackTimers();
+  const target = group.stories.find((story) => story.id === storyId) ||
+    group.stories.find((story) => !story.viewedByMe) ||
+    group.stories[0];
+  state.storyPlayback = {
+    ...state.storyPlayback,
+    ownerId,
+    storyIds: group.stories.map((story) => story.id),
+    index: Math.max(0, group.stories.findIndex((story) => story.id === target.id)),
+    paused: false,
+    startedAt: 0,
+    remainingMs: 0,
+    durationMs: 0
+  };
+  await viewStory(target.id, { preservePlayback: true });
+}
+
+async function viewStory(storyId, options = {}) {
   try {
+    if (!options.preservePlayback) {
+      const localStory = state.stories.find((item) => item.id === storyId);
+      const ownerId = storyOwnerId(localStory);
+      if (ownerId) {
+        const group = groupStoriesByOwner(state.stories).find((item) => item.ownerId === ownerId);
+        state.storyPlayback = {
+          ...state.storyPlayback,
+          ownerId,
+          storyIds: group?.stories?.map((story) => story.id) || [storyId],
+          index: Math.max(0, group?.stories?.findIndex((story) => story.id === storyId) ?? 0),
+          paused: false
+        };
+      }
+    }
     const story = await request(`/stories/${storyId}/view`, { method: "POST" });
     const payload = decodeStoryPayload(story.encryptedPayload);
     const text = payload.text || story.caption || "Instantanea";
@@ -4232,6 +4510,7 @@ async function viewStory(storyId) {
     state.stories = [openedStory, ...state.stories.filter((item) => item.id !== story.id)];
     state.activeStory = openedStory;
     render();
+    startStoryPlayback(openedStory);
     loadActiveStoryMedia().catch(() => {});
     bootstrap().then(() => {
       if (state.activeStory?.id !== story.id) return;
@@ -4243,10 +4522,141 @@ async function viewStory(storyId) {
         mediaUrl: state.activeStory.mediaUrl
       };
       render();
+      syncStoryPlaybackUi();
       loadActiveStoryMedia().catch(() => {});
     }).catch(() => {});
   } catch (error) {
     toast(error.message || "No se pudo abrir historia.");
+  }
+}
+
+function storyDurationFor(story = state.activeStory) {
+  const payload = story?.payload || decodeStoryPayload(story?.encryptedPayload);
+  const mime = payload?.media?.mime || "";
+  return /^(audio|video)\//.test(mime) ? STORY_MEDIA_DURATION_MS : STORY_TEXT_DURATION_MS;
+}
+
+function clearStoryPlaybackTimers() {
+  clearTimeout(state.storyPlayback?.timer);
+  clearInterval(state.storyPlayback?.ticker);
+  if (state.storyPlayback) {
+    state.storyPlayback.timer = null;
+    state.storyPlayback.ticker = null;
+  }
+}
+
+function resetStoryPlayback() {
+  clearStoryPlaybackTimers();
+  state.storyPlayback = {
+    ownerId: null,
+    storyIds: [],
+    index: 0,
+    paused: false,
+    timer: null,
+    ticker: null,
+    startedAt: 0,
+    remainingMs: 0,
+    durationMs: 0
+  };
+}
+
+function startStoryPlayback(story = state.activeStory) {
+  if (!story?.id) return;
+  clearStoryPlaybackTimers();
+  const storyIds = state.storyPlayback.storyIds?.length ? state.storyPlayback.storyIds : [story.id];
+  const index = Math.max(0, storyIds.indexOf(story.id));
+  const durationMs = storyDurationFor(story);
+  state.storyPlayback = {
+    ...state.storyPlayback,
+    storyIds,
+    index,
+    paused: false,
+    startedAt: Date.now(),
+    remainingMs: durationMs,
+    durationMs
+  };
+  state.storyPlayback.timer = setTimeout(() => openAdjacentStory(1).catch(() => {}), durationMs);
+  state.storyPlayback.ticker = setInterval(updateStoryProgressUi, 150);
+  updateStoryProgressUi();
+}
+
+function pauseStoryPlayback({ pauseMedia = true } = {}) {
+  if (!state.activeStory || state.storyPlayback.paused) return;
+  const elapsed = Date.now() - (state.storyPlayback.startedAt || Date.now());
+  state.storyPlayback.remainingMs = Math.max(500, (state.storyPlayback.remainingMs || state.storyPlayback.durationMs || storyDurationFor()) - elapsed);
+  state.storyPlayback.paused = true;
+  clearStoryPlaybackTimers();
+  if (pauseMedia) document.querySelector("[data-story-active-media]")?.pause?.();
+  updateStoryProgressUi();
+}
+
+function resumeStoryPlayback({ playMedia = true } = {}) {
+  if (!state.activeStory || !state.storyPlayback.paused) return;
+  const remainingMs = Math.max(500, state.storyPlayback.remainingMs || storyDurationFor());
+  state.storyPlayback.paused = false;
+  state.storyPlayback.startedAt = Date.now();
+  state.storyPlayback.remainingMs = remainingMs;
+  clearStoryPlaybackTimers();
+  state.storyPlayback.timer = setTimeout(() => openAdjacentStory(1).catch(() => {}), remainingMs);
+  state.storyPlayback.ticker = setInterval(updateStoryProgressUi, 150);
+  if (playMedia) document.querySelector("[data-story-active-media]")?.play?.().catch(() => {});
+  updateStoryProgressUi();
+}
+
+function toggleStoryPlayback() {
+  if (state.storyPlayback.paused) resumeStoryPlayback();
+  else pauseStoryPlayback();
+  render();
+}
+
+async function openAdjacentStory(direction) {
+  const storyIds = state.storyPlayback.storyIds || [];
+  if (!state.activeStory || !storyIds.length) return;
+  const currentIndex = storyIds.indexOf(state.activeStory.id);
+  const nextIndex = currentIndex + direction;
+  if (nextIndex < 0 || nextIndex >= storyIds.length) {
+    if (direction > 0) closeModal();
+    return;
+  }
+  state.storyPlayback.index = nextIndex;
+  state.storyPlayback.paused = false;
+  await viewStory(storyIds[nextIndex], { preservePlayback: true });
+}
+
+function updateStoryProgressUi() {
+  if (!state.activeStory) return;
+  const playback = state.storyPlayback;
+  const storyIds = playback.storyIds?.length ? playback.storyIds : [state.activeStory.id];
+  const index = Math.max(0, storyIds.indexOf(state.activeStory.id));
+  const elapsed = playback.paused ? 0 : Date.now() - (playback.startedAt || Date.now());
+  const remaining = playback.paused
+    ? playback.remainingMs
+    : Math.max(0, (playback.remainingMs || playback.durationMs || storyDurationFor()) - elapsed);
+  const duration = playback.durationMs || storyDurationFor();
+  const currentPercent = Math.max(0, Math.min(100, ((duration - remaining) / duration) * 100));
+  document.querySelectorAll("[data-story-progress]").forEach((bar) => {
+    const barIndex = Number(bar.dataset.storyProgress);
+    const width = barIndex < index ? 100 : barIndex > index ? 0 : currentPercent;
+    bar.style.width = `${width}%`;
+  });
+}
+
+function syncStoryPlaybackUi() {
+  if (!state.activeStory) return;
+  updateStoryProgressUi();
+}
+
+function bindStoryMediaEvents() {
+  const media = document.querySelector("[data-story-active-media]");
+  if (!media || media.dataset.storyMediaBound === "1") return;
+  media.dataset.storyMediaBound = "1";
+  media.addEventListener("pause", () => {
+    if (!media.ended) pauseStoryPlayback({ pauseMedia: false });
+  });
+  media.addEventListener("play", () => resumeStoryPlayback({ playMedia: false }));
+  media.addEventListener("ended", () => openAdjacentStory(1).catch(() => {}));
+  if (!state.storyPlayback.paused) {
+    media.play?.().catch(() => {});
   }
 }
 
@@ -4299,9 +4709,9 @@ function renderStoryMedia(url, media = {}, cacheKey = "") {
     return `<img class="story-media"${cacheAttr} src="${escapeAttr(url)}" alt="${escapeAttr(name)}">`;
   }
   if (mime.startsWith("video/")) {
-    return `<video class="story-media"${cacheAttr} src="${escapeAttr(url)}" controls playsinline></video>`;
+    return `<video class="story-media"${cacheAttr} data-story-active-media src="${escapeAttr(url)}" controls playsinline></video>`;
   }
-  return `<audio class="story-audio"${cacheAttr} src="${escapeAttr(url)}" controls></audio>`;
+  return `<audio class="story-audio"${cacheAttr} data-story-active-media src="${escapeAttr(url)}" controls></audio>`;
 }
 
 function toggleStoryReactions(event) {
@@ -5907,6 +6317,17 @@ function previewProfilePhoto(event) {
   reader.readAsDataURL(file);
 }
 
+function isGroupCall(call = state.call.current) {
+  return (call?.participantUserIds || []).filter(Boolean).length > 2;
+}
+
+function canRejoinCall(call) {
+  if (!call?.id || state.call.current?.id === call.id) return false;
+  if (!call.live) return false;
+  if (call.endedAt) return false;
+  return (call.participantUserIds || []).includes(state.auth?.user?.id);
+}
+
 async function startCall(type) {
   const conversation = selectedConversation();
   if (!conversation) return;
@@ -5930,6 +6351,38 @@ async function startCall(type) {
     stopCallMedia();
     stopCallTones();
     toast(error.message || "No se pudo iniciar llamada.");
+  }
+}
+
+async function rejoinCall(callId) {
+  if (!callId || state.call.current) return;
+  try {
+    const call = await request(`/calls/${encodeURIComponent(callId)}`);
+    if (!call || call.status === "Ended" || call.endedAt) {
+      toast("Esa sala de llamada ya finalizo.");
+      state.callHistory = (state.callHistory || []).map((item) => item.id === callId ? { ...item, live: false, status: "Finalizada", endedAt: item.endedAt || new Date().toISOString() } : item);
+      saveCallHistory();
+      render();
+      return;
+    }
+    state.call.current = call;
+    state.call.phase = "active";
+    state.call.startedAt = call.startedAt || new Date().toISOString();
+    state.call.minimized = false;
+    await prepareCallMedia(call.type === "Video");
+    activateView("calls", { mobileChatOpen: false, renderAfter: false });
+    startCallTicker();
+    rememberCall(call, { status: "Activa", live: true });
+    render();
+    await Promise.all(call.participantUserIds
+      .filter((userId) => userId !== state.auth.user.id)
+      .map((userId) => sendCallSignal(call, userId, "accepted", { accepted: true, rejoined: true }).catch(() => {})));
+    await establishCallPeers();
+    await flushPendingCallSignals();
+    toast("Volviste a la llamada.");
+  } catch (error) {
+    resetCallState({ remember: false });
+    toast(error.message || "No se pudo volver a la llamada.");
   }
 }
 
@@ -6007,9 +6460,11 @@ async function declineCall() {
   if (!call) return;
   try {
     await sendCallSignal(call, call.initiatorUserId, "declined", "declined").catch(() => {});
-    await request(`/calls/${call.id}/end`, { method: "POST" }).catch(() => {});
+    if (!isGroupCall(call)) {
+      await request(`/calls/${call.id}/end`, { method: "POST" }).catch(() => {});
+    }
   } finally {
-    resetCallState();
+    resetCallState({ historyStatus: "Rechazada" });
     syncIncomingCallOverlay();
     render();
   }
@@ -6018,6 +6473,10 @@ async function declineCall() {
 async function endCurrentCall() {
   const call = state.call.current;
   if (!call) return;
+  if (isGroupCall(call) && call.initiatorUserId !== state.auth.user.id) {
+    await leaveGroupCallRoom();
+    return;
+  }
   try {
     await request(`/calls/${call.id}/end`, { method: "POST" });
   } catch {
@@ -6026,6 +6485,21 @@ async function endCurrentCall() {
   resetCallState();
   syncIncomingCallOverlay();
   render();
+}
+
+async function leaveGroupCallRoom() {
+  const call = state.call.current;
+  if (!call) return;
+  try {
+    await Promise.all(call.participantUserIds
+      .filter((userId) => userId !== state.auth.user.id)
+      .map((userId) => sendCallSignal(call, userId, "left", { left: true }).catch(() => {})));
+  } finally {
+    resetCallState({ historyStatus: "Disponible para volver", keepLive: true });
+    syncIncomingCallOverlay();
+    render();
+    toast("Saliste de la llamada. Puedes reentrar mientras siga activa.");
+  }
 }
 
 async function sendCallSignal(call, targetUserId, signalType, payload) {
@@ -6063,9 +6537,22 @@ async function handleCallSignal(signal) {
     return;
   }
   if (signalType === "declined" || signalType === "busy") {
+    if (isGroupCall(call)) {
+      updateRemoteCallState(fromUserId, signalType, true);
+      closePeerConnectionForUser(fromUserId);
+      toast(signalType === "busy" ? "Un participante esta en otra llamada." : "Un participante rechazo la llamada.");
+      render();
+      return;
+    }
     stopCallTones();
     toast(signalType === "busy" ? "El contacto esta en otra llamada." : "Llamada rechazada.");
-    resetCallState();
+    resetCallState({ historyStatus: signalType === "busy" ? "Ocupada" : "Rechazada" });
+    render();
+    return;
+  }
+  if (signalType === "left") {
+    updateRemoteCallState(fromUserId, "left", true);
+    closePeerConnectionForUser(fromUserId);
     render();
     return;
   }
@@ -6340,11 +6827,12 @@ function updateRemoteCallState(userId, key, value) {
   state.call.remoteStates.set(userId, stateForUser);
 }
 
-function resetCallState() {
-  if (state.call.current) {
+function resetCallState(options = {}) {
+  if (state.call.current && options.remember !== false) {
     rememberCall(state.call.current, {
-      status: state.call.phase === "incoming" ? "Perdida" : "Finalizada",
-      endedAt: new Date().toISOString()
+      status: options.historyStatus || (state.call.phase === "incoming" ? "Perdida" : "Finalizada"),
+      endedAt: options.keepLive ? null : new Date().toISOString(),
+      live: Boolean(options.keepLive)
     });
   }
   stopCallTicker();
@@ -6394,6 +6882,22 @@ function stopCallMedia() {
   state.call.localStream = null;
   state.call.remoteStreams = new Map();
   detachCallMediaNodes();
+}
+
+function closePeerConnectionForUser(userId) {
+  const peer = state.call.peers.get(userId);
+  if (peer?.connection) {
+    try {
+      peer.connection.onicecandidate = null;
+      peer.connection.ontrack = null;
+      peer.connection.onconnectionstatechange = null;
+      peer.connection.close?.();
+    } catch {}
+  }
+  state.call.peers.delete(userId);
+  const stream = state.call.remoteStreams.get(userId);
+  stopMediaStream(stream);
+  state.call.remoteStreams.delete(userId);
 }
 
 function closePeerConnections() {
@@ -6491,11 +6995,35 @@ async function handleDeleteAccountSubmit(event) {
 
 function clearSession() {
   resetCallState();
+  if (state.voice.recording || state.voice.starting) {
+    stopVoiceNoteRecording({ cancel: true });
+    clearInterval(state.voice.timer);
+    state.voice.timer = null;
+    setVoiceRecordingUi(false);
+  } else {
+    resetVoiceRecordingState();
+  }
+  clearVoiceHoldHint();
+  closeFloatingMenu();
+  stopCameraStream({ discardRecording: true, keepState: true });
+  stopQrScanner().catch(() => {});
+  stopQrLogin().catch(() => {});
+  resetStoryPlayback();
   cleanupObjectUrls({ keepVisible: false });
   clearTimeout(state.searchTimer);
+  state.searchTimer = null;
   clearTimeout(state.contactSearchTimer);
+  state.contactSearchTimer = null;
   clearTimeout(state.chatSearchTimer);
+  state.chatSearchTimer = null;
   clearTimeout(state.vaultInviteTimer);
+  state.vaultInviteTimer = null;
+  clearTimeout(state.messageScrollTimer);
+  state.messageScrollTimer = null;
+  clearTimeout(state.realtimeReconnectTimer);
+  state.realtimeReconnectTimer = null;
+  clearTimeout(state.typingStopTimer);
+  state.typingStopTimer = null;
   localStorage.removeItem("nivra.auth");
   state.auth = null;
   const previous = state.connection;
@@ -6507,10 +7035,18 @@ function clearSession() {
   state.pushRetryTimer = null;
   state.pushRetryAttempt = 0;
   state.pushReady = false;
+  state.pushPermission = "unknown";
+  state.pushServerReady = null;
+  state.pushError = "";
+  state.webPushForegroundReady = false;
   state.syncInFlight = false;
   state.callHistory = [];
+  state.modal = null;
+  state.activeStory = null;
+  state.replyTo = null;
   cancelActiveMessageLoad("logout");
   clearInterval(state.polling);
+  state.polling = null;
   render();
 }
 
@@ -7715,29 +8251,91 @@ function decodeServerSystemMessage(recipient) {
   }
 }
 
-async function initializePushNotifications() {
-  if (!state.auth?.tokens?.accessToken) return;
+async function initializePushNotifications(options = {}) {
+  if (!state.auth?.tokens?.accessToken) return false;
+  const requestPermission = Boolean(options.requestPermission);
+  const force = Boolean(options.force);
+  await refreshPushPermissionState().catch(() => {});
+
   if (state.pushRegistration && !state.pushRegistering) {
-    await flushPushTokenRegistration().catch(() => {});
-    if (state.pushReady) return;
+    const flushed = await flushPushTokenRegistration().catch(() => false);
+    if (flushed || (state.pushReady && !force)) return Boolean(state.pushReady);
   }
-  if (state.pushReady || state.pushRegistering) return;
+  if (state.pushReady && !force) return true;
+  if (state.pushRegistering) return false;
+
   state.pushRegistering = true;
+  state.pushError = "";
+  scheduleRender();
   try {
     if (window.NIVRA_PUSH_TOKEN) {
-      await queuePushTokenRegistration("fcm", String(window.NIVRA_PUSH_TOKEN).trim());
-      return;
+      return await queuePushTokenRegistration("fcm", String(window.NIVRA_PUSH_TOKEN).trim());
     }
 
     if (isNativeCapacitor()) {
-      await initializeCapacitorPushNotifications();
-      return;
+      return await initializeCapacitorPushNotifications({ requestPermission });
     }
 
-    await initializeWebPushNotifications();
+    return await initializeWebPushNotifications({ requestPermission });
+  } catch (error) {
+    state.pushReady = false;
+    state.pushError = error?.message || "No se pudieron activar las notificaciones.";
+    console.warn("Push initialization failed.", error);
+    return false;
   } finally {
     state.pushRegistering = false;
+    scheduleRender();
   }
+}
+
+async function enableNotificationsFromUserAction() {
+  clearNotificationPromptDismissal();
+  state.pushReady = false;
+  state.pushError = "";
+  render();
+  const ok = await initializePushNotifications({ requestPermission: true, force: true }).catch((error) => {
+    state.pushError = error?.message || "No se pudieron activar las notificaciones.";
+    return false;
+  });
+  await refreshPushPermissionState().catch(() => {});
+  render();
+  if (ok) {
+    toast(state.pushServerReady === false
+      ? "Permiso listo. Falta configurar FCM en el servidor."
+      : "Notificaciones activadas.");
+  } else {
+    toast(pushActivationFailureMessage());
+  }
+}
+
+function pushActivationFailureMessage() {
+  const capability = notificationCapabilityStatus();
+  if (!capability.supported) return capability.reason || "Este dispositivo no soporta notificaciones push.";
+  if (capability.permission === "denied") return "Notificaciones bloqueadas. Activalas en ajustes del sistema o navegador.";
+  return state.pushError || "No se pudo completar el registro de notificaciones.";
+}
+
+async function refreshPushPermissionState() {
+  if (window.NIVRA_PUSH_TOKEN) {
+    state.pushPermission = "granted";
+    return state.pushPermission;
+  }
+  if (isNativeCapacitor()) {
+    const push = window.Capacitor?.Plugins?.PushNotifications;
+    const permission = await push?.checkPermissions?.().catch(() => null);
+    state.pushPermission = normalizePushPermission(permission?.receive);
+    return state.pushPermission;
+  }
+  state.pushPermission = "Notification" in window ? Notification.permission : "unsupported";
+  return state.pushPermission;
+}
+
+function normalizePushPermission(value) {
+  if (value === "granted") return "granted";
+  if (value === "denied") return "denied";
+  if (value === "prompt" || value === "prompt-with-rationale" || value === "default") return "default";
+  if (value === "unsupported") return "unsupported";
+  return value || "default";
 }
 
 function isNativeCapacitor() {
@@ -7747,11 +8345,12 @@ function isNativeCapacitor() {
   return PLATFORM.isCapacitor && !PLATFORM.isHttp;
 }
 
-async function initializeCapacitorPushNotifications() {
+async function initializeCapacitorPushNotifications(options = {}) {
   const push = window.Capacitor?.Plugins?.PushNotifications;
   if (!push) {
     console.warn("PushNotifications plugin is not available in Capacitor.");
-    return;
+    state.pushError = "El plugin nativo de push no esta disponible.";
+    return false;
   }
 
   await initializeCapacitorLocalNotifications();
@@ -7759,11 +8358,17 @@ async function initializeCapacitorPushNotifications() {
 
   let permission = await push.checkPermissions?.().catch(() => null);
   if (!permission || permission.receive !== "granted") {
+    if (!options.requestPermission) {
+      state.pushPermission = normalizePushPermission(permission?.receive);
+      return false;
+    }
     permission = await push.requestPermissions?.().catch(() => null);
   }
-  if (!permission || permission.receive !== "granted") return;
+  state.pushPermission = normalizePushPermission(permission?.receive);
+  if (!permission || permission.receive !== "granted") return false;
 
   await push.register();
+  return await waitForPushReady();
 }
 
 async function bindCapacitorPushListeners(push) {
@@ -7787,7 +8392,7 @@ async function bindCapacitorPushListeners(push) {
   });
 
   await push.addListener("pushNotificationActionPerformed", async (event) => {
-    const data = event?.notification?.data || {};
+    const data = extractPushData(event?.notification || {});
     const action = event?.actionId || event?.action || "";
     await handlePushNavigation(data, { action }).catch(() => {});
     await syncPendingMessages("push-action", { force: true }).catch(() => {});
@@ -7820,7 +8425,7 @@ async function initializeCapacitorLocalNotifications() {
     }]
   }).catch(() => {});
   await local.addListener?.("localNotificationActionPerformed", async (event) => {
-    const data = event?.notification?.extra || {};
+    const data = extractPushData(event?.notification || {});
     const action = event?.actionId || event?.action || "";
     await handlePushNavigation(data, { action }).catch(() => {});
     await syncPendingMessages("local-notification-action", { force: true }).catch(() => {});
@@ -7832,7 +8437,7 @@ async function initializeCapacitorLocalNotifications() {
 async function showCapacitorLocalNotification(notification = {}) {
   const local = window.Capacitor?.Plugins?.LocalNotifications;
   if (!local) return;
-  const data = notification?.data || notification?.notification?.data || {};
+  const data = extractPushData(notification);
   const isCall = isIncomingCallPushData(data);
   const title = notification.title || notification?.notification?.title || "Nivra";
   const body = notification.body ||
@@ -7861,32 +8466,67 @@ function notificationNumericId(value) {
   return Math.max(1, Math.abs(hash));
 }
 
-async function initializeWebPushNotifications() {
-  if (!("Notification" in window) || !("serviceWorker" in navigator)) return;
-  const permission = Notification.permission === "granted"
-    ? "granted"
-    : await Notification.requestPermission();
-  if (permission !== "granted") return;
+function waitForPushReady(timeoutMs = 8000) {
+  if (state.pushReady) return Promise.resolve(true);
+  const startedAt = Date.now();
+  return new Promise((resolve) => {
+    const timer = setInterval(() => {
+      if (state.pushReady) {
+        clearInterval(timer);
+        resolve(true);
+        return;
+      }
+      if (Date.now() - startedAt >= timeoutMs) {
+        clearInterval(timer);
+        resolve(false);
+      }
+    }, 250);
+  });
+}
 
+async function initializeWebPushNotifications(options = {}) {
+  if (!("Notification" in window) || !("serviceWorker" in navigator)) return false;
+  if (!window.isSecureContext && !PLATFORM.isLocalhost) {
+    state.pushError = "El navegador exige HTTPS para notificaciones push.";
+    return false;
+  }
+
+  let permission = Notification.permission;
+  if (permission !== "granted") {
+    if (!options.requestPermission) {
+      state.pushPermission = permission;
+      return false;
+    }
+    permission = await Notification.requestPermission();
+  }
+  state.pushPermission = permission;
+  if (permission !== "granted") return false;
+
+  await registerServiceWorker().catch(() => null);
   const registration = await navigator.serviceWorker.ready.catch(() => null);
-  if (!registration) return;
+  if (!registration) {
+    state.pushError = "El service worker no quedo listo para recibir push.";
+    return false;
+  }
 
   const fcmToken = await getFirebaseMessagingToken(registration).catch((error) => {
     console.warn("Firebase web push token unavailable.", error);
     return null;
   });
   if (fcmToken) {
-    await queuePushTokenRegistration("fcm", fcmToken);
-    return;
+    return await queuePushTokenRegistration("fcm", fcmToken);
   }
 
   const subscription = await getStandardWebPushSubscription(registration).catch((error) => {
     console.warn("Standard Web Push subscription unavailable.", error);
     return null;
   });
-  if (!subscription) return;
+  if (!subscription) {
+    state.pushError = "No se pudo obtener token FCM/Web Push.";
+    return false;
+  }
 
-  await queuePushTokenRegistration("webpush", serializePushSubscription(subscription));
+  return await queuePushTokenRegistration("webpush", serializePushSubscription(subscription));
 }
 
 async function getFirebaseMessagingToken(serviceWorkerRegistration) {
@@ -7899,18 +8539,41 @@ async function getFirebaseMessagingToken(serviceWorkerRegistration) {
     const messaging = window.firebase.messaging(app);
     if (messaging.useServiceWorker) messaging.useServiceWorker(serviceWorkerRegistration);
     if (messaging.usePublicVapidKey) messaging.usePublicVapidKey(vapidKey);
+    bindWebForegroundMessaging(null, messaging);
     return await messaging.getToken({ vapidKey, serviceWorkerRegistration });
   }
 
   const appModule = await import(firebaseSdkUrl("firebase-app.js"));
   const messagingModule = await import(firebaseSdkUrl("firebase-messaging.js"));
+  if (messagingModule.isSupported) {
+    const supported = await messagingModule.isSupported();
+    if (!supported) return null;
+  }
   const app = appModule.getApps().length ? appModule.getApps()[0] : appModule.initializeApp(firebaseConfig);
   const messaging = messagingModule.getMessaging(app);
+  bindWebForegroundMessaging(messagingModule, messaging);
   return await messagingModule.getToken(messaging, { vapidKey, serviceWorkerRegistration });
 }
 
 function firebaseSdkUrl(file) {
   return `https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/${file}`;
+}
+
+function bindWebForegroundMessaging(messagingModule, messaging) {
+  if (state.webPushForegroundReady || !messaging) return;
+  try {
+    if (messagingModule?.onMessage) {
+      messagingModule.onMessage(messaging, (payload) => handleForegroundPushNotification(payload).catch(() => {}));
+      state.webPushForegroundReady = true;
+      return;
+    }
+    if (messaging.onMessage) {
+      messaging.onMessage((payload) => handleForegroundPushNotification(payload).catch(() => {}));
+      state.webPushForegroundReady = true;
+    }
+  } catch (error) {
+    console.warn("Firebase foreground listener unavailable.", error);
+  }
 }
 
 async function getStandardWebPushSubscription(serviceWorkerRegistration) {
@@ -7943,7 +8606,7 @@ function base64UrlToUint8Array(value) {
 }
 
 async function handleForegroundPushNotification(notification = {}) {
-  const data = notification?.data || {};
+  const data = extractPushData(notification);
   if (isIncomingCallPushData(data)) {
     toast("Llamada entrante");
     await hydrateIncomingCallFromPushData(data).catch(() => {});
@@ -8030,12 +8693,24 @@ function pushDataValue(data = {}, ...keys) {
   return "";
 }
 
+function extractPushData(notification = {}) {
+  return notification?.data ||
+    notification?.extra ||
+    notification?.notification?.data ||
+    notification?.notification?.extra ||
+    {};
+}
+
 async function registerPushToken(provider, token) {
   if (!provider || !token || !state.auth?.tokens?.accessToken) return;
-  await request(PUSH_TOKEN_ENDPOINT, {
+  const response = await request(PUSH_TOKEN_ENDPOINT, {
     method: "POST",
     body: { provider, token }
   });
+  if (response && Object.prototype.hasOwnProperty.call(response, "serverReady")) {
+    state.pushServerReady = Boolean(response.serverReady);
+  }
+  return response;
 }
 
 async function queuePushTokenRegistration(provider, token) {
@@ -8053,12 +8728,16 @@ async function flushPushTokenRegistration() {
   try {
     await registerPushToken(state.pushRegistration.provider, state.pushRegistration.token);
     state.pushReady = true;
+    state.pushError = "";
     state.pushRetryAttempt = 0;
     state.pushRegistration = null;
+    scheduleRender();
     return true;
   } catch (error) {
     state.pushReady = false;
+    state.pushError = error?.message || "Registro de notificaciones pendiente.";
     schedulePushTokenRegistrationRetry(error);
+    scheduleRender();
     return false;
   }
 }
@@ -8096,6 +8775,58 @@ function showRealtimeNotification(title, options = {}) {
     };
   } catch {
     // Browsers can reject notifications outside secure contexts.
+  }
+}
+
+async function testNotificationDelivery() {
+  await refreshPushPermissionState().catch(() => {});
+  if (notificationCapabilityStatus().permission !== "granted") {
+    await enableNotificationsFromUserAction();
+    if (notificationCapabilityStatus().permission !== "granted") return;
+  }
+
+  const data = {
+    type: "message",
+    conversationId: state.selectedConversationId || "",
+    tag: "nivra-test"
+  };
+  if (isNativeCapacitor()) {
+    await initializeCapacitorLocalNotifications().catch(() => {});
+    await showCapacitorLocalNotification({
+      title: "Nivra",
+      body: "Aviso de prueba listo.",
+      data
+    }).catch(() => {});
+    toast("Aviso de prueba enviado.");
+    return;
+  }
+
+  if ("serviceWorker" in navigator) {
+    const registration = await navigator.serviceWorker.ready.catch(() => null);
+    if (registration?.showNotification) {
+      await registration.showNotification("Nivra", {
+        body: "Aviso de prueba listo.",
+        icon: "/assets/icon-192.png",
+        badge: "/assets/icon-192.png",
+        tag: "nivra-test",
+        data
+      });
+      toast("Aviso de prueba enviado.");
+      return;
+    }
+  }
+
+  try {
+    const notification = new Notification("Nivra", {
+      body: "Aviso de prueba listo.",
+      icon: "/assets/icon-192.png",
+      tag: "nivra-test",
+      data
+    });
+    notification.onclick = () => notification.close();
+    toast("Aviso de prueba enviado.");
+  } catch {
+    toast("El navegador bloqueo el aviso de prueba.");
   }
 }
 
