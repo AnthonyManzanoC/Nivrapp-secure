@@ -1,0 +1,341 @@
+:host {
+  display: block;
+}
+
+.auth-page {
+  --background: transparent;
+}
+
+.auth-shell {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: minmax(340px, 520px) minmax(0, 1fr);
+  background:
+    linear-gradient(118deg, rgba(24, 214, 162, .105), transparent 31%),
+    linear-gradient(244deg, rgba(107, 168, 255, .09), transparent 35%),
+    linear-gradient(152deg, #06090c 0%, #0f1619 48%, #06090c 100%);
+  color: var(--nivra-text);
+}
+
+.auth-panel {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: max(28px, env(safe-area-inset-top)) 34px max(34px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-right: 1px solid var(--nivra-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .052), transparent 24%),
+    linear-gradient(180deg, rgba(9, 15, 17, .94), rgba(8, 13, 15, .86));
+  backdrop-filter: var(--nivra-glass);
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 34px;
+}
+
+.brand-row img {
+  width: 42px;
+  height: 42px;
+  filter: drop-shadow(0 10px 22px rgba(24, 214, 162, .22));
+}
+
+.brand-row strong,
+.brand-row span {
+  display: block;
+}
+
+.brand-row strong {
+  font-size: 22px;
+}
+
+.brand-row span,
+.auth-copy,
+label span,
+ion-note {
+  color: var(--nivra-muted);
+}
+
+h1 {
+  margin: 0 0 10px;
+  max-width: 11ch;
+  font-size: clamp(34px, 5vw, 54px);
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.auth-copy {
+  margin: 0 0 24px;
+  max-width: 42ch;
+  line-height: 1.55;
+}
+
+ion-segment {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  display: flex;
+  margin-bottom: 18px;
+  --background: rgba(255, 255, 255, .065);
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .055);
+  overflow: hidden;
+}
+
+ion-segment-button {
+  --indicator-color: rgba(24, 214, 162, .22);
+  --color: var(--nivra-muted);
+  --color-checked: var(--nivra-text);
+  width: 33.333%;
+  max-width: 33.333%;
+  min-width: 0 !important;
+  flex: 1 1 0;
+  min-height: 44px;
+}
+
+ion-segment-button::part(native) {
+  min-width: 0;
+  padding-inline: 4px;
+}
+
+ion-segment-button ion-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.auth-form {
+  display: grid;
+  gap: 14px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+}
+
+ion-input {
+  --background: rgba(255, 255, 255, .064);
+  --border-color: var(--nivra-line);
+  --border-radius: 8px;
+  --color: var(--nivra-text);
+  --placeholder-color: var(--nivra-muted);
+  --highlight-color-focused: var(--nivra-brand-2);
+  min-height: 48px;
+}
+
+.field-hint {
+  color: #ffb4b4;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+ion-button {
+  --border-radius: 8px;
+  min-height: 46px;
+  font-weight: 850;
+}
+
+.inline-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  max-width: 100%;
+  gap: 10px;
+  align-items: end;
+}
+
+.inline-row ion-button {
+  min-width: 0;
+}
+
+.mini-tabs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .054);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+
+.mini-tabs button {
+  min-height: 38px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--nivra-muted);
+  background: transparent;
+}
+
+.mini-tabs button.active {
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .085), rgba(255, 255, 255, .02)),
+    rgba(24, 214, 162, .18);
+}
+
+.qr-card {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+}
+
+.qr-frame {
+  width: min(232px, 68vw);
+  aspect-ratio: 1;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: #f4fbf7;
+  overflow: hidden;
+  box-shadow: 0 16px 46px rgba(0, 0, 0, .32), 0 0 0 1px rgba(255, 255, 255, .16);
+}
+
+.qr-frame img {
+  width: 100%;
+  height: 100%;
+}
+
+.qr-frame ion-icon {
+  color: #04100d;
+  font-size: 88px;
+}
+
+.auth-visual {
+  min-height: 100dvh;
+  padding: 52px;
+  display: grid;
+  place-items: center;
+}
+
+.phone-preview {
+  width: min(420px, 100%);
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 8px;
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .105), rgba(255, 255, 255, .035)),
+    rgba(5, 9, 11, .55);
+  box-shadow: var(--nivra-shadow), inset 0 1px 0 rgba(255, 255, 255, .08);
+  backdrop-filter: var(--nivra-glass);
+}
+
+.phone-head {
+  display: flex;
+  justify-content: space-between;
+  color: var(--nivra-muted);
+  margin-bottom: 12px;
+}
+
+.phone-head b {
+  color: var(--nivra-brand-2);
+}
+
+.mini-bubble {
+  width: fit-content;
+  max-width: 78%;
+  margin-bottom: 8px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px 8px 8px 3px;
+  padding: 10px 11px;
+  color: var(--nivra-soft);
+  background: rgba(255, 255, 255, .078);
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+.mini-bubble.mine {
+  margin-left: auto;
+  border-radius: 8px 8px 3px 8px;
+  color: var(--nivra-text);
+  background: linear-gradient(135deg, rgba(24, 214, 162, .28), rgba(107, 168, 255, .14));
+}
+
+.signal-strip {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.signal-strip span {
+  padding: 11px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  color: var(--nivra-brand-2);
+  text-align: center;
+  background: rgba(255, 255, 255, .06);
+}
+
+.recaptcha-slot {
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+@media (max-width: 800px) {
+  .auth-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-panel {
+    min-height: 100dvh;
+    justify-content: flex-start;
+    border-right: 0;
+    padding: 28px 24px calc(42px + env(safe-area-inset-bottom));
+  }
+
+  ion-segment,
+  .auth-form,
+  .qr-card,
+  ion-note,
+  ion-text {
+    width: 100%;
+    max-width: calc(100vw - 72px);
+  }
+
+  .auth-visual {
+    display: none;
+  }
+
+  h1 {
+    max-width: 12ch;
+    font-size: 36px;
+  }
+
+  .inline-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+}
+
+@media (max-width: 420px) {
+  ion-segment,
+  .auth-form,
+  .qr-card,
+  ion-note,
+  ion-text {
+    max-width: calc(100vw - 72px);
+  }
+
+  .inline-row {
+    gap: 8px;
+  }
+
+  ion-segment-button {
+    min-height: 48px;
+  }
+
+  ion-segment-button ion-icon {
+    font-size: 19px;
+  }
+
+  ion-segment-button ion-label {
+    font-size: 12px;
+  }
+}

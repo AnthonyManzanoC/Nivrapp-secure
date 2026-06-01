@@ -37,6 +37,7 @@ public interface INivraStore
     Task AddMessageAsync(MessageEnvelope message, CancellationToken cancellationToken = default);
     Task<MessageEnvelope?> GetMessageAsync(string messageId, CancellationToken cancellationToken = default);
     Task<List<MessageEnvelope>> PendingMessagesForDeviceAsync(string userId, string deviceId, DateTimeOffset now, CancellationToken cancellationToken = default);
+    Task<List<MessageEnvelope>> MessagesForDeviceSinceAsync(string userId, string deviceId, DateTimeOffset since, DateTimeOffset now, int take, CancellationToken cancellationToken = default);
     Task<int> MarkMessagesDeliveredAsync(string userId, string deviceId, IEnumerable<string> messageIds, DateTimeOffset deliveredAt, CancellationToken cancellationToken = default);
 
     Task AddFileAsync(FileObject file, CancellationToken cancellationToken = default);

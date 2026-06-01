@@ -18,7 +18,7 @@ public sealed class NivraPushOptions
 {
     public bool Enabled { get; init; }
     public string Provider { get; init; } = "Fcm";
-    public bool IncludeNotificationPayload { get; init; } = true;
+    public bool IncludeNotificationPayload { get; init; }
     public FcmPushOptions Fcm { get; init; } = new();
 }
 
@@ -132,12 +132,14 @@ public sealed class PushNotificationService(
                 ["callId"] = callId,
                 ["callerId"] = callerUserId,
                 ["callerUserId"] = callerUserId,
-                ["callerName"] = callerName,
                 ["callType"] = callType.ToString(),
                 ["conversationId"] = conversationId ?? "",
+                ["pushIntent"] = "wake_call",
+                ["silent"] = "1",
                 ["tag"] = $"nivra-call-{callId}"
             },
-            cancellationToken);
+            cancellationToken,
+            silentDataOnly: true);
     }
 
     public async Task SendCallEndedAsync(
@@ -211,7 +213,8 @@ public sealed class PushNotificationService(
         string body,
         Dictionary<string, string> data,
         CancellationToken cancellationToken,
-        bool? includeNotificationPayloadOverride = null)
+        bool? includeNotificationPayloadOverride = null,
+        bool silentDataOnly = false)
     {
         var pushOptions = options.CurrentValue;
         FcmRuntimeConfig? fcmConfig;
@@ -257,7 +260,7 @@ public sealed class PushNotificationService(
                 continue;
             }
 
-            var result = await SendFcmAsync(fcmConfig, rawToken, title, body, data, includeNotificationPayload, cancellationToken);
+            var result = await SendFcmAsync(fcmConfig, rawToken, title, body, data, includeNotificationPayload, silentDataOnly, cancellationToken);
             if (result.InvalidToken)
             {
                 token.RevokedAt = DateTimeOffset.UtcNow;
@@ -278,6 +281,7 @@ public sealed class PushNotificationService(
         string body,
         Dictionary<string, string> data,
         bool includeNotificationPayload,
+        bool silentDataOnly,
         CancellationToken cancellationToken)
     {
         try
@@ -289,7 +293,7 @@ public sealed class PushNotificationService(
                 $"https://fcm.googleapis.com/v1/projects/{Uri.EscapeDataString(fcmConfig.ProjectId)}/messages:send");
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
             request.Content = new StringContent(
-                JsonSerializer.Serialize(new { message = CreateFcmMessage(token, title, body, data, includeNotificationPayload) }, JsonOptions),
+                JsonSerializer.Serialize(new { message = CreateFcmMessage(token, title, body, data, includeNotificationPayload, silentDataOnly) }, JsonOptions),
                 Encoding.UTF8,
                 "application/json");
 
@@ -319,46 +323,49 @@ public sealed class PushNotificationService(
         string title,
         string body,
         Dictionary<string, string> data,
-        bool includeNotificationPayload)
+        bool includeNotificationPayload,
+        bool silentDataOnly)
     {
+        _ = title;
+        _ = body;
+        _ = includeNotificationPayload;
         var tag = data.TryGetValue("tag", out var value) ? value : "nivra-event";
         var normalizedType = data.TryGetValue("type", out var type)
             ? type.Replace('_', '-').ToLowerInvariant()
             : "";
         var isTerminalCall = normalizedType is "end-call" or "missed-call" or "call-ended";
         var isIncomingCall = normalizedType.Contains("call", StringComparison.Ordinal) && !isTerminalCall;
-        var isCall = isIncomingCall || isTerminalCall;
-        var channelId = isCall ? "nivra_calls" : "nivra_messages";
         var androidTtl = isIncomingCall ? "75s" : isTerminalCall ? "300s" : "86400s";
         var webTtl = isIncomingCall ? "75" : isTerminalCall ? "300" : "86400";
         var pushData = data.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal);
-        pushData["title"] = title;
-        pushData["body"] = body;
+        pushData.Remove("title");
+        pushData.Remove("body");
+        if (silentDataOnly)
+        {
+            pushData["silent"] = "1";
+            pushData["contentAvailable"] = "1";
+        }
+        var android = new Dictionary<string, object?>
+        {
+            ["priority"] = "HIGH",
+            ["ttl"] = androidTtl,
+            ["collapse_key"] = tag
+        };
+        var aps = new Dictionary<string, object?>
+        {
+            ["content-available"] = 1
+        };
         var message = new Dictionary<string, object?>
         {
             ["token"] = token,
             ["data"] = pushData,
-            ["android"] = new Dictionary<string, object?>
-            {
-                ["priority"] = "HIGH",
-                ["ttl"] = androidTtl,
-                ["collapse_key"] = tag,
-                ["notification"] = new Dictionary<string, object?>
-                {
-                    ["title"] = title,
-                    ["body"] = body,
-                    ["channel_id"] = channelId,
-                    ["tag"] = tag,
-                    ["sound"] = "default",
-                    ["default_sound"] = true,
-                    ["notification_priority"] = isIncomingCall ? "PRIORITY_MAX" : "PRIORITY_HIGH"
-                }
-            },
+            ["android"] = android,
             ["apns"] = new Dictionary<string, object?>
             {
                 ["headers"] = new Dictionary<string, string>
                 {
-                    ["apns-priority"] = "10",
+                    ["apns-priority"] = "5",
+                    ["apns-push-type"] = "background",
                     ["apns-expiration"] = DateTimeOffset.UtcNow
                         .AddSeconds(int.Parse(webTtl, System.Globalization.CultureInfo.InvariantCulture))
                         .ToUnixTimeSeconds()
@@ -366,11 +373,7 @@ public sealed class PushNotificationService(
                 },
                 ["payload"] = new Dictionary<string, object?>
                 {
-                    ["aps"] = new Dictionary<string, object?>
-                    {
-                        ["sound"] = "default",
-                        ["content-available"] = 1
-                    }
+                    ["aps"] = aps
                 }
             },
             ["webpush"] = new Dictionary<string, object?>
@@ -379,36 +382,9 @@ public sealed class PushNotificationService(
                 {
                     ["Urgency"] = "high",
                     ["TTL"] = webTtl
-                },
-                ["notification"] = new Dictionary<string, object?>
-                {
-                    ["title"] = title,
-                    ["body"] = body,
-                    ["icon"] = "/assets/icon-192.png",
-                    ["badge"] = "/assets/icon-192.png",
-                    ["tag"] = tag,
-                    ["requireInteraction"] = isIncomingCall,
-                    ["renotify"] = isIncomingCall,
-                    ["silent"] = false,
-                    ["actions"] = isIncomingCall
-                        ? new[]
-                        {
-                            new Dictionary<string, string> { ["action"] = "accept", ["title"] = "Contestar" },
-                            new Dictionary<string, string> { ["action"] = "decline", ["title"] = "Rechazar" }
-                        }
-                        : Array.Empty<Dictionary<string, string>>()
                 }
             }
         };
-
-        if (includeNotificationPayload || isCall)
-        {
-            message["notification"] = new Dictionary<string, string>
-            {
-                ["title"] = title,
-                ["body"] = body
-            };
-        }
 
         return message;
     }

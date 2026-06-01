@@ -1,0 +1,54 @@
+info: Microsoft.EntityFrameworkCore.Migrations[20405]
+      No migrations were applied. The database is already up to date.
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://localhost:5055
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: C:\Users\USER\Documents\New project 4\Nivra.Api
+warn: Microsoft.EntityFrameworkCore.Query[10102]
+      The query uses a row limiting operator ('Skip'/'Take') without an 'OrderBy' operator. This may lead to unpredictable results. If the 'Distinct' operator is used after 'OrderBy', then make sure to use the 'OrderBy' operator after 'Distinct' as the ordering would otherwise get erased.
+warn: Nivra.Api.Services.PushNotificationService[0]
+      Stored push token could not be unprotected.
+      System.Security.Cryptography.CryptographicException: The key {b876f784-3882-42c8-88df-d884ac1c73b3} was not found in the key ring. For more information go to https://aka.ms/aspnet/dataprotectionwarning
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.UnprotectCore(Byte[] protectedData, Boolean allowOperationsOnRevokedKeys, UnprotectStatus& status)
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.Unprotect(Byte[] protectedData)
+         at Microsoft.AspNetCore.DataProtection.DataProtectionCommonExtensions.Unprotect(IDataProtector protector, String protectedData)
+         at Nivra.Api.Services.PushNotificationService.TryUnprotectToken(String tokenCiphertext) in C:\Users\USER\Documents\New project 4\Nivra.Api\Services\PushNotificationService.cs:line 553
+warn: Nivra.Api.Services.PushNotificationService[0]
+      Stored push token could not be unprotected.
+      System.Security.Cryptography.CryptographicException: The key {b876f784-3882-42c8-88df-d884ac1c73b3} was not found in the key ring. For more information go to https://aka.ms/aspnet/dataprotectionwarning
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.UnprotectCore(Byte[] protectedData, Boolean allowOperationsOnRevokedKeys, UnprotectStatus& status)
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.Unprotect(Byte[] protectedData)
+         at Microsoft.AspNetCore.DataProtection.DataProtectionCommonExtensions.Unprotect(IDataProtector protector, String protectedData)
+         at Nivra.Api.Services.PushNotificationService.TryUnprotectToken(String tokenCiphertext) in C:\Users\USER\Documents\New project 4\Nivra.Api\Services\PushNotificationService.cs:line 553
+warn: Nivra.Api.Services.PushNotificationService[0]
+      Stored push token could not be unprotected.
+      System.Security.Cryptography.CryptographicException: The key {b876f784-3882-42c8-88df-d884ac1c73b3} was not found in the key ring. For more information go to https://aka.ms/aspnet/dataprotectionwarning
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.UnprotectCore(Byte[] protectedData, Boolean allowOperationsOnRevokedKeys, UnprotectStatus& status)
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.Unprotect(Byte[] protectedData)
+         at Microsoft.AspNetCore.DataProtection.DataProtectionCommonExtensions.Unprotect(IDataProtector protector, String protectedData)
+         at Nivra.Api.Services.PushNotificationService.TryUnprotectToken(String tokenCiphertext) in C:\Users\USER\Documents\New project 4\Nivra.Api\Services\PushNotificationService.cs:line 553
+warn: Nivra.Api.Services.PushNotificationService[0]
+      Stored push token could not be unprotected.
+      System.Security.Cryptography.CryptographicException: The key {b876f784-3882-42c8-88df-d884ac1c73b3} was not found in the key ring. For more information go to https://aka.ms/aspnet/dataprotectionwarning
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.UnprotectCore(Byte[] protectedData, Boolean allowOperationsOnRevokedKeys, UnprotectStatus& status)
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.Unprotect(Byte[] protectedData)
+         at Microsoft.AspNetCore.DataProtection.DataProtectionCommonExtensions.Unprotect(IDataProtector protector, String protectedData)
+         at Nivra.Api.Services.PushNotificationService.TryUnprotectToken(String tokenCiphertext) in C:\Users\USER\Documents\New project 4\Nivra.Api\Services\PushNotificationService.cs:line 553
+warn: Nivra.Api.Services.PushNotificationService[0]
+      Stored push token could not be unprotected.
+      System.Security.Cryptography.CryptographicException: The key {b876f784-3882-42c8-88df-d884ac1c73b3} was not found in the key ring. For more information go to https://aka.ms/aspnet/dataprotectionwarning
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.UnprotectCore(Byte[] protectedData, Boolean allowOperationsOnRevokedKeys, UnprotectStatus& status)
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.Unprotect(Byte[] protectedData)
+         at Microsoft.AspNetCore.DataProtection.DataProtectionCommonExtensions.Unprotect(IDataProtector protector, String protectedData)
+         at Nivra.Api.Services.PushNotificationService.TryUnprotectToken(String tokenCiphertext) in C:\Users\USER\Documents\New project 4\Nivra.Api\Services\PushNotificationService.cs:line 553
+warn: Nivra.Api.Services.PushNotificationService[0]
+      Stored push token could not be unprotected.
+      System.Security.Cryptography.CryptographicException: The key {b876f784-3882-42c8-88df-d884ac1c73b3} was not found in the key ring. For more information go to https://aka.ms/aspnet/dataprotectionwarning
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.UnprotectCore(Byte[] protectedData, Boolean allowOperationsOnRevokedKeys, UnprotectStatus& status)
+         at Microsoft.AspNetCore.DataProtection.KeyManagement.KeyRingBasedDataProtector.Unprotect(Byte[] protectedData)
+         at Microsoft.AspNetCore.DataProtection.DataProtectionCommonExtensions.Unprotect(IDataProtector protector, String protectedData)
+         at Nivra.Api.Services.PushNotificationService.TryUnprotectToken(String tokenCiphertext) in C:\Users\USER\Documents\New project 4\Nivra.Api\Services\PushNotificationService.cs:line 553

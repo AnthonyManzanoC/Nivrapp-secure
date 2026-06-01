@@ -1,0 +1,114 @@
+<ion-content fullscreen class="chats-page">
+  <section class="chat-layout">
+    <aside class="sidebar">
+      <header class="side-head">
+        <div>
+          <h1>Chats</h1>
+          <span>{{ chat.conversations().length }} conversaciones</span>
+        </div>
+        <div class="side-actions">
+          <ion-button mode="ios" fill="clear" size="small" (click)="refresh()" aria-label="Sincronizar">
+            @if (chat.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="sync-outline"></ion-icon> }
+          </ion-button>
+        </div>
+      </header>
+
+      <div class="search-box" [class.has-value]="query">
+        <ion-icon name="search-outline"></ion-icon>
+        <ion-input mode="ios" [(ngModel)]="query" (ionInput)="onSearchChange()" placeholder="Buscar"></ion-input>
+        @if (query) {
+          <button type="button" (click)="clearSearch()" aria-label="Limpiar busqueda">
+            <ion-icon name="close-outline"></ion-icon>
+          </button>
+        }
+      </div>
+
+      @if (query.trim().length >= 2 || searching) {
+        <ion-list class="list search-results" lines="none">
+          @if (searching) {
+            <div class="empty compact"><ion-spinner name="crescent"></ion-spinner></div>
+          }
+          @for (person of searchResults; track person.id) {
+            <ion-item button class="list-item" (click)="startConversation(person)">
+              <ion-avatar slot="start" class="avatar">{{ (person.displayName || person.alias).slice(0, 2).toUpperCase() }}</ion-avatar>
+              <ion-label class="item-copy">
+                <strong>{{ person.displayName || person.alias }}</strong>
+                <small>@{{ person.alias }}</small>
+              </ion-label>
+              <ion-icon slot="end" name="add-outline"></ion-icon>
+            </ion-item>
+          } @empty {
+            @if (!searching) {
+              <div class="empty compact">
+                <strong>Sin resultados</strong>
+                <span>Prueba otro alias o nombre.</span>
+              </div>
+            }
+          }
+        </ion-list>
+      } @else if (query.length < 2 && recentSearches.length) {
+        <div class="recent-searches">
+          <div class="recent-head">
+            <span>Busquedas recientes</span>
+            <button type="button" (click)="clearRecent()" aria-label="Eliminar busquedas recientes">
+              <ion-icon name="trash-outline"></ion-icon>
+            </button>
+          </div>
+          @for (person of recentSearches; track person.id) {
+            <div class="recent-tile">
+              <button type="button" class="recent-open" (click)="startConversation(person)">
+                <span class="avatar large">{{ (person.displayName || person.alias).slice(0, 2).toUpperCase() }}</span>
+                <strong>{{ person.displayName || person.alias }}</strong>
+                <small>@{{ person.alias }}</small>
+              </button>
+              <button type="button" class="recent-remove" (click)="removeRecent(person, $event)" aria-label="Quitar busqueda reciente">
+                <ion-icon name="close-outline"></ion-icon>
+              </button>
+            </div>
+          }
+        </div>
+      } @else {
+        <ion-list class="list" lines="none">
+          @for (conversation of chat.conversations(); track conversation.id) {
+            <ion-item-sliding>
+              <ion-item
+                button
+                class="list-item conversation-item"
+                [routerLink]="['/app/chats', conversation.id]"
+                routerLinkActive="active"
+                (click)="openConversation(conversation.id)">
+                <ion-avatar slot="start" class="avatar">{{ chat.avatarLabel(conversation) }}</ion-avatar>
+                <ion-label class="item-copy">
+                  <strong>{{ chat.conversationTitle(conversation) }}</strong>
+                  <small>{{ chat.conversationSubtitle(conversation) }}</small>
+                </ion-label>
+                <ion-note slot="end">{{ (conversation.lastMessageAt || conversation.updatedAt) | date:'shortTime' }}</ion-note>
+              </ion-item>
+              <ion-item-options side="end">
+                <ion-item-option color="primary" (click)="openConversation(conversation.id)">
+                  <ion-icon slot="icon-only" name="add-outline"></ion-icon>
+                </ion-item-option>
+              </ion-item-options>
+            </ion-item-sliding>
+          } @empty {
+            <div class="empty">
+              <strong>Nivra</strong>
+              <span>Busca un alias para abrir tu primer chat.</span>
+            </div>
+          }
+        </ion-list>
+      }
+    </aside>
+
+    <section class="detail-stage">
+      <router-outlet></router-outlet>
+      @if (!chat.selectedConversation()) {
+        <div class="empty-detail">
+          <img src="assets/brand/nivra-mark.svg" alt="">
+          <h2>Nivra</h2>
+          <p>Selecciona un chat para continuar.</p>
+        </div>
+      }
+    </section>
+  </section>
+</ion-content>

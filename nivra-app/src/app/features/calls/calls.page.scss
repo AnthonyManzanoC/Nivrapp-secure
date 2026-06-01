@@ -1,0 +1,142 @@
+@use "../shared-page";
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.panel-head span {
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--nivra-muted);
+  font-size: 12px;
+}
+
+.call-active {
+  min-height: 520px;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 12px;
+  text-align: center;
+}
+
+.call-stage {
+  position: relative;
+  min-height: 420px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .14), rgba(107, 168, 255, .09)),
+    radial-gradient(circle at 50% 20%, rgba(255, 255, 255, .08), transparent 34%),
+    rgba(5, 9, 11, .78);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 18px 46px rgba(0, 0, 0, .28);
+}
+
+.waiting-tile,
+.remote-tile,
+.start-panel {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  color: var(--nivra-muted);
+}
+
+.waiting-tile ion-icon,
+.start-panel ion-icon,
+.remote-tile ion-icon {
+  width: 72px;
+  height: 72px;
+  color: var(--nivra-brand-2);
+  filter: drop-shadow(0 12px 24px rgba(24, 214, 162, .18));
+}
+
+.waiting-tile strong,
+.start-panel strong {
+  color: var(--nivra-text);
+  font-size: 28px;
+}
+
+.remote-tile,
+.remote-tile video {
+  width: 100%;
+  height: 100%;
+}
+
+.remote-tile video {
+  object-fit: cover;
+}
+
+.remote-tile span {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: var(--nivra-soft);
+  background: rgba(0, 0, 0, .46);
+  font-size: 12px;
+}
+
+.local-preview {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  width: min(34%, 180px);
+  aspect-ratio: 9 / 12;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 8px;
+  object-fit: cover;
+  background: #030607;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .36), 0 0 0 1px rgba(114, 240, 202, .12);
+}
+
+.call-controls,
+.start-actions {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.call-controls ion-button {
+  --border-radius: 999px;
+  min-height: 42px;
+}
+
+.call-controls .accept {
+  --background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+  --color: #03100d;
+}
+
+.start-panel {
+  min-height: 460px;
+  border: 1px dashed rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  padding: 24px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .055), rgba(255, 255, 255, .018)),
+    rgba(255, 255, 255, .018);
+}
+
+.error-copy {
+  margin: 0;
+  color: #ffb4b4;
+  font-size: 13px;
+}
+
+@media (max-width: 900px) {
+  .call-active {
+    min-height: 420px;
+  }
+
+  .call-stage {
+    min-height: 320px;
+  }
+}

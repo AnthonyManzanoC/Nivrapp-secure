@@ -1,0 +1,176 @@
+<ion-content fullscreen class="page">
+  <main class="surface">
+    <header class="page-head">
+      <div>
+        <h1>Cuenta</h1>
+        <p>@{{ auth.session()?.user?.alias }}</p>
+      </div>
+      <ion-button mode="ios" fill="clear" (click)="reload()" aria-label="Actualizar">
+        @if (account.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
+      </ion-button>
+    </header>
+
+    <section class="grid">
+      <article class="panel span-7">
+        <h2>Perfil</h2>
+        <div class="form-grid">
+          <label>
+            <span>Nombre</span>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="displayName"></ion-input>
+          </label>
+          <label>
+            <span>Email</span>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="email" type="email"></ion-input>
+          </label>
+          <label>
+            <span>Telefono</span>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="phone" type="tel"></ion-input>
+          </label>
+          <label class="wide">
+            <span>Bio</span>
+            <ion-textarea mode="ios" fill="outline" [(ngModel)]="bio" rows="4"></ion-textarea>
+          </label>
+          <label class="toggle-row wide">
+            <span>Visible en directorio</span>
+            <ion-toggle mode="ios" [checked]="isDiscoverable" (ionChange)="isDiscoverable = $event.detail.checked"></ion-toggle>
+          </label>
+        </div>
+        <ion-button mode="ios" (click)="saveProfile()" [disabled]="saving">
+          <ion-icon name="shield-checkmark-outline"></ion-icon>
+          Guardar perfil
+        </ion-button>
+      </article>
+
+      <article class="panel span-5">
+        <h2>Plan</h2>
+        <div class="metric">
+          <strong>{{ account.entitlements()?.planCode || auth.session()?.user?.planCode || 'free' }}</strong>
+          <span>Plan activo</span>
+        </div>
+        <div class="mini-list">
+          <span>Dispositivos: {{ account.devices().length }} / {{ account.entitlements()?.maxLinkedDevices || 'sin limite' }}</span>
+          <span>Boveda: {{ (account.entitlements()?.vaultStorageBytes || 0) / 1048576 | number:'1.0-0' }} MB</span>
+          <span>Backups cifrados: {{ account.entitlements()?.encryptedBackupsEnabled ? 'si' : 'no' }}</span>
+        </div>
+      </article>
+
+      <article class="panel span-6">
+        <h2>Privacidad</h2>
+        @if (account.privacy(); as privacy) {
+          <div class="toggles">
+            <label class="toggle-row">
+              <span>Ocultar contenido en avisos</span>
+              <ion-toggle mode="ios" [checked]="privacy.hideNotificationContent" (ionChange)="patchPrivacy('hideNotificationContent', $event.detail.checked)"></ion-toggle>
+            </label>
+            <label class="toggle-row">
+              <span>Permitir reenviar</span>
+              <ion-toggle mode="ios" [checked]="privacy.allowForwarding" (ionChange)="patchPrivacy('allowForwarding', $event.detail.checked)"></ion-toggle>
+            </label>
+            <label class="toggle-row">
+              <span>Permitir capturas</span>
+              <ion-toggle mode="ios" [checked]="privacy.allowScreenshots" (ionChange)="patchPrivacy('allowScreenshots', $event.detail.checked)"></ion-toggle>
+            </label>
+            <label class="toggle-row">
+              <span>Confirmaciones de lectura</span>
+              <ion-toggle mode="ios" [checked]="privacy.readReceipts" (ionChange)="patchPrivacy('readReceipts', $event.detail.checked)"></ion-toggle>
+            </label>
+          </div>
+          <ion-button mode="ios" fill="outline" (click)="savePrivacy()" [disabled]="saving">Guardar privacidad</ion-button>
+        }
+      </article>
+
+      <article class="panel span-6">
+        <h2>Notificaciones</h2>
+        <div class="mini-list">
+          <span>Permiso: {{ push.permission() }}</span>
+          <span>Servidor FCM: {{ push.serverReady() ? 'listo' : 'pendiente' }}</span>
+          <span>Token local: {{ push.tokenId() ? 'registrado' : 'sin registrar' }}</span>
+        </div>
+        <div class="account-actions">
+          <ion-button mode="ios" fill="outline" (click)="enablePush()" [disabled]="saving || push.permission() === 'unsupported'">
+            <ion-icon name="notifications-outline"></ion-icon>
+            Activar avisos
+          </ion-button>
+          <ion-button mode="ios" fill="clear" color="danger" (click)="revokePush()" [disabled]="saving || !push.tokenId()">
+            <ion-icon name="notifications-off-outline"></ion-icon>
+            Revocar token
+          </ion-button>
+        </div>
+        @if (push.error()) {
+          <p class="error">{{ push.error() }}</p>
+        }
+      </article>
+
+      <article class="panel span-6">
+        <h2>Dispositivos</h2>
+        <div class="device-list">
+          @for (device of account.devices(); track device.id) {
+            <div class="device-row">
+              <div>
+                <strong>{{ device.name }}</strong>
+                <span>{{ device.lastSeenAt | date:'short' }}</span>
+              </div>
+              @if (device.id !== auth.session()?.device?.id) {
+                <ion-button mode="ios" fill="clear" color="danger" (click)="revoke(device.id)" aria-label="Revocar">
+                  <ion-icon name="trash-outline"></ion-icon>
+                </ion-button>
+              } @else {
+                <small>Este equipo</small>
+              }
+            </div>
+          }
+        </div>
+      </article>
+
+      <article class="panel span-6">
+        <h2>Vincular por QR</h2>
+        <div class="mini-list">
+          <span>Escanea o pega aqui el QR generado en otro equipo.</span>
+          <span>Se envia la llave local cifrada al nuevo dispositivo.</span>
+        </div>
+        @if (qrScannerOpen) {
+          <div class="qr-scanner">
+            <div id="qrScannerRegion"></div>
+            <div class="qr-reticle" aria-hidden="true"></div>
+          </div>
+          <p class="scanner-status">{{ qrScannerStatus }}</p>
+        }
+        <ion-textarea mode="ios" fill="outline" rows="3" [(ngModel)]="qrText" placeholder="nivra://login/qr?..."></ion-textarea>
+        <div class="account-actions">
+          <ion-button mode="ios" fill="outline" (click)="startQrScanner()" [disabled]="saving || qrScannerBusy">
+            @if (qrScannerBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="camera-outline"></ion-icon> }
+            Camara
+          </ion-button>
+          <input #qrFileInput type="file" accept="image/*" hidden (change)="scanQrFile($event)">
+          <ion-button mode="ios" fill="outline" (click)="qrFileInput.click()" [disabled]="saving || qrScannerBusy">
+            <ion-icon name="image-outline"></ion-icon>
+            Imagen
+          </ion-button>
+          @if (qrScannerOpen) {
+            <ion-button mode="ios" fill="clear" (click)="stopQrScanner()" [disabled]="qrScannerBusy">Cerrar</ion-button>
+          }
+        </div>
+        <ion-button mode="ios" fill="outline" (click)="authorizeQr()" [disabled]="saving || !qrText.trim()">
+          <ion-icon name="qr-code-outline"></ion-icon>
+          Autorizar dispositivo
+        </ion-button>
+      </article>
+
+      <article class="panel span-6 danger-zone">
+        <h2>Zona sensible</h2>
+        <div class="mini-list">
+          <span>Desactiva la cuenta, revoca sesiones y minimiza datos almacenados.</span>
+          <span>Escribe DELETE para confirmar.</span>
+        </div>
+        <ion-input mode="ios" fill="outline" [(ngModel)]="deleteConfirmation" placeholder="DELETE"></ion-input>
+        <ion-button mode="ios" color="danger" fill="outline" (click)="deleteAccount()" [disabled]="saving || deleteConfirmation !== 'DELETE'">
+          <ion-icon name="warning-outline"></ion-icon>
+          Solicitar borrado
+        </ion-button>
+      </article>
+    </section>
+
+    @if (notice) { <p class="notice">{{ notice }}</p> }
+    @if (error) { <p class="error">{{ error }}</p> }
+  </main>
+</ion-content>

@@ -9,6 +9,9 @@ Nivra.Api/appsettings.Development.json
 node_modules/
 Nivra.Desktop/node_modules/
 Nivra.Desktop/dist/
+nivra-app/dist/
+nivra-app/.angular/
+nivra-app/devserver.*.log
 
 # Ignorar compilaciones y artefactos
 artifacts/
@@ -21,3 +24,4 @@ obj/
 *.apk
 artifacts/
 android/app/build/
+tools/jdk/

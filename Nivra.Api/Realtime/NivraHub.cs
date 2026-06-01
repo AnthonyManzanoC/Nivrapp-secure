@@ -1,6 +1,4 @@
 using System.Collections.Concurrent;
-using System.Text;
-using System.Text.Json;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Nivra.Api.Contracts;
@@ -382,82 +380,6 @@ public sealed class NivraHub(
             file.State = FileState.Deleted;
             await storage.DeleteIfExistsAsync(file, cancellationToken);
         }
-    }
-
-    private async Task InsertMissedCallMessagesAsync(
-        StartCallRequest request,
-        CurrentUser currentUser,
-        ConversationRecord? conversation,
-        HashSet<string> participants,
-        List<string> offlineUserIds)
-    {
-        if (conversation is null || offlineUserIds.Count == 0)
-        {
-            return;
-        }
-
-        var now = timeProvider.GetUtcNow();
-        var caller = await db.Users
-            .AsNoTracking()
-            .Where(user => user.Id == currentUser.UserId)
-            .Select(user => new { user.Alias, user.DisplayName })
-            .FirstOrDefaultAsync(Context.ConnectionAborted);
-        var callerName = string.IsNullOrWhiteSpace(caller?.DisplayName) ? caller?.Alias ?? "un contacto" : caller.DisplayName;
-        var payload = new
-        {
-            type = "system",
-            @event = "missed-call",
-            title = "Llamada perdida",
-            text = $"{callerName} intento llamarte",
-            callType = request.Type.ToString(),
-            callerUserId = currentUser.UserId,
-            callerAlias = caller?.Alias,
-            conversationId = conversation.Id,
-            at = now
-        };
-        var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))));
-
-        var recipients = new List<RecipientCiphertext>();
-        foreach (var userId in offlineUserIds)
-        {
-            var devices = await store.ActiveDevicesForUserAsync(userId, Context.ConnectionAborted);
-            recipients.AddRange(devices.Select(device => new RecipientCiphertext
-            {
-                UserId = userId,
-                DeviceId = device.Id,
-                Ciphertext = encodedPayload,
-                Header = "system:missed-call"
-            }));
-        }
-
-        if (recipients.Count == 0)
-        {
-            return;
-        }
-
-        var message = new MessageEnvelope
-        {
-            Id = NivraIds.NewId("msg"),
-            ConversationId = conversation.Id,
-            ClientMessageId = $"system-missed-call-{Guid.NewGuid():N}",
-            SenderUserId = currentUser.UserId,
-            SenderDeviceId = currentUser.DeviceId,
-            Kind = MessageKind.System,
-            Recipients = recipients,
-            EncryptedPolicy = "system:missed-call",
-            ServerReceivedAt = now,
-            DeleteAfterRead = false
-        };
-        message.Receipts = recipients.Select(recipient => new DeliveryReceipt
-        {
-            UserId = recipient.UserId,
-            DeviceId = recipient.DeviceId
-        }).ToList();
-
-        conversation.LastMessageAt = now;
-        conversation.UpdatedAt = now;
-        db.Messages.Add(message);
-        await db.SaveChangesAsync(Context.ConnectionAborted);
     }
 
     private async Task NotifyUsersAsync(IEnumerable<string> userIds, string method, object payload)

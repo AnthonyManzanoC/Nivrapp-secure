@@ -63,13 +63,23 @@ builder.Services.AddCors(options =>
     options.AddPolicy("NivraClients", policy =>
     {
         var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
-            ?? ["http://localhost:5055", "https://localhost:5055", "http://localhost:4200", "http://localhost:5173"];
+            ?? [
+                "http://localhost:5055",
+                "https://localhost:5055",
+                "http://localhost:4200",
+                "http://localhost:5173",
+                "http://localhost:8100",
+                "capacitor://localhost",
+                "ionic://localhost"
+            ];
 
         policy
+            .WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials()
-            .WithOrigins(allowedOrigins);
+            .WithExposedHeaders("WWW-Authenticate")
+            .SetPreflightMaxAge(TimeSpan.FromHours(1));
     });
 });
 
@@ -151,11 +161,7 @@ app.UseCors("NivraClients");
 app.UseNivraAuth();
 app.UseRateLimiter();
 
-app.UseDefaultFiles();
-app.UseStaticFiles();
-
 app.MapNivraApi();
 app.MapHub<NivraHub>("/hubs/realtime");
-app.MapFallbackToFile("index.html");
 
 app.Run();

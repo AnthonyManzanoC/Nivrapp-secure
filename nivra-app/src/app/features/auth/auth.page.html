@@ -1,0 +1,129 @@
+<ion-content fullscreen class="auth-page">
+  <main class="auth-shell">
+    <section class="auth-panel">
+      <div class="brand-row">
+        <img src="assets/brand/nivra-mark.svg" alt="">
+        <div>
+          <strong>Nivra</strong>
+          <span>Private messenger</span>
+        </div>
+      </div>
+
+      <h1>Entra a tu espacio privado</h1>
+      <p class="auth-copy">Cifrado en cliente, llamadas en tiempo real y la misma cuenta en web, PC y movil.</p>
+
+      <ion-segment [value]="mode" (ionChange)="setMode($any($event.detail.value))" mode="ios">
+        <ion-segment-button value="phone">
+          <ion-icon name="call-outline"></ion-icon>
+          <ion-label>Telefono</ion-label>
+        </ion-segment-button>
+        <ion-segment-button value="alias">
+          <ion-icon name="key-outline"></ion-icon>
+          <ion-label>Alias</ion-label>
+        </ion-segment-button>
+        <ion-segment-button value="qr">
+          <ion-icon name="qr-code-outline"></ion-icon>
+          <ion-label>QR</ion-label>
+        </ion-segment-button>
+      </ion-segment>
+
+      @if (auth.pendingPhoneAlias()) {
+        <form class="auth-form" (ngSubmit)="completeAlias()">
+          <label>
+            <span>Alias</span>
+            <ion-input mode="ios" fill="outline" name="alias" [(ngModel)]="alias" autocomplete="username"></ion-input>
+            @if (alias && !isAliasValid(alias)) {
+              <small class="field-hint">Usa 3-32 caracteres: letras, numeros, punto, guion o guion bajo.</small>
+            }
+          </label>
+          <label>
+            <span>Nombre</span>
+            <ion-input mode="ios" fill="outline" name="displayName" [(ngModel)]="displayName"></ion-input>
+          </label>
+          <ion-button type="submit" expand="block" mode="ios" [disabled]="auth.busy() || !isAliasValid(alias)">
+            @if (auth.busy()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="shield-checkmark-outline"></ion-icon> }
+            Activar cuenta
+          </ion-button>
+        </form>
+      } @else if (mode === 'phone') {
+        <form class="auth-form" (ngSubmit)="verifyOtp()">
+          <label>
+            <span>Telefono</span>
+            <ion-input mode="ios" fill="outline" name="phone" [(ngModel)]="phone" type="tel" inputmode="tel" placeholder="+57..."></ion-input>
+          </label>
+          <div class="inline-row">
+            <label>
+              <span>Codigo</span>
+              <ion-input mode="ios" fill="outline" name="code" [(ngModel)]="code" inputmode="numeric" autocomplete="one-time-code"></ion-input>
+            </label>
+            <ion-button type="button" mode="ios" fill="outline" [disabled]="auth.busy()" (click)="sendOtp()">SMS</ion-button>
+          </div>
+          <ion-button type="submit" expand="block" mode="ios" [disabled]="auth.busy()">
+            @if (auth.busy()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="log-in-outline"></ion-icon> }
+            Entrar
+          </ion-button>
+        </form>
+      } @else if (mode === 'alias') {
+        <form class="auth-form" (ngSubmit)="submitAlias()">
+          <div class="mini-tabs">
+            <button type="button" [class.active]="aliasMode === 'login'" (click)="aliasMode = 'login'">Entrar</button>
+            <button type="button" [class.active]="aliasMode === 'register'" (click)="aliasMode = 'register'">Crear</button>
+          </div>
+          <label>
+            <span>Alias</span>
+            <ion-input mode="ios" fill="outline" name="alias" [(ngModel)]="alias" autocomplete="username"></ion-input>
+            @if (alias && !isAliasValid(alias)) {
+              <small class="field-hint">Usa 3-32 caracteres: letras, numeros, punto, guion o guion bajo.</small>
+            }
+          </label>
+          @if (aliasMode === 'register') {
+            <label>
+              <span>Nombre</span>
+              <ion-input mode="ios" fill="outline" name="displayName" [(ngModel)]="displayName"></ion-input>
+            </label>
+          }
+          <label>
+            <span>Password</span>
+            <ion-input mode="ios" fill="outline" name="password" [(ngModel)]="password" type="password" autocomplete="current-password"></ion-input>
+          </label>
+          <ion-button type="submit" expand="block" mode="ios" [disabled]="auth.busy() || !isAliasValid(alias)">
+            @if (auth.busy()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="log-in-outline"></ion-icon> }
+            {{ aliasMode === 'register' ? 'Crear cuenta' : 'Entrar' }}
+          </ion-button>
+        </form>
+      } @else {
+        <section class="qr-card">
+          <div class="qr-frame">
+            @if (qrDataUrl) {
+              <img [src]="qrDataUrl" alt="">
+            } @else {
+              <ion-icon name="qr-code-outline"></ion-icon>
+            }
+          </div>
+          <strong>{{ qrChallenge?.shortCode || 'QR listo' }}</strong>
+          <ion-button expand="block" mode="ios" (click)="startQr()" [disabled]="auth.busy()">Generar QR</ion-button>
+        </section>
+      }
+
+      @if (notice) { <ion-note color="success">{{ notice }}</ion-note> }
+      @if (error) { <ion-text color="danger"><p>{{ error }}</p></ion-text> }
+      <div id="phoneRecaptcha" class="recaptcha-slot"></div>
+    </section>
+
+    <section class="auth-visual" aria-hidden="true">
+      <div class="phone-preview">
+        <div class="phone-head">
+          <span>Nivra</span>
+          <b>online</b>
+        </div>
+        <div class="mini-bubble">Llaves listas en este dispositivo.</div>
+        <div class="mini-bubble mine">Mensaje cifrado antes de salir.</div>
+        <div class="signal-strip">
+          <span>SignalR</span>
+          <span>E2EE</span>
+          <span>Firebase</span>
+        </div>
+      </div>
+    </section>
+  </main>
+</ion-content>

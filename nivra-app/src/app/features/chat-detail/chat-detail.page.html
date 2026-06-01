@@ -1,0 +1,258 @@
+<section class="chat-detail">
+  <ion-header class="chat-header">
+    <ion-toolbar>
+      <ion-buttons slot="start">
+        <ion-button mode="ios" fill="clear" class="mobile-back" (click)="back()" aria-label="Volver">
+          <ion-icon name="arrow-back-outline"></ion-icon>
+        </ion-button>
+      </ion-buttons>
+      <div class="title-wrap">
+        <span class="avatar">{{ conversation() ? chat.avatarLabel(conversation()!) : 'N' }}</span>
+        <div>
+          <h1>{{ conversation() ? chat.conversationTitle(conversation()!) : 'Chat' }}</h1>
+          <p>{{ chat.presenceLabel(conversation()) }}</p>
+        </div>
+      </div>
+      <ion-buttons slot="end">
+        <ion-button mode="ios" fill="clear" (click)="startCall('Voice')" aria-label="Llamada">
+          <ion-icon name="call-outline"></ion-icon>
+        </ion-button>
+        <ion-button mode="ios" fill="clear" (click)="startCall('Video')" aria-label="Video">
+          <ion-icon name="videocam-outline"></ion-icon>
+        </ion-button>
+        <ion-button mode="ios" fill="clear" aria-label="Menu" (click)="chatMenuOpen = !chatMenuOpen">
+          <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
+        </ion-button>
+      </ion-buttons>
+      @if (chatMenuOpen) {
+        <div class="chat-menu">
+          <button type="button" (click)="clearChat('me')">Vaciar para mi</button>
+          <button type="button" (click)="clearChat('everyone')">Vaciar para todos</button>
+          <button type="button" class="danger" (click)="deleteChat('me')">Eliminar para mi</button>
+          <button type="button" class="danger" (click)="deleteChat('everyone')">Eliminar para todos</button>
+        </div>
+      }
+    </ion-toolbar>
+  </ion-header>
+
+  <ion-content class="messages-content" [scrollEvents]="true">
+    <div class="messages">
+      @for (message of messages(); track message.id) {
+        @if (chat.isCallLog(message.payload)) {
+          <div class="call-log-message" [class.missed]="message.payload.event === 'missed-call' || message.payload['status'] === 'missed'">
+            <div class="call-log-bubble">
+              <ion-icon [name]="(message.payload.event === 'missed-call' || message.payload['status'] === 'missed') ? 'call-outline' : 'checkmark-done-outline'"></ion-icon>
+              <div>
+                <strong>{{ chat.callLogTitle(message.payload) }}</strong>
+                <span>{{ chat.callLogText(message.payload) }}</span>
+              </div>
+            </div>
+            <small>{{ message.at | date:'shortTime' }} - {{ message.payload.callType === 'Video' ? 'video' : 'voz' }}</small>
+          </div>
+        } @else if (message.payload.type === 'system') {
+          <div class="system-message">
+            {{ message.payload.text || message.payload.title || 'Evento de sistema' }}
+          </div>
+        } @else {
+          <article class="message" [class.mine]="message.mine" [class.decrypt-error]="message.decryptError" [class.has-reactions]="reactions(message).length">
+            <button type="button" class="message-more" (click)="toggleActions(message)" aria-label="Acciones">
+              <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
+            </button>
+            @if (actionMessageId === message.id) {
+              <div class="message-actions">
+                @if (canEdit(message)) {
+                  <button type="button" (click)="beginEdit(message)">
+                    <ion-icon name="create-outline"></ion-icon>
+                    Editar
+                  </button>
+                }
+                <button type="button" (click)="openForward(message)">
+                  <ion-icon name="arrow-redo-outline"></ion-icon>
+                  Reenviar
+                </button>
+                <button type="button" (click)="deleteForMe(message)">
+                  <ion-icon name="trash-outline"></ion-icon>
+                  Para mi
+                </button>
+                @if (message.mine) {
+                  <button type="button" class="danger" (click)="deleteForEveryone(message)">
+                    <ion-icon name="trash-outline"></ion-icon>
+                    Para todos
+                  </button>
+                }
+              </div>
+            }
+            @if (forwardedLabel(message)) {
+              <div class="forwarded-chip">
+                <ion-icon name="arrow-redo-outline"></ion-icon>
+                {{ forwardedLabel(message) }}
+              </div>
+            }
+            @if (message.payload.replyTo) {
+              <div class="reply-chip">Respuesta cifrada</div>
+            }
+            @if (chat.asFile(message.payload); as file) {
+              <div class="file-card">
+                <button type="button" class="file-thumb" (click)="preview(message)" [attr.aria-label]="'Abrir ' + chat.fileName(file)">
+                  @if (chat.mediaPreview(file.fileId || file.downloadFile || file.previewFile); as media) {
+                    @if (chat.isImage(file)) {
+                      <img [src]="media.url" [alt]="chat.fileName(file)">
+                    } @else if (chat.isVideo(file)) {
+                      <video [src]="media.url" muted playsinline></video>
+                    } @else if (chat.isAudio(file)) {
+                      <ion-icon name="play-circle-outline"></ion-icon>
+                    } @else {
+                      <ion-icon name="document-attach-outline"></ion-icon>
+                    }
+                  } @else if (chat.isImage(file)) {
+                    <ion-icon name="image-outline"></ion-icon>
+                  } @else {
+                    <ion-icon name="document-attach-outline"></ion-icon>
+                  }
+                </button>
+                <div class="file-copy">
+                  <strong>{{ chat.fileName(file) }}</strong>
+                  <span>{{ chat.fileSize(file) }}</span>
+                </div>
+                <ion-button mode="ios" fill="clear" type="button" (click)="download(message)" [disabled]="downloadingId === message.id" aria-label="Descargar">
+                  @if (downloadingId === message.id) {
+                    <ion-spinner name="crescent"></ion-spinner>
+                  } @else {
+                    <ion-icon name="download-outline"></ion-icon>
+                  }
+                </ion-button>
+              </div>
+            } @else {
+              <p>{{ message.payload.text || chat.preview(message.payload) }}</p>
+            }
+            <div class="quick-reaction-row">
+              @for (emoji of chat.quickReactions; track emoji) {
+                <button type="button" (click)="react(message, emoji)" [attr.aria-label]="'Reaccionar ' + emoji">{{ emoji }}</button>
+              }
+            </div>
+            @if (reactions(message).length) {
+              <div class="reactions" [title]="chat.reactionSummary(message)">
+                @for (group of chat.reactionGroups(message); track group.emoji) {
+                  <span>{{ group.emoji }}@if (group.count > 1) { <strong>{{ group.count }}</strong> }</span>
+                }
+              </div>
+            }
+            <footer>
+              <time>{{ message.at | date:'shortTime' }}</time>
+              @if (message.status === 'editado') {
+                <span>editado</span>
+              }
+              @if (message.mine) {
+                <ion-icon name="checkmark-done-outline"></ion-icon>
+              }
+            </footer>
+          </article>
+        }
+      } @empty {
+        <div class="empty-thread">
+          <span class="avatar large">{{ conversation() ? chat.avatarLabel(conversation()!) : 'N' }}</span>
+          <h2>{{ conversation() ? chat.conversationTitle(conversation()!) : 'Nivra' }}</h2>
+          <p>Chat cifrado listo.</p>
+        </div>
+      }
+    </div>
+  </ion-content>
+
+  <ion-footer class="composer-footer">
+    @if (editingMessage) {
+      <div class="edit-bar">
+        <ion-icon name="create-outline"></ion-icon>
+        <div>
+          <strong>Editando mensaje</strong>
+          <span>{{ editingMessage.payload.text }}</span>
+        </div>
+        <ion-button type="button" mode="ios" fill="clear" (click)="cancelEdit()" aria-label="Cancelar edicion">
+          <ion-icon name="close-outline"></ion-icon>
+        </ion-button>
+      </div>
+    }
+    <div class="policy-row">
+      <ion-toggle mode="ios" [(ngModel)]="deleteAfterRead" [disabled]="sending" name="deleteAfterRead">Ver una vez</ion-toggle>
+      <ion-select mode="ios" interface="popover" [(ngModel)]="ttlSeconds" [disabled]="sending" name="ttlSeconds" aria-label="Expiracion">
+        @for (option of ttlOptions; track option.label) {
+          <ion-select-option [value]="option.value">{{ option.label }}</ion-select-option>
+        }
+      </ion-select>
+    </div>
+    <form class="composer" (ngSubmit)="send()">
+      <input #fileInput type="file" multiple hidden (change)="attachFiles($event)">
+      <ion-button type="button" mode="ios" fill="clear" aria-label="Adjuntar" [disabled]="sending || chat.uploading()" (click)="fileInput.click()">
+        <ion-icon name="attach-outline"></ion-icon>
+      </ion-button>
+      <ion-button type="button" mode="ios" fill="clear" aria-label="Reacciones">
+        <ion-icon name="happy-outline"></ion-icon>
+      </ion-button>
+      <ion-textarea
+        mode="ios"
+        name="draft"
+        [(ngModel)]="draft"
+        (ionInput)="onDraftInput()"
+        autoGrow="true"
+        rows="1"
+        placeholder="Mensaje">
+      </ion-textarea>
+      <ion-button type="button" mode="ios" fill="clear" [class.recording]="recordingVoice" [disabled]="sending && !recordingVoice" (click)="toggleVoiceNote()" aria-label="Voz">
+        <ion-icon [name]="recordingVoice ? 'close-outline' : 'mic-outline'"></ion-icon>
+      </ion-button>
+      <ion-button type="submit" mode="ios" class="send" [disabled]="sending || !draft.trim()" aria-label="Enviar">
+        <ion-icon [name]="editingMessage ? 'checkmark-outline' : 'send-outline'"></ion-icon>
+      </ion-button>
+    </form>
+    @if (attachmentError) {
+      <p class="composer-error">{{ attachmentError }}</p>
+    }
+    @if (notice) {
+      <p class="composer-notice">{{ notice }}</p>
+    }
+  </ion-footer>
+
+  <ion-modal class="forward-modal" [isOpen]="!!forwardingMessage" (didDismiss)="closeForward()">
+    <ng-template>
+      @if (forwardingMessage) {
+      <section>
+        <header>
+          <div>
+            <h2>Reenviar</h2>
+            <p>{{ chat.preview(forwardingMessage.payload) }}</p>
+          </div>
+          <ion-button mode="ios" fill="clear" (click)="closeForward()" aria-label="Cerrar">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </header>
+        <div class="forward-search">
+          <ion-icon name="search-outline"></ion-icon>
+          <input [(ngModel)]="forwardQuery" placeholder="Buscar chat">
+        </div>
+        <div class="forward-list">
+          @for (target of forwardTargets(); track target.id) {
+            <button type="button" [class.selected]="selectedForwardIds.has(target.id)" (click)="toggleForwardTarget(target)">
+              <span class="avatar">{{ chat.avatarLabel(target) }}</span>
+              <span>
+                <strong>{{ chat.conversationTitle(target) }}</strong>
+                <small>{{ chat.conversationSubtitle(target) }}</small>
+              </span>
+              @if (selectedForwardIds.has(target.id)) {
+                <ion-icon name="checkmark-outline"></ion-icon>
+              }
+            </button>
+          } @empty {
+            <div class="empty-forward">No hay chats disponibles.</div>
+          }
+        </div>
+        <footer>
+          <ion-button mode="ios" fill="outline" (click)="closeForward()">Cancelar</ion-button>
+          <ion-button mode="ios" (click)="sendForward()" [disabled]="!selectedForwardIds.size || busyAction === 'forward'">
+            @if (busyAction === 'forward') { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
+            Enviar
+          </ion-button>
+        </footer>
+      </section>
+      }
+    </ng-template>
+  </ion-modal>
+</section>

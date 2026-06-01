@@ -1,0 +1,345 @@
+@use "../shared-page";
+
+.search-line {
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: center;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding-left: 10px;
+  margin-bottom: 12px;
+  background: rgba(255, 255, 255, .055);
+}
+
+.native-select {
+  min-height: 44px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .055);
+}
+
+.row-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.panel-headline {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.panel-headline h2 {
+  margin-bottom: 2px;
+}
+
+.contact-list,
+.story-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.contact-list {
+  max-height: 420px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.contact-card {
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.contact-card.favorite {
+  border-color: rgba(247, 201, 72, .28);
+  background:
+    linear-gradient(135deg, rgba(247, 201, 72, .09), rgba(255, 255, 255, .025)),
+    rgba(255, 255, 255, .035);
+}
+
+.contact-main {
+  min-width: 0;
+  border: 0;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  color: var(--nivra-text);
+  background: transparent;
+  text-align: left;
+}
+
+.contact-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #03100d;
+  font-weight: 900;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+}
+
+.contact-main span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.contact-main strong,
+.contact-main small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contact-main small {
+  color: var(--nivra-muted);
+}
+
+.person-result {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.story-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.story-compose-media {
+  min-height: 48px;
+  border: 1px dashed rgba(255, 255, 255, .16);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+}
+
+.story-compose-media button {
+  min-width: 0;
+  border: 0;
+  border-radius: 8px;
+  min-height: 38px;
+  padding: 0 10px;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .055);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.story-compose-media span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.story-compose-media .clear-file {
+  width: 38px;
+  padding: 0;
+  justify-content: center;
+  color: #ffb4b4;
+}
+
+.story-settings {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.native-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--nivra-muted);
+  font-size: 13px;
+}
+
+.story-row {
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.story-open {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+}
+
+.story-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #03100d;
+  font-weight: 900;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+}
+
+.story-open span:last-child {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.story-open strong,
+.story-open small,
+.story-open em {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.story-open small {
+  color: var(--nivra-soft);
+  font-style: normal;
+}
+
+.story-open em {
+  color: var(--nivra-muted);
+  font-size: 12px;
+  font-style: normal;
+}
+
+.story-viewer {
+  position: fixed;
+  z-index: 12;
+  inset: 18px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 8px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .08), transparent 30%),
+    rgba(3, 6, 7, .96);
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .56);
+}
+
+.story-viewer-top {
+  min-height: 58px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: rgba(0, 0, 0, .24);
+}
+
+.story-viewer-top div {
+  min-width: 0;
+  display: grid;
+}
+
+.story-viewer-top span {
+  color: var(--nivra-muted);
+  font-size: 12px;
+}
+
+.story-viewer-top button {
+  width: 38px;
+  height: 38px;
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .08);
+}
+
+.story-viewer-body {
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.story-viewer-body img,
+.story-viewer-body video {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.story-viewer-body audio {
+  width: min(520px, 100%);
+}
+
+.story-viewer-body p {
+  max-width: 760px;
+  margin: 0;
+  font-size: clamp(28px, 6vw, 72px);
+  line-height: 1.06;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.story-loading {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  color: var(--nivra-muted);
+}
+
+.story-viewer footer {
+  padding: 12px 16px 16px;
+  color: var(--nivra-soft);
+  text-align: center;
+  background: rgba(0, 0, 0, .18);
+}
+
+@media (max-width: 720px) {
+  .story-settings {
+    grid-template-columns: 1fr;
+  }
+
+  .contact-card,
+  .person-result,
+  .story-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .row-actions {
+    justify-content: flex-start;
+  }
+
+  .story-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .story-viewer {
+    inset: 0;
+    border-radius: 0;
+  }
+}

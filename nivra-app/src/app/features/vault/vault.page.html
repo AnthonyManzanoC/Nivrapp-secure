@@ -1,0 +1,293 @@
+<ion-content fullscreen class="page">
+  <main class="surface vault-surface">
+    <header class="page-head vault-hero">
+      <div>
+        <span class="eyebrow">Nivra Vault</span>
+        <h1>Boveda</h1>
+        <p>Cifrado local, salas privadas y archivos E2EE.</p>
+      </div>
+      <ion-button mode="ios" fill="clear" (click)="vault.load()" aria-label="Actualizar">
+        @if (vault.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
+      </ion-button>
+    </header>
+
+    <section class="grid">
+      <article class="panel span-4 unlock-panel">
+        <div class="panel-title">
+          <div>
+            <h2>{{ vault.unlocked() ? 'Llave local activa' : 'Desbloquear' }}</h2>
+            <span class="card-sub">La llave queda en este dispositivo.</span>
+          </div>
+          <ion-icon name="shield-checkmark-outline"></ion-icon>
+        </div>
+        @if (!vault.unlocked()) {
+          <div class="stack">
+            <ion-input mode="ios" fill="outline" [(ngModel)]="pin" type="password" placeholder="PIN local"></ion-input>
+            <ion-button mode="ios" (click)="unlock()" [disabled]="!pin || isBusy('unlock')">
+              @if (isBusy('unlock')) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="lock-closed-outline"></ion-icon> }
+              Entrar
+            </ion-button>
+          </div>
+        } @else {
+          <div class="vault-key-state">
+            <strong>Activa</strong>
+            <span>Notas descifradas localmente</span>
+            <ion-button mode="ios" fill="outline" (click)="vault.lock()">Bloquear</ion-button>
+          </div>
+        }
+      </article>
+
+      <article class="panel span-8">
+        <div class="panel-title">
+          <div>
+            <h2>Nueva nota</h2>
+            <span class="card-sub">Contenido sellado con tu PIN local.</span>
+          </div>
+          <ion-icon name="key-outline"></ion-icon>
+        </div>
+        <div class="form-grid">
+          <label class="wide">
+            <span>Titulo</span>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="title"></ion-input>
+          </label>
+          <label class="wide">
+            <span>Contenido</span>
+            <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="body"></ion-textarea>
+          </label>
+        </div>
+        <ion-button mode="ios" (click)="createNote()" [disabled]="!vault.unlocked() || !body.trim() || isBusy('note')">
+          <ion-icon name="add-circle-outline"></ion-icon>
+          Guardar nota
+        </ion-button>
+      </article>
+
+      <article class="panel span-5">
+        <div class="panel-title">
+          <div>
+            <h2>Notas y archivos</h2>
+            <span class="card-sub">{{ vault.items().length }} elementos</span>
+          </div>
+        </div>
+        <div class="stack note-list">
+          @for (item of vault.items(); track item.id) {
+            <div class="vault-row">
+              <div>
+                <strong>{{ item.decoded?.title || item.decoded?.name || item.kind }}</strong>
+                <span class="card-sub">{{ item.decodeError ? 'No se pudo descifrar aqui' : (item.decoded?.body || (item.updatedAt | date:'short')) }}</span>
+              </div>
+              <ion-button mode="ios" fill="clear" color="danger" (click)="deleteItem(item.id)" [disabled]="isBusy('item:' + item.id)">
+                <ion-icon name="trash-outline"></ion-icon>
+              </ion-button>
+            </div>
+          } @empty {
+            <div class="empty-copy">Tu boveda esta lista.</div>
+          }
+        </div>
+      </article>
+
+      <article class="panel span-7">
+        <div class="panel-title">
+          <div>
+            <h2>Crear sala privada</h2>
+            <span class="card-sub">Vault compartida con miembros y archivos cifrados.</span>
+          </div>
+          <ion-icon name="people-outline"></ion-icon>
+        </div>
+        <div class="form-grid">
+          <label>
+            <span>Nombre</span>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="roomName" placeholder="War room"></ion-input>
+          </label>
+          <label>
+            <span>PIN</span>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="roomPin" type="password" placeholder="Opcional"></ion-input>
+          </label>
+          <label>
+            <span>Acceso</span>
+            <select class="native-select" [(ngModel)]="roomAccessMode">
+              <option value="PinOnly">PIN requerido</option>
+              <option value="InviteOnly">Solo invitados</option>
+              <option value="WaitingRoom">Lobby con aprobacion</option>
+            </select>
+          </label>
+          <label>
+            <span>Retencion</span>
+            <select class="native-select" [(ngModel)]="retentionMode">
+              <option value="Persistent">Persistente</option>
+              <option value="BurnOnExit">Se quema al salir</option>
+              <option value="ExpiresAfterTtl">Expira en 1 hora</option>
+            </select>
+          </label>
+          <label class="wide">
+            <span>Invitar</span>
+            <div class="search-box">
+              <ion-icon name="search-outline"></ion-icon>
+              <ion-input mode="ios" [(ngModel)]="inviteQuery" placeholder="@alias o nombre" (ionInput)="searchInvites()"></ion-input>
+            </div>
+          </label>
+        </div>
+
+        @if (vault.people().length) {
+          <div class="people-strip">
+            @for (person of vault.people(); track person.id) {
+              <button type="button" class="person-pill" [class.selected]="inviteSelected(person)" (click)="toggleInvite(person)">
+                <span>{{ (person.displayName || person.alias || 'N')[0] }}</span>
+                {{ person.displayName || person.alias }}
+              </button>
+            }
+          </div>
+        }
+
+        <ion-button mode="ios" fill="outline" (click)="createRoom()" [disabled]="isBusy('room:create')">
+          @if (isBusy('room:create')) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="add-circle-outline"></ion-icon> }
+          Crear sala
+        </ion-button>
+      </article>
+
+      <article class="panel span-5 room-list-panel">
+        <div class="panel-title">
+          <div>
+            <h2>Salas Vault</h2>
+            <span class="card-sub">{{ vault.rooms().length }} espacios</span>
+          </div>
+        </div>
+        <div class="stack room-list">
+          @for (room of vault.rooms(); track room.id) {
+            <div class="room-card" [class.active]="vault.activeRoomId() === room.id">
+              <button type="button" class="room-main" (click)="openRoom(room)">
+                <span class="room-avatar">{{ initials(room) }}</span>
+                <span>
+                  <strong>{{ room.name }}</strong>
+                  <small>{{ vault.roomStatusLabel(room) }} - {{ vault.retentionLabel(room.retentionMode) }}</small>
+                </span>
+              </button>
+              <div class="room-meta">
+                <span>{{ vault.accessLabel(room.accessMode) }}</span>
+                <span>{{ room.members.length }} miembros</span>
+              </div>
+              @if (vault.currentMember(room)?.status !== 'Active') {
+                <div class="join-row">
+                  <ion-input mode="ios" fill="outline" [(ngModel)]="roomPinById[room.id]" type="password" placeholder="PIN si aplica"></ion-input>
+                  <ion-button mode="ios" fill="clear" (click)="joinRoom(room)" [disabled]="isBusy('join:' + room.id)" aria-label="Entrar">
+                    <ion-icon name="enter-outline"></ion-icon>
+                  </ion-button>
+                </div>
+              } @else {
+                <div class="room-actions">
+                  <ion-button mode="ios" fill="clear" (click)="openRoom(room)">Abrir</ion-button>
+                  <ion-button mode="ios" fill="clear" color="danger" (click)="leaveRoom(room)" [disabled]="isBusy('leave:' + room.id)">
+                    <ion-icon name="log-out-outline"></ion-icon>
+                  </ion-button>
+                </div>
+              }
+            </div>
+          } @empty {
+            <div class="empty-copy">Crea tu primera sala Vault.</div>
+          }
+        </div>
+      </article>
+
+      <article class="panel span-7 room-workspace">
+        @if (vault.activeRoom(); as room) {
+          <header class="room-head">
+            <div class="room-main static">
+              <span class="room-avatar large">{{ initials(room) }}</span>
+              <span>
+                <strong>{{ room.name }}</strong>
+                <small>{{ vault.accessLabel(room.accessMode) }} - {{ activeMembers(room).length }} activos</small>
+              </span>
+            </div>
+            <div class="member-dots">
+              @for (member of activeMembers(room).slice(0, 5); track member.userId) {
+                <span title="{{ vault.memberLabel(member) }}">{{ vault.memberLabel(member)[0] }}</span>
+              }
+            </div>
+          </header>
+
+          @if (waitingMembers(room).length && vault.canModerate(room)) {
+            <div class="waiting-list">
+              @for (member of waitingMembers(room); track member.userId) {
+                <div class="vault-row">
+                  <div>
+                    <strong>{{ vault.memberLabel(member) }}</strong>
+                    <span class="card-sub">Esperando aprobacion</span>
+                  </div>
+                  <ion-button mode="ios" fill="clear" (click)="approve(room, member)" [disabled]="isBusy('approve:' + member.userId)">
+                    <ion-icon name="checkmark-circle-outline"></ion-icon>
+                  </ion-button>
+                </div>
+              }
+            </div>
+          }
+
+          <div class="invite-bar">
+            <div class="search-box">
+              <ion-icon name="search-outline"></ion-icon>
+              <ion-input mode="ios" [(ngModel)]="inviteQuery" placeholder="Invitar por alias" (ionInput)="searchInvites()"></ion-input>
+            </div>
+            <ion-button mode="ios" fill="outline" (click)="inviteActiveRoom()" [disabled]="!selectedInviteIds.size || isBusy('invite:' + room.id)">
+              Invitar
+            </ion-button>
+          </div>
+
+          <div class="vault-chat">
+            @for (message of vault.activeMessages(); track message.id) {
+              <div class="vault-message" [class.mine]="message.mine" [class.system]="message.payload.type === 'system'">
+                <small>{{ vault.messageSender(message) }} - {{ message.at | date:'shortTime' }}</small>
+                @if (messageFile(message); as file) {
+                  <div class="file-bubble">
+                    @if (vault.mediaPreviews()[file.fileId || file.downloadFile || file.previewFile || '']; as media) {
+                      @if (vault.isImage(file)) {
+                        <img [src]="media.url" [alt]="vault.fileName(file)" />
+                      } @else if (vault.isVideo(file)) {
+                        <video [src]="media.url" controls playsinline></video>
+                      } @else if (vault.isAudio(file)) {
+                        <audio [src]="media.url" controls></audio>
+                      }
+                    }
+                    <strong>{{ vault.fileName(file) }}</strong>
+                    <span>{{ vault.fileSize(file) }}</span>
+                    <div class="file-actions">
+                      <ion-button mode="ios" fill="clear" (click)="previewFile(file)">
+                        <ion-icon name="shield-checkmark-outline"></ion-icon>
+                        Ver
+                      </ion-button>
+                      <ion-button mode="ios" fill="clear" (click)="downloadFile(file)">
+                        <ion-icon name="cloud-download-outline"></ion-icon>
+                        Descargar
+                      </ion-button>
+                    </div>
+                  </div>
+                } @else {
+                  <p>{{ vault.preview(message.payload) }}</p>
+                }
+              </div>
+            } @empty {
+              <div class="empty-copy">Sala lista para mensajes cifrados.</div>
+            }
+          </div>
+
+          <footer class="composer">
+            <input #vaultFile hidden type="file" (change)="fileSelected($event)" />
+            <ion-button mode="ios" fill="clear" (click)="vaultFile.click()" aria-label="Adjuntar">
+              @if (vault.uploading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="attach-outline"></ion-icon> }
+            </ion-button>
+            <ion-textarea mode="ios" autoGrow="true" rows="1" [(ngModel)]="roomMessage" placeholder="Mensaje Vault"></ion-textarea>
+            <ion-button mode="ios" (click)="sendMessage()" [disabled]="!roomMessage.trim() || vault.sending()">
+              @if (vault.sending()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
+            </ion-button>
+          </footer>
+        } @else {
+          <div class="vault-empty-stage">
+            <ion-icon name="shield-checkmark-outline"></ion-icon>
+            <h2>Abre una sala Vault</h2>
+            <p>Mensajes, archivos y presencia privada aparecen aqui.</p>
+          </div>
+        }
+      </article>
+    </section>
+
+    @if (notice) { <p class="notice">{{ notice }}</p> }
+    @if (error) { <p class="error">{{ error }}</p> }
+  </main>
+</ion-content>

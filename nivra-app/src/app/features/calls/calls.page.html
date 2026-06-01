@@ -1,0 +1,121 @@
+<ion-content fullscreen class="page">
+  <main class="surface">
+    <header class="page-head">
+      <div>
+        <h1>Llamadas</h1>
+        <p>WebRTC con senalizacion real por backend y SignalR.</p>
+      </div>
+    </header>
+
+    <section class="grid">
+      <article class="panel span-7">
+        <div class="panel-head">
+          <h2>Activa</h2>
+          <span>{{ calls.phase() }}</span>
+        </div>
+
+        @if (calls.activeCall(); as call) {
+          <div class="call-active" [class.video]="call.type === 'Video'">
+            <div class="call-stage">
+              @if (calls.remoteEntries().length) {
+                @for (entry of calls.remoteEntries(); track entry[0]) {
+                  <div class="remote-tile">
+                    @if (call.type === 'Video') {
+                      <video [appMediaStream]="entry[1]" [muted]="!calls.speaker()" autoplay playsinline></video>
+                    } @else {
+                      <audio [appMediaStream]="entry[1]" [muted]="!calls.speaker()" autoplay></audio>
+                      <ion-icon name="phone-portrait-outline"></ion-icon>
+                    }
+                    <span>{{ entry[0] }}</span>
+                  </div>
+                }
+              } @else {
+                <div class="waiting-tile">
+                  <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
+                  <strong>{{ call.type === 'Video' ? 'Videollamada' : 'Llamada' }}</strong>
+                  <span>{{ call.status }} - {{ call.startedAt | date:'shortTime' }}</span>
+                </div>
+              }
+
+              @if (calls.localStream(); as local) {
+                <video class="local-preview" [appMediaStream]="local" muted autoplay playsinline></video>
+              }
+            </div>
+
+            <div class="call-controls">
+              @if (calls.phase() === 'ringing') {
+                <ion-button mode="ios" class="accept" (click)="accept()">
+                  <ion-icon name="call-outline"></ion-icon>
+                  Aceptar
+                </ion-button>
+                <ion-button mode="ios" color="danger" (click)="decline()">
+                  <ion-icon name="close-outline"></ion-icon>
+                  Rechazar
+                </ion-button>
+              } @else {
+                <ion-button mode="ios" fill="clear" (click)="calls.toggleMute()">
+                  <ion-icon [name]="calls.muted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
+                </ion-button>
+                @if (call.type === 'Video') {
+                  <ion-button mode="ios" fill="clear" (click)="calls.toggleCamera()">
+                    <ion-icon [name]="calls.cameraOff() ? 'videocam-off-outline' : 'videocam-outline'"></ion-icon>
+                  </ion-button>
+                }
+                <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()">
+                  <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
+                </ion-button>
+                <ion-button mode="ios" color="danger" (click)="endActive()">
+                  <ion-icon name="close-outline"></ion-icon>
+                  Colgar
+                </ion-button>
+              }
+            </div>
+          </div>
+        } @else {
+          <div class="start-panel">
+            <ion-icon name="call-outline"></ion-icon>
+            <strong>{{ selectedTitle() }}</strong>
+            <span>Inicia desde el chat seleccionado.</span>
+            <div class="start-actions">
+              <ion-button mode="ios" [disabled]="!chat.selectedConversation()" (click)="startSelected('Voice')">
+                <ion-icon name="call-outline"></ion-icon>
+                Voz
+              </ion-button>
+              <ion-button mode="ios" [disabled]="!chat.selectedConversation()" (click)="startSelected('Video')">
+                <ion-icon name="videocam-outline"></ion-icon>
+                Video
+              </ion-button>
+            </div>
+          </div>
+        }
+
+        @if (calls.error()) {
+          <p class="error-copy">{{ calls.error() }}</p>
+        }
+      </article>
+
+      <article class="panel span-5">
+        <h2>Historial local</h2>
+        <div class="stack">
+          @for (call of calls.history(); track call.id) {
+            <div class="call-row">
+              <div>
+                <strong>{{ call.type }} - {{ call.status }}</strong>
+                <span class="card-sub">{{ call.startedAt | date:'short' }}</span>
+              </div>
+              @if (canRejoin(call.id) && call.status !== 'Ended' && !call.endedAt) {
+                <ion-button mode="ios" fill="clear" (click)="rejoin(call.id)" aria-label="Reentrar">
+                  <ion-icon name="enter-outline"></ion-icon>
+                </ion-button>
+              } @else {
+                <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
+              }
+            </div>
+          } @empty {
+            <div class="empty-copy">Las llamadas entrantes apareceran aqui.</div>
+          }
+        </div>
+      </article>
+    </section>
+  </main>
+</ion-content>

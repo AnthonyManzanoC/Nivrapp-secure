@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 
 let mainWindow = null;
+let isQuitting = false;
 
 function readBundledApiBaseUrl(webRoot) {
   try {
@@ -16,9 +17,18 @@ function readBundledApiBaseUrl(webRoot) {
 }
 
 function resolveWebRoot() {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, "wwwroot")
-    : path.join(__dirname, "..", "Nivra.Api", "wwwroot");
+  const candidates = app.isPackaged
+    ? [
+        path.join(process.resourcesPath, "wwwroot"),
+        path.join(process.resourcesPath, "browser")
+      ]
+    : [
+        path.join(__dirname, "wwwroot"),
+        path.join(__dirname, "..", "nivra-app", "dist", "nivra-app", "browser"),
+        path.join(__dirname, "..", "Nivra.Api", "wwwroot")
+      ];
+
+  return candidates.find((candidate) => fs.existsSync(path.join(candidate, "index.html"))) || candidates[0];
 }
 
 function resolveWindowIcon() {
@@ -64,6 +74,13 @@ function createWindow(webRoot, apiBaseUrl) {
 
   mainWindow.on("closed", () => {
     mainWindow = null;
+  });
+
+  mainWindow.on("close", () => {
+    if (!isQuitting) {
+      isQuitting = true;
+      app.quit();
+    }
   });
 
   mainWindow.loadFile(indexPath, { query });
@@ -116,5 +133,10 @@ if (!hasSingleInstanceLock) {
 }
 
 app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
+  isQuitting = true;
+  app.quit();
+});
+
+app.on("before-quit", () => {
+  isQuitting = true;
 });

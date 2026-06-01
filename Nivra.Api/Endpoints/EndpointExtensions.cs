@@ -1,7 +1,5 @@
 using System.Text.RegularExpressions;
 using System.Security.Cryptography;
-using System.Text;
-using System.Text.Json;
 using FirebaseAdmin.Auth;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
@@ -35,8 +33,10 @@ public static partial class EndpointExtensions
         app.MapGet("/api/info", () => Results.Ok(ApiInfo()));
         app.MapGet("/favicon.ico", static (IWebHostEnvironment environment) =>
         {
-            var webRoot = environment.WebRootPath ?? Path.Combine(environment.ContentRootPath, "wwwroot");
-            return Results.File(Path.Combine(webRoot, "assets", "nivra-mark.svg"), "image/svg+xml");
+            var legacyMark = Path.Combine(environment.ContentRootPath, "wwwroot_legacy", "assets", "nivra-mark.svg");
+            return File.Exists(legacyMark)
+                ? Results.File(legacyMark, "image/svg+xml")
+                : Results.NoContent();
         });
 
         app.MapGet("/health", () => Results.Ok(new
@@ -1512,7 +1512,7 @@ public static partial class EndpointExtensions
             return Results.Ok(pending);
         });
 
-        messages.MapGet("/sync", async Task<IResult> (int? take, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        messages.MapGet("/sync", async Task<IResult> (int? take, DateTimeOffset? since, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1522,11 +1522,15 @@ public static partial class EndpointExtensions
 
             var now = timeProvider.GetUtcNow();
             var limit = Math.Clamp(take ?? 200, 1, 500);
-            var pending = (await store.PendingMessagesForDeviceAsync(current.UserId, current.DeviceId, now, cancellationToken))
-                .Take(limit)
+            var messages = since is { } watermark
+                ? await store.MessagesForDeviceSinceAsync(current.UserId, current.DeviceId, watermark, now, limit, cancellationToken)
+                : (await store.PendingMessagesForDeviceAsync(current.UserId, current.DeviceId, now, cancellationToken)).Take(limit);
+            var page = messages.ToList();
+            var pending = page
                 .Select(message => ToMessageResponseForDevice(message, current.UserId, current.DeviceId))
                 .ToList();
-            return Results.Ok(new MessageSyncResponse(pending, now));
+            var syncedAt = page.Count > 0 ? page[^1].ServerReceivedAt : now;
+            return Results.Ok(new MessageSyncResponse(pending, syncedAt));
         });
 
         messages.MapPost("/sync/ack", async Task<IResult> (MessageSyncAckRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
@@ -2572,7 +2576,7 @@ public static partial class EndpointExtensions
             return Results.Accepted();
         });
 
-        group.MapPost("/{callId}/end", async Task<IResult> (string callId, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        group.MapPost("/{callId}/end", async Task<IResult> (string callId, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2586,11 +2590,9 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
-            var previousStatus = call.Status;
             call.Status = CallStatus.Ended;
             call.EndedAt = timeProvider.GetUtcNow();
             await store.SaveChangesAsync(cancellationToken);
-            await InsertCallLogMessageAsync(db, store, hub, call, current, previousStatus, cancellationToken);
             var response = ToCallResponse(call);
             await NotifyUsers(hub, call.ParticipantUserIds, "call.ended", response);
             foreach (var userId in call.ParticipantUserIds.Distinct(StringComparer.Ordinal))
@@ -2600,117 +2602,6 @@ public static partial class EndpointExtensions
 
             return Results.Ok(response);
         });
-    }
-
-    private static async Task InsertCallLogMessageAsync(
-        NivraDbContext db,
-        INivraStore store,
-        IHubContext<NivraHub> hub,
-        CallSession call,
-        CurrentUser current,
-        CallStatus previousStatus,
-        CancellationToken cancellationToken)
-    {
-        if (string.IsNullOrWhiteSpace(call.ConversationId) || call.EndedAt is null)
-        {
-            return;
-        }
-
-        var conversation = await db.Conversations.FirstOrDefaultAsync(item => item.Id == call.ConversationId, cancellationToken);
-        if (conversation is null)
-        {
-            return;
-        }
-
-        var clientMessageId = $"system-call-log-{call.Id}";
-        var exists = await db.Messages.AnyAsync(message =>
-            message.ConversationId == conversation.Id &&
-            message.ClientMessageId == clientMessageId,
-            cancellationToken);
-        if (exists)
-        {
-            return;
-        }
-
-        var missed = previousStatus == CallStatus.Ringing;
-        var duration = missed ? TimeSpan.Zero : call.EndedAt.Value - call.StartedAt;
-        if (duration < TimeSpan.Zero) duration = TimeSpan.Zero;
-        var payload = new
-        {
-            type = "call_log",
-            @event = missed ? "missed-call" : "call-ended",
-            title = missed ? "Llamada perdida" : "Llamada finalizada",
-            text = missed ? "No hubo respuesta" : $"Duracion {FormatCallDuration(duration)}",
-            status = missed ? "missed" : "ended",
-            durationMs = (int)Math.Max(0, duration.TotalMilliseconds),
-            callId = call.Id,
-            callType = call.Type.ToString(),
-            conversationId = conversation.Id,
-            initiatorUserId = call.InitiatorUserId,
-            endedByUserId = current.UserId,
-            startedAt = call.StartedAt,
-            endedAt = call.EndedAt
-        };
-        var encodedPayload = Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload, new JsonSerializerOptions(JsonSerializerDefaults.Web))));
-
-        var recipients = new List<RecipientCiphertext>();
-        foreach (var userId in call.ParticipantUserIds.Distinct(StringComparer.Ordinal))
-        {
-            var devices = await store.ActiveDevicesForUserAsync(userId, cancellationToken);
-            recipients.AddRange(devices.Select(device => new RecipientCiphertext
-            {
-                UserId = userId,
-                DeviceId = device.Id,
-                Ciphertext = encodedPayload,
-                Header = "system:call-log"
-            }));
-        }
-
-        if (recipients.Count == 0)
-        {
-            return;
-        }
-
-        var now = call.EndedAt.Value;
-        var message = new MessageEnvelope
-        {
-            Id = NivraIds.NewId("msg"),
-            ConversationId = conversation.Id,
-            ClientMessageId = clientMessageId,
-            SenderUserId = current.UserId,
-            SenderDeviceId = current.DeviceId,
-            Kind = MessageKind.System,
-            Recipients = recipients,
-            EncryptedPolicy = "system:call-log",
-            ServerReceivedAt = now,
-            DeleteAfterRead = false
-        };
-        message.Receipts = recipients.Select(recipient => new DeliveryReceipt
-        {
-            UserId = recipient.UserId,
-            DeviceId = recipient.DeviceId
-        }).ToList();
-
-        conversation.LastMessageAt = now;
-        conversation.UpdatedAt = now;
-        db.Messages.Add(message);
-        await db.SaveChangesAsync(cancellationToken);
-
-        foreach (var recipient in recipients)
-        {
-            await hub.Clients.Group(GroupsFor.Device(recipient.DeviceId)).SendAsync(
-                "message.received",
-                ToMessageResponseForDevice(message, recipient.UserId, recipient.DeviceId),
-                cancellationToken);
-        }
-    }
-
-    private static string FormatCallDuration(TimeSpan duration)
-    {
-        var totalSeconds = Math.Max(0, (int)Math.Round(duration.TotalSeconds));
-        var minutes = totalSeconds / 60;
-        var seconds = totalSeconds % 60;
-        return minutes <= 0 ? $"{seconds} seg" : $"{minutes} min {seconds} seg";
     }
 
     private static void MapPrivacyEndpoints(this WebApplication app)

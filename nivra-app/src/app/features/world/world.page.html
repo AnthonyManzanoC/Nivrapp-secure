@@ -1,0 +1,225 @@
+<ion-content fullscreen class="page">
+  <main class="surface">
+    <header class="page-head">
+      <div>
+        <h1>Mundo</h1>
+        <p>Contactos, solicitudes e historias privadas.</p>
+      </div>
+      <ion-button mode="ios" fill="clear" (click)="social.load()" aria-label="Actualizar">
+        @if (social.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
+      </ion-button>
+    </header>
+
+    <section class="grid">
+      <article class="panel span-5">
+        <div class="panel-headline">
+          <div>
+            <h2>Contactos</h2>
+            <span class="card-sub">{{ social.contacts().length }} guardados</span>
+          </div>
+        </div>
+        <div class="contact-list">
+          @for (contact of social.contacts(); track contact.userId) {
+            <div class="contact-card" [class.favorite]="contact.isFavorite">
+              <button type="button" class="contact-main" (click)="openContact(contact)">
+                <span class="contact-avatar">{{ (contact.displayName || contact.alias || 'N')[0] }}</span>
+                <span>
+                  <strong>{{ contact.displayName || contact.alias }}</strong>
+                  <small>@{{ contact.alias }}</small>
+                </span>
+              </button>
+              <div class="row-actions">
+                <ion-button mode="ios" fill="clear" (click)="toggleFavorite(contact)" [disabled]="busyId === 'favorite:' + contact.userId" aria-label="Favorito">
+                  <ion-icon [name]="contact.isFavorite ? 'star' : 'star-outline'"></ion-icon>
+                </ion-button>
+                <ion-button mode="ios" fill="clear" (click)="openContact(contact)" aria-label="Abrir chat">
+                  <ion-icon name="chatbubble-ellipses-outline"></ion-icon>
+                </ion-button>
+                <ion-button mode="ios" fill="clear" color="danger" (click)="deleteContact(contact)" [disabled]="busyId === 'remove:' + contact.userId" aria-label="Eliminar contacto">
+                  <ion-icon name="person-remove-outline"></ion-icon>
+                </ion-button>
+              </div>
+            </div>
+          } @empty {
+            <div class="empty-copy">Tus contactos apareceran aqui.</div>
+          }
+        </div>
+      </article>
+
+      <article class="panel span-7">
+        <h2>Buscar personas</h2>
+        <label class="search-line">
+          <ion-icon name="search-outline"></ion-icon>
+          <ion-input mode="ios" [(ngModel)]="query" (ionInput)="searchChanged()" placeholder="Alias o nombre"></ion-input>
+        </label>
+        <div class="stack">
+          @for (person of social.people(); track person.id) {
+            <div class="result-row person-result">
+              <div>
+                <strong>{{ person.displayName || person.alias }}</strong>
+                <span class="card-sub">@{{ person.alias }} - {{ person.friendshipState }}</span>
+              </div>
+              <div class="row-actions">
+                <ion-button mode="ios" fill="clear" (click)="openPerson(person)" [disabled]="busyId === 'open:' + person.id" aria-label="Abrir chat">
+                  <ion-icon name="chatbubble-ellipses-outline"></ion-icon>
+                </ion-button>
+                @if (!person.isContact) {
+                  <ion-button mode="ios" fill="clear" (click)="addContact(person)" [disabled]="busyId === 'contact:' + person.id || person.id === auth.session()?.user?.id" aria-label="Guardar contacto">
+                    <ion-icon name="person-add-outline"></ion-icon>
+                  </ion-button>
+                }
+                @if (person.friendshipState === 'none') {
+                  <ion-button mode="ios" fill="outline" [disabled]="busyId === person.id || person.id === auth.session()?.user?.id" (click)="request(person)">
+                    <ion-icon name="add-outline"></ion-icon>
+                  </ion-button>
+                }
+              </div>
+            </div>
+          } @empty {
+            <div class="empty-copy">Busca un alias para conectar.</div>
+          }
+        </div>
+      </article>
+
+      <article class="panel span-5">
+        <h2>Nueva historia</h2>
+        <div class="stack">
+          <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="storyText" placeholder="Comparte algo cifrado para tus contactos"></ion-textarea>
+          <input #storyFileInput type="file" hidden accept="image/*,video/*,audio/*" (change)="storyFileSelected($event)">
+          <div class="story-compose-media">
+            <button type="button" (click)="storyFileInput.click()">
+              <ion-icon name="document-attach-outline"></ion-icon>
+              <span>{{ storyFile ? storyFile.name : 'Adjuntar imagen, video o audio' }}</span>
+            </button>
+            @if (storyFile) {
+              <button type="button" class="clear-file" (click)="clearStoryFile()" aria-label="Quitar archivo">
+                <ion-icon name="close-outline"></ion-icon>
+              </button>
+            }
+          </div>
+          <div class="story-settings">
+            <select class="native-select" [(ngModel)]="visibility">
+              <option value="Contacts">Contactos</option>
+              <option value="MutualContacts">Mutuos</option>
+              <option value="PublicWorld">Mundo</option>
+            </select>
+            <select class="native-select" [(ngModel)]="durationSeconds">
+              <option [ngValue]="3600">1 hora</option>
+              <option [ngValue]="86400">24 horas</option>
+              <option [ngValue]="604800">7 dias</option>
+            </select>
+          </div>
+          <label class="native-check">
+            <input type="checkbox" [(ngModel)]="viewOnce">
+            <span>Ver una vez</span>
+          </label>
+          <ion-button mode="ios" (click)="publishStory()" [disabled]="busyId === 'story' || social.publishing() || (!storyText.trim() && !storyFile)">
+            @if (social.publishing()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
+            Publicar
+          </ion-button>
+        </div>
+      </article>
+
+      <article class="panel span-7">
+        <h2>Solicitudes</h2>
+        <div class="stack">
+          @for (request of social.friendRequests(); track request.id) {
+            <div class="result-row">
+              <div>
+                <strong>{{ request.from.displayName || request.from.alias }}</strong>
+                <span class="card-sub">{{ request.status }} - {{ request.createdAt | date:'short' }}</span>
+              </div>
+              @if (request.status === 'Pending' && request.to.id === auth.session()?.user?.id) {
+                <div class="row-actions">
+                  <ion-button mode="ios" fill="outline" (click)="accept(request.id)"><ion-icon name="checkmark-outline"></ion-icon></ion-button>
+                  <ion-button mode="ios" fill="clear" color="danger" (click)="reject(request.id)"><ion-icon name="close-outline"></ion-icon></ion-button>
+                </div>
+              } @else if (request.status === 'Pending' && request.from.id === auth.session()?.user?.id) {
+                <ion-button mode="ios" fill="clear" color="danger" (click)="cancel(request.id)">
+                  <ion-icon name="close-outline"></ion-icon>
+                  Cancelar
+                </ion-button>
+              }
+            </div>
+          } @empty {
+            <div class="empty-copy">No hay solicitudes pendientes.</div>
+          }
+        </div>
+      </article>
+
+      <article class="panel span-12">
+        <h2>Historias</h2>
+        <div class="story-grid">
+          @for (story of social.stories(); track story.id) {
+            @if (social.storyPayload(story); as payload) {
+              <div class="story-row">
+                <button type="button" class="story-open" (click)="openStory(story)">
+                  <span class="story-avatar">{{ (story.owner.displayName || story.owner.alias || 'N')[0] }}</span>
+                  <span>
+                    <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
+                    <small>{{ social.storyText(story) }}</small>
+                    <em>{{ payload.media ? payload.media.mime : story.visibility }} - {{ story.viewCount }} vistas</em>
+                  </span>
+                </button>
+                <div class="row-actions">
+                  <ion-button mode="ios" fill="clear" (click)="openStory(story)" [disabled]="busyId === 'story:' + story.id" aria-label="Ver historia">
+                    <ion-icon name="eye-outline"></ion-icon>
+                  </ion-button>
+                  @if (isMine(story)) {
+                    <ion-button mode="ios" fill="clear" color="danger" (click)="deleteStory(story)" aria-label="Eliminar historia">
+                      <ion-icon name="trash-outline"></ion-icon>
+                    </ion-button>
+                  }
+                </div>
+              </div>
+            }
+          } @empty {
+            <div class="empty-copy">Aun no hay historias visibles.</div>
+          }
+        </div>
+      </article>
+    </section>
+
+    @if (social.activeStory(); as story) {
+      @if (social.storyPayload(story); as payload) {
+        <section class="story-viewer">
+          <div class="story-viewer-top">
+            <div>
+              <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
+              <span>{{ story.expiresAt | date:'shortTime' }}</span>
+            </div>
+            <button type="button" (click)="social.closeStory()" aria-label="Cerrar">
+              <ion-icon name="close-outline"></ion-icon>
+            </button>
+          </div>
+          <div class="story-viewer-body">
+            @if (payload.media; as mediaPayload) {
+              @if (social.storyMedia(story); as media) {
+                @if (social.isImage(media.mime)) {
+                  <img [src]="media.url" [alt]="media.name">
+                } @else if (social.isVideo(media.mime)) {
+                  <video [src]="media.url" controls playsinline autoplay></video>
+                } @else {
+                  <audio [src]="media.url" controls autoplay></audio>
+                }
+              } @else {
+                <div class="story-loading">
+                  <ion-spinner name="crescent"></ion-spinner>
+                  <span>Descifrando {{ mediaPayload.mime }}</span>
+                </div>
+              }
+            } @else {
+              <p>{{ payload.text || story.caption || 'Instantanea' }}</p>
+            }
+          </div>
+          @if (payload.text) {
+            <footer>{{ payload.text }}</footer>
+          }
+        </section>
+      }
+    }
+
+    @if (notice) { <p class="notice">{{ notice }}</p> }
+    @if (error) { <p class="error">{{ error }}</p> }
+  </main>
+</ion-content>

@@ -244,6 +244,32 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<List<MessageEnvelope>> MessagesForDeviceSinceAsync(
+        string userId,
+        string deviceId,
+        DateTimeOffset since,
+        DateTimeOffset now,
+        int take,
+        CancellationToken cancellationToken = default)
+    {
+        var limit = Math.Clamp(take, 1, 500);
+        return await db.Messages
+            .Where(message => message.Recipients.Any(recipient => recipient.UserId == userId && recipient.DeviceId == deviceId))
+            .Where(message => message.ServerReceivedAt > since)
+            .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
+            .Where(message => !message.Receipts.Any(receipt => receipt.UserId == userId && receipt.DeletedAt != null))
+            .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
+                receipt.UserId == userId &&
+                (receipt.ReadAt != null || receipt.DeletedAt != null)))
+            .Where(message => message.Receipts.Any(receipt =>
+                receipt.UserId == userId &&
+                receipt.DeviceId == deviceId &&
+                receipt.DeletedAt == null))
+            .OrderBy(message => message.ServerReceivedAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<int> MarkMessagesDeliveredAsync(
         string userId,
         string deviceId,

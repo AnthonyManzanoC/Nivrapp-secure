@@ -1,0 +1,386 @@
+@use "../shared-page";
+
+.vault-surface {
+  --vault-green: #35d69f;
+  --vault-cyan: #66d9ef;
+  --vault-warn: #f7c948;
+}
+
+.vault-hero {
+  align-items: flex-start;
+}
+
+.eyebrow {
+  display: inline-block;
+  margin-bottom: 5px;
+  color: var(--vault-green);
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.panel-title,
+.room-head,
+.invite-bar,
+.composer,
+.room-actions,
+.file-actions,
+.join-row,
+.room-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.panel-title {
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.panel-title h2,
+.room-head strong {
+  margin: 0;
+}
+
+.panel-title > ion-icon {
+  width: 38px;
+  height: 38px;
+  padding: 9px;
+  border: 1px solid rgba(53, 214, 159, .22);
+  border-radius: 8px;
+  color: var(--vault-green);
+  background: rgba(53, 214, 159, .09);
+}
+
+.native-select {
+  min-height: 44px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .055);
+}
+
+.vault-key-state {
+  display: grid;
+  gap: 8px;
+}
+
+.vault-key-state strong {
+  width: max-content;
+  border: 1px solid rgba(53, 214, 159, .28);
+  border-radius: 999px;
+  padding: 5px 10px;
+  color: var(--vault-green);
+  background: rgba(53, 214, 159, .1);
+}
+
+.search-box {
+  min-height: 44px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  padding: 0 10px;
+  background: rgba(255, 255, 255, .055);
+}
+
+.search-box ion-icon {
+  color: var(--nivra-muted);
+}
+
+.search-box ion-input {
+  --background: transparent;
+  --border-width: 0;
+}
+
+.people-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 0 14px;
+}
+
+.person-pill {
+  border: 1px solid var(--nivra-line);
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px 7px 7px;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .045);
+  white-space: nowrap;
+}
+
+.person-pill span,
+.member-dots span,
+.room-avatar {
+  display: grid;
+  place-items: center;
+  font-weight: 900;
+}
+
+.person-pill span,
+.member-dots span {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #06100d;
+  background: var(--vault-green);
+}
+
+.person-pill.selected {
+  border-color: rgba(53, 214, 159, .55);
+  background: rgba(53, 214, 159, .12);
+}
+
+.room-list-panel,
+.room-workspace {
+  min-height: 560px;
+}
+
+.room-list {
+  max-height: 650px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.room-card {
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.room-card.active {
+  border-color: rgba(53, 214, 159, .36);
+  background: rgba(53, 214, 159, .075);
+}
+
+.room-main {
+  width: 100%;
+  border: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 0;
+  color: var(--nivra-text);
+  background: transparent;
+  text-align: left;
+}
+
+.room-main.static {
+  width: auto;
+}
+
+.room-avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  color: #06100d;
+  background: linear-gradient(135deg, var(--vault-green), var(--vault-cyan));
+  box-shadow: 0 10px 24px rgba(53, 214, 159, .16);
+}
+
+.room-avatar.large {
+  width: 50px;
+  height: 50px;
+}
+
+.room-main strong,
+.room-main small,
+.room-meta span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.room-main small,
+.room-meta,
+.vault-message small {
+  color: var(--nivra-muted);
+}
+
+.room-meta {
+  justify-content: space-between;
+  font-size: 12px;
+}
+
+.join-row {
+  align-items: stretch;
+}
+
+.join-row ion-input {
+  min-width: 0;
+}
+
+.room-actions {
+  justify-content: flex-end;
+}
+
+.room-head {
+  justify-content: space-between;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--nivra-line);
+}
+
+.member-dots {
+  display: flex;
+  flex-direction: row-reverse;
+}
+
+.member-dots span {
+  margin-left: -7px;
+  border: 2px solid #0d1416;
+}
+
+.waiting-list {
+  display: grid;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.invite-bar {
+  margin: 14px 0;
+}
+
+.invite-bar .search-box {
+  flex: 1;
+}
+
+.vault-chat {
+  height: 340px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: auto;
+  padding: 14px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .018)),
+    rgba(5, 9, 11, .52);
+}
+
+.vault-message {
+  width: min(78%, 460px);
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  background: rgba(255, 255, 255, .06);
+}
+
+.vault-message.mine {
+  align-self: flex-end;
+  border-color: rgba(53, 214, 159, .26);
+  background: rgba(53, 214, 159, .13);
+}
+
+.vault-message.system {
+  align-self: center;
+  max-width: 80%;
+  text-align: center;
+  background: rgba(247, 201, 72, .1);
+  border-color: rgba(247, 201, 72, .18);
+}
+
+.vault-message p {
+  margin: 0;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.file-bubble {
+  display: grid;
+  gap: 8px;
+}
+
+.file-bubble img,
+.file-bubble video {
+  width: 100%;
+  max-height: 260px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #05090b;
+}
+
+.file-bubble audio {
+  width: 100%;
+}
+
+.file-actions {
+  flex-wrap: wrap;
+}
+
+.composer {
+  margin-top: 12px;
+  padding: 8px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .045);
+}
+
+.composer ion-textarea {
+  flex: 1;
+  --background: transparent;
+  --border-width: 0;
+}
+
+.vault-empty-stage {
+  min-height: 520px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 12px;
+  text-align: center;
+  color: var(--nivra-muted);
+}
+
+.vault-empty-stage ion-icon {
+  width: 72px;
+  height: 72px;
+  color: var(--vault-green);
+}
+
+.vault-empty-stage h2 {
+  margin: 0;
+  color: var(--nivra-text);
+}
+
+@media (max-width: 860px) {
+  .vault-hero {
+    align-items: center;
+  }
+
+  .room-list-panel,
+  .room-workspace {
+    min-height: unset;
+  }
+
+  .vault-chat {
+    height: 56dvh;
+  }
+
+  .vault-message {
+    width: 88%;
+  }
+
+  .invite-bar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .composer {
+    position: sticky;
+    bottom: calc(var(--nivra-bottom-nav-height) + 10px + env(safe-area-inset-bottom));
+  }
+}

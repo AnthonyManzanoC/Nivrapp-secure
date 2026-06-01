@@ -1,0 +1,220 @@
+.page {
+  --background: transparent;
+}
+
+.surface {
+  height: 100dvh;
+  overflow: auto;
+  padding: 24px;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .026), transparent 18%),
+    transparent;
+}
+
+.page-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.page-head h1 {
+  margin: 0;
+  font-size: 30px;
+  line-height: 1.05;
+  letter-spacing: 0;
+}
+
+.page-head p,
+label span,
+.mini-list,
+.device-row span,
+.card-sub,
+.notice,
+.empty-copy {
+  color: var(--nivra-muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.panel {
+  min-width: 0;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 16px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .082), rgba(255, 255, 255, .03)),
+    var(--nivra-panel);
+  box-shadow: var(--nivra-shadow-tiny), inset 0 1px 0 rgba(255, 255, 255, .07);
+  backdrop-filter: var(--nivra-glass);
+}
+
+.panel h2 {
+  margin: 0 0 14px;
+  font-size: 18px;
+  letter-spacing: 0;
+}
+
+.span-4 { grid-column: span 4; }
+.span-5 { grid-column: span 5; }
+.span-6 { grid-column: span 6; }
+.span-7 { grid-column: span 7; }
+.span-8 { grid-column: span 8; }
+.span-12 { grid-column: span 12; }
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+label {
+  display: grid;
+  gap: 7px;
+}
+
+.wide {
+  grid-column: 1 / -1;
+}
+
+ion-input,
+ion-textarea {
+  --background: rgba(255, 255, 255, .062);
+  --border-color: var(--nivra-line);
+  --border-radius: 8px;
+  --color: var(--nivra-text);
+  --highlight-color-focused: var(--nivra-brand-2);
+}
+
+ion-button {
+  --border-radius: 8px;
+  font-weight: 800;
+}
+
+.toggle-row {
+  min-height: 46px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  background: rgba(255, 255, 255, .042);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+}
+
+.toggles,
+.mini-list,
+.device-list,
+.stack {
+  display: grid;
+  gap: 10px;
+}
+
+.metric {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 14px;
+}
+
+.metric strong {
+  font-size: 32px;
+  color: var(--nivra-brand-2);
+}
+
+.device-row,
+.result-row,
+.story-row,
+.vault-row,
+.call-row {
+  min-width: 0;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 12px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, .042);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+.device-row:hover,
+.result-row:hover,
+.story-row:hover,
+.vault-row:hover,
+.call-row:hover {
+  border-color: var(--nivra-line-strong);
+  background: rgba(255, 255, 255, .06);
+  transform: translateY(-1px);
+}
+
+.device-row strong,
+.result-row strong,
+.story-row strong,
+.vault-row strong,
+.call-row strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notice,
+.error {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  max-width: min(420px, calc(100vw - 36px));
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: rgba(8, 13, 15, .94);
+  box-shadow: var(--nivra-shadow-soft);
+}
+
+.error {
+  color: #ffd5d5;
+  border-color: rgba(255, 107, 107, .3);
+}
+
+.empty-copy {
+  display: grid;
+  place-items: center;
+  min-height: 120px;
+  text-align: center;
+  border: 1px dashed var(--nivra-line);
+  border-radius: 8px;
+}
+
+@media (max-width: 860px) {
+  .surface {
+    padding: 18px 14px calc(var(--nivra-bottom-nav-height) + 24px + env(safe-area-inset-bottom));
+  }
+
+  .grid {
+    grid-template-columns: 1fr;
+  }
+
+  .span-4,
+  .span-5,
+  .span-6,
+  .span-7,
+  .span-8,
+  .span-12 {
+    grid-column: 1;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+}
