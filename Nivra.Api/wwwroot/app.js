@@ -28,7 +28,11 @@ const MAX_SEEN_MESSAGE_IDS = 5000;
 const MESSAGE_BOTTOM_THRESHOLD_PX = 100;
 const MESSAGE_SCROLL_DEBOUNCE_MS = 120;
 const SEARCH_DEBOUNCE_MS = 600;
+const LOCAL_SEARCH_DEBOUNCE_MS = 300;
 const SEARCH_MIN_CHARS = 2;
+const RECENT_SEARCHES_KEY = "nivra_recent_searches";
+const RECENT_SEARCHES_LIMIT = 8;
+const CHAT_SEARCH_RENDER_LIMIT = 80;
 const MAIN_THREAD_YIELD_EVERY = 8;
 const MAX_CALL_HISTORY = 80;
 const MESSAGE_REACTION_EMOJIS = ["👍", "❤️", "😂", "😮", "😢"];
@@ -359,6 +363,8 @@ const state = {
     privacy: "",
     account: ""
   },
+  chatRecentSearchesOpen: false,
+  recentSearches: loadRecentSearches(),
   contactPanel: {
     tab: "mine",
     query: "",
@@ -480,6 +486,7 @@ const state = {
   aliasByUserId: new Map(),
   profileByUserId: new Map(),
   profileRefreshAtByUserId: new Map(),
+  conversationSearchCache: new Map(),
   archivedConversationIds: new Set(loadJson("nivra.archivedConversations") || []),
   replyTo: null,
   contextMenu: null,
@@ -510,6 +517,7 @@ const state = {
   pushRetryAttempt: 0,
   launchPush: null,
   retentionTimer: null,
+  localSearchTimer: null,
   searchTimer: null,
   contactSearchTimer: null,
   chatSearchTimer: null,
@@ -566,6 +574,7 @@ const debouncedDirectorySearch = debounce(() => searchDirectory(), SEARCH_DEBOUN
 const debouncedContactsPanelSearch = debounce(() => searchContactsPanel(), SEARCH_DEBOUNCE_MS);
 const debouncedChatModalSearch = debounce(() => searchChatModal(), SEARCH_DEBOUNCE_MS);
 const debouncedVaultInviteSearch = debounce(() => searchVaultInviteModal(), SEARCH_DEBOUNCE_MS);
+const debouncedLocalSearchRender = debounce(() => scheduleRender(), LOCAL_SEARCH_DEBOUNCE_MS);
 
 document.documentElement.dataset.platform = PLATFORM.name;
 window.addEventListener("beforeunload", revokeCachedMediaPreviews);
@@ -1319,6 +1328,8 @@ function render() {
     cancelAnimationFrame(state.renderFrame);
     state.renderFrame = null;
   }
+  clearTimeout(state.localSearchTimer);
+  state.localSearchTimer = null;
   const transient = captureTransientInputs();
   prepareDomForRender(state.lastRenderedView, state.view);
   syncShellClasses();
@@ -1547,6 +1558,11 @@ function textMatchesSearch(value, query) {
 function activateView(view, options = {}) {
   if (!view) return;
   setSearchQueryForView(state.view, currentSearchQuery());
+  if (state.view !== view) {
+    state.chatRecentSearchesOpen = false;
+    clearTimeout(state.localSearchTimer);
+    state.localSearchTimer = null;
+  }
   state.view = view;
   state.query = searchQueryForView(view);
   if (options.mobileChatOpen !== undefined) {
@@ -1558,6 +1574,11 @@ function activateView(view, options = {}) {
   if (view === "world" && isRemoteSearchQueryReady(searchQueryForView("world"))) {
     scheduleDirectorySearch();
   }
+}
+
+function handleGlobalSearchFocus(event) {
+  if (state.view !== "chats") return;
+  setChatRecentSearchesVisible(event.target.value === "");
 }
 
 function handleGlobalSearchInput(event) {
@@ -1574,14 +1595,22 @@ function handleGlobalSearchInput(event) {
       scheduleRender();
       break;
     case "chats":
+      setChatRecentSearchesVisible(event.target.value === "" && document.activeElement === event.target);
+      scheduleLocalSearchRender();
+      break;
     case "vault":
     case "calls":
     case "privacy":
     case "account":
     default:
-      scheduleRender();
+      state.chatRecentSearchesOpen = false;
+      scheduleLocalSearchRender();
       break;
   }
+}
+
+function scheduleLocalSearchRender() {
+  state.localSearchTimer = debouncedLocalSearchRender();
 }
 
 function personSearchText(person = {}) {
@@ -1603,9 +1632,46 @@ function conversationSearchText(conversation) {
   return [conversationTitle(conversation), conversation.type, conversationSubtitle(conversation, { archived: state.archivedConversationIds.has(conversation.id) }), people].join(" ");
 }
 
+function conversationSearchTextCached(conversation) {
+  const signature = conversationSearchSignature(conversation);
+  const cached = state.conversationSearchCache.get(conversation.id);
+  if (cached?.signature === signature) return cached.text;
+  const text = conversationSearchText(conversation).toLowerCase();
+  state.conversationSearchCache.set(conversation.id, { signature, text });
+  return text;
+}
+
+function conversationSearchSignature(conversation) {
+  const participants = (conversation.participants || [])
+    .map((participant) => {
+      const profile = state.profileByUserId.get(participant.userId);
+      const alias = state.aliasByUserId.get(participant.userId) || profile?.alias || "";
+      const displayName = profile?.displayName || "";
+      const presence = state.presenceByUserId.get(participant.userId);
+      return [
+        participant.userId,
+        participant.removedAt || "",
+        alias,
+        displayName,
+        presence?.online ? "1" : "0",
+        presence?.lastSeenAt || ""
+      ].join(":");
+    })
+    .join("|");
+  return [
+    conversation.id,
+    conversation.type,
+    conversation.lastMessageAt || "",
+    conversation.updatedAt || "",
+    state.archivedConversationIds.has(conversation.id) ? "archived" : "",
+    participants
+  ].join("~");
+}
+
 function filteredConversations() {
   const query = normalizedSearchQuery("chats");
-  return state.conversations.filter((conversation) => textMatchesSearch(conversationSearchText(conversation), query));
+  if (!query) return state.conversations;
+  return state.conversations.filter((conversation) => conversationSearchTextCached(conversation).includes(query));
 }
 
 function filteredDirectoryPeople() {
@@ -1726,26 +1792,13 @@ function renderSidebar() {
 
 function renderSideList() {
   if (state.view === "chats") {
-    const query = normalizedSearchQuery("chats");
-    const rawQuery = searchQueryForView("chats");
-    const conversations = filteredConversations();
-    if (!conversations.length) {
-      const globalAction = query
-        ? `<button class="btn ghost full" data-global-person-search="${escapeAttr(rawQuery)}">${icon("globe")}<span>Buscar "${escapeHtml(rawQuery)}" en la red global</span></button>`
-        : `<button class="btn ghost full" id="contactsEmptyBtn">${icon("user")}<span>Ver contactos</span></button>`;
-      return `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>${query ? "No esta en tus chats" : "Sin chats"}</h2><p>${query ? "El buscador de chats solo filtra conversaciones abiertas." : "Abre contactos o crea una conversacion nueva."}</p>${globalAction}</div>`;
-    }
-    const activeConversations = conversations.filter((conversation) => !state.archivedConversationIds.has(conversation.id));
-    const archivedConversations = conversations.filter((conversation) => state.archivedConversationIds.has(conversation.id));
-    const renderedConversations = [
-      ...activeConversations.map((conversation) => renderConversationListItem(conversation)),
-      archivedConversations.length && !query ? `<div class="side-section-title">Archivados</div>` : "",
-      ...archivedConversations.map((conversation) => renderConversationListItem(conversation, { archived: true }))
-    ].join("");
-    const globalAction = query
-      ? `<button class="quick-create" data-global-person-search="${escapeAttr(rawQuery)}">${icon("globe")}<span>Buscar "${escapeHtml(rawQuery)}" en la red global</span></button>`
-      : "";
-    return renderedConversations + globalAction;
+    const showRecent = shouldShowChatRecentSearches();
+    return `
+      <div id="chatSideList" class="chat-side-list ${showRecent ? "hidden" : ""}">
+        ${renderChatConversationList()}
+      </div>
+      ${renderRecentSearchesContainer({ visible: showRecent })}
+    `;
   }
 
   if (state.view === "world") {
@@ -1777,6 +1830,213 @@ function renderSideList() {
   }
 
   return `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>Nivra</h2><p>Privacidad, cuenta y preferencias listas.</p></div>`;
+}
+
+function renderChatConversationList() {
+  const query = normalizedSearchQuery("chats");
+  const rawQuery = searchQueryForView("chats");
+  const conversations = filteredConversations();
+  if (!conversations.length) {
+    const globalAction = query
+      ? `<button class="btn ghost full" data-global-person-search="${escapeAttr(rawQuery)}">${icon("globe")}<span>Buscar "${escapeHtml(rawQuery)}" en la red global</span></button>`
+      : `<button class="btn ghost full" id="contactsEmptyBtn">${icon("user")}<span>Ver contactos</span></button>`;
+    return `<div class="empty"><img src="assets/nivra-mark.svg" alt=""><h2>${query ? "No esta en tus chats" : "Sin chats"}</h2><p>${query ? "El buscador de chats solo filtra conversaciones abiertas." : "Abre contactos o crea una conversacion nueva."}</p>${globalAction}</div>`;
+  }
+
+  const activeConversations = conversations.filter((conversation) => !state.archivedConversationIds.has(conversation.id));
+  const archivedConversations = conversations.filter((conversation) => state.archivedConversationIds.has(conversation.id));
+  const limited = limitedChatSearchConversations(activeConversations, archivedConversations, query);
+  const renderedConversations = [
+    ...limited.active.map((conversation) => renderConversationListItem(conversation)),
+    limited.archived.length && !query ? `<div class="side-section-title">Archivados</div>` : "",
+    ...limited.archived.map((conversation) => renderConversationListItem(conversation, { archived: true }))
+  ].join("");
+  const hiddenNotice = limited.hiddenCount
+    ? `<div class="list-truncation">Mostrando ${limited.shownCount} resultados. Escribe mas para afinar.</div>`
+    : "";
+  const globalAction = query
+    ? `<button class="quick-create" data-global-person-search="${escapeAttr(rawQuery)}">${icon("globe")}<span>Buscar "${escapeHtml(rawQuery)}" en la red global</span></button>`
+    : "";
+  return renderedConversations + hiddenNotice + globalAction;
+}
+
+function limitedChatSearchConversations(activeConversations, archivedConversations, query) {
+  if (!query) {
+    return {
+      active: activeConversations,
+      archived: archivedConversations,
+      shownCount: activeConversations.length + archivedConversations.length,
+      hiddenCount: 0
+    };
+  }
+
+  const active = activeConversations.slice(0, CHAT_SEARCH_RENDER_LIMIT);
+  const remaining = Math.max(0, CHAT_SEARCH_RENDER_LIMIT - active.length);
+  const archived = archivedConversations.slice(0, remaining);
+  const shownCount = active.length + archived.length;
+  const hiddenCount = Math.max(0, activeConversations.length + archivedConversations.length - shownCount);
+  return { active, archived, shownCount, hiddenCount };
+}
+
+function shouldShowChatRecentSearches() {
+  return state.view === "chats" && state.chatRecentSearchesOpen && searchQueryForView("chats") === "";
+}
+
+function setChatRecentSearchesVisible(visible) {
+  const shouldShow = Boolean(visible && state.view === "chats" && searchQueryForView("chats") === "");
+  state.chatRecentSearchesOpen = shouldShow;
+  document.querySelector("#recentSearchesContainer")?.classList.toggle("hidden", !shouldShow);
+  document.querySelector("#chatSideList")?.classList.toggle("hidden", shouldShow);
+}
+
+function renderRecentSearchesContainer({ visible = false } = {}) {
+  const recent = recentSearchesForCurrentUser().map(recentSearchDisplayEntry);
+  const clearButton = recent.length
+    ? `<button class="recent-search-clear" data-clear-recent-searches="1" type="button">${icon("trash")}<span>Eliminar todo</span></button>`
+    : "";
+  const content = recent.length
+    ? `<div class="recent-search-grid">${recent.map(renderRecentSearchItem).join("")}</div>`
+    : `<div class="recent-search-empty">Aun no hay busquedas recientes.</div>`;
+  return `
+    <section id="recentSearchesContainer" class="recent-searches-container ${visible ? "" : "hidden"}" aria-label="Busquedas recientes">
+      <div class="recent-search-head">
+        <span>Busquedas recientes</span>
+        ${clearButton}
+      </div>
+      ${content}
+    </section>
+  `;
+}
+
+function renderRecentSearchItem(entry) {
+  const title = entry.title || "Nivra";
+  const subtitle = entry.subtitle || "";
+  return `
+    <button class="recent-search-tile" data-open-recent-conversation="${escapeAttr(entry.conversationId)}" type="button" title="${escapeAttr(title)}" aria-label="Abrir ${escapeAttr(title)}">
+      <span class="recent-search-avatar-wrap">${avatarNode({ displayName: title, alias: title, profilePhotoDataUrl: entry.profilePhotoDataUrl }, "recent-search-avatar")}</span>
+      <span class="recent-search-name">${escapeHtml(title)}</span>
+      ${subtitle ? `<span class="recent-search-sub">${escapeHtml(subtitle)}</span>` : ""}
+    </button>
+  `;
+}
+
+function loadRecentSearches() {
+  const stored = loadJson(RECENT_SEARCHES_KEY);
+  return Array.isArray(stored)
+    ? stored.map(normalizeRecentSearchEntry).filter(Boolean).slice(0, RECENT_SEARCHES_LIMIT)
+    : [];
+}
+
+function recentSearchesForCurrentUser() {
+  const accountUserId = state.auth?.user?.id || "";
+  return state.recentSearches
+    .map(normalizeRecentSearchEntry)
+    .filter((entry) => entry?.conversationId && (!entry.accountUserId || !accountUserId || entry.accountUserId === accountUserId))
+    .slice(0, RECENT_SEARCHES_LIMIT);
+}
+
+function recentSearchDisplayEntry(entry) {
+  const conversation = state.conversations.find((item) => item.id === entry.conversationId);
+  if (!conversation) return entry;
+  return { ...entry, ...recentSearchEntryFromConversation(conversation), savedAt: entry.savedAt };
+}
+
+function normalizeRecentSearchEntry(entry = {}) {
+  const conversationId = clippedStorageText(entry.conversationId || entry.id, 96);
+  const userId = clippedStorageText(entry.userId, 96);
+  if (!conversationId && !userId) return null;
+  const title = clippedStorageText(entry.title || entry.displayName || entry.alias || entry.name || "Nivra", 72) || "Nivra";
+  const subtitle = clippedStorageText(entry.subtitle || entry.alias || "", 80);
+  const photo = clippedStorageText(entry.profilePhotoDataUrl || entry.photo || "", 120000);
+  return {
+    type: clippedStorageText(entry.type || "conversation", 24),
+    conversationId,
+    userId,
+    title,
+    subtitle,
+    profilePhotoDataUrl: photo.startsWith("data:image/") ? photo : "",
+    accountUserId: clippedStorageText(entry.accountUserId, 96),
+    savedAt: Number(entry.savedAt) || Date.now()
+  };
+}
+
+function clippedStorageText(value, maxLength) {
+  return String(value || "").trim().slice(0, maxLength);
+}
+
+function recentSearchEntryFromConversation(conversation, { person = null } = {}) {
+  if (!conversation?.id) return null;
+  const lead = person || conversationPrimaryPerson(conversation);
+  const alias = lead?.alias || "";
+  const participantCount = activeParticipantIds(conversation).length;
+  const subtitle = alias
+    ? `@${alias}`
+    : conversation.type === "Group"
+      ? `${participantCount} participantes`
+      : conversationSubtitle(conversation);
+  return normalizeRecentSearchEntry({
+    type: conversation.type || "conversation",
+    conversationId: conversation.id,
+    userId: lead?.id || lead?.userId || "",
+    title: conversationTitle(conversation),
+    subtitle,
+    profilePhotoDataUrl: lead?.profilePhotoDataUrl || "",
+    accountUserId: state.auth?.user?.id || "",
+    savedAt: Date.now()
+  });
+}
+
+function rememberRecentSearchFromConversation(conversationOrId, options = {}) {
+  const conversation = typeof conversationOrId === "string"
+    ? state.conversations.find((item) => item.id === conversationOrId)
+    : conversationOrId;
+  const entry = recentSearchEntryFromConversation(conversation, options);
+  if (!entry) return;
+  const next = [
+    entry,
+    ...state.recentSearches
+      .map(normalizeRecentSearchEntry)
+      .filter((item) => item && !(item.accountUserId === entry.accountUserId && item.conversationId === entry.conversationId))
+  ];
+  state.recentSearches = next.slice(0, RECENT_SEARCHES_LIMIT);
+  saveJson(RECENT_SEARCHES_KEY, state.recentSearches);
+}
+
+function clearRecentSearches() {
+  const accountUserId = state.auth?.user?.id || "";
+  state.recentSearches = state.recentSearches
+    .map(normalizeRecentSearchEntry)
+    .filter((entry) => entry && accountUserId && entry.accountUserId && entry.accountUserId !== accountUserId);
+  saveJson(RECENT_SEARCHES_KEY, state.recentSearches);
+  render();
+}
+
+function shouldRememberChatSearchSelection() {
+  return state.view === "chats" && Boolean(searchQueryForView("chats").trim());
+}
+
+function shouldRememberPeopleSearchSelection() {
+  const modalType = typeof state.modal === "string" ? state.modal : state.modal?.type;
+  return Boolean(
+    searchQueryForView("world").trim() ||
+    (modalType === "contacts" && state.contactPanel.query.trim()) ||
+    (modalType === "newChat" && state.chatSearch.query.trim())
+  );
+}
+
+function openRecentConversation(conversationId) {
+  const conversation = state.conversations.find((item) => item.id === conversationId);
+  if (!conversation) {
+    state.recentSearches = state.recentSearches.filter((entry) => entry.conversationId !== conversationId);
+    saveJson(RECENT_SEARCHES_KEY, state.recentSearches);
+    toast("Ese chat ya no esta disponible.");
+    render();
+    return;
+  }
+  rememberRecentSearchFromConversation(conversation);
+  state.chatRecentSearchesOpen = false;
+  setChatRecentSearchesVisible(false);
+  openConversationFromList(conversationId).catch(() => {});
 }
 
 function renderConversationListItem(conversation, { archived = false } = {}) {
@@ -3587,19 +3847,130 @@ function renderAccountView() {
   `;
 }
 
+function isSidebarListElement(node) {
+  return Boolean(node?.closest?.(".sidebar .list"));
+}
+
+function bindSidebarListEvents() {
+  const list = document.querySelector(".sidebar .list");
+  if (!list) return;
+  list.addEventListener("click", handleSidebarListClick);
+  list.addEventListener("keydown", handleSidebarListKeydown);
+}
+
+function handleSidebarListClick(event) {
+  const list = event.currentTarget;
+  const target = event.target?.closest ? event.target : event.target?.parentElement;
+  if (!target) return;
+
+  const clearRecent = target.closest("[data-clear-recent-searches]");
+  if (clearRecent && list.contains(clearRecent)) {
+    event.preventDefault();
+    clearRecentSearches();
+    return;
+  }
+
+  const recent = target.closest("[data-open-recent-conversation]");
+  if (recent && list.contains(recent)) {
+    event.preventDefault();
+    openRecentConversation(recent.dataset.openRecentConversation);
+    return;
+  }
+
+  const menu = target.closest("[data-chat-menu]");
+  if (menu && list.contains(menu)) {
+    event.preventDefault();
+    event.stopPropagation();
+    openChatContextMenu(menu.dataset.chatMenu, menu);
+    return;
+  }
+
+  const globalPersonSearch = target.closest("[data-global-person-search]");
+  if (globalPersonSearch && list.contains(globalPersonSearch)) {
+    event.preventDefault();
+    openContactsDialog("discover", globalPersonSearch.dataset.globalPersonSearch || currentSearchQuery());
+    return;
+  }
+
+  const contactsEmpty = target.closest("#contactsEmptyBtn");
+  if (contactsEmpty && list.contains(contactsEmpty)) {
+    event.preventDefault();
+    openContactsDialog("mine");
+    return;
+  }
+
+  const conversation = target.closest("[data-open-conversation]");
+  if (conversation && list.contains(conversation)) {
+    event.preventDefault();
+    if (shouldRememberChatSearchSelection()) {
+      rememberRecentSearchFromConversation(conversation.dataset.openConversation);
+    }
+    openConversationFromList(conversation.dataset.openConversation).catch(() => {});
+    return;
+  }
+
+  const startChat = target.closest("[data-start-chat-user]");
+  if (startChat && list.contains(startChat)) {
+    event.preventDefault();
+    startChatWithUser(startChat.dataset.startChatUser);
+    return;
+  }
+
+  const addFriend = target.closest("[data-add-friend]");
+  if (addFriend && list.contains(addFriend)) {
+    event.preventDefault();
+    sendFriendRequest(addFriend.dataset.addFriend);
+    return;
+  }
+
+  const acceptFriend = target.closest("[data-accept-friend]");
+  if (acceptFriend && list.contains(acceptFriend)) {
+    event.preventDefault();
+    respondFriendRequest(acceptFriend.dataset.acceptFriend, "accept");
+    return;
+  }
+
+  const rejectFriend = target.closest("[data-reject-friend]");
+  if (rejectFriend && list.contains(rejectFriend)) {
+    event.preventDefault();
+    respondFriendRequest(rejectFriend.dataset.rejectFriend, "reject");
+    return;
+  }
+
+  const storyGroup = target.closest("[data-view-story-group]");
+  if (storyGroup && list.contains(storyGroup)) {
+    event.preventDefault();
+    openStoryGroup(storyGroup.dataset.viewStoryGroup, storyGroup.dataset.storyId).catch((error) => toast(error.message || "No se pudo abrir historia."));
+    return;
+  }
+
+  const story = target.closest("[data-view-story]");
+  if (story && list.contains(story)) {
+    event.preventDefault();
+    viewStory(story.dataset.viewStory);
+  }
+}
+
+function handleSidebarListKeydown(event) {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const conversation = event.target.closest("[data-open-conversation]");
+  if (!conversation || !event.currentTarget.contains(conversation)) return;
+  event.preventDefault();
+  conversation.click();
+}
+
 function bindAppEvents() {
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => {
       activateView(button.dataset.view);
     });
   });
-  document.querySelector("#globalSearch")?.addEventListener("input", handleGlobalSearchInput);
+  const globalSearch = document.querySelector("#globalSearch");
+  globalSearch?.addEventListener("focus", handleGlobalSearchFocus);
+  globalSearch?.addEventListener("input", handleGlobalSearchInput);
+  bindSidebarListEvents();
   document.querySelector("#newChatBtn")?.addEventListener("click", openNewChatDialog);
   document.querySelector("#contactsBtn")?.addEventListener("click", () => openContactsDialog("mine"));
-  document.querySelector("#contactsEmptyBtn")?.addEventListener("click", () => openContactsDialog("mine"));
-  document.querySelectorAll("[data-global-person-search]").forEach((button) => {
-    button.addEventListener("click", () => openContactsDialog("discover", button.dataset.globalPersonSearch || currentSearchQuery()));
-  });
   document.querySelector("#openChatProfile")?.addEventListener("click", openChatProfile);
   document.querySelector("#closeChatProfile")?.addEventListener("click", closeChatProfile);
   document.querySelector("#profileScrim")?.addEventListener("click", closeChatProfile);
@@ -3647,6 +4018,7 @@ function bindAppEvents() {
   });
   document.querySelector("#createGroupChatBtn")?.addEventListener("click", createGroupChatFromSelection);
   document.querySelectorAll("[data-open-conversation]").forEach((button) => {
+    if (isSidebarListElement(button)) return;
     button.addEventListener("click", () => openConversationFromList(button.dataset.openConversation).catch(() => {}));
     button.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
@@ -3655,6 +4027,7 @@ function bindAppEvents() {
     });
   });
   document.querySelectorAll("[data-chat-menu]").forEach((button) => {
+    if (isSidebarListElement(button)) return;
     button.addEventListener("click", (event) => {
       event.preventDefault();
       event.stopPropagation();
@@ -3662,21 +4035,27 @@ function bindAppEvents() {
     });
   });
   document.querySelectorAll("[data-start-chat-user]").forEach((button) => {
+    if (isSidebarListElement(button)) return;
     button.addEventListener("click", () => startChatWithUser(button.dataset.startChatUser));
   });
   document.querySelectorAll("[data-add-friend]").forEach((button) => {
+    if (isSidebarListElement(button)) return;
     button.addEventListener("click", () => sendFriendRequest(button.dataset.addFriend));
   });
   document.querySelectorAll("[data-accept-friend]").forEach((button) => {
+    if (isSidebarListElement(button)) return;
     button.addEventListener("click", () => respondFriendRequest(button.dataset.acceptFriend, "accept"));
   });
   document.querySelectorAll("[data-reject-friend]").forEach((button) => {
+    if (isSidebarListElement(button)) return;
     button.addEventListener("click", () => respondFriendRequest(button.dataset.rejectFriend, "reject"));
   });
   document.querySelectorAll("[data-view-story]").forEach((button) => {
+    if (isSidebarListElement(button)) return;
     button.addEventListener("click", () => viewStory(button.dataset.viewStory));
   });
   document.querySelectorAll("[data-view-story-group]").forEach((button) => {
+    if (isSidebarListElement(button)) return;
     button.addEventListener("click", () => openStoryGroup(button.dataset.viewStoryGroup, button.dataset.storyId).catch((error) => toast(error.message || "No se pudo abrir historia.")));
   });
   document.querySelector("#syncBtn")?.addEventListener("click", async () => {
@@ -4646,10 +5025,12 @@ async function authorizeQrLogin(challenge) {
 async function startChatWithUser(userId) {
   const person = findKnownPerson(userId);
   if (!person) return;
+  const rememberRecent = shouldRememberPeopleSearchSelection();
   try {
     const conversation = await ensureDirectConversationWithUser(userId);
     selectConversation(conversation.id);
     activateView("chats", { mobileChatOpen: true, renderAfter: false });
+    if (rememberRecent) rememberRecentSearchFromConversation(conversation, { person });
     closeModal();
     await loadConversationHistory(conversation.id, true);
     await joinSelectedConversation();
@@ -7587,6 +7968,8 @@ function clearSession() {
   stopQrLogin().catch(() => {});
   resetStoryPlayback();
   cleanupObjectUrls({ keepVisible: false });
+  clearTimeout(state.localSearchTimer);
+  state.localSearchTimer = null;
   clearTimeout(state.searchTimer);
   state.searchTimer = null;
   clearTimeout(state.contactSearchTimer);
