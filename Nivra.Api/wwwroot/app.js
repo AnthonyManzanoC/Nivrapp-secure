@@ -1082,6 +1082,18 @@ async function bootstrapCore(_options = {}) {
       (room.members || []).forEach((member) => rememberProfile(member, { persist: true }));
     });
     await hydrateConversationProfilesFromCache();
+    let bootstrapMessageIndex = 0;
+    for (const message of data.messages || []) {
+      await applyMessageEnvelope(message, { markSeen: false, notifyReceipt: false, scroll: false });
+      await breatheMainThread(++bootstrapMessageIndex);
+    }
+    let bootstrapDeletionIndex = 0;
+    for (const deleted of data.deletedMessages || []) {
+      const messageId = deleted.messageId || deleted.MessageId;
+      const conversationId = deleted.conversationId || deleted.ConversationId;
+      if (messageId && conversationId) await removeMessageEverywhere(conversationId, messageId);
+      await breatheMainThread(++bootstrapDeletionIndex);
+    }
     if (state.selectedConversationId && !state.conversations.some((conversation) => conversation.id === state.selectedConversationId)) {
       selectConversation(null);
     }
@@ -2361,7 +2373,8 @@ function openChatContextMenu(conversationId, anchor) {
     className: "chat-floating-menu",
     items: [
       { label: archived ? "Desarchivar" : "Archivar", iconName: "archive", action: () => toggleArchiveChat(conversationId) },
-      { label: "Vaciar chat", iconName: "trash", action: () => clearChat(conversationId, "everyone"), danger: true },
+      { label: "Vaciar para mi", iconName: "trash", action: () => clearChat(conversationId, "me") },
+      { label: "Vaciar para todos", iconName: "trash", action: () => clearChat(conversationId, "everyone"), danger: true },
       { label: "Eliminar para mi", iconName: "trash", action: () => deleteChat(conversationId, "me") },
       { label: "Eliminar para todos", iconName: "trash", action: () => deleteChat(conversationId, "everyone"), danger: true }
     ]
@@ -5349,17 +5362,35 @@ async function encryptedRecipients(conversation, payload, fileObjectId) {
   let index = 0;
   const activeParticipants = (conversation.participants || []).filter((participant) => !participant.removedAt);
   const directories = await directoriesForUsers(activeParticipants.map((participant) => participant.userId));
+  const ownDirectory = await ownKeyDirectory().catch(() => null);
   for (const participant of activeParticipants) {
     if (participant.userId === state.auth.user.id) {
-      const own = await encryptForPublicKey(await currentPublicKey(), payload);
-      recipients.push({
-        userId: participant.userId,
-        deviceId: state.auth.device.id,
-        ciphertext: own.ciphertext,
-        header: own.header,
-        fileObjectId
-      });
-      await breatheMainThread(++index);
+      const usedDeviceIds = new Set();
+      for (const device of ownDirectory?.devices || []) {
+        const publicKey = parsePublicJwk(device.keyBundle?.identityKey);
+        if (!device.deviceId || !publicKey || usedDeviceIds.has(device.deviceId)) continue;
+        const sealed = await encryptForPublicKey(publicKey, payload);
+        recipients.push({
+          userId: participant.userId,
+          deviceId: device.deviceId,
+          ciphertext: sealed.ciphertext,
+          header: sealed.header,
+          fileObjectId
+        });
+        usedDeviceIds.add(device.deviceId);
+        await breatheMainThread(++index);
+      }
+      if (!usedDeviceIds.has(state.auth.device.id)) {
+        const own = await encryptForPublicKey(await currentPublicKey(), payload);
+        recipients.push({
+          userId: participant.userId,
+          deviceId: state.auth.device.id,
+          ciphertext: own.ciphertext,
+          header: own.header,
+          fileObjectId
+        });
+        await breatheMainThread(++index);
+      }
       continue;
     }
 
@@ -5949,6 +5980,7 @@ async function loadConversationHistory(conversationId, shouldRender = true) {
       if (!isMessageLoadSessionActive(session)) return;
       await breatheMainThread(++index);
     }
+    await reconcileConversationHistory(conversationId, history || []);
     updateConversationPaging(conversationId, state.messages.get(conversationId) || []);
     if (shouldRender && isMessageLoadSessionActive(session)) renderConversationMessages(conversationId, { replace: true, scroll: "bottom" }) || render();
   } catch (error) {
@@ -5956,6 +5988,25 @@ async function loadConversationHistory(conversationId, shouldRender = true) {
     // History is best-effort; realtime and polling still keep the chat usable.
   } finally {
     finishMessageLoadSession(session);
+  }
+}
+
+async function reconcileConversationHistory(conversationId, history) {
+  if (!conversationId) return;
+  const local = state.messages.get(conversationId) || [];
+  if (!local.length) return;
+  const serverIds = new Set((history || []).map((message) => message?.id).filter(Boolean));
+  const oldestServerAt = history?.[0]?.serverReceivedAt || null;
+  const stale = history?.length
+    ? local.filter((message) => compareMessageAt(message.at, oldestServerAt) >= 0 && !serverIds.has(message.id))
+    : local;
+  if (!stale.length) return;
+  const staleIds = new Set(stale.map((message) => message.id));
+  state.messages.set(conversationId, local.filter((message) => !staleIds.has(message.id)));
+  let index = 0;
+  for (const message of stale) {
+    await removeLocalMessage(conversationId, message.id).catch(() => {});
+    await breatheMainThread(++index);
   }
 }
 
@@ -5992,11 +6043,8 @@ async function applyMessageEnvelope(message, { markSeen, notifyReceipt, scroll =
   } else if (payload.type === "delete") {
     const target = findMessage(payload.targetMessageId);
     if (target) {
-      target.payload = { type: "text", text: "Este mensaje fue eliminado", deleted: true };
-      target.status = "eliminado";
       const location = findMessageLocation(target.id);
-      if (location) persistLocalMessage(location.conversationId, target).catch(() => {});
-      if (location) upsertMessageNode(location.conversationId, target.id);
+      if (location) await removeMessageEverywhere(location.conversationId, target.id);
     }
   } else {
     pushMessage(message.conversationId, {
@@ -6023,11 +6071,26 @@ async function handleMessageDeletedEvent(payload) {
   const messageId = payload?.messageId || payload?.MessageId;
   if (!messageId) return;
   const location = findMessageLocation(messageId);
-  if (!location) return;
-  location.message.payload = { type: "text", text: "Este mensaje fue eliminado", deleted: true };
-  location.message.status = "eliminado";
-  await persistLocalMessage(location.conversationId, location.message).catch(() => {});
-  upsertMessageNode(location.conversationId, messageId);
+  const conversationId = payload?.conversationId || payload?.ConversationId || location?.conversationId;
+  if (!conversationId) return;
+  const reason = String(payload?.reason || payload?.Reason || "").toLowerCase();
+  const deviceId = payload?.deviceId || payload?.DeviceId || "";
+  if (reason === "view_once" && deviceId === state.auth?.device?.id && location?.message?.openedAt) {
+    return;
+  }
+  await removeMessageEverywhere(conversationId, messageId);
+}
+
+async function removeMessageEverywhere(conversationId, messageId) {
+  if (!conversationId || !messageId) return;
+  await removeLocalMessage(conversationId, messageId).catch(() => {});
+  const list = state.messages.get(conversationId) || [];
+  const next = list.filter((message) => message.id !== messageId);
+  if (next.length !== list.length) {
+    state.messages.set(conversationId, next);
+  }
+  removeMessageNode(conversationId, messageId);
+  updateConversationPreview(conversationId);
 }
 
 async function handleChatClearedEvent(payload) {
@@ -7586,6 +7649,19 @@ async function directoryForUser(userId) {
   return directory;
 }
 
+async function ownKeyDirectory() {
+  const userId = state.auth?.user?.id;
+  if (!userId) return null;
+  const cached = state.keyDirectory.get(userId);
+  const activeDeviceCount = (state.devices || []).filter((device) => !device.revokedAt).length;
+  if (cached && (!activeDeviceCount || (cached.devices || []).length >= activeDeviceCount)) return cached;
+  const alias = state.auth?.user?.alias;
+  if (!alias) return null;
+  const directory = await request(`/keys/${encodeURIComponent(alias)}`);
+  cacheKeyDirectory(directory);
+  return directory;
+}
+
 async function directoriesForUsers(userIds = []) {
   const ids = [...new Set((userIds || []).filter((id) => id && id !== state.auth?.user?.id))];
   const missing = ids.filter((id) => !state.keyDirectory.has(id));
@@ -8428,13 +8504,11 @@ async function deleteMessageForMe(messageId) {
   const location = findMessageLocation(messageId);
   if (!location) return;
   try {
-    await request(`/api/messages/${encodeURIComponent(messageId)}?scope=me`, { method: "DELETE" });
+    await request(`/api/messages/${encodeURIComponent(messageId)}?forEveryone=false`, { method: "DELETE" });
   } catch {
     await request(`/messages/${messageId}/receipt`, { method: "POST", body: { kind: "Deleted" } }).catch(() => {});
   }
-  await removeLocalMessage(location.conversationId, messageId).catch(() => {});
-  state.messages.set(location.conversationId, (state.messages.get(location.conversationId) || []).filter((item) => item.id !== messageId));
-  removeMessageNode(location.conversationId, messageId);
+  await removeMessageEverywhere(location.conversationId, messageId);
   toast("Mensaje eliminado para ti.");
 }
 
@@ -8443,12 +8517,13 @@ async function deleteMessageForEveryone(messageId) {
   if (!message || !message.mine) return;
   const location = findMessageLocation(messageId);
   if (!location) return;
-  message.payload = { type: "text", text: "Este mensaje fue eliminado", deleted: true };
-  message.status = "eliminado";
-  persistLocalMessage(location.conversationId, message).catch(() => {});
-  upsertMessageNode(location.conversationId, messageId);
-  await request(`/api/messages/${encodeURIComponent(messageId)}?scope=everyone`, { method: "DELETE" }).catch(() => {});
-  await sendPayload({ type: "delete", targetMessageId: messageId }, "System");
+  try {
+    await request(`/api/messages/${encodeURIComponent(messageId)}?forEveryone=true`, { method: "DELETE" });
+    await removeMessageEverywhere(location.conversationId, messageId);
+    toast("Mensaje eliminado para todos.");
+  } catch (error) {
+    toast(error.message || "No se pudo eliminar para todos.");
+  }
 }
 
 async function openViewOnceMessage(messageId) {
@@ -8463,9 +8538,7 @@ async function openViewOnceMessage(messageId) {
     const current = findMessageLocation(messageId);
     if (!current?.message?.openedAt) return;
     current.message.payload = { type: "text", text: "Mensaje de una sola vez eliminado" };
-    await removeLocalMessage(current.conversationId, messageId).catch(() => {});
-    state.messages.set(current.conversationId, (state.messages.get(current.conversationId) || []).filter((message) => message.id !== messageId));
-    removeMessageNode(current.conversationId, messageId);
+    await removeMessageEverywhere(current.conversationId, messageId);
   }, VIEW_ONCE_DELETE_DELAY_MS);
 }
 

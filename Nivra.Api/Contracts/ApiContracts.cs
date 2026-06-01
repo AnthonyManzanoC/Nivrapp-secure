@@ -197,6 +197,12 @@ public sealed record MessageSyncAckRequest(List<string> MessageIds);
 
 public sealed record MessageSyncAckResponse(int Acknowledged, DateTimeOffset AcknowledgedAt);
 
+public sealed record MessageDeletionResponse(
+    string MessageId,
+    string ConversationId,
+    string Scope,
+    DateTimeOffset DeletedAt);
+
 public sealed record CreateFileRequest(
     long EncryptedSize,
     string? MimeTypeCiphertext,
@@ -356,6 +362,8 @@ public sealed record SyncBootstrapResponse(
     List<DeviceResponse> Devices,
     List<ContactResponse> Contacts,
     List<ConversationResponse> Conversations,
+    List<MessageResponse> Messages,
+    List<MessageDeletionResponse> DeletedMessages,
     List<VaultItemResponse> VaultItems,
     List<FriendRequestResponse> FriendRequests,
     List<StoryResponse> Stories,

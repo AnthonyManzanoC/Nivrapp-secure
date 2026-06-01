@@ -230,6 +230,11 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
     {
         return await db.Messages
             .Where(message => message.Recipients.Any(recipient => recipient.UserId == userId && recipient.DeviceId == deviceId))
+            .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
+            .Where(message => !message.Receipts.Any(receipt => receipt.UserId == userId && receipt.DeletedAt != null))
+            .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
+                receipt.UserId == userId &&
+                (receipt.ReadAt != null || receipt.DeletedAt != null)))
             .Where(message => message.Receipts.Any(receipt =>
                 receipt.UserId == userId &&
                 receipt.DeviceId == deviceId &&

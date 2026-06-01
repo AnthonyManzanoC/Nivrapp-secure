@@ -914,8 +914,10 @@ public static partial class EndpointExtensions
                 .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId && recipient.DeviceId == current.DeviceId))
                 .Where(message => !message.Receipts.Any(receipt =>
                     receipt.UserId == current.UserId &&
-                    receipt.DeviceId == current.DeviceId &&
                     receipt.DeletedAt != null))
+                .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
+                    receipt.UserId == current.UserId &&
+                    (receipt.ReadAt != null || receipt.DeletedAt != null)))
                 .OrderByDescending(message => message.ServerReceivedAt)
                 .Take(limit)
                 .ToListAsync(cancellationToken);
@@ -1149,7 +1151,7 @@ public static partial class EndpointExtensions
             participant.RemovedAt = now;
             foreach (var message in messages)
             {
-                foreach (var receipt in message.Receipts.Where(receipt => receipt.UserId == current.UserId && receipt.DeviceId == current.DeviceId))
+                foreach (var receipt in message.Receipts.Where(receipt => receipt.UserId == current.UserId))
                 {
                     receipt.DeletedAt ??= now;
                 }
@@ -1157,6 +1159,15 @@ public static partial class EndpointExtensions
 
             conversation.UpdatedAt = now;
             await db.SaveChangesAsync(cancellationToken);
+            await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("ChatCleared", new
+            {
+                conversationId,
+                scope = "me",
+                mode = "deleted",
+                requestedByUserId = current.UserId,
+                deviceId = current.DeviceId,
+                at = now
+            }, cancellationToken);
             return Results.NoContent();
         });
 
@@ -1189,7 +1200,7 @@ public static partial class EndpointExtensions
             {
                 var receipts = clearForEveryone
                     ? message.Receipts
-                    : message.Receipts.Where(receipt => receipt.UserId == current.UserId && receipt.DeviceId == current.DeviceId);
+                    : message.Receipts.Where(receipt => receipt.UserId == current.UserId);
                 foreach (var receipt in receipts)
                 {
                     receipt.DeletedAt ??= now;
@@ -1199,16 +1210,22 @@ public static partial class EndpointExtensions
             conversation.UpdatedAt = now;
             await db.SaveChangesAsync(cancellationToken);
 
+            var payload = new
+            {
+                conversationId,
+                scope = clearForEveryone ? "everyone" : "me",
+                mode = "cleared",
+                requestedByUserId = current.UserId,
+                deviceId = current.DeviceId,
+                at = now
+            };
             if (clearForEveryone)
             {
-                await NotifyUsers(hub, conversation.Participants.Select(item => item.UserId), "ChatCleared", new
-                {
-                    conversationId,
-                    scope = "everyone",
-                    mode = "cleared",
-                    requestedByUserId = current.UserId,
-                    at = now
-                });
+                await NotifyUsers(hub, conversation.Participants.Select(item => item.UserId), "ChatCleared", payload);
+            }
+            else
+            {
+                await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("ChatCleared", payload, cancellationToken);
             }
 
             return Results.Ok(new { conversationId, clearedForEveryone = clearForEveryone, at = now });
@@ -1218,7 +1235,7 @@ public static partial class EndpointExtensions
 
         var apiMessages = app.MapGroup("/api/messages");
 
-        apiMessages.MapDelete("/{messageId}", async Task<IResult> (string messageId, string? scope, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        apiMessages.MapDelete("/{messageId}", async Task<IResult> (string messageId, bool? forEveryone, string? scope, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1240,7 +1257,7 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var deleteForEveryone = string.Equals(scope, "everyone", StringComparison.OrdinalIgnoreCase);
+            var deleteForEveryone = forEveryone == true || string.Equals(scope, "everyone", StringComparison.OrdinalIgnoreCase);
             if (deleteForEveryone)
             {
                 if (message.SenderUserId != current.UserId)
@@ -1265,14 +1282,29 @@ public static partial class EndpointExtensions
                 return Results.NoContent();
             }
 
-            var ownReceipt = message.Receipts.FirstOrDefault(receipt => receipt.UserId == current.UserId && receipt.DeviceId == current.DeviceId);
-            if (ownReceipt is null)
+            var ownReceipts = message.Receipts
+                .Where(receipt => receipt.UserId == current.UserId)
+                .ToList();
+            if (ownReceipts.Count == 0)
             {
                 return Results.NotFound();
             }
 
-            ownReceipt.DeletedAt ??= now;
+            foreach (var receipt in ownReceipts)
+            {
+                receipt.DeletedAt ??= now;
+            }
+
             await db.SaveChangesAsync(cancellationToken);
+            await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("MessageDeleted", new
+            {
+                messageId,
+                conversationId = message.ConversationId,
+                scope = "me",
+                deletedByUserId = current.UserId,
+                deviceId = current.DeviceId,
+                at = now
+            }, cancellationToken);
             return Results.NoContent();
         });
 
@@ -1391,6 +1423,8 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
+            var deletedForUser = false;
+            var deleteReason = "deleted";
             switch (request.Kind)
             {
                 case ReceiptKind.Delivered:
@@ -1400,11 +1434,24 @@ public static partial class EndpointExtensions
                     receipt.ReadAt = now;
                     if (message.DeleteAfterRead)
                     {
-                        receipt.DeletedAt = now;
+                        deleteReason = "view_once";
+                        foreach (var userReceipt in message.Receipts.Where(candidate => candidate.UserId == current.UserId))
+                        {
+                            userReceipt.DeliveredAt ??= now;
+                            userReceipt.ReadAt ??= now;
+                            userReceipt.DeletedAt ??= now;
+                        }
+
+                        deletedForUser = true;
                     }
                     break;
                 case ReceiptKind.Deleted:
-                    receipt.DeletedAt = now;
+                    foreach (var userReceipt in message.Receipts.Where(candidate => candidate.UserId == current.UserId))
+                    {
+                        userReceipt.DeletedAt ??= now;
+                    }
+
+                    deletedForUser = true;
                     break;
             }
 
@@ -1417,6 +1464,19 @@ public static partial class EndpointExtensions
                 kind = request.Kind,
                 at = now
             }, cancellationToken);
+            if (deletedForUser)
+            {
+                await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("MessageDeleted", new
+                {
+                    messageId,
+                    conversationId = message.ConversationId,
+                    scope = "me",
+                    reason = deleteReason,
+                    deletedByUserId = current.UserId,
+                    deviceId = current.DeviceId,
+                    at = now
+                }, cancellationToken);
+            }
 
             return Results.Ok(ToMessageResponse(message));
         });
@@ -2541,6 +2601,46 @@ public static partial class EndpointExtensions
             var conversations = (await store.ConversationsForUserAsync(current.UserId, cancellationToken))
                 .Select(ToConversationResponse)
                 .ToList();
+            var now = DateTimeOffset.UtcNow;
+            var conversationIds = conversations.Select(conversation => conversation.Id).ToList();
+            List<MessageEnvelope> recentMessages = conversationIds.Count == 0
+                ? []
+                : await db.Messages
+                    .Where(message => conversationIds.Contains(message.ConversationId))
+                    .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
+                    .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId && recipient.DeviceId == current.DeviceId))
+                    .Where(message => !message.Receipts.Any(receipt =>
+                        receipt.UserId == current.UserId &&
+                        receipt.DeletedAt != null))
+                    .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
+                        receipt.UserId == current.UserId &&
+                        (receipt.ReadAt != null || receipt.DeletedAt != null)))
+                    .OrderByDescending(message => message.ServerReceivedAt)
+                    .Take(500)
+                    .ToListAsync(cancellationToken);
+            recentMessages.Reverse();
+            List<MessageEnvelope> deletedMessageRows = conversationIds.Count == 0
+                ? []
+                : await db.Messages
+                    .Where(message => conversationIds.Contains(message.ConversationId))
+                    .Where(message => message.Receipts.Any(receipt =>
+                        receipt.UserId == current.UserId &&
+                        receipt.DeletedAt != null))
+                    .OrderByDescending(message => message.ServerReceivedAt)
+                    .Take(500)
+                    .ToListAsync(cancellationToken);
+            var deletedMessages = deletedMessageRows
+                .Select(message => new MessageDeletionResponse(
+                    message.Id,
+                    message.ConversationId,
+                    "me",
+                    message.Receipts
+                        .Where(receipt => receipt.UserId == current.UserId && receipt.DeletedAt != null)
+                        .Select(receipt => receipt.DeletedAt!.Value)
+                        .DefaultIfEmpty(message.ServerReceivedAt)
+                        .Max()))
+                .ToList();
+
             var vault = (await store.VaultItemsForUserAsync(current.UserId, cancellationToken))
                 .Select(ToVaultItemResponse)
                 .ToList();
@@ -2554,7 +2654,6 @@ public static partial class EndpointExtensions
                 friendRequests.Add(await ToFriendRequestResponseAsync(friendRequest, current.UserId, db, cancellationToken));
             }
 
-            var now = DateTimeOffset.UtcNow;
             var visibleStories = new List<StoryResponse>();
             foreach (var story in await db.Stories
                 .Where(story => story.DeletedAt == null && story.ExpiresAt > now)
@@ -2587,6 +2686,8 @@ public static partial class EndpointExtensions
                 (await store.ActiveDevicesForUserAsync(current.UserId, cancellationToken)).Select(ToDeviceResponse).ToList(),
                 contacts,
                 conversations,
+                recentMessages.Select(message => ToMessageResponseForDevice(message, current.UserId, current.DeviceId)).ToList(),
+                deletedMessages,
                 vault,
                 friendRequests,
                 visibleStories.Take(80).ToList(),
