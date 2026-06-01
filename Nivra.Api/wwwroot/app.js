@@ -57,6 +57,7 @@ const QR_AUTHORIZE_TIMEOUT_MS = 12000;
 const CALL_SIGNAL_TIMEOUT_MS = 8000;
 const CALL_END_REQUEST_TIMEOUT_MS = 8000;
 const CALL_RING_TIMEOUT_MS = 45000;
+const SYSTEM_CALL_LOG_POLICY = "system:call-log";
 const PROFILE_REFRESH_MIN_MS = 5 * 60 * 1000;
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [5000, 15000, 60000, 180000];
 const PUSH_PROMPT_DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -364,6 +365,7 @@ const state = {
     account: ""
   },
   chatRecentSearchesOpen: false,
+  chatSearchFocused: false,
   recentSearches: loadRecentSearches(),
   contactPanel: {
     tab: "mine",
@@ -479,6 +481,8 @@ const state = {
   messages: new Map(),
   messagePaging: new Map(),
   messageDomWindows: new Map(),
+  pendingMessageReactions: new Map(),
+  pendingReactionSends: new Set(),
   mediaCache: new Map(),
   objectUrls: new Set(),
   seenMessageIds: new Set((loadJson("nivra.seen") || []).slice(-MAX_SEEN_MESSAGE_IDS)),
@@ -578,6 +582,7 @@ const debouncedLocalSearchRender = debounce(() => scheduleRender(), LOCAL_SEARCH
 
 document.documentElement.dataset.platform = PLATFORM.name;
 window.addEventListener("beforeunload", revokeCachedMediaPreviews);
+document.addEventListener("pointerdown", handleDocumentPointerDownForSearch, true);
 
 init().catch((error) => {
   console.error(error);
@@ -1132,6 +1137,7 @@ async function bootstrapCore(_options = {}) {
       await loadLocalConversationMessages(state.selectedConversationId, false);
       render();
       await loadConversationHistory(state.selectedConversationId, false);
+      renderConversationMessages(state.selectedConversationId, { replace: true, scroll: "bottom" }) || render();
     }
     await refreshPresence();
     refreshConversationProfilesInBackground();
@@ -1560,6 +1566,7 @@ function activateView(view, options = {}) {
   setSearchQueryForView(state.view, currentSearchQuery());
   if (state.view !== view) {
     state.chatRecentSearchesOpen = false;
+    state.chatSearchFocused = false;
     clearTimeout(state.localSearchTimer);
     state.localSearchTimer = null;
   }
@@ -1578,7 +1585,18 @@ function activateView(view, options = {}) {
 
 function handleGlobalSearchFocus(event) {
   if (state.view !== "chats") return;
+  state.chatSearchFocused = true;
+  updateSearchClearButton();
   setChatRecentSearchesVisible(event.target.value === "");
+}
+
+function handleGlobalSearchBlur(event) {
+  if (state.view !== "chats") return;
+  const next = event.relatedTarget;
+  state.chatSearchFocused = false;
+  updateSearchClearButton();
+  if (next?.closest?.(".search-box, #recentSearchesContainer")) return;
+  if (event.target.value === "") closeChatSearchMode({ renderAfter: false });
 }
 
 function handleGlobalSearchInput(event) {
@@ -1595,6 +1613,8 @@ function handleGlobalSearchInput(event) {
       scheduleRender();
       break;
     case "chats":
+      state.chatSearchFocused = document.activeElement === event.target;
+      updateSearchClearButton();
       setChatRecentSearchesVisible(event.target.value === "" && document.activeElement === event.target);
       scheduleLocalSearchRender();
       break;
@@ -1611,6 +1631,49 @@ function handleGlobalSearchInput(event) {
 
 function scheduleLocalSearchRender() {
   state.localSearchTimer = debouncedLocalSearchRender();
+}
+
+function handleClearSearchClick(event) {
+  event.preventDefault();
+  event.stopPropagation();
+  const input = document.querySelector("#globalSearch");
+  if (input) {
+    input.value = "";
+    input.blur();
+  }
+  setSearchQueryForView("chats", "");
+  closeChatSearchMode({ renderAfter: true });
+}
+
+function handleDocumentPointerDownForSearch(event) {
+  if (state.view !== "chats") return;
+  const target = event.target;
+  if (!target?.closest) return;
+  if (target.closest(".search-box, #recentSearchesContainer")) return;
+  const input = document.querySelector("#globalSearch");
+  if (!input || input.value !== "") return;
+  closeChatSearchMode({ renderAfter: false });
+}
+
+function closeChatSearchMode({ renderAfter = false } = {}) {
+  state.chatRecentSearchesOpen = false;
+  state.chatSearchFocused = false;
+  document.querySelector("#recentSearchesContainer")?.classList.add("hidden");
+  document.querySelector("#chatSideList")?.classList.remove("hidden");
+  updateSearchClearButton();
+  if (renderAfter) render();
+}
+
+function isChatSearchClearVisible() {
+  return state.view === "chats" && (state.chatSearchFocused || searchQueryForView("chats") !== "");
+}
+
+function updateSearchClearButton() {
+  const button = document.querySelector("#clearSearchBtn");
+  if (!button) return;
+  const visible = isChatSearchClearVisible();
+  button.classList.toggle("show", visible);
+  button.hidden = !visible;
 }
 
 function personSearchText(person = {}) {
@@ -1782,8 +1845,9 @@ function renderSidebar() {
         <div><h2>${title}</h2><span>${escapeHtml(state.auth.user.alias)} - ${escapeHtml(state.entitlements?.planCode || "free")}</span></div>
         ${action}
       </div>
-      <div class="search-box">
-        <input class="input" id="globalSearch" placeholder="${escapeAttr(searchPlaceholder(state.view))}" value="${escapeAttr(currentSearchQuery())}">
+      <div class="search-box ${state.view === "chats" ? "has-clear-search" : ""}">
+        <input class="input" id="globalSearch" autocomplete="off" placeholder="${escapeAttr(searchPlaceholder(state.view))}" value="${escapeAttr(currentSearchQuery())}">
+        ${state.view === "chats" ? `<button class="clear-search-btn ${isChatSearchClearVisible() ? "show" : ""}" id="clearSearchBtn" type="button" title="Cerrar busqueda" aria-label="Cerrar busqueda" ${isChatSearchClearVisible() ? "" : "hidden"}>${icon("x")}</button>` : ""}
       </div>
       <div class="list">${renderSideList()}</div>
     </aside>
@@ -2312,6 +2376,7 @@ function renderChatView() {
 function renderMessage(message) {
   const payload = message.payload || {};
   const isDeleted = message.status === "eliminado" || payload.deleted;
+  if (isCallLogPayload(payload)) return renderCallLogMessage(message, payload);
   if (payload.type === "system") {
     const title = payload.title || (payload.event === "missed-call" ? "Llamada perdida" : "Aviso de sistema");
     const text = payload.text || "Evento de sistema";
@@ -2343,7 +2408,7 @@ function renderMessage(message) {
     ? `<div class="story-reply-chip">${icon("globe")}<span>${escapeHtml(payload.storyPreview || "Respuesta a historia")}</span></div>`
     : "";
   const forwarded = payload.forwardedFrom ? `<div class="forwarded-chip">${icon("forward")}<span>Reenviado</span></div>` : "";
-  const reactions = (message.reactions || []).map((item) => `<span class="reaction-pill">${escapeHtml(item)}</span>`).join("");
+  const reactions = renderReactionBadges(message);
   const policy = messagePolicyLabel(message);
   const receipt = renderMessageReceipt(message);
   return `
@@ -2354,10 +2419,136 @@ function renderMessage(message) {
       <div class="${payload.type === "file" ? `file-bubble ${payload.voiceNote ? "voice-file" : ""}` : ""}">${payload.type === "file" ? `<span>${payload.voiceNote ? icon("mic") : fileTypeIcon(payload.mime)}</span><strong>${escapeHtml(text)}</strong><small>${escapeHtml(fileMetaLabel(payload))}</small>` : linkify(escapeHtml(text))}</div>
       ${payload.type === "file" ? renderFilePreview(payload, message.id) : ""}
       ${payload.type === "file" ? `<div class="message-actions"><button class="btn ghost" data-download-file="${payload.fileId}" ${fileDataAttributes(payload, message.id)}>Descargar</button></div>` : ""}
-      ${reactions ? `<div class="message-reactions">${reactions}</div>` : ""}
+      ${reactions}
       <div class="message-meta"><span>${message.mine ? "Tu" : escapeHtml(message.senderAlias || "Contacto")}</span><span>${formatTime(message.at)}</span>${receipt}${policy ? `<span>${escapeHtml(policy)}</span>` : ""}</div>
     </article>
   `;
+}
+
+function isCallLogPayload(payload = {}) {
+  return payload.type === "call_log" || (payload.type === "system" && ["missed-call", "call-ended"].includes(payload.event));
+}
+
+function renderCallLogMessage(message, payload = {}) {
+  const missed = payload.event === "missed-call" || payload.status === "missed";
+  const title = payload.title || (missed ? "Llamada perdida" : "Llamada finalizada");
+  const text = payload.text || (missed
+    ? "No hubo respuesta"
+    : `Duracion ${formatDurationVerbose(payload.durationMs || 0)}`);
+  return `
+    <article class="message call-log-message" data-message-id="${message.id}">
+      <div class="call-log-bubble">
+        ${icon(missed ? "phone-off" : "phone")}
+        <div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(text)}</span></div>
+      </div>
+      <div class="message-meta"><span>${formatTime(message.at)}</span><span>${escapeHtml(payload.callType === "Video" ? "video" : "voz")}</span></div>
+    </article>
+  `;
+}
+
+function renderReactionBadges(message) {
+  const reactions = normalizedReactionsForMessage(message);
+  if (!reactions.length) return "";
+  const groups = reactionGroups(reactions);
+  const label = groups.map((group) => `${group.emoji} ${group.count}`).join(", ");
+  return `
+    <button class="message-reactions" type="button" data-reaction-detail="${escapeAttr(message.id)}" aria-label="Ver reacciones: ${escapeAttr(label)}" title="Ver reacciones">
+      ${groups.map((group) => `<span class="reaction-pill"><span>${escapeHtml(group.emoji)}</span>${group.count > 1 ? `<strong>${group.count}</strong>` : ""}</span>`).join("")}
+    </button>
+  `;
+}
+
+function normalizedReactionsForMessage(message = {}) {
+  return (message.reactions || [])
+    .map((reaction, index) => normalizeReactionEntry(reaction, { message, index }))
+    .filter(Boolean);
+}
+
+function normalizeReactionEntry(reaction, { message = {}, index = 0, fallback = {} } = {}) {
+  if (!reaction) return null;
+  if (typeof reaction === "string") {
+    return {
+      emoji: reaction,
+      userId: fallback.userId || "",
+      deviceId: fallback.deviceId || "",
+      alias: fallback.alias || "Alguien",
+      displayName: fallback.displayName || fallback.alias || "Alguien",
+      profilePhotoDataUrl: fallback.profilePhotoDataUrl || "",
+      at: fallback.at || message.at || new Date().toISOString(),
+      reactionId: fallback.reactionId || `${message.id || "msg"}:legacy:${index}`
+    };
+  }
+  const emoji = String(reaction.emoji || reaction.reaction || reaction.value || "").trim();
+  if (!emoji) return null;
+  const alias = reaction.alias || reaction.userAlias || reaction.senderAlias || fallback.alias || "";
+  return {
+    emoji,
+    userId: reaction.userId || reaction.senderUserId || fallback.userId || "",
+    deviceId: reaction.deviceId || reaction.senderDeviceId || fallback.deviceId || "",
+    alias,
+    displayName: reaction.displayName || reaction.name || alias || fallback.displayName || "Alguien",
+    profilePhotoDataUrl: reaction.profilePhotoDataUrl || fallback.profilePhotoDataUrl || "",
+    at: reaction.at || reaction.reactionAt || fallback.at || new Date().toISOString(),
+    reactionId: reaction.reactionId || reaction.id || fallback.reactionId || `${message.id || "msg"}:${index}:${emoji}`
+  };
+}
+
+function reactionGroups(reactions = []) {
+  const groups = new Map();
+  for (const reaction of reactions) {
+    const group = groups.get(reaction.emoji) || { emoji: reaction.emoji, count: 0, reactions: [] };
+    group.count += 1;
+    group.reactions.push(reaction);
+    groups.set(reaction.emoji, group);
+  }
+  return [...groups.values()];
+}
+
+function reactionActorKey(reaction = {}) {
+  return reaction.userId || reaction.deviceId || reaction.alias || reaction.displayName || "unknown";
+}
+
+function applyReactionToMessage(message, reaction, { conversationId = null, persist = true, render = true } = {}) {
+  if (!message?.id || !reaction?.emoji) return false;
+  const normalized = normalizeReactionEntry(reaction, { message });
+  if (!normalized) return false;
+  const existing = normalizedReactionsForMessage(message);
+  const nextKey = `${reactionActorKey(normalized)}:${normalized.emoji}`;
+  const alreadyApplied = existing.some((item) =>
+    item.reactionId === normalized.reactionId ||
+    `${reactionActorKey(item)}:${item.emoji}` === nextKey);
+  if (alreadyApplied) {
+    message.reactions = existing;
+    return false;
+  }
+  message.reactions = [...existing, normalized];
+  const location = conversationId ? { conversationId, message } : findMessageLocation(message.id);
+  if (persist && location) persistLocalMessage(location.conversationId, message).catch(() => {});
+  if (render && location) upsertMessageNode(location.conversationId, message.id, { scroll: false });
+  return true;
+}
+
+function queuePendingReaction(targetMessageId, reaction) {
+  if (!targetMessageId || !reaction?.emoji) return;
+  const list = state.pendingMessageReactions.get(targetMessageId) || [];
+  const key = `${reactionActorKey(reaction)}:${reaction.emoji}:${reaction.reactionId || ""}`;
+  if (!list.some((item) => `${reactionActorKey(item)}:${item.emoji}:${item.reactionId || ""}` === key)) {
+    list.push(reaction);
+  }
+  state.pendingMessageReactions.set(targetMessageId, list);
+}
+
+function applyPendingReactionsForMessage(conversationId, messageId) {
+  const pending = state.pendingMessageReactions.get(messageId);
+  if (!pending?.length) return;
+  const message = (state.messages.get(conversationId) || []).find((item) => item.id === messageId);
+  if (!message) return;
+  let changed = false;
+  for (const reaction of pending) {
+    changed = applyReactionToMessage(message, reaction, { conversationId, persist: false, render: false }) || changed;
+  }
+  state.pendingMessageReactions.delete(messageId);
+  if (changed) persistLocalMessage(conversationId, message).catch(() => {});
 }
 
 function renderFilePreview(payload, messageId) {
@@ -2632,13 +2823,23 @@ function bindMessageGestureMenu() {
   };
 
   container.addEventListener("contextmenu", (event) => {
+    if (event.target.closest("[data-reaction-detail]")) return;
     const bubble = event.target.closest("[data-message-id]");
     if (!bubble || !container.contains(bubble)) return;
     event.preventDefault();
     openMessageContextMenu(bubble.dataset.messageId, { x: event.clientX, y: event.clientY });
   });
 
+  container.addEventListener("click", (event) => {
+    const reactionBadge = event.target.closest("[data-reaction-detail]");
+    if (!reactionBadge || !container.contains(reactionBadge)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openReactionDetails(reactionBadge.dataset.reactionDetail, reactionBadge);
+  });
+
   container.addEventListener("pointerdown", (event) => {
+    if (event.target.closest("[data-reaction-detail]")) return;
     const bubble = event.target.closest("[data-message-id]");
     if (!bubble || !container.contains(bubble) || event.pointerType === "mouse") return;
     pressPoint = { x: event.clientX, y: event.clientY, messageId: bubble.dataset.messageId };
@@ -2690,6 +2891,49 @@ function openMessageContextMenu(messageId, point) {
       { label: "Eliminar para todos", iconName: "trash", action: () => deleteMessageForEveryone(messageId), danger: true, disabled: !message.mine || deleted }
     ]
   });
+}
+
+function openReactionDetails(messageId, anchor) {
+  const message = findMessage(messageId);
+  const reactions = normalizedReactionsForMessage(message);
+  if (!message || !reactions.length) return;
+  closeFloatingMenu();
+  const menu = document.createElement("div");
+  menu.className = "floating-menu reaction-detail-menu";
+  menu.setAttribute("role", "dialog");
+  menu.setAttribute("aria-label", "Detalle de reacciones");
+  menu.innerHTML = `
+    <div class="reaction-detail-head">Reacciones</div>
+    ${reactions.map((reaction) => `
+      <div class="reaction-detail-row">
+        ${avatarNode({
+          displayName: reaction.displayName,
+          alias: reaction.alias,
+          profilePhotoDataUrl: reaction.profilePhotoDataUrl
+        }, "mini-avatar")}
+        <span>${escapeHtml(reaction.displayName || reaction.alias || "Alguien")}</span>
+        <strong>${escapeHtml(reaction.emoji)}</strong>
+      </div>
+    `).join("")}
+  `;
+  document.body.appendChild(menu);
+  const rect = anchor.getBoundingClientRect();
+  const menuRect = menu.getBoundingClientRect();
+  const left = Math.max(10, Math.min(rect.left, window.innerWidth - menuRect.width - 10));
+  const top = Math.max(10, Math.min(rect.bottom + 8, window.innerHeight - menuRect.height - 10));
+  menu.style.left = `${left}px`;
+  menu.style.top = `${top}px`;
+
+  const close = (event) => {
+    if (event?.target && menu.contains(event.target)) return;
+    closeFloatingMenu();
+  };
+  const onKeyDown = (event) => {
+    if (event.key === "Escape") closeFloatingMenu();
+  };
+  window.setTimeout(() => document.addEventListener("pointerdown", close), 0);
+  document.addEventListener("keydown", onKeyDown);
+  state.contextMenu = { menu, onPointerDown: close, onKeyDown };
 }
 
 function openFloatingMenu({ anchor = null, point = null, className = "", reactions = [], items = [] }) {
@@ -3967,7 +4211,9 @@ function bindAppEvents() {
   });
   const globalSearch = document.querySelector("#globalSearch");
   globalSearch?.addEventListener("focus", handleGlobalSearchFocus);
+  globalSearch?.addEventListener("blur", handleGlobalSearchBlur);
   globalSearch?.addEventListener("input", handleGlobalSearchInput);
+  document.querySelector("#clearSearchBtn")?.addEventListener("click", handleClearSearchClick);
   bindSidebarListEvents();
   document.querySelector("#newChatBtn")?.addEventListener("click", openNewChatDialog);
   document.querySelector("#contactsBtn")?.addEventListener("click", () => openContactsDialog("mine"));
@@ -4106,7 +4352,11 @@ function bindAppEvents() {
   document.querySelector("#cameraRecordBtn")?.addEventListener("click", toggleCameraRecording);
   document.querySelector("#switchCameraBtn")?.addEventListener("click", switchCamera);
   document.querySelectorAll("[data-react]").forEach((button) => {
-    button.addEventListener("click", () => sendReaction(button.dataset.react, button.dataset.emoji));
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      sendReaction(button.dataset.react, button.dataset.emoji);
+    });
   });
   document.querySelectorAll("[data-reply]").forEach((button) => {
     button.addEventListener("click", () => setReply(button.dataset.reply));
@@ -5882,14 +6132,39 @@ async function sendTextMessage() {
 
 async function sendReaction(messageId, emoji) {
   const message = findMessage(messageId);
-  if (message) {
-    message.reactions = [...(message.reactions || []), emoji];
-    const location = findMessageLocation(messageId);
-    if (location) persistLocalMessage(location.conversationId, message).catch(() => {});
-  }
-  await sendPayload({ type: "reaction", targetMessageId: messageId, emoji }, "System");
+  if (!message || !emoji) return;
   const location = findMessageLocation(messageId);
-  if (location) upsertMessageNode(location.conversationId, messageId);
+  if (!location) return;
+  const reaction = {
+    emoji,
+    userId: state.auth?.user?.id || "",
+    deviceId: state.auth?.device?.id || "",
+    alias: state.auth?.user?.alias || "Tu",
+    displayName: displayPerson(state.auth?.user) || state.auth?.user?.alias || "Tu",
+    profilePhotoDataUrl: state.auth?.user?.profilePhotoDataUrl || "",
+    at: new Date().toISOString(),
+    reactionId: `local-${crypto.randomUUID?.() || Date.now()}`
+  };
+  const pendingKey = `${messageId}:${reaction.userId || reaction.deviceId}:${emoji}`;
+  if (state.pendingReactionSends.has(pendingKey)) return;
+  const added = applyReactionToMessage(message, reaction, { conversationId: location.conversationId, persist: true, render: true });
+  if (!added) return;
+  state.pendingReactionSends.add(pendingKey);
+  try {
+    await sendPayload({
+      type: "reaction",
+      targetMessageId: messageId,
+      emoji,
+      userId: reaction.userId,
+      deviceId: reaction.deviceId,
+      alias: reaction.alias,
+      displayName: reaction.displayName,
+      profilePhotoDataUrl: reaction.profilePhotoDataUrl,
+      reactionAt: reaction.at
+    }, "System", null, { quiet: true, ttlSeconds: null, deleteAfterRead: false, suppressLocalMessage: true });
+  } finally {
+    state.pendingReactionSends.delete(pendingKey);
+  }
 }
 
 function openAttachmentModal() {
@@ -5948,16 +6223,18 @@ async function sendPayloadToConversation(conversation, payload, kind = "Text", f
     });
 
     rememberSeenMessage(response.id);
-    pushMessage(conversation.id, {
-      id: response.id,
-      payload: outgoingPayload,
-      mine: true,
-      at: response.serverReceivedAt,
-      status: "enviado",
-      expiresAt: response.expiresAt || expiresAt,
-      deleteAfterRead: response.deleteAfterRead || deleteAfterRead,
-      receipts: response.receipts || []
-    });
+    if (!options.suppressLocalMessage) {
+      pushMessage(conversation.id, {
+        id: response.id,
+        payload: outgoingPayload,
+        mine: true,
+        at: response.serverReceivedAt,
+        status: "enviado",
+        expiresAt: response.expiresAt || expiresAt,
+        deleteAfterRead: response.deleteAfterRead || deleteAfterRead,
+        receipts: response.receipts || []
+      });
+    }
     return response;
   } catch (error) {
     if (!options.quiet) toast(error.message || "No se pudo enviar.");
@@ -6603,7 +6880,9 @@ async function loadConversationHistory(conversationId, shouldRender = true) {
     }
     await reconcileConversationHistory(conversationId, history || []);
     updateConversationPaging(conversationId, state.messages.get(conversationId) || []);
-    if (shouldRender && isMessageLoadSessionActive(session)) renderConversationMessages(conversationId, { replace: true, scroll: "bottom" }) || render();
+    if (isMessageLoadSessionActive(session) && (shouldRender || conversationId === state.selectedConversationId)) {
+      renderConversationMessages(conversationId, { replace: true, scroll: "bottom" }) || (shouldRender ? render() : null);
+    }
   } catch (error) {
     if (error?.name === "AbortError") return;
     // History is best-effort; realtime and polling still keep the chat usable.
@@ -6645,12 +6924,23 @@ async function applyMessageEnvelope(message, { markSeen, notifyReceipt, scroll =
   }
 
   if (payload.type === "reaction") {
+    const reaction = normalizeReactionEntry(payload, {
+      fallback: {
+        userId: message.senderUserId,
+        deviceId: message.senderDeviceId,
+        alias: state.aliasByUserId.get(message.senderUserId) || payload.alias,
+        displayName: payload.displayName || state.aliasByUserId.get(message.senderUserId),
+        profilePhotoDataUrl: payload.profilePhotoDataUrl,
+        at: message.serverReceivedAt,
+        reactionId: message.id
+      }
+    });
     const target = findMessage(payload.targetMessageId);
     if (target) {
-      target.reactions = [...(target.reactions || []), payload.emoji || "+"];
       const location = findMessageLocation(target.id);
-      if (location) persistLocalMessage(location.conversationId, target).catch(() => {});
-      if (location) upsertMessageNode(location.conversationId, target.id);
+      applyReactionToMessage(target, reaction, { conversationId: location?.conversationId, persist: true, render: true });
+    } else {
+      queuePendingReaction(payload.targetMessageId, reaction);
     }
   } else if (payload.type === "edit") {
     const target = findMessage(payload.targetMessageId);
@@ -8662,11 +8952,14 @@ function pushMessage(conversationId, message, { scroll = true } = {}) {
 
 function mergeConversationMessages(conversationId, messages) {
   const merged = new Map((state.messages.get(conversationId) || []).map((message) => [message.id, message]));
+  const touchedIds = [];
   for (const message of messages || []) {
     if (!message?.id) continue;
     merged.set(message.id, { ...(merged.get(message.id) || {}), ...message });
+    touchedIds.push(message.id);
   }
   state.messages.set(conversationId, [...merged.values()].sort(compareMessagesByTime));
+  touchedIds.forEach((messageId) => applyPendingReactionsForMessage(conversationId, messageId));
 }
 
 function findMessage(id) {
@@ -8736,6 +9029,14 @@ function formatDuration(milliseconds = 0) {
   const minutes = String(Math.floor(total / 60)).padStart(2, "0");
   const seconds = String(total % 60).padStart(2, "0");
   return `${minutes}:${seconds}`;
+}
+
+function formatDurationVerbose(milliseconds = 0) {
+  const total = Math.max(0, Math.round(Number(milliseconds || 0) / 1000));
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  if (minutes <= 0) return `${seconds} seg`;
+  return `${minutes} min ${seconds} seg`;
 }
 
 function extensionForMime(mime = "") {
@@ -8906,7 +9207,7 @@ function messageDisplayText(payload = {}) {
     return `${payload.voiceNote ? "Nota de voz" : fileTypeLabel(payload.mime)}: ${payload.fileName || "adjunto"}`;
   }
   if (payload.type === "reaction") {
-    return `Reaccion: ${payload.emoji || "+"}`;
+    return "Reaccion aplicada";
   }
   if (payload.type === "story-response") {
     const reaction = payload.reaction ? `Reaccion ${payload.reaction}` : "";
@@ -9259,7 +9560,12 @@ async function openViewOnceMessage(messageId) {
 }
 
 function isServerSystemMessage(message, recipient) {
-  return message?.kind === "System" && (message.encryptedPolicy === SYSTEM_MISSED_CALL_POLICY || recipient?.header === SYSTEM_MISSED_CALL_POLICY);
+  return message?.kind === "System" && (
+    message.encryptedPolicy === SYSTEM_MISSED_CALL_POLICY ||
+    message.encryptedPolicy === SYSTEM_CALL_LOG_POLICY ||
+    recipient?.header === SYSTEM_MISSED_CALL_POLICY ||
+    recipient?.header === SYSTEM_CALL_LOG_POLICY
+  );
 }
 
 function decodeServerSystemMessage(recipient) {

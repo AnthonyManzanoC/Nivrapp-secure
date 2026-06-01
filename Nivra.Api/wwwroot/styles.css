@@ -381,7 +381,38 @@ button, .btn, .nav-btn, .list-item, .segment, .top-title-button { -webkit-tap-hi
 .side-head h2 { margin: 0; font-size: 22px; letter-spacing: 0; }
 .side-head span { color: var(--muted); font-size: 12px; }
 .side-actions { display: flex; gap: 8px; align-items: center; }
-.search-box { padding: 0 18px 14px; }
+.search-box { position: relative; padding: 0 18px 14px; }
+.search-box.has-clear-search .input { padding-right: 48px; }
+.clear-search-btn {
+  position: absolute;
+  right: 28px;
+  top: calc(50% - 7px);
+  transform: translateY(-50%) scale(.92);
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: rgba(255,255,255,.52);
+  background: rgba(255,255,255,.055);
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity .14s ease, color .14s ease, background .14s ease, transform .14s ease;
+}
+.clear-search-btn.show {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(-50%) scale(1);
+}
+.clear-search-btn:hover,
+.clear-search-btn:focus-visible {
+  color: var(--text);
+  background: rgba(255,255,255,.11);
+  outline: none;
+}
+.clear-search-btn .ui-icon { width: 16px; height: 16px; }
 .list { overflow: auto; padding: 0 10px 16px; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .chat-side-list { min-width: 0; }
 .list-item {
@@ -751,6 +782,47 @@ button, .btn, .nav-btn, .list-item, .segment, .top-title-button { -webkit-tap-hi
   background: rgba(255,255,255,.048);
   border-style: dashed;
 }
+.message.call-log-message {
+  align-self: center;
+  max-width: min(420px, 92%);
+  border: 0;
+  padding: 0;
+  background: transparent;
+  box-shadow: none;
+  text-align: center;
+}
+.call-log-bubble {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid rgba(114,240,202,.18);
+  border-radius: 999px;
+  color: var(--soft);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.035)),
+    rgba(8, 13, 15, .62);
+  box-shadow: 0 12px 30px rgba(0,0,0,.18), inset 0 1px 0 rgba(255,255,255,.08);
+}
+.call-log-bubble .ui-icon {
+  width: 17px;
+  height: 17px;
+  color: var(--brand-2);
+}
+.call-log-bubble strong,
+.call-log-bubble span {
+  display: block;
+  text-align: left;
+  line-height: 1.15;
+}
+.call-log-bubble strong { font-size: 13px; }
+.call-log-bubble span { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.call-log-message .message-meta {
+  justify-content: center;
+  margin-top: 5px;
+  font-size: 11px;
+}
 .message.deleted {
   color: var(--muted);
   font-style: italic;
@@ -836,18 +908,57 @@ button, .btn, .nav-btn, .list-item, .segment, .top-title-button { -webkit-tap-hi
 .view-once-box span { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .reaction { border: 0; border-radius: 6px; background: rgba(255,255,255,.08); color: var(--soft); padding: 4px 7px; }
 .message-reactions {
+  border: 0;
   display: inline-flex;
   flex-wrap: wrap;
   gap: 4px;
   margin-top: 8px;
+  padding: 0;
+  color: var(--soft);
+  background: transparent;
+  cursor: pointer;
 }
 .reaction-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   border: 1px solid rgba(255,255,255,.1);
   border-radius: 999px;
-  background: rgba(5,9,11,.34);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.12), rgba(255,255,255,.05)),
+    rgba(5,9,11,.52);
   padding: 3px 7px;
   line-height: 1;
+  box-shadow: 0 8px 18px rgba(0,0,0,.14);
 }
+.reaction-pill strong { font-size: 11px; color: var(--brand-2); }
+.message-reactions:hover .reaction-pill { border-color: rgba(114,240,202,.34); }
+.reaction-detail-menu {
+  width: min(260px, calc(100vw - 20px));
+  padding: 8px;
+}
+.reaction-detail-head {
+  padding: 7px 8px 9px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+.reaction-detail-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 9px;
+  align-items: center;
+  padding: 7px 8px;
+  border-radius: 8px;
+}
+.reaction-detail-row:hover { background: rgba(255,255,255,.055); }
+.reaction-detail-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reaction-detail-row strong { font-size: 18px; }
 .file-bubble {
   border: 1px solid rgba(255,255,255,.12);
   border-radius: 8px;
