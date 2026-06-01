@@ -111,6 +111,7 @@ public sealed class UserAccount
     public string? DisplayName { get; set; }
     public string? Email { get; set; }
     public string? Phone { get; set; }
+    public bool RequiresAlias { get; set; }
     public string? Bio { get; set; }
     public string? ProfilePhotoDataUrl { get; set; }
     public bool IsDiscoverable { get; set; } = true;

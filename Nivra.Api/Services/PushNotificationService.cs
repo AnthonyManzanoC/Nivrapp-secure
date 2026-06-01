@@ -66,6 +66,26 @@ public sealed class PushNotificationService(
         }
     }
 
+    public bool TryEnsureFirebaseAdminApp()
+    {
+        try
+        {
+            var fcmOptions = EffectiveFcmOptions(options.CurrentValue.Fcm);
+            if (!HasFcmCredentialSource(fcmOptions))
+            {
+                return false;
+            }
+
+            _ = FcmServiceAccount.FromOptions(fcmOptions, initializeFirebaseApp: true);
+            return FirebaseApp.DefaultInstance is not null;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Firebase Admin could not be initialized.");
+            return false;
+        }
+    }
+
     public string ProtectToken(string token)
     {
         return _tokenProtector.Protect(token);

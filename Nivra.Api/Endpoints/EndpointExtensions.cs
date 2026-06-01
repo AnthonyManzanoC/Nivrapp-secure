@@ -1,4 +1,6 @@
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
+using FirebaseAdmin.Auth;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.AspNetCore.SignalR;
 using Nivra.Api.Contracts;
@@ -63,7 +65,7 @@ public static partial class EndpointExtensions
     {
         var group = app.MapGroup("/auth").RequireRateLimiting("auth");
 
-        group.MapPost("/register", async Task<IResult> (RegisterRequest request, INivraStore store, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
+        group.MapPost("/register", async Task<IResult> (RegisterRequest request, INivraStore store, NivraDbContext db, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
         {
             var validation = ValidateRegister(request);
             if (validation is not null)
@@ -72,13 +74,25 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
+            var phone = NormalizePhone(request.Phone);
+            if (!string.IsNullOrWhiteSpace(request.Phone) && phone is null)
+            {
+                return Error("invalid_phone", "Envia un numero de telefono valido.");
+            }
+
+            if (phone is not null &&
+                await db.Users.AnyAsync(candidate => candidate.Phone == phone && candidate.DisabledAt == null, cancellationToken))
+            {
+                return Error("phone_taken", "Ese telefono ya esta asociado a otra cuenta Nivra.", StatusCodes.Status409Conflict);
+            }
+
             var user = new UserAccount
             {
                 Id = NivraIds.NewId("usr"),
                 Alias = PgSqlNivraStore.NormalizeAlias(request.Alias),
                 DisplayName = request.DisplayName?.Trim(),
                 Email = NormalizeOptional(request.Email),
-                Phone = NormalizePhone(request.Phone),
+                Phone = phone,
                 PasswordHash = hasher.Hash(request.Password),
                 CreatedAt = now,
                 UpdatedAt = now
@@ -121,7 +135,7 @@ public static partial class EndpointExtensions
             return Results.Ok(new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens));
         });
 
-        group.MapPost("/phone/start", async Task<IResult> (PhoneOtpStartRequest request, NivraDbContext db, PhoneOtpService otpService, CancellationToken cancellationToken) =>
+        group.MapPost("/phone/start", (PhoneOtpStartRequest request, PhoneOtpService otpService) =>
         {
             var phone = NormalizePhone(request.Phone);
             if (phone is null)
@@ -129,17 +143,11 @@ public static partial class EndpointExtensions
                 return Error("invalid_phone", "Envia un numero de telefono valido.");
             }
 
-            var userExists = await db.Users.AnyAsync(user => user.Phone == phone && user.DisabledAt == null, cancellationToken);
-            if (!userExists)
-            {
-                return Error("phone_not_found", "Ese telefono no esta asociado a una cuenta Nivra.", StatusCodes.Status404NotFound);
-            }
-
             var challenge = otpService.Start(phone);
-            return Results.Accepted(value: new PhoneOtpStartResponse(challenge.ExpiresAt, $"Codigo dev: {challenge.Code}"));
+            return Results.Accepted(value: new PhoneOtpStartResponse(challenge.ExpiresAt, challenge.DeliveryHint));
         });
 
-        group.MapPost("/phone/verify", async Task<IResult> (PhoneOtpVerifyRequest request, NivraDbContext db, PhoneOtpService otpService, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
+        group.MapPost("/phone/verify", async Task<IResult> (PhoneOtpVerifyRequest request, NivraDbContext db, PhoneOtpService otpService, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
         {
             var phone = NormalizePhone(request.Phone);
             if (phone is null || string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.DeviceName))
@@ -152,28 +160,147 @@ public static partial class EndpointExtensions
                 return Error("invalid_otp", "Codigo invalido o vencido.", StatusCodes.Status401Unauthorized);
             }
 
-            var user = await db.Users.FirstOrDefaultAsync(candidate => candidate.Phone == phone && candidate.DisabledAt == null, cancellationToken);
-            if (user is null)
+            return await CompleteVerifiedPhoneLoginAsync(
+                phone,
+                request.DeviceName,
+                request.KeyBundle,
+                "auth.phone_login",
+                "OTP verified",
+                db,
+                otpService,
+                hasher,
+                tokenService,
+                timeProvider,
+                http,
+                cancellationToken);
+        });
+
+        async Task<IResult> VerifyFirebasePhone(FirebasePhoneVerifyRequest request, NivraDbContext db, PhoneOtpService otpService, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, PushNotificationService pushNotifications, HttpContext http, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(request.FirebaseToken) || string.IsNullOrWhiteSpace(request.DeviceName))
             {
-                return Error("phone_not_found", "Ese telefono no esta asociado a una cuenta Nivra.", StatusCodes.Status404NotFound);
+                return Error("invalid_firebase_phone_login", "Token Firebase y dispositivo son obligatorios.");
             }
 
-            var device = NewDevice(user.Id, request.DeviceName, request.KeyBundle, timeProvider.GetUtcNow(), trusted: true);
-            db.Devices.Add(device);
-            await db.SaveChangesAsync(cancellationToken);
+            if (!pushNotifications.TryEnsureFirebaseAdminApp())
+            {
+                return Error("firebase_not_configured", "Firebase Admin no esta configurado para validar telefonos.", StatusCodes.Status503ServiceUnavailable);
+            }
 
-            var tokens = await tokenService.CreateSessionAsync(new PgSqlNivraStore(db), user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
+            FirebaseToken decodedToken;
+            try
+            {
+                decodedToken = await FirebaseAuth.DefaultInstance.VerifyIdTokenAsync(request.FirebaseToken.Trim());
+            }
+            catch (FirebaseAuthException)
+            {
+                return Error("invalid_firebase_token", "Firebase no pudo validar ese codigo telefonico.", StatusCodes.Status401Unauthorized);
+            }
+            catch (InvalidOperationException)
+            {
+                return Error("firebase_not_configured", "Firebase Admin no esta listo para validar telefonos.", StatusCodes.Status503ServiceUnavailable);
+            }
+
+            if (!decodedToken.Claims.TryGetValue("phone_number", out var phoneClaim) ||
+                NormalizePhone(Convert.ToString(phoneClaim, System.Globalization.CultureInfo.InvariantCulture)) is not { } phone)
+            {
+                return Error("firebase_phone_missing", "El token de Firebase no trae un telefono verificado.", StatusCodes.Status401Unauthorized);
+            }
+
+            return await CompleteVerifiedPhoneLoginAsync(
+                phone,
+                request.DeviceName,
+                request.KeyBundle,
+                "auth.firebase_phone_login",
+                $"FirebaseUid={decodedToken.Uid}",
+                db,
+                otpService,
+                hasher,
+                tokenService,
+                timeProvider,
+                http,
+                cancellationToken);
+        }
+
+        group.MapPost("/phone/verify-firebase", VerifyFirebasePhone);
+        app.MapPost("/api/auth/phone/verify-firebase", VerifyFirebasePhone).RequireRateLimiting("auth");
+
+        group.MapPost("/phone/complete-alias", async Task<IResult> (CompletePhoneAliasRequest request, NivraDbContext db, PhoneOtpService otpService, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.PhoneSetupToken) ||
+                string.IsNullOrWhiteSpace(request.Alias) ||
+                string.IsNullOrWhiteSpace(request.DeviceName))
+            {
+                return Error("invalid_phone_alias", "Token, alias y dispositivo son obligatorios.");
+            }
+
+            if (!AliasPattern.IsMatch(request.Alias.Trim()))
+            {
+                return Error("invalid_alias", "El alias debe tener 3 a 32 caracteres: letras, numeros, guion, punto o guion bajo.");
+            }
+
+            if (!otpService.TryGetAliasSetup(request.PhoneSetupToken, out var setup))
+            {
+                return Error("invalid_phone_setup", "La verificacion del telefono vencio. Pide otro codigo.", StatusCodes.Status401Unauthorized);
+            }
+
+            var user = await db.Users.FirstOrDefaultAsync(candidate =>
+                candidate.Id == setup.UserId &&
+                candidate.Phone == setup.Phone &&
+                candidate.DisabledAt == null,
+                cancellationToken);
+            if (user is null)
+            {
+                return Error("invalid_phone_setup", "No encontramos la cuenta temporal de este telefono.", StatusCodes.Status404NotFound);
+            }
+
+            if (!user.RequiresAlias)
+            {
+                return Error("alias_already_completed", "Ese telefono ya tiene una cuenta lista.", StatusCodes.Status409Conflict);
+            }
+
+            var normalizedAlias = PgSqlNivraStore.NormalizeAlias(request.Alias);
+            var aliasTaken = await db.Users.AnyAsync(candidate =>
+                candidate.Alias == normalizedAlias &&
+                candidate.Id != user.Id &&
+                candidate.DisabledAt == null,
+                cancellationToken);
+            if (aliasTaken)
+            {
+                return Error("alias_taken", "Ese alias ya esta ocupado.", StatusCodes.Status409Conflict);
+            }
+
+            var now = timeProvider.GetUtcNow();
+            user.Alias = normalizedAlias;
+            user.DisplayName = NormalizeOptional(request.DisplayName) ?? normalizedAlias;
+            user.RequiresAlias = false;
+            user.IsDiscoverable = true;
+            user.UpdatedAt = now;
+
+            var device = NewDevice(user.Id, request.DeviceName, request.KeyBundle, now, trusted: true);
+            db.Devices.Add(device);
             db.SecurityAuditEvents.Add(new SecurityAuditEvent
             {
                 Id = NivraIds.NewId("aud"),
                 UserId = user.Id,
-                Action = "auth.phone_login",
+                Action = "auth.phone_alias_completed",
                 IpAddress = ClientIp(http),
-                Details = $"Device={device.Id}",
-                CreatedAt = timeProvider.GetUtcNow()
+                Details = $"Alias={normalizedAlias}; Device={device.Id}",
+                CreatedAt = now
             });
-            await db.SaveChangesAsync(cancellationToken);
 
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                db.ChangeTracker.Clear();
+                return Error("alias_or_phone_taken", "Ese alias o telefono ya esta vinculado a otra cuenta.", StatusCodes.Status409Conflict);
+            }
+
+            otpService.ConsumeAliasSetup(request.PhoneSetupToken);
+            var tokens = await tokenService.CreateSessionAsync(new PgSqlNivraStore(db), user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
             return Results.Ok(new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens));
         });
 
@@ -184,11 +311,13 @@ public static partial class EndpointExtensions
                 return Error("invalid_device", "El nombre del dispositivo es obligatorio.");
             }
 
-            var challenge = qrLogin.Start(request.DeviceName, request.KeyBundle);
+            var challenge = qrLogin.Start(request.DeviceName, request.KeyBundle, request.PublicKey);
+            var syncToken = $"{challenge.Id}.{challenge.Code}";
             return Results.Ok(new QrLoginStartResponse(
                 challenge.Id,
                 challenge.Code,
-                $"nivra://login/qr?qrId={Uri.EscapeDataString(challenge.Id)}&code={Uri.EscapeDataString(challenge.Code)}",
+                syncToken,
+                $"nivra://login/qr?qrId={Uri.EscapeDataString(challenge.Id)}&code={Uri.EscapeDataString(challenge.Code)}&syncToken={Uri.EscapeDataString(syncToken)}",
                 challenge.ExpiresAt));
         });
 
@@ -200,10 +329,13 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
-            return Results.Ok(new QrLoginStatusResponse(challenge.Auth is null ? "pending" : "authorized", challenge.Auth));
+            return Results.Ok(new QrLoginStatusResponse(
+                challenge.Authorization is null ? "pending" : "authorized",
+                challenge.Authorization?.Auth,
+                challenge.Authorization?.EncryptedPayload));
         });
 
-        group.MapPost("/qr/authorize", async Task<IResult> (QrLoginAuthorizeRequest request, HttpContext http, NivraDbContext db, TokenService tokenService, TimeProvider timeProvider, QrLoginService qrLogin, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        async Task<IResult> AuthorizeQrLogin(QrLoginAuthorizeRequest request, HttpContext http, NivraDbContext db, TokenService tokenService, TimeProvider timeProvider, QrLoginService qrLogin, IHubContext<NivraHub> hub, CancellationToken cancellationToken)
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -217,26 +349,57 @@ public static partial class EndpointExtensions
                 return Error("invalid_qr", "QR invalido o vencido.", StatusCodes.Status410Gone);
             }
 
+            if (string.IsNullOrWhiteSpace(request.EncryptedPayload))
+            {
+                return Error("invalid_qr_payload", "El payload cifrado de llaves es obligatorio.");
+            }
+
             var user = await db.Users.FirstOrDefaultAsync(candidate => candidate.Id == current.UserId && candidate.DisabledAt == null, cancellationToken);
             if (user is null)
             {
                 return Results.Unauthorized();
             }
 
-            var device = NewDevice(user.Id, challenge.DeviceName, challenge.KeyBundle, timeProvider.GetUtcNow(), trusted: true);
+            var sourceDevice = await db.Devices.FirstOrDefaultAsync(candidate =>
+                candidate.Id == current.DeviceId &&
+                candidate.UserId == user.Id &&
+                candidate.RevokedAt == null,
+                cancellationToken);
+            if (sourceDevice is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var linkedKeyBundle = KeyBundleToRequest(sourceDevice.KeyBundle);
+            var device = NewDevice(user.Id, challenge.DeviceName, linkedKeyBundle, now, trusted: true);
             db.Devices.Add(device);
+            db.SecurityAuditEvents.Add(new SecurityAuditEvent
+            {
+                Id = NivraIds.NewId("aud"),
+                UserId = user.Id,
+                Action = "auth.qr_device_link",
+                IpAddress = ClientIp(http),
+                Details = $"SourceDevice={sourceDevice.Id}; TargetDevice={device.Id}; Qr={challenge.Id}",
+                CreatedAt = now
+            });
             await db.SaveChangesAsync(cancellationToken);
 
             var tokens = await tokenService.CreateSessionAsync(new PgSqlNivraStore(db), user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
             var auth = new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens);
-            if (!qrLogin.TryAuthorize(request.QrId, request.Code, auth))
+            var authorization = new QrLoginAuthorizedResponse(auth, request.EncryptedPayload.Trim());
+            if (!qrLogin.TryAuthorize(request.QrId, request.Code, authorization))
             {
                 return Error("invalid_qr", "QR invalido o vencido.", StatusCodes.Status410Gone);
             }
 
-            await hub.Clients.Group(GroupsFor.QrLogin(request.QrId)).SendAsync("auth.qrAuthorized", auth, cancellationToken);
-            return Results.NoContent();
-        });
+            await hub.Clients.Group(GroupsFor.QrLogin(request.QrId)).SendAsync("QrAuthorized", authorization, cancellationToken);
+            await hub.Clients.Group(GroupsFor.QrLogin(request.QrId)).SendAsync("auth.qrAuthorized", authorization, cancellationToken);
+            return Results.Accepted(value: authorization);
+        }
+
+        group.MapPost("/qr/authorize", AuthorizeQrLogin);
+        app.MapPost("/api/auth/qr-login", AuthorizeQrLogin).RequireRateLimiting("auth");
 
         async Task<IResult> AuthorizeQrLink(QrLinkAuthorizeRequest request, HttpContext http, IHubContext<NivraHub> hub, CancellationToken cancellationToken)
         {
@@ -294,7 +457,7 @@ public static partial class EndpointExtensions
             return user is null ? Results.Unauthorized() : Results.Ok(ToUserResponse(user));
         });
 
-        app.MapPatch("/me", async Task<IResult> (PatchProfileRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        app.MapPatch("/me", async Task<IResult> (PatchProfileRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -308,14 +471,39 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            string? normalizedPhone = null;
+            if (request.Phone is not null)
+            {
+                normalizedPhone = NormalizePhone(request.Phone);
+                if (!string.IsNullOrWhiteSpace(request.Phone) && normalizedPhone is null)
+                {
+                    return Error("invalid_phone", "Envia un numero de telefono valido.");
+                }
+
+                if (normalizedPhone is not null &&
+                    normalizedPhone != user.Phone &&
+                    await db.Users.AnyAsync(candidate => candidate.Id != user.Id && candidate.Phone == normalizedPhone && candidate.DisabledAt == null, cancellationToken))
+                {
+                    return Error("phone_taken", "Ese telefono ya esta asociado a otra cuenta Nivra.", StatusCodes.Status409Conflict);
+                }
+            }
+
             user.DisplayName = request.DisplayName?.Trim() ?? user.DisplayName;
             user.Email = NormalizeOptional(request.Email) ?? user.Email;
-            user.Phone = NormalizePhone(request.Phone) ?? user.Phone;
+            user.Phone = request.Phone is null ? user.Phone : normalizedPhone;
             user.Bio = request.Bio is null ? user.Bio : NormalizeOptional(request.Bio);
             user.ProfilePhotoDataUrl = request.ProfilePhotoDataUrl is null ? user.ProfilePhotoDataUrl : NormalizeProfilePhoto(request.ProfilePhotoDataUrl);
             user.IsDiscoverable = request.IsDiscoverable ?? user.IsDiscoverable;
             user.UpdatedAt = timeProvider.GetUtcNow();
-            await store.SaveChangesAsync(cancellationToken);
+            try
+            {
+                await store.SaveChangesAsync(cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                db.ChangeTracker.Clear();
+                return Error("phone_taken", "Ese telefono ya esta asociado a otra cuenta Nivra.", StatusCodes.Status409Conflict);
+            }
             return Results.Ok(ToUserResponse(user));
         });
     }
@@ -2740,6 +2928,116 @@ public static partial class EndpointExtensions
         });
     }
 
+    private static async Task<IResult> CompleteVerifiedPhoneLoginAsync(
+        string phone,
+        string deviceName,
+        KeyBundleRequest? keyBundle,
+        string auditAction,
+        string auditDetails,
+        NivraDbContext db,
+        PhoneOtpService otpService,
+        PasswordHasher hasher,
+        TokenService tokenService,
+        TimeProvider timeProvider,
+        HttpContext http,
+        CancellationToken cancellationToken)
+    {
+        var user = await db.Users.FirstOrDefaultAsync(candidate => candidate.Phone == phone && candidate.DisabledAt == null, cancellationToken);
+        if (user is null)
+        {
+            user = await CreatePendingPhoneUserAsync(db, hasher, phone, timeProvider.GetUtcNow(), cancellationToken);
+        }
+
+        if (user.RequiresAlias)
+        {
+            var setup = otpService.CreateAliasSetup(user.Id, phone);
+            db.SecurityAuditEvents.Add(new SecurityAuditEvent
+            {
+                Id = NivraIds.NewId("aud"),
+                UserId = user.Id,
+                Action = "auth.phone_alias_required",
+                IpAddress = ClientIp(http),
+                Details = auditDetails,
+                CreatedAt = timeProvider.GetUtcNow()
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            return Results.Ok(new PhoneOtpVerifyResponse(true, null, setup.Token, setup.ExpiresAt, phone));
+        }
+
+        var now = timeProvider.GetUtcNow();
+        var device = NewDevice(
+            user.Id,
+            deviceName,
+            keyBundle ?? new KeyBundleRequest(null, null, null, []),
+            now,
+            trusted: true);
+        db.Devices.Add(device);
+        await db.SaveChangesAsync(cancellationToken);
+
+        var tokens = await tokenService.CreateSessionAsync(new PgSqlNivraStore(db), user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
+        db.SecurityAuditEvents.Add(new SecurityAuditEvent
+        {
+            Id = NivraIds.NewId("aud"),
+            UserId = user.Id,
+            Action = auditAction,
+            IpAddress = ClientIp(http),
+            Details = $"{auditDetails}; Device={device.Id}",
+            CreatedAt = now
+        });
+        await db.SaveChangesAsync(cancellationToken);
+
+        var auth = new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens);
+        return Results.Ok(new PhoneOtpVerifyResponse(false, auth, null, null, phone));
+    }
+
+    private static async Task<UserAccount> CreatePendingPhoneUserAsync(NivraDbContext db, PasswordHasher hasher, string phone, DateTimeOffset now, CancellationToken cancellationToken)
+    {
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            var user = new UserAccount
+            {
+                Id = NivraIds.NewId("usr"),
+                Alias = GeneratePendingPhoneAlias(),
+                DisplayName = null,
+                Email = null,
+                Phone = phone,
+                RequiresAlias = true,
+                IsDiscoverable = false,
+                PasswordHash = hasher.Hash(CreateOpaquePassword()),
+                CreatedAt = now,
+                UpdatedAt = now
+            };
+
+            db.Users.Add(user);
+            try
+            {
+                await db.SaveChangesAsync(cancellationToken);
+                return user;
+            }
+            catch (DbUpdateException)
+            {
+                db.ChangeTracker.Clear();
+                var existing = await db.Users.FirstOrDefaultAsync(candidate => candidate.Phone == phone && candidate.DisabledAt == null, cancellationToken);
+                if (existing is not null)
+                {
+                    return existing;
+                }
+            }
+        }
+
+        throw new InvalidOperationException("Could not reserve a phone account.");
+    }
+
+    private static string GeneratePendingPhoneAlias()
+    {
+        return $"phone_{Convert.ToHexString(RandomNumberGenerator.GetBytes(8)).ToLowerInvariant()}";
+    }
+
+    private static string CreateOpaquePassword()
+    {
+        return Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
+    }
+
     private static IResult ValidateRegister(RegisterRequest request)
     {
         if (string.IsNullOrWhiteSpace(request.Alias) || !AliasPattern.IsMatch(request.Alias.Trim()))
@@ -2784,6 +3082,15 @@ public static partial class EndpointExtensions
             OneTimePreKeys = request.OneTimePreKeys?.Where(key => !string.IsNullOrWhiteSpace(key)).Distinct().ToList() ?? [],
             LastRotatedAt = now
         };
+    }
+
+    private static KeyBundleRequest KeyBundleToRequest(KeyBundle keyBundle)
+    {
+        return new KeyBundleRequest(
+            keyBundle.IdentityKey,
+            keyBundle.SignedPreKey,
+            keyBundle.PreKeySignature,
+            keyBundle.OneTimePreKeys.ToList());
     }
 
     private static RecipientCiphertext ToRecipientCiphertext(RecipientCipherRequest request)

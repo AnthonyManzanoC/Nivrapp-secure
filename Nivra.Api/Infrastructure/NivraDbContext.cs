@@ -61,6 +61,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(user => user.DisplayName).HasMaxLength(160);
             entity.Property(user => user.Email).HasMaxLength(320);
             entity.Property(user => user.Phone).HasMaxLength(40);
+            entity.Property(user => user.RequiresAlias).HasDefaultValue(false);
             entity.Property(user => user.Bio).HasMaxLength(500);
             entity.Property(user => user.ProfilePhotoDataUrl);
             entity.Property(user => user.IsDiscoverable).HasDefaultValue(true);
@@ -68,7 +69,9 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(user => user.CreatedAt).IsRequired();
             entity.Property(user => user.UpdatedAt).IsRequired();
             entity.HasIndex(user => user.DisabledAt);
-            entity.HasIndex(user => user.Phone);
+            entity.HasIndex(user => user.Phone)
+                .IsUnique()
+                .HasFilter("\"Phone\" IS NOT NULL AND \"DisabledAt\" IS NULL");
             entity.HasIndex(user => user.IsDiscoverable);
 
             entity.OwnsOne(user => user.PasswordHash, owned =>

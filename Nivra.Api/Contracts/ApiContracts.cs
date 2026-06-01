@@ -58,13 +58,34 @@ public sealed record PhoneOtpVerifyRequest(
     string DeviceName,
     KeyBundleRequest KeyBundle);
 
-public sealed record QrLoginStartRequest(string DeviceName, KeyBundleRequest KeyBundle);
+public sealed record FirebasePhoneVerifyRequest(
+    string FirebaseToken,
+    string DeviceName,
+    KeyBundleRequest KeyBundle);
 
-public sealed record QrLoginStartResponse(string QrId, string Code, string DeepLink, DateTimeOffset ExpiresAt);
+public sealed record PhoneOtpVerifyResponse(
+    bool RequiresAlias,
+    AuthResponse? Auth,
+    string? PhoneSetupToken,
+    DateTimeOffset? PhoneSetupExpiresAt,
+    string? Phone);
 
-public sealed record QrLoginAuthorizeRequest(string QrId, string Code);
+public sealed record CompletePhoneAliasRequest(
+    string PhoneSetupToken,
+    string Alias,
+    string? DisplayName,
+    string DeviceName,
+    KeyBundleRequest KeyBundle);
 
-public sealed record QrLoginStatusResponse(string Status, AuthResponse? Auth);
+public sealed record QrLoginStartRequest(string DeviceName, KeyBundleRequest? KeyBundle, string? PublicKey);
+
+public sealed record QrLoginStartResponse(string QrId, string Code, string SyncToken, string DeepLink, DateTimeOffset ExpiresAt);
+
+public sealed record QrLoginAuthorizeRequest(string QrId, string Code, string? EncryptedPayload);
+
+public sealed record QrLoginAuthorizedResponse(AuthResponse Auth, string EncryptedPayload);
+
+public sealed record QrLoginStatusResponse(string Status, AuthResponse? Auth, string? EncryptedPayload);
 
 public sealed record QrLinkAuthorizeRequest(string TargetConnectionId, string EncryptedPayload);
 

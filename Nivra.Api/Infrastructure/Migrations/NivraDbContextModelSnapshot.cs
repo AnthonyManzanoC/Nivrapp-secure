@@ -701,6 +701,11 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Property<string>("ProfilePhotoDataUrl")
                         .HasColumnType("text");
 
+                    b.Property<bool>("RequiresAlias")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -713,7 +718,9 @@ namespace Nivra.Api.Infrastructure.Migrations
 
                     b.HasIndex("IsDiscoverable");
 
-                    b.HasIndex("Phone");
+                    b.HasIndex("Phone")
+                        .IsUnique()
+                        .HasFilter("\"Phone\" IS NOT NULL AND \"DisabledAt\" IS NULL");
 
                     b.ToTable("users", "public");
                 });

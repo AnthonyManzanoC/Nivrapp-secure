@@ -517,6 +517,18 @@ const state = {
   renderFrame: null,
   messageLoadSeq: 0,
   messageLoadSession: null,
+  pendingPhoneAlias: null,
+  firebasePhone: {
+    app: null,
+    auth: null,
+    authModule: null,
+    compat: false,
+    recaptchaVerifier: null,
+    recaptchaElement: null,
+    confirmationResult: null,
+    phone: "",
+    busy: false
+  },
   qrLogin: null,
   qrScanner: {
     reader: null,
@@ -624,6 +636,7 @@ function syncShellClasses() {
   document.body.classList.toggle("chat-abierto", chatPanelOpen);
   document.body.classList.toggle("chat-open", chatPanelOpen);
   document.body.classList.toggle("modal-open", Boolean(state.modal || state.activeStory));
+  document.body.classList.toggle("auth-open", !state.auth?.tokens?.accessToken);
 }
 
 async function init() {
@@ -1348,7 +1361,7 @@ function render() {
 }
 
 function renderAuth() {
-  const mode = defaultAuthMode();
+  const mode = state.pendingPhoneAlias ? "phoneAlias" : defaultAuthMode();
   APP.innerHTML = `
     <div class="auth-shell" data-auth-default="${mode}">
       <section class="auth-panel">
@@ -1361,19 +1374,19 @@ function renderAuth() {
         <div class="tabs">
           <button class="tab-btn ${mode === "login" ? "active" : ""}" data-auth-tab="login" type="button">Entrar</button>
           <button class="tab-btn ${mode === "register" ? "active" : ""}" data-auth-tab="register" type="button">Crear cuenta</button>
-          <button class="tab-btn ${mode === "phone" ? "active" : ""}" data-auth-tab="phone" type="button">Telefono</button>
+          <button class="tab-btn ${mode === "phone" || mode === "phoneAlias" ? "active" : ""}" data-auth-tab="phone" type="button">Telefono</button>
           <button class="tab-btn ${mode === "qr" ? "active" : ""}" data-auth-tab="qr" type="button">QR</button>
         </div>
         <form id="authForm" data-mode="${mode}">
           <div class="field auth-alias-field ${mode === "phone" || mode === "qr" ? "hidden" : ""}">
             <label for="alias">Alias</label>
-            <input id="alias" class="input" autocomplete="username" placeholder="tu_alias" ${mode === "login" || mode === "register" ? "required" : ""}>
+            <input id="alias" class="input" autocomplete="username" placeholder="tu_alias" ${mode === "login" || mode === "register" || mode === "phoneAlias" ? "required" : ""}>
           </div>
-          <div class="field auth-password-field ${mode === "phone" || mode === "qr" ? "hidden" : ""}">
+          <div class="field auth-password-field ${mode === "phone" || mode === "phoneAlias" || mode === "qr" ? "hidden" : ""}">
             <label for="password">Password</label>
             <input id="password" class="input" type="password" autocomplete="current-password" placeholder="Minimo 10 caracteres" ${mode === "login" || mode === "register" ? "required" : ""}>
           </div>
-          <div id="displayNameWrap" class="field ${mode === "register" ? "" : "hidden"}">
+          <div id="displayNameWrap" class="field ${mode === "register" || mode === "phoneAlias" ? "" : "hidden"}">
             <label for="displayName">Nombre visible</label>
             <input id="displayName" class="input" placeholder="Como te veran tus contactos">
           </div>
@@ -1381,12 +1394,17 @@ function renderAuth() {
             <label for="phoneLogin">Telefono</label>
             <div class="inline-field">
               <input id="phoneLogin" class="input" inputmode="tel" autocomplete="tel" placeholder="+57 300 000 0000">
-              <button class="btn ghost" type="button" id="sendOtpBtn">Codigo</button>
+              <button class="btn ghost" type="button" id="sendOtpBtn" ${state.firebasePhone.busy ? `disabled aria-busy="true"` : ""}>${state.firebasePhone.busy ? "Enviando" : "Codigo"}</button>
             </div>
+            <div id="phoneRecaptcha" class="recaptcha-slot" aria-hidden="true"></div>
           </div>
           <div id="otpWrap" class="field ${mode === "phone" ? "" : "hidden"}">
             <label for="otpCode">Codigo</label>
             <input id="otpCode" class="input" inputmode="numeric" autocomplete="one-time-code" placeholder="000000">
+          </div>
+          <div id="phoneAliasWrap" class="field phone-alias-note ${mode === "phoneAlias" ? "" : "hidden"}">
+            <label>Telefono verificado</label>
+            <div class="verified-phone">${escapeHtml(state.pendingPhoneAlias?.phone || "")}</div>
           </div>
           <div id="qrLoginBox" class="qr-login-box ${mode === "qr" ? "" : "hidden"}">
             <div class="qr-frame" id="qrFrame">QR</div>
@@ -1449,23 +1467,29 @@ function isMobileViewport() {
 }
 
 function authSubmitLabel(mode) {
-  return mode === "register" ? "Crear Nivra" : mode === "qr" ? "Regenerar QR" : mode === "phone" ? "Verificar codigo" : "Continuar";
+  return mode === "register" ? "Crear Nivra" : mode === "qr" ? "Regenerar QR" : mode === "phoneAlias" ? "Terminar cuenta" : mode === "phone" ? "Verificar codigo" : "Continuar";
 }
 
 function setAuthMode(mode) {
-  document.querySelectorAll("[data-auth-tab]").forEach((tab) => tab.classList.toggle("active", tab.dataset.authTab === mode));
+  if (mode !== "phoneAlias") state.pendingPhoneAlias = null;
+  if (mode !== "phone" && mode !== "phoneAlias") {
+    clearFirebasePhoneChallenge();
+    resetFirebaseRecaptchaVerifier().catch(() => {});
+  }
+  document.querySelectorAll("[data-auth-tab]").forEach((tab) => tab.classList.toggle("active", tab.dataset.authTab === mode || (mode === "phoneAlias" && tab.dataset.authTab === "phone")));
   const form = document.querySelector("#authForm");
   if (!form) return;
   form.dataset.mode = mode;
-  document.querySelector("#displayNameWrap")?.classList.toggle("hidden", mode !== "register");
+  document.querySelector("#displayNameWrap")?.classList.toggle("hidden", mode !== "register" && mode !== "phoneAlias");
   document.querySelector("#phoneWrap")?.classList.toggle("hidden", mode !== "phone");
   document.querySelector("#otpWrap")?.classList.toggle("hidden", mode !== "phone");
+  document.querySelector("#phoneAliasWrap")?.classList.toggle("hidden", mode !== "phoneAlias");
   document.querySelector("#qrLoginBox")?.classList.toggle("hidden", mode !== "qr");
   document.querySelector(".auth-alias-field")?.classList.toggle("hidden", mode === "phone" || mode === "qr");
-  document.querySelector(".auth-password-field")?.classList.toggle("hidden", mode === "phone" || mode === "qr");
+  document.querySelector(".auth-password-field")?.classList.toggle("hidden", mode === "phone" || mode === "phoneAlias" || mode === "qr");
   const alias = document.querySelector("#alias");
   const password = document.querySelector("#password");
-  if (alias) alias.required = mode === "login" || mode === "register";
+  if (alias) alias.required = mode === "login" || mode === "register" || mode === "phoneAlias";
   if (password) password.required = mode === "login" || mode === "register";
   const submit = document.querySelector(".auth-actions .btn");
   if (submit) submit.textContent = authSubmitLabel(mode);
@@ -3842,6 +3866,11 @@ async function handleAuthSubmit(event) {
     return;
   }
 
+  if (mode === "phoneAlias") {
+    await completePhoneAlias();
+    return;
+  }
+
   if (mode === "qr") {
     await startQrLogin();
     return;
@@ -3871,13 +3900,22 @@ async function handleAuthSubmit(event) {
 }
 
 async function startPhoneOtp() {
+  state.pendingPhoneAlias = null;
   const phone = document.querySelector("#phoneLogin")?.value.trim();
   if (!phone) return;
+  setPhoneAuthBusy(true);
   try {
-    const response = await request("/auth/phone/start", { method: "POST", body: { phone }, skipAuth: true });
-    toast(response.deliveryHint || "Codigo enviado.");
+    const session = await getFirebasePhoneAuthSession();
+    const verifier = await getFirebaseRecaptchaVerifier(session);
+    state.firebasePhone.confirmationResult = await session.signInWithPhoneNumber(phone, verifier);
+    state.firebasePhone.phone = phone;
+    document.querySelector("#otpCode")?.focus();
+    toast("Codigo SMS enviado por Firebase.");
   } catch (error) {
-    toast(error.message || "No se pudo enviar codigo.");
+    await resetFirebaseRecaptchaVerifier();
+    toast(firebasePhoneAuthErrorMessage(error, "No se pudo enviar el codigo SMS."));
+  } finally {
+    setPhoneAuthBusy(false);
   }
 }
 
@@ -3888,16 +3926,67 @@ async function verifyPhoneOtp() {
     toast("Telefono y codigo son obligatorios.");
     return;
   }
+  if (!state.firebasePhone.confirmationResult) {
+    toast("Primero pide el codigo SMS de Firebase.");
+    return;
+  }
+  setPhoneAuthBusy(true);
   try {
-    const keys = await prepareDeviceKeys({ registration: false });
-    const auth = await request("/auth/phone/verify", {
+    const credential = await state.firebasePhone.confirmationResult.confirm(code);
+    const firebaseToken = await credential.user.getIdToken();
+    const keys = await prepareDeviceKeys({ registration: true });
+    const response = await request("/api/auth/phone/verify-firebase", {
       method: "POST",
-      body: { phone, code, deviceName: deviceName(), keyBundle: keys.keyBundle },
+      body: { firebaseToken, deviceName: deviceName(), keyBundle: keys.keyBundle },
       skipAuth: true
     });
+    if (response?.requiresAlias) {
+      state.pendingPhoneAlias = {
+        token: response.phoneSetupToken,
+        expiresAt: response.phoneSetupExpiresAt,
+        phone: response.phone || state.firebasePhone.phone || phone,
+        keys
+      };
+      clearFirebasePhoneChallenge();
+      setAuthMode("phoneAlias");
+      document.querySelector("#alias")?.focus();
+      toast("Telefono verificado. Escoge tu alias para terminar.");
+      return;
+    }
+    const auth = response?.auth || response;
+    clearFirebasePhoneChallenge();
     await completeAuth(auth, keys);
   } catch (error) {
-    toast(error.message || "No se pudo entrar por telefono.");
+    toast(firebasePhoneAuthErrorMessage(error, "No se pudo entrar por telefono."));
+  } finally {
+    setPhoneAuthBusy(false);
+  }
+}
+
+async function completePhoneAlias() {
+  const pending = state.pendingPhoneAlias;
+  const alias = document.querySelector("#alias")?.value.trim();
+  const displayName = document.querySelector("#displayName")?.value.trim();
+  if (!pending?.token || !pending?.keys || !alias) {
+    toast("Escoge tu alias para terminar la cuenta.");
+    return;
+  }
+  try {
+    const auth = await request("/auth/phone/complete-alias", {
+      method: "POST",
+      body: {
+        phoneSetupToken: pending.token,
+        alias,
+        displayName: displayName || alias,
+        deviceName: deviceName(),
+        keyBundle: pending.keys.keyBundle
+      },
+      skipAuth: true
+    });
+    state.pendingPhoneAlias = null;
+    await completeAuth(auth, pending.keys);
+  } catch (error) {
+    toast(error.message || "No se pudo terminar la cuenta.");
   }
 }
 
@@ -3917,17 +4006,36 @@ async function startQrLoginInternal() {
   if (!window.signalR) throw new Error("SignalR no esta cargado.");
   await stopQrLogin();
   const ephemeral = await createQrEphemeralKeys();
+  const publicKey = base64UrlJson(ephemeral.publicJwk);
+  const serverChallenge = await request("/auth/qr/start", {
+    method: "POST",
+    body: {
+      deviceName: deviceName(),
+      keyBundle: null,
+      publicKey
+    },
+    skipAuth: true
+  });
+  const query = new URLSearchParams({
+    qr_login_id: serverChallenge.qrId,
+    qr_code: serverChallenge.code
+  });
   const connection = new signalR.HubConnectionBuilder()
-    .withUrl(apiUrl("/hubs/realtime?qr_link=1"), { withCredentials: false })
+    .withUrl(apiUrl(`/hubs/realtime?${query.toString()}`), { withCredentials: false })
     .withAutomaticReconnect()
     .build();
   detachQrLoginHandlers(connection);
+  connection.on("QrAuthorized", async (authorization) => {
+    await handleQrLoginAuthorized(authorization, ephemeral, connection);
+  });
+  connection.on("auth.qrAuthorized", async (authorization) => {
+    await handleQrLoginAuthorized(authorization, ephemeral, connection);
+  });
   connection.on("qr-login-success", async (encryptedPayload) => {
     await handleQrLoginSuccess(encryptedPayload, ephemeral, connection);
   });
   await connection.start();
-  const connectionId = connection.connectionId || await connection.invoke("GetConnectionId");
-  const challenge = buildQrLinkChallenge(connectionId, ephemeral.publicJwk);
+  const challenge = buildQrLinkChallenge(serverChallenge, ephemeral.publicJwk);
   state.qrLogin = { ...challenge, connection, ephemeral, active: true };
   renderQrChallenge(state.qrLogin);
 }
@@ -3997,67 +4105,99 @@ async function stopQrLogin() {
 }
 
 function detachQrLoginHandlers(connection) {
+  connection?.off?.("QrAuthorized");
+  connection?.off?.("auth.qrAuthorized");
   connection?.off?.("qr-login-success");
 }
 
-function buildQrLinkChallenge(connectionId, publicJwk) {
+function buildQrLinkChallenge(serverChallenge, publicJwk) {
   const createdAt = new Date();
-  const expiresAt = new Date(createdAt.getTime() + QR_LOGIN_TTL_MS);
+  const expiresAt = serverChallenge?.expiresAt ? new Date(serverChallenge.expiresAt) : new Date(createdAt.getTime() + QR_LOGIN_TTL_MS);
+  const qrId = serverChallenge?.qrId || "";
+  const code = serverChallenge?.code || "";
+  const syncToken = serverChallenge?.syncToken || `${qrId}.${code}`;
   const payload = {
-    v: 1,
+    v: 2,
     type: "nivra-qr-login",
+    mode: "signalr-sync",
     alg: "RSA-OAEP-256+A256GCM",
-    connectionId,
+    qrId,
+    code,
+    syncToken,
     publicKey: base64UrlJson(publicJwk),
     origin: API_BASE_URL,
+    targetDeviceName: deviceName(),
     createdAt: createdAt.toISOString(),
     expiresAt: expiresAt.toISOString()
   };
-  const qrData = base64UrlJson(payload);
+  const qrData = `nivra://login/qr?data=${encodeURIComponent(base64UrlJson(payload))}`;
   const expiresTimer = setTimeout(() => {
-    if (state.qrLogin?.connectionId === connectionId) {
+    if (state.qrLogin?.qrId === qrId) {
       stopQrLogin().catch(() => {});
       setAuthMode("qr");
       toast("QR renovado por seguridad.");
     }
-  }, QR_LOGIN_TTL_MS);
+  }, Math.max(1000, expiresAt.getTime() - Date.now()));
   return {
     ...payload,
     qrData,
-    shortCode: connectionId.slice(-6).toUpperCase(),
+    shortCode: code || syncToken.slice(-6).toUpperCase(),
     status: "Escanealo desde Cuenta -> Vincular dispositivo.",
     expiresTimer
   };
 }
 
 async function handleQrLoginSuccess(encryptedPayload, ephemeral, connection) {
+  if (!state.qrLogin?.active) return;
   try {
     const payload = await decryptQrPayload(encryptedPayload, ephemeral.privateKey);
     if (!payload?.auth?.tokens?.accessToken || !payload?.keyMaterial?.privateJwk) {
       throw new Error("El paquete QR no contiene una sesion valida.");
     }
-    detachQrLoginHandlers(connection);
-    await connection.stop().catch(() => {});
-    state.qrLogin = null;
-    state.auth = payload.auth;
-    saveJson("nivra.auth", payload.auth);
-    await saveDeviceKeys(
-      payload.auth.user.alias,
-      payload.auth.device.id,
-      payload.keyMaterial.privateJwk,
-      payload.keyMaterial.publicJwk,
-      { userId: payload.auth.user.id, importedFromQr: true }
-    );
-    await bootstrap();
-    await refreshPushPermissionState().catch(() => {});
-    await initializePushNotifications({ requestPermission: false }).catch(() => {});
-    await connectRealtime();
-    startPolling();
-    render();
-    toast("Dispositivo vinculado.");
+    await finishQrImportedAuth(payload.auth, payload.keyMaterial, connection);
   } catch (error) {
     toast(error.message || "No se pudo desbloquear el QR.");
   }
+}
+
+async function handleQrLoginAuthorized(authorization, ephemeral, connection) {
+  if (!state.qrLogin?.active) return;
+  try {
+    const auth = authorization?.auth || authorization?.Auth;
+    const encryptedPayload = authorization?.encryptedPayload || authorization?.EncryptedPayload;
+    if (!auth?.tokens?.accessToken || !encryptedPayload) {
+      throw new Error("La autorizacion QR no contiene una sesion valida.");
+    }
+    const payload = await decryptQrPayload(encryptedPayload, ephemeral.privateKey);
+    if (!payload?.keyMaterial?.privateJwk) {
+      throw new Error("El paquete QR no contiene llaves locales.");
+    }
+    await finishQrImportedAuth(auth, payload.keyMaterial, connection);
+  } catch (error) {
+    toast(error.message || "No se pudo desbloquear el QR.");
+  }
+}
+
+async function finishQrImportedAuth(auth, keyMaterial, connection) {
+  detachQrLoginHandlers(connection);
+  await connection.stop().catch(() => {});
+  state.qrLogin = null;
+  state.auth = auth;
+  saveJson("nivra.auth", auth);
+  await saveDeviceKeys(
+    auth.user.alias,
+    auth.device.id,
+    keyMaterial.privateJwk,
+    keyMaterial.publicJwk,
+    { userId: auth.user.id, importedFromQr: true }
+  );
+  await bootstrap();
+  await refreshPushPermissionState().catch(() => {});
+  await initializePushNotifications({ requestPermission: false }).catch(() => {});
+  await connectRealtime();
+  startPolling();
+  render();
+  toast("Dispositivo vinculado.");
 }
 
 async function openNewChatDialog() {
@@ -4371,11 +4511,16 @@ function parseQrLoginData(raw) {
   } catch {
     throw new Error("Ese QR no pertenece a Nivra.");
   }
-  if (payload?.type !== "nivra-qr-login" || !payload.connectionId || !payload.publicKey) {
+  if (payload?.type !== "nivra-qr-login" || !payload.publicKey || (!payload.connectionId && (!payload.qrId || !payload.code) && !payload.syncToken)) {
     throw new Error("QR de vinculacion invalido.");
   }
   if (payload.expiresAt && Date.parse(payload.expiresAt) <= Date.now()) {
     throw new Error("Ese QR ya vencio. Genera uno nuevo.");
+  }
+  if ((!payload.qrId || !payload.code) && payload.syncToken) {
+    const parts = String(payload.syncToken).split(".");
+    payload.qrId = parts[0];
+    payload.code = parts[1];
   }
   return {
     ...payload,
@@ -4388,12 +4533,24 @@ async function authorizeQrLogin(challenge) {
   if (!state.auth?.tokens?.accessToken || !keyMaterial?.privateJwk) {
     throw new Error("Necesitas una sesion activa y una llave local para vincular.");
   }
-  const sealed = await encryptQrPayload(challenge.publicJwk, {
-    auth: state.auth,
+  const payload = {
     keyMaterial,
     sourceDeviceName: deviceName(),
     linkedAt: new Date().toISOString()
-  });
+  };
+  const sealed = await encryptQrPayload(challenge.publicJwk, challenge.qrId && challenge.code ? payload : { ...payload, auth: state.auth });
+  if (challenge.qrId && challenge.code) {
+    await request("/api/auth/qr-login", {
+      method: "POST",
+      body: {
+        qrId: challenge.qrId,
+        code: challenge.code,
+        encryptedPayload: sealed
+      }
+    });
+    return;
+  }
+
   await request("/api/auth/authorize-qr", {
     method: "POST",
     body: {
@@ -8967,6 +9124,115 @@ async function requestFirebaseMessagingRegistration(firebaseConfig, tokenOptions
   if (fidRegistration) return fidRegistration;
   const token = await messagingModule.getToken(messaging, tokenOptions);
   return token ? { provider: "fcm", token } : null;
+}
+
+async function getFirebasePhoneAuthSession() {
+  const firebaseConfig = window.NIVRA_FIREBASE_CONFIG;
+  if (!isFirebaseAuthConfigReady(firebaseConfig)) {
+    throw new Error("Firebase Phone Auth no esta configurado en esta app.");
+  }
+
+  if (window.firebase?.auth) {
+    const app = await getCompatFirebaseApp(firebaseConfig);
+    const auth = window.firebase.auth(app);
+    auth.useDeviceLanguage?.();
+    state.firebasePhone.app = app;
+    state.firebasePhone.auth = auth;
+    state.firebasePhone.authModule = null;
+    state.firebasePhone.compat = true;
+    return {
+      app,
+      auth,
+      compat: true,
+      signInWithPhoneNumber: (phone, verifier) => auth.signInWithPhoneNumber(phone, verifier),
+      createRecaptchaVerifier: (elementId, parameters) => new window.firebase.auth.RecaptchaVerifier(elementId, parameters, app)
+    };
+  }
+
+  const appModule = await import(firebaseSdkUrl("firebase-app.js"));
+  const authModule = await import(firebaseSdkUrl("firebase-auth.js"));
+  const app = await getModularFirebaseApp(appModule, firebaseConfig);
+  const auth = authModule.getAuth(app);
+  if (authModule.useDeviceLanguage) {
+    authModule.useDeviceLanguage(auth);
+  } else {
+    auth.useDeviceLanguage?.();
+  }
+
+  state.firebasePhone.app = app;
+  state.firebasePhone.auth = auth;
+  state.firebasePhone.authModule = authModule;
+  state.firebasePhone.compat = false;
+  return {
+    app,
+    auth,
+    authModule,
+    compat: false,
+    signInWithPhoneNumber: (phone, verifier) => authModule.signInWithPhoneNumber(auth, phone, verifier),
+    createRecaptchaVerifier: (elementId, parameters) => new authModule.RecaptchaVerifier(auth, elementId, parameters)
+  };
+}
+
+async function getFirebaseRecaptchaVerifier(session) {
+  const element = document.querySelector("#sendOtpBtn");
+  if (!element) throw new Error("No se encontro el boton de envio.");
+  if (state.firebasePhone.recaptchaVerifier && state.firebasePhone.recaptchaElement === element) {
+    return state.firebasePhone.recaptchaVerifier;
+  }
+
+  await resetFirebaseRecaptchaVerifier();
+  const verifier = session.createRecaptchaVerifier("sendOtpBtn", {
+    size: "invisible",
+    callback: () => {},
+    "expired-callback": () => resetFirebaseRecaptchaVerifier().catch(() => {})
+  });
+  await verifier.render?.();
+  state.firebasePhone.recaptchaVerifier = verifier;
+  state.firebasePhone.recaptchaElement = element;
+  return verifier;
+}
+
+async function resetFirebaseRecaptchaVerifier() {
+  const verifier = state.firebasePhone.recaptchaVerifier;
+  state.firebasePhone.recaptchaVerifier = null;
+  state.firebasePhone.recaptchaElement = null;
+  try {
+    verifier?.clear?.();
+  } catch {}
+}
+
+function clearFirebasePhoneChallenge() {
+  state.firebasePhone.confirmationResult = null;
+  state.firebasePhone.phone = "";
+}
+
+function setPhoneAuthBusy(busy) {
+  state.firebasePhone.busy = busy;
+  const button = document.querySelector("#sendOtpBtn");
+  if (button) {
+    button.disabled = busy;
+    button.setAttribute("aria-busy", busy ? "true" : "false");
+    button.textContent = busy ? "Enviando" : "Codigo";
+  }
+}
+
+function isFirebaseAuthConfigReady(firebaseConfig) {
+  return Boolean(firebaseConfig?.apiKey &&
+    firebaseConfig?.authDomain &&
+    firebaseConfig?.projectId &&
+    firebaseConfig?.appId);
+}
+
+function firebasePhoneAuthErrorMessage(error, fallback) {
+  const code = String(error?.code || error?.message || "").toLowerCase();
+  if (code.includes("invalid-phone-number")) return "Revisa el numero con codigo de pais, por ejemplo +593...";
+  if (code.includes("captcha-check-failed") || code.includes("missing-app-credential") || code.includes("invalid-app-credential")) return "No se pudo validar reCAPTCHA. Reintenta el envio del codigo.";
+  if (code.includes("app-not-authorized") || code.includes("unauthorized-domain")) return "Este dominio no esta autorizado en Firebase Authentication.";
+  if (code.includes("too-many-requests") || code.includes("quota-exceeded")) return "Firebase bloqueo temporalmente los SMS por demasiados intentos. Espera un momento.";
+  if (code.includes("invalid-verification-code")) return "Ese codigo no coincide. Revisalo e intenta otra vez.";
+  if (code.includes("code-expired")) return "Ese codigo vencio. Pide uno nuevo.";
+  if (code.includes("network-request-failed")) return "No hay conexion estable con Firebase. Revisa internet e intenta otra vez.";
+  return error?.message || fallback;
 }
 
 async function registerFirebaseMessagingFid(messagingModule, messaging, tokenOptions) {

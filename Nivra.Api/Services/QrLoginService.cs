@@ -9,7 +9,7 @@ public sealed class QrLoginService(TimeProvider timeProvider)
     private readonly ConcurrentDictionary<string, QrLoginChallenge> _challenges = new(StringComparer.Ordinal);
     private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(2);
 
-    public QrLoginChallenge Start(string deviceName, KeyBundleRequest keyBundle)
+    public QrLoginChallenge Start(string deviceName, KeyBundleRequest? keyBundle, string? publicKey)
     {
         PurgeExpired();
 
@@ -20,6 +20,7 @@ public sealed class QrLoginService(TimeProvider timeProvider)
             code,
             deviceName.Trim(),
             keyBundle,
+            publicKey?.Trim(),
             timeProvider.GetUtcNow(),
             timeProvider.GetUtcNow().Add(Lifetime));
 
@@ -32,7 +33,7 @@ public sealed class QrLoginService(TimeProvider timeProvider)
         PurgeExpired();
         return _challenges.TryGetValue(qrId, out var challenge) &&
             challenge.ExpiresAt > timeProvider.GetUtcNow() &&
-            challenge.Auth is null &&
+            challenge.Authorization is null &&
             string.Equals(challenge.Code, code.Trim(), StringComparison.Ordinal);
     }
 
@@ -52,7 +53,7 @@ public sealed class QrLoginService(TimeProvider timeProvider)
             : null;
     }
 
-    public bool TryAuthorize(string qrId, string code, AuthResponse auth)
+    public bool TryAuthorize(string qrId, string code, QrLoginAuthorizedResponse authorization)
     {
         var challenge = GetPending(qrId, code);
         if (challenge is null)
@@ -60,7 +61,7 @@ public sealed class QrLoginService(TimeProvider timeProvider)
             return false;
         }
 
-        challenge.Auth = auth;
+        challenge.Authorization = authorization;
         challenge.AuthorizedAt = timeProvider.GetUtcNow();
         return true;
     }
@@ -75,7 +76,7 @@ public sealed class QrLoginService(TimeProvider timeProvider)
         var now = timeProvider.GetUtcNow();
         foreach (var item in _challenges)
         {
-            if (item.Value.ExpiresAt <= now && item.Value.Auth is null)
+            if (item.Value.ExpiresAt <= now && item.Value.Authorization is null)
             {
                 _challenges.TryRemove(item.Key, out _);
             }
@@ -87,16 +88,18 @@ public sealed class QrLoginChallenge(
     string id,
     string code,
     string deviceName,
-    KeyBundleRequest keyBundle,
+    KeyBundleRequest? keyBundle,
+    string? publicKey,
     DateTimeOffset createdAt,
     DateTimeOffset expiresAt)
 {
     public string Id { get; } = id;
     public string Code { get; } = code;
     public string DeviceName { get; } = deviceName;
-    public KeyBundleRequest KeyBundle { get; } = keyBundle;
+    public KeyBundleRequest? KeyBundle { get; } = keyBundle;
+    public string? PublicKey { get; } = publicKey;
     public DateTimeOffset CreatedAt { get; } = createdAt;
     public DateTimeOffset ExpiresAt { get; } = expiresAt;
     public DateTimeOffset? AuthorizedAt { get; set; }
-    public AuthResponse? Auth { get; set; }
+    public QrLoginAuthorizedResponse? Authorization { get; set; }
 }
