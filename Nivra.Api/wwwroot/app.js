@@ -1396,7 +1396,7 @@ function renderAuth() {
               <input id="phoneLogin" class="input" inputmode="tel" autocomplete="tel" placeholder="+57 300 000 0000">
               <button class="btn ghost" type="button" id="sendOtpBtn" ${state.firebasePhone.busy ? `disabled aria-busy="true"` : ""}>${state.firebasePhone.busy ? "Enviando" : "Codigo"}</button>
             </div>
-            <div id="phoneRecaptcha" class="recaptcha-slot" aria-hidden="true"></div>
+            <div id="phoneRecaptcha" class="recaptcha-slot"></div>
           </div>
           <div id="otpWrap" class="field ${mode === "phone" ? "" : "hidden"}">
             <label for="otpCode">Codigo</label>
@@ -9208,7 +9208,6 @@ function ensureFirebaseRecaptchaContainer() {
   element = document.createElement("div");
   element.id = "phoneRecaptcha";
   element.className = "recaptcha-slot";
-  element.setAttribute("aria-hidden", "true");
   document.querySelector("#phoneWrap")?.appendChild(element) || document.body.appendChild(element);
   return element;
 }

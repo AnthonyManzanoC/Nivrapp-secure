@@ -222,6 +222,14 @@ button, .btn, .nav-btn, .list-item, .segment, .top-title-button { -webkit-tap-hi
   height: 1px;
   overflow: hidden;
 }
+
+/* Ocultar el badge flotante de reCAPTCHA para mantener la UI limpia */
+.grecaptcha-badge {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  display: none !important;
+}
+
 .qr-login-box {
   border: 1px solid var(--line);
   background: rgba(255,255,255,.05);
