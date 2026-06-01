@@ -1474,7 +1474,7 @@ function setAuthMode(mode) {
   if (mode !== "phoneAlias") state.pendingPhoneAlias = null;
   if (mode !== "phone" && mode !== "phoneAlias") {
     clearFirebasePhoneChallenge();
-    resetFirebaseRecaptchaVerifier().catch(() => {});
+    resetFirebaseRecaptchaVerifier({ clear: true }).catch(() => {});
   }
   document.querySelectorAll("[data-auth-tab]").forEach((tab) => tab.classList.toggle("active", tab.dataset.authTab === mode || (mode === "phoneAlias" && tab.dataset.authTab === "phone")));
   const form = document.querySelector("#authForm");
@@ -3912,7 +3912,8 @@ async function startPhoneOtp() {
     document.querySelector("#otpCode")?.focus();
     toast("Codigo SMS enviado por Firebase.");
   } catch (error) {
-    await resetFirebaseRecaptchaVerifier();
+    const forceClear = String(error?.code || error?.message || "").toLowerCase().includes("already been rendered");
+    await resetFirebaseRecaptchaVerifier({ clear: forceClear });
     toast(firebasePhoneAuthErrorMessage(error, "No se pudo enviar el codigo SMS."));
   } finally {
     setPhoneAuthBusy(false);
@@ -9174,31 +9175,85 @@ async function getFirebasePhoneAuthSession() {
 }
 
 async function getFirebaseRecaptchaVerifier(session) {
-  const element = document.querySelector("#sendOtpBtn");
-  if (!element) throw new Error("No se encontro el boton de envio.");
-  if (state.firebasePhone.recaptchaVerifier && state.firebasePhone.recaptchaElement === element) {
-    return state.firebasePhone.recaptchaVerifier;
+  const element = ensureFirebaseRecaptchaContainer();
+  const verifier = window.recaptchaVerifier || state.firebasePhone.recaptchaVerifier;
+  const verifierElement = window.recaptchaElement || state.firebasePhone.recaptchaElement;
+  if (verifier && verifierElement === element && document.body.contains(element)) {
+    state.firebasePhone.recaptchaVerifier = verifier;
+    state.firebasePhone.recaptchaElement = element;
+    window.recaptchaVerifier = verifier;
+    window.recaptchaElement = element;
+    return verifier;
   }
 
-  await resetFirebaseRecaptchaVerifier();
-  const verifier = session.createRecaptchaVerifier("sendOtpBtn", {
+  if (verifier) await resetFirebaseRecaptchaVerifier({ clear: true });
+  element.innerHTML = "";
+  const nextVerifier = session.createRecaptchaVerifier("phoneRecaptcha", {
     size: "invisible",
     callback: () => {},
     "expired-callback": () => resetFirebaseRecaptchaVerifier().catch(() => {})
   });
-  await verifier.render?.();
-  state.firebasePhone.recaptchaVerifier = verifier;
+  window.recaptchaVerifier = nextVerifier;
+  window.recaptchaElement = element;
+  window.recaptchaWidgetId = await nextVerifier.render?.();
+  state.firebasePhone.recaptchaVerifier = nextVerifier;
   state.firebasePhone.recaptchaElement = element;
-  return verifier;
+  return nextVerifier;
 }
 
-async function resetFirebaseRecaptchaVerifier() {
-  const verifier = state.firebasePhone.recaptchaVerifier;
-  state.firebasePhone.recaptchaVerifier = null;
-  state.firebasePhone.recaptchaElement = null;
+function ensureFirebaseRecaptchaContainer() {
+  let element = document.querySelector("#phoneRecaptcha");
+  if (element) return element;
+
+  element = document.createElement("div");
+  element.id = "phoneRecaptcha";
+  element.className = "recaptcha-slot";
+  element.setAttribute("aria-hidden", "true");
+  document.querySelector("#phoneWrap")?.appendChild(element) || document.body.appendChild(element);
+  return element;
+}
+
+async function resetFirebaseRecaptchaVerifier({ clear = false } = {}) {
+  const verifier = window.recaptchaVerifier || state.firebasePhone.recaptchaVerifier;
+  if (!verifier) {
+    state.firebasePhone.recaptchaVerifier = null;
+    state.firebasePhone.recaptchaElement = null;
+    window.recaptchaVerifier = null;
+    window.recaptchaElement = null;
+    window.recaptchaWidgetId = null;
+    return;
+  }
+
+  if (clear) {
+    try {
+      verifier.clear?.();
+    } catch {}
+    state.firebasePhone.recaptchaVerifier = null;
+    state.firebasePhone.recaptchaElement = null;
+    window.recaptchaVerifier = null;
+    window.recaptchaElement = null;
+    window.recaptchaWidgetId = null;
+    ensureFirebaseRecaptchaContainer().innerHTML = "";
+    return;
+  }
+
   try {
-    verifier?.clear?.();
-  } catch {}
+    const widgetId = window.recaptchaWidgetId ?? await verifier.render?.();
+    if (widgetId !== undefined && widgetId !== null) {
+      window.recaptchaWidgetId = widgetId;
+      window.grecaptcha?.reset?.(widgetId);
+    }
+  } catch {
+    try {
+      verifier.clear?.();
+    } catch {}
+    window.recaptchaVerifier = null;
+    window.recaptchaElement = null;
+    window.recaptchaWidgetId = null;
+  }
+
+  state.firebasePhone.recaptchaVerifier = window.recaptchaVerifier || null;
+  state.firebasePhone.recaptchaElement = window.recaptchaElement || null;
 }
 
 function clearFirebasePhoneChallenge() {
