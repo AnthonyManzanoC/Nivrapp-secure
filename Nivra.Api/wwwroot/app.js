@@ -49,6 +49,10 @@ const FIREBASE_APP_NAME = "nivra-web-push";
 const FIREBASE_RESETTABLE_IDB_NAMES = ["fcm_token_details_db", "firebase-installations-database"];
 const REQUEST_TIMEOUT_MS = 20000;
 const UPLOAD_REQUEST_TIMEOUT_MS = 120000;
+const QR_AUTHORIZE_TIMEOUT_MS = 12000;
+const CALL_SIGNAL_TIMEOUT_MS = 8000;
+const CALL_END_REQUEST_TIMEOUT_MS = 8000;
+const CALL_RING_TIMEOUT_MS = 45000;
 const PROFILE_REFRESH_MIN_MS = 5 * 60 * 1000;
 const PUSH_REGISTRATION_RETRY_DELAYS_MS = [5000, 15000, 60000, 180000];
 const PUSH_PROMPT_DISMISS_MS = 7 * 24 * 60 * 60 * 1000;
@@ -406,7 +410,9 @@ const state = {
     pendingSignals: [],
     startedAt: null,
     minimized: false,
-    ticker: null
+    ticker: null,
+    ringTimeout: null,
+    ending: false
   },
   endedCallIds: new Set(),
   camera: {
@@ -2969,8 +2975,8 @@ function renderQrScannerModal() {
       </div>
       <div class="qr-scanner-actions">
         <input id="qrScanFileInput" class="hidden" type="file" accept="image/*">
-        <button class="btn ghost" type="button" id="qrScanFileBtn">${icon("image")}<span>Imagen</span></button>
-        <button class="btn primary" type="button" id="restartQrScannerBtn">${icon("sync")}<span>Reintentar</span></button>
+        <button class="btn ghost" type="button" id="qrScanFileBtn" ${state.qrScanner.busy ? "disabled" : ""}>${icon("image")}<span>Imagen</span></button>
+        <button class="btn primary" type="button" id="restartQrScannerBtn" ${state.qrScanner.busy ? "disabled" : ""}>${icon("sync")}<span>Reintentar</span></button>
       </div>
     </section>
   `;
@@ -3239,7 +3245,9 @@ function renderCallLayer() {
   const title = callTitle(call);
   const subtitle = callSubtitle(call);
   const status = callStatusText();
-  const endLabel = isGroupCall(call) && call.initiatorUserId !== state.auth.user.id ? "Salir" : "Colgar";
+  const ending = Boolean(state.call.ending);
+  const endLabel = ending ? "Cerrando" : isGroupCall(call) && call.initiatorUserId !== state.auth.user.id ? "Salir" : "Colgar";
+  const endingAttrs = ending ? `disabled aria-busy="true"` : "";
   return `
     <section class="call-layer ${isVideo ? "video" : "voice"} ${isIncoming ? "incoming" : ""} ${state.call.minimized ? "call-minimized" : ""}" aria-label="Llamada">
       <div class="call-shell">
@@ -3250,7 +3258,7 @@ function renderCallLayer() {
             <strong data-call-status>${escapeHtml(status)}</strong>
             <span>${escapeHtml(subtitle)}</span>
           </div>
-          <button class="btn danger" id="endCallTopBtn">${icon("phone-off")}<span>${endLabel}</span></button>
+          <button class="btn danger" id="endCallTopBtn" ${endingAttrs}>${icon("phone-off")}<span>${endLabel}</span></button>
         </header>
         <div class="call-stage ${isVideo ? "video-stage" : "voice-stage"}">
           ${isVideo ? renderVideoCallStage(participants) : renderVoiceCallStage(participants, title)}
@@ -3258,12 +3266,12 @@ function renderCallLayer() {
         <footer class="call-controls">
           ${isIncoming ? `
             <button class="call-action accept" id="acceptCallBtn">${icon(isVideo ? "video" : "phone")}<span>Aceptar</span></button>
-            <button class="call-action decline" id="declineCallBtn">${icon("phone-off")}<span>Rechazar</span></button>
+            <button class="call-action decline" id="declineCallBtn" ${endingAttrs}>${icon("phone-off")}<span>${ending ? "Cerrando" : "Rechazar"}</span></button>
           ` : `
             <button class="call-action ${state.call.muted ? "active" : ""}" id="toggleMuteBtn">${icon(state.call.muted ? "mic-off" : "mic")}<span>${state.call.muted ? "Silenciado" : "Micro"}</span></button>
             ${isVideo ? `<button class="call-action ${state.call.cameraOff ? "active" : ""}" id="toggleCameraBtn">${icon(state.call.cameraOff ? "video-off" : "video")}<span>${state.call.cameraOff ? "Camara off" : "Camara"}</span></button>` : ""}
             <button class="call-action ${state.call.speaker ? "active" : ""}" id="toggleSpeakerBtn">${icon("volume")}<span>Audio</span></button>
-            <button class="call-action decline" id="endCallBtn">${icon("phone-off")}<span>${endLabel}</span></button>
+            <button class="call-action decline" id="endCallBtn" ${endingAttrs}>${icon("phone-off")}<span>${endLabel}</span></button>
           `}
         </footer>
       </div>
@@ -3278,8 +3286,8 @@ function bindIncomingCallOverlayEvents() {
   document.querySelector("#incomingAcceptBtn")?.addEventListener("click", () => {
     acceptCall().catch((error) => toast(error.message || "No se pudo contestar."));
   });
-  document.querySelector("#incomingDeclineBtn")?.addEventListener("click", () => {
-    declineCall().catch((error) => toast(error.message || "No se pudo rechazar."));
+  document.querySelector("#incomingDeclineBtn")?.addEventListener("click", (event) => {
+    declineCall(event).catch((error) => toast(error.message || "No se pudo rechazar."));
   });
 }
 
@@ -4036,7 +4044,7 @@ async function startQrLoginInternal() {
     await handleQrLoginSuccess(encryptedPayload, ephemeral, connection);
   });
   await connection.start();
-  const challenge = buildQrLinkChallenge(serverChallenge, ephemeral.publicJwk);
+  const challenge = buildQrLinkChallenge(serverChallenge, ephemeral.publicJwk, ephemeral.publicSpki);
   state.qrLogin = { ...challenge, connection, ephemeral, active: true };
   renderQrChallenge(state.qrLogin);
 }
@@ -4070,7 +4078,7 @@ function renderQrChallenge(challenge) {
     if (window.QRCode?.toCanvas) {
       const canvas = document.createElement("canvas");
       frame.appendChild(canvas);
-      window.QRCode.toCanvas(canvas, qrText, { width: 168, margin: 1, color: { dark: "#04100d", light: "#f4fbf7" } }).catch(() => {
+      window.QRCode.toCanvas(canvas, qrText, { width: 196, margin: 2, errorCorrectionLevel: "L", color: { dark: "#04100d", light: "#f4fbf7" } }).catch(() => {
         frame.innerHTML = renderQrSvg(qrText) || fakeQrMatrix(qrText || "nivra");
       });
     } else if (window.qrcode) {
@@ -4086,7 +4094,7 @@ function renderQrChallenge(challenge) {
 function renderQrSvg(value) {
   if (!value || !window.qrcode) return "";
   try {
-    const qr = window.qrcode(0, "M");
+    const qr = window.qrcode(0, "L");
     qr.addData(value);
     qr.make();
     return qr.createSvgTag({ scalable: true, margin: 1 }).replace("<svg", '<svg class="qr-svg"');
@@ -4111,27 +4119,32 @@ function detachQrLoginHandlers(connection) {
   connection?.off?.("qr-login-success");
 }
 
-function buildQrLinkChallenge(serverChallenge, publicJwk) {
+function buildQrLinkChallenge(serverChallenge, publicJwk, publicSpki = "") {
   const createdAt = new Date();
   const expiresAt = serverChallenge?.expiresAt ? new Date(serverChallenge.expiresAt) : new Date(createdAt.getTime() + QR_LOGIN_TTL_MS);
   const qrId = serverChallenge?.qrId || "";
   const code = serverChallenge?.code || "";
   const syncToken = serverChallenge?.syncToken || `${qrId}.${code}`;
+  const publicKey = base64UrlJson(publicJwk);
   const payload = {
-    v: 2,
+    v: 3,
     type: "nivra-qr-login",
-    mode: "signalr-sync",
-    alg: "RSA-OAEP-256+A256GCM",
     qrId,
     code,
-    syncToken,
-    publicKey: base64UrlJson(publicJwk),
-    origin: API_BASE_URL,
-    targetDeviceName: deviceName(),
-    createdAt: createdAt.toISOString(),
+    publicKey,
+    publicSpki,
     expiresAt: expiresAt.toISOString()
   };
-  const qrData = `nivra://login/qr?data=${encodeURIComponent(base64UrlJson(payload))}`;
+  const query = new URLSearchParams({
+    v: String(payload.v),
+    type: payload.type,
+    qrId,
+    code,
+    pk: publicSpki || publicKey,
+    k: publicSpki ? "spki" : "jwk",
+    exp: payload.expiresAt
+  });
+  const qrData = `nivra://login/qr?${query.toString()}`;
   const expiresTimer = setTimeout(() => {
     if (state.qrLogin?.qrId === qrId) {
       stopQrLogin().catch(() => {});
@@ -4400,11 +4413,30 @@ async function startQrScanner() {
   if (window.Html5Qrcode) {
     const reader = new Html5Qrcode("qrScannerRegion");
     state.qrScanner.reader = reader;
-    await reader.start(
-      { facingMode: "environment" },
-      { fps: 10, qrbox: (width, height) => ({ width: Math.min(width, height, 280), height: Math.min(width, height, 280) }) },
-      (decodedText) => handleQrScanResult(decodedText)
-    );
+    try {
+      await reader.start(
+        { facingMode: { ideal: "environment" } },
+        {
+          fps: 7,
+          qrbox: (width, height) => {
+            const size = Math.min(width, height, 300);
+            return { width: size, height: size };
+          },
+          aspectRatio: 1,
+          disableFlip: true,
+          experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+        },
+        (decodedText) => {
+          handleQrScanResult(decodedText).catch((error) => {
+            console.warn("QR scan handling failed.", error);
+          });
+        }
+      );
+    } catch (error) {
+      state.qrScanner.reader = null;
+      try { reader.clear?.(); } catch {}
+      throw error;
+    }
     return;
   }
 
@@ -4447,7 +4479,7 @@ async function stopQrScanner() {
     const reader = state.qrScanner.reader;
     state.qrScanner.reader = null;
     await reader.stop().catch(() => {});
-    reader.clear?.();
+    try { reader.clear?.(); } catch {}
   }
   if (state.qrScanner.raf) {
     cancelAnimationFrame(state.qrScanner.raf);
@@ -4456,6 +4488,15 @@ async function stopQrScanner() {
   if (state.qrScanner.stream) {
     state.qrScanner.stream.getTracks().forEach((track) => track.stop());
     state.qrScanner.stream = null;
+  }
+  const video = document.querySelector("#qrScannerVideo");
+  if (video) {
+    try {
+      video.pause?.();
+      video.srcObject = null;
+      video.classList.add("hidden");
+      video.load?.();
+    } catch {}
   }
 }
 
@@ -4468,9 +4509,15 @@ function setQrScannerStatus(status) {
 async function handleQrScanFile(event) {
   const file = event.target.files?.[0];
   if (!file) return;
+  let tempReader = null;
   try {
-    if (state.qrScanner.reader?.scanFile) {
-      const result = await state.qrScanner.reader.scanFile(file, true);
+    const reader = state.qrScanner.reader?.scanFile
+      ? state.qrScanner.reader
+      : window.Html5Qrcode
+        ? (tempReader = new Html5Qrcode("qrScannerRegion"))
+        : null;
+    if (reader?.scanFile) {
+      const result = await reader.scanFile(file, true);
       await handleQrScanResult(result);
       return;
     }
@@ -4478,6 +4525,7 @@ async function handleQrScanFile(event) {
   } catch (error) {
     setQrScannerStatus(error.message || "No pude leer ese QR.");
   } finally {
+    try { tempReader?.clear?.(); } catch {}
     event.target.value = "";
   }
 }
@@ -4485,34 +4533,65 @@ async function handleQrScanFile(event) {
 async function handleQrScanResult(decodedText) {
   if (state.qrScanner.busy) return;
   state.qrScanner.busy = true;
-  setQrScannerStatus("QR leido. Cifrando autorizacion...");
+  setQrScannerStatus("QR leido. Deteniendo camara...");
   try {
     const challenge = parseQrLoginData(decodedText);
-    await authorizeQrLogin(challenge);
     await stopQrScanner();
+    setQrScannerStatus("QR leido. Vinculando dispositivo...");
+    await authorizeQrLogin(challenge);
     state.modal = null;
+    state.qrScanner.busy = false;
     render();
-    toast("Autorizacion enviada al otro dispositivo.");
+    toast("Dispositivo vinculado.");
   } catch (error) {
     state.qrScanner.busy = false;
-    setQrScannerStatus(error.message || "QR no valido.");
+    const message = error.message || "No se pudo vincular el dispositivo.";
+    toast(message);
+    setQrScannerStatus(`${message} Reintentando escaner...`);
+    await stopQrScanner().catch(() => {});
+    setTimeout(() => {
+      if (state.modal?.type !== "qrScanner" || state.qrScanner.busy) return;
+      startQrScanner().catch((restartError) => {
+        state.qrScanner.busy = false;
+        setQrScannerStatus(restartError.message || "No se pudo abrir la camara.");
+      });
+    }, 700);
   }
 }
 
 function parseQrLoginData(raw) {
   const text = String(raw || "").trim();
   let encoded = text;
+  let payload = null;
   try {
     const url = new URL(text);
-    encoded = url.searchParams.get("data") || url.hash.replace(/^#/, "") || text;
+    const directPublicKey = url.searchParams.get("publicKey") || url.searchParams.get("pk") || "";
+    const directQrId = url.searchParams.get("qrId") || url.searchParams.get("qr_login_id") || "";
+    const directCode = url.searchParams.get("code") || url.searchParams.get("qr_code") || "";
+    if (directPublicKey && (directQrId || url.searchParams.get("syncToken"))) {
+      const keyKind = (url.searchParams.get("k") || url.searchParams.get("keyType") || (url.searchParams.has("publicKey") ? "jwk" : "spki")).toLowerCase();
+      payload = {
+        v: Number(url.searchParams.get("v") || 3),
+        type: url.searchParams.get("type") || "nivra-qr-login",
+        qrId: directQrId,
+        code: directCode,
+        syncToken: url.searchParams.get("syncToken") || "",
+        publicKey: keyKind === "jwk" ? directPublicKey : "",
+        publicSpki: keyKind === "spki" ? directPublicKey : "",
+        expiresAt: url.searchParams.get("expiresAt") || url.searchParams.get("exp") || ""
+      };
+    } else {
+      encoded = url.searchParams.get("data") || url.hash.replace(/^#/, "") || text;
+    }
   } catch {}
-  let payload;
-  try {
-    payload = encoded.startsWith("{") ? JSON.parse(encoded) : jsonFromBase64Url(encoded);
-  } catch {
-    throw new Error("Ese QR no pertenece a Nivra.");
+  if (!payload) {
+    try {
+      payload = encoded.startsWith("{") ? JSON.parse(encoded) : jsonFromBase64Url(encoded);
+    } catch {
+      throw new Error("Ese QR no pertenece a Nivra.");
+    }
   }
-  if (payload?.type !== "nivra-qr-login" || !payload.publicKey || (!payload.connectionId && (!payload.qrId || !payload.code) && !payload.syncToken)) {
+  if (payload?.type !== "nivra-qr-login" || (!payload.publicKey && !payload.publicSpki) || (!payload.connectionId && (!payload.qrId || !payload.code) && !payload.syncToken)) {
     throw new Error("QR de vinculacion invalido.");
   }
   if (payload.expiresAt && Date.parse(payload.expiresAt) <= Date.now()) {
@@ -4525,7 +4604,7 @@ function parseQrLoginData(raw) {
   }
   return {
     ...payload,
-    publicJwk: jsonFromBase64Url(payload.publicKey)
+    publicJwk: payload.publicKey ? jsonFromBase64Url(payload.publicKey) : null
   };
 }
 
@@ -4539,10 +4618,12 @@ async function authorizeQrLogin(challenge) {
     sourceDeviceName: deviceName(),
     linkedAt: new Date().toISOString()
   };
-  const sealed = await encryptQrPayload(challenge.publicJwk, challenge.qrId && challenge.code ? payload : { ...payload, auth: state.auth });
+  const publicMaterial = challenge.publicJwk || challenge.publicSpki;
+  const sealed = await encryptQrPayload(publicMaterial, challenge.qrId && challenge.code ? payload : { ...payload, auth: state.auth });
   if (challenge.qrId && challenge.code) {
     await request("/api/auth/qr-login", {
       method: "POST",
+      timeoutMs: QR_AUTHORIZE_TIMEOUT_MS,
       body: {
         qrId: challenge.qrId,
         code: challenge.code,
@@ -4554,6 +4635,7 @@ async function authorizeQrLogin(challenge) {
 
   await request("/api/auth/authorize-qr", {
     method: "POST",
+    timeoutMs: QR_AUTHORIZE_TIMEOUT_MS,
     body: {
       targetConnectionId: challenge.connectionId,
       encryptedPayload: sealed
@@ -6426,6 +6508,11 @@ function detachRealtimeHandlers(connection) {
     "call.started",
     "call.signal",
     "call.ended",
+    "CallEnded",
+    "call.rejected",
+    "CallRejected",
+    "call.timeout",
+    "CallTimeout",
     "call.failed",
     "device.revoked",
     "device.listChanged"
@@ -6529,9 +6616,13 @@ async function connectRealtime() {
   connection.on("call.started", realtimeHandler("call.started", handleIncomingCall));
   connection.on("call.signal", realtimeHandler("call.signal", handleCallSignal));
   connection.on("call.ended", realtimeHandler("call.ended", handleCallEnded));
+  connection.on("CallEnded", realtimeHandler("CallEnded", handleCallEnded));
+  connection.on("call.rejected", realtimeHandler("call.rejected", handleCallRejected));
+  connection.on("CallRejected", realtimeHandler("CallRejected", handleCallRejected));
+  connection.on("call.timeout", realtimeHandler("call.timeout", handleCallTimeout));
+  connection.on("CallTimeout", realtimeHandler("CallTimeout", handleCallTimeout));
   connection.on("call.failed", realtimeHandler("call.failed", (payload) => {
-    stopCallTones();
-    resetCallState();
+    cleanupCallState({ historyStatus: "Fallida" });
     render();
     toast(payload?.message || "No se pudo iniciar la llamada.");
   }));
@@ -6743,14 +6834,18 @@ async function startCall(type) {
     rememberCall(call, { status: "Llamando" });
     activateView("calls", { renderAfter: false });
     startCallTicker();
+    scheduleCallTimeout(call);
     playCallTone("outgoing");
     render();
     await establishCallPeers();
     await flushPendingCallSignals();
     toast(`${type === "Video" ? "Videollamada" : "Llamada"} iniciada.`);
   } catch (error) {
-    stopCallMedia();
-    stopCallTones();
+    const call = state.call.current;
+    cleanupCallState({ historyStatus: "Fallida", remember: Boolean(call) });
+    if (call?.id) {
+      request(`/calls/${call.id}/end`, { method: "POST", timeoutMs: CALL_END_REQUEST_TIMEOUT_MS }).catch(() => {});
+    }
     toast(error.message || "No se pudo iniciar llamada.");
   }
 }
@@ -6770,6 +6865,7 @@ async function rejoinCall(callId) {
     state.call.phase = "active";
     state.call.startedAt = call.startedAt || new Date().toISOString();
     state.call.minimized = false;
+    clearCallTimeout();
     await prepareCallMedia(call.type === "Video");
     activateView("calls", { mobileChatOpen: false, renderAfter: false });
     startCallTicker();
@@ -6801,6 +6897,7 @@ async function handleIncomingCall(call, options = {}) {
   state.call.minimized = false;
   rememberCall(call, { status: state.call.phase === "incoming" ? "Entrante" : "Llamando" });
   startCallTicker();
+  scheduleCallTimeout(call);
   if (state.call.phase === "incoming") {
     playCallTone("incoming");
     navigator.vibrate?.([320, 140, 320]);
@@ -6823,6 +6920,7 @@ async function acceptCall() {
     state.call.phase = "active";
     state.call.startedAt = new Date().toISOString();
     state.call.minimized = false;
+    clearCallTimeout();
     stopCallTones();
     syncIncomingCallOverlay();
     startCallTicker();
@@ -6856,61 +6954,58 @@ function restoreActiveCallLayer() {
   render();
 }
 
-async function declineCall() {
+async function declineCall(event) {
+  event?.preventDefault?.();
   const call = state.call.current;
   if (!call) return;
-  try {
-    await sendCallSignal(call, call.initiatorUserId, "declined", "declined").catch(() => {});
-    if (!isGroupCall(call)) {
-      await request(`/calls/${call.id}/end`, { method: "POST" }).catch(() => {});
-    }
-  } finally {
-    rememberEndedCallId(call.id);
-    await clearCallNotificationByData({ callId: call.id, tag: `nivra-call-${call.id}` }).catch(() => {});
-    resetCallState({ historyStatus: "Rechazada" });
-    syncIncomingCallOverlay();
-    render();
+  if (state.call.ending) return;
+  state.call.ending = true;
+  disableCallEndControls();
+  rememberEndedCallId(call.id);
+  clearCallNotificationByData({ callId: call.id, tag: `nivra-call-${call.id}` }).catch(() => {});
+  cleanupCallState({ historyStatus: "Rechazada" });
+  render();
+  sendCallSignal(call, call.initiatorUserId, "declined", "declined", { timeoutMs: CALL_SIGNAL_TIMEOUT_MS }).catch(() => {});
+  if (!isGroupCall(call)) {
+    request(`/calls/${call.id}/end`, { method: "POST", timeoutMs: CALL_END_REQUEST_TIMEOUT_MS }).catch(() => {});
   }
 }
 
-async function endCurrentCall() {
+async function endCurrentCall(event) {
+  event?.preventDefault?.();
   const call = state.call.current;
   if (!call) return;
+  if (state.call.ending) return;
+  state.call.ending = true;
+  disableCallEndControls();
   if (isGroupCall(call) && call.initiatorUserId !== state.auth.user.id) {
-    await leaveGroupCallRoom();
+    leaveGroupCallRoom(call);
     return;
   }
-  try {
-    await request(`/calls/${call.id}/end`, { method: "POST" });
-  } catch {
-    // Ending locally should still close the UI.
-  }
   rememberEndedCallId(call.id);
-  await clearCallNotificationByData({ callId: call.id, tag: `nivra-call-${call.id}` }).catch(() => {});
-  resetCallState();
-  syncIncomingCallOverlay();
+  clearCallNotificationByData({ callId: call.id, tag: `nivra-call-${call.id}` }).catch(() => {});
+  cleanupCallState();
   render();
+  request(`/calls/${call.id}/end`, { method: "POST", timeoutMs: CALL_END_REQUEST_TIMEOUT_MS }).catch(() => {});
 }
 
-async function leaveGroupCallRoom() {
-  const call = state.call.current;
+function leaveGroupCallRoom(call = state.call.current) {
   if (!call) return;
-  try {
-    await Promise.all(call.participantUserIds
-      .filter((userId) => userId !== state.auth.user.id)
-      .map((userId) => sendCallSignal(call, userId, "left", { left: true }).catch(() => {})));
-  } finally {
-    resetCallState({ historyStatus: "Disponible para volver", keepLive: true });
-    syncIncomingCallOverlay();
-    render();
-    toast("Saliste de la llamada. Puedes reentrar mientras siga activa.");
-  }
+  rememberEndedCallId(call.id);
+  cleanupCallState({ historyStatus: "Disponible para volver", keepLive: true });
+  render();
+  toast("Saliste de la llamada. Puedes reentrar mientras siga activa.");
+  Promise.all(call.participantUserIds
+    .filter((userId) => userId !== state.auth.user.id)
+    .map((userId) => sendCallSignal(call, userId, "left", { left: true }, { timeoutMs: CALL_SIGNAL_TIMEOUT_MS }).catch(() => {})))
+    .catch(() => {});
 }
 
-async function sendCallSignal(call, targetUserId, signalType, payload) {
+async function sendCallSignal(call, targetUserId, signalType, payload, options = {}) {
   if (!call?.id || !targetUserId || targetUserId === state.auth.user.id) return;
   await request(`/calls/${call.id}/signal`, {
     method: "POST",
+    timeoutMs: options.timeoutMs ?? CALL_SIGNAL_TIMEOUT_MS,
     body: {
       targetUserId,
       signalType,
@@ -6935,6 +7030,7 @@ async function handleCallSignal(signal) {
     }
     state.call.phase = "active";
     state.call.startedAt = new Date().toISOString();
+    clearCallTimeout();
     stopCallTones();
     startCallTicker();
     await establishAcceptedCallPeer(fromUserId);
@@ -6951,7 +7047,7 @@ async function handleCallSignal(signal) {
     }
     stopCallTones();
     toast(signalType === "busy" ? "El contacto esta en otra llamada." : "Llamada rechazada.");
-    resetCallState({ historyStatus: signalType === "busy" ? "Ocupada" : "Rechazada" });
+    cleanupCallState({ historyStatus: signalType === "busy" ? "Ocupada" : "Rechazada" });
     render();
     return;
   }
@@ -6975,21 +7071,41 @@ async function handleCallSignal(signal) {
   }
 }
 
-async function handleCallEnded(call) {
-  const callId = call?.id || call?.Id;
+async function handleCallEnded(call, options = {}) {
+  const callId = call?.id || call?.Id || call?.callId || call?.CallId;
   if (!callId) return;
   rememberEndedCallId(callId);
+  if (state.call.current?.id === callId) {
+    cleanupCallState({ historyStatus: options.historyStatus || terminalCallHistoryStatus(call) });
+    render();
+    toast(options.toast || "Llamada finalizada.");
+    clearCallNotificationByData({ callId, tag: `nivra-call-${callId}` }).catch(() => {});
+    return;
+  }
   await clearCallNotificationByData({ callId, tag: `nivra-call-${callId}` }).catch(() => {});
   if (state.call.current?.id !== callId) {
-    markCallHistoryEnded(callId);
+    markCallHistoryEnded(callId, options.historyStatus || terminalCallHistoryStatus(call));
     render();
     return;
   }
-  stopCallTones();
-  resetCallState();
-  syncIncomingCallOverlay();
+  cleanupCallState({ historyStatus: options.historyStatus || terminalCallHistoryStatus(call) });
   render();
-  toast("Llamada finalizada.");
+  toast(options.toast || "Llamada finalizada.");
+}
+
+function handleCallRejected(call) {
+  return handleCallEnded(call, { historyStatus: "Rechazada", toast: "Llamada rechazada." });
+}
+
+function handleCallTimeout(call) {
+  return handleCallEnded(call, { historyStatus: "Perdida", toast: "Llamada sin respuesta." });
+}
+
+function terminalCallHistoryStatus(call) {
+  const type = String(call?.type || call?.Type || call?.status || call?.Status || "").toLowerCase();
+  if (type.includes("reject") || type.includes("rechaz")) return "Rechazada";
+  if (type.includes("timeout") || type.includes("missed") || type.includes("perdid")) return "Perdida";
+  return "Finalizada";
 }
 
 async function prepareCallMedia(withVideo) {
@@ -7154,6 +7270,7 @@ async function handleWebRtcSignal(signal) {
     await connection.setLocalDescription(answer);
     await sendCallSignal(state.call.current, fromUserId, "answer", { description: connection.localDescription });
     state.call.phase = "active";
+    clearCallTimeout();
     startCallTicker();
     render();
     return;
@@ -7164,6 +7281,7 @@ async function handleWebRtcSignal(signal) {
       await setRemoteDescriptionAndFlush(fromUserId, connection, payload.description);
     }
     state.call.phase = "active";
+    clearCallTimeout();
     startCallTicker();
     render();
     return;
@@ -7241,6 +7359,10 @@ function updateRemoteCallState(userId, key, value) {
 }
 
 function resetCallState(options = {}) {
+  cleanupCallState(options);
+}
+
+function cleanupCallState(options = {}) {
   if (state.call.current && options.remember !== false) {
     rememberCall(state.call.current, {
       status: options.historyStatus || (state.call.phase === "incoming" ? "Perdida" : "Finalizada"),
@@ -7249,6 +7371,7 @@ function resetCallState(options = {}) {
     });
   }
   stopCallTicker();
+  clearCallTimeout();
   stopCallTones();
   stopCallMedia();
   closePeerConnections();
@@ -7261,7 +7384,45 @@ function resetCallState(options = {}) {
   state.call.minimized = false;
   state.call.pendingSignals = [];
   state.call.remoteStates = new Map();
+  state.call.ending = false;
   syncIncomingCallOverlay();
+}
+
+window.cleanupCallState = cleanupCallState;
+
+function disableCallEndControls() {
+  document.querySelectorAll("#endCallBtn, #endCallTopBtn, #declineCallBtn, #incomingDeclineBtn").forEach((button) => {
+    button.disabled = true;
+    button.setAttribute("aria-busy", "true");
+  });
+}
+
+function scheduleCallTimeout(call) {
+  clearCallTimeout();
+  if (!call?.id || !["incoming", "dialing"].includes(state.call.phase)) return;
+  state.call.ringTimeout = setTimeout(() => {
+    handleLocalCallTimeout(call.id).catch((error) => console.warn("Call timeout cleanup failed.", error));
+  }, CALL_RING_TIMEOUT_MS);
+}
+
+function clearCallTimeout() {
+  clearTimeout(state.call.ringTimeout);
+  state.call.ringTimeout = null;
+}
+
+async function handleLocalCallTimeout(callId) {
+  const call = state.call.current;
+  if (!call || call.id !== callId || !["incoming", "dialing"].includes(state.call.phase)) return;
+  const phase = state.call.phase;
+  const historyStatus = phase === "incoming" ? "Perdida" : "Sin respuesta";
+  rememberEndedCallId(call.id);
+  clearCallNotificationByData({ callId: call.id, tag: `nivra-call-${call.id}` }).catch(() => {});
+  cleanupCallState({ historyStatus });
+  render();
+  toast(phase === "incoming" ? "Llamada perdida." : "Llamada sin respuesta.");
+  if (!isGroupCall(call) || call.initiatorUserId === state.auth?.user?.id) {
+    request(`/calls/${call.id}/end`, { method: "POST", timeoutMs: CALL_END_REQUEST_TIMEOUT_MS }).catch(() => {});
+  }
 }
 
 function stopMediaStream(stream) {
@@ -7304,6 +7465,9 @@ function closePeerConnectionForUser(userId) {
       peer.connection.onicecandidate = null;
       peer.connection.ontrack = null;
       peer.connection.onconnectionstatechange = null;
+      peer.connection.getReceivers?.().forEach((receiver) => {
+        try { receiver.track?.stop?.(); } catch {}
+      });
       peer.connection.close?.();
     } catch {}
   }
@@ -7675,11 +7839,22 @@ async function createQrEphemeralKeys() {
     ["wrapKey", "unwrapKey"]
   );
   const publicJwk = await crypto.subtle.exportKey("jwk", pair.publicKey);
-  return { publicKey: pair.publicKey, privateKey: pair.privateKey, publicJwk };
+  const publicSpki = b64url(new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey)));
+  return { publicKey: pair.publicKey, privateKey: pair.privateKey, publicJwk, publicSpki };
 }
 
-async function encryptQrPayload(publicJwk, payload) {
-  const publicKey = await crypto.subtle.importKey("jwk", publicJwk, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["wrapKey"]);
+async function importQrEncryptionPublicKey(publicMaterial) {
+  if (typeof publicMaterial === "string") {
+    return crypto.subtle.importKey("spki", ub64url(publicMaterial), { name: "RSA-OAEP", hash: "SHA-256" }, false, ["wrapKey"]);
+  }
+  if (publicMaterial?.spki) {
+    return crypto.subtle.importKey("spki", ub64url(publicMaterial.spki), { name: "RSA-OAEP", hash: "SHA-256" }, false, ["wrapKey"]);
+  }
+  return crypto.subtle.importKey("jwk", publicMaterial, { name: "RSA-OAEP", hash: "SHA-256" }, false, ["wrapKey"]);
+}
+
+async function encryptQrPayload(publicMaterial, payload) {
+  const publicKey = await importQrEncryptionPublicKey(publicMaterial);
   const contentKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]);
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, contentKey, TEXT.encode(JSON.stringify(payload)));
@@ -8966,14 +9141,15 @@ async function handleTerminalCallPush(data = {}, options = {}) {
   const callId = pushDataValue(data, "callId", "CallId");
   if (!callId) return;
   rememberEndedCallId(callId);
-  await clearCallNotificationByData(data).catch(() => {});
   markCallHistoryEnded(callId, normalizePushType(pushDataValue(data, "type", "Type")) === "missed-call" ? "Perdida" : "Finalizada");
-  if (state.call.current?.id !== callId) return;
-  stopCallTones();
-  resetCallState({ historyStatus: options.historyStatus || "Finalizada" });
-  syncIncomingCallOverlay();
+  if (state.call.current?.id !== callId) {
+    await clearCallNotificationByData(data).catch(() => {});
+    return;
+  }
+  cleanupCallState({ historyStatus: options.historyStatus || "Finalizada" });
   if (options.toast !== false) toast("Llamada finalizada.");
   render();
+  clearCallNotificationByData(data).catch(() => {});
 }
 
 async function clearCallNotificationByData(data = {}) {
@@ -9903,8 +10079,10 @@ function playCallTone(kind) {
 function stopCallTones() {
   Object.values(callTones).forEach((audio) => {
     if (!audio) return;
-    audio.pause();
-    audio.currentTime = 0;
+    try {
+      audio.pause();
+      audio.currentTime = 0;
+    } catch {}
   });
   stopFallbackTone();
 }

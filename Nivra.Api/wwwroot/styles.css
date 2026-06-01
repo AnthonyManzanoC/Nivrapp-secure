@@ -253,16 +253,16 @@ button, .btn, .nav-btn, .list-item, .segment, .top-title-button { -webkit-tap-hi
   overflow-wrap: anywhere;
 }
 .qr-frame {
-  width: 176px;
-  height: 176px;
+  width: 204px;
+  height: 204px;
   border-radius: 8px;
   background: #f4fbf7;
   display: grid;
   place-items: center;
   overflow: hidden;
 }
-.qr-frame canvas { width: 168px !important; height: 168px !important; }
-.qr-frame svg { width: 168px; height: 168px; display: block; }
+.qr-frame canvas { width: 196px !important; height: 196px !important; }
+.qr-frame svg { width: 196px; height: 196px; display: block; }
 .qr-grid { display: grid; grid-template-columns: repeat(21, 1fr); gap: 2px; width: 156px; height: 156px; padding: 8px; }
 .qr-grid i { display: block; background: transparent; }
 .qr-grid i.on { background: #04100d; border-radius: 1px; }
