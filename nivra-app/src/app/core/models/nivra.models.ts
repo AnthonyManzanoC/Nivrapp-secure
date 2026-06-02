@@ -509,6 +509,7 @@ export interface FirebaseWebConfigResponse {
   appId: string;
   vapidKey: string;
   sdkVersion?: string;
+  webPushPublicKey?: string;
 }
 
 export interface PresenceResponse {

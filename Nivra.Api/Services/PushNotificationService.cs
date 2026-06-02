@@ -1,3 +1,5 @@
+using System.Net;
+using System.Buffers.Binary;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
@@ -20,6 +22,7 @@ public sealed class NivraPushOptions
     public string Provider { get; init; } = "Fcm";
     public bool IncludeNotificationPayload { get; init; }
     public FcmPushOptions Fcm { get; init; } = new();
+    public StandardWebPushOptions WebPush { get; init; } = new();
 }
 
 public sealed class FcmPushOptions
@@ -29,6 +32,15 @@ public sealed class FcmPushOptions
     public string ServiceAccountJson { get; init; } = "";
     public string ServiceAccountJsonBase64 { get; init; } = "";
     public string TokenUri { get; init; } = "https://oauth2.googleapis.com/token";
+}
+
+public sealed class StandardWebPushOptions
+{
+    public bool Enabled { get; init; } = true;
+    public string PublicKey { get; init; } = "";
+    public string PrivateKey { get; init; } = "";
+    public string Subject { get; init; } = "mailto:security@nivra.local";
+    public int TtlSeconds { get; init; } = 86400;
 }
 
 public sealed class PushNotificationService(
@@ -57,11 +69,34 @@ public sealed class PushNotificationService(
         {
             try
             {
-                return ResolveFcmRuntimeConfig(options.CurrentValue, initializeFirebaseApp: true) is not null;
+                return ResolveFcmRuntimeConfig(options.CurrentValue, initializeFirebaseApp: true) is not null ||
+                    ResolveStandardWebPushRuntimeConfig(options.CurrentValue) is not null;
             }
             catch
             {
-                return false;
+                try
+                {
+                    return ResolveStandardWebPushRuntimeConfig(options.CurrentValue) is not null;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+        }
+    }
+
+    public string StandardWebPushPublicKey
+    {
+        get
+        {
+            try
+            {
+                return ResolveStandardWebPushRuntimeConfig(options.CurrentValue)?.PublicKey ?? "";
+            }
+            catch
+            {
+                return "";
             }
         }
     }
@@ -217,7 +252,7 @@ public sealed class PushNotificationService(
         bool silentDataOnly = false)
     {
         var pushOptions = options.CurrentValue;
-        FcmRuntimeConfig? fcmConfig;
+        FcmRuntimeConfig? fcmConfig = null;
         try
         {
             fcmConfig = ResolveFcmRuntimeConfig(pushOptions, initializeFirebaseApp: true);
@@ -225,10 +260,10 @@ public sealed class PushNotificationService(
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Push notification skipped because FCM is not ready.");
-            return;
         }
 
-        if (fcmConfig is null)
+        var webPushConfig = ResolveStandardWebPushRuntimeConfig(pushOptions);
+        if (fcmConfig is null && webPushConfig is null)
         {
             return;
         }
@@ -243,7 +278,9 @@ public sealed class PushNotificationService(
                  token.Provider == "FCM" ||
                  token.Provider == "fcm-fid" ||
                  token.Provider == "FcmFid" ||
-                 token.Provider == "FCM-FID"))
+                 token.Provider == "FCM-FID" ||
+                 token.Provider == "webpush" ||
+                 token.Provider == "WebPush"))
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
         {
@@ -260,7 +297,23 @@ public sealed class PushNotificationService(
                 continue;
             }
 
-            var result = await SendFcmAsync(fcmConfig, rawToken, title, body, data, includeNotificationPayload, silentDataOnly, cancellationToken);
+            FcmSendResult result;
+            if (IsStandardWebPushProvider(token.Provider))
+            {
+                if (webPushConfig is null)
+                {
+                    continue;
+                }
+                result = await SendStandardWebPushAsync(webPushConfig, rawToken, title, body, data, includeNotificationPayload, silentDataOnly, cancellationToken);
+            }
+            else
+            {
+                if (fcmConfig is null)
+                {
+                    continue;
+                }
+                result = await SendFcmAsync(fcmConfig, rawToken, title, body, data, includeNotificationPayload, silentDataOnly, cancellationToken);
+            }
             if (result.InvalidToken)
             {
                 token.RevokedAt = DateTimeOffset.UtcNow;
@@ -314,6 +367,70 @@ public sealed class PushNotificationService(
         catch (Exception exception)
         {
             logger.LogWarning(exception, "Could not send FCM push notification.");
+            return FcmSendResult.TransientFailure;
+        }
+    }
+
+    private async Task<FcmSendResult> SendStandardWebPushAsync(
+        StandardWebPushRuntimeConfig webPushConfig,
+        string subscriptionJson,
+        string title,
+        string body,
+        Dictionary<string, string> data,
+        bool includeNotificationPayload,
+        bool silentDataOnly,
+        CancellationToken cancellationToken)
+    {
+        _ = title;
+        _ = body;
+        _ = includeNotificationPayload;
+        _ = silentDataOnly;
+        try
+        {
+            var subscription = JsonSerializer.Deserialize<StandardWebPushSubscription>(subscriptionJson, JsonOptions);
+            if (subscription is null ||
+                string.IsNullOrWhiteSpace(subscription.Endpoint) ||
+                string.IsNullOrWhiteSpace(subscription.Keys?.P256dh) ||
+                string.IsNullOrWhiteSpace(subscription.Keys.Auth))
+            {
+                return FcmSendResult.Invalid;
+            }
+
+            var pushData = data.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal);
+            pushData.Remove("title");
+            pushData.Remove("body");
+            pushData["nivraWebPush"] = "1";
+            var payloadBytes = JsonSerializer.SerializeToUtf8Bytes(new { data = pushData }, JsonOptions);
+            var encrypted = EncryptStandardWebPushPayload(webPushConfig, subscription, payloadBytes);
+
+            var client = httpClientFactory.CreateClient();
+            using var request = new HttpRequestMessage(HttpMethod.Post, subscription.Endpoint);
+            request.Headers.TryAddWithoutValidation("TTL", webPushConfig.TtlSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            request.Headers.TryAddWithoutValidation("Urgency", "high");
+            request.Headers.TryAddWithoutValidation("Authorization", CreateVapidAuthorizationHeader(webPushConfig, subscription.Endpoint));
+            request.Content = new ByteArrayContent(encrypted);
+            request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            request.Content.Headers.ContentEncoding.Add("aes128gcm");
+
+            using var response = await client.SendAsync(request, cancellationToken);
+            if (response.IsSuccessStatusCode)
+            {
+                return FcmSendResult.Success;
+            }
+
+            var responseBody = await response.Content.ReadAsStringAsync(cancellationToken);
+            logger.LogWarning("Web Push rejected a notification with status {StatusCode}: {Body}", response.StatusCode, responseBody);
+            return response.StatusCode is HttpStatusCode.Gone or HttpStatusCode.NotFound
+                ? FcmSendResult.Invalid
+                : FcmSendResult.TransientFailure;
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(exception, "Could not send standard Web Push notification.");
             return FcmSendResult.TransientFailure;
         }
     }
@@ -387,6 +504,241 @@ public sealed class PushNotificationService(
         };
 
         return message;
+    }
+
+    private static bool IsStandardWebPushProvider(string provider)
+    {
+        return string.Equals(provider, "webpush", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(provider, "web-push", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static byte[] EncryptStandardWebPushPayload(
+        StandardWebPushRuntimeConfig webPushConfig,
+        StandardWebPushSubscription subscription,
+        byte[] payload)
+    {
+        var receiverPublicKey = Base64UrlDecode(subscription.Keys.P256dh);
+        var authSecret = Base64UrlDecode(subscription.Keys.Auth);
+        var salt = RandomNumberGenerator.GetBytes(16);
+
+        using var sender = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+        using var receiver = ECDiffieHellman.Create(RawPublicKeyParameters(receiverPublicKey));
+        var sharedSecret = sender.DeriveRawSecretAgreement(receiver.PublicKey);
+        var senderPublicKey = RawPublicKey(sender.ExportParameters(false));
+
+        var prk = HkdfExtract(authSecret, sharedSecret);
+        var info = Combine(Encoding.ASCII.GetBytes("WebPush: info\0"), receiverPublicKey, senderPublicKey);
+        var ikm = HkdfExpand(prk, info, 32);
+        var cek = Hkdf(salt, ikm, Encoding.ASCII.GetBytes("Content-Encoding: aes128gcm\0"), 16);
+        var nonce = Hkdf(salt, ikm, Encoding.ASCII.GetBytes("Content-Encoding: nonce\0"), 12);
+        var plaintext = Combine(payload, [0x02]);
+        var ciphertext = new byte[plaintext.Length];
+        var tag = new byte[16];
+        using (var aes = new AesGcm(cek, 16))
+        {
+            aes.Encrypt(nonce, plaintext, ciphertext, tag);
+        }
+
+        var recordSize = new byte[4];
+        BinaryPrimitives.WriteUInt32BigEndian(recordSize, 4096);
+        return Combine(
+            salt,
+            recordSize,
+            [(byte)senderPublicKey.Length],
+            senderPublicKey,
+            ciphertext,
+            tag);
+    }
+
+    private static string CreateVapidAuthorizationHeader(StandardWebPushRuntimeConfig webPushConfig, string endpoint)
+    {
+        var uri = new Uri(endpoint);
+        var audience = $"{uri.Scheme}://{uri.Host}{(uri.IsDefaultPort ? "" : $":{uri.Port}")}";
+        var now = DateTimeOffset.UtcNow;
+        var header = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object>
+        {
+            ["typ"] = "JWT",
+            ["alg"] = "ES256"
+        }));
+        var payload = Base64Url(JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, object>
+        {
+            ["aud"] = audience,
+            ["exp"] = now.AddHours(12).ToUnixTimeSeconds(),
+            ["sub"] = webPushConfig.Subject
+        }));
+        var unsigned = $"{header}.{payload}";
+        using var signer = ECDsa.Create(webPushConfig.PrivateKey);
+        var signature = signer.SignData(
+            Encoding.ASCII.GetBytes(unsigned),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
+        return $"vapid t={unsigned}.{Base64Url(signature)}, k={webPushConfig.PublicKey}";
+    }
+
+    private StandardWebPushRuntimeConfig? ResolveStandardWebPushRuntimeConfig(NivraPushOptions pushOptions)
+    {
+        if (!pushOptions.Enabled)
+        {
+            return null;
+        }
+
+        var webPushOptions = EffectiveStandardWebPushOptions(pushOptions.WebPush);
+        if (!webPushOptions.Enabled)
+        {
+            return null;
+        }
+
+        var privateKey = ResolveStandardWebPushPrivateKey(webPushOptions);
+        var publicKey = Base64Url(RawPublicKey(privateKey));
+        var subject = FirstNonBlank(webPushOptions.Subject, "mailto:security@nivra.local");
+        var ttl = Math.Clamp(webPushOptions.TtlSeconds <= 0 ? 86400 : webPushOptions.TtlSeconds, 60, 2_419_200);
+        return new StandardWebPushRuntimeConfig(publicKey, privateKey, subject, ttl);
+    }
+
+    private StandardWebPushOptions EffectiveStandardWebPushOptions(StandardWebPushOptions options)
+    {
+        return new StandardWebPushOptions
+        {
+            Enabled = FirstBoolean(
+                configuration["Push:WebPush:Enabled"],
+                configuration["Push__WebPush__Enabled"],
+                options.Enabled),
+            PublicKey = FirstNonBlank(options.PublicKey, configuration["Push:WebPush:PublicKey"], configuration["Push__WebPush__PublicKey"]),
+            PrivateKey = FirstNonBlank(options.PrivateKey, configuration["Push:WebPush:PrivateKey"], configuration["Push__WebPush__PrivateKey"]),
+            Subject = FirstNonBlank(options.Subject, configuration["Push:WebPush:Subject"], configuration["Push__WebPush__Subject"], "mailto:security@nivra.local"),
+            TtlSeconds = FirstInt(
+                options.TtlSeconds,
+                configuration["Push:WebPush:TtlSeconds"],
+                configuration["Push__WebPush__TtlSeconds"],
+                86400)
+        };
+    }
+
+    private ECParameters ResolveStandardWebPushPrivateKey(StandardWebPushOptions webPushOptions)
+    {
+        if (!string.IsNullOrWhiteSpace(webPushOptions.PrivateKey))
+        {
+            return ImportWebPushPrivateKey(webPushOptions.PrivateKey);
+        }
+
+        var seed = FirstNonBlank(
+            configuration["Push:WebPush:Seed"],
+            configuration["Push__WebPush__Seed"],
+            configuration["Security:TokenSigningKey"],
+            configuration["Security__TokenSigningKey"],
+            "nivra-local-standard-webpush-seed-v1");
+        for (var attempt = 0; attempt < 128; attempt++)
+        {
+            var candidate = SHA256.HashData(Encoding.UTF8.GetBytes($"{seed}:standard-webpush:{attempt}"));
+            try
+            {
+                using var key = ECDsa.Create(new ECParameters
+                {
+                    Curve = ECCurve.NamedCurves.nistP256,
+                    D = candidate
+                });
+                return key.ExportParameters(true);
+            }
+            catch (CryptographicException)
+            {
+                // Try the next deterministic candidate if this scalar is outside the curve order.
+            }
+        }
+
+        throw new InvalidOperationException("Could not derive a valid standard Web Push VAPID key.");
+    }
+
+    private static ECParameters ImportWebPushPrivateKey(string value)
+    {
+        var clean = CleanConfigValue(value);
+        if (clean.Contains("BEGIN", StringComparison.OrdinalIgnoreCase))
+        {
+            using var pemKey = ECDsa.Create();
+            pemKey.ImportFromPem(clean);
+            return pemKey.ExportParameters(true);
+        }
+
+        var raw = Base64UrlDecode(clean);
+        if (raw.Length != 32)
+        {
+            throw new InvalidOperationException("Push:WebPush:PrivateKey must be a PEM key or a base64url P-256 private scalar.");
+        }
+
+        using var key = ECDsa.Create(new ECParameters
+        {
+            Curve = ECCurve.NamedCurves.nistP256,
+            D = raw
+        });
+        return key.ExportParameters(true);
+    }
+
+    private static ECParameters RawPublicKeyParameters(byte[] rawPublicKey)
+    {
+        if (rawPublicKey.Length != 65 || rawPublicKey[0] != 0x04)
+        {
+            throw new InvalidOperationException("Web Push subscription p256dh key is not an uncompressed P-256 public key.");
+        }
+
+        return new ECParameters
+        {
+            Curve = ECCurve.NamedCurves.nistP256,
+            Q = new ECPoint
+            {
+                X = rawPublicKey[1..33],
+                Y = rawPublicKey[33..65]
+            }
+        };
+    }
+
+    private static byte[] RawPublicKey(ECParameters parameters)
+    {
+        if (parameters.Q.X is null || parameters.Q.Y is null)
+        {
+            throw new InvalidOperationException("P-256 public key is missing coordinates.");
+        }
+
+        return Combine([0x04], parameters.Q.X, parameters.Q.Y);
+    }
+
+    private static byte[] Hkdf(byte[] salt, byte[] ikm, byte[] info, int length)
+    {
+        return HkdfExpand(HkdfExtract(salt, ikm), info, length);
+    }
+
+    private static byte[] HkdfExtract(byte[] salt, byte[] ikm)
+    {
+        using var hmac = new HMACSHA256(salt);
+        return hmac.ComputeHash(ikm);
+    }
+
+    private static byte[] HkdfExpand(byte[] prk, byte[] info, int length)
+    {
+        var output = new List<byte>(length);
+        var previous = Array.Empty<byte>();
+        byte counter = 1;
+        while (output.Count < length)
+        {
+            using var hmac = new HMACSHA256(prk);
+            var blockInput = Combine(previous, info, [counter++]);
+            previous = hmac.ComputeHash(blockInput);
+            output.AddRange(previous);
+        }
+
+        return output.Take(length).ToArray();
+    }
+
+    private static byte[] Combine(params byte[][] values)
+    {
+        var length = values.Sum(value => value.Length);
+        var output = new byte[length];
+        var offset = 0;
+        foreach (var value in values)
+        {
+            Buffer.BlockCopy(value, 0, output, offset, value.Length);
+            offset += value.Length;
+        }
+
+        return output;
     }
 
     private FcmRuntimeConfig? ResolveFcmRuntimeConfig(NivraPushOptions pushOptions, bool initializeFirebaseApp)
@@ -609,6 +961,50 @@ public sealed class PushNotificationService(
             .Replace('/', '_');
     }
 
+    private static byte[] Base64UrlDecode(string value)
+    {
+        var normalized = CleanConfigValue(value)
+            .Replace('-', '+')
+            .Replace('_', '/');
+        normalized = normalized.PadRight((normalized.Length + 3) / 4 * 4, '=');
+        return Convert.FromBase64String(normalized);
+    }
+
+    private static bool FirstBoolean(string? first, string? second, bool fallback)
+    {
+        if (bool.TryParse(CleanConfigValue(first), out var parsedFirst))
+        {
+            return parsedFirst;
+        }
+
+        if (bool.TryParse(CleanConfigValue(second), out var parsedSecond))
+        {
+            return parsedSecond;
+        }
+
+        return fallback;
+    }
+
+    private static int FirstInt(int optionValue, string? first, string? second, int fallback)
+    {
+        if (optionValue > 0)
+        {
+            return optionValue;
+        }
+
+        if (int.TryParse(CleanConfigValue(first), out var parsedFirst) && parsedFirst > 0)
+        {
+            return parsedFirst;
+        }
+
+        if (int.TryParse(CleanConfigValue(second), out var parsedSecond) && parsedSecond > 0)
+        {
+            return parsedSecond;
+        }
+
+        return fallback;
+    }
+
     private sealed record OAuthTokenResponse(
         [property: JsonPropertyName("access_token")] string AccessToken,
         [property: JsonPropertyName("expires_in")] int ExpiresIn);
@@ -618,10 +1014,26 @@ public sealed class PushNotificationService(
         FcmPushOptions Options,
         FcmServiceAccount Account);
 
+    private sealed record StandardWebPushRuntimeConfig(
+        string PublicKey,
+        ECParameters PrivateKey,
+        string Subject,
+        int TtlSeconds);
+
+    private sealed record StandardWebPushSubscription(
+        string Endpoint,
+        StandardWebPushSubscriptionKeys Keys,
+        long? ExpirationTime);
+
+    private sealed record StandardWebPushSubscriptionKeys(
+        string P256dh,
+        string Auth);
+
     private sealed record FcmSendResult(bool InvalidToken)
     {
         public static readonly FcmSendResult Success = new(false);
         public static readonly FcmSendResult TransientFailure = new(false);
+        public static readonly FcmSendResult Invalid = new(true);
 
         public static FcmSendResult FromError(string responseBody)
         {

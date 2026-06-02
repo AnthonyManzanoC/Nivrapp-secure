@@ -2733,9 +2733,9 @@ public static partial class EndpointExtensions
     {
         var group = app.MapGroup("/push-tokens");
 
-        group.MapGet("/web-config", (IConfiguration configuration) =>
+        group.MapGet("/web-config", (IConfiguration configuration, PushNotificationService pushNotifications) =>
         {
-            return Results.Ok(FirebaseWebConfig(configuration));
+            return Results.Ok(FirebaseWebConfig(configuration, pushNotifications.StandardWebPushPublicKey));
         });
 
         group.MapPost("/", async Task<IResult> (RegisterPushTokenRequest request, HttpContext http, INivraStore store, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, CancellationToken cancellationToken) =>
@@ -2794,7 +2794,7 @@ public static partial class EndpointExtensions
         });
     }
 
-    private static FirebaseWebConfigResponse FirebaseWebConfig(IConfiguration configuration)
+    private static FirebaseWebConfigResponse FirebaseWebConfig(IConfiguration configuration, string webPushPublicKey)
     {
         return new FirebaseWebConfigResponse(
             FirebaseConfigValue(configuration, "ApiKey", DefaultFirebaseWebApiKey),
@@ -2804,7 +2804,8 @@ public static partial class EndpointExtensions
             FirebaseConfigValue(configuration, "MessagingSenderId", DefaultFirebaseWebMessagingSenderId),
             FirebaseConfigValue(configuration, "AppId", DefaultFirebaseWebAppId),
             FirebaseConfigValue(configuration, "VapidKey", DefaultFirebaseWebVapidKey),
-            FirebaseConfigValue(configuration, "SdkVersion", DefaultFirebaseSdkVersion));
+            FirebaseConfigValue(configuration, "SdkVersion", DefaultFirebaseSdkVersion),
+            webPushPublicKey);
     }
 
     private static string FirebaseConfigValue(IConfiguration configuration, string key, string fallback)

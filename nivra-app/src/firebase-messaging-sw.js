@@ -18,6 +18,15 @@ self.addEventListener('notificationclick', (event) => {
   })());
 });
 
+self.addEventListener('push', (event) => {
+  const payload = readStandardWebPushPayload(event);
+  const data = normalizeData(payload?.data || payload || {});
+  if (data.nivraWebPush !== '1') {
+    return;
+  }
+  event.waitUntil(showNivraNotification(data).catch(() => undefined));
+});
+
 self.window = self;
 
 try {
@@ -193,6 +202,21 @@ function normalizeData(raw) {
     }
     return data;
   }, {});
+}
+
+function readStandardWebPushPayload(event) {
+  if (!event.data) {
+    return {};
+  }
+  try {
+    return event.data.json();
+  } catch {
+    try {
+      return JSON.parse(event.data.text());
+    } catch {
+      return {};
+    }
+  }
 }
 
 function normalizeType(type) {

@@ -363,7 +363,8 @@ public sealed record FirebaseWebConfigResponse(
     string MessagingSenderId,
     string AppId,
     string VapidKey,
-    string SdkVersion);
+    string SdkVersion,
+    string WebPushPublicKey);
 
 public sealed record EntitlementsResponse(
     string PlanCode,
