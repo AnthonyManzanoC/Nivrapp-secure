@@ -4,7 +4,7 @@ import { FirebaseMessaging, Importance, Visibility, type Notification as NativeF
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { ToastController } from '@ionic/angular/standalone';
 import { deleteApp, initializeApp, getApps, type FirebaseApp, type FirebaseOptions } from 'firebase/app';
-import { getMessaging, getToken, isSupported, type MessagePayload, onMessage } from 'firebase/messaging';
+import { getMessaging, getToken, isSupported, type MessagePayload, type Messaging, onMessage } from 'firebase/messaging';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { FirebaseWebConfigResponse, MessageResponse, PushStatusResponse, PushTokenResponse, RealtimeEvent } from '../models/nivra.models';
@@ -95,15 +95,7 @@ export class PushService {
         this.error.set('Firebase Web Push no esta configurado.');
         return this.initializeDesktopNotifications(options);
       }
-      const app = await this.firebaseAppForWebConfig(webConfig.firebase);
-      const messaging = getMessaging(app);
-      if (!this.foregroundBound) {
-        onMessage(messaging, (payload) => {
-          void this.handlePushData(this.normalizeWebData(payload.data), 'web-fcm');
-        });
-        this.foregroundBound = true;
-      }
-      const token = await this.getWebFcmToken(messaging, registration, webConfig.vapidKey);
+      const token = await this.getWebFcmToken(webConfig.firebase, registration, webConfig.vapidKey);
       if (!token) {
         this.error.set('No se obtuvo token FCM.');
         return false;
@@ -302,20 +294,22 @@ export class PushService {
   }
 
   private async getWebFcmToken(
-    messaging: ReturnType<typeof getMessaging>,
+    firebaseConfig: FirebaseOptions,
     serviceWorkerRegistration: ServiceWorkerRegistration,
     vapidKey: string,
   ): Promise<string> {
     const strictVapidKey = this.environmentVapidKey() || vapidKey;
     const tokenOptions = { vapidKey: strictVapidKey, serviceWorkerRegistration };
     try {
+      const messaging = await this.messagingForWebConfig(firebaseConfig);
       return await getToken(messaging, tokenOptions);
     } catch (error) {
       if (!this.shouldResetFirebaseMessagingState(error)) {
         throw error;
       }
-      await this.resetFirebaseMessagingState(serviceWorkerRegistration);
+      await this.cleanupRejectedWebPushState(serviceWorkerRegistration);
       try {
+        const messaging = await this.messagingForWebConfig(firebaseConfig, true);
         return await getToken(messaging, tokenOptions);
       } catch (retryError) {
         await this.cleanupRejectedWebPushState(serviceWorkerRegistration);
@@ -324,9 +318,30 @@ export class PushService {
     }
   }
 
+  private async messagingForWebConfig(config: FirebaseOptions, forceFresh = false): Promise<Messaging> {
+    if (forceFresh) {
+      await this.deleteFirebaseMessagingApp();
+    }
+    const app = await this.firebaseAppForWebConfig(config);
+    const messaging = getMessaging(app);
+    this.bindForegroundMessaging(messaging);
+    return messaging;
+  }
+
+  private bindForegroundMessaging(messaging: Messaging): void {
+    if (this.foregroundBound) {
+      return;
+    }
+    onMessage(messaging, (payload) => {
+      void this.handlePushData(this.normalizeWebData(payload.data), 'web-fcm');
+    });
+    this.foregroundBound = true;
+  }
+
   private async cleanupRejectedWebPushState(serviceWorkerRegistration?: ServiceWorkerRegistration): Promise<void> {
     this.tokenId.set(null);
     this.webConfigPromise = undefined;
+    await this.deleteFirebaseMessagingApp();
     const registration = serviceWorkerRegistration ?? await navigator.serviceWorker?.getRegistration?.('/firebase-messaging-sw.js').catch(() => undefined);
     if (registration) {
       await this.resetFirebaseMessagingState(registration);
@@ -334,6 +349,14 @@ export class PushService {
       await Promise.all(FIREBASE_RESETTABLE_IDB_NAMES.map((name) => this.deleteIndexedDbDatabase(name)));
     }
     this.clearFirebaseLocalStorageState();
+  }
+
+  private async deleteFirebaseMessagingApp(): Promise<void> {
+    const apps = getApps().filter((candidate) =>
+      candidate.name === FIREBASE_APP_NAME ||
+      new RegExp(`^${FIREBASE_APP_NAME}-\\d+$`).test(candidate.name));
+    await Promise.all(apps.map((app) => deleteApp(app).catch(() => undefined)));
+    this.foregroundBound = false;
   }
 
   private async resetFirebaseMessagingState(serviceWorkerRegistration: ServiceWorkerRegistration): Promise<void> {
