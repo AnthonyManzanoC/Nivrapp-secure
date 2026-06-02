@@ -17,6 +17,11 @@ type PushSource = 'web-fcm' | 'native-fcm' | 'service-worker-click' | 'native-ac
 
 const FIREBASE_APP_NAME = 'nivra';
 const FIREBASE_RESETTABLE_IDB_NAMES = ['fcm_token_details_db', 'firebase-installations-database'];
+const FIREBASE_LOCAL_STORAGE_PREFIXES = ['firebase:', 'firebase-messaging', 'fcm_'];
+
+type FirebaseWebOptions = FirebaseOptions & {
+  vapidKey?: string;
+};
 
 interface ResolvedFirebaseWebConfig {
   firebase: FirebaseOptions;
@@ -25,7 +30,7 @@ interface ResolvedFirebaseWebConfig {
 }
 
 interface NivraRuntimeGlobals {
-  NIVRA_FIREBASE_CONFIG?: Partial<FirebaseOptions>;
+  NIVRA_FIREBASE_CONFIG?: Partial<FirebaseWebOptions>;
   NIVRA_FIREBASE_VAPID_KEY?: string;
   NIVRA_FIREBASE_SDK_VERSION?: string;
 }
@@ -109,6 +114,9 @@ export class PushService {
     } catch (error) {
       if (this.isElectronRuntime()) {
         return this.initializeDesktopNotifications(options);
+      }
+      if (this.shouldResetFirebaseMessagingState(error)) {
+        await this.cleanupRejectedWebPushState().catch(() => undefined);
       }
       this.error.set(this.firebaseMessagingErrorMessage(error));
       return false;
@@ -215,11 +223,6 @@ export class PushService {
   }
 
   private async loadWebFirebaseConfig(): Promise<ResolvedFirebaseWebConfig | null> {
-    const runtime = this.runtimeWebFirebaseConfig();
-    if (runtime) {
-      return runtime;
-    }
-
     const backend = await firstValueFrom(
       this.api.get<FirebaseWebConfigResponse>('/push-tokens/web-config', { skipAuth: true }),
     ).catch(() => null);
@@ -237,9 +240,14 @@ export class PushService {
       return backendConfig;
     }
 
+    const runtime = this.runtimeWebFirebaseConfig();
+    if (runtime) {
+      return runtime;
+    }
+
     return this.normalizeWebFirebaseConfig(
       environment.firebase,
-      environment.firebaseVapidKey,
+      this.environmentVapidKey(),
       (globalThis as NivraRuntimeGlobals).NIVRA_FIREBASE_SDK_VERSION,
     );
   }
@@ -258,15 +266,16 @@ export class PushService {
     vapidKey: string | null | undefined,
     sdkVersion: string | null | undefined,
   ): ResolvedFirebaseWebConfig | null {
+    const source = firebase as Partial<FirebaseWebOptions> | null | undefined;
     const config: FirebaseOptions = {
-      apiKey: String(firebase?.apiKey || '').trim(),
-      authDomain: String(firebase?.authDomain || '').trim(),
-      projectId: String(firebase?.projectId || '').trim(),
-      storageBucket: String(firebase?.storageBucket || '').trim(),
-      messagingSenderId: String(firebase?.messagingSenderId || '').trim(),
-      appId: String(firebase?.appId || '').trim(),
+      apiKey: String(source?.apiKey || '').trim(),
+      authDomain: String(source?.authDomain || '').trim(),
+      projectId: String(source?.projectId || '').trim(),
+      storageBucket: String(source?.storageBucket || '').trim(),
+      messagingSenderId: String(source?.messagingSenderId || '').trim(),
+      appId: String(source?.appId || '').trim(),
     };
-    const publicVapidKey = String(vapidKey || '').trim();
+    const publicVapidKey = String(vapidKey || source?.vapidKey || this.environmentVapidKey()).trim();
     if (!config.apiKey || !config.projectId || !config.messagingSenderId || !config.appId || !String(config.appId).includes(':web:') || publicVapidKey.length < 20) {
       return null;
     }
@@ -297,7 +306,8 @@ export class PushService {
     serviceWorkerRegistration: ServiceWorkerRegistration,
     vapidKey: string,
   ): Promise<string> {
-    const tokenOptions = { vapidKey, serviceWorkerRegistration };
+    const strictVapidKey = this.environmentVapidKey() || vapidKey;
+    const tokenOptions = { vapidKey: strictVapidKey, serviceWorkerRegistration };
     try {
       return await getToken(messaging, tokenOptions);
     } catch (error) {
@@ -305,8 +315,25 @@ export class PushService {
         throw error;
       }
       await this.resetFirebaseMessagingState(serviceWorkerRegistration);
-      return getToken(messaging, tokenOptions);
+      try {
+        return await getToken(messaging, tokenOptions);
+      } catch (retryError) {
+        await this.cleanupRejectedWebPushState(serviceWorkerRegistration);
+        throw retryError;
+      }
     }
+  }
+
+  private async cleanupRejectedWebPushState(serviceWorkerRegistration?: ServiceWorkerRegistration): Promise<void> {
+    this.tokenId.set(null);
+    this.webConfigPromise = undefined;
+    const registration = serviceWorkerRegistration ?? await navigator.serviceWorker?.getRegistration?.('/firebase-messaging-sw.js').catch(() => undefined);
+    if (registration) {
+      await this.resetFirebaseMessagingState(registration);
+    } else {
+      await Promise.all(FIREBASE_RESETTABLE_IDB_NAMES.map((name) => this.deleteIndexedDbDatabase(name)));
+    }
+    this.clearFirebaseLocalStorageState();
   }
 
   private async resetFirebaseMessagingState(serviceWorkerRegistration: ServiceWorkerRegistration): Promise<void> {
@@ -342,6 +369,19 @@ export class PushService {
         finish(false);
       }
     });
+  }
+
+  private clearFirebaseLocalStorageState(): void {
+    try {
+      for (const key of Object.keys(localStorage)) {
+        const normalized = key.toLowerCase();
+        if (FIREBASE_LOCAL_STORAGE_PREFIXES.some((prefix) => normalized.startsWith(prefix))) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch {
+      // LocalStorage can be unavailable in locked-down browsers.
+    }
   }
 
   private async bindNativeFirebaseListeners(): Promise<void> {
@@ -675,6 +715,10 @@ export class PushService {
       return 'Este navegador no soporta FCM Web Push remoto.';
     }
     return candidate?.message || 'No se pudo activar push.';
+  }
+
+  private environmentVapidKey(): string {
+    return String((environment.firebase as FirebaseWebOptions).vapidKey || environment.firebaseVapidKey || '').trim();
   }
 
   private shouldSkipVisual(data: Record<string, string>): boolean {

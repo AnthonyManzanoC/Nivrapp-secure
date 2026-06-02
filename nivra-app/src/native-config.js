@@ -10,7 +10,8 @@ window.NIVRA_FIREBASE_CONFIG = window.NIVRA_FIREBASE_CONFIG || {
   projectId: "nivra-af67e",
   storageBucket: "nivra-af67e.firebasestorage.app",
   messagingSenderId: "1052459577646",
-  appId: "1:1052459577646:web:104a77188d9e03b0b10abf"
+  appId: "1:1052459577646:web:104a77188d9e03b0b10abf",
+  vapidKey: window.NIVRA_FIREBASE_VAPID_KEY
 };
 
 window.NIVRA_ENABLE_STANDARD_WEB_PUSH = window.NIVRA_ENABLE_STANDARD_WEB_PUSH || false;
