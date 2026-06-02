@@ -19,6 +19,7 @@ type PushRegistration = { provider: 'fcm' | 'fcm-fid'; token: string };
 const FIREBASE_APP_NAME = 'nivra';
 const FIREBASE_RESETTABLE_IDB_NAMES = ['fcm_token_details_db', 'firebase-installations-database'];
 const FIREBASE_LOCAL_STORAGE_PREFIXES = ['firebase:', 'firebase-messaging', 'fcm_'];
+const FCM_REGISTRATION_RETRY_AFTER_KEY = 'nivra.fcm.retryAfter';
 
 type FirebaseWebOptions = FirebaseOptions & {
   vapidKey?: string;
@@ -64,7 +65,7 @@ export class PushService {
     this.initializing = true;
     this.error.set('');
     try {
-      if (!await this.auth.ensureFreshSession({ force: options.requestPermission === true })) {
+      if (!await this.auth.ensureFreshSession()) {
         this.error.set('Tu sesion vencio. Vuelve a entrar para activar avisos.');
         return false;
       }
@@ -96,6 +97,9 @@ export class PushService {
       if (permission !== 'granted') {
         return false;
       }
+      if (!options.requestPermission && this.isFirebaseRegistrationBackedOff()) {
+        return false;
+      }
 
       const registration = await this.registerFirebaseMessagingServiceWorker();
       const webConfig = await this.resolveWebFirebaseConfig();
@@ -110,12 +114,14 @@ export class PushService {
       }
 
       await this.registerServerToken(remoteRegistration.token, remoteRegistration.provider);
+      this.clearFirebaseRegistrationBackoff();
       return true;
     } catch (error) {
       if (this.isElectronRuntime()) {
         return this.initializeDesktopNotifications(options);
       }
       if (this.shouldResetFirebaseMessagingState(error)) {
+        this.deferFirebaseRegistrationRetry();
         await this.cleanupRejectedWebPushState().catch(() => undefined);
       }
       this.error.set(this.firebaseMessagingErrorMessage(error));
@@ -371,6 +377,31 @@ export class PushService {
       await Promise.all(FIREBASE_RESETTABLE_IDB_NAMES.map((name) => this.deleteIndexedDbDatabase(name)));
     }
     this.clearFirebaseLocalStorageState();
+  }
+
+  private deferFirebaseRegistrationRetry(durationMs = 5 * 60 * 1000): void {
+    try {
+      localStorage.setItem(FCM_REGISTRATION_RETRY_AFTER_KEY, String(Date.now() + durationMs));
+    } catch {
+      // Best effort only; browsers can deny localStorage in privacy modes.
+    }
+  }
+
+  private clearFirebaseRegistrationBackoff(): void {
+    try {
+      localStorage.removeItem(FCM_REGISTRATION_RETRY_AFTER_KEY);
+    } catch {
+      // Best effort only; browsers can deny localStorage in privacy modes.
+    }
+  }
+
+  private isFirebaseRegistrationBackedOff(): boolean {
+    try {
+      const retryAfter = Number(localStorage.getItem(FCM_REGISTRATION_RETRY_AFTER_KEY) || '0');
+      return Number.isFinite(retryAfter) && retryAfter > Date.now();
+    } catch {
+      return false;
+    }
   }
 
   private async deleteFirebaseMessagingApp(): Promise<void> {

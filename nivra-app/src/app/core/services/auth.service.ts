@@ -67,6 +67,8 @@ export class AuthService implements OnDestroy {
   private qrConnection: HubConnection | null = null;
   private qrPollTimer: number | null = null;
   private authRefreshPromise: Promise<boolean> | null = null;
+  private refreshBackoffUntil = 0;
+  private refreshHardFailure = false;
 
   readonly session = signal<AuthSession | null>(this.loadSession());
   readonly pendingPhoneAlias = signal<PhoneAliasChallenge | null>(null);
@@ -353,6 +355,11 @@ export class AuthService implements OnDestroy {
   async refreshToken(): Promise<boolean> {
     const refreshToken = this.session()?.tokens.refreshToken;
     if (!refreshToken) {
+      this.refreshHardFailure = true;
+      return false;
+    }
+    if (Date.now() < this.refreshBackoffUntil) {
+      this.refreshHardFailure = false;
       return false;
     }
 
@@ -363,23 +370,38 @@ export class AuthService implements OnDestroy {
     })
       .then(async (response) => {
         if (!response.ok) {
+          this.refreshHardFailure = response.status === 401 || response.status === 403;
+          if (response.status === 429 || response.status >= 500) {
+            this.refreshBackoffUntil = Date.now() + this.refreshRetryDelayMs(response);
+          }
           return false;
         }
         const tokens = await response.json() as AuthSession['tokens'];
         const current = this.session();
         if (!current?.tokens || !tokens.accessToken) {
+          this.refreshHardFailure = true;
           return false;
         }
+        this.refreshHardFailure = false;
+        this.refreshBackoffUntil = 0;
         const next = { ...current, tokens };
         this.persistSession(next);
         return true;
       })
-      .catch(() => false)
+      .catch(() => {
+        this.refreshHardFailure = false;
+        this.refreshBackoffUntil = Date.now() + 30000;
+        return false;
+      })
       .finally(() => {
         this.authRefreshPromise = null;
       });
 
     return this.authRefreshPromise;
+  }
+
+  lastRefreshFailedPermanently(): boolean {
+    return this.refreshHardFailure;
   }
 
   async ensureFreshSession(options: { force?: boolean; skewMs?: number } = {}): Promise<boolean> {
@@ -433,6 +455,19 @@ export class AuthService implements OnDestroy {
   private persistSession(auth: AuthSession): void {
     this.session.set(auth);
     localStorage.setItem(SESSION_KEY, JSON.stringify(auth));
+  }
+
+  private refreshRetryDelayMs(response: Response): number {
+    const retryAfter = response.headers.get('Retry-After');
+    const retrySeconds = Number(retryAfter);
+    if (Number.isFinite(retrySeconds) && retrySeconds > 0) {
+      return Math.min(5 * 60 * 1000, retrySeconds * 1000);
+    }
+    const retryDate = retryAfter ? Date.parse(retryAfter) : NaN;
+    if (Number.isFinite(retryDate)) {
+      return Math.min(5 * 60 * 1000, Math.max(15000, retryDate - Date.now()));
+    }
+    return response.status === 429 ? 60000 : 30000;
   }
 
   private loadSession(): AuthSession | null {

@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard';
 import { NavigationEnd, Router } from '@angular/router';
@@ -27,6 +27,7 @@ export class AppComponent {
   readonly calls = inject(CallsService);
   private readonly now = signal(Date.now());
   private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
+  private startServicesPromise: Promise<void> | null = null;
   private lastPushRouteKey = '';
   readonly showCallBanner = computed(() => {
     const phase = this.calls.phase();
@@ -76,7 +77,7 @@ export class AppComponent {
 
     effect(() => {
       if (this.auth.isAuthenticated()) {
-        void this.startAuthenticatedServices();
+        untracked(() => void this.startAuthenticatedServices());
       } else {
         void this.realtime.disconnect();
       }
@@ -119,12 +120,19 @@ export class AppComponent {
   }
 
   private async startAuthenticatedServices(): Promise<void> {
-    if (!await this.auth.ensureFreshSession({ force: true })) {
-      await this.auth.logout(true);
-      return;
+    if (this.startServicesPromise) {
+      return this.startServicesPromise;
     }
-    await this.realtime.connect();
-    await this.push.initialize();
+    this.startServicesPromise = (async () => {
+      if (!await this.auth.ensureFreshSession()) {
+        return;
+      }
+      await this.realtime.connect();
+      await this.push.initialize();
+    })().finally(() => {
+      this.startServicesPromise = null;
+    });
+    return this.startServicesPromise;
   }
 
   private formatDuration(durationMs: number): string {

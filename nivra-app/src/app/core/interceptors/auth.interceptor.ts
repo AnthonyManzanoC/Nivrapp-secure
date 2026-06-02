@@ -15,8 +15,10 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
     return from(auth.ensureFreshSession()).pipe(
       switchMap((refreshed) => {
         if (!refreshed) {
-          void auth.logout(true);
-          return throwError(() => new Error('Sesion vencida.'));
+          if (auth.lastRefreshFailedPermanently()) {
+            void auth.logout(true);
+          }
+          return next(req.clone({ setHeaders: { Authorization: `Bearer ${auth.accessToken()}` } }));
         }
         return next(req.clone({ setHeaders: { Authorization: `Bearer ${auth.accessToken()}` } }));
       }),
@@ -38,7 +40,9 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
         return from(auth.refreshToken()).pipe(
           switchMap((refreshed) => {
             if (!refreshed) {
-              void auth.logout(true);
+              if (auth.lastRefreshFailedPermanently()) {
+                void auth.logout(true);
+              }
               return throwError(() => error);
             }
             const retry = req.clone({
