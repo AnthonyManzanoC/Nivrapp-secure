@@ -14,6 +14,7 @@ import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
 type PushSource = 'web-fcm' | 'native-fcm' | 'service-worker-click' | 'native-action' | 'realtime';
+type PushRegistration = { provider: 'fcm' | 'fcm-fid'; token: string };
 
 const FIREBASE_APP_NAME = 'nivra';
 const FIREBASE_RESETTABLE_IDB_NAMES = ['fcm_token_details_db', 'firebase-installations-database'];
@@ -63,7 +64,14 @@ export class PushService {
     this.initializing = true;
     this.error.set('');
     try {
-      await this.refreshStatus();
+      if (!await this.auth.ensureFreshSession({ force: options.requestPermission === true })) {
+        this.error.set('Tu sesion vencio. Vuelve a entrar para activar avisos.');
+        return false;
+      }
+      if (!await this.refreshStatus()) {
+        this.error.set('Tu sesion Nivra no esta autorizada para registrar avisos.');
+        return false;
+      }
       this.bindServiceWorkerMessages();
       if (Capacitor.isNativePlatform()) {
         return this.initializeNativeFirebase(options);
@@ -89,19 +97,19 @@ export class PushService {
         return false;
       }
 
-      const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js');
+      const registration = await this.registerFirebaseMessagingServiceWorker();
       const webConfig = await this.resolveWebFirebaseConfig();
       if (!webConfig) {
         this.error.set('Firebase Web Push no esta configurado.');
         return this.initializeDesktopNotifications(options);
       }
-      const token = await this.getWebFcmToken(webConfig.firebase, registration, webConfig.vapidKey);
-      if (!token) {
+      const remoteRegistration = await this.getWebFcmToken(webConfig.firebase, registration, webConfig.vapidKey);
+      if (!remoteRegistration?.token) {
         this.error.set('No se obtuvo token FCM.');
         return false;
       }
 
-      await this.registerServerToken(token);
+      await this.registerServerToken(remoteRegistration.token, remoteRegistration.provider);
       return true;
     } catch (error) {
       if (this.isElectronRuntime()) {
@@ -121,9 +129,12 @@ export class PushService {
     return this.initialize({ requestPermission: true });
   }
 
-  async refreshStatus(): Promise<void> {
+  async refreshStatus(): Promise<boolean> {
     if (!this.auth.isAuthenticated()) {
-      return;
+      return false;
+    }
+    if (!await this.auth.ensureFreshSession()) {
+      return false;
     }
     const status = await firstValueFrom(this.api.get<PushStatusResponse>('/push-tokens/status')).catch(() => null);
     if (status) {
@@ -132,6 +143,7 @@ export class PushService {
     if ('Notification' in window) {
       this.permission.set(Notification.permission);
     }
+    return Boolean(status);
   }
 
   async revokeCurrentToken(): Promise<void> {
@@ -297,20 +309,23 @@ export class PushService {
     firebaseConfig: FirebaseOptions,
     serviceWorkerRegistration: ServiceWorkerRegistration,
     vapidKey: string,
-  ): Promise<string> {
+  ): Promise<PushRegistration> {
     const strictVapidKey = this.environmentVapidKey() || vapidKey;
     const tokenOptions = { vapidKey: strictVapidKey, serviceWorkerRegistration };
     try {
       const messaging = await this.messagingForWebConfig(firebaseConfig);
-      return await getToken(messaging, tokenOptions);
+      const token = await getToken(messaging, tokenOptions);
+      return { provider: 'fcm', token };
     } catch (error) {
       if (!this.shouldResetFirebaseMessagingState(error)) {
         throw error;
       }
       await this.cleanupRejectedWebPushState(serviceWorkerRegistration);
       try {
+        const freshRegistration = await this.registerFirebaseMessagingServiceWorker();
         const messaging = await this.messagingForWebConfig(firebaseConfig, true);
-        return await getToken(messaging, tokenOptions);
+        const token = await getToken(messaging, { ...tokenOptions, serviceWorkerRegistration: freshRegistration });
+        return { provider: 'fcm', token };
       } catch (retryError) {
         await this.cleanupRejectedWebPushState(serviceWorkerRegistration);
         throw retryError;
@@ -338,6 +353,12 @@ export class PushService {
     this.foregroundBound = true;
   }
 
+  private async registerFirebaseMessagingServiceWorker(): Promise<ServiceWorkerRegistration> {
+    const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
+    await registration.update?.().catch(() => undefined);
+    return registration;
+  }
+
   private async cleanupRejectedWebPushState(serviceWorkerRegistration?: ServiceWorkerRegistration): Promise<void> {
     this.tokenId.set(null);
     this.webConfigPromise = undefined;
@@ -345,6 +366,7 @@ export class PushService {
     const registration = serviceWorkerRegistration ?? await navigator.serviceWorker?.getRegistration?.('/firebase-messaging-sw.js').catch(() => undefined);
     if (registration) {
       await this.resetFirebaseMessagingState(registration);
+      await registration.unregister().catch(() => false);
     } else {
       await Promise.all(FIREBASE_RESETTABLE_IDB_NAMES.map((name) => this.deleteIndexedDbDatabase(name)));
     }
@@ -423,9 +445,12 @@ export class PushService {
     this.nativeBound = true;
   }
 
-  private async registerServerToken(token: string): Promise<void> {
+  private async registerServerToken(token: string, provider: PushRegistration['provider'] = 'fcm'): Promise<void> {
+    if (!await this.auth.ensureFreshSession()) {
+      throw new Error('Sesion vencida; no se pudo registrar el token push.');
+    }
     const response = await firstValueFrom(this.api.post<PushTokenResponse>('/push-tokens', {
-      provider: 'fcm',
+      provider,
       token,
     }));
     this.tokenId.set(response.id);

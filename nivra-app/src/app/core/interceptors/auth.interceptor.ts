@@ -11,6 +11,18 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
   const api = inject(NivraApiService);
   const shouldAuthenticate = !req.context.get(SKIP_AUTH) && req.url.startsWith(api.baseUrl);
   const token = auth.accessToken();
+  if (shouldAuthenticate && token && !auth.hasFreshAccessToken()) {
+    return from(auth.ensureFreshSession()).pipe(
+      switchMap((refreshed) => {
+        if (!refreshed) {
+          void auth.logout(true);
+          return throwError(() => new Error('Sesion vencida.'));
+        }
+        return next(req.clone({ setHeaders: { Authorization: `Bearer ${auth.accessToken()}` } }));
+      }),
+    );
+  }
+
   const authedReq = shouldAuthenticate && token
     ? req.clone({ setHeaders: { Authorization: `Bearer ${token}` } })
     : req;

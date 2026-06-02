@@ -76,8 +76,7 @@ export class AppComponent {
 
     effect(() => {
       if (this.auth.isAuthenticated()) {
-        void this.realtime.connect();
-        void this.push.initialize();
+        void this.startAuthenticatedServices();
       } else {
         void this.realtime.disconnect();
       }
@@ -117,6 +116,15 @@ export class AppComponent {
 
   async openActiveCall(): Promise<void> {
     await this.router.navigateByUrl('/app/calls');
+  }
+
+  private async startAuthenticatedServices(): Promise<void> {
+    if (!await this.auth.ensureFreshSession({ force: true })) {
+      await this.auth.logout(true);
+      return;
+    }
+    await this.realtime.connect();
+    await this.push.initialize();
   }
 
   private formatDuration(durationMs: number): string {

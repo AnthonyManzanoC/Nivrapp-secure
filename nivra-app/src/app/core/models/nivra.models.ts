@@ -24,6 +24,8 @@ export interface StoredDeviceKeys extends DeviceKeys {
 export interface TokenPair {
   accessToken: string;
   refreshToken: string;
+  accessTokenExpiresAt?: string;
+  refreshTokenExpiresAt?: string;
   expiresAt?: string;
 }
 

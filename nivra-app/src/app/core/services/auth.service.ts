@@ -53,6 +53,7 @@ interface ParsedQrLoginChallenge {
 
 const FIREBASE_APP_NAME = 'nivra-web-phone-auth';
 const SESSION_KEY = 'nivra.auth';
+const TOKEN_REFRESH_SKEW_MS = 2 * 60 * 1000;
 
 @Injectable({ providedIn: 'root' })
 export class AuthService implements OnDestroy {
@@ -72,6 +73,7 @@ export class AuthService implements OnDestroy {
   readonly busy = signal(false);
   readonly accessToken = computed(() => this.session()?.tokens.accessToken ?? '');
   readonly isAuthenticated = computed(() => Boolean(this.accessToken()));
+  readonly hasFreshAccessToken = computed(() => this.hasUsableAccessToken(this.session()));
 
   ngOnDestroy(): void {
     void this.stopQrLogin();
@@ -380,6 +382,17 @@ export class AuthService implements OnDestroy {
     return this.authRefreshPromise;
   }
 
+  async ensureFreshSession(options: { force?: boolean; skewMs?: number } = {}): Promise<boolean> {
+    const current = this.session();
+    if (!current?.tokens?.accessToken || !current.tokens.refreshToken) {
+      return false;
+    }
+    if (!options.force && this.hasUsableAccessToken(current, options.skewMs ?? TOKEN_REFRESH_SKEW_MS)) {
+      return true;
+    }
+    return this.refreshToken();
+  }
+
   async logout(skipServer = false): Promise<void> {
     if (!skipServer && this.accessToken()) {
       await firstValueFrom(this.api.post('/auth/logout', {}, {})).catch(() => null);
@@ -428,6 +441,45 @@ export class AuthService implements OnDestroy {
     } catch {
       return null;
     }
+  }
+
+  private hasUsableAccessToken(session: AuthSession | null, skewMs = TOKEN_REFRESH_SKEW_MS): boolean {
+    const token = session?.tokens?.accessToken;
+    if (!token) {
+      return false;
+    }
+    const expiresAt = this.accessTokenExpiresAt(session?.tokens);
+    return expiresAt === null || expiresAt - Date.now() > skewMs;
+  }
+
+  private accessTokenExpiresAt(tokens: AuthSession['tokens'] | null | undefined): number | null {
+    const explicit = Date.parse(tokens?.accessTokenExpiresAt || tokens?.expiresAt || '');
+    if (Number.isFinite(explicit)) {
+      return explicit;
+    }
+    const token = tokens?.accessToken || '';
+    try {
+      const [payload] = token.split('.', 1);
+      if (!payload) {
+        return null;
+      }
+      const decoded = JSON.parse(this.base64UrlDecode(payload)) as {
+        exp?: unknown;
+        ExpiresUnixSeconds?: unknown;
+        expiresUnixSeconds?: unknown;
+      };
+      const seconds = Number(decoded.exp ?? decoded.ExpiresUnixSeconds ?? decoded.expiresUnixSeconds);
+      return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private base64UrlDecode(value: string): string {
+    const padded = value.replace(/-/g, '+').replace(/_/g, '/').padEnd(value.length + (4 - value.length % 4) % 4, '=');
+    return decodeURIComponent(Array.from(atob(padded), (char) =>
+      `%${char.charCodeAt(0).toString(16).padStart(2, '0')}`,
+    ).join(''));
   }
 
   private async ensureFirebaseAuth(): Promise<Auth> {

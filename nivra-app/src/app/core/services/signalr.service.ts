@@ -23,6 +23,9 @@ export class SignalrService implements OnDestroy {
   }
 
   async connect(): Promise<void> {
+    if (!await this.auth.ensureFreshSession()) {
+      return;
+    }
     const token = this.auth.accessToken();
     if (!token) {
       return;

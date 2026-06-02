@@ -193,6 +193,9 @@ export class ChatService implements OnDestroy {
     if (!this.auth.isAuthenticated()) {
       return;
     }
+    if (!await this.auth.ensureFreshSession()) {
+      return;
+    }
 
     this.loading.set(true);
     try {
@@ -222,6 +225,9 @@ export class ChatService implements OnDestroy {
 
   async syncMissedMessages(take = 200): Promise<void> {
     if (!this.auth.isAuthenticated() || this.syncInFlight) {
+      return;
+    }
+    if (!await this.auth.ensureFreshSession()) {
       return;
     }
     this.syncInFlight = true;
