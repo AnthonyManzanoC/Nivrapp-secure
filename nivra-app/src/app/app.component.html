@@ -1,3 +1,17 @@
 <ion-app>
   <ion-router-outlet></ion-router-outlet>
+  @if (showCallBanner()) {
+    @if (calls.activeCall(); as call) {
+      <button type="button" class="global-call-banner" (click)="openActiveCall()" aria-label="Volver a la llamada">
+        <span class="call-pulse">
+          <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
+        </span>
+        <span class="call-copy">
+          <strong>{{ calls.callTitle(call) }}</strong>
+          <small>{{ calls.callStatusLabel(call) }} - {{ callElapsed() }}</small>
+        </span>
+        <span class="call-return">Volver</span>
+      </button>
+    }
+  }
 </ion-app>

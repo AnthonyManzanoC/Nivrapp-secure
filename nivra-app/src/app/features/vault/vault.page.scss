@@ -4,6 +4,8 @@
   --vault-green: #35d69f;
   --vault-cyan: #66d9ef;
   --vault-warn: #f7c948;
+  user-select: none;
+  -webkit-user-select: none;
 }
 
 .vault-hero {
@@ -31,6 +33,12 @@
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.vault-surface ion-input,
+.vault-surface ion-textarea {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .panel-title {
@@ -74,6 +82,59 @@
   padding: 5px 10px;
   color: var(--vault-green);
   background: rgba(53, 214, 159, .1);
+}
+
+.note-compose-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.note-size {
+  color: var(--nivra-muted);
+  font-size: 12px;
+}
+
+.note-attachment-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-top: 12px;
+  scroll-snap-type: x mandatory;
+}
+
+.note-attachment-chip {
+  min-width: min(260px, 78vw);
+  border: 1px solid rgba(53, 214, 159, .18);
+  border-radius: 8px;
+  padding: 9px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--nivra-text);
+  background: rgba(53, 214, 159, .07);
+  scroll-snap-align: start;
+  text-align: left;
+}
+
+.note-attachment-chip ion-icon {
+  color: var(--vault-green);
+}
+
+.note-attachment-chip strong,
+.note-attachment-chip small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-attachment-chip small,
+.vault-note-files,
+.note-file-card small {
+  color: var(--nivra-muted);
 }
 
 .search-box {
@@ -208,6 +269,63 @@
   color: var(--nivra-muted);
 }
 
+.vault-row > div {
+  min-width: 0;
+}
+
+.note-file-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.note-file-card {
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  background: rgba(255, 255, 255, .035);
+}
+
+.note-file-card img,
+.note-file-card video {
+  grid-column: 1 / -1;
+  width: 100%;
+  max-height: 180px;
+  border-radius: 8px;
+  object-fit: cover;
+  background: #05090b;
+}
+
+.note-file-card audio {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.note-file-card strong,
+.note-file-card small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.note-file-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 2px;
+}
+
+.note-file-actions ion-button {
+  width: 34px;
+  height: 34px;
+  margin: 0;
+  --border-radius: 999px;
+}
+
 .room-meta {
   justify-content: space-between;
   font-size: 12px;
@@ -221,6 +339,24 @@
   min-width: 0;
 }
 
+.room-denied {
+  border: 1px solid rgba(255, 107, 107, .18);
+  border-radius: 8px;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffb7b7;
+  background: rgba(255, 107, 107, .055);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.room-denied ion-icon {
+  width: 16px;
+  height: 16px;
+}
+
 .room-actions {
   justify-content: flex-end;
 }
@@ -229,6 +365,12 @@
   justify-content: space-between;
   padding-bottom: 14px;
   border-bottom: 1px solid var(--nivra-line);
+  flex-wrap: wrap;
+}
+
+.voice-start {
+  --border-color: rgba(53, 214, 159, .36);
+  --color: var(--vault-green);
 }
 
 .member-dots {
@@ -247,12 +389,137 @@
   margin: 14px 0;
 }
 
-.invite-bar {
+.owner-invite-panel {
   margin: 14px 0;
+  border: 1px solid rgba(53, 214, 159, .14);
+  border-radius: 8px;
+  padding: 10px;
+  background:
+    linear-gradient(135deg, rgba(53, 214, 159, .07), rgba(102, 217, 239, .035)),
+    rgba(255, 255, 255, .025);
+}
+
+.owner-invite-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.owner-invite-title ion-icon {
+  width: 26px;
+  height: 26px;
+  color: var(--vault-green);
+}
+
+.owner-invite-title span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.owner-invite-title strong {
+  color: var(--nivra-text);
+}
+
+.owner-invite-title small {
+  color: var(--nivra-muted);
+  line-height: 1.35;
+}
+
+.invite-bar {
+  margin: 0;
 }
 
 .invite-bar .search-box {
   flex: 1;
+}
+
+.people-strip.compact {
+  margin-top: 10px;
+  padding-bottom: 2px;
+}
+
+.voice-widget {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 999px;
+  margin: 12px 0;
+  padding: 8px 10px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(53, 214, 159, .16), rgba(102, 217, 239, .08)),
+    rgba(9, 15, 17, .92);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, .25), inset 0 1px 0 rgba(255, 255, 255, .08);
+  backdrop-filter: blur(16px) saturate(135%);
+}
+
+.voice-widget.connected {
+  border-color: rgba(53, 214, 159, .32);
+}
+
+.voice-widget.failed {
+  border-color: rgba(255, 107, 107, .32);
+  background:
+    linear-gradient(135deg, rgba(255, 107, 107, .12), rgba(255, 255, 255, .04)),
+    rgba(9, 15, 17, .92);
+}
+
+.voice-roster,
+.voice-controls {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.voice-roster > ion-icon {
+  width: 24px;
+  height: 24px;
+  color: var(--vault-green);
+}
+
+.voice-roster strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--nivra-text);
+}
+
+.voice-avatar {
+  width: 30px;
+  height: 30px;
+  border: 2px solid rgba(8, 13, 15, .92);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #06100d;
+  background: linear-gradient(135deg, var(--vault-green), var(--vault-cyan));
+  font-weight: 950;
+  margin-left: -8px;
+}
+
+.voice-avatar:first-of-type {
+  margin-left: 0;
+}
+
+.voice-avatar.speaking {
+  box-shadow: 0 0 0 4px rgba(53, 214, 159, .16);
+  animation: voicePulse 1.15s ease-in-out infinite;
+}
+
+.voice-controls ion-button {
+  width: 38px;
+  height: 38px;
+  margin: 0;
+  --border-radius: 999px;
+  --background: rgba(255, 255, 255, .06);
 }
 
 .vault-chat {
@@ -379,8 +646,27 @@
     flex-direction: column;
   }
 
+  .voice-widget {
+    align-items: stretch;
+    border-radius: 18px;
+    flex-direction: column;
+  }
+
+  .voice-controls {
+    justify-content: space-between;
+  }
+
   .composer {
     position: sticky;
     bottom: calc(var(--nivra-bottom-nav-height) + 10px + env(safe-area-inset-bottom));
+  }
+}
+
+@keyframes voicePulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
   }
 }

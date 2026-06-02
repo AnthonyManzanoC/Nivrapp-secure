@@ -1,0 +1,95 @@
+:host {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.global-call-banner {
+  position: fixed;
+  z-index: 14;
+  top: max(10px, env(safe-area-inset-top));
+  left: 50%;
+  width: min(460px, calc(100vw - 24px));
+  min-height: 54px;
+  border: 1px solid rgba(255, 255, 255, .2);
+  border-radius: 999px;
+  padding: 7px 9px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: #03100d;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .36), rgba(255, 255, 255, .12)),
+    linear-gradient(135deg, #44f0b5, #7df8d4);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .3), 0 0 0 1px rgba(24, 214, 162, .18);
+  transform: translateX(-50%);
+  animation: callBannerPulse 1.9s ease-in-out infinite;
+}
+
+.call-pulse {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(3, 16, 13, .14);
+}
+
+.call-pulse ion-icon {
+  font-size: 20px;
+}
+
+.call-copy {
+  min-width: 0;
+  display: grid;
+  text-align: left;
+}
+
+.call-copy strong,
+.call-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.call-copy strong {
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.call-copy small {
+  color: rgba(3, 16, 13, .72);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.call-return {
+  border-radius: 999px;
+  padding: 8px 11px;
+  color: var(--nivra-text);
+  background: rgba(3, 16, 13, .78);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+@media (max-width: 768px) {
+  .global-call-banner {
+    top: max(8px, env(safe-area-inset-top));
+    min-height: 50px;
+  }
+
+  .call-return {
+    display: none;
+  }
+}
+
+@keyframes callBannerPulse {
+  0%, 100% {
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .3), 0 0 0 1px rgba(24, 214, 162, .18), 0 0 0 0 rgba(68, 240, 181, .24);
+  }
+  50% {
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .3), 0 0 0 1px rgba(24, 214, 162, .18), 0 0 0 9px rgba(68, 240, 181, .06);
+  }
+}

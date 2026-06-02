@@ -55,10 +55,32 @@
             <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="body"></ion-textarea>
           </label>
         </div>
-        <ion-button mode="ios" (click)="createNote()" [disabled]="!vault.unlocked() || !body.trim() || isBusy('note')">
-          <ion-icon name="add-circle-outline"></ion-icon>
-          Guardar nota
-        </ion-button>
+        <input #noteFiles hidden type="file" multiple accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" (change)="noteFilesSelected($event)" />
+        <div class="note-compose-actions">
+          <ion-button mode="ios" fill="outline" (click)="noteFiles.click()" [disabled]="!vault.unlocked()">
+            <ion-icon name="attach-outline"></ion-icon>
+            Adjuntar
+          </ion-button>
+          <ion-button mode="ios" (click)="createNote()" [disabled]="!vault.unlocked() || (!body.trim() && !noteAttachments.length) || isBusy('note')">
+            @if (isBusy('note')) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="add-circle-outline"></ion-icon> }
+            Guardar nota
+          </ion-button>
+          <span class="note-size">{{ selectedNoteAttachmentSize() }}</span>
+        </div>
+        @if (noteAttachments.length) {
+          <div class="note-attachment-strip">
+            @for (file of noteAttachments; track file.name + file.size + file.lastModified) {
+              <button type="button" class="note-attachment-chip" (click)="removeNoteAttachment(file)" title="Quitar adjunto">
+                <ion-icon name="document-attach-outline"></ion-icon>
+                <span>
+                  <strong>{{ file.name }}</strong>
+                  <small>{{ file.type || 'archivo cifrado' }}</small>
+                </span>
+                <ion-icon name="close-outline"></ion-icon>
+              </button>
+            }
+          </div>
+        }
       </article>
 
       <article class="panel span-5">
@@ -74,6 +96,38 @@
               <div>
                 <strong>{{ item.decoded?.title || item.decoded?.name || item.kind }}</strong>
                 <span class="card-sub">{{ item.decodeError ? 'No se pudo descifrar aqui' : (item.decoded?.body || (item.updatedAt | date:'short')) }}</span>
+                @if (!item.decodeError && vault.noteAttachmentSummary(item)) {
+                  <span class="card-sub vault-note-files">{{ vault.noteAttachmentSummary(item) }}</span>
+                }
+                @if (!item.decodeError && vault.noteAttachments(item).length) {
+                  <div class="note-file-list">
+                    @for (attachment of vault.noteAttachments(item); track attachment.id) {
+                      <div class="note-file-card">
+                        @if (vault.mediaPreviews()[vault.noteAttachmentKey(item, attachment)]; as preview) {
+                          @if (vault.isNoteAttachmentImage(attachment)) {
+                            <img [src]="preview.url" [alt]="attachment.name">
+                          } @else if (vault.isNoteAttachmentAudio(attachment)) {
+                            <audio [src]="preview.url" controls></audio>
+                          } @else if (vault.isNoteAttachmentVideo(attachment)) {
+                            <video [src]="preview.url" controls playsinline></video>
+                          }
+                        }
+                        <div>
+                          <strong>{{ attachment.name }}</strong>
+                          <small>{{ vault.noteAttachmentSize(attachment) }} - {{ attachment.mime || 'archivo' }}</small>
+                        </div>
+                        <div class="note-file-actions">
+                          <ion-button mode="ios" fill="clear" (click)="previewNoteAttachment(item, attachment)" [disabled]="isBusy('note-preview:' + attachment.id)">
+                            <ion-icon name="play-circle-outline"></ion-icon>
+                          </ion-button>
+                          <ion-button mode="ios" fill="clear" (click)="downloadNoteAttachment(item, attachment)" [disabled]="isBusy('note-download:' + attachment.id)">
+                            <ion-icon name="cloud-download-outline"></ion-icon>
+                          </ion-button>
+                        </div>
+                      </div>
+                    }
+                  </div>
+                }
               </div>
               <ion-button mode="ios" fill="clear" color="danger" (click)="deleteItem(item.id)" [disabled]="isBusy('item:' + item.id)">
                 <ion-icon name="trash-outline"></ion-icon>
@@ -100,14 +154,14 @@
           </label>
           <label>
             <span>PIN</span>
-            <ion-input mode="ios" fill="outline" [(ngModel)]="roomPin" type="password" placeholder="Opcional"></ion-input>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="roomPin" type="password" placeholder="Requerido para modo PIN"></ion-input>
           </label>
           <label>
             <span>Acceso</span>
             <select class="native-select" [(ngModel)]="roomAccessMode">
-              <option value="PinOnly">PIN requerido</option>
+              <option value="PinOnly">Invitados + PIN</option>
               <option value="InviteOnly">Solo invitados</option>
-              <option value="WaitingRoom">Lobby con aprobacion</option>
+              <option value="WaitingRoom">Invitados + aprobacion</option>
             </select>
           </label>
           <label>
@@ -127,10 +181,10 @@
           </label>
         </div>
 
-        @if (vault.people().length) {
+        @if (availableInvitePeople(null).length) {
           <div class="people-strip">
-            @for (person of vault.people(); track person.id) {
-              <button type="button" class="person-pill" [class.selected]="inviteSelected(person)" (click)="toggleInvite(person)">
+            @for (person of availableInvitePeople(null); track person.id) {
+              <button type="button" class="person-pill" [class.selected]="inviteSelected(person)" (click)="toggleInvite(person, null)">
                 <span>{{ (person.displayName || person.alias || 'N')[0] }}</span>
                 {{ person.displayName || person.alias }}
               </button>
@@ -138,7 +192,7 @@
           </div>
         }
 
-        <ion-button mode="ios" fill="outline" (click)="createRoom()" [disabled]="isBusy('room:create')">
+        <ion-button mode="ios" fill="outline" (click)="createRoom()" [disabled]="isBusy('room:create') || ((roomAccessMode === 'PinOnly' || roomAccessMode === 'WaitingRoom') && !roomPin.trim())">
           @if (isBusy('room:create')) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="add-circle-outline"></ion-icon> }
           Crear sala
         </ion-button>
@@ -166,12 +220,19 @@
                 <span>{{ room.members.length }} miembros</span>
               </div>
               @if (vault.currentMember(room)?.status !== 'Active') {
-                <div class="join-row">
-                  <ion-input mode="ios" fill="outline" [(ngModel)]="roomPinById[room.id]" type="password" placeholder="PIN si aplica"></ion-input>
-                  <ion-button mode="ios" fill="clear" (click)="joinRoom(room)" [disabled]="isBusy('join:' + room.id)" aria-label="Entrar">
-                    <ion-icon name="enter-outline"></ion-icon>
-                  </ion-button>
-                </div>
+                @if (vault.canAttemptJoin(room)) {
+                  <div class="join-row">
+                    <ion-input mode="ios" fill="outline" [(ngModel)]="roomPinById[room.id]" type="password" placeholder="PIN de sala"></ion-input>
+                    <ion-button mode="ios" fill="clear" (click)="joinRoom(room)" [disabled]="isBusy('join:' + room.id)" aria-label="Entrar">
+                      <ion-icon name="enter-outline"></ion-icon>
+                    </ion-button>
+                  </div>
+                } @else {
+                  <div class="room-denied">
+                    <ion-icon name="lock-closed-outline"></ion-icon>
+                    No estas invitado a esta sala.
+                  </div>
+                }
               } @else {
                 <div class="room-actions">
                   <ion-button mode="ios" fill="clear" (click)="openRoom(room)">Abrir</ion-button>
@@ -202,6 +263,10 @@
                 <span title="{{ vault.memberLabel(member) }}">{{ vault.memberLabel(member)[0] }}</span>
               }
             </div>
+            <ion-button mode="ios" class="voice-start" fill="outline" (click)="startVoice(room)" [disabled]="vault.voicePhase() === 'connecting' || (vault.voiceConnected() && vault.voiceRoomId() === room.id)">
+              @if (vault.voicePhase() === 'connecting') { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="headset-outline"></ion-icon> }
+              Audio en vivo
+            </ion-button>
           </header>
 
           @if (waitingMembers(room).length && vault.canModerate(room)) {
@@ -220,15 +285,67 @@
             </div>
           }
 
-          <div class="invite-bar">
-            <div class="search-box">
-              <ion-icon name="search-outline"></ion-icon>
-              <ion-input mode="ios" [(ngModel)]="inviteQuery" placeholder="Invitar por alias" (ionInput)="searchInvites()"></ion-input>
+          @if (vault.canInviteGuests(room)) {
+            <div class="owner-invite-panel">
+              <div class="owner-invite-title">
+                <ion-icon name="people-outline"></ion-icon>
+                <span>
+                  <strong>Anadir invitados</strong>
+                  <small>Solo el dueno puede abrir la puerta. El PIN solo funciona despues de estar invitado.</small>
+                </span>
+              </div>
+              <div class="invite-bar">
+                <div class="search-box">
+                  <ion-icon name="search-outline"></ion-icon>
+                  <ion-input mode="ios" [(ngModel)]="inviteQuery" placeholder="@alias, nombre o telefono" (ionInput)="searchInvites()"></ion-input>
+                </div>
+                <ion-button mode="ios" fill="outline" (click)="inviteActiveRoom()" [disabled]="!selectedInviteIds.size || isBusy('invite:' + room.id)">
+                  Invitar
+                </ion-button>
+              </div>
+              @if (availableInvitePeople(room).length) {
+                <div class="people-strip compact">
+                  @for (person of availableInvitePeople(room); track person.id) {
+                    <button type="button" class="person-pill" [class.selected]="inviteSelected(person)" (click)="toggleInvite(person, room)">
+                      <span>{{ (person.displayName || person.alias || 'N')[0] }}</span>
+                      {{ person.displayName || person.alias }}
+                    </button>
+                  }
+                </div>
+              }
             </div>
-            <ion-button mode="ios" fill="outline" (click)="inviteActiveRoom()" [disabled]="!selectedInviteIds.size || isBusy('invite:' + room.id)">
-              Invitar
-            </ion-button>
-          </div>
+          }
+
+          @if (vault.voiceRoomId() === room.id || vault.voicePhase() === 'connecting' || vault.voiceError()) {
+            <div class="voice-widget" [class.connected]="vault.voiceConnected()" [class.failed]="vault.voicePhase() === 'failed'">
+              <div class="voice-roster">
+                <ion-icon name="headset-outline"></ion-icon>
+                @if (vault.voiceConnected()) {
+                  @for (member of vault.voiceRoster(room); track member.userId) {
+                    <span class="voice-avatar" [class.speaking]="vault.voiceActiveSpeakers().includes(member.userId)" title="{{ vault.memberLabel(member) }}">
+                      {{ vault.memberLabel(member)[0] }}
+                    </span>
+                  }
+                  <strong>{{ vault.voiceRoster(room).length || 1 }} en audio</strong>
+                } @else if (vault.voicePhase() === 'connecting') {
+                  <strong>Conectando audio seguro...</strong>
+                } @else {
+                  <strong>{{ vault.voiceError() || 'Audio no disponible' }}</strong>
+                }
+              </div>
+              <div class="voice-controls">
+                @for (entry of vault.voiceRemoteEntries(); track entry[0]) {
+                  <audio [appMediaStream]="entry[1]" autoplay></audio>
+                }
+                <ion-button mode="ios" fill="clear" (click)="toggleVoiceMute()" [disabled]="!vault.voiceConnected() || isBusy('voice:mute')" aria-label="Mutear">
+                  <ion-icon [name]="vault.voiceMuted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
+                </ion-button>
+                <ion-button mode="ios" fill="clear" color="danger" (click)="leaveVoice()" [disabled]="!vault.voiceRoomId() && vault.voicePhase() !== 'failed'" aria-label="Salir del audio">
+                  <ion-icon name="close-outline"></ion-icon>
+                </ion-button>
+              </div>
+            </div>
+          }
 
           <div class="vault-chat">
             @for (message of vault.activeMessages(); track message.id) {

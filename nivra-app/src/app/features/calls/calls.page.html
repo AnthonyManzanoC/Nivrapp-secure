@@ -10,14 +10,20 @@
     <section class="grid">
       <article class="panel span-7">
         <div class="panel-head">
-          <h2>Activa</h2>
-          <span>{{ calls.phase() }}</span>
+          <h2>{{ calls.activeCall() ? 'Activa' : 'Agenda' }}</h2>
+          <span>{{ uiPhase() }}</span>
         </div>
 
         @if (calls.activeCall(); as call) {
-          <div class="call-active" [class.video]="call.type === 'Video'">
-            <div class="call-stage">
-              @if (calls.remoteEntries().length) {
+          <div class="call-active" [class.video]="call.type === 'Video'" [class.incoming]="calls.phase() === 'ringing'">
+            <div class="call-stage" [class.has-local-video]="call.type === 'Video' && calls.localStream() && calls.phase() !== 'connected'">
+              @if (call.type === 'Video' && calls.phase() !== 'connected') {
+                @if (calls.localStream(); as local) {
+                  <video id="localVideo" class="local-preview-main" [appMediaStream]="local" muted autoplay playsinline></video>
+                }
+              }
+
+              @if (calls.phase() === 'connected' && calls.remoteEntries().length) {
                 @for (entry of calls.remoteEntries(); track entry[0]) {
                   <div class="remote-tile">
                     @if (call.type === 'Video') {
@@ -30,15 +36,35 @@
                   </div>
                 }
               } @else {
-                <div class="waiting-tile">
-                  <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
-                  <strong>{{ call.type === 'Video' ? 'Videollamada' : 'Llamada' }}</strong>
-                  <span>{{ call.status }} - {{ call.startedAt | date:'shortTime' }}</span>
+                <div class="waiting-tile" [class.over-video]="call.type === 'Video' && calls.localStream() && calls.phase() !== 'connected'">
+                  <div class="call-avatar" [class.ringing]="calls.phase() === 'calling' || calls.phase() === 'ringing'">
+                    @if (calls.callPhoto(call)) {
+                      <img [src]="calls.callPhoto(call)" alt="">
+                    } @else {
+                      <strong>{{ calls.callInitials(call) }}</strong>
+                    }
+                  </div>
+                  <strong>{{ calls.isGroupCall(call) ? 'Llamada de Grupo: ' + calls.callTitle(call) : calls.callTitle(call) }}</strong>
+                  <span>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | date:'shortTime' }}</span>
+                  <small>{{ call.type === 'Video' ? 'Videollamada cifrada' : 'Llamada cifrada' }}</small>
+                  @if (calls.isGroupCall(call)) {
+                    <div class="group-call-faces" aria-label="Participantes">
+                      @for (person of calls.callParticipantAvatars(call); track person.id) {
+                        @if (person.photo) {
+                          <img [src]="person.photo" [alt]="person.label">
+                        } @else {
+                          <span>{{ person.initials }}</span>
+                        }
+                      }
+                    </div>
+                  }
                 </div>
               }
 
-              @if (calls.localStream(); as local) {
-                <video class="local-preview" [appMediaStream]="local" muted autoplay playsinline></video>
+              @if (call.type === 'Video') {
+                @if (calls.phase() === 'connected' && calls.localStream(); as local) {
+                  <video id="localVideo" class="local-preview" [appMediaStream]="local" muted autoplay playsinline></video>
+                }
               }
             </div>
 
@@ -53,16 +79,19 @@
                   Rechazar
                 </ion-button>
               } @else {
-                <ion-button mode="ios" fill="clear" (click)="calls.toggleMute()">
+                <ion-button mode="ios" fill="clear" [disabled]="!calls.localStream()" (click)="calls.toggleMute()">
                   <ion-icon [name]="calls.muted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
                 </ion-button>
                 @if (call.type === 'Video') {
-                  <ion-button mode="ios" fill="clear" (click)="calls.toggleCamera()">
+                  <ion-button mode="ios" fill="clear" [disabled]="!calls.localStream()" (click)="calls.toggleCamera()">
                     <ion-icon [name]="calls.cameraOff() ? 'videocam-off-outline' : 'videocam-outline'"></ion-icon>
                   </ion-button>
                 }
                 <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()">
                   <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
+                </ion-button>
+                <ion-button mode="ios" fill="clear" (click)="openInviteModal()" aria-label="Anadir participante">
+                  <ion-icon name="person-add-outline"></ion-icon>
                 </ion-button>
                 <ion-button mode="ios" color="danger" (click)="endActive()">
                   <ion-icon name="close-outline"></ion-icon>
@@ -72,19 +101,65 @@
             </div>
           </div>
         } @else {
-          <div class="start-panel">
-            <ion-icon name="call-outline"></ion-icon>
-            <strong>{{ selectedTitle() }}</strong>
-            <span>Inicia desde el chat seleccionado.</span>
-            <div class="start-actions">
-              <ion-button mode="ios" [disabled]="!chat.selectedConversation()" (click)="startSelected('Voice')">
+          <div class="agenda-panel">
+            <div class="agenda-hero">
+              <div class="agenda-hero-icon">
                 <ion-icon name="call-outline"></ion-icon>
-                Voz
-              </ion-button>
-              <ion-button mode="ios" [disabled]="!chat.selectedConversation()" (click)="startSelected('Video')">
-                <ion-icon name="videocam-outline"></ion-icon>
-                Video
-              </ion-button>
+              </div>
+              <div>
+                <strong>Agenda de llamadas</strong>
+                <span>Busca por nombre, alias o telefono y llama sin abrir el chat.</span>
+              </div>
+            </div>
+
+            <ion-searchbar
+              mode="ios"
+              class="call-search"
+              [(ngModel)]="callQuery"
+              placeholder="Buscar contacto o numero"
+              searchIcon="search-outline"
+              animated="true"
+              showClearButton="focus">
+            </ion-searchbar>
+
+            <div class="agenda-list">
+              @if (filteredCallContacts(); as contacts) {
+                @for (contact of contacts; track contact.userId) {
+                  <div class="agenda-row">
+                    <div class="contact-face">
+                      @if (contactPhoto(contact)) {
+                        <img [src]="contactPhoto(contact)" alt="">
+                      } @else {
+                        <span>{{ contactInitials(contact) }}</span>
+                      }
+                    </div>
+                    <div class="agenda-copy">
+                      <strong>{{ contactLabel(contact) }}</strong>
+                      <small>{{ contactSubLabel(contact) }}</small>
+                    </div>
+                    <div class="agenda-actions">
+                      <ion-button
+                        mode="ios"
+                        fill="clear"
+                        (click)="startContactCall(contact, 'Voice')"
+                        [disabled]="callBusyId !== '' || calls.activeCall() !== null"
+                        [attr.aria-label]="'Llamar a ' + contactLabel(contact)">
+                        <ion-icon name="call-outline"></ion-icon>
+                      </ion-button>
+                      <ion-button
+                        mode="ios"
+                        fill="clear"
+                        (click)="startContactCall(contact, 'Video')"
+                        [disabled]="callBusyId !== '' || calls.activeCall() !== null"
+                        [attr.aria-label]="'Videollamar a ' + contactLabel(contact)">
+                        <ion-icon name="videocam-outline"></ion-icon>
+                      </ion-button>
+                    </div>
+                  </div>
+                } @empty {
+                  <div class="empty-copy">No hay contactos que coincidan con la busqueda.</div>
+                }
+              }
             </div>
           </div>
         }
@@ -98,18 +173,31 @@
         <h2>Historial local</h2>
         <div class="stack">
           @for (call of calls.history(); track call.id) {
-            <div class="call-row">
-              <div>
-                <strong>{{ call.type }} - {{ call.status }}</strong>
-                <span class="card-sub">{{ call.startedAt | date:'short' }}</span>
+            <div class="call-row history-row" [class.missed]="historyClass(call) === 'missed'" [class.outgoing]="historyClass(call) === 'outgoing'" [class.incoming]="historyClass(call) === 'incoming'">
+              <div class="history-main">
+                <div class="history-avatar">
+                  @if (historyPhoto(call)) {
+                    <img [src]="historyPhoto(call)" alt="">
+                  } @else {
+                    <span>{{ historyInitials(call) }}</span>
+                  }
+                </div>
+                <div class="history-copy">
+                  <strong>{{ historyTitle(call) }}</strong>
+                  <span>{{ historySubtitle(call) }}</span>
+                  <small>{{ call.startedAt | date:'short' }}</small>
+                </div>
               </div>
-              @if (canRejoin(call.id) && call.status !== 'Ended' && !call.endedAt) {
-                <ion-button mode="ios" fill="clear" (click)="rejoin(call.id)" aria-label="Reentrar">
-                  <ion-icon name="enter-outline"></ion-icon>
-                </ion-button>
-              } @else {
-                <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
-              }
+              <div class="history-actions">
+                <ion-icon class="direction" [name]="historyIcon(call)"></ion-icon>
+                @if (canRejoin(call.id) && call.status !== 'Ended' && !call.endedAt) {
+                  <ion-button mode="ios" fill="clear" (click)="rejoin(call.id)" aria-label="Reentrar">
+                    <ion-icon name="enter-outline"></ion-icon>
+                  </ion-button>
+                } @else {
+                  <ion-icon class="kind" [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
+                }
+              </div>
             </div>
           } @empty {
             <div class="empty-copy">Las llamadas entrantes apareceran aqui.</div>
@@ -118,4 +206,35 @@
       </article>
     </section>
   </main>
+
+  <ion-modal class="invite-modal" [isOpen]="inviteModalOpen" (didDismiss)="closeInviteModal()">
+    <ng-template>
+      <section class="invite-sheet">
+        <header>
+          <div>
+            <h2>Anadir participante</h2>
+            <p>Preparado para migrar esta llamada a sala grupal SFU.</p>
+          </div>
+          <ion-button mode="ios" fill="clear" (click)="closeInviteModal()" aria-label="Cerrar">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </header>
+        <div class="invite-list">
+          @for (contact of chat.contacts(); track contact.userId) {
+            <button type="button" (click)="inviteToCall(contact)">
+              @if (contact.profilePhotoDataUrl) {
+                <img [src]="contact.profilePhotoDataUrl" alt="">
+              } @else {
+                <span>{{ contactLabel(contact).slice(0, 2).toUpperCase() }}</span>
+              }
+              <strong>{{ contactLabel(contact) }}</strong>
+              <small>{{ contactSubLabel(contact) }}</small>
+            </button>
+          } @empty {
+            <p class="empty-copy">No hay contactos disponibles para invitar.</p>
+          }
+        </div>
+      </section>
+    </ng-template>
+  </ion-modal>
 </ion-content>

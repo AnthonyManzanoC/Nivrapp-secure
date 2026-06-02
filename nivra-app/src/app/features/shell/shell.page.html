@@ -1,5 +1,5 @@
 <ion-app>
-  <main class="workspace">
+  <main class="workspace" [class.mobile-nav-hidden]="hideMobileNav()">
     <nav class="rail" aria-label="Nivra">
       <img class="rail-logo" src="assets/brand/nivra-mark.svg" alt="">
       @for (item of nav; track item.path) {
@@ -19,28 +19,36 @@
       <router-outlet></router-outlet>
     </section>
 
-    @if (calls.activeCall(); as call) {
-      <aside class="call-pill" [class.incoming]="calls.phase() === 'ringing'">
-        <button class="call-pill-main" type="button" (click)="openCalls()">
-          <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
-          <span>
-            <strong>{{ call.type === 'Video' ? 'Videollamada' : 'Llamada' }}</strong>
-            <small>{{ calls.phase() }}</small>
-          </span>
-        </button>
-        @if (calls.phase() === 'ringing') {
-          <button class="pill-action accept" type="button" (click)="acceptCall()" aria-label="Aceptar llamada">
-            <ion-icon name="call-outline"></ion-icon>
-          </button>
-          <button class="pill-action danger" type="button" (click)="declineCall()" aria-label="Rechazar llamada">
-            <ion-icon name="close-outline"></ion-icon>
-          </button>
-        } @else {
-          <button class="pill-action danger" type="button" (click)="endCall()" aria-label="Colgar">
-            <ion-icon name="close-outline"></ion-icon>
-          </button>
-        }
-      </aside>
+    @if (calls.phase() === 'ringing') {
+      @if (calls.activeCall(); as call) {
+        <section class="incoming-call-overlay" aria-live="assertive">
+          <div class="incoming-call-card">
+            <span class="incoming-kind">
+              <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
+              {{ call.type === 'Video' ? 'Videollamada entrante' : 'Llamada entrante' }}
+            </span>
+            <div class="incoming-avatar">
+              @if (calls.callPhoto(call)) {
+                <img [src]="calls.callPhoto(call)" alt="">
+              } @else {
+                <strong>{{ calls.callInitials(call) }}</strong>
+              }
+            </div>
+            <h2>{{ calls.callTitle(call) }}</h2>
+            <p>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | date:'shortTime' }}</p>
+            <div class="incoming-actions">
+              <button class="incoming-action reject" type="button" (click)="declineCall()" aria-label="Rechazar llamada">
+                <ion-icon name="close-outline"></ion-icon>
+                <span>Rechazar</span>
+              </button>
+              <button class="incoming-action accept" type="button" (click)="acceptCall()" aria-label="Aceptar llamada">
+                <ion-icon name="call-outline"></ion-icon>
+                <span>Aceptar</span>
+              </button>
+            </div>
+          </div>
+        </section>
+      }
     }
   </main>
 </ion-app>

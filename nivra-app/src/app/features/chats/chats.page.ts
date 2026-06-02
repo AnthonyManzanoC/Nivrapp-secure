@@ -1,7 +1,7 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { Component, OnDestroy, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Router, RouterOutlet } from '@angular/router';
 import {
   IonAvatar,
   IonButton,
@@ -14,12 +14,13 @@ import {
   IonItemSliding,
   IonLabel,
   IonList,
+  IonModal,
   IonNote,
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { addOutline, closeOutline, searchOutline, syncOutline, trashOutline } from 'ionicons/icons';
-import { UserSummary } from '../../core/models/nivra.models';
+import { addOutline, checkmarkOutline, closeOutline, peopleOutline, searchOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { Contact, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 
@@ -30,8 +31,6 @@ import { ChatService } from '../../core/services/chat.service';
     CommonModule,
     DatePipe,
     FormsModule,
-    RouterLink,
-    RouterLinkActive,
     RouterOutlet,
     IonAvatar,
     IonButton,
@@ -44,6 +43,7 @@ import { ChatService } from '../../core/services/chat.service';
     IonItemSliding,
     IonLabel,
     IonList,
+    IonModal,
     IonNote,
     IonSpinner,
   ],
@@ -53,15 +53,24 @@ import { ChatService } from '../../core/services/chat.service';
 export class ChatsPage implements OnDestroy {
   readonly chat = inject(ChatService);
   private readonly auth = inject(AuthService);
+  private readonly router = inject(Router);
   query = '';
   searchResults: UserSummary[] = [];
   searching = false;
   recentSearches = this.loadRecent();
+  showRecentSearches = false;
+  recentCollapsed = true;
+  detailActive = false;
+  groupModalOpen = false;
+  groupName = '';
+  groupBusy = false;
+  groupError = '';
+  selectedGroupUserIds = new Set<string>();
   private timer: number | null = null;
   private searchSeq = 0;
 
   constructor() {
-    addIcons({ addOutline, closeOutline, searchOutline, syncOutline, trashOutline });
+    addIcons({ addOutline, checkmarkOutline, closeOutline, peopleOutline, searchOutline, syncOutline, trashOutline });
   }
 
   ngOnDestroy(): void {
@@ -74,7 +83,23 @@ export class ChatsPage implements OnDestroy {
     void this.chat.bootstrap();
   }
 
+  ionViewWillLeave(): void {
+    this.showRecentSearches = false;
+    this.recentCollapsed = true;
+  }
+
+  onSearchFocus(): void {
+    if (!this.query.trim()) {
+      this.showRecentSearches = true;
+      this.recentCollapsed = false;
+    }
+  }
+
   onSearchChange(): void {
+    if (this.query.trim().length >= 2) {
+      this.showRecentSearches = false;
+      this.recentCollapsed = true;
+    }
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
     }
@@ -102,14 +127,18 @@ export class ChatsPage implements OnDestroy {
   }
 
   async openConversation(conversationId: string): Promise<void> {
-    await this.chat.selectConversation(conversationId);
+    await this.router.navigate(['/app/chats', conversationId]);
+    void this.chat.selectConversation(conversationId);
   }
 
   async startConversation(person: UserSummary): Promise<void> {
-    await this.chat.createDirectConversation(person);
+    const conversation = await this.chat.createDirectConversation(person);
     this.rememberRecent(person);
     this.query = '';
     this.searchResults = [];
+    this.showRecentSearches = false;
+    this.recentCollapsed = true;
+    await this.router.navigate(['/app/chats', conversation.id]);
   }
 
   clearSearch(): void {
@@ -117,6 +146,8 @@ export class ChatsPage implements OnDestroy {
     this.query = '';
     this.searchResults = [];
     this.searching = false;
+    this.showRecentSearches = true;
+    this.recentCollapsed = false;
   }
 
   removeRecent(person: UserSummary, event: Event): void {
@@ -128,6 +159,77 @@ export class ChatsPage implements OnDestroy {
   clearRecent(): void {
     this.recentSearches = [];
     localStorage.removeItem(this.recentKey());
+  }
+
+  hideRecent(event?: Event): void {
+    event?.stopPropagation();
+    this.showRecentSearches = false;
+    this.recentCollapsed = true;
+  }
+
+  openGroupModal(): void {
+    this.showRecentSearches = false;
+    this.recentCollapsed = true;
+    this.groupError = '';
+    this.groupName = '';
+    this.selectedGroupUserIds = new Set<string>();
+    this.groupModalOpen = true;
+  }
+
+  closeGroupModal(): void {
+    if (this.groupBusy) {
+      return;
+    }
+    this.groupModalOpen = false;
+    this.groupError = '';
+  }
+
+  isGroupSelected(contact: Contact): boolean {
+    return this.selectedGroupUserIds.has(contact.userId);
+  }
+
+  toggleGroupContact(contact: Contact, event?: Event): void {
+    event?.stopPropagation();
+    const next = new Set(this.selectedGroupUserIds);
+    if (next.has(contact.userId)) {
+      next.delete(contact.userId);
+    } else {
+      next.add(contact.userId);
+    }
+    this.selectedGroupUserIds = next;
+  }
+
+  contactLabel(contact: Contact): string {
+    return contact.displayName || contact.phone || contact.alias || 'Contacto';
+  }
+
+  contactSubLabel(contact: Contact): string {
+    return contact.phone || (contact.alias ? `@${contact.alias}` : 'Contacto cifrado');
+  }
+
+  async createGroup(): Promise<void> {
+    if (this.groupBusy) {
+      return;
+    }
+    const participantUserIds = [...this.selectedGroupUserIds];
+    if (!participantUserIds.length) {
+      this.groupError = 'Selecciona al menos un contacto.';
+      return;
+    }
+    this.groupBusy = true;
+    this.groupError = '';
+    try {
+      const conversation = await this.chat.createGroupConversation({
+        name: this.groupName,
+        participantUserIds,
+      });
+      this.groupModalOpen = false;
+      await this.router.navigate(['/app/chats', conversation.id]);
+    } catch (error) {
+      this.groupError = error instanceof Error ? error.message : 'No se pudo crear el grupo.';
+    } finally {
+      this.groupBusy = false;
+    }
   }
 
   private rememberRecent(person: UserSummary): void {

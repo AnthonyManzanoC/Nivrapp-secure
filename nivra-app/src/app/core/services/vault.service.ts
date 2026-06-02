@@ -1,5 +1,6 @@
 import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Room, RoomEvent } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
 import {
   ChatPayload,
@@ -12,28 +13,41 @@ import {
   RecipientCipherRequest,
   UserSummary,
   VaultItem,
+  VaultNoteAttachment,
   VaultRealtimeMessageResponse,
   VaultRoom,
   VaultRoomMember,
   VaultRoomMessageVm,
 } from '../models/nivra.models';
 import { AuthService } from './auth.service';
+import { ChatService } from './chat.service';
 import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
 const VAULT_META_PREFIX = 'nivra.vault.';
 const MAX_VAULT_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_NOTE_ATTACHMENT_BYTES = 12 * 1024 * 1024;
+const MAX_NOTE_ATTACHMENTS = 8;
+
+interface LiveKitRoomTokenResponse {
+  serverUrl: string;
+  token: string;
+}
+
+type VaultVoicePhase = 'idle' | 'connecting' | 'connected' | 'failed';
 
 @Injectable({ providedIn: 'root' })
 export class VaultService {
   private readonly api = inject(NivraApiService);
   private readonly auth = inject(AuthService);
+  private readonly chat = inject(ChatService);
   private readonly crypto = inject(CryptoService);
   private readonly realtime = inject(SignalrService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly directories = new Map<string, PublicKeyDirectory>();
   private key: CryptoKey | null = null;
+  private voiceRoom: Room | null = null;
 
   readonly unlocked = signal(false);
   readonly items = signal<DecodedVaultItem[]>([]);
@@ -45,6 +59,15 @@ export class VaultService {
   readonly loading = signal(false);
   readonly sending = signal(false);
   readonly uploading = signal(false);
+  readonly noteBusy = signal(false);
+  readonly voicePhase = signal<VaultVoicePhase>('idle');
+  readonly voiceRoomId = signal<string | null>(null);
+  readonly voiceMuted = signal(false);
+  readonly voiceError = signal('');
+  readonly voiceRemoteStreams = signal<Record<string, MediaStream>>({});
+  readonly voiceActiveSpeakers = signal<string[]>([]);
+  readonly voiceRemoteEntries = computed(() => Object.entries(this.voiceRemoteStreams()));
+  readonly voiceConnected = computed(() => this.voicePhase() === 'connected' && Boolean(this.voiceRoomId()));
 
   readonly activeRoom = computed(() => {
     const id = this.activeRoomId();
@@ -130,13 +153,20 @@ export class VaultService {
     this.key = null;
     this.unlocked.set(false);
     this.items.update((items) => items.map(({ decoded: _decoded, decodeError: _decodeError, ...item }) => ({ ...item })));
+    this.leaveVoiceChat();
   }
 
-  async createNote(title: string, body: string): Promise<void> {
+  async createNote(title: string, body: string, files: File[] = []): Promise<void> {
     if (!this.key) {
       throw new Error('Desbloquea la boveda primero.');
     }
-    const encryptedMetadata = JSON.stringify(await this.crypto.encryptWithKey(this.key, { title, body }));
+    const attachments = await this.encryptNoteAttachments(files);
+    const encryptedMetadata = JSON.stringify(await this.crypto.encryptWithKey(this.key, {
+      title,
+      body,
+      attachments,
+      schema: 2,
+    }));
     await firstValueFrom(this.api.post('/vault/items', {
       kind: 'Note',
       encryptedMetadata,
@@ -173,10 +203,14 @@ export class VaultService {
     if (this.currentMember(room)?.status === 'Active') {
       await this.selectRoom(room.id);
     }
+    await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, options.invitedUserIds ?? []), options.pin || null);
     return room;
   }
 
   async joinRoom(room: VaultRoom, pin?: string | null): Promise<VaultRoom> {
+    if (!this.canAttemptJoin(room)) {
+      throw new Error('No estas invitado a esta sala. Pidele al dueno que te agregue primero.');
+    }
     const joined = await firstValueFrom(this.api.post<VaultRoom>(`/vault/rooms/${encodeURIComponent(room.id)}/join`, {
       pin: pin || null,
     }));
@@ -202,18 +236,30 @@ export class VaultService {
     if (this.activeRoomId() === roomId) {
       this.setActiveRoom(null);
     }
+    this.clearRoomMessages(roomId);
+    if (this.voiceRoomId() === roomId) {
+      this.leaveVoiceChat();
+    }
     this.rooms.update((rooms) => rooms.filter((room) => room.id !== roomId));
   }
 
   async inviteUsers(roomId: string, userIds: string[]): Promise<VaultRoom> {
-    const ids = [...new Set(userIds.filter(Boolean))];
+    const currentRoom = this.rooms().find((candidate) => candidate.id === roomId) ?? this.activeRoom();
+    if (!this.canInviteGuests(currentRoom)) {
+      throw new Error('Solo el dueno de la sala puede agregar invitados.');
+    }
+    const existing = new Set((currentRoom?.members ?? [])
+      .filter((member) => member.status !== 'Left' && member.status !== 'Rejected')
+      .map((member) => member.userId));
+    const ids = [...new Set(userIds.filter((id) => Boolean(id) && !existing.has(id)))];
     if (!ids.length) {
-      throw new Error('Selecciona al menos un contacto.');
+      throw new Error('Selecciona un contacto que todavia no este en la sala.');
     }
     const room = await firstValueFrom(this.api.post<VaultRoom>(`/vault/rooms/${encodeURIComponent(roomId)}/invite`, {
       userIds: ids,
     }));
     this.syncRoom(room);
+    await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, ids), null);
     return room;
   }
 
@@ -309,13 +355,197 @@ export class VaultService {
     link.click();
   }
 
+  noteAttachments(item: DecodedVaultItem | null | undefined): VaultNoteAttachment[] {
+    return Array.isArray(item?.decoded?.attachments) ? item.decoded.attachments : [];
+  }
+
+  noteAttachmentKey(item: DecodedVaultItem, attachment: VaultNoteAttachment): string {
+    return `note:${item.id}:${attachment.id}`;
+  }
+
+  noteAttachmentSummary(item: DecodedVaultItem): string {
+    const attachments = this.noteAttachments(item);
+    if (!attachments.length) {
+      return '';
+    }
+    const total = attachments.reduce((sum, attachment) => sum + Number(attachment.size || 0), 0);
+    return `${attachments.length} adjunto${attachments.length === 1 ? '' : 's'} - ${this.formatBytes(total)}`;
+  }
+
+  async ensureNoteAttachmentPreview(item: DecodedVaultItem, attachment: VaultNoteAttachment): Promise<MediaPreview | null> {
+    const key = this.noteAttachmentKey(item, attachment);
+    const cached = this.mediaPreviews()[key];
+    if (cached) {
+      return cached;
+    }
+    const blob = this.noteAttachmentBlob(attachment);
+    return this.rememberMediaPreview(key, blob, attachment.mime, attachment.name);
+  }
+
+  async downloadNoteAttachment(item: DecodedVaultItem, attachment: VaultNoteAttachment): Promise<void> {
+    const preview = await this.ensureNoteAttachmentPreview(item, attachment);
+    if (!preview) {
+      return;
+    }
+    const link = document.createElement('a');
+    link.href = preview.url;
+    link.download = attachment.name;
+    link.click();
+  }
+
+  isNoteAttachmentImage(attachment: VaultNoteAttachment): boolean {
+    return (attachment.mime || '').startsWith('image/');
+  }
+
+  isNoteAttachmentAudio(attachment: VaultNoteAttachment): boolean {
+    return (attachment.mime || '').startsWith('audio/');
+  }
+
+  isNoteAttachmentVideo(attachment: VaultNoteAttachment): boolean {
+    return (attachment.mime || '').startsWith('video/');
+  }
+
+  noteAttachmentSize(attachment: VaultNoteAttachment): string {
+    return this.formatBytes(Number(attachment.size || 0));
+  }
+
+  async startVoiceChat(room: VaultRoom | null = this.activeRoom()): Promise<void> {
+    if (!room?.id) {
+      throw new Error('Abre una sala Vault primero.');
+    }
+    if (this.currentMember(room)?.status !== 'Active') {
+      throw new Error('Debes entrar a la sala para unirte al audio.');
+    }
+
+    this.voiceError.set('');
+    this.disconnectVoiceRoom();
+    this.resetVoiceState();
+    this.voicePhase.set('connecting');
+    try {
+      const credentials = await firstValueFrom(this.api.get<LiveKitRoomTokenResponse>(`/vault/rooms/${encodeURIComponent(room.id)}/voice-token`));
+      if (!credentials?.serverUrl || !credentials.token) {
+        throw new Error('El servidor no devolvio credenciales LiveKit validas.');
+      }
+
+      const liveRoom = new Room();
+      this.voiceRoom = liveRoom;
+      liveRoom.on(RoomEvent.TrackSubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
+        this.addVoiceRemoteTrack(participant?.identity || crypto.randomUUID(), track);
+      });
+      liveRoom.on(RoomEvent.TrackUnsubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
+        this.removeVoiceRemoteTrack(participant?.identity || '', track);
+      });
+      liveRoom.on(RoomEvent.ActiveSpeakersChanged, (speakers: Array<{ identity?: string }>) => {
+        this.voiceActiveSpeakers.set(speakers.map((speaker) => speaker.identity).filter((id): id is string => Boolean(id)));
+      });
+      liveRoom.on(RoomEvent.Disconnected, () => {
+        if (this.voiceRoom === liveRoom) {
+          this.resetVoiceState();
+        }
+      });
+
+      await liveRoom.connect(credentials.serverUrl, credentials.token);
+      await (liveRoom.localParticipant as unknown as {
+        setMicrophoneEnabled: (enabled: boolean) => Promise<unknown>;
+        setCameraEnabled?: (enabled: boolean) => Promise<unknown>;
+      }).setMicrophoneEnabled(true);
+      await (liveRoom.localParticipant as unknown as {
+        setCameraEnabled?: (enabled: boolean) => Promise<unknown>;
+      }).setCameraEnabled?.(false);
+      this.voiceRoomId.set(room.id);
+      this.voiceMuted.set(false);
+      this.voicePhase.set('connected');
+    } catch (error) {
+      this.disconnectVoiceRoom();
+      this.resetVoiceState();
+      this.voicePhase.set('failed');
+      this.voiceError.set(error instanceof Error ? error.message : 'No se pudo iniciar el chat de voz.');
+      throw error;
+    }
+  }
+
+  async toggleVoiceMute(): Promise<void> {
+    const room = this.voiceRoom;
+    if (!room) {
+      return;
+    }
+    const nextMuted = !this.voiceMuted();
+    await (room.localParticipant as unknown as {
+      setMicrophoneEnabled: (enabled: boolean) => Promise<unknown>;
+    }).setMicrophoneEnabled(!nextMuted);
+    this.voiceMuted.set(nextMuted);
+  }
+
+  leaveVoiceChat(): void {
+    this.disconnectVoiceRoom();
+    this.resetVoiceState();
+  }
+
+  voiceMemberLabel(userId: string | null | undefined): string {
+    if (!userId) {
+      return 'Miembro';
+    }
+    if (userId === this.auth.session()?.user.id) {
+      return 'Tu';
+    }
+    const room = this.activeRoom();
+    const member = room?.members?.find((candidate) => candidate.userId === userId);
+    return member ? this.memberLabel(member) : userId.slice(0, 6);
+  }
+
+  voiceMemberInitials(userId: string | null | undefined): string {
+    return this.initials(this.voiceMemberLabel(userId));
+  }
+
+  voiceRoster(room: VaultRoom | null = this.activeRoom()): VaultRoomMember[] {
+    const connectedIds = new Set([
+      this.auth.session()?.user.id,
+      ...Object.keys(this.voiceRemoteStreams()),
+      ...this.voiceActiveSpeakers(),
+    ].filter(Boolean) as string[]);
+    return (room?.members ?? [])
+      .filter((member) => member.status === 'Active' && connectedIds.has(member.userId))
+      .slice(0, 8);
+  }
+
   currentMember(room: VaultRoom | null | undefined): VaultRoomMember | null {
     const userId = this.auth.session()?.user.id;
     return room?.members?.find((member) => member.userId === userId) ?? null;
   }
 
+  isCurrentUser(userId: string | null | undefined): boolean {
+    return Boolean(userId && this.auth.session()?.user.id === userId);
+  }
+
   canModerate(room: VaultRoom | null | undefined): boolean {
-    return this.currentMember(room)?.role === 'Owner';
+    return this.isRoomOwner(room);
+  }
+
+  isRoomOwner(room: VaultRoom | null | undefined): boolean {
+    const userId = this.auth.session()?.user.id;
+    return Boolean(userId && room?.owner?.id === userId);
+  }
+
+  canInviteGuests(room: VaultRoom | null | undefined): boolean {
+    return this.isRoomOwner(room);
+  }
+
+  canAttemptJoin(room: VaultRoom | null | undefined): boolean {
+    if (!room) {
+      return false;
+    }
+    if (this.isRoomOwner(room)) {
+      return true;
+    }
+    const userId = this.auth.session()?.user.id;
+    if (!userId) {
+      return false;
+    }
+    if (room.participantIds?.length && !room.participantIds.includes(userId)) {
+      return false;
+    }
+    const member = this.currentMember(room);
+    return member?.status === 'Invited' || member?.status === 'Active';
   }
 
   memberLabel(member: VaultRoomMember): string {
@@ -385,9 +615,9 @@ export class VaultService {
 
   accessLabel(value?: string | null): string {
     return {
-      PinOnly: 'PIN requerido',
+      PinOnly: 'Invitados + PIN',
       InviteOnly: 'Solo invitados',
-      WaitingRoom: 'Lobby con aprobacion',
+      WaitingRoom: 'Invitados + aprobacion',
     }[value || ''] || value || 'Privado';
   }
 
@@ -408,6 +638,14 @@ export class VaultService {
       Left: 'Saliste',
       Rejected: 'Rechazada',
     }[status || ''] || status || 'Sin acceso';
+  }
+
+  async enablePrivacyShield(): Promise<void> {
+    await this.setPrivacyScreen(true);
+  }
+
+  async disablePrivacyShield(): Promise<void> {
+    await this.setPrivacyScreen(false);
   }
 
   private async sendVaultPayload(payload: ChatPayload, kind = 'Text', fileObjectId: string | null = null): Promise<void> {
@@ -606,6 +844,12 @@ export class VaultService {
     if (this.activeRoomId() === roomId && value.closedAt) {
       this.setActiveRoom(null);
     }
+    if (value.closedAt) {
+      this.clearRoomMessages(roomId);
+      if (this.voiceRoomId() === roomId) {
+        this.leaveVoiceChat();
+      }
+    }
     void this.load();
   }
 
@@ -626,6 +870,17 @@ export class VaultService {
     }
   }
 
+  private clearRoomMessages(roomId: string): void {
+    this.messagesByRoom.update((state) => {
+      if (!state[roomId]) {
+        return state;
+      }
+      const next = { ...state };
+      delete next[roomId];
+      return next;
+    });
+  }
+
   private activeMemberIds(room: VaultRoom): string[] {
     return (room.members ?? [])
       .filter((member) => member.status === 'Active')
@@ -640,6 +895,41 @@ export class VaultService {
       return new Date(Date.now() + 60 * 60 * 1000).toISOString();
     }
     return null;
+  }
+
+  private async encryptNoteAttachments(files: File[]): Promise<VaultNoteAttachment[]> {
+    if (!files.length) {
+      return [];
+    }
+    if (files.length > MAX_NOTE_ATTACHMENTS) {
+      throw new Error(`Maximo ${MAX_NOTE_ATTACHMENTS} adjuntos por nota.`);
+    }
+    const total = files.reduce((sum, file) => sum + file.size, 0);
+    if (total > MAX_NOTE_ATTACHMENT_BYTES) {
+      throw new Error(`Maximo ${this.formatBytes(MAX_NOTE_ATTACHMENT_BYTES)} por nota segura.`);
+    }
+    const now = new Date().toISOString();
+    const attachments: VaultNoteAttachment[] = [];
+    for (const file of files) {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      attachments.push({
+        id: `vna-${crypto.randomUUID()}`,
+        name: file.name || 'archivo-vault',
+        mime: file.type || 'application/octet-stream',
+        size: file.size,
+        dataBase64: this.crypto.b64(bytes),
+        createdAt: now,
+      });
+    }
+    return attachments;
+  }
+
+  private noteAttachmentBlob(attachment: VaultNoteAttachment): Blob {
+    const bytes = this.crypto.ub64(attachment.dataBase64);
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    return new Blob([buffer], {
+      type: attachment.mime || 'application/octet-stream',
+    });
   }
 
   private async decodeItems(items: VaultItem[]): Promise<DecodedVaultItem[]> {
@@ -658,6 +948,163 @@ export class VaultService {
       }
     }
     return decoded;
+  }
+
+  private async notifyVaultInvites(room: VaultRoom, invitedUserIds: string[], pin: string | null): Promise<void> {
+    const current = this.auth.session();
+    if (!current || !invitedUserIds.length) {
+      return;
+    }
+    const members = invitedUserIds
+      .map((userId) => room.members.find((member) => member.userId === userId))
+      .filter((member): member is VaultRoomMember => Boolean(member?.userId && member.userId !== current.user.id));
+    if (!members.length) {
+      return;
+    }
+
+    const text = [
+      `Nivra Vault: Te he invitado a mi Sala Privada "${room.name}".`,
+      'Usa el PIN acordado para entrar. Primero Nivra valida que estes en la lista de invitados y luego desbloquea el contenido.',
+      'Los mensajes siguen las reglas de retencion de la sala.',
+    ].join('\n');
+
+    await Promise.all(members.map(async (member) => {
+      try {
+        const conversation = await this.chat.createDirectConversation(this.memberAsPerson(member));
+        await this.chat.sendText(conversation, text, {
+          ttlSeconds: this.ttlSecondsForRoom(room),
+        });
+      } catch {
+        // Best-effort E2EE invite: backend push + vault.invited still notify the member.
+      }
+    }));
+  }
+
+  private invitedUserIdsFromRoom(room: VaultRoom, fallbackIds: string[]): string[] {
+    const requested = new Set(fallbackIds.filter(Boolean));
+    return room.members
+      .filter((member) => member.status === 'Invited' && requested.has(member.userId))
+      .map((member) => member.userId);
+  }
+
+  private memberAsPerson(member: VaultRoomMember): UserSummary {
+    return {
+      id: member.userId,
+      alias: member.alias,
+      displayName: member.displayName,
+      phone: null,
+      bio: null,
+      profilePhotoDataUrl: member.profilePhotoDataUrl,
+      isDiscoverable: true,
+      isContact: true,
+      isMutualContact: true,
+      isFavorite: false,
+      friendshipState: 'contact',
+    };
+  }
+
+  private ttlSecondsForRoom(room: VaultRoom): number | null {
+    if (!room.expiresAt) {
+      return null;
+    }
+    const seconds = Math.floor((new Date(room.expiresAt).getTime() - Date.now()) / 1000);
+    return seconds > 0 ? seconds : null;
+  }
+
+  private addVoiceRemoteTrack(participantId: string, track: unknown): void {
+    const mediaTrack = (track as { mediaStreamTrack?: MediaStreamTrack }).mediaStreamTrack;
+    if (!participantId || !mediaTrack) {
+      return;
+    }
+    const stream = this.voiceRemoteStreams()[participantId] ?? new MediaStream();
+    if (!stream.getTracks().some((item) => item.id === mediaTrack.id)) {
+      stream.addTrack(mediaTrack);
+    }
+    this.voiceRemoteStreams.update((items) => ({ ...items, [participantId]: stream }));
+  }
+
+  private removeVoiceRemoteTrack(participantId: string, track: unknown): void {
+    const mediaTrack = (track as { mediaStreamTrack?: MediaStreamTrack }).mediaStreamTrack;
+    if (!participantId || !mediaTrack) {
+      return;
+    }
+    const stream = this.voiceRemoteStreams()[participantId];
+    stream?.removeTrack(mediaTrack);
+    if (!stream || !stream.getTracks().length) {
+      this.voiceRemoteStreams.update((items) => {
+        const next = { ...items };
+        delete next[participantId];
+        return next;
+      });
+    }
+  }
+
+  private disconnectVoiceRoom(): void {
+    const room = this.voiceRoom;
+    this.voiceRoom = null;
+    if (!room) {
+      return;
+    }
+    room.removeAllListeners();
+    room.disconnect();
+  }
+
+  private resetVoiceState(): void {
+    this.voiceRemoteStreams.update((streams) => {
+      Object.values(streams).forEach((stream) => {
+        stream.getTracks().forEach((track) => {
+          track.enabled = false;
+          track.stop();
+        });
+      });
+      return {};
+    });
+    this.voiceActiveSpeakers.set([]);
+    this.voiceRoomId.set(null);
+    this.voiceMuted.set(false);
+    this.voicePhase.set('idle');
+  }
+
+  private async setPrivacyScreen(enabled: boolean): Promise<void> {
+    try {
+      const loader = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<Record<string, unknown>>;
+      const module = await loader('@capacitor-community/privacy-screen');
+      const privacy = (module['PrivacyScreen'] ?? module['default'] ?? module) as Record<string, unknown>;
+      const methodNames = enabled
+        ? ['enable', 'preventScreenshots', 'setEnabled']
+        : ['disable', 'allowScreenshots', 'setDisabled'];
+      for (const name of methodNames) {
+        const method = privacy[name];
+        if (typeof method === 'function') {
+          await (method as (value?: boolean) => Promise<unknown>).call(privacy, enabled);
+          return;
+        }
+      }
+    } catch {
+      // Optional native hardening. Web builds continue with CSS protections.
+    }
+  }
+
+  private initials(value: string | null | undefined): string {
+    return (value || 'NV')
+      .split(/\s|,|-/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'NV';
+  }
+
+  private formatBytes(size: number): string {
+    if (!size) {
+      return '0 B';
+    }
+    if (size < 1024) {
+      return `${size} B`;
+    }
+    if (size < 1024 * 1024) {
+      return `${(size / 1024).toFixed(1)} KB`;
+    }
+    return `${(size / 1024 / 1024).toFixed(1)} MB`;
   }
 
   private fileId(payload: FileChatPayload | null): string | null {

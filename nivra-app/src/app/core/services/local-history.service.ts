@@ -2,10 +2,10 @@ import { Injectable } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import type { SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { IDBPDatabase, openDB } from 'idb';
-import { ChatMessageVm, ChatPayload, Contact, Conversation } from '../models/nivra.models';
+import { CallSession, ChatMessageVm, ChatPayload, Contact, Conversation, LocalProfile, Story } from '../models/nivra.models';
 
 const LOCAL_DB_NAME = 'NivraDB';
-const LOCAL_DB_VERSION = 9;
+const LOCAL_DB_VERSION = 12;
 const NATIVE_SQLITE_DB_NAME = 'nivra_local_vault';
 const LOCAL_MESSAGE_STORE = 'messages';
 const LOCAL_KEY_STORE = 'deviceKeys';
@@ -14,7 +14,9 @@ const LOCAL_VAULT_KEY_STORE = 'localVaultKeys';
 const LOCAL_CONVERSATION_STORE = 'conversations';
 const LOCAL_CONTACT_STORE = 'contacts';
 const LOCAL_SYNC_STORE = 'syncWatermarks';
-const VIEW_ONCE_DELETE_DELAY_MS = 15000;
+const LOCAL_CALL_STORE = 'calls';
+const LOCAL_STORY_STORE = 'stories';
+const VIEW_ONCE_DELETE_DELAY_MS = 0;
 const LOCAL_PURGE_LIMIT = 500;
 const LOCAL_PAYLOAD_VERSION = 2;
 
@@ -65,6 +67,20 @@ interface StoredContact extends Contact {
   accountKey: string;
 }
 
+interface StoredProfile extends LocalProfile {
+  userId: string;
+}
+
+interface StoredCall extends CallSession {
+  key: string;
+  accountKey: string;
+}
+
+interface StoredStory extends Story {
+  key: string;
+  accountKey: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class LocalHistoryService {
   private dbPromise?: Promise<IDBPDatabase | null>;
@@ -89,6 +105,47 @@ export class LocalHistoryService {
     return active
       .sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime())
       .slice(-safeLimit);
+  }
+
+  async accountKeysForUser(userId: string): Promise<string[]> {
+    if (!userId) {
+      return [];
+    }
+    const keys = new Set<string>([userId]);
+    const sqlite = await this.openNativeSqlite();
+    if (sqlite) {
+      const rows = await sqlite.query(
+        `SELECT account_key FROM local_conversations WHERE account_key = ? OR account_key LIKE ?
+         UNION SELECT account_key FROM local_messages WHERE account_key = ? OR account_key LIKE ?
+         UNION SELECT account_key FROM local_contacts WHERE account_key = ? OR account_key LIKE ?
+         UNION SELECT account_key FROM local_calls WHERE account_key = ? OR account_key LIKE ?`,
+        [userId, `${userId}:%`, userId, `${userId}:%`, userId, `${userId}:%`, userId, `${userId}:%`],
+      ).catch(() => ({ values: [] as Record<string, unknown>[] }));
+      for (const row of rows.values ?? []) {
+        const key = row['account_key'];
+        if (typeof key === 'string' && key) {
+          keys.add(key);
+        }
+      }
+      return [...keys];
+    }
+    const db = await this.open();
+    if (!db) {
+      return [...keys];
+    }
+    for (const storeName of [LOCAL_CONVERSATION_STORE, LOCAL_MESSAGE_STORE, LOCAL_CONTACT_STORE, LOCAL_CALL_STORE]) {
+      if (!db.objectStoreNames.contains(storeName)) {
+        continue;
+      }
+      const records = await db.transaction(storeName, 'readonly').objectStore(storeName).getAll() as Array<{ accountKey?: string }>;
+      for (const record of records) {
+        const key = record.accountKey;
+        if (key === userId || key?.startsWith(`${userId}:`)) {
+          keys.add(key);
+        }
+      }
+    }
+    return [...keys];
   }
 
   async putMessage(accountKey: string, message: ChatMessageVm): Promise<void> {
@@ -263,6 +320,143 @@ export class LocalHistoryService {
       key: this.contactStorageKey(accountKey, contact.userId),
       accountKey,
     } satisfies StoredContact)));
+  }
+
+  async profiles(userIds: string[] = []): Promise<LocalProfile[]> {
+    const db = await this.open();
+    if (!db) {
+      return [];
+    }
+    const ids = [...new Set(userIds.filter(Boolean))];
+    const store = db.transaction(LOCAL_PROFILE_STORE, 'readonly').objectStore(LOCAL_PROFILE_STORE);
+    if (!ids.length) {
+      return await store.getAll() as LocalProfile[];
+    }
+    const records = await Promise.all(ids.map((userId) => store.get(userId) as Promise<StoredProfile | undefined>));
+    return records.filter((record): record is StoredProfile => Boolean(record));
+  }
+
+  async putProfiles(profiles: LocalProfile[]): Promise<void> {
+    const records = profiles
+      .filter((profile): profile is LocalProfile & { userId: string } => Boolean(profile?.userId))
+      .map((profile) => ({
+        ...profile,
+        id: profile.id || profile.userId,
+        aliasLower: (profile.alias || '').trim().toLowerCase(),
+        cachedAt: new Date().toISOString(),
+      } satisfies StoredProfile));
+    if (!records.length) {
+      return;
+    }
+    const db = await this.open();
+    if (!db) {
+      return;
+    }
+    const store = db.transaction(LOCAL_PROFILE_STORE, 'readwrite').objectStore(LOCAL_PROFILE_STORE);
+    await Promise.all(records.map((profile) => store.put(profile)));
+  }
+
+  async calls(accountKey: string): Promise<CallSession[]> {
+    if (!accountKey) {
+      return [];
+    }
+    const sqlite = await this.openNativeSqlite();
+    if (sqlite) {
+      const rows = await sqlite.query(
+        `SELECT record_json FROM local_calls
+         WHERE account_key = ?
+         ORDER BY started_at DESC
+         LIMIT 80`,
+        [accountKey],
+      ).catch(() => ({ values: [] as Record<string, unknown>[] }));
+      return (rows.values ?? [])
+        .map((row) => this.parseSqliteRecord<StoredCall>(row))
+        .filter((record): record is StoredCall => Boolean(record))
+        .map(({ key: _key, accountKey: _accountKey, ...call }) => call);
+    }
+    const db = await this.open();
+    if (!db) {
+      return [];
+    }
+    const records = await db.transaction(LOCAL_CALL_STORE, 'readonly')
+      .objectStore(LOCAL_CALL_STORE)
+      .index('byAccountStarted')
+      .getAll(IDBKeyRange.bound([accountKey, ''], [accountKey, '\uffff'])) as StoredCall[];
+    return records
+      .map(({ key: _key, accountKey: _accountKey, ...call }) => call)
+      .sort((left, right) => Date.parse(right.startedAt || '') - Date.parse(left.startedAt || ''))
+      .slice(0, 80);
+  }
+
+  async putCalls(accountKey: string, calls: CallSession[]): Promise<void> {
+    if (!accountKey || !calls.length) {
+      return;
+    }
+    const records = calls
+      .filter((call): call is CallSession & { id: string } => Boolean(call?.id))
+      .slice(0, 80);
+    const sqlite = await this.openNativeSqlite();
+    if (sqlite) {
+      for (const call of records) {
+        const record: StoredCall = {
+          ...call,
+          key: this.callStorageKey(accountKey, call.id),
+          accountKey,
+        };
+        await sqlite.run(
+          `INSERT OR REPLACE INTO local_calls (key, account_key, id, started_at, record_json)
+           VALUES (?, ?, ?, ?, ?)`,
+          [record.key, accountKey, call.id, call.startedAt || '', JSON.stringify(record)],
+        );
+      }
+      return;
+    }
+    const db = await this.open();
+    if (!db) {
+      return;
+    }
+    const store = db.transaction(LOCAL_CALL_STORE, 'readwrite').objectStore(LOCAL_CALL_STORE);
+    await Promise.all(records.map((call) => store.put({
+      ...call,
+      key: this.callStorageKey(accountKey, call.id),
+      accountKey,
+    } satisfies StoredCall)));
+  }
+
+  async stories(accountKey: string): Promise<Story[]> {
+    if (!accountKey) {
+      return [];
+    }
+    const db = await this.open();
+    if (!db || !db.objectStoreNames.contains(LOCAL_STORY_STORE)) {
+      return [];
+    }
+    const records = await db.transaction(LOCAL_STORY_STORE, 'readonly')
+      .objectStore(LOCAL_STORY_STORE)
+      .index('byAccount')
+      .getAll(accountKey) as StoredStory[];
+    return records
+      .map(({ key: _key, accountKey: _accountKey, ...story }) => story)
+      .sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || ''));
+  }
+
+  async putStories(accountKey: string, stories: Story[]): Promise<void> {
+    if (!accountKey || !stories.length) {
+      return;
+    }
+    const db = await this.open();
+    if (!db || !db.objectStoreNames.contains(LOCAL_STORY_STORE)) {
+      return;
+    }
+    const store = db.transaction(LOCAL_STORY_STORE, 'readwrite').objectStore(LOCAL_STORY_STORE);
+    await Promise.all(stories
+      .filter((story): story is Story & { id: string } => Boolean(story?.id))
+      .map((story) => store.put({
+        ...story,
+        targetType: story.targetType ?? (story.targetId ? 'group' : 'contacts'),
+        key: this.storyStorageKey(accountKey, story.id),
+        accountKey,
+      } satisfies StoredStory)));
   }
 
   async removeMessage(accountKey: string, conversationId: string, messageId: string): Promise<void> {
@@ -461,6 +655,9 @@ export class LocalHistoryService {
         if (!conversationStore.indexNames.contains('byAccountUpdated')) {
           conversationStore.createIndex('byAccountUpdated', ['accountKey', 'updatedAt']);
         }
+        if (!conversationStore.indexNames.contains('byAccountType')) {
+          conversationStore.createIndex('byAccountType', ['accountKey', 'type']);
+        }
 
         const contactStore = db.objectStoreNames.contains(LOCAL_CONTACT_STORE)
           ? transaction.objectStore(LOCAL_CONTACT_STORE)
@@ -477,6 +674,29 @@ export class LocalHistoryService {
           : db.createObjectStore(LOCAL_SYNC_STORE, { keyPath: 'accountKey' });
         if (!syncStore.indexNames.contains('byUpdated')) {
           syncStore.createIndex('byUpdated', 'updatedAt');
+        }
+
+        const callStore = db.objectStoreNames.contains(LOCAL_CALL_STORE)
+          ? transaction.objectStore(LOCAL_CALL_STORE)
+          : db.createObjectStore(LOCAL_CALL_STORE, { keyPath: 'key' });
+        if (!callStore.indexNames.contains('byAccount')) {
+          callStore.createIndex('byAccount', 'accountKey');
+        }
+        if (!callStore.indexNames.contains('byAccountStarted')) {
+          callStore.createIndex('byAccountStarted', ['accountKey', 'startedAt']);
+        }
+
+        const storyStore = db.objectStoreNames.contains(LOCAL_STORY_STORE)
+          ? transaction.objectStore(LOCAL_STORY_STORE)
+          : db.createObjectStore(LOCAL_STORY_STORE, { keyPath: 'key' });
+        if (!storyStore.indexNames.contains('byAccount')) {
+          storyStore.createIndex('byAccount', 'accountKey');
+        }
+        if (!storyStore.indexNames.contains('byAccountTarget')) {
+          storyStore.createIndex('byAccountTarget', ['accountKey', 'targetType', 'targetId']);
+        }
+        if (!storyStore.indexNames.contains('byAccountExpires')) {
+          storyStore.createIndex('byAccountExpires', ['accountKey', 'expiresAt']);
         }
 
         const keyStore = db.objectStoreNames.contains(LOCAL_KEY_STORE)
@@ -566,6 +786,15 @@ export class LocalHistoryService {
           synced_at TEXT NOT NULL,
           updated_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS local_calls (
+          key TEXT PRIMARY KEY NOT NULL,
+          account_key TEXT NOT NULL,
+          id TEXT NOT NULL,
+          started_at TEXT,
+          record_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_local_calls_account ON local_calls(account_key, started_at);
 
         CREATE TABLE IF NOT EXISTS local_vault_keys (
           account_key TEXT PRIMARY KEY NOT NULL,
@@ -747,6 +976,14 @@ export class LocalHistoryService {
 
   private contactStorageKey(accountKey: string, userId: string): string {
     return `${accountKey}:${userId}`;
+  }
+
+  private callStorageKey(accountKey: string, callId: string): string {
+    return `${accountKey}:${callId}`;
+  }
+
+  private storyStorageKey(accountKey: string, storyId: string): string {
+    return `${accountKey}:${storyId}`;
   }
 
   private async encryptPayload(accountKey: string, payload: ChatPayload): Promise<EncryptedLocalPayload> {

@@ -32,6 +32,8 @@ export class AccountPage implements OnInit, OnDestroy {
   email = '';
   phone = '';
   bio = '';
+  profilePhotoDataUrl = '';
+  profilePhotoDirty = false;
   isDiscoverable = true;
   saving = false;
   notice = '';
@@ -63,6 +65,8 @@ export class AccountPage implements OnInit, OnDestroy {
       this.email = user.email ?? '';
       this.phone = user.phone ?? '';
       this.bio = user.bio ?? '';
+      this.profilePhotoDataUrl = user.profilePhotoDataUrl ?? '';
+      this.profilePhotoDirty = false;
       this.isDiscoverable = user.isDiscoverable;
     }
   }
@@ -74,10 +78,36 @@ export class AccountPage implements OnInit, OnDestroy {
         email: this.email || null,
         phone: this.phone || null,
         bio: this.bio || null,
+        ...(this.profilePhotoDirty ? { profilePhotoDataUrl: this.profilePhotoDataUrl } : {}),
         isDiscoverable: this.isDiscoverable,
       });
+      this.profilePhotoDirty = false;
       this.notice = 'Perfil actualizado.';
     });
+  }
+
+  async pickProfilePhoto(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      this.error = 'Selecciona una imagen valida.';
+      return;
+    }
+    await this.run(async () => {
+      this.profilePhotoDataUrl = await this.resizeProfilePhoto(file);
+      this.profilePhotoDirty = true;
+      this.notice = 'Foto lista. Guarda el perfil para publicarla.';
+    });
+  }
+
+  removeProfilePhoto(): void {
+    this.profilePhotoDataUrl = '';
+    this.profilePhotoDirty = true;
+    this.notice = 'Foto quitada. Guarda el perfil para confirmar.';
   }
 
   async savePrivacy(): Promise<void> {
@@ -243,5 +273,50 @@ export class AccountPage implements OnInit, OnDestroy {
     } finally {
       this.saving = false;
     }
+  }
+
+  private async resizeProfilePhoto(file: File): Promise<string> {
+    const image = await this.loadImage(file);
+    const maxSide = 512;
+    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
+    let width = Math.max(1, Math.round((image.naturalWidth || maxSide) * scale));
+    let height = Math.max(1, Math.round((image.naturalHeight || maxSide) * scale));
+    const canvas = document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    if (!context) {
+      throw new Error('No se pudo preparar la imagen.');
+    }
+
+    let quality = 0.86;
+    let dataUrl = '';
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      canvas.width = width;
+      canvas.height = height;
+      context.clearRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      dataUrl = canvas.toDataURL('image/jpeg', quality);
+      if (dataUrl.length <= 340000) {
+        return dataUrl;
+      }
+      quality = Math.max(0.56, quality - 0.08);
+      width = Math.max(160, Math.round(width * 0.82));
+      height = Math.max(160, Math.round(height * 0.82));
+    }
+    if (dataUrl.length > 350000) {
+      throw new Error('La imagen sigue siendo muy grande. Prueba otra foto.');
+    }
+    return dataUrl;
+  }
+
+  private loadImage(file: File): Promise<HTMLImageElement> {
+    const objectUrl = URL.createObjectURL(file);
+    return new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error('No se pudo leer la imagen.'));
+      image.src = objectUrl;
+    }).finally(() => {
+      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    });
   }
 }

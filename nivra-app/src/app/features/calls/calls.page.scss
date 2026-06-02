@@ -38,6 +38,11 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 18px 46px rgba(0, 0, 0, .28);
 }
 
+.call-stage.has-local-video {
+  place-items: stretch;
+  background: #030607;
+}
+
 .waiting-tile,
 .remote-tile,
 .start-panel {
@@ -47,9 +52,71 @@
   color: var(--nivra-muted);
 }
 
+.waiting-tile.over-video {
+  position: relative;
+  z-index: 2;
+  align-self: end;
+  justify-self: center;
+  width: min(94%, 440px);
+  margin-bottom: 22px;
+  border: 1px solid rgba(255, 255, 255, .14);
+  border-radius: 8px;
+  padding: 18px 18px 16px;
+  background:
+    linear-gradient(180deg, rgba(8, 13, 15, .62), rgba(8, 13, 15, .86)),
+    rgba(8, 13, 15, .74);
+  box-shadow: 0 22px 58px rgba(0, 0, 0, .38), inset 0 1px 0 rgba(255, 255, 255, .09);
+  backdrop-filter: blur(16px) saturate(130%);
+}
+
+.waiting-tile.over-video .call-avatar {
+  width: 76px;
+  height: 76px;
+  box-shadow: 0 14px 34px rgba(0, 0, 0, .32), 0 0 0 8px rgba(24, 214, 162, .035);
+}
+
+.waiting-tile.over-video strong {
+  font-size: 22px;
+}
+
+.call-avatar {
+  width: 128px;
+  height: 128px;
+  border-radius: 999px;
+  padding: 5px;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(rgba(6, 11, 13, .88), rgba(6, 11, 13, .88)) padding-box,
+    linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2)) border-box;
+  border: 2px solid transparent;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, .36), 0 0 0 12px rgba(24, 214, 162, .035);
+}
+
+.call-avatar.ringing {
+  animation: callPulse 1.55s ease-in-out infinite;
+}
+
+.call-avatar img,
+.call-avatar strong {
+  width: 100%;
+  height: 100%;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  object-fit: cover;
+  color: var(--nivra-text);
+  font-size: 34px;
+  font-weight: 950;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .03)),
+    linear-gradient(135deg, rgba(24, 214, 162, .42), rgba(107, 168, 255, .22));
+}
+
 .waiting-tile ion-icon,
 .start-panel ion-icon,
-.remote-tile ion-icon {
+.remote-tile ion-icon,
+.agenda-hero-icon ion-icon {
   width: 72px;
   height: 72px;
   color: var(--nivra-brand-2);
@@ -60,6 +127,40 @@
 .start-panel strong {
   color: var(--nivra-text);
   font-size: 28px;
+}
+
+.waiting-tile small {
+  color: var(--nivra-muted);
+}
+
+.group-call-faces {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-top: 4px;
+}
+
+.group-call-faces img,
+.group-call-faces span {
+  width: 34px;
+  height: 34px;
+  margin-left: -7px;
+  border: 2px solid rgba(8, 13, 15, .9);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  object-fit: cover;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .035)),
+    linear-gradient(135deg, rgba(24, 214, 162, .4), rgba(107, 168, 255, .24));
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.group-call-faces img:first-child,
+.group-call-faces span:first-child {
+  margin-left: 0;
 }
 
 .remote-tile,
@@ -96,6 +197,30 @@
   box-shadow: 0 16px 40px rgba(0, 0, 0, .36), 0 0 0 1px rgba(114, 240, 202, .12);
 }
 
+.local-preview-main {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #030607;
+}
+
+.local-preview-main::after {
+  content: "";
+}
+
+.call-stage.has-local-video::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, .06), rgba(0, 0, 0, .45)),
+    radial-gradient(circle at 50% 20%, transparent, rgba(0, 0, 0, .34));
+}
+
 .call-controls,
 .start-actions {
   display: flex;
@@ -115,6 +240,96 @@
   --color: #03100d;
 }
 
+ion-modal.invite-modal {
+  --width: min(430px, calc(100vw - 24px));
+  --height: min(620px, calc(100dvh - 40px));
+  --border-radius: 8px;
+  --background: rgba(8, 13, 15, .98);
+  --box-shadow: var(--nivra-shadow-soft);
+  color: var(--nivra-text);
+}
+
+.invite-sheet {
+  height: 100%;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .07), transparent 28%),
+    rgba(8, 13, 15, .98);
+}
+
+.invite-sheet header {
+  border-bottom: 1px solid rgba(255, 255, 255, .1);
+  padding: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.invite-sheet h2,
+.invite-sheet p {
+  margin: 0;
+}
+
+.invite-sheet p,
+.invite-list small {
+  color: var(--nivra-muted);
+}
+
+.invite-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 7px;
+  padding: 12px;
+  overscroll-behavior: contain;
+}
+
+.invite-list button {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: 10px;
+  padding: 10px;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .045);
+  text-align: left;
+}
+
+.invite-list button:hover {
+  border-color: rgba(24, 214, 162, .25);
+  background: rgba(24, 214, 162, .08);
+}
+
+.invite-list img,
+.invite-list button > span {
+  grid-row: span 2;
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  object-fit: cover;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .02)),
+    linear-gradient(135deg, rgba(24, 214, 162, .38), rgba(107, 168, 255, .22));
+  font-weight: 850;
+}
+
+.invite-list strong,
+.invite-list small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .start-panel {
   min-height: 460px;
   border: 1px dashed rgba(255, 255, 255, .12);
@@ -131,6 +346,202 @@
   font-size: 13px;
 }
 
+.agenda-panel {
+  min-height: 460px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr);
+  gap: 14px;
+}
+
+.agenda-hero {
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px;
+  padding: 16px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .12), rgba(107, 168, 255, .07)),
+    rgba(255, 255, 255, .028);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+
+.agenda-hero-icon {
+  width: 76px;
+  height: 76px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(24, 214, 162, .08);
+}
+
+.agenda-hero-icon ion-icon {
+  width: 40px;
+  height: 40px;
+}
+
+.agenda-hero strong {
+  display: block;
+  color: var(--nivra-text);
+  font-size: 24px;
+  line-height: 1.08;
+}
+
+.agenda-hero span,
+.agenda-copy small,
+.history-copy span,
+.history-copy small {
+  color: var(--nivra-muted);
+}
+
+.call-search {
+  padding: 0;
+  --background: rgba(255, 255, 255, .06);
+  --border-radius: 999px;
+  --box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+  --color: var(--nivra-text);
+  --icon-color: var(--nivra-muted);
+  --placeholder-color: var(--nivra-muted);
+  --clear-button-color: var(--nivra-muted);
+}
+
+.agenda-list {
+  min-height: 0;
+  max-height: 360px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.agenda-row {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  background: rgba(255, 255, 255, .042);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+.agenda-row:hover {
+  border-color: rgba(24, 214, 162, .22);
+  background: rgba(24, 214, 162, .07);
+  transform: translateY(-1px);
+}
+
+.contact-face,
+.history-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, .035)),
+    linear-gradient(135deg, rgba(24, 214, 162, .38), rgba(107, 168, 255, .22));
+  font-weight: 900;
+}
+
+.contact-face img,
+.history-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.agenda-copy,
+.history-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.agenda-copy strong,
+.agenda-copy small,
+.history-copy strong,
+.history-copy span,
+.history-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agenda-actions,
+.history-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+}
+
+.agenda-actions ion-button,
+.history-actions ion-button {
+  --border-radius: 999px;
+  width: 42px;
+  height: 42px;
+  margin: 0;
+}
+
+.agenda-actions ion-icon {
+  color: var(--nivra-brand-2);
+}
+
+.history-row {
+  padding: 10px;
+}
+
+.history-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.history-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 999px;
+}
+
+.history-copy strong {
+  color: var(--nivra-text);
+}
+
+.history-actions .direction {
+  width: 20px;
+  height: 20px;
+}
+
+.history-actions .kind {
+  width: 18px;
+  height: 18px;
+  color: var(--nivra-muted);
+}
+
+.history-row.outgoing .direction {
+  color: var(--nivra-brand-2);
+}
+
+.history-row.incoming .direction {
+  color: #79b7ff;
+}
+
+.history-row.missed .direction,
+.history-row.missed .history-copy span {
+  color: #ff8f8f;
+}
+
 @media (max-width: 900px) {
   .call-active {
     min-height: 420px;
@@ -138,5 +549,67 @@
 
   .call-stage {
     min-height: 320px;
+  }
+
+  .waiting-tile.over-video {
+    margin-bottom: 14px;
+    padding: 14px;
+  }
+
+  .call-avatar {
+    width: 104px;
+    height: 104px;
+  }
+
+  ion-modal.invite-modal {
+    --width: 100vw;
+    --height: 100dvh;
+    --border-radius: 0;
+  }
+
+  .invite-sheet {
+    border-radius: 0;
+    border-inline: 0;
+  }
+
+  .agenda-panel {
+    min-height: 420px;
+  }
+
+  .agenda-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .agenda-hero-icon {
+    width: 60px;
+    height: 60px;
+  }
+
+  .agenda-list {
+    max-height: none;
+  }
+
+  .agenda-row {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .agenda-actions {
+    grid-column: 1 / -1;
+    justify-content: stretch;
+  }
+
+  .agenda-actions ion-button {
+    flex: 1;
+  }
+}
+
+@keyframes callPulse {
+  0%, 100% {
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .36), 0 0 0 8px rgba(24, 214, 162, .04);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 24px 80px rgba(0, 0, 0, .36), 0 0 0 22px rgba(24, 214, 162, .015);
+    transform: scale(1.018);
   }
 }

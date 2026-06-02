@@ -35,6 +35,7 @@
     "html5-qrcode": "^2.3.8",
     "idb": "^8.0.3",
     "ionicons": "^7.0.0",
+    "livekit-client": "^2.19.1",
     "qrcode": "^1.5.4",
     "rxjs": "~7.8.0",
     "tslib": "^2.3.0",

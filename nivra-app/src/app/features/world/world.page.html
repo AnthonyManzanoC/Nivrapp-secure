@@ -84,7 +84,19 @@
       <article class="panel span-5">
         <h2>Nueva historia</h2>
         <div class="stack">
-          <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="storyText" placeholder="Comparte algo cifrado para tus contactos"></ion-textarea>
+          <div class="audience-block">
+            <label>
+              <span>Audiencia</span>
+              <select class="native-select" [(ngModel)]="storyAudience">
+                <option value="contacts">Mis contactos</option>
+                @for (group of storyGroups(); track group.id) {
+                  <option [value]="group.id">{{ chat.conversationTitle(group) }}</option>
+                }
+              </select>
+            </label>
+            <small>{{ storyAudienceLabel() }}</small>
+          </div>
+          <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="storyText" placeholder="Comparte una historia cifrada"></ion-textarea>
           <input #storyFileInput type="file" hidden accept="image/*,video/*,audio/*" (change)="storyFileSelected($event)">
           <div class="story-compose-media">
             <button type="button" (click)="storyFileInput.click()">
@@ -98,11 +110,17 @@
             }
           </div>
           <div class="story-settings">
-            <select class="native-select" [(ngModel)]="visibility">
-              <option value="Contacts">Contactos</option>
-              <option value="MutualContacts">Mutuos</option>
-              <option value="PublicWorld">Mundo</option>
-            </select>
+            @if (storyAudience === 'contacts') {
+              <select class="native-select" [(ngModel)]="visibility">
+                <option value="Contacts">Contactos</option>
+                <option value="MutualContacts">Mutuos</option>
+                <option value="PublicWorld">Mundo</option>
+              </select>
+            } @else {
+              <select class="native-select" disabled>
+                <option>Solo miembros del grupo</option>
+              </select>
+            }
             <select class="native-select" [(ngModel)]="durationSeconds">
               <option [ngValue]="3600">1 hora</option>
               <option [ngValue]="86400">24 horas</option>
@@ -148,9 +166,14 @@
       </article>
 
       <article class="panel span-12">
-        <h2>Historias</h2>
+        <div class="panel-headline">
+          <div>
+            <h2>Historias de contactos</h2>
+            <span class="card-sub">{{ contactStories().length }} visibles</span>
+          </div>
+        </div>
         <div class="story-grid">
-          @for (story of social.stories(); track story.id) {
+          @for (story of contactStories(); track story.id) {
             @if (social.storyPayload(story); as payload) {
               <div class="story-row">
                 <button type="button" class="story-open" (click)="openStory(story)">
@@ -174,7 +197,42 @@
               </div>
             }
           } @empty {
-            <div class="empty-copy">Aun no hay historias visibles.</div>
+            <div class="empty-copy">Aun no hay historias de contactos visibles.</div>
+          }
+        </div>
+        <div class="story-section-separator"></div>
+        <div class="panel-headline">
+          <div>
+            <h2>Historias de tus grupos</h2>
+            <span class="card-sub">{{ groupStories().length }} visibles</span>
+          </div>
+        </div>
+        <div class="story-grid">
+          @for (story of groupStories(); track story.id) {
+            @if (social.storyPayload(story); as payload) {
+              <div class="story-row group-story-row">
+                <button type="button" class="story-open" (click)="openStory(story)">
+                  <span class="story-avatar">{{ (story.owner.displayName || story.owner.alias || 'N')[0] }}</span>
+                  <span>
+                    <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
+                    <small>{{ storyGroupTitle(story) }} - {{ social.storyText(story) }}</small>
+                    <em>{{ payload.media ? payload.media.mime : 'Grupo' }} - {{ story.viewCount }} vistas</em>
+                  </span>
+                </button>
+                <div class="row-actions">
+                  <ion-button mode="ios" fill="clear" (click)="openStory(story)" [disabled]="busyId === 'story:' + story.id" aria-label="Ver historia">
+                    <ion-icon name="eye-outline"></ion-icon>
+                  </ion-button>
+                  @if (isMine(story)) {
+                    <ion-button mode="ios" fill="clear" color="danger" (click)="deleteStory(story)" aria-label="Eliminar historia">
+                      <ion-icon name="trash-outline"></ion-icon>
+                    </ion-button>
+                  }
+                </div>
+              </div>
+            }
+          } @empty {
+            <div class="empty-copy">Aun no hay historias grupales visibles.</div>
           }
         </div>
       </article>

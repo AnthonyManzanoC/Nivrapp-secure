@@ -21,7 +21,7 @@ import {
   timeOutline,
   trashOutline,
 } from 'ionicons/icons';
-import { Contact, Story, UserSummary } from '../../core/models/nivra.models';
+import { Contact, Conversation, Story, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { SocialService } from '../../core/services/social.service';
@@ -42,6 +42,7 @@ export class WorldPage implements OnInit, OnDestroy {
   query = '';
   storyText = '';
   visibility = 'Contacts';
+  storyAudience = 'contacts';
   durationSeconds = 24 * 60 * 60;
   viewOnce = false;
   storyFile: File | null = null;
@@ -114,8 +115,8 @@ export class WorldPage implements OnInit, OnDestroy {
 
   async openPerson(person: UserSummary): Promise<void> {
     await this.run(`open:${person.id}`, async () => {
-      await this.chat.createDirectConversation(person);
-      await this.router.navigateByUrl(`/app/chats/${this.chat.selectedConversationId()}`);
+      const conversation = await this.chat.createDirectConversation(person);
+      await this.router.navigateByUrl(`/app/chats/${conversation.id}`);
     });
   }
 
@@ -154,17 +155,26 @@ export class WorldPage implements OnInit, OnDestroy {
     if (!text && !this.storyFile) {
       return;
     }
+    const group = this.selectedStoryGroup();
+    const targetType = group ? 'group' : 'contacts';
+    const allowedUserIds = group
+      ? group.participants.filter((participant) => !participant.removedAt).map((participant) => participant.userId)
+      : [];
     await this.run('story', async () => {
       await this.social.publishStory({
         text,
-        visibility: this.visibility,
+        visibility: group ? 'SelectedUsers' : this.visibility,
         file: this.storyFile,
         durationSeconds: Number(this.durationSeconds),
         viewOnce: this.viewOnce,
+        targetType,
+        targetId: group?.id ?? null,
+        allowedUserIds,
       });
       this.storyText = '';
       this.storyFile = null;
       this.viewOnce = false;
+      this.storyAudience = 'contacts';
       this.notice = 'Historia publicada.';
     });
   }
@@ -182,6 +192,40 @@ export class WorldPage implements OnInit, OnDestroy {
 
   isMine(story: Story): boolean {
     return story.owner.id === this.auth.session()?.user.id;
+  }
+
+  storyGroups(): Conversation[] {
+    const currentUserId = this.auth.session()?.user.id;
+    return this.chat.conversations()
+      .filter((conversation) => this.chat.isGroup(conversation))
+      .filter((conversation) => conversation.participants.some((participant) =>
+        !participant.removedAt && participant.userId === currentUserId))
+      .sort((left, right) => this.chat.conversationTitle(left).localeCompare(this.chat.conversationTitle(right)));
+  }
+
+  selectedStoryGroup(): Conversation | null {
+    if (this.storyAudience === 'contacts') {
+      return null;
+    }
+    return this.storyGroups().find((conversation) => conversation.id === this.storyAudience) ?? null;
+  }
+
+  contactStories(): Story[] {
+    return this.social.contactStories();
+  }
+
+  groupStories(): Story[] {
+    return this.social.groupStories();
+  }
+
+  storyGroupTitle(story: Story): string {
+    const group = this.chat.conversations().find((conversation) => conversation.id === story.targetId);
+    return group ? this.chat.conversationTitle(group) : 'Grupo';
+  }
+
+  storyAudienceLabel(): string {
+    const group = this.selectedStoryGroup();
+    return group ? `Publicar en ${this.chat.conversationTitle(group)}` : 'Publicar para tus contactos';
   }
 
   contactAsPerson(contact: Contact): UserSummary {

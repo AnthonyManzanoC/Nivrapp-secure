@@ -10,19 +10,28 @@ import {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const LOCAL_DB_NAME = 'NivraDB';
-const LOCAL_DB_VERSION = 8;
+const LOCAL_DB_VERSION = 12;
 const LOCAL_MESSAGE_STORE = 'messages';
 const LOCAL_KEY_STORE = 'deviceKeys';
 const LOCAL_PROFILE_STORE = 'profilesStore';
 const LOCAL_VAULT_KEY_STORE = 'localVaultKeys';
 const LOCAL_CONVERSATION_STORE = 'conversations';
 const LOCAL_CONTACT_STORE = 'contacts';
+const LOCAL_SYNC_STORE = 'syncWatermarks';
+const LOCAL_CALL_STORE = 'calls';
+const LOCAL_STORY_STORE = 'stories';
 
 interface QrEphemeralKeys {
   publicKey: CryptoKey;
   privateKey: CryptoKey;
   publicJwk: JsonWebKey;
   publicSpki: string;
+}
+
+export interface PublicKeyRecipient {
+  userId: string;
+  deviceId: string;
+  publicJwk: JsonWebKey;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -173,9 +182,73 @@ export class CryptoService {
     };
   }
 
+  async encryptGroupPayloadForRecipients(
+    own: StoredDeviceKeys,
+    recipients: PublicKeyRecipient[],
+    payload: unknown,
+    fileObjectId: string | null = null,
+  ): Promise<RecipientCipherRequest[]> {
+    await this.yieldToMainThread();
+    const contentKey = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    const rawContentKey = new Uint8Array(await crypto.subtle.exportKey('raw', contentKey));
+    const payloadIv = crypto.getRandomValues(new Uint8Array(12));
+    const payloadCiphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv: payloadIv },
+      contentKey,
+      textEncoder.encode(JSON.stringify(payload)),
+    );
+    const unique = new Map<string, PublicKeyRecipient>();
+    recipients
+      .filter((recipient) => recipient.userId && recipient.deviceId && recipient.publicJwk)
+      .forEach((recipient) => unique.set(`${recipient.userId}:${recipient.deviceId}`, recipient));
+
+    const sealedRecipients: RecipientCipherRequest[] = [];
+    for (const recipient of unique.values()) {
+      const sealedKey = await this.encryptForPublicKey(own, recipient.publicJwk, {
+        type: 'group-sender-key',
+        alg: 'A256GCM',
+        key: this.b64(rawContentKey),
+      });
+      sealedRecipients.push({
+        userId: recipient.userId,
+        deviceId: recipient.deviceId,
+        ciphertext: sealedKey.ciphertext,
+        header: JSON.stringify({
+          v: 2,
+          alg: 'NIVRA-GROUP-A256GCM',
+          keyHeader: sealedKey.header,
+          payloadIv: this.b64(payloadIv),
+          payloadCiphertext: this.b64(new Uint8Array(payloadCiphertext)),
+        }),
+        fileObjectId,
+      });
+    }
+    rawContentKey.fill(0);
+    return sealedRecipients;
+  }
+
   async decryptEnvelope<T>(own: StoredDeviceKeys, header: string | null | undefined, ciphertext: string): Promise<T> {
     await this.yieldToMainThread();
-    const meta = JSON.parse(header || '{}') as { senderPublicKey?: JsonWebKey; iv?: string };
+    const meta = JSON.parse(header || '{}') as {
+      v?: number;
+      alg?: string;
+      senderPublicKey?: JsonWebKey;
+      iv?: string;
+      keyHeader?: string;
+      payloadIv?: string;
+      payloadCiphertext?: string;
+    };
+    if (meta.v === 2 && meta.alg === 'NIVRA-GROUP-A256GCM') {
+      return this.decryptGroupEnvelope<T>(own, meta, ciphertext);
+    }
+    return this.decryptEcdhEnvelope<T>(own, meta, ciphertext);
+  }
+
+  private async decryptEcdhEnvelope<T>(
+    own: StoredDeviceKeys,
+    meta: { senderPublicKey?: JsonWebKey; iv?: string },
+    ciphertext: string,
+  ): Promise<T> {
     if (!meta.senderPublicKey || !meta.iv) {
       throw new Error('Sobre cifrado invalido.');
     }
@@ -204,6 +277,27 @@ export class CryptoService {
       { name: 'AES-GCM', iv: this.ub64Buffer(meta.iv) },
       key,
       this.ub64Buffer(ciphertext),
+    );
+    return JSON.parse(textDecoder.decode(plain)) as T;
+  }
+
+  private async decryptGroupEnvelope<T>(
+    own: StoredDeviceKeys,
+    meta: { keyHeader?: string; payloadIv?: string; payloadCiphertext?: string },
+    sealedKeyCiphertext: string,
+  ): Promise<T> {
+    if (!meta.keyHeader || !meta.payloadIv || !meta.payloadCiphertext) {
+      throw new Error('Sobre de grupo invalido.');
+    }
+    const keyPackage = await this.decryptEnvelope<{ type?: string; key?: string }>(own, meta.keyHeader, sealedKeyCiphertext);
+    if (keyPackage.type !== 'group-sender-key' || !keyPackage.key) {
+      throw new Error('Llave de grupo invalida.');
+    }
+    const key = await crypto.subtle.importKey('raw', this.ub64Buffer(keyPackage.key), { name: 'AES-GCM' }, false, ['decrypt']);
+    const plain = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: this.ub64Buffer(meta.payloadIv) },
+      key,
+      this.ub64Buffer(meta.payloadCiphertext),
     );
     return JSON.parse(textDecoder.decode(plain)) as T;
   }
@@ -394,6 +488,9 @@ export class CryptoService {
         if (!conversationStore.indexNames.contains('byAccountUpdated')) {
           conversationStore.createIndex('byAccountUpdated', ['accountKey', 'updatedAt']);
         }
+        if (!conversationStore.indexNames.contains('byAccountType')) {
+          conversationStore.createIndex('byAccountType', ['accountKey', 'type']);
+        }
 
         const contactStore = db.objectStoreNames.contains(LOCAL_CONTACT_STORE)
           ? transaction.objectStore(LOCAL_CONTACT_STORE)
@@ -403,6 +500,36 @@ export class CryptoService {
         }
         if (!contactStore.indexNames.contains('byAccountAlias')) {
           contactStore.createIndex('byAccountAlias', ['accountKey', 'alias']);
+        }
+
+        const syncStore = db.objectStoreNames.contains(LOCAL_SYNC_STORE)
+          ? transaction.objectStore(LOCAL_SYNC_STORE)
+          : db.createObjectStore(LOCAL_SYNC_STORE, { keyPath: 'accountKey' });
+        if (!syncStore.indexNames.contains('byUpdated')) {
+          syncStore.createIndex('byUpdated', 'updatedAt');
+        }
+
+        const callStore = db.objectStoreNames.contains(LOCAL_CALL_STORE)
+          ? transaction.objectStore(LOCAL_CALL_STORE)
+          : db.createObjectStore(LOCAL_CALL_STORE, { keyPath: 'key' });
+        if (!callStore.indexNames.contains('byAccount')) {
+          callStore.createIndex('byAccount', 'accountKey');
+        }
+        if (!callStore.indexNames.contains('byAccountStarted')) {
+          callStore.createIndex('byAccountStarted', ['accountKey', 'startedAt']);
+        }
+
+        const storyStore = db.objectStoreNames.contains(LOCAL_STORY_STORE)
+          ? transaction.objectStore(LOCAL_STORY_STORE)
+          : db.createObjectStore(LOCAL_STORY_STORE, { keyPath: 'key' });
+        if (!storyStore.indexNames.contains('byAccount')) {
+          storyStore.createIndex('byAccount', 'accountKey');
+        }
+        if (!storyStore.indexNames.contains('byAccountTarget')) {
+          storyStore.createIndex('byAccountTarget', ['accountKey', 'targetType', 'targetId']);
+        }
+        if (!storyStore.indexNames.contains('byAccountExpires')) {
+          storyStore.createIndex('byAccountExpires', ['accountKey', 'expiresAt']);
         }
 
         if (!db.objectStoreNames.contains(LOCAL_KEY_STORE)) {

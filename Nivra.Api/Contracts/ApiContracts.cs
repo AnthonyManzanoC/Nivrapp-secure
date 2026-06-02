@@ -122,6 +122,7 @@ public sealed record ContactResponse(
     string UserId,
     string Alias,
     string? DisplayName,
+    string? Phone,
     string? ProfilePhotoDataUrl,
     string? NicknameCiphertext,
     bool IsFavorite,
@@ -133,6 +134,7 @@ public sealed record UserSummaryResponse(
     string Id,
     string Alias,
     string? DisplayName,
+    string? Phone,
     string? Bio,
     string? ProfilePhotoDataUrl,
     bool IsDiscoverable,
@@ -302,6 +304,7 @@ public sealed record VaultRoomResponse(
     VaultAccessMode AccessMode,
     VaultRetentionMode RetentionMode,
     string? EncryptedWelcome,
+    List<string> ParticipantIds,
     List<VaultRoomMemberResponse> Members,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
@@ -328,6 +331,8 @@ public sealed record StartCallRequest(CallType Type, string? ConversationId, Lis
 
 public sealed record CallSignalRequest(string TargetUserId, string SignalType, string PayloadCiphertext);
 
+public sealed record LiveKitRoomTokenResponse(string ServerUrl, string Token);
+
 public sealed record CallResponse(
     string Id,
     string? ConversationId,
@@ -349,6 +354,16 @@ public sealed record PatchPrivacyRequest(
 public sealed record RegisterPushTokenRequest(string Provider, string Token);
 
 public sealed record PushTokenResponse(string Id, string Provider, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt, bool ServerReady);
+
+public sealed record FirebaseWebConfigResponse(
+    string ApiKey,
+    string AuthDomain,
+    string ProjectId,
+    string StorageBucket,
+    string MessagingSenderId,
+    string AppId,
+    string VapidKey,
+    string SdkVersion);
 
 public sealed record EntitlementsResponse(
     string PlanCode,

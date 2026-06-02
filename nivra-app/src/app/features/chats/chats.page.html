@@ -4,9 +4,12 @@
       <header class="side-head">
         <div>
           <h1>Chats</h1>
-          <span>{{ chat.conversations().length }} conversaciones</span>
+          <span>{{ chat.visibleConversations().length }} conversaciones</span>
         </div>
         <div class="side-actions">
+          <ion-button mode="ios" fill="clear" size="small" (click)="openGroupModal()" aria-label="Nuevo grupo">
+            <ion-icon name="people-outline"></ion-icon>
+          </ion-button>
           <ion-button mode="ios" fill="clear" size="small" (click)="refresh()" aria-label="Sincronizar">
             @if (chat.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="sync-outline"></ion-icon> }
           </ion-button>
@@ -15,7 +18,7 @@
 
       <div class="search-box" [class.has-value]="query">
         <ion-icon name="search-outline"></ion-icon>
-        <ion-input mode="ios" [(ngModel)]="query" (ionInput)="onSearchChange()" placeholder="Buscar"></ion-input>
+        <ion-input mode="ios" [(ngModel)]="query" (ionFocus)="onSearchFocus()" (ionInput)="onSearchChange()" placeholder="Buscar"></ion-input>
         @if (query) {
           <button type="button" (click)="clearSearch()" aria-label="Limpiar busqueda">
             <ion-icon name="close-outline"></ion-icon>
@@ -30,10 +33,14 @@
           }
           @for (person of searchResults; track person.id) {
             <ion-item button class="list-item" (click)="startConversation(person)">
-              <ion-avatar slot="start" class="avatar">{{ (person.displayName || person.alias).slice(0, 2).toUpperCase() }}</ion-avatar>
+              @if (person.profilePhotoDataUrl) {
+                <img slot="start" class="avatar avatar-img" [src]="person.profilePhotoDataUrl" alt="">
+              } @else {
+                <ion-avatar slot="start" class="avatar">{{ (person.displayName || person.phone || person.alias).slice(0, 2).toUpperCase() }}</ion-avatar>
+              }
               <ion-label class="item-copy">
-                <strong>{{ person.displayName || person.alias }}</strong>
-                <small>@{{ person.alias }}</small>
+                <strong>{{ person.displayName || person.phone || person.alias }}</strong>
+                <small>{{ person.phone || '@' + person.alias }}</small>
               </ion-label>
               <ion-icon slot="end" name="add-outline"></ion-icon>
             </ion-item>
@@ -46,38 +53,52 @@
             }
           }
         </ion-list>
-      } @else if (query.length < 2 && recentSearches.length) {
+      } @else if (query.length < 2 && recentSearches.length && showRecentSearches && !recentCollapsed) {
         <div class="recent-searches">
           <div class="recent-head">
             <span>Busquedas recientes</span>
-            <button type="button" (click)="clearRecent()" aria-label="Eliminar busquedas recientes">
-              <ion-icon name="trash-outline"></ion-icon>
-            </button>
-          </div>
-          @for (person of recentSearches; track person.id) {
-            <div class="recent-tile">
-              <button type="button" class="recent-open" (click)="startConversation(person)">
-                <span class="avatar large">{{ (person.displayName || person.alias).slice(0, 2).toUpperCase() }}</span>
-                <strong>{{ person.displayName || person.alias }}</strong>
-                <small>@{{ person.alias }}</small>
-              </button>
-              <button type="button" class="recent-remove" (click)="removeRecent(person, $event)" aria-label="Quitar busqueda reciente">
+            <div class="recent-actions">
+              <button type="button" (click)="hideRecent($event)" aria-label="Cerrar busquedas recientes">
                 <ion-icon name="close-outline"></ion-icon>
               </button>
+              <button type="button" (click)="clearRecent()" aria-label="Eliminar busquedas recientes">
+                <ion-icon name="trash-outline"></ion-icon>
+              </button>
             </div>
-          }
+          </div>
+          <div class="recent-row">
+            @for (person of recentSearches; track person.id) {
+              <div class="recent-tile">
+                <button type="button" class="recent-open" (click)="startConversation(person)">
+                  @if (person.profilePhotoDataUrl) {
+                    <img class="avatar large avatar-img" [src]="person.profilePhotoDataUrl" alt="">
+                  } @else {
+                    <span class="avatar large">{{ (person.displayName || person.phone || person.alias).slice(0, 2).toUpperCase() }}</span>
+                  }
+                  <strong>{{ person.displayName || person.phone || person.alias }}</strong>
+                  <small>{{ person.phone || '@' + person.alias }}</small>
+                </button>
+                <button type="button" class="recent-remove" (click)="removeRecent(person, $event)" aria-label="Quitar busqueda reciente">
+                  <ion-icon name="close-outline"></ion-icon>
+                </button>
+              </div>
+            }
+          </div>
         </div>
       } @else {
         <ion-list class="list" lines="none">
-          @for (conversation of chat.conversations(); track conversation.id) {
+          @for (conversation of chat.visibleConversations(); track conversation.id) {
             <ion-item-sliding>
               <ion-item
                 button
                 class="list-item conversation-item"
-                [routerLink]="['/app/chats', conversation.id]"
-                routerLinkActive="active"
+                [class.active]="chat.selectedConversationId() === conversation.id"
                 (click)="openConversation(conversation.id)">
-                <ion-avatar slot="start" class="avatar">{{ chat.avatarLabel(conversation) }}</ion-avatar>
+                @if (chat.conversationPhoto(conversation)) {
+                  <img slot="start" class="avatar avatar-img" [src]="chat.conversationPhoto(conversation)" alt="">
+                } @else {
+                  <ion-avatar slot="start" class="avatar">{{ chat.avatarLabel(conversation) }}</ion-avatar>
+                }
                 <ion-label class="item-copy">
                   <strong>{{ chat.conversationTitle(conversation) }}</strong>
                   <small>{{ chat.conversationSubtitle(conversation) }}</small>
@@ -100,9 +121,9 @@
       }
     </aside>
 
-    <section class="detail-stage">
-      <router-outlet></router-outlet>
-      @if (!chat.selectedConversation()) {
+    <section class="detail-stage" [class.detail-active]="detailActive">
+      <router-outlet (activate)="detailActive = true" (deactivate)="detailActive = false"></router-outlet>
+      @if (!detailActive) {
         <div class="empty-detail">
           <img src="assets/brand/nivra-mark.svg" alt="">
           <h2>Nivra</h2>
@@ -111,4 +132,63 @@
       }
     </section>
   </section>
+
+  <ion-modal class="group-modal" [isOpen]="groupModalOpen" (didDismiss)="closeGroupModal()">
+    <ng-template>
+      <section class="group-builder">
+        <header>
+          <div>
+            <h2>Nuevo grupo</h2>
+            <p>{{ selectedGroupUserIds.size }} participantes seleccionados</p>
+          </div>
+          <ion-button mode="ios" fill="clear" (click)="closeGroupModal()" aria-label="Cerrar">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </header>
+
+        <label class="group-name">
+          <span>Nombre del grupo</span>
+          <input [(ngModel)]="groupName" type="text" maxlength="48" placeholder="Familia, equipo, amigos">
+        </label>
+
+        <div class="group-contact-list">
+          @for (contact of chat.contacts(); track contact.userId) {
+            <button type="button" class="group-contact" [class.selected]="isGroupSelected(contact)" (click)="toggleGroupContact(contact, $event)">
+              @if (contact.profilePhotoDataUrl) {
+                <img class="avatar avatar-img" [src]="contact.profilePhotoDataUrl" alt="">
+              } @else {
+                <span class="avatar">{{ contactLabel(contact).slice(0, 2).toUpperCase() }}</span>
+              }
+              <span class="group-contact-copy">
+                <strong>{{ contactLabel(contact) }}</strong>
+                <small>{{ contactSubLabel(contact) }}</small>
+              </span>
+              <span class="group-check">
+                @if (isGroupSelected(contact)) {
+                  <ion-icon name="checkmark-outline"></ion-icon>
+                }
+              </span>
+            </button>
+          } @empty {
+            <div class="empty group-empty">
+              <strong>Sin contactos</strong>
+              <span>Busca contactos primero para armar un grupo.</span>
+            </div>
+          }
+        </div>
+
+        @if (groupError) {
+          <p class="group-error">{{ groupError }}</p>
+        }
+
+        <footer>
+          <ion-button mode="ios" fill="clear" (click)="closeGroupModal()">Cancelar</ion-button>
+          <ion-button mode="ios" [disabled]="groupBusy || !selectedGroupUserIds.size" (click)="createGroup()">
+            @if (groupBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="people-outline"></ion-icon> }
+            Crear grupo
+          </ion-button>
+        </footer>
+      </section>
+    </ng-template>
+  </ion-modal>
 </ion-content>

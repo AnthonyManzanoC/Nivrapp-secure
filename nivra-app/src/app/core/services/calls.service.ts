@@ -1,10 +1,13 @@
 import { DestroyRef, Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Room, RoomEvent } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
-import { CallPhase, CallSession, CallSignalEvent, PublicKeyDirectory, RecipientCipherRequest } from '../models/nivra.models';
+import { environment } from '../../../environments/environment';
+import { CallPhase, CallSession, CallSignalEvent, GroupCallRoom, PublicKeyDirectory, RecipientCipherRequest } from '../models/nivra.models';
 import { AuthService } from './auth.service';
 import { ChatService } from './chat.service';
 import { CryptoService } from './crypto.service';
+import { LocalHistoryService } from './local-history.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
@@ -25,6 +28,11 @@ interface SecureCallSignalEnvelope {
   recipients: RecipientCipherRequest[];
 }
 
+interface LiveKitRoomTokenResponse {
+  serverUrl: string;
+  token: string;
+}
+
 const CALL_RING_TIMEOUT_MS = 45_000;
 
 @Injectable({ providedIn: 'root' })
@@ -33,14 +41,21 @@ export class CallsService implements OnDestroy {
   private readonly auth = inject(AuthService);
   private readonly chat = inject(ChatService);
   private readonly crypto = inject(CryptoService);
+  private readonly historyStore = inject(LocalHistoryService);
   private readonly realtime = inject(SignalrService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly peers = new Map<string, PeerState>();
+  private readonly pendingRemoteStreams = new Map<string, MediaStream>();
   private readonly pendingSignals: CallSignalEvent[] = [];
   private readonly timedOutCallIds = new Set<string>();
+  private readonly systemLoggedCallIds = new Set<string>();
   private readonly directories = new Map<string, PublicKeyDirectory>();
+  private liveKitRoom: Room | null = null;
   private readonly textDecoder = new TextDecoder();
   private ringTimeout: number | null = null;
+  private ringToneInterval: number | null = null;
+  private ringAudioContext: AudioContext | null = null;
+  private ringTonePhase: 'calling' | 'ringing' | null = null;
 
   readonly activeCall = signal<CallSession | null>(null);
   readonly phase = signal<CallPhase>('idle');
@@ -52,6 +67,7 @@ export class CallsService implements OnDestroy {
   readonly speaker = signal(true);
   readonly error = signal('');
   readonly history = signal<CallSession[]>(this.loadHistory());
+  readonly activeGroupRooms = signal<Record<string, GroupCallRoom>>({});
   readonly remoteEntries = computed(() => Object.entries(this.remoteStreams()));
 
   constructor() {
@@ -59,11 +75,18 @@ export class CallsService implements OnDestroy {
       if (event.type === 'call.started' || event.type === 'incomingCall') {
         void this.receiveIncoming(event.payload as CallSession);
       }
+      if (event.type === 'GroupCallStarted' || event.type === 'group.call.started' || event.type === 'groupCallStarted') {
+        void this.receiveGroupCallStarted(event.payload);
+      }
       if (event.type === 'call.signal') {
         void this.handleCallSignal(event.payload as CallSignalEvent);
       }
       if (event.type === 'call.ended' || event.type === 'CallEnded') {
         const call = event.payload as CallSession;
+        this.forgetGroupRoom(call);
+        if (this.isGroupCall(call)) {
+          void this.recordCallSystemOnce(call, 'call-ended', this.durationMsForCall(call));
+        }
         if (call?.id === this.activeCall()?.id) {
           this.cleanup({ remember: false });
         }
@@ -96,9 +119,9 @@ export class CallsService implements OnDestroy {
       untracked(() => {
         if (userId) {
           this.history.set(this.loadHistory());
+          void this.loadPersistentHistory();
         } else {
           this.cleanup({ remember: false });
-          this.history.set([]);
         }
       });
     });
@@ -110,20 +133,36 @@ export class CallsService implements OnDestroy {
 
   async start(type: 'Voice' | 'Video', conversationId: string | null, participantUserIds: string[] = []): Promise<CallSession> {
     this.error.set('');
-    await this.prepareMedia(type === 'Video');
+    if (this.activeCall()) {
+      const error = new Error('Ya hay una llamada activa.');
+      this.error.set(error.message);
+      throw error;
+    }
     try {
+      const groupCall = this.isGroupConversationId(conversationId);
+      if (type === 'Video' && !groupCall) {
+        await this.prepareMedia(true);
+      }
       const call = await firstValueFrom(this.api.post<CallSession>('/calls/start', {
         type,
         conversationId,
         participantUserIds,
+        groupId: groupCall ? conversationId : null,
+        roomMode: groupCall ? 'GroupRoom' : 'Direct',
       }));
-      this.activeCall.set(call);
+      const normalized = this.withGroupRoomMetadata(call, conversationId, groupCall);
+      this.rememberGroupRoom(normalized);
+      this.activeCall.set(normalized);
       this.phase.set('calling');
-      this.addHistory(call);
-      this.scheduleRingTimeout(call);
-      await this.establishCallPeers();
-      await this.flushPendingCallSignals();
-      return call;
+      this.addHistory(normalized);
+      if (groupCall) {
+        await this.connectLiveKitRoom(normalized);
+      } else {
+        this.scheduleRingTimeout(normalized);
+        this.startRingingTone('calling');
+        await this.flushPendingCallSignals();
+      }
+      return normalized;
     } catch (error) {
       this.cleanup({ remember: false });
       this.error.set(error instanceof Error ? error.message : 'No se pudo iniciar la llamada.');
@@ -137,9 +176,17 @@ export class CallsService implements OnDestroy {
       return;
     }
     this.error.set('');
+    if (this.isGroupCall(call)) {
+      this.phase.set('connecting');
+      this.clearRingTimeout();
+      this.stopRingingTone();
+      await this.connectLiveKitRoom(call);
+      return;
+    }
     await this.prepareMedia(call.type === 'Video');
     this.phase.set('connecting');
     this.clearRingTimeout();
+    this.stopRingingTone();
     await Promise.all(this.otherParticipantIds(call).map((userId) =>
       this.sendCallSignal(call, userId, 'accepted', { accepted: true }).catch(() => undefined)));
     await this.establishCallPeers();
@@ -154,8 +201,10 @@ export class CallsService implements OnDestroy {
     this.phase.set('rejected');
     await Promise.all(this.otherParticipantIds(call).map((userId) =>
       this.sendCallSignal(call, userId, 'declined', { declined: true }).catch(() => undefined)));
-    await this.chat.recordCallSystemMessage(call, 'call-rejected').catch(() => undefined);
-    const shouldEndRoom = call.participantUserIds.length <= 2 || call.initiatorUserId === this.currentUserId();
+    if (!this.isGroupCall(call)) {
+      await this.chat.recordCallSystemMessage(call, 'call-rejected').catch(() => undefined);
+    }
+    const shouldEndRoom = !this.isGroupCall(call) || call.initiatorUserId === this.currentUserId();
     this.cleanup({ historyStatus: 'Rejected' });
     if (shouldEndRoom) {
       await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, {})).catch(() => null);
@@ -174,7 +223,8 @@ export class CallsService implements OnDestroy {
       ...call,
       endedAt: call.endedAt || new Date().toISOString(),
     };
-    await this.chat.recordCallSystemMessage(callLog, 'call-ended', this.durationMsForCall(callLog)).catch(() => undefined);
+    await this.recordCallSystemOnce(callLog, 'call-ended', this.durationMsForCall(callLog));
+    this.forgetGroupRoom(callLog);
     if (call.id === this.activeCall()?.id) {
       this.cleanup({ remember: false });
     }
@@ -190,13 +240,24 @@ export class CallsService implements OnDestroy {
       this.addHistory(call);
       return;
     }
-    await this.prepareMedia(call.type === 'Video');
-    this.activeCall.set(call);
+    const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? null, this.isGroupCall(call));
+    if (this.isGroupCall(normalized)) {
+      this.rememberGroupRoom(normalized);
+      this.activeCall.set(normalized);
+      this.phase.set('connecting');
+      this.clearRingTimeout();
+      this.addHistory(normalized);
+      await this.connectLiveKitRoom(normalized);
+      return;
+    }
+    await this.prepareMedia(normalized.type === 'Video');
+    this.rememberGroupRoom(normalized);
+    this.activeCall.set(normalized);
     this.phase.set('connecting');
     this.clearRingTimeout();
-    this.addHistory(call);
-    await Promise.all(this.otherParticipantIds(call).map((userId) =>
-      this.sendCallSignal(call, userId, 'accepted', { accepted: true, rejoined: true }).catch(() => undefined)));
+    this.addHistory(normalized);
+    await Promise.all(this.otherParticipantIds(normalized).map((userId) =>
+      this.sendCallSignal(normalized, userId, 'accepted', { accepted: true, rejoined: true }).catch(() => undefined)));
     await this.establishCallPeers();
     await this.flushPendingCallSignals();
   }
@@ -227,6 +288,242 @@ export class CallsService implements OnDestroy {
     this.cleanup({ remember: false });
   }
 
+  activeGroupRoomForConversation(conversationId: string | null | undefined): GroupCallRoom | null {
+    if (!conversationId) {
+      return null;
+    }
+    return this.activeGroupRooms()[conversationId] ?? null;
+  }
+
+  async joinGroupRoom(room: GroupCallRoom): Promise<void> {
+    if (!room?.call?.id) {
+      return;
+    }
+    if (this.activeCall()?.id === room.call.id) {
+      return;
+    }
+    if (this.activeCall()) {
+      this.error.set('Ya hay una llamada activa.');
+      return;
+    }
+    const call = this.withGroupRoomMetadata(room.call, room.conversationId, true);
+    this.rememberGroupRoom(call);
+    this.activeCall.set(call);
+    this.phase.set('connecting');
+    this.clearRingTimeout();
+    this.stopRingingTone();
+    this.addHistory(call);
+    await this.connectLiveKitRoom(call);
+  }
+
+  private async connectLiveKitRoom(call: CallSession): Promise<void> {
+    const credentials = await this.liveKitCredentialsForCall(call).catch((error) => {
+      this.error.set(error instanceof Error ? error.message : 'No se pudo obtener el token LiveKit.');
+      return null;
+    });
+    if (!credentials?.serverUrl || !credentials.token) {
+      this.phase.set('calling');
+      this.rememberGroupRoom(call);
+      return;
+    }
+    this.disconnectLiveKitRoom();
+    const room = new Room();
+    this.liveKitRoom = room;
+    room.on(RoomEvent.TrackSubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
+      this.addLiveKitRemoteTrack(participant?.identity || crypto.randomUUID(), track);
+    });
+    room.on(RoomEvent.TrackUnsubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
+      this.removeLiveKitRemoteTrack(participant?.identity || '', track);
+    });
+    room.on(RoomEvent.LocalTrackPublished, () => this.syncLiveKitLocalTracks());
+    room.on(RoomEvent.LocalTrackUnpublished, () => this.syncLiveKitLocalTracks());
+    room.on(RoomEvent.Disconnected, () => {
+      if (this.activeCall()?.id === call.id) {
+        this.phase.set('ended');
+      }
+    });
+    await room.connect(credentials.serverUrl, credentials.token);
+    await (room.localParticipant as unknown as {
+      setMicrophoneEnabled: (enabled: boolean) => Promise<unknown>;
+      setCameraEnabled: (enabled: boolean) => Promise<unknown>;
+    }).setMicrophoneEnabled(true);
+    if (call.type === 'Video') {
+      await (room.localParticipant as unknown as {
+        setCameraEnabled: (enabled: boolean) => Promise<unknown>;
+      }).setCameraEnabled(true);
+    }
+    this.syncLiveKitLocalTracks();
+    this.phase.set('connected');
+    this.error.set('');
+    this.clearRingTimeout();
+    this.stopRingingTone();
+  }
+
+  private async liveKitCredentialsForCall(call: CallSession): Promise<LiveKitRoomTokenResponse | null> {
+    const embeddedUrl = this.liveKitString(call, 'liveKitUrl') || environment.livekit?.url || '';
+    const embeddedToken = this.liveKitString(call, 'liveKitToken') || environment.livekit?.token || '';
+    if (embeddedUrl && embeddedToken) {
+      return {
+        serverUrl: embeddedUrl,
+        token: embeddedToken,
+      };
+    }
+
+    const groupId = call.groupId || call.conversationId;
+    if (!groupId) {
+      throw new Error('No se pudo resolver el grupo para la sala LiveKit.');
+    }
+
+    const response = await firstValueFrom(this.api.get<LiveKitRoomTokenResponse>(`/api/calls/room-token/${encodeURIComponent(groupId)}`));
+    if (!response?.serverUrl || !response.token) {
+      throw new Error('El servidor no devolvio credenciales LiveKit validas.');
+    }
+    return response;
+  }
+
+  private liveKitString(call: CallSession, key: 'liveKitUrl' | 'liveKitToken'): string {
+    const value = (call as unknown as Record<string, unknown>)[key];
+    return typeof value === 'string' ? value.trim() : '';
+  }
+
+  private addLiveKitRemoteTrack(participantId: string, track: unknown): void {
+    const mediaTrack = (track as { mediaStreamTrack?: MediaStreamTrack }).mediaStreamTrack;
+    if (!participantId || !mediaTrack) {
+      return;
+    }
+    const stream = this.remoteStreams()[participantId] ?? new MediaStream();
+    if (!stream.getTracks().some((item) => item.id === mediaTrack.id)) {
+      stream.addTrack(mediaTrack);
+    }
+    this.remoteStreams.update((items) => ({ ...items, [participantId]: stream }));
+  }
+
+  private removeLiveKitRemoteTrack(participantId: string, track: unknown): void {
+    const mediaTrack = (track as { mediaStreamTrack?: MediaStreamTrack }).mediaStreamTrack;
+    if (!participantId || !mediaTrack) {
+      return;
+    }
+    const stream = this.remoteStreams()[participantId];
+    stream?.removeTrack(mediaTrack);
+    if (!stream || !stream.getTracks().length) {
+      this.remoteStreams.update((items) => {
+        const next = { ...items };
+        delete next[participantId];
+        return next;
+      });
+    }
+  }
+
+  private syncLiveKitLocalTracks(): void {
+    const localParticipant = this.liveKitRoom?.localParticipant as unknown as {
+      trackPublications?: Map<string, { track?: { mediaStreamTrack?: MediaStreamTrack } | null }>;
+    } | undefined;
+    const tracks = [...(localParticipant?.trackPublications?.values() ?? [])]
+      .map((publication) => publication.track?.mediaStreamTrack)
+      .filter((track): track is MediaStreamTrack => Boolean(track));
+    this.localStream.set(tracks.length ? new MediaStream(tracks) : null);
+  }
+
+  private disconnectLiveKitRoom(): void {
+    const room = this.liveKitRoom;
+    this.liveKitRoom = null;
+    if (!room) {
+      return;
+    }
+    room.removeAllListeners();
+    room.disconnect();
+  }
+
+  inviteToCall(contactId: string): void {
+    const call = this.activeCall();
+    console.log('Migrating to Group SFU Call...', { contactId, callId: call?.id, roomId: call?.roomId || call?.id });
+  }
+
+  clearInactiveCallUi(): void {
+    const phase = this.phase();
+    const terminal = ['idle', 'ended', 'missed', 'rejected', 'failed'].includes(phase);
+    if (!this.activeCall()) {
+      if (phase !== 'idle') {
+        this.phase.set('idle');
+      }
+      return;
+    }
+    if (terminal) {
+      this.cleanup({ remember: false });
+    }
+  }
+
+  callTitle(call: CallSession | null | undefined): string {
+    const conversation = this.conversationForCall(call);
+    if (conversation) {
+      return this.chat.conversationTitle(conversation);
+    }
+    return call?.type === 'Video' ? 'Videollamada' : 'Llamada';
+  }
+
+  callPhoto(call: CallSession | null | undefined): string {
+    const conversation = this.conversationForCall(call);
+    return conversation ? this.chat.conversationPhoto(conversation) : '';
+  }
+
+  callInitials(call: CallSession | null | undefined): string {
+    const conversation = this.conversationForCall(call);
+    return conversation ? this.chat.avatarLabel(conversation) : 'NV';
+  }
+
+  callStatusLabel(call: CallSession | null | undefined): string {
+    const phase = this.phase();
+    if (phase === 'calling') {
+      return 'Llamando';
+    }
+    if (phase === 'ringing') {
+      return 'Entrante';
+    }
+    if (phase === 'connecting') {
+      return 'Conectando';
+    }
+    if (phase === 'connected') {
+      return 'En llamada';
+    }
+    if (phase === 'missed') {
+      return 'No respondio';
+    }
+    return call?.status || phase;
+  }
+
+  callParticipantAvatars(call: CallSession | null | undefined): { id: string; label: string; photo: string; initials: string }[] {
+    const conversation = this.conversationForCall(call);
+    const currentUserId = this.currentUserId();
+    const fallbackParticipants: Array<{
+      userId: string;
+      displayName?: string | null;
+      phone?: string | null;
+      alias?: string | null;
+      profilePhotoDataUrl?: string | null;
+    }> = (call?.participantUserIds ?? [])
+      .filter((userId) => userId !== currentUserId)
+      .map((userId) => ({ userId }));
+    const participants = conversation?.participants?.length
+      ? conversation.participants.filter((participant) => !participant.removedAt && participant.userId !== currentUserId)
+      : fallbackParticipants;
+    return participants.slice(0, 6).map((participant) => {
+      const label = participant.displayName || participant.phone || participant.alias || 'Contacto';
+      return {
+        id: participant.userId,
+        label,
+        photo: participant.profilePhotoDataUrl || '',
+        initials: label.split(/\s|,|-/).filter(Boolean).slice(0, 2).map((part: string) => part[0]?.toUpperCase()).join('') || 'N',
+      };
+    });
+  }
+
+  isGroupCall(call: CallSession | null | undefined): boolean {
+    if (!call) {
+      return false;
+    }
+    return Boolean(call.isGroupRoom || call.groupId || (call.conversationId && this.isGroupConversationId(call.conversationId)));
+  }
+
   private async receiveIncoming(call: CallSession): Promise<void> {
     if (!call?.id || call.status === 'Ended' || call.endedAt) {
       return;
@@ -235,19 +532,22 @@ export class CallsService implements OnDestroy {
     if (!currentUserId) {
       return;
     }
-    if (this.activeCall()?.id === call.id) {
-      this.addHistory(call);
+    const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? call.groupId ?? null, this.isGroupCall(call));
+    this.rememberGroupRoom(normalized);
+    if (this.activeCall()?.id === normalized.id) {
+      this.addHistory(normalized);
       return;
     }
-    if (this.activeCall() && this.activeCall()?.id !== call.id && this.phase() !== 'idle') {
-      await this.sendCallSignal(call, call.initiatorUserId, 'busy', { busy: true }).catch(() => undefined);
+    if (this.activeCall() && this.activeCall()?.id !== normalized.id && this.phase() !== 'idle') {
+      await this.sendCallSignal(normalized, normalized.initiatorUserId, 'busy', { busy: true }).catch(() => undefined);
       return;
     }
 
-    this.activeCall.set(call);
-    this.phase.set(call.initiatorUserId === currentUserId ? 'calling' : 'ringing');
-    this.addHistory(call);
-    this.scheduleRingTimeout(call);
+    this.activeCall.set(normalized);
+    this.phase.set(normalized.initiatorUserId === currentUserId ? 'calling' : 'ringing');
+    this.addHistory(normalized);
+    this.scheduleRingTimeout(normalized);
+    this.startRingingTone(this.phase());
     if (this.phase() !== 'ringing') {
       await this.flushPendingCallSignals();
     }
@@ -285,12 +585,16 @@ export class CallsService implements OnDestroy {
       }
       this.phase.set('connecting');
       this.clearRingTimeout();
+      this.stopRingingTone();
+      if (!this.localStream()) {
+        await this.prepareMedia(call.type === 'Video');
+      }
       await this.establishAcceptedCallPeer(signal.fromUserId);
       return;
     }
 
     if (signalType === 'declined' || signalType === 'busy') {
-      if (call.participantUserIds.length > 2) {
+      if (this.isGroupCall(call) || call.participantUserIds.length > 2) {
         this.updateRemoteCallState(signal.fromUserId, signalType, true);
         this.closePeerConnectionForUser(signal.fromUserId);
         return;
@@ -361,12 +665,7 @@ export class CallsService implements OnDestroy {
       ],
     });
     this.peers.set(userId, { connection, pendingIce: [] });
-    this.localStream()?.getTracks().forEach((track) => {
-      const stream = this.localStream();
-      if (stream) {
-        connection.addTrack(track, stream);
-      }
-    });
+    this.attachLocalTracks(connection);
 
     connection.onicecandidate = (event) => {
       if (event.candidate) {
@@ -381,9 +680,16 @@ export class CallsService implements OnDestroy {
       if (!event.streams?.[0] && event.track) {
         stream.addTrack(event.track);
       }
-      this.remoteStreams.update((items) => ({ ...items, [userId]: stream }));
+      this.pendingRemoteStreams.set(userId, stream);
+      this.publishRemoteStreamIfConnected(userId, connection);
     };
     connection.onconnectionstatechange = () => {
+      if (connection.connectionState === 'connected') {
+        this.phase.set('connected');
+        this.clearRingTimeout();
+        this.stopRingingTone();
+        this.publishRemoteStreamIfConnected(userId, connection);
+      }
       if (['failed', 'closed', 'disconnected'].includes(connection.connectionState)) {
         this.removeRemoteStream(userId);
       }
@@ -431,14 +737,14 @@ export class CallsService implements OnDestroy {
       const answer = await connection.createAnswer();
       await connection.setLocalDescription(answer);
       await this.sendCallSignal(call, signal.fromUserId, 'answer', { description: connection.localDescription });
-      this.phase.set('connected');
+      this.phase.set('connecting');
       this.clearRingTimeout();
       return;
     }
 
     if (signalType === 'answer' && payload.description && connection.signalingState !== 'stable') {
       await this.setRemoteDescriptionAndFlush(signal.fromUserId, connection, payload.description);
-      this.phase.set('connected');
+      this.phase.set('connecting');
       this.clearRingTimeout();
       return;
     }
@@ -602,9 +908,32 @@ export class CallsService implements OnDestroy {
     }));
   }
 
+  private attachLocalTracks(connection: RTCPeerConnection): void {
+    const stream = this.localStream();
+    if (!stream) {
+      return;
+    }
+    const existingTrackIds = new Set(connection.getSenders().map((sender) => sender.track?.id).filter(Boolean));
+    stream.getTracks().forEach((track) => {
+      if (!existingTrackIds.has(track.id)) {
+        connection.addTrack(track, stream);
+      }
+    });
+  }
+
+  private publishRemoteStreamIfConnected(userId: string, connection: RTCPeerConnection): void {
+    const stream = this.pendingRemoteStreams.get(userId);
+    if (!stream || connection.connectionState !== 'connected') {
+      return;
+    }
+    this.remoteStreams.update((items) => ({ ...items, [userId]: stream }));
+  }
+
   private cleanup(options: { remember?: boolean; historyStatus?: string } = {}): void {
     const call = this.activeCall();
     this.clearRingTimeout();
+    this.stopRingingTone();
+    this.disconnectLiveKitRoom();
     if (call && options.remember !== false) {
       this.addHistory({
         ...call,
@@ -614,6 +943,7 @@ export class CallsService implements OnDestroy {
     }
     this.stopLocalMedia();
     this.closePeerConnections();
+    this.stopPendingRemoteMedia();
     this.stopRemoteMedia();
     this.pendingSignals.splice(0);
     this.activeCall.set(null);
@@ -622,10 +952,17 @@ export class CallsService implements OnDestroy {
     this.muted.set(false);
     this.cameraOff.set(false);
     this.speaker.set(true);
+    if (!this.auth.session()?.user.id) {
+      this.activeGroupRooms.set({});
+    }
   }
 
   private stopLocalMedia(): void {
-    this.localStream()?.getTracks().forEach((track) => track.stop());
+    const stream = this.localStream();
+    stream?.getTracks().forEach((track) => {
+      track.enabled = false;
+      track.stop();
+    });
     this.localStream.set(null);
   }
 
@@ -648,6 +985,8 @@ export class CallsService implements OnDestroy {
   }
 
   private removeRemoteStream(userId: string): void {
+    this.pendingRemoteStreams.get(userId)?.getTracks().forEach((track) => track.stop());
+    this.pendingRemoteStreams.delete(userId);
     this.remoteStreams()[userId]?.getTracks().forEach((track) => track.stop());
     this.remoteStreams.update((items) => {
       const next = { ...items };
@@ -671,6 +1010,13 @@ export class CallsService implements OnDestroy {
     this.remoteStreams.set({});
   }
 
+  private stopPendingRemoteMedia(): void {
+    for (const stream of this.pendingRemoteStreams.values()) {
+      stream.getTracks().forEach((track) => track.stop());
+    }
+    this.pendingRemoteStreams.clear();
+  }
+
   private otherParticipantIds(call: CallSession): string[] {
     const currentUserId = this.currentUserId();
     return (call.participantUserIds ?? []).filter((userId) => userId && userId !== currentUserId);
@@ -678,6 +1024,13 @@ export class CallsService implements OnDestroy {
 
   private currentUserId(): string | null {
     return this.auth.session()?.user.id ?? null;
+  }
+
+  private conversationForCall(call: CallSession | null | undefined) {
+    if (!call?.conversationId) {
+      return null;
+    }
+    return this.chat.conversations().find((conversation) => conversation.id === call.conversationId) ?? null;
   }
 
   private addHistory(call: CallSession): void {
@@ -714,6 +1067,105 @@ export class CallsService implements OnDestroy {
       return;
     }
     localStorage.setItem(this.callHistoryStorageKey(), JSON.stringify(items.slice(0, 80)));
+    const accountKey = this.localAccountKey();
+    if (accountKey) {
+      void this.historyStore.putCalls(accountKey, items.slice(0, 80)).catch(() => undefined);
+    }
+  }
+
+  private async loadPersistentHistory(): Promise<void> {
+    const accountKeys = await this.localAccountKeys();
+    if (!accountKeys.length) {
+      return;
+    }
+    const groups = await Promise.all(accountKeys.map((accountKey) => this.historyStore.calls(accountKey).catch(() => [])));
+    const merged = this.uniqueHistory([...this.history(), ...groups.flat()]);
+    if (merged.length) {
+      this.history.set(merged);
+      this.saveHistory(merged);
+    }
+  }
+
+  private uniqueHistory(items: CallSession[]): CallSession[] {
+    const map = new Map<string, CallSession>();
+    for (const item of items) {
+      if (!item?.id) {
+        continue;
+      }
+      const previous = map.get(item.id);
+      if (!previous || Date.parse(item.startedAt || '') >= Date.parse(previous.startedAt || '')) {
+        map.set(item.id, item);
+      }
+    }
+    return [...map.values()]
+      .sort((left, right) => Date.parse(right.startedAt || '') - Date.parse(left.startedAt || ''))
+      .slice(0, 80);
+  }
+
+  private localAccountKey(): string | null {
+    return this.auth.session()?.user.id ?? null;
+  }
+
+  private async localAccountKeys(): Promise<string[]> {
+    const userId = this.auth.session()?.user.id;
+    if (!userId) {
+      return [];
+    }
+    return this.historyStore.accountKeysForUser(userId).catch(() => [userId]);
+  }
+
+  private startRingingTone(phase: CallPhase): void {
+    if (!['calling', 'ringing'].includes(phase)) {
+      return;
+    }
+    const nextPhase = phase as 'calling' | 'ringing';
+    if (this.ringToneInterval !== null && this.ringTonePhase === nextPhase) {
+      return;
+    }
+    this.stopRingingTone();
+    this.ringTonePhase = nextPhase;
+    const playPulse = () => {
+      try {
+        const AudioContextCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!AudioContextCtor) {
+          return;
+        }
+        this.ringAudioContext ??= new AudioContextCtor();
+        const context = this.ringAudioContext;
+        void context.resume?.();
+        const pattern = nextPhase === 'calling'
+          ? [{ offset: 0, duration: .48, frequency: 420 }, { offset: .62, duration: .42, frequency: 420 }]
+          : [{ offset: 0, duration: .32, frequency: 720 }, { offset: .42, duration: .32, frequency: 860 }];
+        for (const pulse of pattern) {
+          const oscillator = context.createOscillator();
+          const gain = context.createGain();
+          const startAt = context.currentTime + pulse.offset;
+          oscillator.type = nextPhase === 'calling' ? 'sine' : 'triangle';
+          oscillator.frequency.setValueAtTime(pulse.frequency, startAt);
+          gain.gain.setValueAtTime(0.0001, startAt);
+          gain.gain.exponentialRampToValueAtTime(nextPhase === 'calling' ? 0.042 : 0.052, startAt + 0.035);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startAt + pulse.duration);
+          oscillator.connect(gain);
+          gain.connect(context.destination);
+          oscillator.start(startAt);
+          oscillator.stop(startAt + pulse.duration + 0.02);
+        }
+      } catch {
+        // Browsers can block autoplay for incoming calls; the visual ringing state still works.
+      }
+    };
+    playPulse();
+    this.ringToneInterval = window.setInterval(playPulse, nextPhase === 'calling' ? 2200 : 1800);
+  }
+
+  private stopRingingTone(): void {
+    if (this.ringToneInterval !== null) {
+      window.clearInterval(this.ringToneInterval);
+      this.ringToneInterval = null;
+    }
+    void this.ringAudioContext?.close().catch(() => undefined);
+    this.ringAudioContext = null;
+    this.ringTonePhase = null;
   }
 
   private scheduleRingTimeout(call: CallSession): void {
@@ -741,6 +1193,11 @@ export class CallsService implements OnDestroy {
 
     this.phase.set('missed');
     const endedAt = new Date().toISOString();
+    if (this.isGroupCall(call) && call.initiatorUserId !== this.currentUserId()) {
+      this.addHistory({ ...call, status: 'Missed', endedAt });
+      this.cleanup({ remember: false });
+      return;
+    }
     this.timedOutCallIds.add(call.id);
     try {
       const ended = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, {}));
@@ -749,7 +1206,7 @@ export class CallsService implements OnDestroy {
         status: 'Missed',
         endedAt: ended.endedAt || endedAt,
       };
-      await this.chat.recordCallSystemMessage(missedCall, 'missed-call').catch(() => undefined);
+      await this.recordCallSystemOnce(missedCall, 'missed-call');
       this.addHistory(missedCall);
     } catch {
       const missedCall = {
@@ -757,7 +1214,7 @@ export class CallsService implements OnDestroy {
         status: 'Missed',
         endedAt,
       };
-      await this.chat.recordCallSystemMessage(missedCall, 'missed-call').catch(() => undefined);
+      await this.recordCallSystemOnce(missedCall, 'missed-call');
       this.addHistory(missedCall);
     } finally {
       if (this.activeCall()?.id === callId) {
@@ -773,6 +1230,91 @@ export class CallsService implements OnDestroy {
       return 0;
     }
     return Math.max(0, ended - started);
+  }
+
+  private async receiveGroupCallStarted(payload: unknown): Promise<void> {
+    const value = payload as Partial<GroupCallRoom> & Partial<CallSession> & { call?: CallSession };
+    const baseCall = value.call ?? (value.id ? value as CallSession : null);
+    if (!baseCall?.id) {
+      return;
+    }
+    const conversationId = value.conversationId || value.groupId || baseCall.conversationId || baseCall.groupId || null;
+    const call = this.withGroupRoomMetadata({
+      ...baseCall,
+      conversationId: baseCall.conversationId || conversationId,
+      groupId: baseCall.groupId || value.groupId || conversationId,
+      roomId: baseCall.roomId || value.roomId || baseCall.id,
+      participantUserIds: baseCall.participantUserIds || value.participantUserIds || [],
+      isGroupRoom: true,
+    }, conversationId, true);
+    this.rememberGroupRoom(call);
+    await this.receiveIncoming(call);
+  }
+
+  private withGroupRoomMetadata(call: CallSession, conversationId: string | null, groupCall: boolean): CallSession {
+    if (!groupCall) {
+      return call;
+    }
+    const resolvedConversationId = call.conversationId || conversationId || call.groupId || null;
+    return {
+      ...call,
+      conversationId: resolvedConversationId,
+      groupId: call.groupId || resolvedConversationId,
+      roomId: call.roomId || call.id,
+      isGroupRoom: true,
+    };
+  }
+
+  private rememberGroupRoom(call: CallSession | null | undefined): void {
+    if (!call || !this.isGroupCall(call) || !call.conversationId) {
+      return;
+    }
+    const room: GroupCallRoom = {
+      roomId: call.roomId || call.id,
+      groupId: call.groupId || call.conversationId,
+      conversationId: call.conversationId,
+      call,
+      participantUserIds: call.participantUserIds ?? [],
+      joinedParticipantIds: call.joinedParticipantIds ?? [],
+      startedAt: call.startedAt || new Date().toISOString(),
+      endedAt: call.endedAt ?? null,
+    };
+    this.activeGroupRooms.update((rooms) => ({ ...rooms, [room.conversationId]: room }));
+  }
+
+  private forgetGroupRoom(call: CallSession | null | undefined): void {
+    const conversationId = call?.conversationId || call?.groupId;
+    if (!conversationId) {
+      return;
+    }
+    this.activeGroupRooms.update((rooms) => {
+      if (!rooms[conversationId]) {
+        return rooms;
+      }
+      const next = { ...rooms };
+      delete next[conversationId];
+      return next;
+    });
+  }
+
+  private isGroupConversationId(conversationId: string | null | undefined): boolean {
+    if (!conversationId) {
+      return false;
+    }
+    const conversation = this.chat.conversations().find((item) => item.id === conversationId);
+    return String(conversation?.type || '').toLowerCase() === 'group';
+  }
+
+  private async recordCallSystemOnce(
+    call: CallSession,
+    event: 'call-rejected' | 'call-ended' | 'missed-call' | 'call-failed',
+    durationMs = 0,
+  ): Promise<void> {
+    if (!call?.id || this.systemLoggedCallIds.has(`${call.id}:${event}`)) {
+      return;
+    }
+    this.systemLoggedCallIds.add(`${call.id}:${event}`);
+    await this.chat.recordCallSystemMessage(call, event, durationMs).catch(() => undefined);
   }
 
   private async directoryForUser(userId: string): Promise<PublicKeyDirectory | null> {

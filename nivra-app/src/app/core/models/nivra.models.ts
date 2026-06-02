@@ -71,6 +71,10 @@ export interface Participant {
   canChangePrivacy: boolean;
   joinedAt: string;
   removedAt?: string | null;
+  alias?: string | null;
+  displayName?: string | null;
+  phone?: string | null;
+  profilePhotoDataUrl?: string | null;
 }
 
 export interface PrivacySettings {
@@ -82,21 +86,37 @@ export interface PrivacySettings {
   privacyPreset?: string | null;
 }
 
+export interface GroupSettings {
+  editInfo: 'all' | 'admins';
+  sendMessages: 'all' | 'admins';
+  addMembers: 'all' | 'admins';
+}
+
 export interface Conversation {
   id: string;
   type: 'Direct' | 'Group' | string;
   titleCiphertext?: string | null;
   privacySettings: PrivacySettings;
   participants: Participant[];
+  participantIds?: string[];
+  groupName?: string | null;
+  groupAvatar?: string | null;
+  admins?: string[];
+  settings?: GroupSettings;
+  title?: string | null;
   createdAt: string;
   updatedAt: string;
   lastMessageAt?: string | null;
+  archivedAt?: string | null;
+  blockedAt?: string | null;
 }
 
 export interface Contact {
   userId: string;
   alias: string;
   displayName?: string | null;
+  phone?: string | null;
+  bio?: string | null;
   profilePhotoDataUrl?: string | null;
   nicknameCiphertext?: string | null;
   isFavorite: boolean;
@@ -107,6 +127,7 @@ export interface UserSummary {
   id: string;
   alias: string;
   displayName?: string | null;
+  phone?: string | null;
   bio?: string | null;
   profilePhotoDataUrl?: string | null;
   isDiscoverable: boolean;
@@ -114,6 +135,24 @@ export interface UserSummary {
   isMutualContact: boolean;
   isFavorite: boolean;
   friendshipState: string;
+}
+
+export interface LocalProfile {
+  userId: string;
+  id?: string;
+  alias?: string | null;
+  aliasLower?: string | null;
+  displayName?: string | null;
+  phone?: string | null;
+  bio?: string | null;
+  profilePhotoDataUrl?: string | null;
+  isDiscoverable?: boolean;
+  isContact?: boolean;
+  isMutualContact?: boolean;
+  isFavorite?: boolean;
+  friendshipState?: string | null;
+  updatedAt?: string;
+  cachedAt?: string;
 }
 
 export interface DirectorySearchResponse {
@@ -271,6 +310,8 @@ export interface Story {
   id: string;
   owner: UserSummary;
   visibility: 'PublicWorld' | 'Contacts' | 'MutualContacts' | 'CloseFriends' | 'SelectedUsers' | string;
+  targetType?: 'contacts' | 'group' | string | null;
+  targetId?: string | null;
   encryptedPayload: string;
   caption?: string | null;
   mediaFileObjectId?: string | null;
@@ -320,9 +361,19 @@ export interface DecodedVaultItem extends VaultItem {
     title?: string;
     body?: string;
     name?: string;
+    attachments?: VaultNoteAttachment[];
     [key: string]: unknown;
   };
   decodeError?: boolean;
+}
+
+export interface VaultNoteAttachment {
+  id: string;
+  name: string;
+  mime: string;
+  size: number;
+  dataBase64: string;
+  createdAt: string;
 }
 
 export interface VaultRoomMember {
@@ -345,6 +396,7 @@ export interface VaultRoom {
   accessMode: 'PinOnly' | 'InviteOnly' | 'WaitingRoom' | string;
   retentionMode: 'Persistent' | 'BurnOnExit' | 'ExpiresAfterTtl' | string;
   encryptedWelcome?: string | null;
+  participantIds?: string[];
   members: VaultRoomMember[];
   createdAt: string;
   updatedAt: string;
@@ -381,10 +433,25 @@ export interface VaultRoomMessageVm {
 export interface CallSession {
   id: string;
   conversationId?: string | null;
+  roomId?: string | null;
+  groupId?: string | null;
   initiatorUserId: string;
   type: 'Voice' | 'Video' | string;
   status: 'Ringing' | 'Active' | 'Ended' | 'Missed' | 'Failed' | string;
   participantUserIds: string[];
+  joinedParticipantIds?: string[];
+  isGroupRoom?: boolean;
+  startedAt: string;
+  endedAt?: string | null;
+}
+
+export interface GroupCallRoom {
+  roomId: string;
+  groupId: string;
+  conversationId: string;
+  call: CallSession;
+  participantUserIds: string[];
+  joinedParticipantIds?: string[];
   startedAt: string;
   endedAt?: string | null;
 }
@@ -429,6 +496,17 @@ export interface PushTokenResponse {
 export interface PushStatusResponse {
   serverReady: boolean;
   provider: string;
+}
+
+export interface FirebaseWebConfigResponse {
+  apiKey: string;
+  authDomain: string;
+  projectId: string;
+  storageBucket: string;
+  messagingSenderId: string;
+  appId: string;
+  vapidKey: string;
+  sdkVersion?: string;
 }
 
 export interface PresenceResponse {

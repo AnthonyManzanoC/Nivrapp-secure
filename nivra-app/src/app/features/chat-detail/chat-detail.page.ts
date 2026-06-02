@@ -1,5 +1,5 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { Component, OnDestroy, OnInit, ViewChild, computed, inject } from '@angular/core';
+import { ChangeDetectorRef, Component, OnDestroy, OnInit, ViewChild, computed, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Keyboard } from '@capacitor/keyboard';
@@ -12,6 +12,7 @@ import {
   IonHeader,
   IonIcon,
   IonModal,
+  IonPopover,
   IonSelect,
   IonSelectOption,
   IonSpinner,
@@ -30,23 +31,35 @@ import {
   happyOutline,
   imageOutline,
   micOutline,
+  pauseCircleOutline,
   attachOutline,
   arrowRedoOutline,
+  archiveOutline,
+  albumsOutline,
+  atOutline,
+  banOutline,
   checkmarkOutline,
   closeOutline,
   createOutline,
+  informationCircleOutline,
+  lockOpenOutline,
+  personCircleOutline,
+  personAddOutline,
   playCircleOutline,
+  returnDownBackOutline,
   sendOutline,
   searchOutline,
+  shieldCheckmarkOutline,
   trashOutline,
   videocamOutline,
 } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
-import { ChatMessageVm, Conversation } from '../../core/models/nivra.models';
-import { ChatService } from '../../core/services/chat.service';
+import { ChatMessageVm, Contact, Conversation, GroupSettings, Participant, Story } from '../../core/models/nivra.models';
+import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
+import { SocialService } from '../../core/services/social.service';
 
 @Component({
   selector: 'app-chat-detail',
@@ -62,6 +75,7 @@ import { SignalrService } from '../../core/services/signalr.service';
     IonHeader,
     IonIcon,
     IonModal,
+    IonPopover,
     IonSelect,
     IonSelectOption,
     IonSpinner,
@@ -76,8 +90,10 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   @ViewChild(IonContent) private content?: IonContent;
   readonly chat = inject(ChatService);
   readonly realtime = inject(SignalrService);
+  readonly calls = inject(CallsService);
+  readonly social = inject(SocialService);
   private readonly auth = inject(AuthService);
-  private readonly calls = inject(CallsService);
+  private readonly cdr = inject(ChangeDetectorRef);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private routeSub?: Subscription;
@@ -91,14 +107,35 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   editingMessage: ChatMessageVm | null = null;
   editDraft = '';
   forwardingMessage: ChatMessageVm | null = null;
+  replyingMessage: ChatMessageVm | null = null;
   forwardQuery = '';
   selectedForwardIds = new Set<string>();
   chatMenuOpen = false;
+  chatMenuEvent: Event | null = null;
+  attachmentMenuOpen = false;
+  attachmentMenuEvent: Event | null = null;
+  messageActionsOpen = false;
+  messageActionEvent: Event | null = null;
+  actionMessage: ChatMessageVm | null = null;
+  contactInfoOpen = false;
+  groupNameDraft = '';
+  groupAvatarDraft: string | null = null;
+  groupSettingsDraft: GroupSettings = {
+    editInfo: 'admins',
+    sendMessages: 'all',
+    addMembers: 'admins',
+  };
+  groupInfoBusy = false;
+  groupInfoError = '';
+  groupAddOpen = false;
+  selectedGroupAddIds = new Set<string>();
+  emojiPanelOpen = false;
   busyAction = '';
   notice = '';
   deleteAfterRead = false;
   ttlSeconds: number | null = null;
   recordingVoice = false;
+  audioState: Record<string, { current: number; duration: number; playing: boolean }> = {};
   readonly ttlOptions = [
     { label: 'Sin expirar', value: null },
     { label: '1 h', value: 3600 },
@@ -111,6 +148,12 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   private voiceStream: MediaStream | null = null;
   private voiceChunks: Blob[] = [];
   private voiceStartedAt = 0;
+  private messagePressTimer: number | null = null;
+  readonly emojiChoices = [
+    '\u{1F600}', '\u{1F602}', '\u{1F60D}', '\u{1F914}', '\u{1F62E}', '\u{1F622}',
+    '\u{1F44D}', '\u2764\uFE0F', '\u{1F525}', '\u{1F389}', '\u{1F64F}', '\u{1F4AA}',
+  ];
+  readonly stickerChoices = ['OK', 'LOL', 'WOW', 'Nivra'];
 
   constructor() {
     addIcons({
@@ -123,14 +166,25 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       happyOutline,
       imageOutline,
       micOutline,
+      pauseCircleOutline,
       attachOutline,
       arrowRedoOutline,
+      archiveOutline,
+      albumsOutline,
+      atOutline,
+      banOutline,
       checkmarkOutline,
       closeOutline,
       createOutline,
+      informationCircleOutline,
+      lockOpenOutline,
+      personCircleOutline,
+      personAddOutline,
       playCircleOutline,
+      returnDownBackOutline,
       sendOutline,
       searchOutline,
+      shieldCheckmarkOutline,
       trashOutline,
       videocamOutline,
     });
@@ -146,6 +200,13 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     void this.bindKeyboard();
   }
 
+  ionViewDidEnter(): void {
+    window.requestAnimationFrame(() => {
+      this.cdr.detectChanges();
+      this.scrollBottom();
+    });
+  }
+
   ngOnDestroy(): void {
     const conversationId = this.conversation()?.id;
     if (conversationId) {
@@ -153,6 +214,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
     this.routeSub?.unsubscribe();
     this.keyboardHandles.forEach((handle) => void handle.remove());
+    this.cancelMessagePress();
     void this.cancelVoiceNote();
     document.documentElement.style.setProperty('--keyboard-bottom', '0px');
   }
@@ -166,13 +228,23 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     if (!conversation || !this.draft.trim() || this.sending) {
       return;
     }
+    if (!this.canSendMessages()) {
+      this.attachmentError = 'Solo los admins pueden enviar mensajes en este grupo.';
+      return;
+    }
     const text = this.draft;
     this.draft = '';
     this.sending = true;
+    this.attachmentError = '';
     try {
       await this.chat.sendTyping(conversation.id, 'stopped', { force: true });
       await this.chat.sendText(conversation, text, this.currentPolicy());
+      this.replyingMessage = null;
+      this.emojiPanelOpen = false;
       this.scrollBottom();
+    } catch (error) {
+      this.draft = text;
+      this.attachmentError = error instanceof Error ? error.message : 'No se pudo enviar el mensaje.';
     } finally {
       this.sending = false;
     }
@@ -188,6 +260,10 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     input.value = '';
     const conversation = this.conversation();
     if (!conversation || !files.length || this.sending) {
+      return;
+    }
+    if (!this.canSendMessages()) {
+      this.attachmentError = 'Solo los admins pueden enviar archivos en este grupo.';
       return;
     }
 
@@ -213,6 +289,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     this.attachmentError = '';
     try {
       await this.chat.downloadAttachment(message.payload);
+      await this.chat.markMessageOpened(message);
     } catch (error) {
       this.attachmentError = error instanceof Error ? error.message : 'No se pudo abrir el adjunto.';
     } finally {
@@ -228,11 +305,80 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     this.attachmentError = '';
     try {
       await this.chat.ensureMediaPreview(message.payload);
+      await this.chat.markMessageOpened(message);
     } catch (error) {
       this.attachmentError = error instanceof Error ? error.message : 'No se pudo previsualizar el adjunto.';
     } finally {
       this.downloadingId = null;
     }
+  }
+
+  async markMessageOpened(message: ChatMessageVm): Promise<void> {
+    await this.chat.markMessageOpened(message);
+  }
+
+  async toggleAudio(audio: HTMLAudioElement, message: ChatMessageVm): Promise<void> {
+    this.syncAudioState(message, audio);
+    if (audio.paused) {
+      this.pauseOtherAudio(audio);
+      await this.chat.markMessageOpened(message);
+      await audio.play().catch(() => undefined);
+      this.markAudioPlaying(message, audio);
+      return;
+    }
+    audio.pause();
+    this.markAudioPaused(message);
+  }
+
+  markAudioPlaying(message: ChatMessageVm, audio: HTMLAudioElement): void {
+    this.setAudioState(message.id, audio, true);
+  }
+
+  markAudioPaused(message: ChatMessageVm): void {
+    this.audioState = {
+      ...this.audioState,
+      [message.id]: {
+        ...(this.audioState[message.id] ?? { current: 0, duration: 0 }),
+        playing: false,
+      },
+    };
+  }
+
+  syncAudioState(message: ChatMessageVm, audio: HTMLAudioElement): void {
+    this.setAudioState(message.id, audio, !audio.paused && !audio.ended);
+  }
+
+  audioEnded(message: ChatMessageVm): void {
+    this.audioState = {
+      ...this.audioState,
+      [message.id]: {
+        ...(this.audioState[message.id] ?? { current: 0, duration: 0 }),
+        current: 0,
+        playing: false,
+      },
+    };
+  }
+
+  seekAudio(audio: HTMLAudioElement, event: Event): void {
+    const input = event.target as HTMLInputElement;
+    audio.currentTime = Number(input.value || 0);
+  }
+
+  isAudioPlaying(messageId: string): boolean {
+    return Boolean(this.audioState[messageId]?.playing);
+  }
+
+  audioDuration(messageId: string): number {
+    return Math.max(1, this.audioState[messageId]?.duration || 0);
+  }
+
+  audioCurrent(messageId: string): number {
+    return this.audioState[messageId]?.current || 0;
+  }
+
+  audioTimeLabel(messageId: string): string {
+    const state = this.audioState[messageId];
+    return this.formatAudioTime(state?.duration || state?.current || 0);
   }
 
   async react(message: ChatMessageVm, emoji: string): Promise<void> {
@@ -241,11 +387,101 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       return;
     }
     await this.chat.sendReaction(conversation, message, emoji);
+    this.closeMessageActions();
   }
 
-  toggleActions(message: ChatMessageVm): void {
-    this.actionMessageId = this.actionMessageId === message.id ? null : message.id;
+  toggleActions(message: ChatMessageVm, event: Event): void {
+    if (this.messageActionsOpen && this.actionMessageId === message.id) {
+      this.closeMessageActions();
+      return;
+    }
+    this.openMessageActions(message, event);
+  }
+
+  openMessageActions(message: ChatMessageVm, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.actionMessage = message;
+    this.actionMessageId = message.id;
+    this.messageActionEvent = event ?? null;
+    this.messageActionsOpen = true;
+    this.closeChatMenu();
+    this.emojiPanelOpen = false;
+  }
+
+  closeMessageActions(): void {
+    this.messageActionsOpen = false;
+    this.messageActionEvent = null;
+    this.actionMessage = null;
+    this.actionMessageId = null;
+  }
+
+  openChatMenu(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.chatMenuEvent = event;
+    this.chatMenuOpen = true;
+    this.closeMessageActions();
+    this.emojiPanelOpen = false;
+  }
+
+  closeChatMenu(): void {
     this.chatMenuOpen = false;
+    this.chatMenuEvent = null;
+  }
+
+  openAttachmentMenu(event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.attachmentMenuEvent = event;
+    this.attachmentMenuOpen = true;
+    this.closeChatMenu();
+    this.closeMessageActions();
+    this.emojiPanelOpen = false;
+  }
+
+  closeAttachmentMenu(): void {
+    this.attachmentMenuOpen = false;
+    this.attachmentMenuEvent = null;
+  }
+
+  chooseAttachment(input: HTMLInputElement): void {
+    this.closeAttachmentMenu();
+    input.click();
+  }
+
+  openContactInfo(): void {
+    const conversation = this.conversation();
+    if (!conversation) {
+      return;
+    }
+    this.prepareGroupInfoDraft(conversation);
+    this.contactInfoOpen = true;
+    this.closeChatMenu();
+    this.closeMessageActions();
+    void this.chat.hydrateConversationProfile(conversation);
+    void this.social.load();
+  }
+
+  closeContactInfo(): void {
+    this.contactInfoOpen = false;
+  }
+
+  startMessagePress(message: ChatMessageVm, event: TouchEvent): void {
+    if (this.messagePressTimer !== null) {
+      window.clearTimeout(this.messagePressTimer);
+    }
+    this.messagePressTimer = window.setTimeout(() => {
+      this.openMessageActions(message, event);
+      this.messagePressTimer = null;
+    }, 420);
+  }
+
+  cancelMessagePress(): void {
+    if (this.messagePressTimer !== null) {
+      window.clearTimeout(this.messagePressTimer);
+      this.messagePressTimer = null;
+    }
   }
 
   canEdit(message: ChatMessageVm): boolean {
@@ -259,13 +495,26 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     this.editingMessage = message;
     this.editDraft = message.payload.text || '';
     this.draft = this.editDraft;
-    this.actionMessageId = null;
+    this.closeMessageActions();
   }
 
   cancelEdit(): void {
     this.editingMessage = null;
     this.editDraft = '';
     this.draft = '';
+  }
+
+  beginReply(message: ChatMessageVm): void {
+    this.replyingMessage = message;
+    this.closeMessageActions();
+    this.closeChatMenu();
+    setTimeout(() => {
+      void this.content?.scrollToBottom(120);
+    }, 30);
+  }
+
+  cancelReply(): void {
+    this.replyingMessage = null;
   }
 
   async submitEdit(): Promise<void> {
@@ -293,7 +542,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
     await this.runAction(`delete-me:${message.id}`, async () => {
       await this.chat.deleteMessage(message, false);
-      this.actionMessageId = null;
+      this.closeMessageActions();
       this.notice = 'Mensaje eliminado para ti.';
     });
   }
@@ -304,7 +553,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
     await this.runAction(`delete-all:${message.id}`, async () => {
       await this.chat.deleteMessage(message, true);
-      this.actionMessageId = null;
+      this.closeMessageActions();
       this.notice = 'Mensaje eliminado para todos.';
     });
   }
@@ -318,8 +567,8 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     this.forwardingMessage = message;
     this.forwardQuery = '';
     this.selectedForwardIds.clear();
-    this.actionMessageId = null;
-    this.chatMenuOpen = false;
+    this.closeMessageActions();
+    this.closeChatMenu();
   }
 
   closeForward(): void {
@@ -360,7 +609,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
     await this.runAction(`clear:${scope}`, async () => {
       await this.chat.clearConversation(conversation, scope);
-      this.chatMenuOpen = false;
+      this.closeChatMenu();
       this.notice = scope === 'everyone' ? 'Chat vaciado para todos.' : 'Chat vaciado para ti.';
     });
   }
@@ -372,8 +621,34 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
     await this.runAction(`delete-chat:${scope}`, async () => {
       await this.chat.deleteConversation(conversation, scope);
-      this.chatMenuOpen = false;
+      this.closeChatMenu();
       await this.router.navigateByUrl('/app/chats');
+    });
+  }
+
+  async toggleArchive(): Promise<void> {
+    const conversation = this.conversation();
+    if (!conversation) {
+      return;
+    }
+    const archived = !this.chat.isConversationArchived(conversation.id);
+    await this.runAction(`archive:${conversation.id}`, async () => {
+      await this.chat.setConversationArchived(conversation, archived);
+      this.closeChatMenu();
+      this.notice = archived ? 'Chat archivado en este dispositivo.' : 'Chat desarchivado.';
+    });
+  }
+
+  async toggleBlock(): Promise<void> {
+    const conversation = this.conversation();
+    if (!conversation) {
+      return;
+    }
+    const blocked = !this.chat.isConversationBlocked(conversation.id);
+    await this.runAction(`block:${conversation.id}`, async () => {
+      await this.chat.setConversationBlocked(conversation, blocked);
+      this.closeChatMenu();
+      this.notice = blocked ? 'Chat bloqueado en este dispositivo.' : 'Chat desbloqueado.';
     });
   }
 
@@ -387,6 +662,15 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       .filter((participant) => !participant.removedAt && participant.userId !== currentUserId)
       .map((participant) => participant.userId);
     await this.calls.start(type, conversation.id, participantUserIds);
+    await this.router.navigateByUrl('/app/calls');
+  }
+
+  async joinGroupCall(): Promise<void> {
+    const room = this.calls.activeGroupRoomForConversation(this.conversation()?.id);
+    if (!room) {
+      return;
+    }
+    await this.calls.joinGroupRoom(room);
     await this.router.navigateByUrl('/app/calls');
   }
 
@@ -405,6 +689,10 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     const conversation = this.conversation();
     if (!conversation || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       this.attachmentError = 'Este dispositivo no permite grabar audio desde la app.';
+      return;
+    }
+    if (!this.canSendMessages()) {
+      this.attachmentError = 'Solo los admins pueden enviar notas de voz en este grupo.';
       return;
     }
     this.attachmentError = '';
@@ -466,6 +754,20 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
   }
 
+  appendEmoji(value: string): void {
+    this.draft = `${this.draft}${value}`;
+    this.onDraftInput();
+  }
+
+  async sendSticker(value: string): Promise<void> {
+    if (this.sending) {
+      return;
+    }
+    this.draft = this.draft.trim() ? `${this.draft.trim()} ${value}` : value;
+    this.emojiPanelOpen = false;
+    await this.send();
+  }
+
   reactions(message: ChatMessageVm): string[] {
     const reactions = message.payload.reactions ?? [];
     return [...new Set(reactions.map((reaction) => reaction.emoji).filter(Boolean))].slice(0, 4);
@@ -479,10 +781,230 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     return value ? 'Reenviado' : '';
   }
 
+  replyPreview(message: ChatMessageVm | null): string {
+    return message ? this.chat.preview(message.payload) : '';
+  }
+
+  replyReference(message: ChatMessageVm | null): unknown {
+    if (!message) {
+      return null;
+    }
+    return {
+      messageId: message.id,
+      senderUserId: message.senderUserId,
+      at: message.at,
+      preview: this.chat.preview(message.payload).slice(0, 120),
+    };
+  }
+
+  isBlocked(): boolean {
+    return this.chat.isConversationBlocked(this.conversation()?.id);
+  }
+
+  isArchived(): boolean {
+    return this.chat.isConversationArchived(this.conversation()?.id);
+  }
+
+  conversationPhoto(): string {
+    return this.chat.conversationPhoto(this.conversation());
+  }
+
+  conversationAlias(): string {
+    return this.chat.conversationAlias(this.conversation());
+  }
+
+  conversationPhone(): string {
+    return this.chat.conversationPhone(this.conversation());
+  }
+
+  conversationBio(): string {
+    return this.chat.conversationBio(this.conversation());
+  }
+
+  isGroupConversation(): boolean {
+    return this.chat.isGroup(this.conversation());
+  }
+
+  canEditGroup(): boolean {
+    return this.chat.canEditGroup(this.conversation());
+  }
+
+  canSendMessages(): boolean {
+    return this.chat.canSendToConversation(this.conversation());
+  }
+
+  canAddGroupMembers(): boolean {
+    return this.chat.canAddGroupMembers(this.conversation());
+  }
+
+  isCurrentUserGroupAdmin(): boolean {
+    return this.chat.isGroupAdmin(this.conversation());
+  }
+
+  isGroupAdmin(userId: string | null | undefined): boolean {
+    return this.chat.isGroupAdmin(this.conversation(), userId || undefined);
+  }
+
+  groupParticipants(): Participant[] {
+    return (this.conversation()?.participants ?? []).filter((participant) => !participant.removedAt);
+  }
+
+  participantLabel(participant: Participant): string {
+    return this.chat.participantDisplayName(participant.userId, participant);
+  }
+
+  participantSubtitle(participant: Participant): string {
+    const role = this.isGroupAdmin(participant.userId) ? 'Admin' : 'Miembro';
+    const alias = this.chat.participantAlias(participant.userId, participant);
+    const phone = participant.phone || '';
+    return [role, alias || phone].filter(Boolean).join(' - ');
+  }
+
+  participantPhoto(participant: Participant): string {
+    return this.chat.participantPhoto(participant.userId, participant);
+  }
+
+  participantInitials(participant: Participant): string {
+    return this.participantLabel(participant)
+      .split(/\s|,|-/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'N';
+  }
+
+  async onGroupAvatarSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (!file) {
+      return;
+    }
+    this.groupInfoError = '';
+    try {
+      this.groupAvatarDraft = await this.fileToDataUrl(file);
+    } catch {
+      this.groupInfoError = 'No se pudo cargar la foto del grupo.';
+    }
+  }
+
+  async saveGroupInfo(): Promise<void> {
+    const conversation = this.conversation();
+    if (!conversation || !this.canEditGroup()) {
+      return;
+    }
+    await this.runGroupInfoAction(async () => {
+      await this.chat.updateGroupInfo(conversation, {
+        groupName: this.groupNameDraft.trim(),
+        groupAvatar: this.groupAvatarDraft,
+      });
+      this.notice = 'Grupo actualizado.';
+      this.prepareGroupInfoDraft(this.conversation() ?? conversation);
+    });
+  }
+
+  async updateGroupSetting(key: keyof GroupSettings, value: GroupSettings[keyof GroupSettings]): Promise<void> {
+    const conversation = this.conversation();
+    if (!conversation || !this.isCurrentUserGroupAdmin()) {
+      return;
+    }
+    const next: GroupSettings = {
+      ...this.groupSettingsDraft,
+      [key]: value,
+    };
+    this.groupSettingsDraft = next;
+    await this.runGroupInfoAction(async () => {
+      await this.chat.updateGroupSettings(conversation, next);
+      this.prepareGroupInfoDraft(this.conversation() ?? conversation);
+    });
+  }
+
+  async toggleParticipantAdmin(participant: Participant): Promise<void> {
+    const conversation = this.conversation();
+    if (!conversation || !this.isCurrentUserGroupAdmin()) {
+      return;
+    }
+    const nextAdmin = !this.isGroupAdmin(participant.userId);
+    await this.runGroupInfoAction(async () => {
+      await this.chat.setGroupParticipantAdmin(conversation, participant.userId, nextAdmin);
+      this.prepareGroupInfoDraft(this.conversation() ?? conversation);
+    });
+  }
+
+  activeGroupStories(): Story[] {
+    return this.social.activeStoriesForGroup(this.conversation()?.id);
+  }
+
+  async openGroupStory(story: Story): Promise<void> {
+    await this.social.viewStory(story);
+  }
+
+  availableGroupContacts(): Contact[] {
+    const currentIds = new Set(this.groupParticipants().map((participant) => participant.userId));
+    return this.chat.contacts()
+      .filter((contact) => !currentIds.has(contact.userId))
+      .sort((left, right) => (left.displayName || left.alias).localeCompare(right.displayName || right.alias));
+  }
+
+  toggleGroupAddContact(contact: Contact): void {
+    if (this.selectedGroupAddIds.has(contact.userId)) {
+      this.selectedGroupAddIds.delete(contact.userId);
+    } else {
+      this.selectedGroupAddIds.add(contact.userId);
+    }
+  }
+
+  async addSelectedGroupParticipants(): Promise<void> {
+    const conversation = this.conversation();
+    if (!conversation || !this.selectedGroupAddIds.size) {
+      return;
+    }
+    await this.runGroupInfoAction(async () => {
+      await this.chat.addGroupParticipants(conversation, [...this.selectedGroupAddIds]);
+      this.selectedGroupAddIds.clear();
+      this.groupAddOpen = false;
+      this.notice = 'Participantes agregados.';
+      this.prepareGroupInfoDraft(this.conversation() ?? conversation);
+    });
+  }
+
+  sharedMediaMessages(): ChatMessageVm[] {
+    return this.messages()
+      .filter((message) => Boolean(this.chat.asFile(message.payload)))
+      .slice(-12)
+      .reverse();
+  }
+
   private scrollBottom(): void {
     setTimeout(() => {
       void this.content?.scrollToBottom(220);
     }, 40);
+  }
+
+  private pauseOtherAudio(active: HTMLAudioElement): void {
+    document.querySelectorAll<HTMLAudioElement>('audio.voice-source').forEach((audio) => {
+      if (audio !== active && !audio.paused) {
+        audio.pause();
+      }
+    });
+  }
+
+  private setAudioState(messageId: string, audio: HTMLAudioElement, playing: boolean): void {
+    this.audioState = {
+      ...this.audioState,
+      [messageId]: {
+        current: Number.isFinite(audio.currentTime) ? audio.currentTime : 0,
+        duration: Number.isFinite(audio.duration) ? audio.duration : 0,
+        playing,
+      },
+    };
+  }
+
+  private formatAudioTime(secondsValue: number): string {
+    const total = Math.max(0, Math.floor(secondsValue || 0));
+    const minutes = Math.floor(total / 60);
+    const seconds = total % 60;
+    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
   }
 
   private async bindKeyboard(): Promise<void> {
@@ -501,12 +1023,55 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
   }
 
-  private currentPolicy(): { deleteAfterRead: boolean; ttlSeconds: number | null } {
+  private currentPolicy(): MessagePolicyOptions {
     const ttlSeconds = Number(this.ttlSeconds || 0);
     return {
       deleteAfterRead: this.deleteAfterRead,
       ttlSeconds: ttlSeconds > 0 ? ttlSeconds : null,
+      replyTo: this.replyReference(this.replyingMessage),
     };
+  }
+
+  private prepareGroupInfoDraft(conversation: Conversation): void {
+    if (!this.chat.isGroup(conversation)) {
+      this.groupInfoError = '';
+      this.selectedGroupAddIds.clear();
+      this.groupAddOpen = false;
+      return;
+    }
+    this.groupNameDraft = this.chat.conversationTitle(conversation);
+    this.groupAvatarDraft = this.chat.conversationPhoto(conversation) || null;
+    this.groupSettingsDraft = {
+      editInfo: conversation.settings?.editInfo === 'all' ? 'all' : 'admins',
+      sendMessages: conversation.settings?.sendMessages === 'admins' ? 'admins' : 'all',
+      addMembers: conversation.settings?.addMembers === 'all' ? 'all' : 'admins',
+    };
+    this.groupInfoError = '';
+    this.selectedGroupAddIds.clear();
+  }
+
+  private async runGroupInfoAction(action: () => Promise<void>): Promise<void> {
+    if (this.groupInfoBusy) {
+      return;
+    }
+    this.groupInfoBusy = true;
+    this.groupInfoError = '';
+    try {
+      await action();
+    } catch (error) {
+      this.groupInfoError = error instanceof Error ? error.message : 'No se pudo actualizar el grupo.';
+    } finally {
+      this.groupInfoBusy = false;
+    }
+  }
+
+  private fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    });
   }
 
   private stopVoiceCapture(send: boolean): Promise<File | null> {

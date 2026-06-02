@@ -13,6 +13,28 @@
     <section class="grid">
       <article class="panel span-7">
         <h2>Perfil</h2>
+        <div class="profile-photo-row">
+          <div class="profile-photo">
+            @if (profilePhotoDataUrl) {
+              <img [src]="profilePhotoDataUrl" alt="">
+            } @else {
+              <span>{{ (displayName || auth.session()?.user?.alias || 'N').slice(0, 2).toUpperCase() }}</span>
+            }
+          </div>
+          <div class="profile-photo-actions">
+            <input #profilePhotoInput type="file" accept="image/*" hidden (change)="pickProfilePhoto($event)">
+            <ion-button mode="ios" fill="outline" (click)="profilePhotoInput.click()" [disabled]="saving">
+              <ion-icon name="camera-outline"></ion-icon>
+              Subir foto
+            </ion-button>
+            @if (profilePhotoDataUrl) {
+              <ion-button mode="ios" fill="clear" color="danger" (click)="removeProfilePhoto()" [disabled]="saving">
+                <ion-icon name="trash-outline"></ion-icon>
+                Quitar
+              </ion-button>
+            }
+          </div>
+        </div>
         <div class="form-grid">
           <label>
             <span>Nombre</span>

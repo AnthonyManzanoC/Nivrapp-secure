@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
-import { Component, inject } from '@angular/core';
-import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Component, inject, signal } from '@angular/core';
+import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { IonApp, IonIcon } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
@@ -30,6 +31,7 @@ export class ShellPage {
   readonly calls = inject(CallsService);
   readonly realtime = inject(SignalrService);
   private readonly router = inject(Router);
+  readonly hideMobileNav = signal(this.isChatDetailRoute(this.router.url));
 
   readonly nav = [
     { path: '/app/chats', icon: 'chatbubble-ellipses-outline', label: 'Chats' },
@@ -51,6 +53,14 @@ export class ShellPage {
       personCircleOutline,
       videocamOutline,
     });
+
+    this.router.events
+      .pipe(takeUntilDestroyed())
+      .subscribe((event) => {
+        if (event instanceof NavigationEnd) {
+          this.hideMobileNav.set(this.isChatDetailRoute(event.urlAfterRedirects));
+        }
+      });
   }
 
   async openCalls(): Promise<void> {
@@ -77,5 +87,9 @@ export class ShellPage {
     this.calls.releaseLocalResources();
     await this.auth.logout();
     await this.router.navigateByUrl('/auth');
+  }
+
+  private isChatDetailRoute(url: string): boolean {
+    return /^\/app\/chats\/[^/?#]+/.test(url);
   }
 }

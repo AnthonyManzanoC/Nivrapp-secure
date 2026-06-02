@@ -1,9 +1,13 @@
-import { Component, DestroyRef, effect, inject } from '@angular/core';
+import { CommonModule } from '@angular/common';
+import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard';
-import { Router } from '@angular/router';
-import { IonApp, IonRouterOutlet } from '@ionic/angular/standalone';
+import { NavigationEnd, Router } from '@angular/router';
+import { IonApp, IonIcon, IonRouterOutlet } from '@ionic/angular/standalone';
+import { addIcons } from 'ionicons';
+import { callOutline, videocamOutline } from 'ionicons/icons';
 import { AuthService } from './core/services/auth.service';
+import { CallsService } from './core/services/calls.service';
 import { PushService } from './core/services/push.service';
 import { SignalrService } from './core/services/signalr.service';
 
@@ -12,7 +16,7 @@ import { SignalrService } from './core/services/signalr.service';
   templateUrl: 'app.component.html',
   styleUrls: ['app.component.scss'],
   standalone: true,
-  imports: [IonApp, IonRouterOutlet],
+  imports: [CommonModule, IonApp, IonIcon, IonRouterOutlet],
 })
 export class AppComponent {
   private readonly auth = inject(AuthService);
@@ -20,10 +24,41 @@ export class AppComponent {
   private readonly router = inject(Router);
   private readonly realtime = inject(SignalrService);
   private readonly destroyRef = inject(DestroyRef);
+  readonly calls = inject(CallsService);
+  private readonly now = signal(Date.now());
+  private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
   private lastPushRouteKey = '';
+  readonly showCallBanner = computed(() => {
+    const phase = this.calls.phase();
+    return this.auth.isAuthenticated()
+      && Boolean(this.calls.activeCall())
+      && phase !== 'idle'
+      && phase !== 'ringing'
+      && !this.onCallsRoute();
+  });
+  readonly callElapsed = computed(() => {
+    const call = this.calls.activeCall();
+    const started = Date.parse(call?.startedAt || '');
+    if (!call || !Number.isFinite(started)) {
+      return '00:00';
+    }
+    return this.formatDuration(Math.max(0, this.now() - started));
+  });
 
   constructor() {
+    addIcons({ callOutline, videocamOutline });
     void this.configureNativeKeyboard();
+
+    const timer = window.setInterval(() => this.now.set(Date.now()), 1000);
+    this.destroyRef.onDestroy(() => window.clearInterval(timer));
+
+    this.router.events
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe((event) => {
+        if (event instanceof NavigationEnd) {
+          this.onCallsRoute.set(event.urlAfterRedirects.startsWith('/app/calls'));
+        }
+      });
 
     this.realtime.events$
       .pipe(takeUntilDestroyed(this.destroyRef))
@@ -78,5 +113,20 @@ export class AppComponent {
     } catch {
       // Web and desktop do not expose the native keyboard bridge.
     }
+  }
+
+  async openActiveCall(): Promise<void> {
+    await this.router.navigateByUrl('/app/calls');
+  }
+
+  private formatDuration(durationMs: number): string {
+    const totalSeconds = Math.floor(durationMs / 1000);
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
+    }
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
   }
 }

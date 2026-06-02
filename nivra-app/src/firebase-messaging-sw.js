@@ -18,17 +18,28 @@ self.addEventListener('notificationclick', (event) => {
   })());
 });
 
-importScripts('https://www.gstatic.com/firebasejs/12.14.0/firebase-app-compat.js');
-importScripts('https://www.gstatic.com/firebasejs/12.14.0/firebase-messaging-compat.js');
+self.window = self;
 
-firebase.initializeApp({
+try {
+  importScripts('/native-config.js');
+} catch {
+  // The foreground app can still pass a service worker registration explicitly.
+}
+
+const FIREBASE_SDK_VERSION = self.NIVRA_FIREBASE_SDK_VERSION || '12.14.0';
+const FIREBASE_CONFIG = self.NIVRA_FIREBASE_CONFIG || {
   apiKey: 'AIzaSyC4TZyBBy6Hj_2vgAngbuN8QD6ND48GEyg',
   authDomain: 'nivra-af67e.firebaseapp.com',
   projectId: 'nivra-af67e',
   storageBucket: 'nivra-af67e.firebasestorage.app',
   messagingSenderId: '1052459577646',
   appId: '1:1052459577646:web:104a77188d9e03b0b10abf'
-});
+};
+
+importScripts(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app-compat.js`);
+importScripts(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-messaging-compat.js`);
+
+firebase.initializeApp(FIREBASE_CONFIG);
 
 const messaging = firebase.messaging();
 

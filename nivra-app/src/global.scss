@@ -41,9 +41,12 @@
 }
 
 html,
-body {
+body,
+app-root,
+ion-app {
   width: 100%;
   height: 100%;
+  overflow: hidden;
   background: var(--nivra-bg);
 }
 
@@ -118,4 +121,110 @@ ion-button {
 ion-input,
 ion-textarea {
   caret-color: var(--nivra-brand-2);
+}
+
+.voice-card {
+  width: min(72vw, 360px);
+  display: grid;
+  gap: 8px;
+}
+
+.voice-meta {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+}
+
+.voice-meta strong,
+.voice-meta small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-meta strong {
+  font-size: 14px;
+}
+
+.voice-meta small {
+  color: var(--nivra-muted);
+  font-size: 12px;
+}
+
+.voice-wave,
+.voice-play {
+  border: 0;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+}
+
+.voice-wave {
+  width: 36px;
+  height: 36px;
+  color: #04100d;
+  background: linear-gradient(135deg, rgba(114, 240, 202, .9), rgba(107, 168, 255, .72));
+}
+
+.voice-inline {
+  min-height: 40px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 999px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 42px;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 5px;
+  background: rgba(255, 255, 255, .06);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .055);
+}
+
+.voice-source {
+  display: none;
+}
+
+.voice-play {
+  width: 32px;
+  height: 32px;
+  color: #04100d;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+}
+
+.voice-play ion-icon {
+  font-size: 20px;
+}
+
+.voice-range {
+  width: 100%;
+  accent-color: var(--nivra-brand-2);
+}
+
+.voice-range::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .22);
+}
+
+.voice-range::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
+  border-radius: 999px;
+  background: var(--nivra-brand-2);
+}
+
+.voice-inline time {
+  color: var(--nivra-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+@media (max-width: 768px) {
+  .voice-card {
+    width: min(82vw, 340px);
+  }
 }

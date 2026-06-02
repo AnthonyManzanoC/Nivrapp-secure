@@ -16,6 +16,14 @@ public static partial class EndpointExtensions
 {
     private static readonly Regex AliasPattern = new("^[a-zA-Z0-9_.-]{3,32}$", RegexOptions.Compiled);
     private const long MaxEncryptedUploadBytes = 50L * 1024 * 1024;
+    private const string DefaultFirebaseWebApiKey = "AIzaSyC4TZyBBy6Hj_2vgAngbuN8QD6ND48GEyg";
+    private const string DefaultFirebaseWebAuthDomain = "nivra-af67e.firebaseapp.com";
+    private const string DefaultFirebaseWebProjectId = "nivra-af67e";
+    private const string DefaultFirebaseWebStorageBucket = "nivra-af67e.firebasestorage.app";
+    private const string DefaultFirebaseWebMessagingSenderId = "1052459577646";
+    private const string DefaultFirebaseWebAppId = "1:1052459577646:web:104a77188d9e03b0b10abf";
+    private const string DefaultFirebaseWebVapidKey = "BI-QXrOQJ14bj9GWZ5_ZniwQ63HxBW1E2n0qOLCe-fHME72yyuXQz2nRdEjSqstpw7IQNOE9U8fx8l9tGrbYHBY";
+    private const string DefaultFirebaseSdkVersion = "12.14.0";
 
     public static void MapNivraApi(this WebApplication app)
     {
@@ -2351,11 +2359,12 @@ public static partial class EndpointExtensions
 
             var memberId = $"{room.Id}:{current.UserId}";
             var member = await db.VaultRoomMembers.FirstOrDefaultAsync(candidate => candidate.Id == memberId, cancellationToken);
-            var isInvited = member is { Status: VaultMemberStatus.Invited or VaultMemberStatus.Active };
+            var isOwner = room.OwnerUserId == current.UserId;
+            var isAuthorizedParticipant = member is { Status: VaultMemberStatus.Invited or VaultMemberStatus.Active };
 
-            if (room.AccessMode == VaultAccessMode.InviteOnly && !isInvited && room.OwnerUserId != current.UserId)
+            if (!isOwner && !isAuthorizedParticipant)
             {
-                return Error("invite_required", "Esta boveda necesita invitacion.", StatusCodes.Status403Forbidden);
+                return Error("invite_required", "No estas invitado a esta sala.", StatusCodes.Status403Forbidden);
             }
 
             if (room.PinHash is not null && !hasher.Verify(request.Pin ?? string.Empty, room.PinHash))
@@ -2363,9 +2372,7 @@ public static partial class EndpointExtensions
                 return Error("invalid_pin", "PIN invalido.", StatusCodes.Status401Unauthorized);
             }
 
-            var nextStatus = room.AccessMode == VaultAccessMode.WaitingRoom && room.OwnerUserId != current.UserId && !isInvited
-                ? VaultMemberStatus.Waiting
-                : VaultMemberStatus.Active;
+            var nextStatus = VaultMemberStatus.Active;
 
             if (member is null)
             {
@@ -2459,11 +2466,94 @@ public static partial class EndpointExtensions
             await NotifyUsers(hub, await VaultRoomAudienceAsync(db, room.Id, cancellationToken), "vault.left", new { roomId, userId = current.UserId, closedAt = room.ClosedAt });
             return Results.NoContent();
         });
+
+        group.MapGet("/{roomId}/voice-token", async Task<IResult> (string roomId, HttpContext http, NivraDbContext db, LiveKitTokenService liveKit, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var room = await db.VaultRooms.FirstOrDefaultAsync(candidate =>
+                candidate.Id == roomId &&
+                candidate.ClosedAt == null &&
+                (candidate.ExpiresAt == null || candidate.ExpiresAt > now),
+                cancellationToken);
+            if (room is null)
+            {
+                return Results.NotFound();
+            }
+
+            var member = await db.VaultRoomMembers.FirstOrDefaultAsync(candidate =>
+                candidate.VaultRoomId == room.Id &&
+                candidate.UserId == current.UserId &&
+                candidate.Status == VaultMemberStatus.Active,
+                cancellationToken);
+            if (member is null)
+            {
+                return Error("vault_voice_forbidden", "Debes entrar a la sala Vault antes de unirte al audio.", StatusCodes.Status403Forbidden);
+            }
+
+            if (!liveKit.IsConfigured)
+            {
+                return Error("livekit_not_configured", "LiveKit no esta configurado en el servidor.", StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var user = await db.Users.FirstOrDefaultAsync(candidate => candidate.Id == current.UserId && candidate.DisabledAt == null, cancellationToken);
+            if (user is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var token = liveKit.CreateRoomToken(LiveKitTokenService.VaultVoiceRoomName(room.Id), user);
+            return Results.Ok(new LiveKitRoomTokenResponse(token.ServerUrl, token.Token));
+        });
     }
 
     private static void MapCallEndpoints(this WebApplication app)
     {
         var group = app.MapGroup("/calls");
+
+        static async Task<IResult> RoomToken(string groupId, HttpContext http, INivraStore store, LiveKitTokenService liveKit, CancellationToken cancellationToken)
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            if (string.IsNullOrWhiteSpace(groupId))
+            {
+                return Error("invalid_group", "El grupo es obligatorio.");
+            }
+
+            var conversation = await store.GetConversationAsync(groupId, cancellationToken);
+            if (conversation is null ||
+                conversation.Type != ConversationType.Group ||
+                !conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null))
+            {
+                return Results.NotFound();
+            }
+
+            if (!liveKit.IsConfigured)
+            {
+                return Error("livekit_not_configured", "LiveKit no esta configurado en el servidor.", StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var user = await store.GetUserAsync(current.UserId, cancellationToken);
+            if (user is null || user.DisabledAt is not null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var token = liveKit.CreateRoomToken(conversation, user);
+            return Results.Ok(new LiveKitRoomTokenResponse(token.ServerUrl, token.Token));
+        }
+
+        group.MapGet("/room-token/{groupId}", RoomToken);
+        app.MapGet("/api/calls/room-token/{groupId}", RoomToken);
 
         group.MapPost("/start", async Task<IResult> (StartCallRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
@@ -2643,6 +2733,11 @@ public static partial class EndpointExtensions
     {
         var group = app.MapGroup("/push-tokens");
 
+        group.MapGet("/web-config", (IConfiguration configuration) =>
+        {
+            return Results.Ok(FirebaseWebConfig(configuration));
+        });
+
         group.MapPost("/", async Task<IResult> (RegisterPushTokenRequest request, HttpContext http, INivraStore store, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
@@ -2697,6 +2792,31 @@ public static partial class EndpointExtensions
             await store.SaveChangesAsync(cancellationToken);
             return Results.NoContent();
         });
+    }
+
+    private static FirebaseWebConfigResponse FirebaseWebConfig(IConfiguration configuration)
+    {
+        return new FirebaseWebConfigResponse(
+            FirebaseConfigValue(configuration, "ApiKey", DefaultFirebaseWebApiKey),
+            FirebaseConfigValue(configuration, "AuthDomain", DefaultFirebaseWebAuthDomain),
+            FirebaseConfigValue(configuration, "ProjectId", DefaultFirebaseWebProjectId),
+            FirebaseConfigValue(configuration, "StorageBucket", DefaultFirebaseWebStorageBucket),
+            FirebaseConfigValue(configuration, "MessagingSenderId", DefaultFirebaseWebMessagingSenderId),
+            FirebaseConfigValue(configuration, "AppId", DefaultFirebaseWebAppId),
+            FirebaseConfigValue(configuration, "VapidKey", DefaultFirebaseWebVapidKey),
+            FirebaseConfigValue(configuration, "SdkVersion", DefaultFirebaseSdkVersion));
+    }
+
+    private static string FirebaseConfigValue(IConfiguration configuration, string key, string fallback)
+    {
+        return FirstNonBlank(
+            configuration[$"Firebase:Web:{key}"],
+            configuration[$"Firebase__Web__{key}"],
+            configuration[$"Push:Fcm:Web:{key}"],
+            configuration[$"Push__Fcm__Web__{key}"],
+            configuration[$"NIVRA_FIREBASE_{key.ToUpperInvariant()}"],
+            key == "VapidKey" ? configuration["NIVRA_FIREBASE_VAPID_KEY"] : null,
+            fallback) ?? fallback;
     }
 
     private static void MapMonetizationEndpoints(this WebApplication app)
@@ -3143,6 +3263,7 @@ public static partial class EndpointExtensions
             contact.ContactUserId,
             user?.Alias ?? "unknown",
             user?.DisplayName,
+            user?.Phone,
             user?.ProfilePhotoDataUrl,
             contact.NicknameCiphertext,
             contact.IsFavorite,
@@ -3261,6 +3382,7 @@ public static partial class EndpointExtensions
             user.Id,
             user.Alias,
             user.DisplayName,
+            outgoing is not null || user.Id == currentUserId ? user.Phone : null,
             user.Bio,
             user.ProfilePhotoDataUrl,
             user.IsDiscoverable,
@@ -3322,6 +3444,11 @@ public static partial class EndpointExtensions
             room.AccessMode,
             room.RetentionMode,
             room.EncryptedWelcome,
+            members
+                .Where(member => member.Status is not VaultMemberStatus.Left and not VaultMemberStatus.Rejected)
+                .Select(member => member.UserId)
+                .Distinct(StringComparer.Ordinal)
+                .ToList(),
             members.Select(member =>
             {
                 users.TryGetValue(member.UserId, out var user);
@@ -3513,6 +3640,20 @@ public static partial class EndpointExtensions
     {
         var trimmed = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private static string? FirstNonBlank(params string?[] values)
+    {
+        foreach (var value in values)
+        {
+            var normalized = NormalizeOptional(value);
+            if (normalized is not null)
+            {
+                return normalized;
+            }
+        }
+
+        return null;
     }
 
     private static string? NormalizePhone(string? value)

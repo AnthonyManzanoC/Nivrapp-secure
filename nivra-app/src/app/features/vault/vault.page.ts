@@ -6,26 +6,33 @@ import { addIcons } from 'ionicons';
 import {
   addCircleOutline,
   attachOutline,
+  closeOutline,
   checkmarkCircleOutline,
   cloudDownloadOutline,
+  documentAttachOutline,
   enterOutline,
+  headsetOutline,
   keyOutline,
   lockClosedOutline,
   logOutOutline,
+  micOffOutline,
+  micOutline,
   peopleOutline,
+  playCircleOutline,
   refreshOutline,
   searchOutline,
   sendOutline,
   shieldCheckmarkOutline,
   trashOutline,
 } from 'ionicons/icons';
-import { FileChatPayload, UserSummary, VaultRoom, VaultRoomMember, VaultRoomMessageVm } from '../../core/models/nivra.models';
+import { DecodedVaultItem, FileChatPayload, UserSummary, VaultNoteAttachment, VaultRoom, VaultRoomMember, VaultRoomMessageVm } from '../../core/models/nivra.models';
 import { VaultService } from '../../core/services/vault.service';
+import { MediaStreamDirective } from '../../shared/media-stream.directive';
 
 @Component({
   selector: 'app-vault',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea],
+  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
   templateUrl: './vault.page.html',
   styleUrls: ['./vault.page.scss'],
 })
@@ -34,6 +41,7 @@ export class VaultPage implements OnInit, OnDestroy {
   pin = '';
   title = '';
   body = '';
+  noteAttachments: File[] = [];
   roomName = '';
   roomPin = '';
   roomAccessMode = 'PinOnly';
@@ -51,13 +59,19 @@ export class VaultPage implements OnInit, OnDestroy {
     addIcons({
       addCircleOutline,
       attachOutline,
+      closeOutline,
       checkmarkCircleOutline,
       cloudDownloadOutline,
+      documentAttachOutline,
       enterOutline,
+      headsetOutline,
       keyOutline,
       lockClosedOutline,
       logOutOutline,
+      micOffOutline,
+      micOutline,
       peopleOutline,
+      playCircleOutline,
       refreshOutline,
       searchOutline,
       sendOutline,
@@ -67,6 +81,7 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async ngOnInit(): Promise<void> {
+    await this.vault.enablePrivacyShield();
     await this.vault.load();
   }
 
@@ -74,6 +89,7 @@ export class VaultPage implements OnInit, OnDestroy {
     if (this.searchTimer !== null) {
       window.clearTimeout(this.searchTimer);
     }
+    void this.vault.disablePrivacyShield();
   }
 
   async unlock(): Promise<void> {
@@ -86,11 +102,30 @@ export class VaultPage implements OnInit, OnDestroy {
 
   async createNote(): Promise<void> {
     await this.run('note', async () => {
-      await this.vault.createNote(this.title || 'Nota privada', this.body);
+      await this.vault.createNote(this.title || 'Nota privada', this.body, this.noteAttachments);
       this.title = '';
       this.body = '';
+      this.noteAttachments = [];
       this.notice = 'Nota cifrada guardada.';
     });
+  }
+
+  noteFilesSelected(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const files = input.files ? Array.from(input.files) : [];
+    input.value = '';
+    if (!files.length) {
+      return;
+    }
+    const map = new Map(this.noteAttachments.map((file) => [`${file.name}:${file.size}:${file.lastModified}`, file]));
+    for (const file of files) {
+      map.set(`${file.name}:${file.size}:${file.lastModified}`, file);
+    }
+    this.noteAttachments = [...map.values()].slice(0, 8);
+  }
+
+  removeNoteAttachment(file: File): void {
+    this.noteAttachments = this.noteAttachments.filter((item) => item !== file);
   }
 
   async createRoom(): Promise<void> {
@@ -123,7 +158,10 @@ export class VaultPage implements OnInit, OnDestroy {
     this.searchTimer = window.setTimeout(() => void this.vault.searchPeople(this.inviteQuery), 280);
   }
 
-  toggleInvite(person: UserSummary): void {
+  toggleInvite(person: UserSummary, room: VaultRoom | null = null): void {
+    if (this.vault.isCurrentUser(person.id) || this.isRoomParticipant(room, person.id)) {
+      return;
+    }
     if (this.selectedInviteIds.has(person.id)) {
       this.selectedInviteIds.delete(person.id);
     } else {
@@ -165,6 +203,10 @@ export class VaultPage implements OnInit, OnDestroy {
   async inviteActiveRoom(): Promise<void> {
     const room = this.vault.activeRoom();
     if (!room) {
+      return;
+    }
+    if (!this.vault.canInviteGuests(room)) {
+      this.error = 'Solo el dueno de la sala puede agregar invitados.';
       return;
     }
     await this.run(`invite:${room.id}`, async () => {
@@ -211,6 +253,30 @@ export class VaultPage implements OnInit, OnDestroy {
     await this.run(`download:${payload.fileId || payload.downloadFile || ''}`, () => this.vault.downloadAttachment(payload));
   }
 
+  async previewNoteAttachment(item: DecodedVaultItem, attachment: VaultNoteAttachment): Promise<void> {
+    await this.run(`note-preview:${attachment.id}`, () => this.vault.ensureNoteAttachmentPreview(item, attachment).then(() => undefined));
+  }
+
+  async downloadNoteAttachment(item: DecodedVaultItem, attachment: VaultNoteAttachment): Promise<void> {
+    await this.run(`note-download:${attachment.id}`, () => this.vault.downloadNoteAttachment(item, attachment));
+  }
+
+  async startVoice(room: VaultRoom): Promise<void> {
+    await this.run(`voice:${room.id}`, async () => {
+      await this.vault.startVoiceChat(room);
+      this.notice = 'Chat de voz activo.';
+    });
+  }
+
+  async toggleVoiceMute(): Promise<void> {
+    await this.run('voice:mute', () => this.vault.toggleVoiceMute());
+  }
+
+  leaveVoice(): void {
+    this.vault.leaveVoiceChat();
+    this.notice = 'Saliste del chat de voz.';
+  }
+
   messageFile(message: VaultRoomMessageVm): FileChatPayload | null {
     return this.vault.asFile(message.payload);
   }
@@ -221,6 +287,21 @@ export class VaultPage implements OnInit, OnDestroy {
 
   activeMembers(room: VaultRoom | null): VaultRoomMember[] {
     return (room?.members ?? []).filter((member) => member.status === 'Active');
+  }
+
+  availableInvitePeople(room: VaultRoom | null): UserSummary[] {
+    return this.vault.people().filter((person) => !this.vault.isCurrentUser(person.id) && !this.isRoomParticipant(room, person.id));
+  }
+
+  selectedNoteAttachmentSize(): string {
+    const total = this.noteAttachments.reduce((sum, file) => sum + file.size, 0);
+    if (!total) {
+      return 'Sin adjuntos';
+    }
+    if (total < 1024 * 1024) {
+      return `${(total / 1024).toFixed(1)} KB`;
+    }
+    return `${(total / 1024 / 1024).toFixed(1)} MB`;
   }
 
   waitingMembers(room: VaultRoom | null): VaultRoomMember[] {
@@ -242,5 +323,15 @@ export class VaultPage implements OnInit, OnDestroy {
     } finally {
       this.busyId = '';
     }
+  }
+
+  private isRoomParticipant(room: VaultRoom | null, userId: string): boolean {
+    if (!room) {
+      return false;
+    }
+    return (room.members ?? []).some((member) =>
+      member.userId === userId &&
+      member.status !== 'Left' &&
+      member.status !== 'Rejected');
   }
 }

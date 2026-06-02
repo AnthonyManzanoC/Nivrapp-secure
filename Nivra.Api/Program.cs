@@ -24,6 +24,7 @@ builder.Services.AddProblemDetails();
 builder.Services.Configure<NivraSecurityOptions>(builder.Configuration.GetSection("Security"));
 builder.Services.Configure<NivraStorageOptions>(builder.Configuration.GetSection("Storage"));
 builder.Services.Configure<NivraPushOptions>(builder.Configuration.GetSection("Push"));
+builder.Services.Configure<LiveKitOptions>(builder.Configuration.GetSection("LiveKit"));
 builder.Services.AddDataProtection();
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -47,6 +48,7 @@ builder.Services.AddSingleton<PhoneOtpService>();
 builder.Services.AddSingleton<QrLoginService>();
 builder.Services.AddSingleton<RealtimePresence>();
 builder.Services.AddSingleton<PushNotificationService>();
+builder.Services.AddSingleton<LiveKitTokenService>();
 builder.Services.AddHostedService<SessionCleanupService>();
 builder.Services.AddSignalR(options =>
 {

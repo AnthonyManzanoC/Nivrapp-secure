@@ -388,6 +388,7 @@ export class AuthService implements OnDestroy {
     await this.resetRecaptcha({ clear: true });
     this.session.set(null);
     this.pendingPhoneAlias.set(null);
+    // Logout only removes credentials; NivraDB chat history and conversations must stay local.
     localStorage.removeItem(SESSION_KEY);
     await this.router.navigateByUrl('/auth');
   }

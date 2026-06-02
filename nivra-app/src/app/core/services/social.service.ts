@@ -13,6 +13,7 @@ import {
 } from '../models/nivra.models';
 import { AuthService } from './auth.service';
 import { CryptoService } from './crypto.service';
+import { LocalHistoryService } from './local-history.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
@@ -23,6 +24,7 @@ export class SocialService {
   private readonly api = inject(NivraApiService);
   private readonly auth = inject(AuthService);
   private readonly crypto = inject(CryptoService);
+  private readonly history = inject(LocalHistoryService);
   private readonly realtime = inject(SignalrService);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -43,10 +45,12 @@ export class SocialService {
       if (event.type === 'story.created' || event.type === 'story.worldCreated') {
         const story = event.payload as Story;
         if (story?.id) {
-          this.stories.update((items) => [story, ...items.filter((item) => item.id !== story.id)]);
+          const normalized = this.normalizeStory(story);
+          this.stories.update((items) => [normalized, ...items.filter((item) => item.id !== normalized.id)]);
           if (story.visibility === 'PublicWorld') {
-            this.worldStories.update((items) => [story, ...items.filter((item) => item.id !== story.id)]);
+            this.worldStories.update((items) => [normalized, ...items.filter((item) => item.id !== normalized.id)]);
           }
+          this.persistStories([normalized]);
         }
       }
       if (event.type === 'story.viewed') {
@@ -68,6 +72,13 @@ export class SocialService {
     }
     this.loading.set(true);
     try {
+      const accountKey = this.localAccountKey();
+      if (accountKey) {
+        const cached = await this.history.stories(accountKey).catch(() => []);
+        if (cached.length) {
+          this.stories.set(this.activeStories(cached));
+        }
+      }
       const [contacts, requests, feed, world] = await Promise.all([
         firstValueFrom(this.api.get<Contact[]>('/contacts')).catch(() => []),
         firstValueFrom(this.api.get<FriendRequest[]>('/friends/requests')).catch(() => []),
@@ -76,8 +87,11 @@ export class SocialService {
       ]);
       this.contacts.set(contacts);
       this.friendRequests.set(requests);
-      this.stories.set(feed);
-      this.worldStories.set(world);
+      const normalizedFeed = this.activeStories(feed.map((story) => this.normalizeStory(story)));
+      const normalizedWorld = this.activeStories(world.map((story) => this.normalizeStory(story)));
+      this.stories.set(normalizedFeed);
+      this.worldStories.set(normalizedWorld);
+      this.persistStories([...normalizedFeed, ...normalizedWorld]);
     } finally {
       this.loading.set(false);
     }
@@ -148,6 +162,9 @@ export class SocialService {
     file?: File | null;
     durationSeconds?: number;
     viewOnce?: boolean;
+    targetType?: 'contacts' | 'group';
+    targetId?: string | null;
+    allowedUserIds?: string[];
   }): Promise<void> {
     const text = options.text.trim();
     const file = options.file ?? null;
@@ -161,6 +178,7 @@ export class SocialService {
     this.publishing.set(true);
     try {
       const durationSeconds = options.durationSeconds ?? 24 * 60 * 60;
+      const allowedUserIds = [...new Set((options.allowedUserIds ?? []).filter(Boolean))];
       let mediaFileObjectId: string | null = null;
       let media: StoryPayload['media'] = null;
 
@@ -172,7 +190,7 @@ export class SocialService {
           encryptedSize: encrypted.bytes.byteLength,
           mimeTypeCiphertext: this.crypto.b64(new TextEncoder().encode(mime)),
           clientSha256: null,
-          allowedUserIds: [this.auth.session()?.user.id].filter(Boolean),
+          allowedUserIds: allowedUserIds.length ? allowedUserIds : [this.auth.session()?.user.id].filter(Boolean),
           expiresAt,
         }));
         await firstValueFrom(this.api.putRaw<FileResponse>(`/files/${encodeURIComponent(fileRecord.id)}/blob`, encrypted.bytes));
@@ -189,15 +207,19 @@ export class SocialService {
       }
 
       const payload = this.encodeStoryPayload({ v: 2, type: media ? 'media' : 'text', text, media });
-      await firstValueFrom(this.api.post<Story>('/stories', {
+      const story = await firstValueFrom(this.api.post<Story>('/stories', {
         visibility: options.visibility,
+        targetType: options.targetType ?? 'contacts',
+        targetId: options.targetId ?? null,
         encryptedPayload: payload,
         caption: text.slice(0, 180) || null,
         mediaFileObjectId,
-        allowedUserIds: [],
+        allowedUserIds,
         viewOnce: Boolean(options.viewOnce),
         durationSeconds,
       }));
+      this.stories.update((items) => [this.normalizeStory(story), ...items.filter((item) => item.id !== story.id)]);
+      this.persistStories([story]);
       await this.load();
     } finally {
       this.publishing.set(false);
@@ -265,6 +287,25 @@ export class SocialService {
     return story?.id ? this.mediaPreviews()[story.id] ?? null : null;
   }
 
+  contactStories(): Story[] {
+    return this.activeStories(this.stories().filter((story) => !this.isGroupStory(story)));
+  }
+
+  groupStories(): Story[] {
+    return this.activeStories(this.stories().filter((story) => this.isGroupStory(story)));
+  }
+
+  activeStoriesForGroup(groupId: string | null | undefined): Story[] {
+    if (!groupId) {
+      return [];
+    }
+    return this.activeStories(this.stories().filter((story) => this.isGroupStory(story) && story.targetId === groupId));
+  }
+
+  isGroupStory(story: Story | null | undefined): boolean {
+    return String(story?.targetType || '').toLowerCase() === 'group' || Boolean(story?.targetId);
+  }
+
   isImage(mime = ''): boolean {
     return mime.startsWith('image/');
   }
@@ -279,6 +320,34 @@ export class SocialService {
 
   private encodeStoryPayload(payload: StoryPayload): string {
     return this.crypto.b64(new TextEncoder().encode(JSON.stringify({ v: 2, ...payload, type: payload.type || 'text' })));
+  }
+
+  private normalizeStory(story: Story): Story {
+    return {
+      ...story,
+      targetType: story.targetType ?? (story.targetId ? 'group' : 'contacts'),
+      targetId: story.targetId ?? null,
+    };
+  }
+
+  private activeStories(stories: Story[]): Story[] {
+    const now = Date.now();
+    return stories
+      .map((story) => this.normalizeStory(story))
+      .filter((story) => !story.expiresAt || Date.parse(story.expiresAt) > now)
+      .sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || ''));
+  }
+
+  private persistStories(stories: Story[]): void {
+    const accountKey = this.localAccountKey();
+    if (!accountKey || !stories.length) {
+      return;
+    }
+    void this.history.putStories(accountKey, stories.map((story) => this.normalizeStory(story))).catch(() => undefined);
+  }
+
+  private localAccountKey(): string | null {
+    return this.auth.session()?.user.id ?? null;
   }
 
   private rememberMediaPreview(cacheKey: string, fileOrBlob: Blob, mime: string, name: string): StoryMediaPreview {

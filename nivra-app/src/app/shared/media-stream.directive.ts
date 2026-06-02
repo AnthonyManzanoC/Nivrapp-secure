@@ -16,10 +16,20 @@ export class MediaStreamDirective implements OnChanges, OnDestroy {
     }
     if (this.stream) {
       void node.play?.().catch(() => undefined);
+    } else {
+      this.releaseElement();
     }
   }
 
   ngOnDestroy(): void {
-    this.element.nativeElement.srcObject = null;
+    this.releaseElement();
+  }
+
+  private releaseElement(): void {
+    const node = this.element.nativeElement;
+    node.pause?.();
+    node.srcObject = null;
+    node.removeAttribute('src');
+    node.load?.();
   }
 }

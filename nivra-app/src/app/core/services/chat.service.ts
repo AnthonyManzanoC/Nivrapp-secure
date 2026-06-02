@@ -10,6 +10,8 @@ import {
   DirectorySearchResponse,
   FileChatPayload,
   FileResponse,
+  GroupSettings,
+  LocalProfile,
   MediaPreview,
   MessageReaction,
   MessageResponse,
@@ -21,13 +23,35 @@ import {
   UserSummary,
 } from '../models/nivra.models';
 import { AuthService } from './auth.service';
-import { CryptoService } from './crypto.service';
+import { CryptoService, PublicKeyRecipient } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
 const QUICK_REACTIONS = ['\u{1F44D}', '\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F64F}'];
+const DEFAULT_GROUP_SETTINGS: GroupSettings = {
+  editInfo: 'admins',
+  sendMessages: 'all',
+  addMembers: 'admins',
+};
+
+type ProfileSource = {
+  id?: string | null;
+  userId?: string | null;
+  alias?: string | null;
+  displayName?: string | null;
+  phone?: string | null;
+  bio?: string | null;
+  profilePhotoDataUrl?: string | null;
+  isDiscoverable?: boolean;
+  isContact?: boolean;
+  isMutualContact?: boolean;
+  isFavorite?: boolean;
+  friendshipState?: string | null;
+  updatedAt?: string;
+  cachedAt?: string;
+};
 
 interface SendPayloadOptions {
   suppressLocalMessage?: boolean;
@@ -39,6 +63,13 @@ interface SendPayloadOptions {
 export interface MessagePolicyOptions {
   deleteAfterRead?: boolean;
   ttlSeconds?: number | null;
+  replyTo?: unknown;
+}
+
+export interface GroupConversationOptions {
+  name: string;
+  participantUserIds: string[];
+  groupAvatar?: string | null;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -53,7 +84,10 @@ export class ChatService implements OnDestroy {
   private readonly readReceiptSentIds = new Set<string>();
   private readonly pendingReactionSends = new Set<string>();
   private readonly pendingReactionsByMessageId = new Map<string, MessageReaction[]>();
+  private readonly profileFetchInFlight = new Set<string>();
+  private readonly directConversationInFlight = new Map<string, Promise<Conversation>>();
   private readonly typingTimers = new Map<string, number>();
+  private readonly expiryTimers = new Map<string, number>();
   private lastTypingSentAt = 0;
   private syncInFlight = false;
   private selectedConversationLoadId = 0;
@@ -61,14 +95,16 @@ export class ChatService implements OnDestroy {
   readonly quickReactions = QUICK_REACTIONS;
   readonly conversations = signal<Conversation[]>([]);
   readonly contacts = signal<Contact[]>([]);
+  readonly profilesByUserId = signal<Record<string, LocalProfile>>({});
   readonly messagesByConversation = signal<Record<string, ChatMessageVm[]>>({});
+  readonly visibleConversations = computed(() => this.dedupeVisibleConversations(this.conversations(), this.messagesByConversation()));
   readonly mediaPreviews = signal<Record<string, MediaPreview>>({});
   readonly directoryResults = signal<UserSummary[]>([]);
   readonly typingByConversation = signal<Record<string, string[]>>({});
   readonly presenceByUser = signal<Record<string, PresenceResponse>>({});
   readonly loading = signal(false);
   readonly uploading = signal(false);
-  readonly selectedConversationId = signal<string | null>(localStorage.getItem('nivra.selectedConversationId'));
+  readonly selectedConversationId = signal<string | null>(this.initialSelectedConversationId());
   readonly selectedConversation = computed(() => {
     const id = this.selectedConversationId();
     return this.conversations().find((conversation) => conversation.id === id) ?? null;
@@ -93,15 +129,19 @@ export class ChatService implements OnDestroy {
         this.applyChatCleared(event.payload);
       }
       if (event.type === 'conversation.created') {
-        const conversation = event.payload as Conversation;
+        const conversation = this.applyLocalConversationState([event.payload as Conversation])[0];
         if (conversation?.id) {
+          this.rememberConversationParticipants([conversation]);
           this.conversations.update((items) => [conversation, ...items.filter((item) => item.id !== conversation.id)].sort(this.compareConversations));
+          void this.hydrateConversationProfiles([conversation]);
         }
       }
       if (event.type === 'conversation.updated') {
-        const conversation = event.payload as Conversation;
+        const conversation = this.applyLocalConversationState([event.payload as Conversation])[0];
         if (conversation?.id) {
+          this.rememberConversationParticipants([conversation]);
           this.conversations.update((items) => items.map((item) => item.id === conversation.id ? conversation : item).sort(this.compareConversations));
+          void this.hydrateConversationProfiles([conversation]);
         }
       }
       if (event.type === 'conversation.typing') {
@@ -140,7 +180,7 @@ export class ChatService implements OnDestroy {
           void this.signalr.connect();
         });
       } else {
-        untracked(() => this.resetInMemoryState());
+        untracked(() => this.pauseForLoggedOutSession());
       }
     });
   }
@@ -156,13 +196,20 @@ export class ChatService implements OnDestroy {
 
     this.loading.set(true);
     try {
+      this.restoreSelectedConversationId();
       await this.loadCachedChatIndex();
       await this.loadCachedSelectedMessages();
       await this.purgeExpiredLocalMessages();
       const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>('/sync/bootstrap'));
-      this.contacts.set(bootstrap.contacts ?? []);
-      this.conversations.set((bootstrap.conversations ?? []).sort(this.compareConversations));
-      await this.persistChatIndex(bootstrap.conversations ?? [], bootstrap.contacts ?? []);
+      const contacts = bootstrap.contacts ?? [];
+      const conversations = this.applyLocalConversationState(bootstrap.conversations ?? []);
+      this.contacts.set(contacts);
+      this.rememberProfiles(contacts, true);
+      this.rememberConversationParticipants(conversations);
+      this.conversations.set(conversations.sort(this.compareConversations));
+      this.ensureSelectedConversation();
+      await this.persistChatIndex(conversations, contacts);
+      void this.hydrateConversationProfiles(conversations);
       for (const message of bootstrap.messages ?? []) {
         await this.ingestMessage(message, false);
       }
@@ -182,15 +229,17 @@ export class ChatService implements OnDestroy {
       const accountKey = this.localAccountKey();
       const watermark = accountKey ? await this.history.getSyncWatermark(accountKey).catch(() => null) : null;
       const params = new URLSearchParams({ take: String(Math.max(1, Math.min(take, 500))) });
-      if (watermark) {
+      const retryDecryptErrors = Object.values(this.messagesByConversation()).some((messages) => messages.some((message) => message.decryptError));
+      if (watermark && !retryDecryptErrors) {
         params.set('since', watermark);
       }
       const sync = await firstValueFrom(this.api.get<MessageSyncResponse>(`/messages/sync?${params.toString()}`));
+      let hadDecryptError = false;
       for (const message of sync.messages ?? []) {
-        await this.ingestMessage(message, false);
+        hadDecryptError = !(await this.ingestMessage(message, false)) || hadDecryptError;
       }
       await this.ackDelivered(sync.messages ?? []);
-      if (accountKey && sync.syncedAt) {
+      if (accountKey && sync.syncedAt && !hadDecryptError) {
         await this.history.setSyncWatermark(accountKey, sync.syncedAt).catch(() => undefined);
       }
       await this.refreshPresenceForConversations();
@@ -201,10 +250,16 @@ export class ChatService implements OnDestroy {
     }
   }
 
+  async hydrateConversationProfile(conversation: Conversation | null | undefined): Promise<void> {
+    if (conversation) {
+      await this.hydrateConversationProfiles([conversation]);
+    }
+  }
+
   async selectConversation(conversationId: string): Promise<void> {
     const loadId = ++this.selectedConversationLoadId;
     this.selectedConversationId.set(conversationId);
-    localStorage.setItem('nivra.selectedConversationId', conversationId);
+    this.persistSelectedConversationId(conversationId);
     await this.signalr.joinConversation(conversationId);
     if (loadId !== this.selectedConversationLoadId || this.selectedConversationId() !== conversationId) {
       return;
@@ -213,7 +268,7 @@ export class ChatService implements OnDestroy {
     if (loadId !== this.selectedConversationLoadId || this.selectedConversationId() !== conversationId) {
       return;
     }
-    await this.loadMessages(conversationId);
+    await this.loadMessages(conversationId).catch(() => undefined);
     if (loadId !== this.selectedConversationLoadId || this.selectedConversationId() !== conversationId) {
       return;
     }
@@ -270,6 +325,10 @@ export class ChatService implements OnDestroy {
     if (typing) {
       return typing;
     }
+    if (this.isGroupConversation(conversation)) {
+      const count = conversation.participants.filter((participant) => !participant.removedAt).length;
+      return `${Math.max(count, 1)} participantes`;
+    }
     const presence = otherUserId ? this.presenceByUser()[otherUserId] : null;
     if (presence?.online) {
       return 'online';
@@ -290,20 +349,181 @@ export class ChatService implements OnDestroy {
       this.api.get<DirectorySearchResponse>(`/directory/search?q=${encodeURIComponent(normalized)}`),
     );
     this.directoryResults.set(result.people ?? []);
+    this.rememberProfiles(result.people ?? [], true);
     return result.people ?? [];
   }
 
   async createDirectConversation(person: UserSummary): Promise<Conversation> {
+    this.rememberProfiles([person], true);
+    const existing = await this.findExistingDirectConversation(person.id);
+    if (existing) {
+      await this.selectConversation(existing.id);
+      return existing;
+    }
+
+    const pending = this.directConversationInFlight.get(person.id);
+    if (pending) {
+      const conversation = await pending;
+      await this.selectConversation(conversation.id);
+      return conversation;
+    }
+
+    const creation = this.createDirectConversationCore(person);
+    this.directConversationInFlight.set(person.id, creation);
+    try {
+      return await creation;
+    } finally {
+      this.directConversationInFlight.delete(person.id);
+    }
+  }
+
+  private async createDirectConversationCore(person: UserSummary): Promise<Conversation> {
     await firstValueFrom(this.api.post('/contacts', { alias: person.alias, nicknameCiphertext: null })).catch(() => null);
-    const conversation = await firstValueFrom(this.api.post<Conversation>('/conversations', {
+    const existing = await this.findExistingDirectConversation(person.id);
+    if (existing) {
+      await this.selectConversation(existing.id);
+      return existing;
+    }
+
+    const conversation = this.applyLocalConversationState([await firstValueFrom(this.api.post<Conversation>('/conversations', {
       type: 'Direct',
       participantUserIds: [person.id],
       titleCiphertext: null,
       privacySettings: null,
-    }));
-    this.conversations.update((items) => [conversation, ...items.filter((item) => item.id !== conversation.id)]);
+    }))])[0];
+    this.rememberConversationParticipants([conversation]);
+    this.conversations.update((items) => [conversation, ...items.filter((item) => item.id !== conversation.id)].sort(this.compareConversations));
     await this.selectConversation(conversation.id);
     return conversation;
+  }
+
+  private createLocalGroupConversation(groupName: string, participantUserIds: string[], groupAvatar: string | null): Conversation {
+    const current = this.auth.session()?.user;
+    const now = new Date().toISOString();
+    const participantIds = [...new Set([current?.id, ...participantUserIds].filter(Boolean) as string[])];
+    return {
+      id: `local-group-${crypto.randomUUID()}`,
+      type: 'Group',
+      titleCiphertext: null,
+      title: groupName,
+      groupName,
+      groupAvatar,
+      admins: current?.id ? [current.id] : [],
+      settings: { ...DEFAULT_GROUP_SETTINGS },
+      participantIds,
+      privacySettings: current?.privacySettings ?? {},
+      participants: participantIds.map((userId) => this.groupParticipant(userId, now, userId === current?.id)),
+      createdAt: now,
+      updatedAt: now,
+      lastMessageAt: null,
+    };
+  }
+
+  private normalizeGroupConversation(
+    conversation: Conversation,
+    groupName: string,
+    participantUserIds: string[],
+    groupAvatar: string | null,
+  ): Conversation {
+    const currentUserId = this.auth.session()?.user.id;
+    const ids = [...new Set([
+      currentUserId,
+      ...(conversation.participantIds ?? []),
+      ...(conversation.participants ?? []).map((participant) => participant.userId),
+      ...participantUserIds,
+    ].filter(Boolean) as string[])];
+    const now = new Date().toISOString();
+    const existing = new Map((conversation.participants ?? []).map((participant) => [participant.userId, participant]));
+    return {
+      ...conversation,
+      type: 'Group',
+      title: this.firstText(conversation.title, conversation.groupName, groupName),
+      groupName: this.firstText(conversation.groupName, conversation.title, groupName),
+      groupAvatar: this.firstText(conversation.groupAvatar, groupAvatar),
+      admins: this.normalizedGroupAdmins(conversation, currentUserId),
+      settings: this.normalizedGroupSettings(conversation.settings),
+      participantIds: ids,
+      privacySettings: conversation.privacySettings ?? this.auth.session()?.user.privacySettings ?? {},
+      participants: ids.map((userId) => ({
+        ...this.groupParticipant(userId, existing.get(userId)?.joinedAt || now, userId === currentUserId),
+        ...(existing.get(userId) ?? {}),
+        userId,
+      })),
+      createdAt: conversation.createdAt || now,
+      updatedAt: conversation.updatedAt || now,
+    };
+  }
+
+  private groupParticipant(userId: string, joinedAt: string, owner = false) {
+    const profile = userId === this.auth.session()?.user.id
+      ? this.normalizeProfile(this.auth.session()?.user)
+      : this.profileForUser(userId) ?? this.normalizeProfile(this.contacts().find((contact) => contact.userId === userId));
+    return {
+      userId,
+      role: owner ? 'Owner' : 'Member',
+      canInvite: true,
+      canChangePrivacy: owner,
+      joinedAt,
+      removedAt: null,
+      alias: profile?.alias ?? null,
+      displayName: profile?.displayName ?? null,
+      phone: profile?.phone ?? null,
+      profilePhotoDataUrl: profile?.profilePhotoDataUrl ?? null,
+    };
+  }
+
+  private defaultGroupName(participantUserIds: string[]): string {
+    const names = participantUserIds
+      .map((userId) => this.displayProfileName(this.profileForUser(userId) ?? this.normalizeProfile(this.contacts().find((contact) => contact.userId === userId))))
+      .filter(Boolean)
+      .slice(0, 3);
+    return names.length ? names.join(', ') : 'Grupo Nivra';
+  }
+
+  async createGroupConversation(options: GroupConversationOptions): Promise<Conversation> {
+    const current = this.auth.session()?.user;
+    if (!current) {
+      throw new Error('No hay sesion activa para crear el grupo.');
+    }
+    const participantUserIds = [...new Set((options.participantUserIds ?? [])
+      .filter(Boolean)
+      .filter((userId) => userId !== current.id))];
+    if (!participantUserIds.length) {
+      throw new Error('Selecciona al menos un contacto para crear el grupo.');
+    }
+    const groupName = options.name.trim() || this.defaultGroupName(participantUserIds);
+    const groupAvatar = options.groupAvatar || null;
+    let conversation: Conversation;
+    try {
+      conversation = await firstValueFrom(this.api.post<Conversation>('/conversations', {
+        type: 'Group',
+        participantUserIds,
+        titleCiphertext: null,
+        privacySettings: null,
+        groupName,
+        groupAvatar,
+        admins: [current.id],
+        settings: { ...DEFAULT_GROUP_SETTINGS },
+      }));
+    } catch {
+      conversation = this.createLocalGroupConversation(groupName, participantUserIds, groupAvatar);
+    }
+
+    const normalized = this.applyLocalConversationState([
+      this.normalizeGroupConversation(conversation, groupName, participantUserIds, groupAvatar),
+    ])[0];
+    this.rememberConversationParticipants([normalized]);
+    this.conversations.update((items) => [normalized, ...items.filter((item) => item.id !== normalized.id)].sort(this.compareConversations));
+    void this.hydrateConversationProfiles([normalized]);
+    const accountKey = this.localAccountKey();
+    if (accountKey) {
+      await this.history.putConversations(accountKey, [normalized]).catch(() => undefined);
+    }
+    await this.selectConversation(normalized.id).catch(() => {
+      this.selectedConversationId.set(normalized.id);
+      this.persistSelectedConversationId(normalized.id);
+    });
+    return normalized;
   }
 
   async sendText(conversation: Conversation, text: string, policy: MessagePolicyOptions = {}): Promise<MessageResponse | null> {
@@ -316,6 +536,9 @@ export class ChatService implements OnDestroy {
       text: body,
       forwardingAllowed: conversation.privacySettings?.allowForwarding ?? true,
     };
+    if (policy.replyTo) {
+      payload.replyTo = policy.replyTo;
+    }
     return this.sendPayload(conversation, payload, 'Text', null, this.policyToSendOptions(policy));
   }
 
@@ -375,6 +598,12 @@ export class ChatService implements OnDestroy {
     fileObjectId: string | null = null,
     options: SendPayloadOptions = {},
   ): Promise<MessageResponse | null> {
+    if (this.isConversationBlocked(conversation.id)) {
+      throw new Error('Este chat esta bloqueado en este dispositivo.');
+    }
+    if (!this.canSendToConversation(conversation)) {
+      throw new Error('Solo los admins pueden enviar mensajes en este grupo.');
+    }
     const outgoingPayload = this.normalizeOutgoingPayload(conversation, payload);
     const recipients = await this.encryptedRecipients(conversation, outgoingPayload, fileObjectId);
     if (!recipients.length) {
@@ -462,14 +691,21 @@ export class ChatService implements OnDestroy {
     if (!conversation) {
       return;
     }
+    const group = this.isGroupConversation(conversation);
+    const groupMissed = event === 'missed-call' && group;
+    const groupEnded = event === 'call-ended' && group;
     const payload: ChatPayload = {
-      type: 'call_log',
+      type: group ? 'system-call' : 'call_log',
       event,
-      title: event === 'call-rejected'
-        ? 'Llamada rechazada'
-        : event === 'call-failed'
-          ? 'Llamada fallida'
-          : event === 'missed-call' ? 'Llamada perdida' : 'Llamada finalizada',
+      title: groupMissed
+        ? (call.type === 'Video' ? 'Videollamada grupal perdida' : 'Llamada grupal perdida')
+        : groupEnded
+          ? (call.type === 'Video' ? 'Videollamada finalizada' : 'Llamada grupal finalizada')
+          : event === 'call-rejected'
+            ? 'Llamada rechazada'
+            : event === 'call-failed'
+              ? 'Llamada fallida'
+              : event === 'missed-call' ? 'Llamada perdida' : 'Llamada finalizada',
       text: event === 'call-ended' ? `Duracion ${this.formatCallDuration(durationMs)}` : this.callEventText(event),
       status: event === 'call-ended' ? 'ended' : event === 'missed-call' ? 'missed' : event === 'call-rejected' ? 'rejected' : 'failed',
       durationMs,
@@ -479,6 +715,7 @@ export class ChatService implements OnDestroy {
       initiatorUserId: call.initiatorUserId || '',
       startedAt: call.startedAt || new Date().toISOString(),
       endedAt: call.endedAt || new Date().toISOString(),
+      groupCall: group,
     };
     await this.sendPayload(conversation, payload, 'System', null, {
       encryptedPolicy: 'client:call-log',
@@ -536,11 +773,7 @@ export class ChatService implements OnDestroy {
     if (this.selectedConversationId() === conversation.id) {
       const nextId = this.conversations()[0]?.id ?? null;
       this.selectedConversationId.set(nextId);
-      if (nextId) {
-        localStorage.setItem('nivra.selectedConversationId', nextId);
-      } else {
-        localStorage.removeItem('nivra.selectedConversationId');
-      }
+      this.persistSelectedConversationId(nextId);
     }
   }
 
@@ -562,7 +795,7 @@ export class ChatService implements OnDestroy {
 
   forwardTargets(sourceConversationId: string, query = ''): Conversation[] {
     const normalized = query.trim().toLowerCase();
-    return [...this.conversations()]
+    return [...this.visibleConversations()]
       .filter((conversation) => conversation.id !== sourceConversationId)
       .filter((conversation) => conversation.participants.some((participant) => !participant.removedAt))
       .sort(this.compareConversations)
@@ -627,19 +860,56 @@ export class ChatService implements OnDestroy {
   }
 
   conversationTitle(conversation: Conversation): string {
-    const currentUserId = this.auth.session()?.user.id;
-    const other = conversation.participants.find((participant) => participant.userId !== currentUserId);
-    const contact = this.contacts().find((candidate) => candidate.userId === other?.userId);
-    return contact?.displayName || contact?.alias || (conversation.type === 'Group' ? 'Grupo Nivra' : 'Chat privado');
+    const people = this.conversationPeople(conversation);
+    if (this.isGroupConversation(conversation)) {
+      const explicit = this.firstText(conversation.groupName, conversation.title);
+      if (explicit) {
+        return explicit;
+      }
+      const title = people.map((person) => this.displayProfileName(person)).filter(Boolean).join(', ');
+      return title || 'Grupo Nivra';
+    }
+    return this.displayProfileName(people[0]) || 'Contacto Nivra';
+  }
+
+  conversationPhoto(conversation: Conversation | null | undefined): string {
+    if (conversation && this.isGroupConversation(conversation)) {
+      return conversation.groupAvatar || '';
+    }
+    return conversation ? this.conversationPrimaryPerson(conversation)?.profilePhotoDataUrl || '' : '';
+  }
+
+  conversationPhone(conversation: Conversation | null | undefined): string {
+    const person = conversation ? this.conversationPrimaryPerson(conversation) : null;
+    return person?.phone || '';
+  }
+
+  conversationAlias(conversation: Conversation | null | undefined): string {
+    const person = conversation ? this.conversationPrimaryPerson(conversation) : null;
+    return person?.alias ? `@${person.alias}` : '';
+  }
+
+  conversationBio(conversation: Conversation | null | undefined): string {
+    const person = conversation ? this.conversationPrimaryPerson(conversation) : null;
+    return person?.bio || '';
+  }
+
+  conversationProfile(conversation: Conversation | null | undefined): LocalProfile | null {
+    return conversation ? this.conversationPrimaryPerson(conversation) : null;
   }
 
   conversationSubtitle(conversation: Conversation): string {
     const messages = this.messagesByConversation()[conversation.id] ?? [];
     const last = messages[messages.length - 1];
+    const state = this.isConversationBlocked(conversation.id)
+      ? 'Bloqueado'
+      : this.isConversationArchived(conversation.id) ? 'Archivado' : '';
     if (!last) {
-      return conversation.type === 'Group' ? 'Espacio cifrado listo' : 'Cifrado extremo a extremo';
+      const fallback = this.isGroupConversation(conversation) ? 'Grupo cifrado listo' : 'Cifrado extremo a extremo';
+      return state ? `${state} - ${fallback}` : fallback;
     }
-    return this.preview(last.payload);
+    const preview = this.preview(last.payload);
+    return state ? `${state} - ${preview}` : preview;
   }
 
   preview(payload: ChatPayload): string {
@@ -660,10 +930,15 @@ export class ChatService implements OnDestroy {
   }
 
   isCallLog(payload: ChatPayload): boolean {
-    return payload.type === 'call_log' || (payload.type === 'system' && ['missed-call', 'call-ended'].includes(String(payload.event || '')));
+    return payload.type === 'call_log'
+      || payload.type === 'system-call'
+      || (payload.type === 'system' && ['missed-call', 'call-ended'].includes(String(payload.event || '')));
   }
 
   callLogTitle(payload: ChatPayload): string {
+    if (payload.type === 'system-call') {
+      return payload.title || (payload['status'] === 'missed' ? 'Llamada grupal perdida' : 'Llamada grupal finalizada');
+    }
     const missed = payload.event === 'missed-call' || payload['status'] === 'missed';
     const rejected = payload.event === 'call-rejected' || payload['status'] === 'rejected';
     const failed = payload.event === 'call-failed' || payload['status'] === 'failed';
@@ -671,6 +946,9 @@ export class ChatService implements OnDestroy {
   }
 
   callLogText(payload: ChatPayload): string {
+    if (payload.type === 'system-call') {
+      return payload.text || (payload['status'] === 'missed' ? 'Nadie se unio' : 'Registro grupal cifrado');
+    }
     const missed = payload.event === 'missed-call' || payload['status'] === 'missed';
     const rejected = payload.event === 'call-rejected' || payload['status'] === 'rejected';
     const failed = payload.event === 'call-failed' || payload['status'] === 'failed';
@@ -699,10 +977,200 @@ export class ChatService implements OnDestroy {
     return title.split(/\s|,|-/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'N';
   }
 
-  private async ingestMessage(message: MessageResponse, markDelivered: boolean): Promise<void> {
+  isConversationArchived(conversationId: string | null | undefined): boolean {
+    if (!conversationId) {
+      return false;
+    }
+    return Boolean(this.conversations().find((conversation) => conversation.id === conversationId)?.archivedAt)
+      || this.readConversationFlag('archived').has(conversationId);
+  }
+
+  async setConversationArchived(conversation: Conversation, archived: boolean): Promise<void> {
+    this.writeConversationFlag('archived', conversation.id, archived);
+    await this.updateConversationLocalState(conversation, {
+      archivedAt: archived ? new Date().toISOString() : null,
+    });
+  }
+
+  isConversationBlocked(conversationId: string | null | undefined): boolean {
+    if (!conversationId) {
+      return false;
+    }
+    return Boolean(this.conversations().find((conversation) => conversation.id === conversationId)?.blockedAt)
+      || this.readConversationFlag('blocked').has(conversationId);
+  }
+
+  async setConversationBlocked(conversation: Conversation, blocked: boolean): Promise<void> {
+    this.writeConversationFlag('blocked', conversation.id, blocked);
+    await this.updateConversationLocalState(conversation, {
+      blockedAt: blocked ? new Date().toISOString() : null,
+    });
+  }
+
+  isGroup(conversation: Conversation | null | undefined): boolean {
+    return this.isGroupConversation(conversation);
+  }
+
+  isGroupAdmin(conversation: Conversation | null | undefined, userId = this.auth.session()?.user.id): boolean {
+    if (!conversation || !userId) {
+      return false;
+    }
+    if (!this.isGroupConversation(conversation)) {
+      return true;
+    }
+    const admins = this.normalizedGroupAdmins(conversation);
+    return admins.includes(userId)
+      || conversation.participants.some((participant) =>
+        participant.userId === userId && ['owner', 'admin'].includes(String(participant.role || '').toLowerCase()));
+  }
+
+  participantProfile(userId: string | null | undefined): LocalProfile | null {
+    if (!userId) {
+      return null;
+    }
+    if (userId === this.auth.session()?.user.id) {
+      return this.normalizeProfile(this.auth.session()?.user);
+    }
+    return this.profileForUser(userId) ?? this.normalizeProfile(this.contacts().find((contact) => contact.userId === userId));
+  }
+
+  participantDisplayName(userId: string | null | undefined, fallback?: ProfileSource | null): string {
+    const current = this.auth.session()?.user;
+    const profile = this.participantProfile(userId) ?? this.normalizeProfile(fallback);
+    const name = this.displayProfileName(profile) || this.firstText(fallback?.displayName, fallback?.phone, fallback?.alias) || 'Contacto';
+    if (userId && current?.id === userId) {
+      const ownName = this.displayProfileName(this.normalizeProfile(current));
+      return ownName ? `${ownName} (Tu)` : 'Tu';
+    }
+    return name;
+  }
+
+  participantPhoto(userId: string | null | undefined, fallback?: ProfileSource | null): string {
+    return this.participantProfile(userId)?.profilePhotoDataUrl
+      || this.normalizeProfile(fallback)?.profilePhotoDataUrl
+      || '';
+  }
+
+  participantAlias(userId: string | null | undefined, fallback?: ProfileSource | null): string {
+    const alias = this.participantProfile(userId)?.alias || this.normalizeProfile(fallback)?.alias || '';
+    return alias ? `@${alias}` : '';
+  }
+
+  canEditGroup(conversation: Conversation | null | undefined): boolean {
+    if (!conversation || !this.isGroupConversation(conversation)) {
+      return false;
+    }
+    return this.normalizedGroupSettings(conversation.settings).editInfo === 'all' || this.isGroupAdmin(conversation);
+  }
+
+  canSendToConversation(conversation: Conversation | null | undefined): boolean {
+    if (!conversation || !this.isGroupConversation(conversation)) {
+      return true;
+    }
+    return this.normalizedGroupSettings(conversation.settings).sendMessages === 'all' || this.isGroupAdmin(conversation);
+  }
+
+  canAddGroupMembers(conversation: Conversation | null | undefined): boolean {
+    if (!conversation || !this.isGroupConversation(conversation)) {
+      return false;
+    }
+    return this.normalizedGroupSettings(conversation.settings).addMembers === 'all' || this.isGroupAdmin(conversation);
+  }
+
+  async updateGroupInfo(conversation: Conversation, patch: { groupName?: string; groupAvatar?: string | null }): Promise<void> {
+    if (!this.canEditGroup(conversation)) {
+      throw new Error('No tienes permisos para editar este grupo.');
+    }
+    const next = {
+      ...conversation,
+      groupName: this.firstText(patch.groupName, conversation.groupName, conversation.title),
+      title: this.firstText(patch.groupName, conversation.title, conversation.groupName),
+      groupAvatar: patch.groupAvatar !== undefined ? patch.groupAvatar : conversation.groupAvatar ?? null,
+      updatedAt: new Date().toISOString(),
+    };
+    await this.persistGroupConversation(next, {
+      groupName: next.groupName,
+      groupAvatar: next.groupAvatar,
+      title: next.title,
+    });
+  }
+
+  async updateGroupSettings(conversation: Conversation, settings: GroupSettings): Promise<void> {
+    if (!this.isGroupAdmin(conversation)) {
+      throw new Error('Solo los admins pueden cambiar la configuracion del grupo.');
+    }
+    const next = {
+      ...conversation,
+      settings: this.normalizedGroupSettings(settings),
+      updatedAt: new Date().toISOString(),
+    };
+    await this.persistGroupConversation(next, { settings: next.settings });
+  }
+
+  async setGroupParticipantAdmin(conversation: Conversation, userId: string, admin: boolean): Promise<void> {
+    if (!this.isGroupAdmin(conversation) || !userId) {
+      throw new Error('Solo los admins pueden asignar moderadores.');
+    }
+    const admins = new Set(this.normalizedGroupAdmins(conversation));
+    if (admin) {
+      admins.add(userId);
+    } else if (userId !== this.auth.session()?.user.id) {
+      admins.delete(userId);
+    }
+    const next = {
+      ...conversation,
+      admins: [...admins],
+      participants: conversation.participants.map((participant) => participant.userId === userId
+        ? {
+            ...participant,
+            role: admin ? 'Admin' : 'Member',
+            canInvite: admin || this.normalizedGroupSettings(conversation.settings).addMembers === 'all',
+            canChangePrivacy: admin,
+          }
+        : participant),
+      updatedAt: new Date().toISOString(),
+    };
+    await this.persistGroupConversation(next, { admins: next.admins, participants: next.participants });
+    await this.signalr.updateGroupRoles(next.id, next.admins).catch(() => undefined);
+  }
+
+  async addGroupParticipants(conversation: Conversation, userIds: string[]): Promise<void> {
+    if (!this.canAddGroupMembers(conversation)) {
+      throw new Error('No tienes permisos para agregar participantes.');
+    }
+    const normalizedIds = [...new Set(userIds.filter(Boolean))]
+      .filter((userId) => !conversation.participants.some((participant) => participant.userId === userId && !participant.removedAt));
+    if (!normalizedIds.length) {
+      return;
+    }
+    const now = new Date().toISOString();
+    const nextParticipants = [
+      ...conversation.participants,
+      ...normalizedIds.map((userId) => this.groupParticipant(userId, now, false)),
+    ];
+    const nextParticipantIds = [...new Set([
+      ...(conversation.participantIds ?? []),
+      ...conversation.participants.map((participant) => participant.userId),
+      ...normalizedIds,
+    ].filter(Boolean))];
+    const next = {
+      ...conversation,
+      participantIds: nextParticipantIds,
+      participants: nextParticipants,
+      updatedAt: now,
+    };
+    this.rememberConversationParticipants([next]);
+    await this.persistGroupConversation(next, {
+      participantIds: next.participantIds,
+      participants: next.participants,
+    });
+    await this.signalr.updateGroupParticipants(next.id, nextParticipantIds).catch(() => undefined);
+  }
+
+  private async ingestMessage(message: MessageResponse, markDelivered: boolean): Promise<boolean> {
     const current = this.auth.session();
     if (!current) {
-      return;
+      return false;
     }
     const recipient = message.recipients.find((item) => item.userId === current.user.id && item.deviceId === current.device.id)
       ?? message.recipients.find((item) => item.userId === current.user.id);
@@ -743,7 +1211,7 @@ export class ChatService implements OnDestroy {
       if (markDelivered && !vm.mine) {
         void this.sendReceipt(message.id, 'Delivered');
       }
-      return;
+      return !decryptError;
     }
     if (payload.type === 'edit') {
       this.applyEditPayload(payload, message.conversationId);
@@ -751,7 +1219,7 @@ export class ChatService implements OnDestroy {
       if (markDelivered && !vm.mine) {
         void this.sendReceipt(message.id, 'Delivered');
       }
-      return;
+      return !decryptError;
     }
     if (payload.type === 'delete') {
       this.applyMessageDeleted({
@@ -762,12 +1230,13 @@ export class ChatService implements OnDestroy {
       if (markDelivered && !vm.mine) {
         void this.sendReceipt(message.id, 'Delivered');
       }
-      return;
+      return !decryptError;
     }
     this.upsertMessage(vm);
     if (markDelivered && !vm.mine) {
       void this.sendReceipt(message.id, 'Delivered');
     }
+    return !decryptError;
   }
 
   private async ingestLocalSent(response: MessageResponse, payload: ChatPayload): Promise<void> {
@@ -801,6 +1270,7 @@ export class ChatService implements OnDestroy {
     if (options.persist !== false) {
       this.persistLocalMessage(messageWithPendingReactions);
     }
+    this.scheduleMessageExpiry(messageWithPendingReactions);
   }
 
   async markConversationRead(conversationId: string): Promise<void> {
@@ -822,6 +1292,10 @@ export class ChatService implements OnDestroy {
       if (accountKey) {
         await this.history.markMessagesOpened(accountKey, conversationId, viewOnceIds).catch(() => undefined);
       }
+      this.messagesByConversation.update((state) => ({
+        ...state,
+        [conversationId]: (state[conversationId] ?? []).filter((message) => !viewOnceIds.includes(message.id)),
+      }));
     }
 
     for (const message of unread) {
@@ -835,6 +1309,17 @@ export class ChatService implements OnDestroy {
       });
       await this.sendReceipt(message.id, 'Read').catch(() => this.readReceiptSentIds.delete(message.id));
     }
+  }
+
+  async markMessageOpened(message: ChatMessageVm | null | undefined): Promise<void> {
+    if (!message?.deleteAfterRead) {
+      return;
+    }
+    const accountKey = this.localAccountKey();
+    if (accountKey) {
+      await this.history.markMessagesOpened(accountKey, message.conversationId, [message.id]).catch(() => undefined);
+    }
+    this.removeMessageFromUiAndLocal(message.conversationId, message.id);
   }
 
   fileName(payload: FileChatPayload): string {
@@ -879,19 +1364,40 @@ export class ChatService implements OnDestroy {
   }
 
   private async loadCachedChatIndex(): Promise<void> {
-    const accountKey = this.localAccountKey();
-    if (!accountKey) {
+    const accountKeys = await this.localAccountKeys();
+    if (!accountKeys.length) {
       return;
     }
-    const [conversations, contacts] = await Promise.all([
-      this.history.conversations(accountKey).catch(() => []),
-      this.history.contacts(accountKey).catch(() => []),
+    const [conversationGroups, contactGroups, profiles] = await Promise.all([
+      Promise.all(accountKeys.map((accountKey) => this.history.conversations(accountKey).catch(() => []))),
+      Promise.all(accountKeys.map((accountKey) => this.history.contacts(accountKey).catch(() => []))),
+      this.history.profiles().catch(() => []),
     ]);
+    const conversations = this.uniqueConversations(conversationGroups.flat());
+    const contacts = this.uniqueContacts(contactGroups.flat());
+    if (profiles.length) {
+      this.rememberProfiles(profiles, false);
+    }
     if (contacts.length) {
       this.contacts.set(contacts);
+      this.rememberProfiles(contacts, false);
     }
     if (conversations.length) {
-      this.conversations.set(conversations.sort(this.compareConversations));
+      const cachedConversations = this.applyLocalConversationState(conversations);
+      this.rememberConversationParticipants(cachedConversations);
+      this.conversations.set(cachedConversations.sort(this.compareConversations));
+      this.ensureSelectedConversation();
+      void this.hydrateConversationProfiles(cachedConversations);
+      const primary = this.localAccountKey();
+      if (primary) {
+        void this.history.putConversations(primary, cachedConversations).catch(() => undefined);
+      }
+    }
+    if (contacts.length) {
+      const primary = this.localAccountKey();
+      if (primary) {
+        void this.history.putContacts(primary, contacts).catch(() => undefined);
+      }
     }
   }
 
@@ -903,26 +1409,34 @@ export class ChatService implements OnDestroy {
     await Promise.all([
       this.history.putConversations(accountKey, conversations).catch(() => undefined),
       this.history.putContacts(accountKey, contacts).catch(() => undefined),
+      this.history.putProfiles(Object.values(this.profilesByUserId())).catch(() => undefined),
     ]);
   }
 
   private async loadCachedMessages(conversationId: string): Promise<void> {
-    const accountKey = this.localAccountKey();
-    if (!accountKey || !conversationId) {
+    const accountKeys = await this.localAccountKeys();
+    if (!accountKeys.length || !conversationId) {
       return;
     }
-    const messages = await this.history.conversationMessagesPage(accountKey, conversationId, 80).catch(() => []);
+    const groups = await Promise.all(accountKeys.map((accountKey) =>
+      this.history.conversationMessagesPage(accountKey, conversationId, 80).catch(() => [])));
+    const messages = this.uniqueMessages(groups.flat()).slice(-80);
     for (const message of messages) {
       this.upsertMessage(message, { persist: false });
+    }
+    const primary = this.localAccountKey();
+    if (primary && messages.length) {
+      void this.history.putMessages(primary, messages).catch(() => undefined);
     }
   }
 
   private async purgeExpiredLocalMessages(): Promise<void> {
-    const accountKey = this.localAccountKey();
-    if (!accountKey) {
+    const accountKeys = await this.localAccountKeys();
+    if (!accountKeys.length) {
       return;
     }
-    const expired = await this.history.purgeExpired(accountKey).catch(() => []);
+    const groups = await Promise.all(accountKeys.map((accountKey) => this.history.purgeExpired(accountKey).catch(() => [])));
+    const expired = this.uniqueMessages(groups.flat());
     if (!expired.length) {
       return;
     }
@@ -965,6 +1479,48 @@ export class ChatService implements OnDestroy {
     }
   }
 
+  private removeMessageFromUiAndLocal(conversationId: string, messageId: string): void {
+    if (!conversationId || !messageId) {
+      return;
+    }
+    const timerKey = `${conversationId}:${messageId}`;
+    const timer = this.expiryTimers.get(timerKey);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      this.expiryTimers.delete(timerKey);
+    }
+    this.messagesByConversation.update((state) => ({
+      ...state,
+      [conversationId]: (state[conversationId] ?? []).filter((message) => message.id !== messageId),
+    }));
+    this.removeLocalMessage(conversationId, messageId);
+  }
+
+  private scheduleMessageExpiry(message: ChatMessageVm): void {
+    if (!message?.id || !message.conversationId) {
+      return;
+    }
+    const timerKey = `${message.conversationId}:${message.id}`;
+    const existing = this.expiryTimers.get(timerKey);
+    if (existing !== undefined) {
+      window.clearTimeout(existing);
+      this.expiryTimers.delete(timerKey);
+    }
+    if (message.deleteAfterRead) {
+      return;
+    }
+    const expiresAtMs = message.expiresAt ? Date.parse(message.expiresAt) : NaN;
+    if (!Number.isFinite(expiresAtMs)) {
+      return;
+    }
+    const delay = Math.max(0, expiresAtMs - Date.now());
+    const timer = window.setTimeout(() => {
+      this.expiryTimers.delete(timerKey);
+      this.removeMessageFromUiAndLocal(message.conversationId, message.id);
+    }, Math.min(delay, 2_147_483_647));
+    this.expiryTimers.set(timerKey, timer);
+  }
+
   private findMessage(messageId: string): ChatMessageVm | null {
     for (const messages of Object.values(this.messagesByConversation())) {
       const found = messages.find((message) => message.id === messageId);
@@ -977,12 +1533,143 @@ export class ChatService implements OnDestroy {
 
   private localAccountKey(): string | null {
     const session = this.auth.session();
-    return session?.user.id && session.device.id ? `${session.user.id}:${session.device.id}` : null;
+    return session?.user.id ?? null;
+  }
+
+  private async localAccountKeys(): Promise<string[]> {
+    const userId = this.auth.session()?.user.id;
+    if (!userId) {
+      return [];
+    }
+    const keys = await this.history.accountKeysForUser(userId).catch(() => [userId]);
+    const legacy = this.auth.session()?.device.id ? `${userId}:${this.auth.session()!.device.id}` : '';
+    return [...new Set([userId, legacy, ...keys].filter(Boolean))];
+  }
+
+  private uniqueConversations(conversations: Conversation[]): Conversation[] {
+    const map = new Map<string, Conversation>();
+    for (const conversation of conversations) {
+      if (!conversation?.id) {
+        continue;
+      }
+      const previous = map.get(conversation.id);
+      if (!previous || this.compareConversations(conversation, previous) < 0) {
+        map.set(conversation.id, conversation);
+      }
+    }
+    return [...map.values()].sort(this.compareConversations);
+  }
+
+  private dedupeVisibleConversations(
+    conversations: Conversation[],
+    messagesByConversation: Record<string, ChatMessageVm[]>,
+  ): Conversation[] {
+    const map = new Map<string, Conversation>();
+    for (const conversation of conversations) {
+      if (!conversation?.id) {
+        continue;
+      }
+      const key = this.visibleConversationKey(conversation);
+      const previous = map.get(key);
+      map.set(key, previous
+        ? this.preferredConversation(previous, conversation, messagesByConversation)
+        : conversation);
+    }
+    return [...map.values()].sort(this.compareConversations);
+  }
+
+  private visibleConversationKey(conversation: Conversation): string {
+    const currentUserId = this.auth.session()?.user.id;
+    if (this.isDirectConversation(conversation)) {
+      const peers = conversation.participants
+        .filter((participant) => !participant.removedAt && participant.userId !== currentUserId)
+        .map((participant) => participant.userId)
+        .filter(Boolean)
+        .sort();
+      if (peers.length === 1) {
+        return `direct:${peers[0]}`;
+      }
+    }
+    return `conversation:${conversation.id}`;
+  }
+
+  private preferredConversation(
+    left: Conversation,
+    right: Conversation,
+    messagesByConversation: Record<string, ChatMessageVm[]>,
+  ): Conversation {
+    const leftMessages = messagesByConversation[left.id]?.length ?? 0;
+    const rightMessages = messagesByConversation[right.id]?.length ?? 0;
+    if (leftMessages !== rightMessages) {
+      return leftMessages > rightMessages ? left : right;
+    }
+    return this.compareConversations(left, right) <= 0 ? left : right;
+  }
+
+  private async findExistingDirectConversation(userId: string): Promise<Conversation | null> {
+    const candidates = this.conversations()
+      .filter((conversation) => this.isDirectConversationWith(conversation, userId));
+    if (!candidates.length) {
+      return null;
+    }
+    if (candidates.length === 1) {
+      return candidates[0];
+    }
+
+    const messagesByConversation = this.messagesByConversation();
+    const accountKeys = await this.localAccountKeys();
+    let best: { conversation: Conversation; score: number; time: number } | null = null;
+    for (const conversation of candidates) {
+      const loadedCount = messagesByConversation[conversation.id]?.length ?? 0;
+      const cachedCount = loadedCount || await this.cachedMessageCount(accountKeys, conversation.id);
+      const time = Date.parse(conversation.lastMessageAt || conversation.updatedAt || conversation.createdAt || '') || 0;
+      const score = (cachedCount > 0 ? 1_000_000 : 0) + Math.min(cachedCount, 999);
+      if (!best || score > best.score || (score === best.score && time > best.time)) {
+        best = { conversation, score, time };
+      }
+    }
+    return best?.conversation ?? candidates.sort(this.compareConversations)[0] ?? null;
+  }
+
+  private isDirectConversationWith(conversation: Conversation, userId: string): boolean {
+    return this.isDirectConversation(conversation)
+      && conversation.participants.some((participant) => !participant.removedAt && participant.userId === userId);
+  }
+
+  private async cachedMessageCount(accountKeys: string[], conversationId: string): Promise<number> {
+    if (!accountKeys.length || !conversationId) {
+      return 0;
+    }
+    const groups = await Promise.all(accountKeys.map((accountKey) =>
+      this.history.conversationMessagesPage(accountKey, conversationId, 2).catch(() => [])));
+    return groups.reduce((total, group) => total + group.length, 0);
+  }
+
+  private uniqueContacts(contacts: Contact[]): Contact[] {
+    const map = new Map<string, Contact>();
+    for (const contact of contacts) {
+      if (!contact?.userId) {
+        continue;
+      }
+      map.set(contact.userId, { ...(map.get(contact.userId) ?? {}), ...contact });
+    }
+    return [...map.values()];
+  }
+
+  private uniqueMessages(messages: ChatMessageVm[]): ChatMessageVm[] {
+    const map = new Map<string, ChatMessageVm>();
+    for (const message of messages) {
+      if (!message?.id) {
+        continue;
+      }
+      map.set(message.id, message);
+    }
+    return [...map.values()].sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime());
   }
 
   private normalizeOutgoingPayload(conversation: Conversation, payload: ChatPayload): ChatPayload {
     const outgoing = { ...(payload || {}) };
-    const controlTypes = new Set(['reaction', 'edit', 'delete', 'system']);
+    const controlTypes = new Set(['reaction', 'edit', 'delete', 'system', 'call_log', 'system-call']);
     if (outgoing.type && !controlTypes.has(outgoing.type) && outgoing.forwardingAllowed === undefined) {
       outgoing.forwardingAllowed = conversation.privacySettings?.allowForwarding ?? true;
     }
@@ -1224,7 +1911,7 @@ export class ChatService implements OnDestroy {
       this.conversations.update((items) => items.filter((conversation) => conversation.id !== conversationId));
       if (this.selectedConversationId() === conversationId) {
         this.selectedConversationId.set(null);
-        localStorage.removeItem('nivra.selectedConversationId');
+        this.persistSelectedConversationId(null);
       }
     }
     this.messagesByConversation.update((state) => ({ ...state, [conversationId]: [] }));
@@ -1313,8 +2000,265 @@ export class ChatService implements OnDestroy {
   }
 
   private contactLabel(userId: string): string {
-    const contact = this.contacts().find((candidate) => candidate.userId === userId);
-    return contact?.displayName || contact?.alias || 'Contacto';
+    return this.displayProfileName(this.profileForUser(userId)) || 'Contacto';
+  }
+
+  private conversationPrimaryPerson(conversation: Conversation): LocalProfile | null {
+    const currentUserId = this.auth.session()?.user.id;
+    const other = conversation.participants.find((participant) => participant.userId !== currentUserId && !participant.removedAt);
+    return other ? this.profileForUser(other.userId) : null;
+  }
+
+  private isGroupConversation(conversation: Conversation | null | undefined): boolean {
+    return String(conversation?.type || '').toLowerCase() === 'group';
+  }
+
+  private isDirectConversation(conversation: Conversation | null | undefined): boolean {
+    return String(conversation?.type || '').toLowerCase() === 'direct';
+  }
+
+  private normalizedGroupSettings(settings: Partial<GroupSettings> | null | undefined): GroupSettings {
+    return {
+      editInfo: settings?.editInfo === 'all' ? 'all' : 'admins',
+      sendMessages: settings?.sendMessages === 'admins' ? 'admins' : 'all',
+      addMembers: settings?.addMembers === 'all' ? 'all' : 'admins',
+    };
+  }
+
+  private normalizedGroupAdmins(conversation: Conversation | null | undefined, fallbackUserId?: string): string[] {
+    const explicit = (conversation?.admins ?? []).filter(Boolean);
+    if (explicit.length) {
+      return [...new Set(explicit)];
+    }
+    const roleAdmins = (conversation?.participants ?? [])
+      .filter((participant) => ['owner', 'admin'].includes(String(participant.role || '').toLowerCase()))
+      .map((participant) => participant.userId)
+      .filter(Boolean);
+    const fallback = fallbackUserId || (conversation?.participants ?? []).find((participant) => !participant.removedAt)?.userId;
+    return [...new Set([...roleAdmins, fallback].filter(Boolean) as string[])];
+  }
+
+  private async persistGroupConversation(conversation: Conversation, patch: Record<string, unknown>): Promise<void> {
+    const next = this.applyLocalConversationState([conversation])[0];
+    this.conversations.update((items) => items.map((item) => item.id === next.id ? next : item).sort(this.compareConversations));
+    const accountKey = this.localAccountKey();
+    if (accountKey) {
+      await this.history.putConversations(accountKey, [next]).catch(() => undefined);
+    }
+    await firstValueFrom(this.api.patch(`/conversations/${encodeURIComponent(next.id)}`, patch)).catch(() => undefined);
+  }
+
+  private conversationPeople(conversation: Conversation): LocalProfile[] {
+    const currentUserId = this.auth.session()?.user.id;
+    return conversation.participants
+      .filter((participant) => participant.userId !== currentUserId && !participant.removedAt)
+      .map((participant) => this.profileForUser(participant.userId) ?? this.normalizeProfile(participant))
+      .filter((profile): profile is LocalProfile => Boolean(profile));
+  }
+
+  private profileForUser(userId: string | null | undefined): LocalProfile | null {
+    if (!userId) {
+      return null;
+    }
+    return this.profilesByUserId()[userId] ?? null;
+  }
+
+  private displayProfileName(profile: LocalProfile | null | undefined): string {
+    return this.firstText(profile?.displayName, profile?.phone, profile?.alias) || '';
+  }
+
+  private rememberConversationParticipants(conversations: Conversation[]): void {
+    const profiles = conversations.flatMap((conversation) => conversation.participants ?? []);
+    this.rememberProfiles(profiles, true);
+  }
+
+  private rememberProfiles(profiles: Array<ProfileSource | null | undefined>, persist = false): LocalProfile[] {
+    const normalized = profiles
+      .map((profile) => this.normalizeProfile(profile))
+      .filter((profile): profile is LocalProfile => Boolean(profile));
+    if (!normalized.length) {
+      return [];
+    }
+    this.profilesByUserId.update((state) => {
+      let changed = false;
+      const next = { ...state };
+      for (const profile of normalized) {
+        const previous: LocalProfile = next[profile.userId] ?? { userId: profile.userId };
+        const merged = {
+          ...previous,
+          ...profile,
+          alias: profile.alias || previous.alias || null,
+          displayName: profile.displayName || previous.displayName || null,
+          phone: profile.phone || previous.phone || null,
+          bio: profile.bio || previous.bio || null,
+          profilePhotoDataUrl: profile.profilePhotoDataUrl || previous.profilePhotoDataUrl || null,
+          cachedAt: new Date().toISOString(),
+        } satisfies LocalProfile;
+        next[profile.userId] = merged;
+        changed = true;
+      }
+      return changed ? next : state;
+    });
+    if (persist) {
+      void this.history.putProfiles(normalized).catch(() => undefined);
+    }
+    return normalized;
+  }
+
+  private normalizeProfile(profile: ProfileSource | null | undefined): LocalProfile | null {
+    const userId = this.firstText(profile?.userId, profile?.id);
+    if (!userId) {
+      return null;
+    }
+    const alias = this.firstText(profile?.alias);
+    return {
+      userId,
+      id: userId,
+      alias,
+      aliasLower: alias.toLowerCase(),
+      displayName: this.firstText(profile?.displayName),
+      phone: this.firstText(profile?.phone),
+      bio: this.firstText(profile?.bio),
+      profilePhotoDataUrl: this.firstText(profile?.profilePhotoDataUrl),
+      isDiscoverable: profile?.isDiscoverable,
+      isContact: profile?.isContact,
+      isMutualContact: profile?.isMutualContact,
+      isFavorite: profile?.isFavorite,
+      friendshipState: profile?.friendshipState ?? null,
+      updatedAt: profile?.updatedAt || new Date().toISOString(),
+      cachedAt: profile?.cachedAt || new Date().toISOString(),
+    };
+  }
+
+  private firstText(...values: unknown[]): string {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    }
+    return '';
+  }
+
+  private async hydrateConversationProfiles(conversations: Conversation[]): Promise<void> {
+    if (!this.auth.isAuthenticated()) {
+      return;
+    }
+    const currentUserId = this.auth.session()?.user.id;
+    const userIds = [...new Set(conversations
+      .flatMap((conversation) => conversation.participants)
+      .filter((participant) => !participant.removedAt && participant.userId !== currentUserId)
+      .map((participant) => participant.userId)
+      .filter(Boolean))];
+    for (const userId of userIds) {
+      const profile = this.profileForUser(userId);
+      if ((profile?.displayName || profile?.phone || profile?.profilePhotoDataUrl) || this.profileFetchInFlight.has(userId)) {
+        continue;
+      }
+      this.profileFetchInFlight.add(userId);
+      firstValueFrom(this.api.get<UserSummary>(`/directory/users/${encodeURIComponent(userId)}`))
+        .then((person) => this.rememberProfiles([person], true))
+        .catch(() => undefined)
+        .finally(() => this.profileFetchInFlight.delete(userId));
+    }
+  }
+
+  private readConversationFlag(kind: 'archived' | 'blocked'): Set<string> {
+    try {
+      const values = JSON.parse(localStorage.getItem(this.conversationFlagKey(kind)) || '[]') as string[];
+      return new Set(Array.isArray(values) ? values.filter(Boolean) : []);
+    } catch {
+      return new Set();
+    }
+  }
+
+  private writeConversationFlag(kind: 'archived' | 'blocked', conversationId: string, enabled: boolean): void {
+    const values = this.readConversationFlag(kind);
+    if (enabled) {
+      values.add(conversationId);
+    } else {
+      values.delete(conversationId);
+    }
+    localStorage.setItem(this.conversationFlagKey(kind), JSON.stringify([...values]));
+  }
+
+  private conversationFlagKey(kind: 'archived' | 'blocked'): string {
+    const userId = this.auth.session()?.user.id || 'anonymous';
+    return `nivra.${kind}Conversations.${userId}`;
+  }
+
+  private applyLocalConversationState(conversations: Conversation[]): Conversation[] {
+    const archived = this.readConversationFlag('archived');
+    const blocked = this.readConversationFlag('blocked');
+    const now = new Date().toISOString();
+    return conversations.map((conversation) => {
+      const base = {
+        ...conversation,
+        archivedAt: conversation.archivedAt ?? (archived.has(conversation.id) ? now : null),
+        blockedAt: conversation.blockedAt ?? (blocked.has(conversation.id) ? now : null),
+      };
+      return this.isGroupConversation(base)
+        ? {
+            ...base,
+            admins: this.normalizedGroupAdmins(base),
+            settings: this.normalizedGroupSettings(base.settings),
+            groupName: this.firstText(base.groupName, base.title) || null,
+            groupAvatar: base.groupAvatar ?? null,
+          }
+        : base;
+    });
+  }
+
+  private async updateConversationLocalState(conversation: Conversation, patch: Pick<Conversation, 'archivedAt' | 'blockedAt'>): Promise<void> {
+    const current = this.conversations().find((item) => item.id === conversation.id) ?? conversation;
+    const next: Conversation = {
+      ...current,
+      ...patch,
+    };
+    this.conversations.update((items) => items.map((item) => item.id === next.id ? next : item).sort(this.compareConversations));
+    const accountKey = this.localAccountKey();
+    if (accountKey) {
+      await this.history.putConversations(accountKey, [next]).catch(() => undefined);
+    }
+  }
+
+  private restoreSelectedConversationId(): void {
+    const conversationId = this.initialSelectedConversationId();
+    if (conversationId !== this.selectedConversationId()) {
+      this.selectedConversationId.set(conversationId);
+    }
+  }
+
+  private ensureSelectedConversation(): void {
+    const conversations = this.conversations();
+    const selected = this.selectedConversationId();
+    if (selected && conversations.some((conversation) => conversation.id === selected)) {
+      this.persistSelectedConversationId(selected);
+      return;
+    }
+    const nextId = conversations[0]?.id ?? null;
+    this.selectedConversationId.set(nextId);
+    this.persistSelectedConversationId(nextId);
+  }
+
+  private initialSelectedConversationId(): string | null {
+    return localStorage.getItem(this.selectedConversationStorageKey())
+      || localStorage.getItem('nivra.selectedConversationId');
+  }
+
+  private persistSelectedConversationId(conversationId: string | null): void {
+    const scopedKey = this.selectedConversationStorageKey();
+    if (conversationId) {
+      localStorage.setItem(scopedKey, conversationId);
+      localStorage.setItem('nivra.selectedConversationId', conversationId);
+      return;
+    }
+    localStorage.removeItem(scopedKey);
+    localStorage.removeItem('nivra.selectedConversationId');
+  }
+
+  private selectedConversationStorageKey(): string {
+    const userId = this.auth.session()?.user.id;
+    return userId ? `nivra.selectedConversationId.${userId}` : 'nivra.selectedConversationId';
   }
 
   private relativeTime(value: string): string {
@@ -1344,6 +2288,7 @@ export class ChatService implements OnDestroy {
     this.messagesByConversation.set({});
     this.mediaPreviews.set({});
     this.directoryResults.set([]);
+    this.profilesByUserId.set({});
     this.typingByConversation.set({});
     this.presenceByUser.set({});
     this.directories.clear();
@@ -1353,8 +2298,20 @@ export class ChatService implements OnDestroy {
     this.lastTypingSentAt = 0;
     this.syncInFlight = false;
     this.selectedConversationLoadId += 1;
-    this.selectedConversationId.set(null);
-    localStorage.removeItem('nivra.selectedConversationId');
+    this.typingTimers.forEach((timer) => window.clearTimeout(timer));
+    this.typingTimers.clear();
+    this.expiryTimers.forEach((timer) => window.clearTimeout(timer));
+    this.expiryTimers.clear();
+  }
+
+  private pauseForLoggedOutSession(): void {
+    this.directories.clear();
+    this.readReceiptSentIds.clear();
+    this.pendingReactionsByMessageId.clear();
+    this.pendingReactionSends.clear();
+    this.lastTypingSentAt = 0;
+    this.syncInFlight = false;
+    this.selectedConversationLoadId += 1;
     this.typingTimers.forEach((timer) => window.clearTimeout(timer));
     this.typingTimers.clear();
   }
@@ -1426,6 +2383,7 @@ export class ChatService implements OnDestroy {
     }
     const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
     const recipients: RecipientCipherRequest[] = [];
+    const groupRecipients: PublicKeyRecipient[] = [];
     const activeParticipants = conversation.participants.filter((participant) => !participant.removedAt);
     const directories = await this.directoriesForUsers(activeParticipants.map((participant) => participant.userId));
 
@@ -1437,6 +2395,15 @@ export class ChatService implements OnDestroy {
       for (const device of directory?.devices ?? []) {
         const publicKey = this.crypto.parsePublicJwk(device.keyBundle?.identityKey);
         if (!device.deviceId || !publicKey || usedDeviceIds.has(device.deviceId)) {
+          continue;
+        }
+        if (this.isGroupConversation(conversation)) {
+          groupRecipients.push({
+            userId: participant.userId,
+            deviceId: device.deviceId,
+            publicJwk: publicKey,
+          });
+          usedDeviceIds.add(device.deviceId);
           continue;
         }
         const sealed = await this.crypto.encryptForPublicKey(own, publicKey, payload);
@@ -1451,6 +2418,14 @@ export class ChatService implements OnDestroy {
       }
 
       if (participant.userId === current.user.id && !usedDeviceIds.has(current.device.id)) {
+        if (this.isGroupConversation(conversation)) {
+          groupRecipients.push({
+            userId: current.user.id,
+            deviceId: current.device.id,
+            publicJwk: own.publicJwk,
+          });
+          continue;
+        }
         const sealed = await this.crypto.encryptForPublicKey(own, own.publicJwk, payload);
         recipients.push({
           userId: current.user.id,
@@ -1462,6 +2437,9 @@ export class ChatService implements OnDestroy {
       }
     }
 
+    if (this.isGroupConversation(conversation)) {
+      return this.crypto.encryptGroupPayloadForRecipients(own, groupRecipients, payload, fileObjectId);
+    }
     return recipients;
   }
 

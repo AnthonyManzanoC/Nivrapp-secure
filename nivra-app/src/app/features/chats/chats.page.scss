@@ -1,13 +1,22 @@
 :host {
   display: block;
+  height: 100%;
+  overflow: hidden;
 }
 
 .chats-page {
   --background: transparent;
+  --overflow: hidden;
+  height: 100%;
+}
+
+.chats-page::part(scroll) {
+  overflow: hidden;
 }
 
 .chat-layout {
-  height: 100dvh;
+  height: 100%;
+  min-height: 0;
   display: grid;
   grid-template-columns: var(--nivra-sidebar-width) minmax(0, 1fr);
   min-width: 0;
@@ -23,6 +32,8 @@
   min-width: 0;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr);
+  min-height: 0;
+  overflow: hidden;
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, .03);
 }
 
@@ -101,10 +112,12 @@ time {
 }
 
 .list {
+  min-height: 0;
   background: transparent;
   overflow: auto;
   padding: 0 10px 16px;
   scrollbar-gutter: stable;
+  overscroll-behavior: contain;
 }
 
 .list-item {
@@ -182,6 +195,12 @@ ion-item-option {
   border-radius: 999px;
 }
 
+.avatar-img {
+  object-fit: cover;
+  padding: 0;
+  flex: 0 0 auto;
+}
+
 .item-copy {
   min-width: 0;
   display: grid;
@@ -200,16 +219,15 @@ time {
 }
 
 .recent-searches {
+  min-height: 0;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(82px, 1fr));
-  gap: 16px 10px;
-  align-items: start;
-  overflow: auto;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 8px;
+  overflow: hidden;
   padding: 2px 14px 18px;
 }
 
 .recent-head {
-  grid-column: 1 / -1;
   min-height: 34px;
   display: flex;
   align-items: center;
@@ -217,6 +235,12 @@ time {
   color: var(--nivra-muted);
   font-size: 12px;
   font-weight: 800;
+}
+
+.recent-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .recent-head button,
@@ -234,9 +258,22 @@ time {
   height: 30px;
 }
 
+.recent-row {
+  min-width: 0;
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x mandatory;
+  padding: 4px 2px 10px;
+}
+
 .recent-tile {
   position: relative;
-  min-width: 0;
+  flex: 0 0 88px;
+  min-width: 88px;
+  scroll-snap-align: start;
 }
 
 .recent-open {
@@ -329,6 +366,145 @@ time {
   margin: 0;
 }
 
+ion-modal.group-modal {
+  --width: min(560px, calc(100vw - 24px));
+  --height: min(720px, calc(100dvh - 32px));
+  --border-radius: 8px;
+  --background: rgba(8, 13, 15, .98);
+  --box-shadow: var(--nivra-shadow-soft);
+  color: var(--nivra-text);
+}
+
+.group-builder {
+  height: 100%;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .07), transparent 28%),
+    rgba(8, 13, 15, .98);
+}
+
+.group-builder header,
+.group-builder footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+}
+
+.group-builder header {
+  border-bottom: 1px solid rgba(255, 255, 255, .1);
+}
+
+.group-builder footer {
+  border-top: 1px solid rgba(255, 255, 255, .1);
+}
+
+.group-builder h2,
+.group-builder p {
+  margin: 0;
+}
+
+.group-builder p,
+.group-name span,
+.group-contact small {
+  color: var(--nivra-muted);
+}
+
+.group-name {
+  margin: 12px;
+  display: grid;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.group-name input {
+  min-height: 44px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 0 12px;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .06);
+  outline: 0;
+}
+
+.group-name input:focus {
+  border-color: rgba(114, 240, 202, .5);
+  box-shadow: 0 0 0 3px rgba(114, 240, 202, .09);
+}
+
+.group-contact-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  gap: 7px;
+  padding: 0 12px 12px;
+  overscroll-behavior: contain;
+}
+
+.group-contact {
+  min-width: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .04);
+  text-align: left;
+}
+
+.group-contact.selected {
+  border-color: rgba(24, 214, 162, .34);
+  background: rgba(24, 214, 162, .1);
+}
+
+.group-contact-copy {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.group-contact strong,
+.group-contact small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.group-check {
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #04100d;
+  background: rgba(255, 255, 255, .055);
+}
+
+.group-contact.selected .group-check {
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+}
+
+.group-error {
+  margin: 0;
+  padding: 0 12px 10px;
+  color: #ffb4b4;
+  font-size: 12px;
+}
+
+.group-empty {
+  min-height: 140px;
+}
+
 @media (max-width: 768px) {
   .chat-layout {
     grid-template-columns: 1fr;
@@ -341,7 +517,27 @@ time {
     min-height: 0;
   }
 
-  .detail-stage:has(app-chat-detail) {
+  .detail-stage {
+    display: none;
+  }
+
+  .detail-stage.detail-active {
+    display: block;
     z-index: 2;
+  }
+
+  .sidebar {
+    border-right: 0;
+  }
+
+  ion-modal.group-modal {
+    --width: 100vw;
+    --height: 100dvh;
+    --border-radius: 0;
+  }
+
+  .group-builder {
+    border-radius: 0;
+    border-inline: 0;
   }
 }

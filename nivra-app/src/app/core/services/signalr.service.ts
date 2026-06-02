@@ -85,6 +85,16 @@ export class SignalrService implements OnDestroy {
     }).catch(() => undefined);
   }
 
+  async updateGroupRoles(conversationId: string, admins: string[]): Promise<void> {
+    await this.ensureConnected();
+    await this.connection?.invoke('UpdateGroupRoles', conversationId, admins).catch(() => undefined);
+  }
+
+  async updateGroupParticipants(conversationId: string, participantIds: string[]): Promise<void> {
+    await this.ensureConnected();
+    await this.connection?.invoke('UpdateGroupParticipants', conversationId, participantIds).catch(() => undefined);
+  }
+
   async joinVaultRoom(roomId: string): Promise<void> {
     await this.ensureConnected();
     await this.connection?.invoke('JoinVaultRoom', roomId).catch(() => undefined);
