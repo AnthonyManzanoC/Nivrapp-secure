@@ -1,3 +1,11 @@
+self.addEventListener('install', () => {
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (event) => {
+  event.waitUntil(self.clients.claim());
+});
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = normalizeData(event.notification.data || {});
@@ -47,17 +55,21 @@ const FIREBASE_CONFIG = self.NIVRA_FIREBASE_CONFIG || {
 };
 FIREBASE_CONFIG.vapidKey = String(self.NIVRA_FIREBASE_VAPID_KEY || FIREBASE_CONFIG.vapidKey || '').trim();
 
-importScripts(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app-compat.js`);
-importScripts(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-messaging-compat.js`);
+try {
+  importScripts(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-app-compat.js`);
+  importScripts(`https://www.gstatic.com/firebasejs/${FIREBASE_SDK_VERSION}/firebase-messaging-compat.js`);
 
-firebase.initializeApp(FIREBASE_CONFIG);
+  firebase.initializeApp(FIREBASE_CONFIG);
 
-const messaging = firebase.messaging();
+  const messaging = firebase.messaging();
 
-messaging.onBackgroundMessage((payload) => {
-  const data = normalizeData(payload.data || {});
-  return showNivraNotification(data).catch(() => undefined);
-});
+  messaging.onBackgroundMessage((payload) => {
+    const data = normalizeData(payload.data || {});
+    return showNivraNotification(data).catch(() => undefined);
+  });
+} catch {
+  // Standard Web Push must keep working even if Firebase's worker runtime is unavailable.
+}
 
 async function showNivraNotification(data) {
   const clientsList = await clients.matchAll({ type: 'window', includeUncontrolled: true });

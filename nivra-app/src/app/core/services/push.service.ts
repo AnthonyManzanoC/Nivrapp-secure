@@ -99,10 +99,6 @@ export class PushService {
       if (permission !== 'granted') {
         return false;
       }
-      if (!options.requestPermission && this.isFirebaseRegistrationBackedOff()) {
-        return false;
-      }
-
       const registration = await this.registerFirebaseMessagingServiceWorker();
       const webConfig = await this.resolveWebFirebaseConfig();
       if (!webConfig) {
@@ -307,21 +303,34 @@ export class PushService {
     serviceWorkerRegistration: ServiceWorkerRegistration,
     forceFcmAttempt: boolean,
   ): Promise<PushRegistration | null> {
+    const activeRegistration = await this.waitForActiveServiceWorker(serviceWorkerRegistration);
+    if (webConfig.webPushPublicKey) {
+      const standardRegistration = await this.getStandardWebPushRegistration(activeRegistration, webConfig.webPushPublicKey);
+      if (standardRegistration?.token) {
+        this.clearFirebaseRegistrationBackoff();
+        return standardRegistration;
+      }
+    }
+
+    if (!forceFcmAttempt && this.isFirebaseRegistrationBackedOff()) {
+      return null;
+    }
+
     if (forceFcmAttempt || !this.isFirebaseRegistrationBackedOff()) {
       try {
-        return await this.getWebFcmToken(webConfig.firebase, serviceWorkerRegistration, webConfig.vapidKey);
+        return await this.getWebFcmToken(webConfig.firebase, activeRegistration, webConfig.vapidKey);
       } catch (error) {
         if (!this.shouldResetFirebaseMessagingState(error)) {
           throw error;
         }
         this.deferFirebaseRegistrationRetry();
-        await this.cleanupRejectedWebPushState(serviceWorkerRegistration, { unregisterWorker: false }).catch(() => undefined);
+        await this.cleanupRejectedWebPushState(activeRegistration, { unregisterWorker: false }).catch(() => undefined);
         this.error.set(this.firebaseMessagingErrorMessage(error));
       }
     }
 
     const fallbackRegistration = await navigator.serviceWorker.getRegistration('/firebase-messaging-sw.js')
-      .catch(() => undefined) ?? serviceWorkerRegistration;
+      .catch(() => undefined) ?? activeRegistration;
     return this.getStandardWebPushRegistration(fallbackRegistration, webConfig.webPushPublicKey);
   }
 
@@ -347,25 +356,9 @@ export class PushService {
   ): Promise<PushRegistration> {
     const strictVapidKey = this.environmentVapidKey() || vapidKey;
     const tokenOptions = { vapidKey: strictVapidKey, serviceWorkerRegistration };
-    try {
-      const messaging = await this.messagingForWebConfig(firebaseConfig);
-      const token = await getToken(messaging, tokenOptions);
-      return { provider: 'fcm', token };
-    } catch (error) {
-      if (!this.shouldResetFirebaseMessagingState(error)) {
-        throw error;
-      }
-      await this.cleanupRejectedWebPushState(serviceWorkerRegistration);
-      try {
-        const freshRegistration = await this.registerFirebaseMessagingServiceWorker();
-        const messaging = await this.messagingForWebConfig(firebaseConfig, true);
-        const token = await getToken(messaging, { ...tokenOptions, serviceWorkerRegistration: freshRegistration });
-        return { provider: 'fcm', token };
-      } catch (retryError) {
-        await this.cleanupRejectedWebPushState(serviceWorkerRegistration);
-        throw retryError;
-      }
-    }
+    const messaging = await this.messagingForWebConfig(firebaseConfig);
+    const token = await getToken(messaging, tokenOptions);
+    return { provider: 'fcm', token };
   }
 
   private async messagingForWebConfig(config: FirebaseOptions, forceFresh = false): Promise<Messaging> {
@@ -391,14 +384,15 @@ export class PushService {
   private async registerFirebaseMessagingServiceWorker(): Promise<ServiceWorkerRegistration> {
     const registration = await navigator.serviceWorker.register('/firebase-messaging-sw.js', { scope: '/' });
     await registration.update?.().catch(() => undefined);
-    return registration;
+    return this.waitForActiveServiceWorker(registration);
   }
 
   private async getStandardWebPushRegistration(
     serviceWorkerRegistration: ServiceWorkerRegistration,
     publicKey: string,
   ): Promise<PushRegistration | null> {
-    if (!('PushManager' in window) || !serviceWorkerRegistration.pushManager) {
+    const activeRegistration = await this.waitForActiveServiceWorker(serviceWorkerRegistration);
+    if (!('PushManager' in window) || !activeRegistration.pushManager) {
       return null;
     }
     const applicationServerKey = String(publicKey || '').trim();
@@ -407,12 +401,12 @@ export class PushService {
     }
     const keyBytes = this.base64UrlToUint8Array(applicationServerKey);
     const keyBuffer = keyBytes.buffer.slice(keyBytes.byteOffset, keyBytes.byteOffset + keyBytes.byteLength) as ArrayBuffer;
-    let existing = await serviceWorkerRegistration.pushManager.getSubscription().catch(() => null);
+    let existing = await activeRegistration.pushManager.getSubscription().catch(() => null);
     if (existing && this.storedStandardWebPushPublicKey() !== applicationServerKey) {
       await existing.unsubscribe().catch(() => false);
       existing = null;
     }
-    const subscription = existing ?? await serviceWorkerRegistration.pushManager.subscribe({
+    const subscription = existing ?? await activeRegistration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: keyBuffer,
     });
@@ -420,6 +414,42 @@ export class PushService {
       this.storeStandardWebPushPublicKey(applicationServerKey);
     }
     return subscription ? { provider: 'webpush', token: this.serializePushSubscription(subscription) } : null;
+  }
+
+  private async waitForActiveServiceWorker(registration: ServiceWorkerRegistration): Promise<ServiceWorkerRegistration> {
+    if (registration.active) {
+      return registration;
+    }
+
+    const activated = new Promise<ServiceWorkerRegistration>((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve(registration);
+      };
+      const workers = [registration.active, registration.installing, registration.waiting].filter(Boolean) as ServiceWorker[];
+      for (const worker of workers) {
+        if (worker.state === 'activated') {
+          finish();
+          return;
+        }
+        worker.addEventListener('statechange', () => {
+          if (worker.state === 'activated') {
+            finish();
+          }
+        }, { once: false });
+      }
+    });
+
+    const ready = navigator.serviceWorker.ready.then((readyRegistration) =>
+      readyRegistration.scope === registration.scope ? readyRegistration : registration);
+    const timeout = new Promise<ServiceWorkerRegistration>((_, reject) => {
+      window.setTimeout(() => reject(new Error('El service worker de notificaciones no se activo a tiempo.')), 12000);
+    });
+    return Promise.race([ready, activated, timeout]);
   }
 
   private async cleanupRejectedWebPushState(
