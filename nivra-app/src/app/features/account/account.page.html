@@ -63,6 +63,41 @@
         </ion-button>
       </article>
 
+      <article class="panel span-5 identity-mode-panel" [class.ghost]="identityMode() === 'ghost'">
+        <div class="identity-mode-icon">
+          <ion-icon [name]="identityMode() === 'ghost' ? 'finger-print-outline' : 'phone-portrait-outline'"></ion-icon>
+        </div>
+        <div>
+          <h2>{{ identityMode() === 'ghost' ? 'Fantasma' : 'Publico controlado' }}</h2>
+          <p>{{ identityMode() === 'ghost' ? 'Solo te encuentran por alias exacto, QR o invitacion directa.' : 'Tu telefono entra al radar cifrado si tambien eres visible.' }}</p>
+        </div>
+      </article>
+
+      <article class="panel span-5 share-account-panel">
+        <div>
+          <h2>Compartir Nivra</h2>
+          <p class="card-sub">Invita con enlace, mensaje o QR de contacto.</p>
+        </div>
+        <div class="share-actions">
+          <ion-button mode="ios" fill="outline" (click)="copyShareMessage()" [disabled]="saving">
+            <ion-icon name="copy-outline"></ion-icon>
+            Copiar
+          </ion-button>
+          <ion-button mode="ios" fill="outline" (click)="shareAccount()" [disabled]="saving">
+            <ion-icon name="share-social-outline"></ion-icon>
+            Compartir
+          </ion-button>
+          <ion-button mode="ios" fill="outline" (click)="openShareModal()" [disabled]="saving || shareBusy">
+            @if (shareBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="qr-code-outline"></ion-icon> }
+            Mostrar QR
+          </ion-button>
+          <ion-button mode="ios" fill="outline" (click)="startContactScanner()" [disabled]="saving || contactScannerBusy">
+            @if (contactScannerBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="scan-outline"></ion-icon> }
+            Escanear contacto
+          </ion-button>
+        </div>
+      </article>
+
       <article class="panel span-5">
         <h2>Plan</h2>
         <div class="metric">
@@ -203,6 +238,71 @@
         </ion-button>
       </article>
     </section>
+
+    <ion-modal class="share-modal" [isOpen]="shareModalOpen" (didDismiss)="closeShareModal()">
+      <ng-template>
+        <section class="share-sheet">
+          <header>
+            <div>
+              <h2>Pase Nivra</h2>
+              <p>@{{ auth.session()?.user?.alias }}</p>
+            </div>
+            <ion-button mode="ios" fill="clear" (click)="closeShareModal()" aria-label="Cerrar">
+              <ion-icon name="close-outline"></ion-icon>
+            </ion-button>
+          </header>
+          <div class="share-qr">
+            @if (shareQrDataUrl) {
+              <img [src]="shareQrDataUrl" alt="">
+            } @else {
+              <ion-spinner name="crescent"></ion-spinner>
+            }
+          </div>
+          <p class="share-link">{{ shareUrl() }}</p>
+          <div class="account-actions compact">
+            <ion-button mode="ios" fill="outline" (click)="copyShareMessage()">
+              <ion-icon name="copy-outline"></ion-icon>
+              Copiar mensaje
+            </ion-button>
+            <ion-button mode="ios" (click)="shareAccount()">
+              <ion-icon name="share-social-outline"></ion-icon>
+              Compartir
+            </ion-button>
+          </div>
+        </section>
+      </ng-template>
+    </ion-modal>
+
+    <ion-modal class="share-modal" [isOpen]="contactScannerOpen" (didDismiss)="stopContactScanner()">
+      <ng-template>
+        <section class="share-sheet">
+          <header>
+            <div>
+              <h2>Escanear contacto</h2>
+              <p>{{ contactScannerStatus }}</p>
+            </div>
+            <ion-button mode="ios" fill="clear" (click)="stopContactScanner()" aria-label="Cerrar">
+              <ion-icon name="close-outline"></ion-icon>
+            </ion-button>
+          </header>
+          <div class="qr-scanner contact-scanner">
+            <div id="contactQrScannerRegion"></div>
+            <div class="qr-reticle" aria-hidden="true"></div>
+          </div>
+          <input #contactQrFileInput type="file" accept="image/*" hidden (change)="scanContactQrFile($event)">
+          <div class="account-actions compact">
+            <ion-button mode="ios" fill="outline" (click)="contactQrFileInput.click()" [disabled]="contactScannerBusy">
+              <ion-icon name="image-outline"></ion-icon>
+              Imagen
+            </ion-button>
+            <ion-button mode="ios" (click)="startContactScanner()" [disabled]="contactScannerBusy">
+              @if (contactScannerBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="camera-outline"></ion-icon> }
+              Camara
+            </ion-button>
+          </div>
+        </section>
+      </ng-template>
+    </ion-modal>
 
     @if (notice) { <p class="notice">{{ notice }}</p> }
     @if (error) { <p class="error">{{ error }}</p> }

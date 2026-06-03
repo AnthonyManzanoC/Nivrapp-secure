@@ -87,6 +87,124 @@
   margin-bottom: 2px;
 }
 
+.identity-panel {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  border-color: rgba(114, 240, 202, .2);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .1), rgba(107, 168, 255, .035)),
+    var(--nivra-panel);
+}
+
+.identity-panel.ghost {
+  border-color: rgba(239, 196, 107, .22);
+  background:
+    linear-gradient(135deg, rgba(239, 196, 107, .09), rgba(107, 168, 255, .025)),
+    var(--nivra-panel);
+}
+
+.identity-main {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.identity-main h2,
+.identity-main p {
+  margin: 0;
+}
+
+.identity-main p {
+  color: var(--nivra-muted);
+  line-height: 1.4;
+}
+
+.identity-icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #04100d;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-blue));
+}
+
+.identity-panel.ghost .identity-icon {
+  background: linear-gradient(135deg, var(--nivra-amber), var(--nivra-blue));
+}
+
+.identity-icon ion-icon {
+  width: 24px;
+  height: 24px;
+}
+
+.radar-panel > .panel-headline > ion-icon {
+  width: 38px;
+  height: 38px;
+  padding: 8px;
+  border: 1px solid rgba(114, 240, 202, .2);
+  border-radius: 8px;
+  color: var(--nivra-brand-2);
+  background: rgba(114, 240, 202, .08);
+}
+
+.radar-layout {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(180px, 240px);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.radar-input {
+  min-width: 0;
+}
+
+.radar-control {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+
+.radar-state {
+  min-height: 44px;
+  border: 1px solid rgba(114, 240, 202, .18);
+  border-radius: 8px;
+  padding: 9px 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  color: var(--nivra-brand-2);
+  background: rgba(114, 240, 202, .065);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.radar-state.ghost {
+  border-color: rgba(239, 196, 107, .22);
+  color: var(--nivra-amber);
+  background: rgba(239, 196, 107, .065);
+}
+
+.radar-state span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.radar-results {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .contact-list,
 .story-grid {
   display: grid;
@@ -432,6 +550,19 @@
 
   .row-actions {
     justify-content: flex-start;
+  }
+
+  .identity-panel {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .identity-panel ion-button {
+    align-self: flex-start;
+  }
+
+  .radar-layout {
+    grid-template-columns: 1fr;
   }
 
   .story-grid {

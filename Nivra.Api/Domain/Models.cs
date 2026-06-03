@@ -111,6 +111,7 @@ public sealed class UserAccount
     public string? DisplayName { get; set; }
     public string? Email { get; set; }
     public string? Phone { get; set; }
+    public string? PhoneHash { get; set; }
     public bool RequiresAlias { get; set; }
     public string? Bio { get; set; }
     public string? ProfilePhotoDataUrl { get; set; }
@@ -350,6 +351,20 @@ public sealed class VaultRoomMember
     public DateTimeOffset? JoinedAt { get; set; }
     public DateTimeOffset? LastSeenAt { get; set; }
     public DateTimeOffset? LeftAt { get; set; }
+}
+
+public sealed class VaultRoomInvite
+{
+    public required string Id { get; init; }
+    public required string VaultRoomId { get; init; }
+    public required string CreatedByUserId { get; init; }
+    public required string CodeHash { get; set; }
+    public bool RequireApproval { get; set; }
+    public int MaxUses { get; set; }
+    public int Uses { get; set; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset ExpiresAt { get; set; }
+    public DateTimeOffset? RevokedAt { get; set; }
 }
 
 public sealed class CallSession

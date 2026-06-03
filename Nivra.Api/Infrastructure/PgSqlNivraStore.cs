@@ -508,6 +508,14 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
             room.UpdatedAt = now;
         }
 
+        var expiredInvites = await db.VaultRoomInvites
+            .Where(invite => invite.ExpiresAt <= now && invite.RevokedAt == null)
+            .ToListAsync(cancellationToken);
+        foreach (var invite in expiredInvites)
+        {
+            invite.RevokedAt = now;
+        }
+
         await db.SaveChangesAsync(cancellationToken);
     }
 

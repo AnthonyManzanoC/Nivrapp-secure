@@ -130,6 +130,14 @@ public sealed record ContactResponse(
 
 public sealed record PatchContactRequest(bool? IsFavorite, string? NicknameCiphertext);
 
+public sealed record ContactRadarScanRequest(List<string>? PhoneHashes);
+
+public sealed record ContactRadarScanResponse(
+    int Submitted,
+    int Matched,
+    bool CurrentUserInRadar,
+    List<UserSummaryResponse> People);
+
 public sealed record UserSummaryResponse(
     string Id,
     string Alias,
@@ -326,6 +334,24 @@ public sealed record VaultRoomMemberResponse(
 public sealed record InviteVaultRoomRequest(List<string> UserIds);
 
 public sealed record JoinVaultRoomRequest(string? Pin);
+
+public sealed record CreateVaultInviteLinkRequest(
+    int? TtlSeconds,
+    int? MaxUses,
+    bool? RequireApproval);
+
+public sealed record VaultInviteLinkResponse(
+    string Code,
+    string RoomId,
+    string RoomName,
+    string AcceptUrl,
+    string DeepLink,
+    bool RequireApproval,
+    int MaxUses,
+    int Uses,
+    DateTimeOffset ExpiresAt);
+
+public sealed record AcceptVaultInviteRequest(string? Pin);
 
 public sealed record StartCallRequest(CallType Type, string? ConversationId, List<string>? ParticipantUserIds);
 

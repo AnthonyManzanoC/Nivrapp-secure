@@ -103,6 +103,7 @@ public static partial class EndpointExtensions
                 DisplayName = request.DisplayName?.Trim(),
                 Email = NormalizeOptional(request.Email),
                 Phone = phone,
+                PhoneHash = phone is null ? null : PrivacyHashes.PhoneContactHash(phone),
                 PasswordHash = hasher.Hash(request.Password),
                 CreatedAt = now,
                 UpdatedAt = now
@@ -285,6 +286,7 @@ public static partial class EndpointExtensions
             user.DisplayName = NormalizeOptional(request.DisplayName) ?? normalizedAlias;
             user.RequiresAlias = false;
             user.IsDiscoverable = true;
+            user.PhoneHash = PrivacyHashes.PhoneContactHash(setup.Phone);
             user.UpdatedAt = now;
 
             var device = NewDevice(user.Id, request.DeviceName, request.KeyBundle, now, trusted: true);
@@ -501,6 +503,9 @@ public static partial class EndpointExtensions
             user.DisplayName = request.DisplayName?.Trim() ?? user.DisplayName;
             user.Email = NormalizeOptional(request.Email) ?? user.Email;
             user.Phone = request.Phone is null ? user.Phone : normalizedPhone;
+            user.PhoneHash = request.Phone is null
+                ? user.PhoneHash
+                : normalizedPhone is null ? null : PrivacyHashes.PhoneContactHash(normalizedPhone);
             user.Bio = request.Bio is null ? user.Bio : NormalizeOptional(request.Bio);
             user.ProfilePhotoDataUrl = request.ProfilePhotoDataUrl is null ? user.ProfilePhotoDataUrl : NormalizeProfilePhoto(request.ProfilePhotoDataUrl);
             user.IsDiscoverable = request.IsDiscoverable ?? user.IsDiscoverable;
@@ -756,6 +761,52 @@ public static partial class EndpointExtensions
             contact.NicknameCiphertext = request.NicknameCiphertext ?? contact.NicknameCiphertext;
             await db.SaveChangesAsync(cancellationToken);
             return Results.Ok(await ToContactResponseAsync(contact, new PgSqlNivraStore(db), cancellationToken));
+        });
+
+        group.MapPost("/radar/scan", async Task<IResult> (ContactRadarScanRequest request, HttpContext http, NivraDbContext db, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var hashes = (request.PhoneHashes ?? [])
+                .Where(hash => !string.IsNullOrWhiteSpace(hash))
+                .Select(hash => hash.Trim().ToLowerInvariant())
+                .Where(PrivacyHashes.IsSha256Hex)
+                .Distinct(StringComparer.Ordinal)
+                .Take(512)
+                .ToList();
+            if (hashes.Count == 0)
+            {
+                var currentUser = await db.Users.FirstOrDefaultAsync(user => user.Id == current.UserId, cancellationToken);
+                return Results.Ok(new ContactRadarScanResponse(0, 0, currentUser?.PhoneHash is not null && currentUser.IsDiscoverable, []));
+            }
+
+            var candidates = await db.Users
+                .Where(user =>
+                    user.DisabledAt == null &&
+                    user.Id != current.UserId &&
+                    user.PhoneHash != null &&
+                    user.IsDiscoverable &&
+                    hashes.Contains(user.PhoneHash))
+                .OrderBy(user => user.Alias)
+                .Take(80)
+                .ToListAsync(cancellationToken);
+
+            var people = new List<UserSummaryResponse>();
+            foreach (var user in candidates)
+            {
+                people.Add(await ToUserSummaryAsync(user, current.UserId, db, cancellationToken));
+            }
+
+            var self = await db.Users.AsNoTracking().FirstOrDefaultAsync(user => user.Id == current.UserId, cancellationToken);
+            return Results.Ok(new ContactRadarScanResponse(
+                hashes.Count,
+                people.Count,
+                self?.PhoneHash is not null && self.IsDiscoverable,
+                people));
         });
     }
 
@@ -2338,6 +2389,138 @@ public static partial class EndpointExtensions
             return Results.Ok(response);
         });
 
+        group.MapPost("/{roomId}/invite-links", async Task<IResult> (string roomId, CreateVaultInviteLinkRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var room = await db.VaultRooms.FirstOrDefaultAsync(candidate =>
+                candidate.Id == roomId &&
+                candidate.ClosedAt == null &&
+                (candidate.ExpiresAt == null || candidate.ExpiresAt > timeProvider.GetUtcNow()),
+                cancellationToken);
+            if (room is null || room.OwnerUserId != current.UserId)
+            {
+                return Results.NotFound();
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var code = CreateVaultInviteCode();
+            var ttlSeconds = Math.Clamp(request.TtlSeconds ?? 24 * 60 * 60, 5 * 60, 7 * 24 * 60 * 60);
+            var maxUses = Math.Clamp(request.MaxUses ?? 1, 1, 50);
+            var invite = new VaultRoomInvite
+            {
+                Id = NivraIds.NewId("vin"),
+                VaultRoomId = room.Id,
+                CreatedByUserId = current.UserId,
+                CodeHash = PrivacyHashes.OpaqueCodeHash(code),
+                RequireApproval = request.RequireApproval ?? room.AccessMode == VaultAccessMode.WaitingRoom,
+                MaxUses = maxUses,
+                Uses = 0,
+                CreatedAt = now,
+                ExpiresAt = now.AddSeconds(ttlSeconds)
+            };
+
+            db.VaultRoomInvites.Add(invite);
+            await db.SaveChangesAsync(cancellationToken);
+            return Results.Created($"/vault/invites/{Uri.EscapeDataString(code)}", ToVaultInviteLinkResponse(invite, room, code, http));
+        });
+
+        app.MapPost("/vault/invites/{code}/accept", async Task<IResult> (string code, AcceptVaultInviteRequest request, HttpContext http, NivraDbContext db, PasswordHasher hasher, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var trimmedCode = NormalizeOptional(code);
+            if (trimmedCode is null)
+            {
+                return Error("invalid_vault_invite", "Codigo de invitacion invalido.");
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var codeHash = PrivacyHashes.OpaqueCodeHash(trimmedCode);
+            var invite = await db.VaultRoomInvites.FirstOrDefaultAsync(candidate => candidate.CodeHash == codeHash, cancellationToken);
+            if (invite is null || invite.RevokedAt is not null || invite.ExpiresAt <= now || invite.Uses >= invite.MaxUses)
+            {
+                return Error("vault_invite_expired", "Esta invitacion ya no esta disponible.", StatusCodes.Status410Gone);
+            }
+
+            var room = await db.VaultRooms.FirstOrDefaultAsync(candidate =>
+                candidate.Id == invite.VaultRoomId &&
+                candidate.ClosedAt == null &&
+                (candidate.ExpiresAt == null || candidate.ExpiresAt > now),
+                cancellationToken);
+            if (room is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (room.PinHash is not null && !hasher.Verify(request.Pin ?? string.Empty, room.PinHash))
+            {
+                return Error("invalid_pin", "PIN invalido.", StatusCodes.Status401Unauthorized);
+            }
+
+            var memberId = $"{room.Id}:{current.UserId}";
+            var member = await db.VaultRoomMembers.FirstOrDefaultAsync(candidate => candidate.Id == memberId, cancellationToken);
+            var wasUsableMember = member is { Status: VaultMemberStatus.Active or VaultMemberStatus.Invited or VaultMemberStatus.Waiting };
+            var nextStatus = invite.RequireApproval || room.AccessMode == VaultAccessMode.WaitingRoom
+                ? VaultMemberStatus.Waiting
+                : VaultMemberStatus.Active;
+
+            if (room.OwnerUserId == current.UserId)
+            {
+                nextStatus = VaultMemberStatus.Active;
+            }
+
+            if (member is null)
+            {
+                member = new VaultRoomMember
+                {
+                    Id = memberId,
+                    VaultRoomId = room.Id,
+                    UserId = current.UserId,
+                    Role = room.OwnerUserId == current.UserId ? ParticipantRole.Owner : ParticipantRole.Member,
+                    Status = nextStatus,
+                    CreatedAt = now
+                };
+                db.VaultRoomMembers.Add(member);
+            }
+
+            member.Status = nextStatus;
+            member.JoinedAt = nextStatus == VaultMemberStatus.Active ? now : member.JoinedAt;
+            member.LastSeenAt = now;
+            member.LeftAt = null;
+            if (!wasUsableMember)
+            {
+                invite.Uses++;
+            }
+            room.UpdatedAt = now;
+
+            await db.SaveChangesAsync(cancellationToken);
+            var response = await ToVaultRoomResponseAsync(room, current.UserId, db, cancellationToken);
+            if (nextStatus == VaultMemberStatus.Waiting)
+            {
+                await hub.Clients.Group(GroupsFor.User(room.OwnerUserId)).SendAsync("vault.joinRequested", response, cancellationToken);
+                await pushNotifications.SendEventAsync(room.OwnerUserId, "Nivra", "Solicitud de entrada a boveda", "vault_join_requested", $"nivra-vault-join-{room.Id}-{current.UserId}", new Dictionary<string, string>
+                {
+                    ["roomId"] = room.Id,
+                    ["userId"] = current.UserId
+                }, cancellationToken);
+            }
+            else
+            {
+                await NotifyUsers(hub, await VaultRoomAudienceAsync(db, room.Id, cancellationToken), "vault.approved", response);
+            }
+
+            return Results.Ok(response);
+        });
+
         group.MapPost("/{roomId}/join", async Task<IResult> (string roomId, JoinVaultRoomRequest request, HttpContext http, NivraDbContext db, PasswordHasher hasher, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
@@ -3035,6 +3218,7 @@ public static partial class EndpointExtensions
             }
 
             user.DisabledAt = now;
+            user.PhoneHash = null;
             user.UpdatedAt = now;
 
             await store.RevokeDevicesForUserAsync(current.UserId, now, cancellationToken);
@@ -3096,6 +3280,12 @@ public static partial class EndpointExtensions
         }
 
         var now = timeProvider.GetUtcNow();
+        if (user.PhoneHash is null)
+        {
+            user.PhoneHash = PrivacyHashes.PhoneContactHash(phone);
+            user.UpdatedAt = now;
+        }
+
         var device = NewDevice(
             user.Id,
             deviceName,
@@ -3132,6 +3322,7 @@ public static partial class EndpointExtensions
                 DisplayName = null,
                 Email = null,
                 Phone = phone,
+                PhoneHash = PrivacyHashes.PhoneContactHash(phone),
                 RequiresAlias = true,
                 IsDiscoverable = false,
                 PasswordHash = hasher.Hash(CreateOpaquePassword()),
@@ -3351,6 +3542,40 @@ public static partial class EndpointExtensions
     private static CallResponse ToCallResponse(CallSession call)
     {
         return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt);
+    }
+
+    private static VaultInviteLinkResponse ToVaultInviteLinkResponse(VaultRoomInvite invite, VaultRoom room, string code, HttpContext http)
+    {
+        var acceptUrl = BuildVaultInviteUrl(http, code);
+        return new VaultInviteLinkResponse(
+            code,
+            room.Id,
+            room.Name,
+            acceptUrl,
+            $"nivra://vault/invite?code={Uri.EscapeDataString(code)}",
+            invite.RequireApproval,
+            invite.MaxUses,
+            invite.Uses,
+            invite.ExpiresAt);
+    }
+
+    private static string CreateVaultInviteCode()
+    {
+        return Convert.ToBase64String(RandomNumberGenerator.GetBytes(24))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+    }
+
+    private static string BuildVaultInviteUrl(HttpContext http, string code)
+    {
+        var origin = http.Request.Headers.Origin.FirstOrDefault();
+        if (string.IsNullOrWhiteSpace(origin))
+        {
+            origin = $"{http.Request.Scheme}://{http.Request.Host}";
+        }
+
+        return $"{origin.TrimEnd('/')}/vault/invite?code={Uri.EscapeDataString(code)}";
     }
 
     private static async Task<string> GetCallerNameAsync(INivraStore store, string callerUserId, CancellationToken cancellationToken)

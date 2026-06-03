@@ -1,0 +1,44 @@
+.page {
+  --background: var(--nivra-bg);
+}
+
+.invite-stage {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .1), rgba(107, 168, 255, .05)),
+    var(--nivra-bg);
+}
+
+.invite-panel {
+  width: min(420px, 100%);
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .035)),
+    var(--nivra-panel);
+  box-shadow: var(--nivra-shadow-soft);
+}
+
+.invite-panel ion-icon {
+  width: 58px;
+  height: 58px;
+  color: var(--nivra-brand-2);
+}
+
+.invite-panel h1,
+.invite-panel p {
+  margin: 0;
+}
+
+.invite-panel p {
+  color: var(--nivra-muted);
+}

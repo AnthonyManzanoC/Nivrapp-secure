@@ -10,12 +10,16 @@ import {
   closeOutline,
   documentAttachOutline,
   eyeOutline,
+  fingerPrintOutline,
   imageOutline,
   personAddOutline,
   personRemoveOutline,
+  phonePortraitOutline,
   refreshOutline,
+  scanOutline,
   searchOutline,
   sendOutline,
+  shieldCheckmarkOutline,
   star,
   starOutline,
   timeOutline,
@@ -46,6 +50,7 @@ export class WorldPage implements OnInit, OnDestroy {
   durationSeconds = 24 * 60 * 60;
   viewOnce = false;
   storyFile: File | null = null;
+  radarPhones = '';
   busyId = '';
   error = '';
   notice = '';
@@ -59,12 +64,16 @@ export class WorldPage implements OnInit, OnDestroy {
       closeOutline,
       documentAttachOutline,
       eyeOutline,
+      fingerPrintOutline,
       imageOutline,
       personAddOutline,
       personRemoveOutline,
+      phonePortraitOutline,
       refreshOutline,
+      scanOutline,
       searchOutline,
       sendOutline,
+      shieldCheckmarkOutline,
       star,
       starOutline,
       timeOutline,
@@ -110,6 +119,37 @@ export class WorldPage implements OnInit, OnDestroy {
     await this.run(`contact:${person.id}`, async () => {
       await this.social.addContact(person);
       this.notice = 'Contacto guardado.';
+    });
+  }
+
+  async scanRadar(): Promise<void> {
+    await this.run('radar', async () => {
+      const response = await this.social.scanPhoneRadar(this.radarPhones);
+      if (response.matched) {
+        this.notice = this.social.radarNewCount()
+          ? `${this.social.radarNewCount()} contacto nuevo en Nivra.`
+          : `${response.matched} contacto${response.matched === 1 ? '' : 's'} detectado${response.matched === 1 ? '' : 's'}.`;
+      } else {
+        this.notice = response.submitted ? 'Sin coincidencias por ahora.' : 'Agrega telefonos para escanear.';
+      }
+    });
+  }
+
+  async pickDeviceContacts(): Promise<void> {
+    const contactsApi = (navigator as Navigator & {
+      contacts?: {
+        select: (properties: string[], options?: { multiple?: boolean }) => Promise<Array<{ tel?: string[] }>>;
+      };
+    }).contacts;
+    if (!contactsApi?.select) {
+      this.notice = 'Selector de contactos no disponible aqui.';
+      return;
+    }
+    await this.run('radar:picker', async () => {
+      const contacts = await contactsApi.select(['tel'], { multiple: true });
+      const phones = contacts.flatMap((contact) => contact.tel ?? []).filter(Boolean);
+      this.radarPhones = phones.join('\n');
+      await this.scanRadar();
     });
   }
 
@@ -226,6 +266,14 @@ export class WorldPage implements OnInit, OnDestroy {
   storyAudienceLabel(): string {
     const group = this.selectedStoryGroup();
     return group ? `Publicar en ${this.chat.conversationTitle(group)}` : 'Publicar para tus contactos';
+  }
+
+  isGhostMode(): boolean {
+    return !this.auth.session()?.user?.phone;
+  }
+
+  async openAccount(): Promise<void> {
+    await this.router.navigateByUrl('/app/account');
   }
 
   contactAsPerson(contact: Contact): UserSummary {

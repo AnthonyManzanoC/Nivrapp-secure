@@ -11,6 +11,22 @@
     </header>
 
     <section class="grid">
+      <article class="panel span-12 identity-panel" [class.ghost]="isGhostMode()">
+        <div class="identity-main">
+          <span class="identity-icon">
+            <ion-icon [name]="isGhostMode() ? 'finger-print-outline' : 'shield-checkmark-outline'"></ion-icon>
+          </span>
+          <div>
+            <h2>{{ isGhostMode() ? 'Modo fantasma' : 'Modo publico controlado' }}</h2>
+            <p>{{ isGhostMode() ? 'Tu alias no aparece por agendas. Comparte @' + auth.session()?.user?.alias + ' o tu QR cuando quieras conectar.' : 'Tu telefono vinculado puede aparecer en radares cifrados de contactos que ya lo tienen.' }}</p>
+          </div>
+        </div>
+        <ion-button mode="ios" fill="outline" (click)="openAccount()">
+          <ion-icon [name]="isGhostMode() ? 'phone-portrait-outline' : 'shield-checkmark-outline'"></ion-icon>
+          Cuenta
+        </ion-button>
+      </article>
+
       <article class="panel span-5">
         <div class="panel-headline">
           <div>
@@ -77,6 +93,63 @@
             </div>
           } @empty {
             <div class="empty-copy">Busca un alias para conectar.</div>
+          }
+        </div>
+      </article>
+
+      <article class="panel span-12 radar-panel">
+        <div class="panel-headline">
+          <div>
+            <h2>Radar cifrado</h2>
+            <span class="card-sub">{{ social.radarMatches().length }} coincidencias</span>
+          </div>
+          <ion-icon name="scan-outline"></ion-icon>
+        </div>
+        <div class="radar-layout">
+          <label class="radar-input">
+            <span>Telefonos</span>
+            <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="radarPhones" placeholder="+57...&#10;+1..."></ion-textarea>
+          </label>
+          <div class="radar-control">
+            <div class="radar-state" [class.ghost]="isGhostMode()">
+              <ion-icon [name]="isGhostMode() ? 'finger-print-outline' : 'shield-checkmark-outline'"></ion-icon>
+              <span>{{ isGhostMode() ? 'Invisible para agendas' : 'Disponible para coincidencias' }}</span>
+            </div>
+            <ion-button mode="ios" fill="outline" (click)="pickDeviceContacts()" [disabled]="busyId === 'radar:picker' || social.radarLoading()">
+              <ion-icon name="phone-portrait-outline"></ion-icon>
+              Contactos
+            </ion-button>
+            <ion-button mode="ios" (click)="scanRadar()" [disabled]="busyId === 'radar' || social.radarLoading()">
+              @if (social.radarLoading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="scan-outline"></ion-icon> }
+              Escanear
+            </ion-button>
+          </div>
+        </div>
+        <div class="radar-results">
+          @for (person of social.radarMatches(); track person.id) {
+            <div class="result-row person-result">
+              <div>
+                <strong>{{ person.displayName || person.alias }}</strong>
+                <span class="card-sub">@{{ person.alias }} - {{ person.friendshipState }}</span>
+              </div>
+              <div class="row-actions">
+                <ion-button mode="ios" fill="clear" (click)="openPerson(person)" [disabled]="busyId === 'open:' + person.id" aria-label="Abrir chat">
+                  <ion-icon name="chatbubble-ellipses-outline"></ion-icon>
+                </ion-button>
+                @if (!person.isContact) {
+                  <ion-button mode="ios" fill="clear" (click)="addContact(person)" [disabled]="busyId === 'contact:' + person.id" aria-label="Guardar contacto">
+                    <ion-icon name="person-add-outline"></ion-icon>
+                  </ion-button>
+                }
+                @if (person.friendshipState === 'none') {
+                  <ion-button mode="ios" fill="outline" [disabled]="busyId === person.id" (click)="request(person)">
+                    <ion-icon name="add-outline"></ion-icon>
+                  </ion-button>
+                }
+              </div>
+            </div>
+          } @empty {
+            <div class="empty-copy">Las coincidencias privadas aparecen aqui.</div>
           }
         </div>
       </article>

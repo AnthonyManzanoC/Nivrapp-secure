@@ -7,6 +7,9 @@
           <span>{{ chat.visibleConversations().length }} conversaciones</span>
         </div>
         <div class="side-actions">
+          <ion-button mode="ios" fill="clear" size="small" (click)="openShareAccount()" aria-label="Compartir Nivra">
+            <ion-icon name="share-social-outline"></ion-icon>
+          </ion-button>
           <ion-button mode="ios" fill="clear" size="small" (click)="openGroupModal()" aria-label="Nuevo grupo">
             <ion-icon name="people-outline"></ion-icon>
           </ion-button>
@@ -115,6 +118,10 @@
             <div class="empty">
               <strong>Nivra</strong>
               <span>Busca un alias para abrir tu primer chat.</span>
+              <ion-button mode="ios" fill="outline" size="small" (click)="openShareAccount()">
+                <ion-icon name="share-social-outline"></ion-icon>
+                Compartir pase
+              </ion-button>
             </div>
           }
         </ion-list>

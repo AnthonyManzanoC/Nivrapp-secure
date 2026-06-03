@@ -7,12 +7,13 @@ import {
   IonContent,
   IonIcon,
   IonInput,
+  IonModal,
   IonSpinner,
   IonTextarea,
   IonToggle,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { cameraOutline, imageOutline, logOutOutline, notificationsOffOutline, notificationsOutline, qrCodeOutline, refreshOutline, scanOutline, shieldCheckmarkOutline, trashOutline, warningOutline } from 'ionicons/icons';
+import { cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, logOutOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, trashOutline, warningOutline } from 'ionicons/icons';
 import { AccountService } from '../../core/services/account.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
@@ -22,7 +23,7 @@ import { PushService } from '../../core/services/push.service';
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, IonToggle],
+  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss'],
 })
@@ -47,10 +48,17 @@ export class AccountPage implements OnInit, OnDestroy {
   qrScannerOpen = false;
   qrScannerBusy = false;
   qrScannerStatus = 'Listo para escanear.';
+  shareModalOpen = false;
+  shareQrDataUrl = '';
+  shareBusy = false;
+  contactScannerOpen = false;
+  contactScannerBusy = false;
+  contactScannerStatus = 'Listo para escanear contacto.';
   private qrScanner: import('html5-qrcode').Html5Qrcode | null = null;
+  private contactScanner: import('html5-qrcode').Html5Qrcode | null = null;
 
   constructor() {
-    addIcons({ cameraOutline, imageOutline, logOutOutline, notificationsOffOutline, notificationsOutline, qrCodeOutline, refreshOutline, scanOutline, shieldCheckmarkOutline, trashOutline, warningOutline });
+    addIcons({ cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, logOutOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, trashOutline, warningOutline });
   }
 
   async ngOnInit(): Promise<void> {
@@ -59,6 +67,7 @@ export class AccountPage implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     void this.stopQrScanner();
+    void this.stopContactScanner();
   }
 
   async reload(): Promise<void> {
@@ -127,6 +136,145 @@ export class AccountPage implements OnInit, OnDestroy {
 
   patchPrivacy(key: keyof PrivacySettings, value: boolean | number | null): void {
     this.account.privacy.update((privacy) => privacy ? { ...privacy, [key]: value } : privacy);
+  }
+
+  identityMode(): 'ghost' | 'public' {
+    return this.phone.trim() ? 'public' : 'ghost';
+  }
+
+  shareUrl(): string {
+    const alias = this.auth.session()?.user?.alias || '';
+    const origin = window.location.origin || window.location.href.split('/').slice(0, 3).join('/');
+    return `${origin}/contact?alias=${encodeURIComponent(alias)}`;
+  }
+
+  shareMessage(): string {
+    const user = this.auth.session()?.user;
+    const alias = user?.alias || '';
+    const name = user?.displayName || alias;
+    return [
+      `${name} te invita a Nivra, mensajeria privada con chat y boveda cifrada.`,
+      `Buscame como @${alias}.`,
+      'Si ya tienes Nivra, abre este enlace para iniciar el chat:',
+      this.shareUrl(),
+    ].join('\n');
+  }
+
+  async copyShareMessage(): Promise<void> {
+    await this.run(async () => {
+      await navigator.clipboard.writeText(this.shareMessage());
+      this.notice = 'Invitacion copiada.';
+    });
+  }
+
+  async shareAccount(): Promise<void> {
+    await this.run(async () => {
+      const payload = {
+        title: 'Nivra',
+        text: this.shareMessage(),
+        url: this.shareUrl(),
+      };
+      const share = navigator as Navigator & { share?: (data: typeof payload) => Promise<void> };
+      if (share.share) {
+        await share.share(payload);
+        this.notice = 'Invitacion lista para enviar.';
+        return;
+      }
+      await navigator.clipboard.writeText(this.shareMessage());
+      this.notice = 'Tu navegador no comparte directo; copie la invitacion.';
+    });
+  }
+
+  async openShareModal(): Promise<void> {
+    await this.run(async () => {
+      await this.ensureShareQr();
+      this.shareModalOpen = true;
+    });
+  }
+
+  closeShareModal(): void {
+    this.shareModalOpen = false;
+  }
+
+  async startContactScanner(): Promise<void> {
+    if (this.contactScannerBusy) {
+      return;
+    }
+    this.contactScannerOpen = true;
+    this.contactScannerBusy = true;
+    this.contactScannerStatus = 'Preparando camara...';
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      const { Html5Qrcode } = await import('html5-qrcode');
+      await this.stopContactScanner({ keepOpen: true });
+      this.contactScanner = new Html5Qrcode('contactQrScannerRegion');
+      await this.contactScanner.start(
+        { facingMode: 'environment' },
+        {
+          fps: 8,
+          qrbox: (width, height) => {
+            const size = Math.floor(Math.min(width, height) * 0.72);
+            return { width: size, height: size };
+          },
+        },
+        (text) => void this.handleContactQr(text),
+        () => undefined,
+      );
+      this.contactScannerStatus = 'Apunta la camara al QR de contacto.';
+    } catch (error) {
+      this.contactScannerStatus = error instanceof Error ? error.message : 'No se pudo abrir la camara.';
+      await this.stopContactScanner({ keepOpen: true });
+    } finally {
+      this.contactScannerBusy = false;
+    }
+  }
+
+  async stopContactScanner(options: { keepOpen?: boolean } = {}): Promise<void> {
+    const scanner = this.contactScanner;
+    this.contactScanner = null;
+    if (scanner) {
+      await scanner.stop().catch(() => undefined);
+      try {
+        scanner.clear();
+      } catch {
+        // Contact scanner cleanup is best-effort because html5-qrcode throws when already cleared.
+      }
+    }
+    if (!options.keepOpen) {
+      this.contactScannerOpen = false;
+    }
+  }
+
+  async scanContactQrFile(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (!file || this.contactScannerBusy) {
+      return;
+    }
+    this.contactScannerOpen = true;
+    this.contactScannerBusy = true;
+    this.contactScannerStatus = 'Leyendo imagen...';
+    let tempScanner: import('html5-qrcode').Html5Qrcode | null = null;
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await this.stopContactScanner({ keepOpen: true });
+      const { Html5Qrcode } = await import('html5-qrcode');
+      tempScanner = new Html5Qrcode('contactQrScannerRegion');
+      const text = await tempScanner.scanFile(file, true);
+      await this.handleContactQr(text, { allowWhileBusy: true });
+    } catch (error) {
+      this.contactScannerStatus = error instanceof Error ? error.message : 'No se pudo leer ese QR.';
+    } finally {
+      if (tempScanner && tempScanner !== this.contactScanner) {
+        try {
+          tempScanner.clear();
+        } catch {
+          // Contact scanner cleanup is best-effort because html5-qrcode throws when already cleared.
+        }
+      }
+      this.contactScannerBusy = false;
+    }
   }
 
   async revoke(deviceId: string): Promise<void> {
@@ -266,6 +414,26 @@ export class AccountPage implements OnInit, OnDestroy {
     }
   }
 
+  private async handleContactQr(text: string, options: { allowWhileBusy?: boolean } = {}): Promise<void> {
+    if (!text || (this.contactScannerBusy && !options.allowWhileBusy)) {
+      return;
+    }
+    this.contactScannerBusy = true;
+    this.contactScannerStatus = 'QR detectado. Abriendo contacto...';
+    try {
+      const alias = this.contactAliasFromQr(text);
+      if (!alias) {
+        throw new Error('Ese QR no parece ser de contacto Nivra.');
+      }
+      await this.stopContactScanner();
+      await this.router.navigate(['/contact'], { queryParams: { alias } });
+    } catch (error) {
+      this.contactScannerStatus = error instanceof Error ? error.message : 'No se pudo abrir ese contacto.';
+    } finally {
+      this.contactScannerBusy = false;
+    }
+  }
+
   async deleteAccount(): Promise<void> {
     if (this.deleteConfirmation !== 'DELETE' || !window.confirm('Esto desactiva la cuenta, revoca sesiones y minimiza datos. Continuar?')) {
       return;
@@ -288,6 +456,45 @@ export class AccountPage implements OnInit, OnDestroy {
     } finally {
       this.saving = false;
     }
+  }
+
+  private async ensureShareQr(): Promise<void> {
+    if (this.shareQrDataUrl) {
+      return;
+    }
+    this.shareBusy = true;
+    try {
+      const QRCode = await import('qrcode');
+      this.shareQrDataUrl = await QRCode.toDataURL(this.shareUrl(), {
+        margin: 1,
+        width: 280,
+        color: {
+          dark: '#03100d',
+          light: '#ffffff',
+        },
+      });
+    } finally {
+      this.shareBusy = false;
+    }
+  }
+
+  private contactAliasFromQr(text: string): string | null {
+    const value = text.trim();
+    if (!value) {
+      return null;
+    }
+    try {
+      const url = new URL(value);
+      const alias = url.searchParams.get('alias') || '';
+      return this.normalizeContactAlias(alias);
+    } catch {
+      return this.normalizeContactAlias(value);
+    }
+  }
+
+  private normalizeContactAlias(value: string): string | null {
+    const alias = value.trim().replace(/^@/, '');
+    return /^[a-zA-Z0-9_.-]{3,32}$/.test(alias) ? alias.toLowerCase() : null;
   }
 
   private async resizeProfilePhoto(file: File): Promise<string> {

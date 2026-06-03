@@ -1,0 +1,51 @@
+.page {
+  --background: var(--nivra-bg);
+}
+
+.contact-stage {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .1), rgba(107, 168, 255, .055)),
+    var(--nivra-bg);
+}
+
+.contact-panel {
+  width: min(430px, 100%);
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  padding: 24px;
+  text-align: center;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .035)),
+    var(--nivra-panel);
+  box-shadow: var(--nivra-shadow-soft);
+}
+
+.contact-panel ion-icon {
+  width: 58px;
+  height: 58px;
+  color: var(--nivra-brand-2);
+}
+
+.contact-panel h1,
+.contact-panel p {
+  margin: 0;
+}
+
+.contact-panel p {
+  color: var(--nivra-muted);
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}

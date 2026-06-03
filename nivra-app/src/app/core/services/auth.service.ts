@@ -53,6 +53,8 @@ interface ParsedQrLoginChallenge {
 
 const FIREBASE_APP_NAME = 'nivra-web-phone-auth';
 const SESSION_KEY = 'nivra.auth';
+const PENDING_VAULT_INVITE_KEY = 'nivra.pendingVaultInvite';
+const PENDING_CONTACT_ALIAS_KEY = 'nivra.pendingContactAlias';
 const TOKEN_REFRESH_SKEW_MS = 2 * 60 * 1000;
 
 @Injectable({ providedIn: 'root' })
@@ -434,7 +436,7 @@ export class AuthService implements OnDestroy {
     }
     await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id });
     this.persistSession(auth);
-    await this.router.navigateByUrl('/app/chats');
+    await this.router.navigateByUrl(this.consumePostAuthUrl());
   }
 
   deviceName(): string {
@@ -449,12 +451,26 @@ export class AuthService implements OnDestroy {
     const keys = this.crypto.materialToDeviceKeys(keyMaterial);
     await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id });
     this.persistSession(auth);
-    await this.router.navigateByUrl('/app/chats');
+    await this.router.navigateByUrl(this.consumePostAuthUrl());
   }
 
   private persistSession(auth: AuthSession): void {
     this.session.set(auth);
     localStorage.setItem(SESSION_KEY, JSON.stringify(auth));
+  }
+
+  private consumePostAuthUrl(): string {
+    const inviteCode = localStorage.getItem(PENDING_VAULT_INVITE_KEY);
+    if (inviteCode) {
+      localStorage.removeItem(PENDING_VAULT_INVITE_KEY);
+      return `/app/vault?invite=${encodeURIComponent(inviteCode)}`;
+    }
+    const contactAlias = localStorage.getItem(PENDING_CONTACT_ALIAS_KEY);
+    if (contactAlias) {
+      localStorage.removeItem(PENDING_CONTACT_ALIAS_KEY);
+      return `/contact?alias=${encodeURIComponent(contactAlias)}`;
+    }
+    return '/app/chats';
   }
 
   private refreshRetryDelayMs(response: Response): number {

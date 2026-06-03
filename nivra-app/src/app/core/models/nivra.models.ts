@@ -162,6 +162,13 @@ export interface DirectorySearchResponse {
   people: UserSummary[];
 }
 
+export interface ContactRadarScanResponse {
+  submitted: number;
+  matched: number;
+  currentUserInRadar: boolean;
+  people: UserSummary[];
+}
+
 export interface PublicDeviceKey {
   deviceId: string;
   deviceName: string;
@@ -404,6 +411,18 @@ export interface VaultRoom {
   updatedAt: string;
   expiresAt?: string | null;
   closedAt?: string | null;
+}
+
+export interface VaultInviteLink {
+  code: string;
+  roomId: string;
+  roomName: string;
+  acceptUrl: string;
+  deepLink: string;
+  requireApproval: boolean;
+  maxUses: number;
+  uses: number;
+  expiresAt: string;
 }
 
 export interface VaultRealtimeMessageResponse {

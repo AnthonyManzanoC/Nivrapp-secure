@@ -127,6 +127,7 @@ await using (var scope = app.Services.CreateAsyncScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
     await dbContext.Database.MigrateAsync();
+    await BackfillPhoneHashesAsync(dbContext);
 }
 
 app.UseExceptionHandler(exceptionApp =>
@@ -167,3 +168,21 @@ app.MapNivraApi();
 app.MapHub<NivraHub>("/hubs/realtime");
 
 app.Run();
+
+static async Task BackfillPhoneHashesAsync(NivraDbContext dbContext)
+{
+    var users = await dbContext.Users
+        .Where(user => user.Phone != null && user.PhoneHash == null && user.DisabledAt == null)
+        .ToListAsync();
+    if (users.Count == 0)
+    {
+        return;
+    }
+
+    foreach (var user in users)
+    {
+        user.PhoneHash = PrivacyHashes.PhoneContactHash(user.Phone!);
+    }
+
+    await dbContext.SaveChangesAsync();
+}

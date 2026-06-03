@@ -35,6 +35,7 @@ La API expone:
 - `GET /keys/{alias}`
 - `POST /keys/prekeys`
 - `GET/POST/DELETE /contacts`
+- `POST /contacts/radar/scan`
 - `GET/POST/PATCH /conversations`
 - `POST /conversations/{conversationId}/messages`
 - `GET /messages/pending`
@@ -43,6 +44,8 @@ La API expone:
 - `POST /messages/{messageId}/receipt`
 - `POST/GET/PUT /files`
 - `GET/POST/PATCH/DELETE /vault/items`
+- `POST /vault/rooms/{roomId}/invite-links`
+- `POST /vault/invites/{code}/accept`
 - `POST /calls/start`
 - `POST /calls/{callId}/signal`
 - `POST /calls/{callId}/end`
@@ -95,6 +98,8 @@ Frontend Angular/Ionic:
 - llamadas WebRTC con estados, limpieza de streams/tracks y mensajes de sistema creados por cliente E2EE;
 - push FCM web/nativo con data-push silencioso para llamadas entrantes;
 - pantallas iniciales conectadas para Mundo, Boveda, Llamadas y Cuenta;
+- radar cifrado de contactos por hashes SHA-256 calculados en cliente;
+- enlaces efimeros de Vault con codigo hasheado en servidor y flujo post-login;
 - servicios Angular para JWT, SignalR, Firebase, WebCrypto ECDH P-256 + AES-GCM;
 - salida configurada en `nivra-app/dist/nivra-app/browser` para Vercel/Capacitor;
 - modo oscuro, responsive web/movil.
@@ -132,6 +137,7 @@ Migraciones aplicadas:
 - `20260528234436_InitialNivraPostgres`
 - `20260528235000_CreateSupabaseVaultBucket`
 - `20260529223000_PushTokenCiphertext`
+- `20260603035228_PhoneRadarVaultInviteLinks`
 
 ## Modelo gratis primero
 

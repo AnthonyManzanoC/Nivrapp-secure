@@ -12,6 +12,7 @@ import {
   PublicKeyDirectory,
   RecipientCipherRequest,
   UserSummary,
+  VaultInviteLink,
   VaultItem,
   VaultNoteAttachment,
   VaultRealtimeMessageResponse,
@@ -261,6 +262,43 @@ export class VaultService {
     this.syncRoom(room);
     await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, ids), null);
     return room;
+  }
+
+  async createInviteLink(room: VaultRoom, options: { ttlSeconds?: number; maxUses?: number; requireApproval?: boolean } = {}): Promise<VaultInviteLink> {
+    if (!this.canInviteGuests(room)) {
+      throw new Error('Solo el dueno de la sala puede crear enlaces.');
+    }
+    return firstValueFrom(this.api.post<VaultInviteLink>(`/vault/rooms/${encodeURIComponent(room.id)}/invite-links`, {
+      ttlSeconds: options.ttlSeconds ?? 24 * 60 * 60,
+      maxUses: options.maxUses ?? 1,
+      requireApproval: options.requireApproval ?? room.accessMode === 'WaitingRoom',
+    }));
+  }
+
+  async acceptInviteCode(code: string, pin = ''): Promise<VaultRoom> {
+    const value = code.trim();
+    if (!value) {
+      throw new Error('Codigo de invitacion invalido.');
+    }
+    const room = await firstValueFrom(this.api.post<VaultRoom>(`/vault/invites/${encodeURIComponent(value)}/accept`, {
+      pin: pin || null,
+    }));
+    this.syncRoom(room);
+    if (this.currentMember(room)?.status === 'Active') {
+      await this.selectRoom(room.id);
+    }
+    return room;
+  }
+
+  inviteShareText(room: VaultRoom, invite: VaultInviteLink): string {
+    const owner = this.auth.session()?.user.alias;
+    return [
+      `Te invite a la sala Vault "${room.name}" en Nivra.`,
+      owner ? `Mi alias es @${owner}.` : '',
+      'El enlace solo abre acceso a la sala; el contenido se cifra en cada dispositivo.',
+      room.accessMode === 'PinOnly' || room.accessMode === 'WaitingRoom' ? 'Te paso el PIN por un canal separado.' : '',
+      invite.acceptUrl,
+    ].filter(Boolean).join('\n');
   }
 
   async approveMember(roomId: string, memberUserId: string): Promise<VaultRoom> {

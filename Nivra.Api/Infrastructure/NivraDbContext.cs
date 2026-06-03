@@ -22,6 +22,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     public DbSet<StoryRecord> Stories => Set<StoryRecord>();
     public DbSet<VaultRoom> VaultRooms => Set<VaultRoom>();
     public DbSet<VaultRoomMember> VaultRoomMembers => Set<VaultRoomMember>();
+    public DbSet<VaultRoomInvite> VaultRoomInvites => Set<VaultRoomInvite>();
     public DbSet<CallSession> Calls => Set<CallSession>();
     public DbSet<PushTokenRecord> PushTokens => Set<PushTokenRecord>();
     public DbSet<AdCampaign> AdCampaigns => Set<AdCampaign>();
@@ -61,6 +62,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(user => user.DisplayName).HasMaxLength(160);
             entity.Property(user => user.Email).HasMaxLength(320);
             entity.Property(user => user.Phone).HasMaxLength(40);
+            entity.Property(user => user.PhoneHash).HasMaxLength(64);
             entity.Property(user => user.RequiresAlias).HasDefaultValue(false);
             entity.Property(user => user.Bio).HasMaxLength(500);
             entity.Property(user => user.ProfilePhotoDataUrl);
@@ -72,6 +74,9 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasIndex(user => user.Phone)
                 .IsUnique()
                 .HasFilter("\"Phone\" IS NOT NULL AND \"DisabledAt\" IS NULL");
+            entity.HasIndex(user => user.PhoneHash)
+                .IsUnique()
+                .HasFilter("\"PhoneHash\" IS NOT NULL AND \"DisabledAt\" IS NULL");
             entity.HasIndex(user => user.IsDiscoverable);
 
             entity.OwnsOne(user => user.PasswordHash, owned =>
@@ -334,6 +339,22 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasIndex(member => new { member.UserId, member.Status });
             entity.HasOne<VaultRoom>().WithMany().HasForeignKey(member => member.VaultRoomId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(member => member.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<VaultRoomInvite>(entity =>
+        {
+            entity.ToTable("vault_room_invites");
+            entity.HasKey(invite => invite.Id);
+            entity.Property(invite => invite.Id).HasMaxLength(64);
+            entity.Property(invite => invite.VaultRoomId).HasMaxLength(64).IsRequired();
+            entity.Property(invite => invite.CreatedByUserId).HasMaxLength(64).IsRequired();
+            entity.Property(invite => invite.CodeHash).HasMaxLength(64).IsRequired();
+            entity.Property(invite => invite.MaxUses).HasDefaultValue(1);
+            entity.Property(invite => invite.Uses).HasDefaultValue(0);
+            entity.HasIndex(invite => invite.CodeHash).IsUnique();
+            entity.HasIndex(invite => new { invite.VaultRoomId, invite.ExpiresAt });
+            entity.HasOne<VaultRoom>().WithMany().HasForeignKey(invite => invite.VaultRoomId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<UserAccount>().WithMany().HasForeignKey(invite => invite.CreatedByUserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<CallSession>(entity =>

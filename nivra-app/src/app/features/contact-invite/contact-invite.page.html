@@ -1,0 +1,18 @@
+<ion-content fullscreen class="page">
+  <main class="contact-stage">
+    <section class="contact-panel">
+      <ion-icon [name]="error ? 'person-add-outline' : 'chatbubble-ellipses-outline'"></ion-icon>
+      @if (!error) {
+        <h1>Abriendo @{{ alias }}</h1>
+        <ion-spinner name="crescent"></ion-spinner>
+      } @else {
+        <h1>No se pudo abrir</h1>
+        <p>{{ error }}</p>
+        <div class="actions">
+          <ion-button mode="ios" fill="outline" (click)="goChats()">Chats</ion-button>
+          <ion-button mode="ios" (click)="retry()">Reintentar</ion-button>
+        </div>
+      }
+    </section>
+  </main>
+</ion-content>

@@ -3,6 +3,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { firstValueFrom } from 'rxjs';
 import {
   Contact,
+  ContactRadarScanResponse,
   DirectorySearchResponse,
   FileResponse,
   FriendRequest,
@@ -33,9 +34,12 @@ export class SocialService {
   readonly friendRequests = signal<FriendRequest[]>([]);
   readonly stories = signal<Story[]>([]);
   readonly worldStories = signal<Story[]>([]);
+  readonly radarMatches = signal<UserSummary[]>([]);
+  readonly radarNewCount = signal(0);
   readonly activeStory = signal<Story | null>(null);
   readonly mediaPreviews = signal<Record<string, StoryMediaPreview>>({});
   readonly loading = signal(false);
+  readonly radarLoading = signal(false);
   readonly publishing = signal(false);
 
   constructor() {
@@ -108,6 +112,36 @@ export class SocialService {
     );
     this.people.set(response.people ?? []);
     return response.people ?? [];
+  }
+
+  async scanPhoneRadar(rawPhones: string): Promise<ContactRadarScanResponse> {
+    const phones = this.extractPhones(rawPhones);
+    if (!phones.length) {
+      const empty: ContactRadarScanResponse = {
+        submitted: 0,
+        matched: 0,
+        currentUserInRadar: Boolean(this.auth.session()?.user.phone && this.auth.session()?.user.isDiscoverable),
+        people: [],
+      };
+      this.radarMatches.set([]);
+      this.radarNewCount.set(0);
+      return empty;
+    }
+
+    this.radarLoading.set(true);
+    try {
+      const phoneHashes = await Promise.all(phones.map((phone) => this.hashPhone(phone)));
+      const response = await firstValueFrom(this.api.post<ContactRadarScanResponse>('/contacts/radar/scan', {
+        phoneHashes,
+      }));
+      this.radarMatches.set(response.people ?? []);
+      const seen = this.radarSeenIds();
+      this.radarNewCount.set((response.people ?? []).filter((person) => !seen.has(person.id)).length);
+      this.rememberRadarSeen(response.people ?? []);
+      return response;
+    } finally {
+      this.radarLoading.set(false);
+    }
   }
 
   async requestFriend(person: UserSummary, message = ''): Promise<void> {
@@ -320,6 +354,61 @@ export class SocialService {
 
   private encodeStoryPayload(payload: StoryPayload): string {
     return this.crypto.b64(new TextEncoder().encode(JSON.stringify({ v: 2, ...payload, type: payload.type || 'text' })));
+  }
+
+  private extractPhones(rawPhones: string): string[] {
+    const candidates = rawPhones
+      .split(/[\n,;]+/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    return [...new Set(candidates
+      .map((value) => this.normalizePhone(value))
+      .filter((value): value is string => Boolean(value)))]
+      .slice(0, 512);
+  }
+
+  private normalizePhone(value: string): string | null {
+    const trimmed = value.trim();
+    const hasPlus = trimmed.startsWith('+');
+    const digits = trimmed.replace(/\D/g, '');
+    if (digits.length < 7 || digits.length > 15) {
+      return null;
+    }
+    return hasPlus ? `+${digits}` : digits;
+  }
+
+  private async hashPhone(normalizedPhone: string): Promise<string> {
+    const bytes = new TextEncoder().encode(`nivra-phone:v1:${normalizedPhone}`);
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  private rememberRadarSeen(people: UserSummary[]): void {
+    const accountKey = this.localAccountKey();
+    if (!accountKey || !people.length) {
+      return;
+    }
+    try {
+      const key = `nivra.radar.seen.${accountKey}`;
+      const previous = JSON.parse(localStorage.getItem(key) || '[]') as string[];
+      localStorage.setItem(key, JSON.stringify([...new Set([...previous, ...people.map((person) => person.id)])].slice(-500)));
+    } catch {
+      // Radar memory is local-only and best-effort.
+    }
+  }
+
+  private radarSeenIds(): Set<string> {
+    const accountKey = this.localAccountKey();
+    if (!accountKey) {
+      return new Set();
+    }
+    try {
+      return new Set(JSON.parse(localStorage.getItem(`nivra.radar.seen.${accountKey}`) || '[]') as string[]);
+    } catch {
+      return new Set();
+    }
   }
 
   private normalizeStory(story: Story): Story {

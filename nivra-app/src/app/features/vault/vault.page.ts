@@ -1,6 +1,7 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { ActivatedRoute, Router } from '@angular/router';
 import { IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
@@ -13,6 +14,7 @@ import {
   enterOutline,
   headsetOutline,
   keyOutline,
+  linkOutline,
   lockClosedOutline,
   logOutOutline,
   micOffOutline,
@@ -38,6 +40,8 @@ import { MediaStreamDirective } from '../../shared/media-stream.directive';
 })
 export class VaultPage implements OnInit, OnDestroy {
   readonly vault = inject(VaultService);
+  private readonly route = inject(ActivatedRoute);
+  private readonly router = inject(Router);
   pin = '';
   title = '';
   body = '';
@@ -51,6 +55,8 @@ export class VaultPage implements OnInit, OnDestroy {
   busyId = '';
   error = '';
   notice = '';
+  pendingInviteCode = '';
+  pendingInvitePin = '';
   roomPinById: Record<string, string> = {};
   selectedInviteIds = new Set<string>();
   private searchTimer: number | null = null;
@@ -66,6 +72,7 @@ export class VaultPage implements OnInit, OnDestroy {
       enterOutline,
       headsetOutline,
       keyOutline,
+      linkOutline,
       lockClosedOutline,
       logOutOutline,
       micOffOutline,
@@ -83,6 +90,7 @@ export class VaultPage implements OnInit, OnDestroy {
   async ngOnInit(): Promise<void> {
     await this.vault.enablePrivacyShield();
     await this.vault.load();
+    await this.acceptIncomingInvite();
   }
 
   ngOnDestroy(): void {
@@ -218,6 +226,33 @@ export class VaultPage implements OnInit, OnDestroy {
     });
   }
 
+  async shareRoomInvite(room: VaultRoom): Promise<void> {
+    await this.run(`share:${room.id}`, async () => {
+      const invite = await this.vault.createInviteLink(room, {
+        ttlSeconds: 24 * 60 * 60,
+        maxUses: 1,
+        requireApproval: room.accessMode === 'WaitingRoom',
+      });
+      const text = this.vault.inviteShareText(room, invite);
+      await this.shareText(text, invite.acceptUrl);
+      this.notice = 'Invitacion Vault lista.';
+    });
+  }
+
+  async acceptPendingInvite(): Promise<void> {
+    if (!this.pendingInviteCode) {
+      return;
+    }
+    await this.run('invite:accept', async () => {
+      const room = await this.vault.acceptInviteCode(this.pendingInviteCode, this.pendingInvitePin);
+      this.pendingInviteCode = '';
+      this.pendingInvitePin = '';
+      await this.clearInviteQuery();
+      const member = this.vault.currentMember(room);
+      this.notice = member?.status === 'Waiting' ? 'Solicitud enviada al propietario.' : 'Sala Vault agregada.';
+    });
+  }
+
   async approve(room: VaultRoom, member: VaultRoomMember): Promise<void> {
     await this.run(`approve:${member.userId}`, async () => {
       await this.vault.approveMember(room.id, member.userId);
@@ -323,6 +358,40 @@ export class VaultPage implements OnInit, OnDestroy {
     } finally {
       this.busyId = '';
     }
+  }
+
+  private async acceptIncomingInvite(): Promise<void> {
+    const code = this.route.snapshot.queryParamMap.get('invite')?.trim() ?? '';
+    if (!code) {
+      return;
+    }
+    this.pendingInviteCode = code;
+    try {
+      await this.acceptPendingInvite();
+    } catch {
+      // run() captures UI errors; keep the code visible so the user can add a PIN.
+    }
+  }
+
+  private async shareText(text: string, url: string): Promise<void> {
+    const share = navigator as Navigator & {
+      share?: (data: { title?: string; text?: string; url?: string }) => Promise<void>;
+      clipboard?: Clipboard;
+    };
+    if (share.share) {
+      await share.share({ title: 'Nivra Vault', text, url }).catch(() => undefined);
+      return;
+    }
+    await navigator.clipboard?.writeText(text);
+  }
+
+  private async clearInviteQuery(): Promise<void> {
+    await this.router.navigate([], {
+      relativeTo: this.route,
+      queryParams: { invite: null },
+      queryParamsHandling: 'merge',
+      replaceUrl: true,
+    });
   }
 
   private isRoomParticipant(room: VaultRoom | null, userId: string): boolean {

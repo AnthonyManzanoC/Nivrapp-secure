@@ -19,7 +19,7 @@ import {
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { addOutline, checkmarkOutline, closeOutline, peopleOutline, searchOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { addOutline, checkmarkOutline, closeOutline, peopleOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Contact, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
@@ -70,7 +70,7 @@ export class ChatsPage implements OnDestroy {
   private searchSeq = 0;
 
   constructor() {
-    addIcons({ addOutline, checkmarkOutline, closeOutline, peopleOutline, searchOutline, syncOutline, trashOutline });
+    addIcons({ addOutline, checkmarkOutline, closeOutline, peopleOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline });
   }
 
   ngOnDestroy(): void {
@@ -81,6 +81,10 @@ export class ChatsPage implements OnDestroy {
 
   refresh(): void {
     void this.chat.bootstrap();
+  }
+
+  async openShareAccount(): Promise<void> {
+    await this.router.navigateByUrl('/app/account');
   }
 
   ionViewWillLeave(): void {

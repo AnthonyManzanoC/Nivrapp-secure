@@ -11,6 +11,36 @@
   min-height: 40px;
 }
 
+.account-actions.compact {
+  margin-top: 0;
+}
+
+.share-account-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 16px;
+  border-color: rgba(107, 168, 255, .2);
+  background:
+    linear-gradient(135deg, rgba(107, 168, 255, .1), rgba(24, 214, 162, .05)),
+    rgba(13, 20, 22, .76);
+}
+
+.share-account-panel h2,
+.share-account-panel p {
+  margin: 0;
+}
+
+.share-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.share-actions ion-button {
+  min-height: 40px;
+}
+
 .session-panel {
   border-color: rgba(255, 107, 107, .22);
   background:
@@ -23,6 +53,53 @@
   min-height: 44px;
   margin-top: 14px;
   font-weight: 900;
+}
+
+.identity-mode-panel {
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  border-color: rgba(114, 240, 202, .22);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .1), rgba(107, 168, 255, .04)),
+    rgba(13, 20, 22, .76);
+}
+
+.identity-mode-panel.ghost {
+  border-color: rgba(239, 196, 107, .24);
+  background:
+    linear-gradient(135deg, rgba(239, 196, 107, .09), rgba(107, 168, 255, .035)),
+    rgba(13, 20, 22, .76);
+}
+
+.identity-mode-panel h2,
+.identity-mode-panel p {
+  margin: 0;
+}
+
+.identity-mode-panel p {
+  color: var(--nivra-muted);
+  line-height: 1.4;
+}
+
+.identity-mode-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #04100d;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-blue));
+}
+
+.identity-mode-panel.ghost .identity-mode-icon {
+  background: linear-gradient(135deg, var(--nivra-amber), var(--nivra-blue));
+}
+
+.identity-mode-icon ion-icon {
+  width: 28px;
+  height: 28px;
 }
 
 .profile-photo-row {
@@ -110,6 +187,80 @@
   font-size: 12px;
 }
 
+ion-modal.share-modal {
+  --width: min(92vw, 430px);
+  --height: auto;
+  --border-radius: 8px;
+  --box-shadow: 0 24px 70px rgba(0, 0, 0, .42);
+}
+
+.share-sheet {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .06), rgba(255, 255, 255, .02)),
+    rgba(9, 15, 18, .98);
+}
+
+.share-sheet header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.share-sheet h2,
+.share-sheet p {
+  margin: 0;
+}
+
+.share-sheet header p {
+  color: var(--nivra-muted);
+  font-size: 13px;
+}
+
+.share-qr {
+  width: min(100%, 292px);
+  aspect-ratio: 1;
+  margin: 0 auto;
+  border: 1px solid rgba(114, 240, 202, .28);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  background: #fff;
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+.share-qr img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.share-link {
+  overflow-wrap: anywhere;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--nivra-muted);
+  background: rgba(255, 255, 255, .04);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.contact-scanner {
+  min-height: 300px;
+  margin: 0;
+}
+
+.contact-scanner #contactQrScannerRegion {
+  width: 100%;
+  min-height: 300px;
+}
+
 @media (max-width: 640px) {
   .profile-photo-row {
     align-items: flex-start;
@@ -122,5 +273,24 @@
 
   .logout-action {
     width: 100%;
+  }
+
+  .identity-mode-panel {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .identity-mode-icon {
+    width: 46px;
+    height: 46px;
+  }
+
+  .share-actions,
+  .account-actions.compact {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  ion-modal.share-modal {
+    --width: calc(100vw - 24px);
   }
 }

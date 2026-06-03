@@ -8,6 +8,14 @@ const guest = () => inject(AuthService).isAuthenticated() ? inject(Router).parse
 
 export const routes: Routes = [
   {
+    path: 'vault/invite',
+    loadComponent: () => import('./features/vault-invite/vault-invite.page').then((m) => m.VaultInvitePage),
+  },
+  {
+    path: 'contact',
+    loadComponent: () => import('./features/contact-invite/contact-invite.page').then((m) => m.ContactInvitePage),
+  },
+  {
     path: 'auth',
     canMatch: [guest],
     loadComponent: () => import('./features/auth/auth.page').then((m) => m.AuthPage),
