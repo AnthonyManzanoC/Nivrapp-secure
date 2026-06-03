@@ -529,7 +529,7 @@ ion-modal.invite-modal {
   --width: min(430px, calc(100vw - 24px));
   --height: min(620px, calc(100dvh - 40px));
   --border-radius: 8px;
-  --background: rgba(8, 13, 15, .98);
+  --background: var(--nivra-panel-solid);
   --box-shadow: var(--nivra-shadow-soft);
   color: var(--nivra-text);
 }
@@ -543,7 +543,7 @@ ion-modal.invite-modal {
   overflow: hidden;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .07), transparent 28%),
-    rgba(8, 13, 15, .98);
+    var(--nivra-panel-solid);
 }
 
 .invite-sheet header {

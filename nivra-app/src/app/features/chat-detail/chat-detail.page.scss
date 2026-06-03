@@ -881,7 +881,7 @@ ion-modal.contact-info-modal {
   --width: min(430px, calc(100vw - 22px));
   --height: min(760px, calc(100dvh - 28px));
   --border-radius: 8px;
-  --background: rgba(8, 13, 15, .98);
+  --background: var(--nivra-panel-solid);
   --box-shadow: var(--nivra-shadow-soft);
   color: var(--nivra-text);
 }
@@ -896,7 +896,7 @@ ion-modal.contact-info-modal {
   color: var(--nivra-text);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .07), transparent 26%),
-    rgba(8, 13, 15, .98);
+    var(--nivra-panel-solid);
 }
 
 .contact-info header {
@@ -909,7 +909,7 @@ ion-modal.contact-info-modal {
   align-items: center;
   gap: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, .1);
-  background: rgba(8, 13, 15, .96);
+  background: var(--nivra-panel-solid);
   backdrop-filter: var(--nivra-glass);
 }
 
@@ -1474,7 +1474,7 @@ ion-modal.forward-modal {
   --width: min(560px, calc(100vw - 24px));
   --height: min(680px, calc(100dvh - 36px));
   --border-radius: 8px;
-  --background: rgba(8, 13, 15, .97);
+  --background: var(--nivra-panel-solid);
   --box-shadow: var(--nivra-shadow-soft);
   color: var(--nivra-text);
 }
@@ -1487,7 +1487,7 @@ ion-modal.forward-modal {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   overflow: hidden;
   color: var(--nivra-text);
-  background: rgba(8, 13, 15, .97);
+  background: var(--nivra-panel-solid);
 }
 
 .forward-modal header,
@@ -1676,7 +1676,6 @@ ion-modal.forward-modal {
   color: #000;
   background: #e5e5ea;
   box-shadow: none;
-  text-align: center;
 }
 
 :host-context(.nivra-light-theme) .message.decrypt-error footer,

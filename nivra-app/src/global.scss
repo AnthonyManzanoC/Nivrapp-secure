@@ -123,6 +123,19 @@ ion-textarea {
   caret-color: var(--nivra-brand-2);
 }
 
+ion-modal,
+ion-popover {
+  --background: var(--nivra-panel-solid);
+  --color: var(--nivra-text);
+  color: var(--nivra-text);
+}
+
+ion-modal:not(.story-viewer-modal)::part(content),
+ion-popover::part(content) {
+  color: var(--nivra-text);
+  background: var(--nivra-panel-solid);
+}
+
 html.nivra-light-theme,
 body.nivra-light-theme,
 body.nivra-light-theme app-root,
@@ -142,9 +155,21 @@ body.nivra-light-theme ion-content {
   --background: var(--nivra-bg);
 }
 
-body.nivra-light-theme ion-modal {
+body.nivra-light-theme ion-modal,
+body.nivra-light-theme ion-popover {
   --background: var(--nivra-panel-solid);
+  --color: var(--nivra-text);
   color: var(--nivra-text);
+}
+
+body.nivra-light-theme ion-modal:not(.story-viewer-modal)::part(content),
+body.nivra-light-theme ion-popover::part(content) {
+  border: 1px solid var(--nivra-line);
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(247, 248, 251, .9)),
+    var(--nivra-panel-solid);
+  box-shadow: var(--nivra-shadow-soft);
 }
 
 body.nivra-light-theme * {
@@ -345,23 +370,126 @@ body.nivra-light-theme .list-item.active::part(native) {
 
 body.nivra-light-theme ion-modal.group-modal,
 body.nivra-light-theme ion-modal.invite-modal,
-body.nivra-light-theme ion-modal.share-modal {
-  --background: #ffffff;
+body.nivra-light-theme ion-modal.share-modal,
+body.nivra-light-theme ion-modal.contact-info-modal,
+body.nivra-light-theme ion-modal.forward-modal {
+  --background: var(--nivra-panel-solid);
+  --color: var(--nivra-text);
   --box-shadow: var(--nivra-shadow-soft);
 }
 
 body.nivra-light-theme .group-builder,
-body.nivra-light-theme .invite-sheet {
+body.nivra-light-theme .invite-sheet,
+body.nivra-light-theme .share-sheet,
+body.nivra-light-theme .contact-info,
+body.nivra-light-theme ion-modal.forward-modal section {
   border-color: var(--nivra-line);
+  color: var(--nivra-text) !important;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .72)),
-    #ffffff;
+    var(--nivra-panel-solid) !important;
 }
 
 body.nivra-light-theme .group-builder header,
 body.nivra-light-theme .group-builder footer,
-body.nivra-light-theme .invite-sheet header {
+body.nivra-light-theme .invite-sheet header,
+body.nivra-light-theme .contact-info header,
+body.nivra-light-theme ion-modal.forward-modal header,
+body.nivra-light-theme ion-modal.forward-modal footer {
   border-color: var(--nivra-line);
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .82) !important;
+  backdrop-filter: var(--nivra-glass);
+}
+
+body.nivra-light-theme .share-sheet h2,
+body.nivra-light-theme .contact-info h2,
+body.nivra-light-theme .contact-info h3,
+body.nivra-light-theme .contact-info strong,
+body.nivra-light-theme .group-builder h2,
+body.nivra-light-theme .group-builder strong,
+body.nivra-light-theme .invite-sheet h2,
+body.nivra-light-theme ion-modal.forward-modal h2,
+body.nivra-light-theme ion-modal.forward-modal strong {
+  color: var(--nivra-text) !important;
+}
+
+body.nivra-light-theme .share-sheet p,
+body.nivra-light-theme .share-link,
+body.nivra-light-theme .contact-info p,
+body.nivra-light-theme .contact-info small,
+body.nivra-light-theme .contact-info span:not(.avatar):not(.contact-photo):not(.photo-edit),
+body.nivra-light-theme .group-builder p,
+body.nivra-light-theme .group-name span,
+body.nivra-light-theme .group-contact small,
+body.nivra-light-theme .invite-sheet p,
+body.nivra-light-theme .invite-list small,
+body.nivra-light-theme ion-modal.forward-modal p,
+body.nivra-light-theme ion-modal.forward-modal small {
+  color: var(--nivra-muted) !important;
+}
+
+body.nivra-light-theme .contact-actions button,
+body.nivra-light-theme .story-placeholder,
+body.nivra-light-theme .media-tile,
+body.nivra-light-theme .settings-grid label,
+body.nivra-light-theme .add-members-toggle,
+body.nivra-light-theme .add-member-list > button,
+body.nivra-light-theme .participant-row,
+body.nivra-light-theme .admin-toggle,
+body.nivra-light-theme .group-contact,
+body.nivra-light-theme .invite-list button,
+body.nivra-light-theme ion-modal.forward-modal .forward-list button,
+body.nivra-light-theme ion-modal.forward-modal .forward-search,
+body.nivra-light-theme ion-popover .popover-menu button,
+body.nivra-light-theme ion-popover .attachment-menu button {
+  border-color: var(--nivra-line) !important;
+  color: var(--nivra-text) !important;
+  background: rgba(var(--ion-text-color-rgb), .06) !important;
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+body.nivra-light-theme .contact-actions ion-icon,
+body.nivra-light-theme .add-members-toggle ion-icon,
+body.nivra-light-theme .admin-toggle ion-icon,
+body.nivra-light-theme .group-contact ion-icon,
+body.nivra-light-theme .invite-list ion-icon,
+body.nivra-light-theme ion-modal.forward-modal ion-icon,
+body.nivra-light-theme ion-popover ion-icon {
+  color: var(--nivra-brand-2);
+}
+
+body.nivra-light-theme .story-ring,
+body.nivra-light-theme .group-story-ring img,
+body.nivra-light-theme .group-story-ring > span {
+  background:
+    linear-gradient(#ffffff, #ffffff) padding-box,
+    linear-gradient(135deg, var(--nivra-brand), var(--nivra-rose), var(--nivra-brand-2)) border-box !important;
+}
+
+body.nivra-light-theme .contact-photo,
+body.nivra-light-theme .contact-photo.fallback {
+  color: var(--nivra-text) !important;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(242, 244, 247, .86)),
+    linear-gradient(135deg, rgba(24, 214, 162, .24), rgba(52, 120, 246, .12)) !important;
+}
+
+body.nivra-light-theme .share-sheet ion-button[fill="outline"],
+body.nivra-light-theme .share-sheet ion-button[fill="clear"],
+body.nivra-light-theme .contact-info ion-button[fill="clear"],
+body.nivra-light-theme ion-modal.forward-modal ion-button[fill="outline"],
+body.nivra-light-theme ion-popover ion-button[fill="clear"] {
+  --background: rgba(var(--ion-text-color-rgb), .07);
+  --background-hover: rgba(var(--ion-text-color-rgb), .1);
+  --border-color: var(--nivra-line);
+  --color: var(--nivra-text);
+  --box-shadow: none;
+}
+
+body.nivra-light-theme .share-link {
+  border-color: var(--nivra-line) !important;
+  background: rgba(var(--ion-text-color-rgb), .045) !important;
 }
 
 body.nivra-light-theme .detail-stage {

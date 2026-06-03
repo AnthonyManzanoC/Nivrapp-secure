@@ -14,7 +14,7 @@
     linear-gradient(118deg, rgba(24, 214, 162, .105), transparent 31%),
     linear-gradient(244deg, rgba(107, 168, 255, .09), transparent 35%),
     linear-gradient(152deg, #06090c 0%, #0f1619 48%, #06090c 100%);
-  color: var(--nivra-text);
+  color: var(--ion-text-color);
 }
 
 .auth-panel {
@@ -51,11 +51,11 @@
 }
 
 .brand-row strong {
+  color: var(--nivra-text);
   font-size: 22px;
 }
 
 .brand-row span,
-.auth-copy,
 label span,
 ion-note {
   color: var(--nivra-muted);
@@ -64,6 +64,7 @@ ion-note {
 h1 {
   margin: 0 0 10px;
   max-width: 11ch;
+  color: var(--nivra-text);
   font-size: clamp(34px, 5vw, 54px);
   line-height: 1;
   letter-spacing: 0;
@@ -72,6 +73,7 @@ h1 {
 .auth-copy {
   margin: 0 0 24px;
   max-width: 42ch;
+  color: var(--nivra-soft);
   line-height: 1.55;
 }
 
@@ -81,7 +83,7 @@ ion-segment {
   min-width: 0;
   display: flex;
   margin-bottom: 18px;
-  --background: rgba(255, 255, 255, .065);
+  --background: rgba(var(--ion-text-color-rgb), .065);
   border: 1px solid var(--nivra-line);
   border-radius: 8px;
   padding: 4px;
@@ -121,7 +123,7 @@ label {
 }
 
 ion-input {
-  --background: rgba(255, 255, 255, .064);
+  --background: rgba(var(--ion-text-color-rgb), .064);
   --border-color: var(--nivra-line);
   --border-radius: 8px;
   --color: var(--nivra-text);
@@ -161,7 +163,7 @@ ion-button {
   padding: 4px;
   border: 1px solid var(--nivra-line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .054);
+  background: rgba(var(--ion-text-color-rgb), .054);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
 }
 
@@ -176,7 +178,7 @@ ion-button {
 .mini-tabs button.active {
   color: var(--nivra-text);
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, .085), rgba(255, 255, 255, .02)),
+    linear-gradient(180deg, rgba(var(--ion-text-color-rgb), .085), rgba(var(--ion-text-color-rgb), .02)),
     rgba(24, 214, 162, .18);
 }
 
@@ -270,6 +272,51 @@ ion-button {
   color: var(--nivra-brand-2);
   text-align: center;
   background: rgba(255, 255, 255, .06);
+}
+
+:host-context(.nivra-light-theme) .auth-shell {
+  background:
+    linear-gradient(118deg, rgba(24, 214, 162, .11), transparent 31%),
+    linear-gradient(244deg, rgba(52, 120, 246, .075), transparent 35%),
+    linear-gradient(152deg, #f8f9fc 0%, #f2f2f7 100%);
+}
+
+:host-context(.nivra-light-theme) .auth-panel {
+  border-right-color: var(--nivra-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .74)),
+    rgba(255, 255, 255, .82);
+  box-shadow: 0 10px 32px rgba(15, 23, 42, .06);
+}
+
+:host-context(.nivra-light-theme) .auth-visual {
+  background:
+    radial-gradient(circle at 50% 42%, rgba(24, 214, 162, .1), transparent 36%),
+    transparent;
+}
+
+:host-context(.nivra-light-theme) .phone-preview {
+  border-color: rgba(17, 24, 39, .08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .7)),
+    rgba(255, 255, 255, .84);
+  box-shadow: var(--nivra-shadow-soft);
+}
+
+:host-context(.nivra-light-theme) .mini-bubble {
+  color: var(--nivra-text);
+  background: #ffffff;
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+:host-context(.nivra-light-theme) .mini-bubble.mine {
+  color: #ffffff;
+  background: linear-gradient(135deg, #00c781, #00a7e1);
+}
+
+:host-context(.nivra-light-theme) .signal-strip span {
+  border-color: rgba(17, 24, 39, .08);
+  background: rgba(17, 24, 39, .045);
 }
 
 .recaptcha-slot {

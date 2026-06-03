@@ -302,7 +302,9 @@ ion-modal.share-modal {
   --width: min(92vw, 430px);
   --height: auto;
   --border-radius: 8px;
+  --background: var(--nivra-panel-solid);
   --box-shadow: 0 24px 70px rgba(0, 0, 0, .42);
+  color: var(--nivra-text);
 }
 
 .share-sheet {
@@ -312,7 +314,7 @@ ion-modal.share-modal {
   color: var(--nivra-text);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .06), rgba(255, 255, 255, .02)),
-    rgba(9, 15, 18, .98);
+    var(--nivra-panel-solid);
 }
 
 .share-sheet header {
