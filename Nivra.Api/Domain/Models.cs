@@ -169,6 +169,7 @@ public sealed class DeviceRecord
     public required string Id { get; init; }
     public required string UserId { get; init; }
     public required string Name { get; set; }
+    public string? HardwareId { get; set; }
     public KeyBundle KeyBundle { get; set; } = new();
     public bool IsTrusted { get; set; }
     public DateTimeOffset CreatedAt { get; init; }

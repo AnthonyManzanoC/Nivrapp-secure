@@ -101,7 +101,11 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(device => device.Id).HasMaxLength(64);
             entity.Property(device => device.UserId).HasMaxLength(64).IsRequired();
             entity.Property(device => device.Name).HasMaxLength(160).IsRequired();
+            entity.Property(device => device.HardwareId).HasMaxLength(128);
             entity.HasIndex(device => new { device.UserId, device.RevokedAt });
+            entity.HasIndex(device => new { device.UserId, device.HardwareId })
+                .IsUnique()
+                .HasFilter("\"HardwareId\" IS NOT NULL");
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(device => device.UserId).OnDelete(DeleteBehavior.Cascade);
 
             entity.OwnsOne(device => device.KeyBundle, owned =>

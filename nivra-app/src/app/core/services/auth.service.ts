@@ -2,6 +2,7 @@ import { Injectable, OnDestroy, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
+import { Capacitor } from '@capacitor/core';
 import {
   Auth,
   ConfirmationResult,
@@ -55,6 +56,7 @@ const FIREBASE_APP_NAME = 'nivra-web-phone-auth';
 const SESSION_KEY = 'nivra.auth';
 const PENDING_VAULT_INVITE_KEY = 'nivra.pendingVaultInvite';
 const PENDING_CONTACT_ALIAS_KEY = 'nivra.pendingContactAlias';
+const HARDWARE_ID_KEY = 'nivra_hardware_id';
 const TOKEN_REFRESH_SKEW_MS = 2 * 60 * 1000;
 
 @Injectable({ providedIn: 'root' })
@@ -79,6 +81,10 @@ export class AuthService implements OnDestroy {
   readonly isAuthenticated = computed(() => Boolean(this.accessToken()));
   readonly hasFreshAccessToken = computed(() => this.hasUsableAccessToken(this.session()));
 
+  constructor() {
+    void this.hardwareId();
+  }
+
   ngOnDestroy(): void {
     void this.stopQrLogin();
     void this.resetRecaptcha({ clear: true });
@@ -101,10 +107,12 @@ export class AuthService implements OnDestroy {
     this.busy.set(true);
     try {
       const keys = await this.crypto.prepareDeviceKeys(normalizedAlias, mode === 'register');
+      const device = await this.deviceProfile();
       const payload = {
         alias: normalizedAlias,
         password,
-        deviceName: this.deviceName(),
+        deviceName: device.name,
+        hardwareId: device.hardwareId,
         displayName: mode === 'register' ? displayName.trim() || normalizedAlias : undefined,
         email: null,
         phone: null,
@@ -151,10 +159,12 @@ export class AuthService implements OnDestroy {
       const credential = await this.confirmationResult.confirm(code.trim());
       const firebaseToken = await credential.user.getIdToken();
       const keys = await this.crypto.prepareDeviceKeys(null, true);
+      const device = await this.deviceProfile();
       const response = await firstValueFrom(
         this.api.post<FirebasePhoneVerifyResponse>('/api/auth/phone/verify-firebase', {
           firebaseToken,
-          deviceName: this.deviceName(),
+          deviceName: device.name,
+          hardwareId: device.hardwareId,
           keyBundle: keys.keyBundle,
         }, { skipAuth: true }),
       );
@@ -188,12 +198,14 @@ export class AuthService implements OnDestroy {
 
     this.busy.set(true);
     try {
+      const device = await this.deviceProfile();
       const auth = await firstValueFrom(
         this.api.post<AuthSession>('/auth/phone/complete-alias', {
           phoneSetupToken: pending.token,
           alias: normalizedAlias,
           displayName: displayName.trim() || normalizedAlias,
-          deviceName: this.deviceName(),
+          deviceName: device.name,
+          hardwareId: device.hardwareId,
           keyBundle: pending.keys.keyBundle,
         }, { skipAuth: true }),
       );
@@ -207,9 +219,11 @@ export class AuthService implements OnDestroy {
   async startQrLogin(): Promise<QrLoginChallenge> {
     await this.stopQrLogin();
     const ephemeral = await this.crypto.createQrEphemeralKeys();
+    const device = await this.deviceProfile();
     const serverChallenge = await firstValueFrom(
       this.api.post<QrLoginStartResponse>('/auth/qr/start', {
-        deviceName: this.deviceName(),
+        deviceName: device.name,
+        hardwareId: device.hardwareId,
         keyBundle: null,
         publicKey: this.crypto.base64UrlJson(ephemeral.publicJwk),
       }, { skipAuth: true }),
@@ -323,12 +337,14 @@ export class AuthService implements OnDestroy {
       throw new Error('Necesitas una sesion activa para vincular otro dispositivo.');
     }
     const keyMaterial = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+    const device = await this.deviceProfile();
     const payload = {
       keyMaterial: {
         privateJwk: keyMaterial.privateJwk,
         publicJwk: keyMaterial.publicJwk,
       },
-      sourceDeviceName: this.deviceName(),
+      sourceDeviceName: device.name,
+      sourceHardwareId: device.hardwareId,
       linkedAt: new Date().toISOString(),
     };
     const publicMaterial = challenge.publicJwk || challenge.publicSpki;
@@ -440,8 +456,98 @@ export class AuthService implements OnDestroy {
   }
 
   deviceName(): string {
-    const platform = navigator.platform || 'Web';
-    return `${platform} Nivra`;
+    return this.describeDeviceName();
+  }
+
+  private async deviceProfile(): Promise<{ hardwareId: string; name: string }> {
+    return {
+      hardwareId: await this.hardwareId(),
+      name: this.describeDeviceName(),
+    };
+  }
+
+  private async hardwareId(): Promise<string> {
+    const nativeId = await this.nativeHardwareId();
+    if (nativeId) {
+      localStorage.setItem(HARDWARE_ID_KEY, nativeId);
+      return nativeId;
+    }
+
+    const existing = localStorage.getItem(HARDWARE_ID_KEY)?.trim();
+    if (existing) {
+      return existing;
+    }
+
+    const id = crypto.randomUUID?.() ?? this.fallbackUuid();
+    localStorage.setItem(HARDWARE_ID_KEY, id);
+    return id;
+  }
+
+  private async nativeHardwareId(): Promise<string | null> {
+    if (!Capacitor.isNativePlatform?.()) {
+      return null;
+    }
+
+    const capacitorWindow = window as unknown as {
+      Capacitor?: {
+        Plugins?: {
+          Device?: {
+            getId?: () => Promise<{ identifier?: string | null; uuid?: string | null }>;
+          };
+        };
+      };
+    };
+    const getId = capacitorWindow.Capacitor?.Plugins?.Device?.getId;
+    if (!getId) {
+      return null;
+    }
+
+    try {
+      const result = await getId();
+      return result.identifier?.trim() || result.uuid?.trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  private fallbackUuid(): string {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+
+  private describeDeviceName(): string {
+    const platform = Capacitor.getPlatform?.() || 'web';
+    const os = this.detectOs();
+    const browser = this.detectBrowser();
+    if (platform !== 'web') {
+      return `${os} Nivra Mobile`;
+    }
+    return `${os} ${browser}`;
+  }
+
+  private detectOs(): string {
+    const ua = navigator.userAgent || '';
+    const platform = navigator.platform || '';
+    if (/android/i.test(ua)) return 'Android';
+    if (/iphone|ipad|ipod/i.test(ua) || /iPad|iPhone|iPod/.test(platform)) return 'iOS';
+    if (/win/i.test(platform)) return 'Windows';
+    if (/mac/i.test(platform)) return 'macOS';
+    if (/linux/i.test(platform)) return 'Linux';
+    return 'Web';
+  }
+
+  private detectBrowser(): string {
+    const ua = navigator.userAgent || '';
+    if (/Edg\//.test(ua)) return 'Edge';
+    if (/OPR\//.test(ua)) return 'Opera';
+    if (/Chrome\//.test(ua) && !/Edg\//.test(ua)) return 'Chrome';
+    if (/Safari\//.test(ua) && !/Chrome\//.test(ua)) return 'Safari';
+    if (/Firefox\//.test(ua)) return 'Firefox';
+    return 'Browser';
   }
 
   private async completeImportedAuth(

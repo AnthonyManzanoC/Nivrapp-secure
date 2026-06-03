@@ -10,6 +10,7 @@ import {
   IonContent,
   IonIcon,
   IonInput,
+  LoadingController,
   IonModal,
   IonSpinner,
   IonTextarea,
@@ -41,6 +42,7 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly calls = inject(CallsService);
   readonly push = inject(PushService);
   private readonly router = inject(Router);
+  private readonly loadingController = inject(LoadingController);
   alias = '';
   private originalAlias = '';
   displayName = '';
@@ -378,11 +380,21 @@ export class AccountPage implements OnInit, OnDestroy {
 
   async authorizeQr(): Promise<void> {
     await this.run(async () => {
-      await this.auth.authorizeQrLoginText(this.qrText);
-      this.qrText = '';
-      await this.stopQrScanner();
-      await this.account.load();
-      this.notice = 'Dispositivo vinculado por QR.';
+      const loading = await this.loadingController.create({
+        message: 'Vinculando dispositivo seguro...',
+        spinner: 'crescent',
+        backdropDismiss: false,
+      });
+      await loading.present();
+      try {
+        await this.auth.authorizeQrLoginText(this.qrText);
+        this.qrText = '';
+        await this.stopQrScanner();
+        await this.account.load();
+        this.notice = 'Dispositivo vinculado por QR.';
+      } finally {
+        await loading.dismiss().catch(() => undefined);
+      }
     });
   }
 

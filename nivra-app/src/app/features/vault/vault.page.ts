@@ -2,7 +2,9 @@ import { CommonModule, DatePipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
-import { IonButton, IonContent, IonFooter, IonHeader, IonIcon, IonInput, IonSpinner, IonTextarea, IonToolbar } from '@ionic/angular/standalone';
+import { Capacitor } from '@capacitor/core';
+import { StatusBar } from '@capacitor/status-bar';
+import { IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
   addCircleOutline,
@@ -10,8 +12,10 @@ import {
   closeOutline,
   checkmarkCircleOutline,
   cloudDownloadOutline,
+  contractOutline,
   documentAttachOutline,
   enterOutline,
+  expandOutline,
   headsetOutline,
   keyOutline,
   linkOutline,
@@ -34,7 +38,7 @@ import { MediaStreamDirective } from '../../shared/media-stream.directive';
 @Component({
   selector: 'app-vault',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonFooter, IonHeader, IonIcon, IonInput, IonSpinner, IonTextarea, IonToolbar, MediaStreamDirective],
+  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
   templateUrl: './vault.page.html',
   styleUrls: ['./vault.page.scss'],
 })
@@ -59,7 +63,9 @@ export class VaultPage implements OnInit, OnDestroy {
   pendingInvitePin = '';
   roomPinById: Record<string, string> = {};
   selectedInviteIds = new Set<string>();
+  isFullscreen = false;
   private searchTimer: number | null = null;
+  private readonly fullscreenChangeHandler = () => this.syncFullscreenState();
 
   constructor() {
     addIcons({
@@ -68,8 +74,10 @@ export class VaultPage implements OnInit, OnDestroy {
       closeOutline,
       checkmarkCircleOutline,
       cloudDownloadOutline,
+      contractOutline,
       documentAttachOutline,
       enterOutline,
+      expandOutline,
       headsetOutline,
       keyOutline,
       linkOutline,
@@ -88,15 +96,18 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async ngOnInit(): Promise<void> {
+    document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
     await this.vault.enablePrivacyShield();
     await this.vault.load();
     await this.acceptIncomingInvite();
   }
 
   ngOnDestroy(): void {
+    document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
     if (this.searchTimer !== null) {
       window.clearTimeout(this.searchTimer);
     }
+    void this.exitVaultFullscreen();
     void this.vault.disablePrivacyShield();
   }
 
@@ -192,10 +203,6 @@ export class VaultPage implements OnInit, OnDestroy {
     await this.joinRoom(room);
   }
 
-  closeRoomView(): void {
-    this.vault.closeRoomView();
-  }
-
   async joinRoom(room: VaultRoom): Promise<void> {
     await this.run(`join:${room.id}`, async () => {
       const joined = await this.vault.joinRoom(room, this.roomPinById[room.id] || null);
@@ -207,8 +214,21 @@ export class VaultPage implements OnInit, OnDestroy {
 
   async leaveRoom(room: VaultRoom): Promise<void> {
     await this.run(`leave:${room.id}`, async () => {
+      if (this.isFullscreen && this.vault.activeRoomId() === room.id) {
+        await this.exitVaultFullscreen();
+      }
       await this.vault.leaveRoom(room.id);
       this.notice = 'Saliste de la sala.';
+    });
+  }
+
+  async toggleVaultFullscreen(): Promise<void> {
+    await this.run('vault:fullscreen', async () => {
+      if (this.isFullscreen) {
+        await this.exitVaultFullscreen();
+        return;
+      }
+      await this.enterVaultFullscreen();
     });
   }
 
@@ -316,6 +336,10 @@ export class VaultPage implements OnInit, OnDestroy {
     this.notice = 'Saliste del chat de voz.';
   }
 
+  fullscreenLabel(): string {
+    return this.isFullscreen ? 'Restablecer' : 'Pantalla completa';
+  }
+
   messageFile(message: VaultRoomMessageVm): FileChatPayload | null {
     return this.vault.asFile(message.payload);
   }
@@ -387,6 +411,38 @@ export class VaultPage implements OnInit, OnDestroy {
       return;
     }
     await navigator.clipboard?.writeText(text);
+  }
+
+  private async enterVaultFullscreen(): Promise<void> {
+    if (Capacitor.getPlatform() === 'web') {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      }
+      this.isFullscreen = true;
+      return;
+    }
+
+    await StatusBar.hide().catch(() => undefined);
+    this.isFullscreen = true;
+  }
+
+  private async exitVaultFullscreen(): Promise<void> {
+    if (Capacitor.getPlatform() === 'web') {
+      if (document.fullscreenElement && document.exitFullscreen) {
+        await document.exitFullscreen().catch(() => undefined);
+      }
+      this.isFullscreen = false;
+      return;
+    }
+
+    await StatusBar.show().catch(() => undefined);
+    this.isFullscreen = false;
+  }
+
+  private syncFullscreenState(): void {
+    if (Capacitor.getPlatform() === 'web') {
+      this.isFullscreen = Boolean(document.fullscreenElement);
+    }
   }
 
   private async clearInviteQuery(): Promise<void> {

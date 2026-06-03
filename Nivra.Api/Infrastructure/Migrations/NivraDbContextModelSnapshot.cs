@@ -245,6 +245,10 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("HardwareId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<bool>("IsTrusted")
                         .HasColumnType("boolean");
 
@@ -267,6 +271,10 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("UserId", "RevokedAt");
+
+                    b.HasIndex("UserId", "HardwareId")
+                        .IsUnique()
+                        .HasFilter("\"HardwareId\" IS NOT NULL");
 
                     b.ToTable("devices", "public");
                 });

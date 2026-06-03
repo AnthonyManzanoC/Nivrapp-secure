@@ -9,7 +9,7 @@ public sealed class QrLoginService(TimeProvider timeProvider)
     private readonly ConcurrentDictionary<string, QrLoginChallenge> _challenges = new(StringComparer.Ordinal);
     private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(2);
 
-    public QrLoginChallenge Start(string deviceName, KeyBundleRequest? keyBundle, string? publicKey)
+    public QrLoginChallenge Start(string deviceName, KeyBundleRequest? keyBundle, string? publicKey, string? hardwareId)
     {
         PurgeExpired();
 
@@ -21,6 +21,7 @@ public sealed class QrLoginService(TimeProvider timeProvider)
             deviceName.Trim(),
             keyBundle,
             publicKey?.Trim(),
+            hardwareId?.Trim(),
             timeProvider.GetUtcNow(),
             timeProvider.GetUtcNow().Add(Lifetime));
 
@@ -51,6 +52,17 @@ public sealed class QrLoginService(TimeProvider timeProvider)
             string.Equals(challenge.Code, code.Trim(), StringComparison.Ordinal)
             ? challenge
             : null;
+    }
+
+    public void AttachConnection(string qrId, string code, string connectionId)
+    {
+        var challenge = GetPending(qrId, code);
+        if (challenge is null || string.IsNullOrWhiteSpace(connectionId))
+        {
+            return;
+        }
+
+        challenge.ConnectionId = connectionId.Trim();
     }
 
     public bool TryAuthorize(string qrId, string code, QrLoginAuthorizedResponse authorization)
@@ -90,6 +102,7 @@ public sealed class QrLoginChallenge(
     string deviceName,
     KeyBundleRequest? keyBundle,
     string? publicKey,
+    string? hardwareId,
     DateTimeOffset createdAt,
     DateTimeOffset expiresAt)
 {
@@ -98,6 +111,8 @@ public sealed class QrLoginChallenge(
     public string DeviceName { get; } = deviceName;
     public KeyBundleRequest? KeyBundle { get; } = keyBundle;
     public string? PublicKey { get; } = publicKey;
+    public string? HardwareId { get; } = hardwareId;
+    public string? ConnectionId { get; set; }
     public DateTimeOffset CreatedAt { get; } = createdAt;
     public DateTimeOffset ExpiresAt { get; } = expiresAt;
     public DateTimeOffset? AuthorizedAt { get; set; }

@@ -12,13 +12,15 @@ public sealed record RegisterRequest(
     KeyBundleRequest KeyBundle,
     string? DisplayName,
     string? Email,
-    string? Phone);
+    string? Phone,
+    string? HardwareId);
 
 public sealed record LoginRequest(
     string Alias,
     string Password,
     string DeviceName,
-    KeyBundleRequest? KeyBundle);
+    KeyBundleRequest? KeyBundle,
+    string? HardwareId);
 
 public sealed record RefreshTokenRequest(string RefreshToken);
 
@@ -57,12 +59,14 @@ public sealed record PhoneOtpVerifyRequest(
     string Phone,
     string Code,
     string DeviceName,
-    KeyBundleRequest KeyBundle);
+    KeyBundleRequest KeyBundle,
+    string? HardwareId);
 
 public sealed record FirebasePhoneVerifyRequest(
     string FirebaseToken,
     string DeviceName,
-    KeyBundleRequest KeyBundle);
+    KeyBundleRequest KeyBundle,
+    string? HardwareId);
 
 public sealed record PhoneOtpVerifyResponse(
     bool RequiresAlias,
@@ -76,9 +80,10 @@ public sealed record CompletePhoneAliasRequest(
     string Alias,
     string? DisplayName,
     string DeviceName,
-    KeyBundleRequest KeyBundle);
+    KeyBundleRequest KeyBundle,
+    string? HardwareId);
 
-public sealed record QrLoginStartRequest(string DeviceName, KeyBundleRequest? KeyBundle, string? PublicKey);
+public sealed record QrLoginStartRequest(string DeviceName, KeyBundleRequest? KeyBundle, string? PublicKey, string? HardwareId);
 
 public sealed record QrLoginStartResponse(string QrId, string Code, string SyncToken, string DeepLink, DateTimeOffset ExpiresAt);
 
@@ -103,9 +108,10 @@ public sealed record DeviceResponse(
     bool IsTrusted,
     DateTimeOffset CreatedAt,
     DateTimeOffset? LastSeenAt,
-    DateTimeOffset? RevokedAt);
+    DateTimeOffset? RevokedAt,
+    string? HardwareId);
 
-public sealed record LinkDeviceRequest(string DeviceName, KeyBundleRequest KeyBundle);
+public sealed record LinkDeviceRequest(string DeviceName, KeyBundleRequest KeyBundle, string? HardwareId);
 
 public sealed record PublicDeviceKeyResponse(
     string DeviceId,

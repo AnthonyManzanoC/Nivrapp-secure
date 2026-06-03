@@ -232,10 +232,6 @@ export class VaultService {
     this.messagesByRoom.update((state) => ({ ...state, [roomId]: state[roomId] ?? [] }));
   }
 
-  closeRoomView(): void {
-    this.setActiveRoom(null);
-  }
-
   async leaveRoom(roomId: string): Promise<void> {
     await firstValueFrom(this.api.post(`/vault/rooms/${encodeURIComponent(roomId)}/leave`, {}));
     if (this.activeRoomId() === roomId) {

@@ -40,6 +40,7 @@ public sealed class NivraHub(
             qrLogin.IsValid(qrId, qrCode))
         {
             await Groups.AddToGroupAsync(Context.ConnectionId, GroupsFor.QrLogin(qrId));
+            qrLogin.AttachConnection(qrId, qrCode, Context.ConnectionId);
             await base.OnConnectedAsync();
             return;
         }

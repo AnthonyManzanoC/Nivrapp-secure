@@ -47,6 +47,7 @@ export interface NivraDevice {
   id: string;
   userId: string;
   name: string;
+  hardwareId?: string | null;
   isTrusted: boolean;
   createdAt: string;
   lastSeenAt?: string | null;

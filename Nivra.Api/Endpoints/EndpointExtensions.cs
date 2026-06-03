@@ -114,8 +114,7 @@ public static partial class EndpointExtensions
                 return Error("alias_taken", "Ese alias ya esta ocupado.", StatusCodes.Status409Conflict);
             }
 
-            var device = NewDevice(user.Id, request.DeviceName, request.KeyBundle, now, trusted: true);
-            await store.AddDeviceAsync(device, cancellationToken);
+            var device = await UpsertDeviceAsync(db, user.Id, request.DeviceName, request.HardwareId, request.KeyBundle, now, trusted: true, cancellationToken);
             var tokens = await tokenService.CreateSessionAsync(store, user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
             await store.AddAuditAsync(user.Id, "auth.register", ClientIp(http), "Initial account and trusted device created.", now, cancellationToken);
             await NotifyContactJoinedWatchersAsync(db, pushNotifications, user.Id, user.PhoneHash, cancellationToken);
@@ -123,7 +122,7 @@ public static partial class EndpointExtensions
             return Results.Created("/me", new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens));
         });
 
-        group.MapPost("/login", async Task<IResult> (LoginRequest request, INivraStore store, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
+        group.MapPost("/login", async Task<IResult> (LoginRequest request, INivraStore store, NivraDbContext db, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
         {
             var alias = request.Alias.Trim();
             if (string.IsNullOrWhiteSpace(alias) || string.IsNullOrWhiteSpace(request.Password))
@@ -139,8 +138,7 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var device = NewDevice(user.Id, request.DeviceName, request.KeyBundle ?? new KeyBundleRequest(null, null, null, []), now, trusted: true);
-            await store.AddDeviceAsync(device, cancellationToken);
+            var device = await UpsertDeviceAsync(db, user.Id, request.DeviceName, request.HardwareId, request.KeyBundle ?? new KeyBundleRequest(null, null, null, []), now, trusted: true, cancellationToken);
             var tokens = await tokenService.CreateSessionAsync(store, user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
             await store.AddAuditAsync(user.Id, "auth.login", ClientIp(http), $"Device={device.Id}", now, cancellationToken);
 
@@ -176,6 +174,7 @@ public static partial class EndpointExtensions
                 phone,
                 request.DeviceName,
                 request.KeyBundle,
+                request.HardwareId,
                 "auth.phone_login",
                 "OTP verified",
                 db,
@@ -224,6 +223,7 @@ public static partial class EndpointExtensions
                 phone,
                 request.DeviceName,
                 request.KeyBundle,
+                request.HardwareId,
                 "auth.firebase_phone_login",
                 $"FirebaseUid={decodedToken.Uid}",
                 db,
@@ -292,8 +292,7 @@ public static partial class EndpointExtensions
             user.PhoneHash = PrivacyHashes.PhoneContactHash(setup.Phone);
             user.UpdatedAt = now;
 
-            var device = NewDevice(user.Id, request.DeviceName, request.KeyBundle, now, trusted: true);
-            db.Devices.Add(device);
+            var device = await UpsertDeviceAsync(db, user.Id, request.DeviceName, request.HardwareId, request.KeyBundle, now, trusted: true, cancellationToken);
             db.SecurityAuditEvents.Add(new SecurityAuditEvent
             {
                 Id = NivraIds.NewId("aud"),
@@ -327,7 +326,7 @@ public static partial class EndpointExtensions
                 return Error("invalid_device", "El nombre del dispositivo es obligatorio.");
             }
 
-            var challenge = qrLogin.Start(request.DeviceName, request.KeyBundle, request.PublicKey);
+            var challenge = qrLogin.Start(request.DeviceName, request.KeyBundle, request.PublicKey, request.HardwareId);
             var syncToken = $"{challenge.Id}.{challenge.Code}";
             return Results.Ok(new QrLoginStartResponse(
                 challenge.Id,
@@ -388,8 +387,7 @@ public static partial class EndpointExtensions
 
             var now = timeProvider.GetUtcNow();
             var linkedKeyBundle = KeyBundleToRequest(sourceDevice.KeyBundle);
-            var device = NewDevice(user.Id, challenge.DeviceName, linkedKeyBundle, now, trusted: true);
-            db.Devices.Add(device);
+            var device = await UpsertDeviceAsync(db, user.Id, challenge.DeviceName, challenge.HardwareId, linkedKeyBundle, now, trusted: true, cancellationToken);
             db.SecurityAuditEvents.Add(new SecurityAuditEvent
             {
                 Id = NivraIds.NewId("aud"),
@@ -411,6 +409,11 @@ public static partial class EndpointExtensions
 
             await hub.Clients.Group(GroupsFor.QrLogin(request.QrId)).SendAsync("QrAuthorized", authorization, cancellationToken);
             await hub.Clients.Group(GroupsFor.QrLogin(request.QrId)).SendAsync("auth.qrAuthorized", authorization, cancellationToken);
+            if (!string.IsNullOrWhiteSpace(challenge.ConnectionId))
+            {
+                await hub.Clients.Client(challenge.ConnectionId).SendAsync("QrAuthorized", authorization, cancellationToken);
+                await hub.Clients.Client(challenge.ConnectionId).SendAsync("auth.qrAuthorized", authorization, cancellationToken);
+            }
             return Results.Accepted(value: authorization);
         }
 
@@ -586,7 +589,7 @@ public static partial class EndpointExtensions
                 : Results.Ok((await store.ActiveDevicesForUserAsync(current.UserId, cancellationToken)).Select(ToDeviceResponse).ToList());
         });
 
-        devices.MapPost("/link", async Task<IResult> (LinkDeviceRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        devices.MapPost("/link", async Task<IResult> (LinkDeviceRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -600,8 +603,8 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var device = NewDevice(current.UserId, request.DeviceName, request.KeyBundle, now, trusted: true);
-            await store.AddDeviceAsync(device, cancellationToken);
+            var device = await UpsertDeviceAsync(db, current.UserId, request.DeviceName, request.HardwareId, request.KeyBundle, now, trusted: true, cancellationToken);
+            await store.SaveChangesAsync(cancellationToken);
             await store.AddAuditAsync(current.UserId, "device.link", ClientIp(http), $"Device={device.Id}", now, cancellationToken);
             return Results.Created($"/devices/{device.Id}", ToDeviceResponse(device));
         });
@@ -3335,6 +3338,7 @@ public static partial class EndpointExtensions
         string phone,
         string deviceName,
         KeyBundleRequest? keyBundle,
+        string? hardwareId,
         string auditAction,
         string auditDetails,
         NivraDbContext db,
@@ -3377,13 +3381,15 @@ public static partial class EndpointExtensions
             shouldNotifyJoined = user.IsDiscoverable;
         }
 
-        var device = NewDevice(
+        var device = await UpsertDeviceAsync(
+            db,
             user.Id,
             deviceName,
+            hardwareId,
             keyBundle ?? new KeyBundleRequest(null, null, null, []),
             now,
-            trusted: true);
-        db.Devices.Add(device);
+            trusted: true,
+            cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         if (shouldNotifyJoined)
         {
@@ -3475,18 +3481,68 @@ public static partial class EndpointExtensions
         return null!;
     }
 
-    private static DeviceRecord NewDevice(string userId, string deviceName, KeyBundleRequest keyBundle, DateTimeOffset now, bool trusted)
+    private static async Task<DeviceRecord> UpsertDeviceAsync(
+        NivraDbContext db,
+        string userId,
+        string deviceName,
+        string? hardwareId,
+        KeyBundleRequest keyBundle,
+        DateTimeOffset now,
+        bool trusted,
+        CancellationToken cancellationToken)
+    {
+        var normalizedHardwareId = NormalizeHardwareId(hardwareId);
+        DeviceRecord? device = null;
+        if (normalizedHardwareId is not null)
+        {
+            device = await db.Devices.FirstOrDefaultAsync(candidate =>
+                candidate.UserId == userId &&
+                candidate.HardwareId == normalizedHardwareId,
+                cancellationToken);
+        }
+
+        if (device is null)
+        {
+            device = NewDevice(userId, deviceName, normalizedHardwareId, keyBundle, now, trusted);
+            db.Devices.Add(device);
+            return device;
+        }
+
+        device.Name = NormalizeDeviceName(deviceName);
+        device.KeyBundle = ToKeyBundle(keyBundle, now);
+        device.IsTrusted = device.IsTrusted || trusted;
+        device.LastSeenAt = now;
+        device.RevokedAt = null;
+        return device;
+    }
+
+    private static DeviceRecord NewDevice(string userId, string deviceName, string? hardwareId, KeyBundleRequest keyBundle, DateTimeOffset now, bool trusted)
     {
         return new DeviceRecord
         {
             Id = NivraIds.NewId("dev"),
             UserId = userId,
-            Name = deviceName.Trim(),
+            Name = NormalizeDeviceName(deviceName),
+            HardwareId = hardwareId,
             KeyBundle = ToKeyBundle(keyBundle, now),
             IsTrusted = trusted,
             CreatedAt = now,
             LastSeenAt = now
         };
+    }
+
+    private static string NormalizeDeviceName(string deviceName)
+    {
+        var normalized = NormalizeOptional(deviceName) ?? "Nivra";
+        return normalized.Length <= 160 ? normalized : normalized[..160];
+    }
+
+    private static string? NormalizeHardwareId(string? hardwareId)
+    {
+        var normalized = NormalizeOptional(hardwareId);
+        return normalized is null
+            ? null
+            : normalized.Length <= 128 ? normalized : normalized[..128];
     }
 
     private static KeyBundle ToKeyBundle(KeyBundleRequest request, DateTimeOffset now)
@@ -3540,7 +3596,7 @@ public static partial class EndpointExtensions
 
     private static DeviceResponse ToDeviceResponse(DeviceRecord device)
     {
-        return new DeviceResponse(device.Id, device.UserId, device.Name, device.IsTrusted, device.CreatedAt, device.LastSeenAt, device.RevokedAt);
+        return new DeviceResponse(device.Id, device.UserId, device.Name, device.IsTrusted, device.CreatedAt, device.LastSeenAt, device.RevokedAt, device.HardwareId);
     }
 
     private static async Task<ContactResponse> ToContactResponseAsync(ContactRecord contact, INivraStore store, CancellationToken cancellationToken)
