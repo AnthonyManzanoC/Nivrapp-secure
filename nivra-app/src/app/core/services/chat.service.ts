@@ -1,4 +1,5 @@
 import { DestroyRef, Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { firstValueFrom, fromEvent } from 'rxjs';
 import {
@@ -82,6 +83,7 @@ export class ChatService implements OnDestroy {
   private readonly destroyRef = inject(DestroyRef);
   private readonly directories = new Map<string, PublicKeyDirectory>();
   private readonly readReceiptSentIds = new Set<string>();
+  private readonly missingReceiptMessageIds = new Set<string>();
   private readonly pendingReactionSends = new Set<string>();
   private readonly pendingReactionsByMessageId = new Map<string, MessageReaction[]>();
   private readonly profileFetchInFlight = new Set<string>();
@@ -1709,12 +1711,27 @@ export class ChatService implements OnDestroy {
   }
 
   private async sendReceipt(messageId: string, kind: 'Delivered' | 'Read' | 'Deleted'): Promise<void> {
-    await firstValueFrom(this.api.post(`/messages/${encodeURIComponent(messageId)}/receipt`, { kind })).then((response) => {
+    if (this.missingReceiptMessageIds.has(messageId)) {
+      return;
+    }
+
+    try {
+      const response = await firstValueFrom(this.api.post(`/messages/${encodeURIComponent(messageId)}/receipt`, { kind }));
       const message = response as MessageResponse;
       if (message?.id) {
         this.mergeMessageReceipts(message.id, message.receipts ?? []);
       }
-    });
+    } catch (error) {
+      if (this.isMissingMessageReceipt(error)) {
+        this.missingReceiptMessageIds.add(messageId);
+        return;
+      }
+      throw error;
+    }
+  }
+
+  private isMissingMessageReceipt(error: unknown): boolean {
+    return error instanceof HttpErrorResponse && (error.status === 404 || error.status === 410);
   }
 
   private applyReceipt(payload: unknown): void {

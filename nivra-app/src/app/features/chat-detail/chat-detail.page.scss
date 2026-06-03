@@ -1575,6 +1575,217 @@ ion-modal.forward-modal {
   border-radius: 8px;
 }
 
+:host-context(.nivra-light-theme),
+:host-context(.nivra-light-theme) .chat-detail {
+  color: #111827;
+  background: #f2f2f7 !important;
+}
+
+:host-context(.nivra-light-theme) .chat-header,
+:host-context(.nivra-light-theme) .composer-footer {
+  color: #000;
+  background: rgba(255, 255, 255, .94) !important;
+  box-shadow: 0 1px 0 rgba(60, 60, 67, .12);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+
+:host-context(.nivra-light-theme) ion-toolbar {
+  --background: rgba(255, 255, 255, .94);
+  --border-color: rgba(60, 60, 67, .14);
+  --color: #000;
+  color: #000;
+}
+
+:host-context(.nivra-light-theme) ion-toolbar ion-button {
+  --background: transparent;
+  --background-hover: rgba(60, 60, 67, .08);
+  --color: #374151;
+}
+
+:host-context(.nivra-light-theme) .title-wrap {
+  color: #111827;
+}
+
+:host-context(.nivra-light-theme) .title-wrap h1 {
+  color: #0f172a;
+}
+
+:host-context(.nivra-light-theme) .title-wrap p,
+:host-context(.nivra-light-theme) .forwarded-chip,
+:host-context(.nivra-light-theme) .file-copy span,
+:host-context(.nivra-light-theme) .call-log-message,
+:host-context(.nivra-light-theme) .call-log-bubble span,
+:host-context(.nivra-light-theme) .call-log-message small,
+:host-context(.nivra-light-theme) .message footer {
+  color: #667085;
+}
+
+:host-context(.nivra-light-theme) .messages-content,
+:host-context(.nivra-light-theme) .messages-content::part(background) {
+  --background: #f2f2f7;
+  background: #f2f2f7 !important;
+}
+
+:host-context(.nivra-light-theme) .message {
+  color: #111827;
+  border-color: rgba(60, 60, 67, .1);
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .1);
+}
+
+:host-context(.nivra-light-theme) .message p,
+:host-context(.nivra-light-theme) .file-copy strong,
+:host-context(.nivra-light-theme) .call-log-bubble strong {
+  color: #000;
+}
+
+:host-context(.nivra-light-theme) .message.mine {
+  color: #fff;
+  border-color: rgba(0, 0, 0, .02);
+  background: linear-gradient(135deg, #00c781, #00a7e1);
+  box-shadow: 0 2px 6px rgba(0, 167, 225, .22);
+}
+
+:host-context(.nivra-light-theme) .message.mine p,
+:host-context(.nivra-light-theme) .message.mine .file-copy strong,
+:host-context(.nivra-light-theme) .message.mine .file-copy span {
+  color: #fff;
+}
+
+:host-context(.nivra-light-theme) .message.mine footer {
+  color: rgba(255, 255, 255, .82);
+}
+
+:host-context(.nivra-light-theme) .message-more {
+  color: #555;
+  background: rgba(60, 60, 67, .08);
+}
+
+:host-context(.nivra-light-theme) .message.mine .message-more {
+  color: rgba(255, 255, 255, .88);
+  background: rgba(0, 0, 0, .12);
+}
+
+:host-context(.nivra-light-theme) .message.decrypt-error,
+:host-context(.nivra-light-theme) .system-message {
+  align-self: center;
+  max-width: min(86%, 520px);
+  border: 1px solid rgba(60, 60, 67, .08);
+  border-radius: 999px;
+  padding: 7px 12px;
+  color: #000;
+  background: #e5e5ea;
+  box-shadow: none;
+  text-align: center;
+}
+
+:host-context(.nivra-light-theme) .message.decrypt-error footer,
+:host-context(.nivra-light-theme) .message.decrypt-error .message-more {
+  display: none;
+}
+
+:host-context(.nivra-light-theme) .call-log-bubble {
+  color: #000;
+  border-color: rgba(60, 60, 67, .08);
+  background: #e5e5ea;
+  box-shadow: none;
+}
+
+:host-context(.nivra-light-theme) .call-log-message.missed .call-log-bubble {
+  border-color: rgba(255, 59, 48, .12);
+  background: #ffe5e7;
+}
+
+:host-context(.nivra-light-theme) .call-log-bubble ion-icon {
+  color: #001f14;
+  background: #00e676;
+}
+
+:host-context(.nivra-light-theme) .reply-chip,
+:host-context(.nivra-light-theme) .quick-reaction-row,
+:host-context(.nivra-light-theme) .reactions,
+:host-context(.nivra-light-theme) .voice-load,
+:host-context(.nivra-light-theme) .file-thumb {
+  color: #111827;
+  border-color: rgba(60, 60, 67, .1);
+  background: #f8fafc;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+}
+
+:host-context(.nivra-light-theme) .reactions strong {
+  color: #667085;
+}
+
+:host-context(.nivra-light-theme) .edit-bar,
+:host-context(.nivra-light-theme) .policy-row,
+:host-context(.nivra-light-theme) .emoji-panel {
+  color: #111827;
+  border-top-color: rgba(60, 60, 67, .12);
+  background: rgba(255, 255, 255, .94);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+
+:host-context(.nivra-light-theme) .edit-bar span,
+:host-context(.nivra-light-theme) .policy-row {
+  color: #555;
+}
+
+:host-context(.nivra-light-theme) .policy-toggle,
+:host-context(.nivra-light-theme) .policy-row ion-select,
+:host-context(.nivra-light-theme) .emoji-panel button {
+  color: #111827;
+  border-color: rgba(60, 60, 67, .1);
+  background: #f5f5f7;
+}
+
+:host-context(.nivra-light-theme) .policy-row ion-toggle {
+  --track-background: rgba(60, 60, 67, .18);
+  --track-background-checked: rgba(0, 230, 118, .38);
+  --handle-background: #fff;
+  --handle-background-checked: #00e676;
+}
+
+:host-context(.nivra-light-theme) .composer {
+  border-top-color: rgba(60, 60, 67, .12);
+  background: rgba(255, 255, 255, .96);
+  box-shadow: 0 -2px 12px rgba(0, 0, 0, .05);
+  backdrop-filter: blur(18px) saturate(160%);
+}
+
+:host-context(.nivra-light-theme) .composer-icon {
+  --background: transparent;
+  --background-hover: rgba(60, 60, 67, .08);
+  --box-shadow: none;
+  --color: #555;
+}
+
+:host-context(.nivra-light-theme) .composer ion-textarea {
+  --background: #fff;
+  --color: #111827;
+  --placeholder-color: #9ca3af;
+  border-color: #e5e5ea;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .1);
+}
+
+:host-context(.nivra-light-theme) .composer .send {
+  --background: linear-gradient(135deg, #00c781, #00a7e1);
+  --color: #fff;
+  --box-shadow: 0 2px 8px rgba(0, 167, 225, .24);
+}
+
+:host-context(.nivra-light-theme) .composer-error,
+:host-context(.nivra-light-theme) .composer-notice {
+  background: rgba(255, 255, 255, .94);
+}
+
+:host-context(.nivra-light-theme) .composer-error {
+  color: #b42318;
+}
+
+:host-context(.nivra-light-theme) .composer-notice {
+  color: #047857;
+}
+
 @keyframes messageIn {
   from {
     opacity: 0;
