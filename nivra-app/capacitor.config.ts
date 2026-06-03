@@ -21,7 +21,7 @@ const config: CapacitorConfig = {
   plugins: {
     Keyboard: {
       resize: 'body',
-      style: 'DARK',
+      style: 'DEFAULT',
       resizeOnFullScreen: true,
     },
     CapacitorSQLite: {

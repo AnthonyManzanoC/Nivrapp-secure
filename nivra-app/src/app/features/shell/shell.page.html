@@ -1,7 +1,10 @@
 <ion-app>
   <main class="workspace" [class.mobile-nav-hidden]="hideMobileNav()">
     <nav class="rail" aria-label="Nivra">
-      <img class="rail-logo" src="assets/brand/nivra-mark.svg" alt="">
+      <a class="rail-brand" routerLink="/app/chats" aria-label="Nivra">
+        <img class="rail-logo" src="assets/brand/nivra-mark.svg" alt="">
+        <span>Nivra</span>
+      </a>
       @for (item of nav; track item.path) {
         <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active">
           <ion-icon [name]="item.icon"></ion-icon>

@@ -28,6 +28,9 @@ export class AppComponent {
   private readonly router = inject(Router);
   private readonly realtime = inject(SignalrService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly systemThemeQuery = typeof window !== 'undefined' && 'matchMedia' in window
+    ? window.matchMedia('(prefers-color-scheme: light)')
+    : null;
   readonly calls = inject(CallsService);
   private readonly now = signal(Date.now());
   private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
@@ -52,6 +55,7 @@ export class AppComponent {
 
   constructor() {
     this.applyStoredTheme();
+    this.bindSystemTheme();
     addIcons({ callOutline, videocamOutline });
     void this.configureNativeKeyboard();
 
@@ -126,17 +130,45 @@ export class AppComponent {
     if (typeof document === 'undefined') {
       return;
     }
-    const enabled = this.readStoredTheme() === 'light';
+    const enabled = this.prefersLightTheme();
     document.body.classList.toggle('nivra-light-theme', enabled);
     document.documentElement.classList.toggle('nivra-light-theme', enabled);
   }
 
-  private readStoredTheme(): 'dark' | 'light' {
+  private readStoredTheme(): 'dark' | 'light' | 'system' {
     try {
-      return localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark';
+      const value = localStorage.getItem(THEME_STORAGE_KEY);
+      return value === 'light' || value === 'dark' ? value : 'system';
     } catch {
-      return 'dark';
+      return 'system';
     }
+  }
+
+  private prefersLightTheme(): boolean {
+    const stored = this.readStoredTheme();
+    if (stored === 'light') {
+      return true;
+    }
+    if (stored === 'dark') {
+      return false;
+    }
+    return this.systemThemeQuery?.matches ?? false;
+  }
+
+  private bindSystemTheme(): void {
+    const query = this.systemThemeQuery;
+    if (!query) {
+      return;
+    }
+    const listener = () => {
+      if (this.readStoredTheme() !== 'system') {
+        return;
+      }
+      this.applyStoredTheme();
+      void Keyboard.setStyle({ style: this.lightThemeEnabled() ? KeyboardStyle.Light : KeyboardStyle.Dark }).catch(() => undefined);
+    };
+    query.addEventListener('change', listener);
+    this.destroyRef.onDestroy(() => query.removeEventListener('change', listener));
   }
 
   private lightThemeEnabled(): boolean {

@@ -162,9 +162,9 @@ body.nivra-light-theme .surface {
 }
 
 body.nivra-light-theme .panel {
-  border-color: var(--nivra-line);
+  border-color: rgba(17, 24, 39, .055);
   background: var(--nivra-panel-solid);
-  box-shadow: var(--nivra-shadow-tiny);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .05);
   backdrop-filter: var(--nivra-glass);
 }
 
@@ -174,9 +174,9 @@ body.nivra-light-theme .result-row,
 body.nivra-light-theme .story-row,
 body.nivra-light-theme .vault-row,
 body.nivra-light-theme .call-row {
-  border-color: var(--nivra-line);
+  border-color: rgba(17, 24, 39, .055);
   background: rgba(255, 255, 255, .72);
-  box-shadow: var(--nivra-shadow-tiny);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .05);
 }
 
 body.nivra-light-theme .device-row:hover,
@@ -300,10 +300,10 @@ body.nivra-light-theme .native-select,
 body.nivra-light-theme .group-name input,
 body.nivra-light-theme .call-search,
 body.nivra-light-theme .composer {
-  border-color: var(--nivra-line);
+  border-color: rgba(17, 24, 39, .07);
   color: var(--nivra-text);
   background: rgba(255, 255, 255, .78);
-  box-shadow: var(--nivra-shadow-tiny);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .05);
 }
 
 body.nivra-light-theme .search-box:focus-within,
@@ -324,10 +324,10 @@ body.nivra-light-theme .agenda-row,
 body.nivra-light-theme .room-card,
 body.nivra-light-theme .note-file-card,
 body.nivra-light-theme .vault-message {
-  border-color: var(--nivra-line);
+  border-color: rgba(17, 24, 39, .055);
   color: var(--nivra-text);
   background: rgba(255, 255, 255, .72);
-  box-shadow: var(--nivra-shadow-tiny);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, .05);
 }
 
 body.nivra-light-theme .list-item:hover::part(native),

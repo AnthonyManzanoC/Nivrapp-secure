@@ -505,7 +505,14 @@ export class AccountPage implements OnInit, OnDestroy {
 
   private readStoredTheme(): boolean {
     try {
-      return localStorage.getItem(THEME_STORAGE_KEY) === 'light';
+      const value = localStorage.getItem(THEME_STORAGE_KEY);
+      if (value === 'light') {
+        return true;
+      }
+      if (value === 'dark') {
+        return false;
+      }
+      return window.matchMedia?.('(prefers-color-scheme: light)').matches ?? false;
     } catch {
       return false;
     }
