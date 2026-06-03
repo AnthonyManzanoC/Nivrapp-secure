@@ -75,7 +75,7 @@ public static partial class EndpointExtensions
     {
         var group = app.MapGroup("/auth").RequireRateLimiting("auth");
 
-        group.MapPost("/register", async Task<IResult> (RegisterRequest request, INivraStore store, NivraDbContext db, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
+        group.MapPost("/register", async Task<IResult> (RegisterRequest request, INivraStore store, NivraDbContext db, PasswordHasher hasher, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
         {
             var validation = ValidateRegister(request);
             if (validation is not null)
@@ -118,6 +118,7 @@ public static partial class EndpointExtensions
             await store.AddDeviceAsync(device, cancellationToken);
             var tokens = await tokenService.CreateSessionAsync(store, user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
             await store.AddAuditAsync(user.Id, "auth.register", ClientIp(http), "Initial account and trusted device created.", now, cancellationToken);
+            await NotifyContactJoinedWatchersAsync(db, pushNotifications, user.Id, user.PhoneHash, cancellationToken);
 
             return Results.Created("/me", new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens));
         });
@@ -158,7 +159,7 @@ public static partial class EndpointExtensions
             return Results.Accepted(value: new PhoneOtpStartResponse(challenge.ExpiresAt, challenge.DeliveryHint));
         });
 
-        group.MapPost("/phone/verify", async Task<IResult> (PhoneOtpVerifyRequest request, NivraDbContext db, PhoneOtpService otpService, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
+        group.MapPost("/phone/verify", async Task<IResult> (PhoneOtpVerifyRequest request, NivraDbContext db, PhoneOtpService otpService, PasswordHasher hasher, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
         {
             var phone = NormalizePhone(request.Phone);
             if (phone is null || string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.DeviceName))
@@ -181,6 +182,7 @@ public static partial class EndpointExtensions
                 otpService,
                 hasher,
                 tokenService,
+                pushNotifications,
                 timeProvider,
                 http,
                 cancellationToken);
@@ -228,6 +230,7 @@ public static partial class EndpointExtensions
                 otpService,
                 hasher,
                 tokenService,
+                pushNotifications,
                 timeProvider,
                 http,
                 cancellationToken);
@@ -236,7 +239,7 @@ public static partial class EndpointExtensions
         group.MapPost("/phone/verify-firebase", VerifyFirebasePhone);
         app.MapPost("/api/auth/phone/verify-firebase", VerifyFirebasePhone).RequireRateLimiting("auth");
 
-        group.MapPost("/phone/complete-alias", async Task<IResult> (CompletePhoneAliasRequest request, NivraDbContext db, PhoneOtpService otpService, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
+        group.MapPost("/phone/complete-alias", async Task<IResult> (CompletePhoneAliasRequest request, NivraDbContext db, PhoneOtpService otpService, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(request.PhoneSetupToken) ||
                 string.IsNullOrWhiteSpace(request.Alias) ||
@@ -312,6 +315,7 @@ public static partial class EndpointExtensions
             }
 
             otpService.ConsumeAliasSetup(request.PhoneSetupToken);
+            await NotifyContactJoinedWatchersAsync(db, pushNotifications, user.Id, user.PhoneHash, cancellationToken);
             var tokens = await tokenService.CreateSessionAsync(new PgSqlNivraStore(db), user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
             return Results.Ok(new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens));
         });
@@ -469,7 +473,7 @@ public static partial class EndpointExtensions
             return user is null ? Results.Unauthorized() : Results.Ok(ToUserResponse(user));
         });
 
-        app.MapPatch("/me", async Task<IResult> (PatchProfileRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        app.MapPatch("/me", async Task<IResult> (PatchProfileRequest request, HttpContext http, INivraStore store, NivraDbContext db, PushNotificationService pushNotifications, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -500,6 +504,8 @@ public static partial class EndpointExtensions
                 }
             }
 
+            var previousPhoneHash = user.PhoneHash;
+            var wasDiscoverable = user.IsDiscoverable;
             user.DisplayName = request.DisplayName?.Trim() ?? user.DisplayName;
             user.Email = NormalizeOptional(request.Email) ?? user.Email;
             user.Phone = request.Phone is null ? user.Phone : normalizedPhone;
@@ -518,6 +524,12 @@ public static partial class EndpointExtensions
             {
                 db.ChangeTracker.Clear();
                 return Error("phone_taken", "Ese telefono ya esta asociado a otra cuenta Nivra.", StatusCodes.Status409Conflict);
+            }
+            if (user.PhoneHash is not null &&
+                user.IsDiscoverable &&
+                (!string.Equals(previousPhoneHash, user.PhoneHash, StringComparison.Ordinal) || !wasDiscoverable))
+            {
+                await NotifyContactJoinedWatchersAsync(db, pushNotifications, user.Id, user.PhoneHash, cancellationToken);
             }
             return Results.Ok(ToUserResponse(user));
         });
@@ -2949,6 +2961,39 @@ public static partial class EndpointExtensions
             return Results.Created($"/push-tokens/{push.Id}", new PushTokenResponse(push.Id, push.Provider, push.CreatedAt, push.RevokedAt, pushNotifications.IsConfigured));
         });
 
+        group.MapPost("/sync-contacts", async Task<IResult> (List<string>? contactPhoneHashes, HttpContext http, NivraDbContext db, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var hashes = NormalizeContactHashes(contactPhoneHashes, 5000);
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            var existing = await db.UserContactHashes
+                .Where(contactHash => contactHash.UserId == current.UserId)
+                .ToListAsync(cancellationToken);
+            var existingHashes = existing
+                .Select(contactHash => contactHash.ContactPhoneHash)
+                .ToHashSet(StringComparer.Ordinal);
+            var requestedHashes = hashes.ToHashSet(StringComparer.Ordinal);
+
+            db.UserContactHashes.RemoveRange(existing.Where(contactHash => !requestedHashes.Contains(contactHash.ContactPhoneHash)));
+            foreach (var hash in hashes.Where(hash => !existingHashes.Contains(hash)))
+            {
+                db.UserContactHashes.Add(new UserContactHash
+                {
+                    UserId = current.UserId,
+                    ContactPhoneHash = hash
+                });
+            }
+
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return Results.Ok(new ContactHashSyncResponse(hashes.Count, hashes.Count));
+        });
+
         group.MapGet("/status", (HttpContext http, PushNotificationService pushNotifications) =>
         {
             var current = http.GetCurrentUser();
@@ -3197,7 +3242,7 @@ public static partial class EndpointExtensions
                 user.PrivacySettings));
         });
 
-        app.MapPost("/data/delete-request", async Task<IResult> (DeleteAccountRequest request, HttpContext http, INivraStore store, EncryptedFileStorage storage, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        app.MapPost("/data/delete-request", async Task<IResult> (DeleteAccountRequest request, HttpContext http, INivraStore store, NivraDbContext db, EncryptedFileStorage storage, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3224,6 +3269,10 @@ public static partial class EndpointExtensions
             await store.RevokeDevicesForUserAsync(current.UserId, now, cancellationToken);
             await store.RevokeSessionsForUserAsync(current.UserId, now, cancellationToken);
             await store.DeleteContactsTouchingUserAsync(current.UserId, cancellationToken);
+            var uploadedContactHashes = await db.UserContactHashes
+                .Where(contactHash => contactHash.UserId == current.UserId)
+                .ToListAsync(cancellationToken);
+            db.UserContactHashes.RemoveRange(uploadedContactHashes);
 
             foreach (var item in await store.VaultItemsForUserAsync(current.UserId, cancellationToken))
             {
@@ -3253,6 +3302,7 @@ public static partial class EndpointExtensions
         PhoneOtpService otpService,
         PasswordHasher hasher,
         TokenService tokenService,
+        PushNotificationService pushNotifications,
         TimeProvider timeProvider,
         HttpContext http,
         CancellationToken cancellationToken)
@@ -3280,10 +3330,12 @@ public static partial class EndpointExtensions
         }
 
         var now = timeProvider.GetUtcNow();
+        var shouldNotifyJoined = false;
         if (user.PhoneHash is null)
         {
             user.PhoneHash = PrivacyHashes.PhoneContactHash(phone);
             user.UpdatedAt = now;
+            shouldNotifyJoined = user.IsDiscoverable;
         }
 
         var device = NewDevice(
@@ -3294,6 +3346,10 @@ public static partial class EndpointExtensions
             trusted: true);
         db.Devices.Add(device);
         await db.SaveChangesAsync(cancellationToken);
+        if (shouldNotifyJoined)
+        {
+            await NotifyContactJoinedWatchersAsync(db, pushNotifications, user.Id, user.PhoneHash, cancellationToken);
+        }
 
         var tokens = await tokenService.CreateSessionAsync(new PgSqlNivraStore(db), user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
         db.SecurityAuditEvents.Add(new SecurityAuditEvent
@@ -3880,6 +3936,60 @@ public static partial class EndpointExtensions
         }
 
         return null;
+    }
+
+    private static List<string> NormalizeContactHashes(IEnumerable<string>? values, int maxCount)
+    {
+        var limit = Math.Clamp(maxCount, 1, 10_000);
+        return (values ?? Enumerable.Empty<string>())
+            .Where(hash => !string.IsNullOrWhiteSpace(hash))
+            .Select(hash => hash.Trim().ToLowerInvariant())
+            .Where(PrivacyHashes.IsSha256Hex)
+            .Distinct(StringComparer.Ordinal)
+            .Take(limit)
+            .ToList();
+    }
+
+    private static async Task NotifyContactJoinedWatchersAsync(
+        NivraDbContext db,
+        PushNotificationService pushNotifications,
+        string joinedUserId,
+        string? phoneHash,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(phoneHash))
+        {
+            return;
+        }
+
+        var canBeDiscovered = await db.Users.AsNoTracking().AnyAsync(user =>
+            user.Id == joinedUserId &&
+            user.DisabledAt == null &&
+            user.IsDiscoverable &&
+            user.PhoneHash == phoneHash,
+            cancellationToken);
+        if (!canBeDiscovered)
+        {
+            return;
+        }
+
+        var watcherIds = await db.UserContactHashes.AsNoTracking()
+            .Where(contactHash =>
+                contactHash.ContactPhoneHash == phoneHash &&
+                contactHash.UserId != joinedUserId)
+            .Join(
+                db.Users.AsNoTracking().Where(user => user.DisabledAt == null),
+                contactHash => contactHash.UserId,
+                user => user.Id,
+                (contactHash, _) => contactHash.UserId)
+            .Distinct()
+            .Take(10_000)
+            .ToListAsync(cancellationToken);
+
+        foreach (var watcherId in watcherIds)
+        {
+            await pushNotifications.SendContactJoinedAsync(watcherId, cancellationToken);
+        }
     }
 
     private static string? NormalizePhone(string? value)

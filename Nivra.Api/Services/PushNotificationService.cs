@@ -242,6 +242,22 @@ public sealed class PushNotificationService(
         await SendToUserAsync(userId, title, body, payload, cancellationToken);
     }
 
+    public async Task SendContactJoinedAsync(string userId, CancellationToken cancellationToken)
+    {
+        await SendToUserAsync(
+            userId,
+            "Nivra",
+            "Un contacto de tu agenda se ha unido a Nivra.",
+            new Dictionary<string, string>
+            {
+                ["type"] = "contact_joined",
+                ["radarHint"] = "1",
+                ["tag"] = "nivra-contact-joined"
+            },
+            cancellationToken,
+            silentDataOnly: true);
+    }
+
     private async Task SendToUserAsync(
         string userId,
         string title,

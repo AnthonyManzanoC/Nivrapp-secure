@@ -13,7 +13,12 @@ self.addEventListener('notificationclick', (event) => {
   if (event.action) {
     data.action = event.action;
   }
-  const target = data.callId ? '/app/calls' : data.conversationId ? `/app/chats/${data.conversationId}` : '/app/chats';
+  const type = normalizeType(data.type);
+  const target = data.callId
+    ? '/app/calls'
+    : type === 'contact-joined'
+      ? '/app/world'
+      : data.conversationId ? `/app/chats/${data.conversationId}` : '/app/chats';
   event.waitUntil((async () => {
     const clientsList = await clients.matchAll({ type: 'window', includeUncontrolled: true });
     const existing = clientsList.find((client) => 'focus' in client);
@@ -131,6 +136,9 @@ function genericBody(type) {
   }
   if (type === 'message') {
     return 'Nuevo mensaje privado';
+  }
+  if (type === 'contact-joined') {
+    return 'Un contacto de tu agenda se ha unido a Nivra.';
   }
   return 'Nueva actividad privada';
 }

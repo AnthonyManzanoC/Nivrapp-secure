@@ -180,6 +180,9 @@ public class NivraMessagingService extends MessagingService {
         if (type.equals("message")) {
             return "Nuevo mensaje privado";
         }
+        if (type.equals("contact-joined")) {
+            return "Un contacto de tu agenda se ha unido a Nivra.";
+        }
         return "Nueva actividad privada";
     }
 

@@ -8,8 +8,11 @@ import { addIcons } from 'ionicons';
 import { callOutline, videocamOutline } from 'ionicons/icons';
 import { AuthService } from './core/services/auth.service';
 import { CallsService } from './core/services/calls.service';
+import { ContactSyncService } from './core/services/contact-sync.service';
 import { PushService } from './core/services/push.service';
 import { SignalrService } from './core/services/signalr.service';
+
+const THEME_STORAGE_KEY = 'nivra.theme';
 
 @Component({
   selector: 'app-root',
@@ -20,6 +23,7 @@ import { SignalrService } from './core/services/signalr.service';
 })
 export class AppComponent {
   private readonly auth = inject(AuthService);
+  private readonly contactSync = inject(ContactSyncService);
   private readonly push = inject(PushService);
   private readonly router = inject(Router);
   private readonly realtime = inject(SignalrService);
@@ -47,6 +51,7 @@ export class AppComponent {
   });
 
   constructor() {
+    this.applyStoredTheme();
     addIcons({ callOutline, videocamOutline });
     void this.configureNativeKeyboard();
 
@@ -100,6 +105,8 @@ export class AppComponent {
       const pushType = (data['type'] || '').replace(/_/g, '-').toLowerCase();
       if (data['callId'] || pushType.includes('call')) {
         void this.router.navigateByUrl('/app/calls');
+      } else if (pushType === 'contact-joined') {
+        void this.router.navigateByUrl('/app/world');
       } else if (data['conversationId']) {
         void this.router.navigateByUrl(`/app/chats/${data['conversationId']}`);
       }
@@ -109,10 +116,31 @@ export class AppComponent {
   private async configureNativeKeyboard(): Promise<void> {
     try {
       await Keyboard.setResizeMode({ mode: KeyboardResize.Body });
-      await Keyboard.setStyle({ style: KeyboardStyle.Dark });
+      await Keyboard.setStyle({ style: this.lightThemeEnabled() ? KeyboardStyle.Light : KeyboardStyle.Dark });
     } catch {
       // Web and desktop do not expose the native keyboard bridge.
     }
+  }
+
+  private applyStoredTheme(): void {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    const enabled = this.readStoredTheme() === 'light';
+    document.body.classList.toggle('nivra-light-theme', enabled);
+    document.documentElement.classList.toggle('nivra-light-theme', enabled);
+  }
+
+  private readStoredTheme(): 'dark' | 'light' {
+    try {
+      return localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark';
+    } catch {
+      return 'dark';
+    }
+  }
+
+  private lightThemeEnabled(): boolean {
+    return typeof document !== 'undefined' && document.body.classList.contains('nivra-light-theme');
   }
 
   async openActiveCall(): Promise<void> {
@@ -129,6 +157,7 @@ export class AppComponent {
       }
       await this.realtime.connect();
       await this.push.initialize();
+      void this.contactSync.syncCachedContactsInBackground();
     })().finally(() => {
       this.startServicesPromise = null;
     });

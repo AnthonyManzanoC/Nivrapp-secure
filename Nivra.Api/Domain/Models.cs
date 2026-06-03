@@ -199,6 +199,12 @@ public sealed class ContactRecord
     public DateTimeOffset CreatedAt { get; init; }
 }
 
+public sealed class UserContactHash
+{
+    public required string UserId { get; init; }
+    public required string ContactPhoneHash { get; init; }
+}
+
 public sealed class FriendRequestRecord
 {
     public required string Id { get; init; }

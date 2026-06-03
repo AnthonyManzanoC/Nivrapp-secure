@@ -28,6 +28,7 @@ import {
 import { Contact, Conversation, Story, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
+import { ContactSyncService } from '../../core/services/contact-sync.service';
 import { SocialService } from '../../core/services/social.service';
 import { Router } from '@angular/router';
 
@@ -42,6 +43,7 @@ export class WorldPage implements OnInit, OnDestroy {
   readonly social = inject(SocialService);
   readonly auth = inject(AuthService);
   readonly chat = inject(ChatService);
+  readonly contactSync = inject(ContactSyncService);
   private readonly router = inject(Router);
   query = '';
   storyText = '';
@@ -83,6 +85,7 @@ export class WorldPage implements OnInit, OnDestroy {
 
   async ngOnInit(): Promise<void> {
     await this.social.load();
+    void this.contactSync.syncCachedContactsInBackground();
   }
 
   ngOnDestroy(): void {
@@ -132,22 +135,13 @@ export class WorldPage implements OnInit, OnDestroy {
       } else {
         this.notice = response.submitted ? 'Sin coincidencias por ahora.' : 'Agrega telefonos para escanear.';
       }
+      this.contactSync.clearContactJoinedHint();
     });
   }
 
   async pickDeviceContacts(): Promise<void> {
-    const contactsApi = (navigator as Navigator & {
-      contacts?: {
-        select: (properties: string[], options?: { multiple?: boolean }) => Promise<Array<{ tel?: string[] }>>;
-      };
-    }).contacts;
-    if (!contactsApi?.select) {
-      this.notice = 'Selector de contactos no disponible aqui.';
-      return;
-    }
     await this.run('radar:picker', async () => {
-      const contacts = await contactsApi.select(['tel'], { multiple: true });
-      const phones = contacts.flatMap((contact) => contact.tel ?? []).filter(Boolean);
+      const phones = await this.contactSync.pickAndSyncDeviceContacts();
       this.radarPhones = phones.join('\n');
       await this.scanRadar();
     });

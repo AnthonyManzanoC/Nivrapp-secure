@@ -2,6 +2,7 @@ import { CommonModule, DatePipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
+import { Keyboard, KeyboardStyle } from '@capacitor/keyboard';
 import {
   IonButton,
   IonContent,
@@ -13,12 +14,14 @@ import {
   IonToggle,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, logOutOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, trashOutline, warningOutline } from 'ionicons/icons';
+import { cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline } from 'ionicons/icons';
 import { AccountService } from '../../core/services/account.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { PrivacySettings } from '../../core/models/nivra.models';
 import { PushService } from '../../core/services/push.service';
+
+const THEME_STORAGE_KEY = 'nivra.theme';
 
 @Component({
   selector: 'app-account',
@@ -54,14 +57,16 @@ export class AccountPage implements OnInit, OnDestroy {
   contactScannerOpen = false;
   contactScannerBusy = false;
   contactScannerStatus = 'Listo para escanear contacto.';
+  lightTheme = false;
   private qrScanner: import('html5-qrcode').Html5Qrcode | null = null;
   private contactScanner: import('html5-qrcode').Html5Qrcode | null = null;
 
   constructor() {
-    addIcons({ cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, logOutOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, trashOutline, warningOutline });
+    addIcons({ cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline });
   }
 
   async ngOnInit(): Promise<void> {
+    this.initializeTheme();
     await this.reload();
   }
 
@@ -136,6 +141,13 @@ export class AccountPage implements OnInit, OnDestroy {
 
   patchPrivacy(key: keyof PrivacySettings, value: boolean | number | null): void {
     this.account.privacy.update((privacy) => privacy ? { ...privacy, [key]: value } : privacy);
+  }
+
+  setLightTheme(enabled: boolean): void {
+    this.lightTheme = enabled;
+    this.applyTheme(enabled);
+    this.writeStoredTheme(enabled);
+    void this.syncNativeKeyboard(enabled);
   }
 
   identityMode(): 'ghost' | 'public' {
@@ -475,6 +487,43 @@ export class AccountPage implements OnInit, OnDestroy {
       });
     } finally {
       this.shareBusy = false;
+    }
+  }
+
+  private initializeTheme(): void {
+    this.lightTheme = this.readStoredTheme();
+    this.applyTheme(this.lightTheme);
+  }
+
+  private applyTheme(enabled: boolean): void {
+    if (typeof document === 'undefined') {
+      return;
+    }
+    document.body.classList.toggle('nivra-light-theme', enabled);
+    document.documentElement.classList.toggle('nivra-light-theme', enabled);
+  }
+
+  private readStoredTheme(): boolean {
+    try {
+      return localStorage.getItem(THEME_STORAGE_KEY) === 'light';
+    } catch {
+      return false;
+    }
+  }
+
+  private writeStoredTheme(enabled: boolean): void {
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, enabled ? 'light' : 'dark');
+    } catch {
+      // Theme preference is nice to keep, but private modes can block storage.
+    }
+  }
+
+  private async syncNativeKeyboard(enabled: boolean): Promise<void> {
+    try {
+      await Keyboard.setStyle({ style: enabled ? KeyboardStyle.Light : KeyboardStyle.Dark });
+    } catch {
+      // Web and desktop do not expose the native keyboard bridge.
     }
   }
 

@@ -73,6 +73,31 @@
         </div>
       </article>
 
+      <article class="panel span-5 appearance-panel">
+        <div class="appearance-heading">
+          <div class="appearance-icon">
+            <ion-icon [name]="lightTheme ? 'sunny-outline' : 'moon-outline'"></ion-icon>
+          </div>
+          <div>
+            <h2>Apariencia</h2>
+            <p class="card-sub">{{ lightTheme ? 'Grises iOS, texto nitido y sombras suaves.' : 'Oscuro Nivra con contraste nocturno.' }}</p>
+          </div>
+        </div>
+        <label class="toggle-row theme-toggle-row">
+          <span>
+            <strong>{{ lightTheme ? 'Tema claro' : 'Tema oscuro' }}</strong>
+            <small>{{ lightTheme ? 'Limpio, legible y luminoso.' : 'Privado, profundo y enfocado.' }}</small>
+          </span>
+          <ion-toggle mode="ios" [checked]="lightTheme" (ionChange)="setLightTheme($event.detail.checked)" aria-label="Cambiar tema claro"></ion-toggle>
+        </label>
+        <div class="theme-preview" [class.light]="lightTheme" aria-hidden="true">
+          <span class="preview-pill primary"></span>
+          <span class="preview-pill secondary"></span>
+          <span class="preview-line long"></span>
+          <span class="preview-line"></span>
+        </div>
+      </article>
+
       <article class="panel span-5 share-account-panel">
         <div>
           <h2>Compartir Nivra</h2>

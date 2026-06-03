@@ -14,6 +14,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     public DbSet<DeviceRecord> Devices => Set<DeviceRecord>();
     public DbSet<SessionRecord> Sessions => Set<SessionRecord>();
     public DbSet<ContactRecord> Contacts => Set<ContactRecord>();
+    public DbSet<UserContactHash> UserContactHashes => Set<UserContactHash>();
     public DbSet<FriendRequestRecord> FriendRequests => Set<FriendRequestRecord>();
     public DbSet<ConversationRecord> Conversations => Set<ConversationRecord>();
     public DbSet<MessageEnvelope> Messages => Set<MessageEnvelope>();
@@ -145,6 +146,16 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasIndex(contact => contact.ContactUserId);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(contact => contact.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(contact => contact.ContactUserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<UserContactHash>(entity =>
+        {
+            entity.ToTable("user_contact_hashes");
+            entity.HasKey(contactHash => new { contactHash.UserId, contactHash.ContactPhoneHash });
+            entity.Property(contactHash => contactHash.UserId).HasMaxLength(64).IsRequired();
+            entity.Property(contactHash => contactHash.ContactPhoneHash).HasMaxLength(64).IsRequired();
+            entity.HasIndex(contactHash => contactHash.ContactPhoneHash);
+            entity.HasOne<UserAccount>().WithMany().HasForeignKey(contactHash => contactHash.UserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<FriendRequestRecord>(entity =>

@@ -514,6 +514,11 @@ export interface PushTokenResponse {
   serverReady: boolean;
 }
 
+export interface ContactHashSyncResponse {
+  submitted: number;
+  stored: number;
+}
+
 export interface PushStatusResponse {
   serverReady: boolean;
   provider: string;

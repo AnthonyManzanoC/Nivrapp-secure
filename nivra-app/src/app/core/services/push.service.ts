@@ -9,6 +9,7 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { FirebaseWebConfigResponse, MessageResponse, PushStatusResponse, PushTokenResponse, RealtimeEvent } from '../models/nivra.models';
 import { AuthService } from './auth.service';
+import { ContactSyncService } from './contact-sync.service';
 import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
@@ -43,6 +44,7 @@ interface NivraRuntimeGlobals {
 export class PushService {
   private readonly api = inject(NivraApiService);
   private readonly auth = inject(AuthService);
+  private readonly contactSync = inject(ContactSyncService);
   private readonly crypto = inject(CryptoService);
   private readonly realtime = inject(SignalrService);
   private readonly toastController = inject(ToastController);
@@ -595,6 +597,9 @@ export class PushService {
     this.lastMessage.set({ data } as MessagePayload);
 
     const type = this.normalizePushType(data['type']);
+    if (type === 'contact-joined') {
+      this.contactSync.markContactJoinedHint();
+    }
     if (type === 'end-call' || type === 'missed-call' || type === 'call-ended') {
       await this.cancelCallNotification(data['callId']);
     }
@@ -805,6 +810,9 @@ export class PushService {
     }
     if (type === 'message') {
       return { title: 'Nivra', body: 'Nuevo mensaje privado', tag, requireInteraction: false };
+    }
+    if (type === 'contact-joined') {
+      return { title: 'Nivra', body: 'Un contacto de tu agenda se ha unido a Nivra.', tag, requireInteraction: false };
     }
     return { title: 'Nivra', body: 'Nueva actividad privada', tag, requireInteraction: false };
   }

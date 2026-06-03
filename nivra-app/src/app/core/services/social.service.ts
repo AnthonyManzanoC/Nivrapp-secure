@@ -378,11 +378,7 @@ export class SocialService {
   }
 
   private async hashPhone(normalizedPhone: string): Promise<string> {
-    const bytes = new TextEncoder().encode(`nivra-phone:v1:${normalizedPhone}`);
-    const digest = await globalThis.crypto.subtle.digest('SHA-256', bytes);
-    return [...new Uint8Array(digest)]
-      .map((byte) => byte.toString(16).padStart(2, '0'))
-      .join('');
+    return this.crypto.phoneContactHash(normalizedPhone);
   }
 
   private rememberRadarSeen(people: UserSummary[]): void {

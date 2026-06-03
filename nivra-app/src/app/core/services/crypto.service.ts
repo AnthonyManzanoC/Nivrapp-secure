@@ -400,6 +400,17 @@ export class CryptoService {
     return JSON.parse(textDecoder.decode(plain)) as T;
   }
 
+  async phoneContactHash(normalizedPhone: string): Promise<string> {
+    return this.sha256Hex(`nivra-phone:v1:${normalizedPhone.trim()}`);
+  }
+
+  async sha256Hex(value: string): Promise<string> {
+    const digest = await crypto.subtle.digest('SHA-256', textEncoder.encode(value));
+    return [...new Uint8Array(digest)]
+      .map((byte) => byte.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
   randomBytes(length: number): Uint8Array {
     return crypto.getRandomValues(new Uint8Array(length));
   }

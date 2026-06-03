@@ -100,7 +100,12 @@
       <article class="panel span-12 radar-panel">
         <div class="panel-headline">
           <div>
-            <h2>Radar cifrado</h2>
+            <h2 class="radar-title">
+              Radar cifrado
+              @if (contactSync.radarHasNewContact()) {
+                <span class="radar-dot" aria-label="Nuevo contacto en Nivra"></span>
+              }
+            </h2>
             <span class="card-sub">{{ social.radarMatches().length }} coincidencias</span>
           </div>
           <ion-icon name="scan-outline"></ion-icon>

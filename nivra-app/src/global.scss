@@ -123,6 +123,355 @@ ion-textarea {
   caret-color: var(--nivra-brand-2);
 }
 
+html.nivra-light-theme,
+body.nivra-light-theme,
+body.nivra-light-theme app-root,
+body.nivra-light-theme ion-app {
+  background: var(--nivra-bg);
+  color: var(--nivra-text);
+}
+
+body.nivra-light-theme {
+  background:
+    linear-gradient(125deg, rgba(24, 214, 162, .09), transparent 30%),
+    linear-gradient(240deg, rgba(52, 120, 246, .075), transparent 34%),
+    var(--nivra-bg);
+}
+
+body.nivra-light-theme ion-content {
+  --background: var(--nivra-bg);
+}
+
+body.nivra-light-theme ion-modal {
+  --background: var(--nivra-panel-solid);
+  color: var(--nivra-text);
+}
+
+body.nivra-light-theme * {
+  scrollbar-color: rgba(8, 127, 98, .36) transparent;
+}
+
+body.nivra-light-theme *::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(24, 214, 162, .48), rgba(52, 120, 246, .36)) border-box;
+}
+
+body.nivra-light-theme .surface {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .6), transparent 22%),
+    transparent;
+}
+
+body.nivra-light-theme .panel {
+  border-color: var(--nivra-line);
+  background: var(--nivra-panel-solid);
+  box-shadow: var(--nivra-shadow-tiny);
+  backdrop-filter: var(--nivra-glass);
+}
+
+body.nivra-light-theme .toggle-row,
+body.nivra-light-theme .device-row,
+body.nivra-light-theme .result-row,
+body.nivra-light-theme .story-row,
+body.nivra-light-theme .vault-row,
+body.nivra-light-theme .call-row {
+  border-color: var(--nivra-line);
+  background: rgba(255, 255, 255, .72);
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+body.nivra-light-theme .device-row:hover,
+body.nivra-light-theme .result-row:hover,
+body.nivra-light-theme .story-row:hover,
+body.nivra-light-theme .vault-row:hover,
+body.nivra-light-theme .call-row:hover {
+  background: #ffffff;
+  box-shadow: var(--nivra-shadow-soft);
+}
+
+body.nivra-light-theme ion-input,
+body.nivra-light-theme ion-textarea,
+body.nivra-light-theme ion-searchbar {
+  --background: rgba(255, 255, 255, .82);
+  --border-color: var(--nivra-line);
+  --color: var(--nivra-text);
+  --placeholder-color: var(--nivra-muted);
+  --highlight-color-focused: var(--nivra-brand);
+  --icon-color: var(--nivra-muted);
+  --clear-button-color: var(--nivra-muted);
+  --box-shadow: inset 0 1px 0 rgba(255, 255, 255, .78);
+}
+
+body.nivra-light-theme ion-button[fill="outline"] {
+  --background: rgba(255, 255, 255, .66);
+  --background-hover: rgba(255, 255, 255, .95);
+  --border-color: rgba(17, 24, 39, .15);
+  --color: var(--nivra-soft);
+}
+
+body.nivra-light-theme ion-button[fill="clear"] {
+  --color: var(--nivra-soft);
+}
+
+body.nivra-light-theme ion-button[color="danger"] {
+  --border-color: rgba(217, 45, 32, .28);
+  --color: var(--nivra-danger);
+}
+
+body.nivra-light-theme ion-toggle {
+  --track-background: #d9dde6;
+  --track-background-checked: linear-gradient(135deg, var(--nivra-brand), #73ebca);
+  --handle-background: #ffffff;
+  --handle-background-checked: #ffffff;
+  --handle-box-shadow: 0 3px 9px rgba(15, 23, 42, .16);
+}
+
+body.nivra-light-theme .notice,
+body.nivra-light-theme .error {
+  background: rgba(255, 255, 255, .94);
+  box-shadow: var(--nivra-shadow-soft);
+}
+
+body.nivra-light-theme .error {
+  color: #b42318;
+  border-color: rgba(217, 45, 32, .24);
+}
+
+body.nivra-light-theme .workspace {
+  background:
+    linear-gradient(118deg, rgba(24, 214, 162, .075), transparent 34%),
+    linear-gradient(244deg, rgba(52, 120, 246, .06), transparent 36%),
+    linear-gradient(180deg, #f8f9fc 0%, #f2f2f7 100%);
+  color: var(--nivra-text);
+}
+
+body.nivra-light-theme .rail,
+body.nivra-light-theme .sidebar {
+  border-color: var(--nivra-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .74)),
+    rgba(255, 255, 255, .82);
+  box-shadow: 0 10px 32px rgba(15, 23, 42, .06);
+}
+
+body.nivra-light-theme .nav-btn:hover,
+body.nivra-light-theme .pill-action,
+body.nivra-light-theme .recent-head button,
+body.nivra-light-theme .recent-remove,
+body.nivra-light-theme .story-viewer-top button {
+  background: rgba(17, 24, 39, .055);
+}
+
+body.nivra-light-theme .nav-btn.active {
+  border-color: rgba(24, 214, 162, .3);
+  color: var(--nivra-brand-2);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .16), rgba(52, 120, 246, .08)),
+    rgba(255, 255, 255, .94);
+  box-shadow: 0 8px 22px rgba(24, 214, 162, .12);
+}
+
+body.nivra-light-theme .call-pill,
+body.nivra-light-theme .incoming-call-card {
+  color: var(--nivra-text);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .14), rgba(52, 120, 246, .08)),
+    rgba(255, 255, 255, .92);
+  box-shadow: var(--nivra-shadow-soft);
+}
+
+body.nivra-light-theme .call-return {
+  color: #f8fafc;
+}
+
+body.nivra-light-theme .incoming-call-overlay {
+  background:
+    radial-gradient(circle at 50% 25%, rgba(24, 214, 162, .14), transparent 34%),
+    linear-gradient(180deg, rgba(242, 242, 247, .78), rgba(242, 242, 247, .96));
+}
+
+body.nivra-light-theme .incoming-avatar {
+  background:
+    linear-gradient(#ffffff, #ffffff) padding-box,
+    linear-gradient(135deg, var(--nivra-brand), var(--nivra-rose), #73ebca) border-box;
+}
+
+body.nivra-light-theme .search-box,
+body.nivra-light-theme .native-select,
+body.nivra-light-theme .group-name input,
+body.nivra-light-theme .call-search,
+body.nivra-light-theme .composer {
+  border-color: var(--nivra-line);
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .78);
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+body.nivra-light-theme .search-box:focus-within,
+body.nivra-light-theme .group-name input:focus {
+  border-color: rgba(24, 214, 162, .48);
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(24, 214, 162, .12);
+}
+
+body.nivra-light-theme .list-item::part(native),
+body.nivra-light-theme .group-contact,
+body.nivra-light-theme .invite-list button,
+body.nivra-light-theme .contact-card,
+body.nivra-light-theme .audience-block,
+body.nivra-light-theme .story-compose-media,
+body.nivra-light-theme .story-compose-media button,
+body.nivra-light-theme .agenda-row,
+body.nivra-light-theme .room-card,
+body.nivra-light-theme .note-file-card,
+body.nivra-light-theme .vault-message {
+  border-color: var(--nivra-line);
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .72);
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+body.nivra-light-theme .list-item:hover::part(native),
+body.nivra-light-theme .list-item.active::part(native),
+body.nivra-light-theme .recent-open:hover,
+body.nivra-light-theme .recent-open:focus-visible,
+body.nivra-light-theme .agenda-row:hover {
+  border-color: var(--nivra-line-strong);
+  background: #ffffff;
+}
+
+body.nivra-light-theme .list-item.active::part(native) {
+  box-shadow: inset 3px 0 0 var(--nivra-brand), var(--nivra-shadow-soft);
+}
+
+body.nivra-light-theme ion-modal.group-modal,
+body.nivra-light-theme ion-modal.invite-modal,
+body.nivra-light-theme ion-modal.share-modal {
+  --background: #ffffff;
+  --box-shadow: var(--nivra-shadow-soft);
+}
+
+body.nivra-light-theme .group-builder,
+body.nivra-light-theme .invite-sheet {
+  border-color: var(--nivra-line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .92), rgba(255, 255, 255, .72)),
+    #ffffff;
+}
+
+body.nivra-light-theme .group-builder header,
+body.nivra-light-theme .group-builder footer,
+body.nivra-light-theme .invite-sheet header {
+  border-color: var(--nivra-line);
+}
+
+body.nivra-light-theme .detail-stage {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .52), transparent 24%),
+    rgba(255, 255, 255, .28);
+}
+
+body.nivra-light-theme .identity-panel,
+body.nivra-light-theme .pending-invite-panel,
+body.nivra-light-theme .owner-invite-panel,
+body.nivra-light-theme .agenda-hero {
+  border-color: rgba(24, 214, 162, .2);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .1), rgba(52, 120, 246, .045)),
+    #ffffff;
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+body.nivra-light-theme .identity-panel.ghost {
+  border-color: rgba(183, 121, 31, .22);
+  background:
+    linear-gradient(135deg, rgba(183, 121, 31, .09), rgba(52, 120, 246, .04)),
+    #ffffff;
+}
+
+body.nivra-light-theme .contact-card.favorite,
+body.nivra-light-theme .group-story-row,
+body.nivra-light-theme .room-card.active,
+body.nivra-light-theme .vault-message.mine {
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .11), rgba(52, 120, 246, .04)),
+    rgba(255, 255, 255, .76);
+}
+
+body.nivra-light-theme .vault-message.system {
+  border-color: rgba(183, 121, 31, .22);
+  background: rgba(183, 121, 31, .1);
+}
+
+body.nivra-light-theme .room-denied {
+  color: #b42318;
+  background: rgba(217, 45, 32, .07);
+}
+
+body.nivra-light-theme .member-dots span,
+body.nivra-light-theme .voice-avatar {
+  border-color: rgba(255, 255, 255, .92);
+}
+
+body.nivra-light-theme .voice-widget,
+body.nivra-light-theme .vault-chat {
+  border-color: var(--nivra-line);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .1), rgba(52, 120, 246, .04)),
+    rgba(255, 255, 255, .86);
+  box-shadow: var(--nivra-shadow-soft);
+}
+
+body.nivra-light-theme .voice-widget.failed {
+  background:
+    linear-gradient(135deg, rgba(217, 45, 32, .08), rgba(255, 255, 255, .54)),
+    rgba(255, 255, 255, .9);
+}
+
+body.nivra-light-theme .story-viewer,
+body.nivra-light-theme .surface.call-mode {
+  --nivra-text: #f4fbf7;
+  --nivra-muted: rgba(216, 232, 226, .74);
+  --nivra-soft: #d8e8e2;
+  color: var(--nivra-text);
+}
+
+body.nivra-light-theme .story-viewer {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .08), transparent 30%),
+    rgba(3, 6, 7, .96);
+}
+
+body.nivra-light-theme .surface.call-mode,
+body.nivra-light-theme .surface.call-mode .calls-panel,
+body.nivra-light-theme .surface.call-mode .call-stage,
+body.nivra-light-theme .surface.call-mode .video-composition,
+body.nivra-light-theme .surface.call-mode .local-preview,
+body.nivra-light-theme .surface.call-mode .local-preview-main {
+  background: #030607;
+}
+
+body.nivra-light-theme .surface.call-mode .call-controls {
+  border-color: rgba(255, 255, 255, .13);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .095), rgba(255, 255, 255, .045)),
+    rgba(5, 9, 11, .72);
+}
+
+body.nivra-light-theme .surface.call-mode ion-button[fill="clear"],
+body.nivra-light-theme .surface.call-mode .call-controls ion-button {
+  --color: var(--nivra-soft);
+}
+
+body.nivra-light-theme .voice-inline {
+  border-color: var(--nivra-line);
+  background: rgba(255, 255, 255, .78);
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+body.nivra-light-theme .voice-range::-webkit-slider-runnable-track {
+  background: rgba(17, 24, 39, .14);
+}
+
 .voice-card {
   width: min(72vw, 360px);
   display: grid;
