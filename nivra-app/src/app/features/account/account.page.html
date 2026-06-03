@@ -178,6 +178,18 @@
         </ion-button>
       </article>
 
+      <article class="panel span-6 session-panel">
+        <h2>Sesion</h2>
+        <div class="mini-list">
+          <span>Usa esta salida en equipos compartidos o cuando quieras abrir otra cuenta.</span>
+          <span>Se cerrara la sesion local de este dispositivo.</span>
+        </div>
+        <ion-button class="logout-action" mode="ios" fill="outline" color="danger" (click)="logout()" [disabled]="saving">
+          <ion-icon name="log-out-outline"></ion-icon>
+          Cerrar sesion
+        </ion-button>
+      </article>
+
       <article class="panel span-6 danger-zone">
         <h2>Zona sensible</h2>
         <div class="mini-list">

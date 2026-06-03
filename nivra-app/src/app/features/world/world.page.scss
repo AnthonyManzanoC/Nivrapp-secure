@@ -1,5 +1,43 @@
 @use "../shared-page";
 
+:host {
+  display: block;
+  height: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.page {
+  --background: var(--nivra-bg);
+  --overflow: hidden;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--nivra-bg);
+}
+
+.page::part(scroll) {
+  overflow-x: hidden;
+}
+
+.surface,
+.grid,
+.panel,
+.stack,
+.contact-list,
+.story-grid {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.surface {
+  width: 100%;
+  overflow-x: hidden;
+}
+
+.panel {
+  overflow: hidden;
+}
+
 .search-line {
   grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
@@ -11,6 +49,9 @@
 }
 
 .native-select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
   min-height: 44px;
   border: 1px solid var(--nivra-line);
   border-radius: 8px;
@@ -21,9 +62,17 @@
 
 .row-actions {
   display: inline-flex;
+  min-width: 0;
+  max-width: 100%;
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
   justify-content: flex-end;
+}
+
+.row-actions ion-button {
+  margin: 0;
+  min-width: 34px;
 }
 
 .panel-headline {
@@ -51,6 +100,8 @@
 }
 
 .contact-card {
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--nivra-line);
   border-radius: 8px;
   padding: 8px;
@@ -118,6 +169,8 @@
 }
 
 .audience-block {
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid rgba(255, 255, 255, .1);
   border-radius: 8px;
   display: grid;
@@ -145,6 +198,8 @@
 }
 
 .story-compose-media {
+  min-width: 0;
+  max-width: 100%;
   min-height: 48px;
   border: 1px dashed rgba(255, 255, 255, .16);
   border-radius: 8px;
@@ -157,6 +212,7 @@
 
 .story-compose-media button {
   min-width: 0;
+  max-width: 100%;
   border: 0;
   border-radius: 8px;
   min-height: 38px;
@@ -183,6 +239,8 @@
 }
 
 .story-settings {
+  min-width: 0;
+  max-width: 100%;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
@@ -197,6 +255,8 @@
 }
 
 .story-row {
+  min-width: 0;
+  max-width: 100%;
   border: 1px solid var(--nivra-line);
   border-radius: 8px;
   padding: 8px;
@@ -381,5 +441,65 @@
   .story-viewer {
     inset: 0;
     border-radius: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .surface {
+    padding: 14px 10px calc(var(--nivra-bottom-nav-height) + 20px + env(safe-area-inset-bottom));
+  }
+
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  .span-4,
+  .span-5,
+  .span-6,
+  .span-7,
+  .span-8,
+  .span-12 {
+    grid-column: 1 / -1;
+  }
+
+  .panel {
+    width: 100%;
+    padding: 12px;
+  }
+
+  .panel-headline {
+    align-items: flex-start;
+  }
+
+  .contact-main,
+  .story-open {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 8px;
+  }
+
+  .contact-avatar,
+  .story-avatar {
+    width: 38px;
+    height: 38px;
+  }
+}
+
+@media (max-width: 360px) {
+  .surface {
+    padding-inline: 8px;
+  }
+
+  .story-compose-media {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .story-compose-media .clear-file {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .row-actions {
+    gap: 4px;
   }
 }

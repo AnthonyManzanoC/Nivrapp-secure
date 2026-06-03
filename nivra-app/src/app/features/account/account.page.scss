@@ -11,6 +11,20 @@
   min-height: 40px;
 }
 
+.session-panel {
+  border-color: rgba(255, 107, 107, .22);
+  background:
+    linear-gradient(180deg, rgba(255, 107, 107, .075), rgba(255, 255, 255, .025)),
+    rgba(13, 20, 22, .74);
+}
+
+.logout-action {
+  width: fit-content;
+  min-height: 44px;
+  margin-top: 14px;
+  font-weight: 900;
+}
+
 .profile-photo-row {
   display: flex;
   align-items: center;
@@ -104,5 +118,9 @@
   .profile-photo {
     width: 66px;
     height: 66px;
+  }
+
+  .logout-action {
+    width: 100%;
   }
 }

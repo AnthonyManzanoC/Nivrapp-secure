@@ -1,6 +1,7 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Router } from '@angular/router';
 import {
   IonButton,
   IonContent,
@@ -14,6 +15,7 @@ import { addIcons } from 'ionicons';
 import { cameraOutline, imageOutline, logOutOutline, notificationsOffOutline, notificationsOutline, qrCodeOutline, refreshOutline, scanOutline, shieldCheckmarkOutline, trashOutline, warningOutline } from 'ionicons/icons';
 import { AccountService } from '../../core/services/account.service';
 import { AuthService } from '../../core/services/auth.service';
+import { CallsService } from '../../core/services/calls.service';
 import { PrivacySettings } from '../../core/models/nivra.models';
 import { PushService } from '../../core/services/push.service';
 
@@ -27,7 +29,9 @@ import { PushService } from '../../core/services/push.service';
 export class AccountPage implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
   readonly account = inject(AccountService);
+  readonly calls = inject(CallsService);
   readonly push = inject(PushService);
+  private readonly router = inject(Router);
   displayName = '';
   email = '';
   phone = '';
@@ -143,6 +147,17 @@ export class AccountPage implements OnInit, OnDestroy {
     await this.run(async () => {
       await this.push.revokeCurrentToken();
       this.notice = 'Token de notificaciones revocado.';
+    });
+  }
+
+  async logout(): Promise<void> {
+    await this.run(async () => {
+      if (this.calls.activeCall()) {
+        await this.calls.end().catch(() => undefined);
+      }
+      this.calls.releaseLocalResources();
+      await this.auth.logout();
+      await this.router.navigateByUrl('/auth');
     });
   }
 

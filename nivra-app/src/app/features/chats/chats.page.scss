@@ -132,6 +132,18 @@ time {
   margin-bottom: 6px;
 }
 
+.list-item ion-label {
+  min-width: 0;
+}
+
+.list-item ion-note {
+  flex: 0 0 auto;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .list-item::part(native) {
   border: 1px solid transparent;
   border-radius: 8px;
@@ -203,6 +215,7 @@ ion-item-option {
 
 .item-copy {
   min-width: 0;
+  max-width: 100%;
   display: grid;
   gap: 3px;
 }
@@ -323,6 +336,7 @@ time {
 
 .detail-stage {
   position: relative;
+  z-index: 1;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -396,6 +410,10 @@ ion-modal.group-modal {
   padding: 12px;
 }
 
+.group-builder header > div {
+  min-width: 0;
+}
+
 .group-builder header {
   border-bottom: 1px solid rgba(255, 255, 255, .1);
 }
@@ -407,6 +425,9 @@ ion-modal.group-modal {
 .group-builder h2,
 .group-builder p {
   margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .group-builder p,
@@ -523,7 +544,9 @@ ion-modal.group-modal {
 
   .detail-stage.detail-active {
     display: block;
-    z-index: 2;
+    z-index: 8;
+    background: var(--nivra-bg) !important;
+    isolation: isolate;
   }
 
   .sidebar {

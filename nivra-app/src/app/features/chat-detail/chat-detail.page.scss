@@ -1,20 +1,23 @@
 :host {
   display: block;
   height: 100%;
+  position: relative;
+  z-index: 6;
+  isolation: isolate;
+  background: var(--nivra-bg) !important;
 }
 
 .chat-detail {
+  position: relative;
+  z-index: 6;
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .034), transparent 18%),
-    linear-gradient(145deg, rgba(24, 214, 162, .035), transparent 36%),
-    rgba(7, 11, 13, .34);
+  background: var(--nivra-bg) !important;
 }
 
 .chat-header {
-  background: transparent;
+  background: var(--nivra-bg) !important;
   box-shadow: none;
 }
 
@@ -215,6 +218,7 @@ ion-popover.attachment-popover {
 .title-wrap {
   min-width: 0;
   max-width: min(520px, calc(100vw - 188px));
+  width: min(520px, calc(100vw - 188px));
   border: 0;
   padding: 0;
   display: flex;
@@ -223,6 +227,12 @@ ion-popover.attachment-popover {
   color: inherit;
   background: transparent;
   text-align: left;
+}
+
+.title-wrap > div {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
 }
 
 .title-wrap:disabled {
@@ -237,6 +247,8 @@ ion-popover.attachment-popover {
 
 .title-wrap h1,
 .title-wrap p {
+  display: block;
+  max-width: 100%;
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -282,9 +294,15 @@ ion-popover.attachment-popover {
   --background:
     linear-gradient(180deg, rgba(255, 255, 255, .024), transparent 20%),
     radial-gradient(circle at 20px 20px, rgba(255, 255, 255, .026) 1px, transparent 1px),
-    linear-gradient(135deg, rgba(107, 168, 255, .026), transparent 34%);
+    linear-gradient(135deg, rgba(107, 168, 255, .026), transparent 34%),
+    var(--nivra-bg);
   background-size: auto, 28px 28px;
+  background: var(--nivra-bg) !important;
   --padding-bottom: 0;
+}
+
+.messages-content::part(background) {
+  background: var(--nivra-bg) !important;
 }
 
 .messages {
@@ -688,7 +706,7 @@ ion-popover.attachment-popover {
 }
 
 .composer-footer {
-  background: transparent;
+  background: var(--nivra-bg) !important;
   box-shadow: none;
 }
 
@@ -1580,7 +1598,8 @@ ion-modal.forward-modal {
   }
 
   .title-wrap {
-    max-width: calc(100vw - 162px);
+    width: calc(100vw - 174px);
+    max-width: calc(100vw - 174px);
     gap: 8px;
   }
 
@@ -1684,5 +1703,38 @@ ion-modal.forward-modal {
 
   .media-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 380px) {
+  ion-toolbar {
+    padding-inline: 0;
+  }
+
+  ion-toolbar ion-button {
+    --padding-start: 0;
+    --padding-end: 0;
+    width: 34px;
+    min-width: 34px;
+    min-height: 34px;
+  }
+
+  .title-wrap {
+    width: calc(100vw - 164px);
+    max-width: calc(100vw - 164px);
+    gap: 6px;
+  }
+
+  .title-wrap h1 {
+    font-size: 14px;
+  }
+
+  .title-wrap p {
+    font-size: 11px;
+  }
+
+  .avatar {
+    width: 34px;
+    height: 34px;
   }
 }
