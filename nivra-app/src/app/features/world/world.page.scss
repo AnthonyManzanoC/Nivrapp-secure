@@ -591,7 +591,11 @@
 
 @media (max-width: 600px) {
   .surface {
-    padding: 14px 10px calc(var(--nivra-bottom-nav-height) + 20px + env(safe-area-inset-bottom));
+    padding:
+      calc(14px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+      max(10px, env(safe-area-inset-right))
+      calc(var(--nivra-bottom-nav-height) + 20px + env(safe-area-inset-bottom))
+      max(10px, env(safe-area-inset-left));
   }
 
   .grid {
@@ -632,7 +636,7 @@
 
 @media (max-width: 360px) {
   .surface {
-    padding-inline: 8px;
+    padding-inline: max(8px, env(safe-area-inset-left)) max(8px, env(safe-area-inset-right));
   }
 
   .story-compose-media {

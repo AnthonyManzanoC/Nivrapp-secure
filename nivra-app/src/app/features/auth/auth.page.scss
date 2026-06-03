@@ -334,7 +334,11 @@ ion-button {
     min-height: 100dvh;
     justify-content: flex-start;
     border-right: 0;
-    padding: 28px 24px calc(42px + env(safe-area-inset-bottom));
+    padding:
+      calc(28px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+      max(24px, env(safe-area-inset-right))
+      calc(42px + env(safe-area-inset-bottom))
+      max(24px, env(safe-area-inset-left));
   }
 
   ion-segment,

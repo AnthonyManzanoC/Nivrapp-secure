@@ -837,6 +837,23 @@ export class ChatService implements OnDestroy {
     return fileId ? this.mediaPreviews()[fileId] ?? null : null;
   }
 
+  releaseMediaPreview(fileId?: string | null): void {
+    if (!fileId) {
+      return;
+    }
+    const previous = this.mediaPreviews()[fileId];
+    if (!previous) {
+      return;
+    }
+    if (previous.url) {
+      URL.revokeObjectURL(previous.url);
+    }
+    this.mediaPreviews.update((items) => {
+      const { [fileId]: _released, ...rest } = items;
+      return rest;
+    });
+  }
+
   async ensureMediaPreview(payload: ChatPayload): Promise<MediaPreview | null> {
     const file = this.asFile(payload);
     const fileId = this.fileId(file);

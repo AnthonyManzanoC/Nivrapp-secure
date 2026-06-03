@@ -705,7 +705,7 @@ export class AuthService implements OnDestroy {
     const code = `${candidate?.code || ''} ${candidate?.message || ''}`.toLowerCase();
     if (code.includes('invalid-phone-number')) return 'Revisa el numero con codigo de pais, por ejemplo +593...';
     if (code.includes('captcha-check-failed') || code.includes('missing-app-credential') || code.includes('invalid-app-credential')) return 'No se pudo validar reCAPTCHA. Reintenta el envio del codigo.';
-    if (code.includes('app-not-authorized') || code.includes('unauthorized-domain')) return 'Este dominio no esta autorizado en Firebase Authentication.';
+    if (code.includes('app-not-authorized') || code.includes('unauthorized-domain') || code.includes('requests-from-referer')) return 'Firebase bloqueo el origen de esta app. Actualiza la APK y vuelve a pedir el SMS.';
     if (code.includes('too-many-requests') || code.includes('quota-exceeded')) return 'Firebase bloqueo temporalmente los SMS por demasiados intentos.';
     if (code.includes('invalid-verification-code')) return 'Ese codigo no coincide. Revisalo e intenta otra vez.';
     if (code.includes('code-expired')) return 'Ese codigo vencio. Pide uno nuevo.';

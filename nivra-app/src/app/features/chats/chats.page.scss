@@ -38,7 +38,11 @@
 }
 
 .side-head {
-  padding: 18px;
+  padding:
+    calc(18px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+    max(18px, env(safe-area-inset-right))
+    18px
+    max(18px, env(safe-area-inset-left));
   display: flex;
   align-items: center;
   justify-content: space-between;

@@ -1,9 +1,12 @@
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 
 #nullable disable
 
 namespace Nivra.Api.Infrastructure.Migrations
 {
+    [DbContext(typeof(NivraDbContext))]
+    [Migration("20260603153000_DeviceHardwareId")]
     /// <inheritdoc />
     public partial class DeviceHardwareId : Migration
     {

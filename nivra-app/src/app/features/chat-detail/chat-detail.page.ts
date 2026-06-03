@@ -39,6 +39,7 @@ import {
   atOutline,
   banOutline,
   checkmarkOutline,
+  chevronForwardOutline,
   closeOutline,
   createOutline,
   informationCircleOutline,
@@ -52,14 +53,16 @@ import {
   shieldCheckmarkOutline,
   trashOutline,
   videocamOutline,
+  volumeHighOutline,
 } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
-import { ChatMessageVm, Contact, Conversation, GroupSettings, Participant, Story } from '../../core/models/nivra.models';
+import { ChatMessageVm, Contact, Conversation, GroupSettings, MediaPreview, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
 import { SocialService } from '../../core/services/social.service';
+import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 
 @Component({
   selector: 'app-chat-detail',
@@ -82,6 +85,7 @@ import { SocialService } from '../../core/services/social.service';
     IonTextarea,
     IonToggle,
     IonToolbar,
+    ChatMediaGalleryComponent,
   ],
   templateUrl: './chat-detail.page.html',
   styleUrls: ['./chat-detail.page.scss'],
@@ -118,6 +122,9 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   messageActionEvent: Event | null = null;
   actionMessage: ChatMessageVm | null = null;
   contactInfoOpen = false;
+  mediaGalleryOpen = false;
+  activeAudioPreview: MediaPreview | null = null;
+  activeAudioName = '';
   groupNameDraft = '';
   groupAvatarDraft: string | null = null;
   groupSettingsDraft: GroupSettings = {
@@ -174,6 +181,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       atOutline,
       banOutline,
       checkmarkOutline,
+      chevronForwardOutline,
       closeOutline,
       createOutline,
       informationCircleOutline,
@@ -187,6 +195,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       shieldCheckmarkOutline,
       trashOutline,
       videocamOutline,
+      volumeHighOutline,
     });
   }
 
@@ -215,6 +224,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     this.routeSub?.unsubscribe();
     this.keyboardHandles.forEach((handle) => void handle.remove());
     this.cancelMessagePress();
+    this.closeAudioPreview();
     void this.cancelVoiceNote();
     document.documentElement.style.setProperty('--keyboard-bottom', '0px');
   }
@@ -311,6 +321,45 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     } finally {
       this.downloadingId = null;
     }
+  }
+
+  async openMediaItem(message: ChatMessageVm): Promise<void> {
+    const file = this.chat.asFile(message.payload);
+    if (!file) {
+      return;
+    }
+    if (this.chat.isAudio(file) || file.voiceNote) {
+      await this.openAudioPreview(message);
+      return;
+    }
+    await this.preview(message);
+  }
+
+  async openAudioPreview(message: ChatMessageVm): Promise<void> {
+    const file = this.chat.asFile(message.payload);
+    if (!file || this.downloadingId) {
+      return;
+    }
+
+    this.downloadingId = message.id;
+    this.attachmentError = '';
+    try {
+      const preview = await this.chat.ensureMediaPreview(message.payload);
+      await this.chat.markMessageOpened(message);
+      if (preview) {
+        this.activeAudioPreview = preview;
+        this.activeAudioName = file.voiceNote ? 'Nota de voz' : this.chat.fileName(file);
+      }
+    } catch (error) {
+      this.attachmentError = error instanceof Error ? error.message : 'No se pudo reproducir el audio.';
+    } finally {
+      this.downloadingId = null;
+    }
+  }
+
+  closeAudioPreview(): void {
+    this.activeAudioPreview = null;
+    this.activeAudioName = '';
   }
 
   async markMessageOpened(message: ChatMessageVm): Promise<void> {
@@ -465,6 +514,17 @@ export class ChatDetailPage implements OnInit, OnDestroy {
 
   closeContactInfo(): void {
     this.contactInfoOpen = false;
+  }
+
+  openMediaGallery(): void {
+    if (!this.sharedMediaMessages().length) {
+      return;
+    }
+    this.mediaGalleryOpen = true;
+  }
+
+  closeMediaGallery(): void {
+    this.mediaGalleryOpen = false;
   }
 
   startMessagePress(message: ChatMessageVm, event: TouchEvent): void {
@@ -970,8 +1030,15 @@ export class ChatDetailPage implements OnInit, OnDestroy {
 
   sharedMediaMessages(): ChatMessageVm[] {
     return this.messages()
-      .filter((message) => Boolean(this.chat.asFile(message.payload)))
-      .slice(-12)
+      .filter((message) => {
+        const file = this.chat.asFile(message.payload);
+        return Boolean(file && (
+          this.chat.isImage(file) ||
+          this.chat.isVideo(file) ||
+          this.chat.isAudio(file) ||
+          file.voiceNote
+        ));
+      })
       .reverse();
   }
 

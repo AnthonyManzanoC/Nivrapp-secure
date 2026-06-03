@@ -113,6 +113,10 @@ ion-app {
   background: transparent;
 }
 
+ion-header {
+  padding-top: var(--ion-safe-area-top, 0px);
+}
+
 ion-button {
   text-transform: none;
   letter-spacing: 0;
@@ -134,6 +138,122 @@ ion-modal:not(.story-viewer-modal)::part(content),
 ion-popover::part(content) {
   color: var(--nivra-text);
   background: var(--nivra-panel-solid);
+}
+
+ion-modal.media-gallery-modal {
+  --width: min(720px, calc(100vw - 20px));
+  --height: min(820px, calc(100dvh - 20px));
+  --border-radius: 8px;
+  --background: var(--nivra-panel-solid);
+  --box-shadow: var(--nivra-shadow-soft);
+  color: var(--nivra-text);
+}
+
+ion-modal.media-audio-modal {
+  --width: min(390px, calc(100vw - 28px));
+  --height: auto;
+  --border-radius: 8px;
+  --background: var(--nivra-panel-solid);
+  --box-shadow: var(--nivra-shadow-soft);
+  color: var(--nivra-text);
+}
+
+.audio-player-sheet {
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 14px;
+  display: grid;
+  gap: 14px;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, .025)),
+    var(--nivra-panel-solid);
+}
+
+.audio-player-sheet header {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.audio-player-sheet header > span {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #04100d;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+}
+
+.audio-player-sheet strong,
+.audio-player-sheet small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.audio-player-sheet small {
+  color: var(--nivra-muted);
+  font-size: 12px;
+}
+
+.audio-player-sheet audio {
+  width: 100%;
+}
+
+.contact-info .media-head {
+  align-items: center;
+}
+
+.contact-info .media-head-actions {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.contact-info .media-head-actions ion-button {
+  --padding-start: 6px;
+  --padding-end: 2px;
+  min-height: 30px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.contact-info .media-head-actions ion-icon {
+  margin-left: 1px;
+  font-size: 15px;
+}
+
+.contact-info .media-preview-row {
+  min-height: 120px;
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  overscroll-behavior-x: contain;
+}
+
+.contact-info .media-preview-row .media-tile {
+  flex: 0 0 calc((100% - 24px) / 4);
+  min-width: 72px;
+}
+
+@media (max-width: 768px) {
+  ion-modal.media-gallery-modal {
+    --width: 100vw;
+    --height: 100dvh;
+    --border-radius: 0;
+  }
+
+  .contact-info .media-preview-row .media-tile {
+    flex-basis: calc((100% - 16px) / 3);
+  }
 }
 
 html.nivra-light-theme,
@@ -170,6 +290,13 @@ body.nivra-light-theme ion-popover::part(content) {
     linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(247, 248, 251, .9)),
     var(--nivra-panel-solid);
   box-shadow: var(--nivra-shadow-soft);
+}
+
+body.nivra-light-theme .audio-player-sheet {
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(247, 248, 251, .9)),
+    #ffffff;
 }
 
 body.nivra-light-theme * {

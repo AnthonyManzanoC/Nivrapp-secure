@@ -5,7 +5,11 @@
 .surface {
   height: 100dvh;
   overflow: auto;
-  padding: 24px;
+  padding:
+    calc(24px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+    max(24px, env(safe-area-inset-right))
+    24px
+    max(24px, env(safe-area-inset-left));
   color: var(--nivra-text);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .026), transparent 18%),
@@ -198,7 +202,11 @@ ion-button {
 
 @media (max-width: 860px) {
   .surface {
-    padding: 18px 14px calc(var(--nivra-bottom-nav-height) + 24px + env(safe-area-inset-bottom));
+    padding:
+      calc(18px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+      max(14px, env(safe-area-inset-right))
+      calc(var(--nivra-bottom-nav-height) + 24px + env(safe-area-inset-bottom))
+      max(14px, env(safe-area-inset-left));
   }
 
   .grid {

@@ -911,7 +911,11 @@ ion-modal.contact-info-modal {
   top: 0;
   z-index: 4;
   min-height: 52px;
-  padding: 8px 10px;
+  padding:
+    calc(8px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+    max(10px, env(safe-area-inset-right))
+    8px
+    max(10px, env(safe-area-inset-left));
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1423,13 +1427,6 @@ ion-modal.story-viewer-modal {
   white-space: nowrap;
 }
 
-.media-grid {
-  min-height: 120px;
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
-}
-
 .media-tile {
   min-width: 0;
   aspect-ratio: 1;
@@ -1468,6 +1465,7 @@ ion-modal.story-viewer-modal {
 
 .empty-media {
   grid-column: 1 / -1;
+  width: 100%;
   min-height: 90px;
   border: 1px dashed rgba(255, 255, 255, .14);
   border-radius: 8px;
@@ -1914,9 +1912,6 @@ ion-modal.forward-modal {
     font-size: 12px;
   }
 
-  .media-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 380px) {

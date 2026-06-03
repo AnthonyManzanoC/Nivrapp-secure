@@ -71,6 +71,7 @@ builder.Services.AddCors(options =>
                 "http://localhost:4200",
                 "http://localhost:5173",
                 "http://localhost:8100",
+                "https://nivra-af67e.firebaseapp.com",
                 "capacitor://localhost",
                 "ionic://localhost"
             ];

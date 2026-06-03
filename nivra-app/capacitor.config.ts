@@ -8,6 +8,7 @@ const config: CapacitorConfig = {
   webDir: 'dist/nivra-app/browser',
   backgroundColor: '#070b0d',
   server: {
+    hostname: 'nivra-af67e.firebaseapp.com',
     androidScheme: 'https',
     cleartext: false,
   },

@@ -1,0 +1,110 @@
+<section class="media-gallery">
+  <header class="gallery-head">
+    <ion-button mode="ios" fill="clear" (click)="dismiss.emit()" aria-label="Cerrar galeria">
+      <ion-icon name="close-outline"></ion-icon>
+    </ion-button>
+    <div>
+      <h2>Multimedia</h2>
+      <p>{{ items.length }} archivos del chat</p>
+    </div>
+  </header>
+
+  <div class="gallery-grid">
+    @for (message of items; track message.id) {
+      @if (chat.asFile(message.payload); as file) {
+        <button type="button" class="gallery-tile" [class.audio]="isAudio(file)" (click)="open(message)" [attr.aria-label]="'Abrir ' + chat.fileName(file)">
+          @if (previewFor(file); as media) {
+            @if (chat.isImage(file)) {
+              <img [src]="media.url" [alt]="chat.fileName(file)">
+            } @else if (chat.isVideo(file)) {
+              <video [src]="media.url" muted playsinline preload="metadata"></video>
+            } @else {
+              <span class="audio-face">
+                <ion-icon [name]="file.voiceNote ? 'mic-outline' : 'volume-high-outline'"></ion-icon>
+              </span>
+            }
+          } @else if (chat.isImage(file)) {
+            <ion-icon name="image-outline"></ion-icon>
+          } @else if (chat.isVideo(file)) {
+            <ion-icon name="videocam-outline"></ion-icon>
+          } @else if (isAudio(file)) {
+            <ion-icon [name]="file.voiceNote ? 'mic-outline' : 'volume-high-outline'"></ion-icon>
+          } @else {
+            <ion-icon name="document-attach-outline"></ion-icon>
+          }
+
+          @if (chat.isVideo(file)) {
+            <span class="tile-kind">
+              <ion-icon name="play-circle-outline"></ion-icon>
+            </span>
+          }
+          @if (isAudio(file)) {
+            <span class="tile-kind audio-kind">
+              <ion-icon [name]="file.voiceNote ? 'mic-outline' : 'volume-high-outline'"></ion-icon>
+            </span>
+          }
+          @if (loadingId === message.id) {
+            <span class="tile-loading">
+              <ion-spinner name="crescent"></ion-spinner>
+            </span>
+          }
+          <span class="tile-name">{{ chat.fileName(file) }}</span>
+        </button>
+      }
+    } @empty {
+      <div class="gallery-empty">
+        <ion-icon name="image-outline"></ion-icon>
+        <strong>Sin multimedia visible</strong>
+        <span>Los archivos apareceran cuando existan en este dispositivo.</span>
+      </div>
+    }
+  </div>
+
+  @if (error) {
+    <p class="gallery-error">{{ error }}</p>
+  }
+</section>
+
+<ion-modal class="media-viewer-modal" [isOpen]="!!viewerPreview" (didDismiss)="closeViewer()">
+  <ng-template>
+    @if (viewerPreview && viewerFile) {
+      <section class="media-viewer">
+        <header>
+          <strong>{{ chat.fileName(viewerFile) }}</strong>
+          <ion-button mode="ios" fill="clear" (click)="closeViewer()" aria-label="Cerrar archivo">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </header>
+        <div class="media-viewer-body">
+          @if (chat.isImage(viewerFile)) {
+            <img [src]="viewerPreview.url" [alt]="chat.fileName(viewerFile)">
+          } @else if (chat.isVideo(viewerFile)) {
+            <video [src]="viewerPreview.url" controls playsinline autoplay></video>
+          }
+        </div>
+      </section>
+    }
+  </ng-template>
+</ion-modal>
+
+<ion-modal class="gallery-audio-modal" [isOpen]="!!audioPreview" (didDismiss)="closeAudioPlayer()">
+  <ng-template>
+    @if (audioPreview) {
+      <section class="audio-player-sheet">
+        <header>
+          <span>
+            <ion-icon name="volume-high-outline"></ion-icon>
+          </span>
+          <div>
+            <strong>{{ audioName || audioPreview.name }}</strong>
+            <small>Audio cifrado local</small>
+          </div>
+          <ion-button mode="ios" fill="clear" (click)="closeAudioPlayer()" aria-label="Cerrar audio">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </header>
+        <audio controls autoplay [src]="audioPreview.url"></audio>
+      </section>
+    }
+  </ng-template>
+</ion-modal>

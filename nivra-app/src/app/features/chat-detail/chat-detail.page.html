@@ -633,14 +633,22 @@
         </section>
         }
         <section class="contact-section media-section">
-          <div class="section-head">
+          <div class="section-head media-head">
             <h3>Multimedia</h3>
-            <span>{{ sharedMediaMessages().length }}</span>
+            <div class="media-head-actions">
+              <span>{{ sharedMediaMessages().length }}</span>
+              @if (sharedMediaMessages().length) {
+                <ion-button mode="ios" fill="clear" size="small" color="primary" (click)="openMediaGallery()">
+                  Ver todo
+                  <ion-icon name="chevron-forward-outline"></ion-icon>
+                </ion-button>
+              }
+            </div>
           </div>
-          <div class="media-grid">
-            @for (message of sharedMediaMessages(); track message.id) {
+          <div class="media-preview-row">
+            @for (message of sharedMediaMessages().slice(0, 4); track message.id) {
               @if (chat.asFile(message.payload); as file) {
-                <button type="button" class="media-tile" (click)="preview(message)">
+                <button type="button" class="media-tile" (click)="openMediaItem(message)">
                   @if (chat.mediaPreview(file.fileId || file.downloadFile || file.previewFile); as media) {
                     @if (chat.isImage(file)) {
                       <img [src]="media.url" [alt]="chat.fileName(file)">
@@ -661,6 +669,34 @@
           </div>
         </section>
       </section>
+    </ng-template>
+  </ion-modal>
+
+  <ion-modal class="media-gallery-modal" [isOpen]="mediaGalleryOpen" (didDismiss)="closeMediaGallery()">
+    <ng-template>
+      <app-chat-media-gallery [messages]="sharedMediaMessages()" (dismiss)="closeMediaGallery()"></app-chat-media-gallery>
+    </ng-template>
+  </ion-modal>
+
+  <ion-modal class="media-audio-modal" [isOpen]="!!activeAudioPreview" (didDismiss)="closeAudioPreview()">
+    <ng-template>
+      @if (activeAudioPreview) {
+        <section class="audio-player-sheet">
+          <header>
+            <span>
+              <ion-icon name="volume-high-outline"></ion-icon>
+            </span>
+            <div>
+              <strong>{{ activeAudioName || activeAudioPreview.name }}</strong>
+              <small>Audio cifrado local</small>
+            </div>
+            <ion-button mode="ios" fill="clear" (click)="closeAudioPreview()" aria-label="Cerrar audio">
+              <ion-icon name="close-outline"></ion-icon>
+            </ion-button>
+          </header>
+          <audio controls autoplay [src]="activeAudioPreview.url"></audio>
+        </section>
+      }
     </ng-template>
   </ion-modal>
 
