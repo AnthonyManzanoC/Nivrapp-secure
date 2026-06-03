@@ -27,6 +27,17 @@ import { CallsService } from '../../core/services/calls.service';
 import { ChatService } from '../../core/services/chat.service';
 import { MediaStreamDirective } from '../../shared/media-stream.directive';
 
+type CallIdentityProfile = {
+  userId?: string | null;
+  id?: string | null;
+  alias?: string | null;
+  displayName?: string | null;
+  phone?: string | null;
+  profilePhotoDataUrl?: string | null;
+};
+
+type RemoteEntry = [string, MediaStream];
+
 @Component({
   selector: 'app-calls',
   standalone: true,
@@ -41,6 +52,7 @@ export class CallsPage {
   inviteModalOpen = false;
   callQuery = '';
   callBusyId = '';
+  videoSwapped = false;
 
   constructor() {
     addIcons({
@@ -82,6 +94,7 @@ export class CallsPage {
     if (!conversation) {
       return;
     }
+    this.videoSwapped = false;
     const currentUserId = this.auth.session()?.user.id;
     const participantUserIds = conversation.participants
       .filter((participant) => !participant.removedAt && participant.userId !== currentUserId)
@@ -93,6 +106,7 @@ export class CallsPage {
     if (this.callBusyId || this.calls.activeCall()) {
       return;
     }
+    this.videoSwapped = false;
     this.callBusyId = `${type}:${contact.userId}`;
     try {
       const conversation = await this.chat.createDirectConversation(this.contactAsPerson(contact));
@@ -103,18 +117,22 @@ export class CallsPage {
   }
 
   async accept(): Promise<void> {
+    this.videoSwapped = false;
     await this.calls.accept();
   }
 
   async decline(): Promise<void> {
+    this.videoSwapped = false;
     await this.calls.decline();
   }
 
   async endActive(): Promise<void> {
+    this.videoSwapped = false;
     await this.calls.end();
   }
 
   async rejoin(callId: string): Promise<void> {
+    this.videoSwapped = false;
     await this.calls.rejoin(callId);
   }
 
@@ -136,11 +154,20 @@ export class CallsPage {
   }
 
   contactLabel(contact: Contact): string {
-    return contact.displayName || contact.phone || contact.alias || 'Contacto';
+    return this.profileLabel(contact) || 'Contacto';
   }
 
   contactSubLabel(contact: Contact): string {
-    return contact.phone || (contact.alias ? `@${contact.alias}` : 'Contacto cifrado');
+    const label = this.contactLabel(contact);
+    const phone = this.formatPhone(contact.phone);
+    const alias = contact.alias ? `@${contact.alias}` : '';
+    if (phone && label !== phone) {
+      return phone;
+    }
+    if (alias && label !== contact.alias) {
+      return alias;
+    }
+    return contact.bio || 'Contacto cifrado';
   }
 
   contactInitials(contact: Contact): string {
@@ -162,6 +189,11 @@ export class CallsPage {
     return this.calls.activeCall() ? this.calls.phase() : 'idle';
   }
 
+  isCallMode(): boolean {
+    const phase = this.calls.phase();
+    return Boolean(this.calls.activeCall() && ['calling', 'ringing', 'connecting', 'connected'].includes(phase));
+  }
+
   selectedTitle(): string {
     const conversation = this.chat.selectedConversation();
     return conversation ? this.chat.conversationTitle(conversation) : 'Selecciona un chat';
@@ -174,7 +206,7 @@ export class CallsPage {
     }
     const primaryUserId = this.primaryHistoryUserId(call);
     if (primaryUserId) {
-      return this.chat.participantDisplayName(primaryUserId);
+      return this.participantLabel(primaryUserId);
     }
     return call.type === 'Video' ? 'Videollamada' : 'Llamada';
   }
@@ -184,7 +216,7 @@ export class CallsPage {
     if (conversation) {
       return this.chat.conversationPhoto(conversation);
     }
-    return this.chat.participantPhoto(this.primaryHistoryUserId(call));
+    return this.participantPhoto(this.primaryHistoryUserId(call));
   }
 
   historyInitials(call: CallSession): string {
@@ -245,9 +277,94 @@ export class CallsPage {
     return this.callBusyId === `${type}:${contact.userId}`;
   }
 
+  activeCallTitle(call: CallSession): string {
+    const conversation = this.conversationForCall(call);
+    if (conversation) {
+      return this.calls.isGroupCall(call) ? `Llamada de Grupo: ${this.chat.conversationTitle(conversation)}` : this.chat.conversationTitle(conversation);
+    }
+    const labels = this.callParticipantIds(call).map((userId) => this.participantLabel(userId)).filter(Boolean);
+    if (labels.length) {
+      return labels.join(', ');
+    }
+    return this.calls.callTitle(call);
+  }
+
+  activeCallPhoto(call: CallSession): string {
+    const conversation = this.conversationForCall(call);
+    if (conversation) {
+      return this.chat.conversationPhoto(conversation);
+    }
+    return this.participantPhoto(this.callParticipantIds(call)[0]);
+  }
+
+  activeCallInitials(call: CallSession): string {
+    return this.initials(this.activeCallTitle(call));
+  }
+
+  primaryRemoteEntry(): RemoteEntry | null {
+    return this.calls.remoteEntries()[0] ?? null;
+  }
+
+  extraRemoteEntries(): RemoteEntry[] {
+    return this.calls.remoteEntries().slice(1);
+  }
+
+  mainVideoStream(): MediaStream | null {
+    const remote = this.primaryRemoteEntry()?.[1] ?? null;
+    const local = this.calls.localStream();
+    return this.videoSwapped ? local || remote : remote || local;
+  }
+
+  mainVideoParticipantId(): string {
+    const remoteId = this.primaryRemoteEntry()?.[0] || '';
+    return this.videoSwapped ? this.localParticipantId() : remoteId || this.localParticipantId();
+  }
+
+  pipVideoStream(): MediaStream | null {
+    const remote = this.primaryRemoteEntry()?.[1] ?? null;
+    const local = this.calls.localStream();
+    if (!remote || !local) {
+      return null;
+    }
+    return this.videoSwapped ? remote : local;
+  }
+
+  pipVideoParticipantId(): string {
+    const remoteId = this.primaryRemoteEntry()?.[0] || '';
+    return this.videoSwapped ? remoteId : this.localParticipantId();
+  }
+
+  toggleVideoSwap(): void {
+    if (this.calls.activeCall()?.type !== 'Video' || !this.primaryRemoteEntry() || !this.calls.localStream()) {
+      return;
+    }
+    this.videoSwapped = !this.videoSwapped;
+  }
+
+  videoParticipantLabel(userId: string | null | undefined): string {
+    return this.isLocalParticipant(userId) ? this.participantLabel(this.auth.session()?.user.id) : this.participantLabel(userId);
+  }
+
+  videoParticipantPhoto(userId: string | null | undefined): string {
+    return this.isLocalParticipant(userId) ? this.participantPhoto(this.auth.session()?.user.id) : this.participantPhoto(userId);
+  }
+
+  videoParticipantInitials(userId: string | null | undefined): string {
+    return this.initials(this.videoParticipantLabel(userId));
+  }
+
+  videoMuted(userId: string | null | undefined): boolean {
+    return this.isLocalParticipant(userId) || !this.calls.speaker();
+  }
+
+  hasVideoTrack(stream: MediaStream | null | undefined): boolean {
+    return Boolean(stream?.getVideoTracks().length);
+  }
+
   private resetIdleUi(clearSearch: boolean): void {
     this.callBusyId = '';
     this.inviteModalOpen = false;
+    this.videoSwapped = false;
     if (clearSearch) {
       this.callQuery = '';
     }
@@ -322,11 +439,67 @@ export class CallsPage {
     return conversationId ? this.chat.conversations().find((conversation) => conversation.id === conversationId) ?? null : null;
   }
 
+  private callParticipantIds(call: CallSession): string[] {
+    const currentUserId = this.auth.session()?.user.id;
+    return [...new Set([call.initiatorUserId, ...(call.participantUserIds ?? [])])]
+      .filter((userId): userId is string => Boolean(userId && userId !== currentUserId));
+  }
+
   private primaryHistoryUserId(call: CallSession): string | null {
     const currentUserId = this.auth.session()?.user.id;
     const ids = [call.initiatorUserId, ...(call.participantUserIds ?? [])]
       .filter((userId): userId is string => Boolean(userId && userId !== currentUserId));
     return [...new Set(ids)][0] ?? null;
+  }
+
+  private participantLabel(userId: string | null | undefined): string {
+    const currentUser = this.auth.session()?.user;
+    const profile = this.profileForUser(userId);
+    const label = this.profileLabel(profile) || this.chat.participantDisplayName(userId, profile);
+    if (userId && currentUser?.id === userId) {
+      return label && label !== 'Contacto' ? `${label} (Tu)` : 'Tu';
+    }
+    return label || 'Contacto';
+  }
+
+  private participantPhoto(userId: string | null | undefined): string {
+    const profile = this.profileForUser(userId);
+    return profile?.profilePhotoDataUrl || this.chat.participantPhoto(userId, profile);
+  }
+
+  private profileForUser(userId: string | null | undefined): CallIdentityProfile | null {
+    if (!userId) {
+      return null;
+    }
+    const currentUser = this.auth.session()?.user;
+    if (currentUser?.id === userId) {
+      return {
+        userId: currentUser.id,
+        id: currentUser.id,
+        alias: currentUser.alias,
+        displayName: currentUser.displayName,
+        phone: currentUser.phone,
+        profilePhotoDataUrl: currentUser.profilePhotoDataUrl,
+      };
+    }
+    return this.chat.contacts().find((contact) => contact.userId === userId)
+      || this.chat.conversations()
+        .flatMap((conversation) => conversation.participants)
+        .find((participant) => participant.userId === userId)
+      || null;
+  }
+
+  private profileLabel(profile: CallIdentityProfile | null | undefined): string {
+    return this.firstText(profile?.displayName, profile?.alias, this.formatPhone(profile?.phone));
+  }
+
+  private localParticipantId(): string {
+    return this.auth.session()?.user.id || 'local';
+  }
+
+  private isLocalParticipant(userId: string | null | undefined): boolean {
+    const currentUserId = this.auth.session()?.user.id;
+    return !userId || userId === 'local' || Boolean(currentUserId && userId === currentUserId);
   }
 
   private initials(value: string | null | undefined): string {
@@ -340,5 +513,24 @@ export class CallsPage {
 
   private normalize(value: string | null | undefined): string {
     return (value || '').trim().toLowerCase();
+  }
+
+  private firstText(...values: Array<string | null | undefined>): string {
+    return values.map((value) => (value || '').trim()).find(Boolean) || '';
+  }
+
+  private formatPhone(value: string | null | undefined): string {
+    const raw = (value || '').trim();
+    const digits = raw.replace(/[^\d+]/g, '');
+    if (!digits) {
+      return '';
+    }
+    if (digits.startsWith('+') && digits.length > 8) {
+      return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6, 10)}${digits.length > 10 ? ` ${digits.slice(10)}` : ''}`.trim();
+    }
+    if (/^\d{10}$/.test(digits)) {
+      return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
+    }
+    return raw;
   }
 }

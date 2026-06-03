@@ -1,5 +1,5 @@
 <ion-content fullscreen class="page">
-  <main class="surface">
+  <main class="surface" [class.call-mode]="isCallMode()">
     <header class="page-head">
       <div>
         <h1>Llamadas</h1>
@@ -7,8 +7,8 @@
       </div>
     </header>
 
-    <section class="grid">
-      <article class="panel span-7">
+    <section class="grid" [class.call-grid-active]="isCallMode()">
+      <article class="panel calls-panel" [class.span-12]="isCallMode()" [class.span-7]="!isCallMode()">
         <div class="panel-head">
           <h2>{{ calls.activeCall() ? 'Activa' : 'Agenda' }}</h2>
           <span>{{ uiPhase() }}</span>
@@ -24,27 +24,85 @@
               }
 
               @if (calls.phase() === 'connected' && calls.remoteEntries().length) {
-                @for (entry of calls.remoteEntries(); track entry[0]) {
-                  <div class="remote-tile">
-                    @if (call.type === 'Video') {
-                      <video [appMediaStream]="entry[1]" [muted]="!calls.speaker()" autoplay playsinline></video>
-                    } @else {
+                @if (call.type === 'Video') {
+                  @if (mainVideoStream(); as mainVideo) {
+                    <div class="video-composition" [class.local-main]="videoSwapped">
+                      <div class="remote-tile main-video">
+                        @if (hasVideoTrack(mainVideo)) {
+                          <video [appMediaStream]="mainVideo" [muted]="videoMuted(mainVideoParticipantId())" autoplay playsinline></video>
+                        } @else {
+                          <audio [appMediaStream]="mainVideo" [muted]="videoMuted(mainVideoParticipantId())" autoplay></audio>
+                          <div class="video-audio-fallback">
+                            @if (videoParticipantPhoto(mainVideoParticipantId())) {
+                              <img [src]="videoParticipantPhoto(mainVideoParticipantId())" alt="">
+                            } @else {
+                              <strong>{{ videoParticipantInitials(mainVideoParticipantId()) }}</strong>
+                            }
+                          </div>
+                        }
+                        <span>{{ videoParticipantLabel(mainVideoParticipantId()) }}</span>
+                      </div>
+
+                      @if (pipVideoStream(); as pipVideo) {
+                        <button type="button" class="local-preview pip-tile" (click)="toggleVideoSwap()" aria-label="Cambiar video principal">
+                          @if (hasVideoTrack(pipVideo)) {
+                            <video [appMediaStream]="pipVideo" [muted]="videoMuted(pipVideoParticipantId())" autoplay playsinline></video>
+                          } @else {
+                            <audio [appMediaStream]="pipVideo" [muted]="videoMuted(pipVideoParticipantId())" autoplay></audio>
+                            <div class="pip-avatar">
+                              @if (videoParticipantPhoto(pipVideoParticipantId())) {
+                                <img [src]="videoParticipantPhoto(pipVideoParticipantId())" alt="">
+                              } @else {
+                                <strong>{{ videoParticipantInitials(pipVideoParticipantId()) }}</strong>
+                              }
+                            </div>
+                          }
+                          <span>{{ videoParticipantLabel(pipVideoParticipantId()) }}</span>
+                        </button>
+                      }
+
+                      @if (extraRemoteEntries().length) {
+                        <div class="participant-strip" aria-label="Participantes conectados">
+                          @for (entry of extraRemoteEntries(); track entry[0]) {
+                            <div>
+                              @if (videoParticipantPhoto(entry[0])) {
+                                <img [src]="videoParticipantPhoto(entry[0])" [alt]="videoParticipantLabel(entry[0])">
+                              } @else {
+                                <span>{{ videoParticipantInitials(entry[0]) }}</span>
+                              }
+                              <small>{{ videoParticipantLabel(entry[0]) }}</small>
+                            </div>
+                          }
+                        </div>
+                      }
+                    </div>
+                  }
+                } @else {
+                  @for (entry of calls.remoteEntries(); track entry[0]) {
+                    <div class="remote-tile voice-connected">
                       <audio [appMediaStream]="entry[1]" [muted]="!calls.speaker()" autoplay></audio>
-                      <ion-icon name="phone-portrait-outline"></ion-icon>
-                    }
-                    <span>{{ entry[0] }}</span>
-                  </div>
+                      <div class="call-avatar small">
+                        @if (videoParticipantPhoto(entry[0])) {
+                          <img [src]="videoParticipantPhoto(entry[0])" alt="">
+                        } @else {
+                          <strong>{{ videoParticipantInitials(entry[0]) }}</strong>
+                        }
+                      </div>
+                      <strong>{{ videoParticipantLabel(entry[0]) }}</strong>
+                      <span>En llamada - {{ call.startedAt | date:'shortTime' }}</span>
+                    </div>
+                  }
                 }
               } @else {
                 <div class="waiting-tile" [class.over-video]="call.type === 'Video' && calls.localStream() && calls.phase() !== 'connected'">
                   <div class="call-avatar" [class.ringing]="calls.phase() === 'calling' || calls.phase() === 'ringing'">
-                    @if (calls.callPhoto(call)) {
-                      <img [src]="calls.callPhoto(call)" alt="">
+                    @if (activeCallPhoto(call)) {
+                      <img [src]="activeCallPhoto(call)" alt="">
                     } @else {
-                      <strong>{{ calls.callInitials(call) }}</strong>
+                      <strong>{{ activeCallInitials(call) }}</strong>
                     }
                   </div>
-                  <strong>{{ calls.isGroupCall(call) ? 'Llamada de Grupo: ' + calls.callTitle(call) : calls.callTitle(call) }}</strong>
+                  <strong>{{ activeCallTitle(call) }}</strong>
                   <span>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | date:'shortTime' }}</span>
                   <small>{{ call.type === 'Video' ? 'Videollamada cifrada' : 'Llamada cifrada' }}</small>
                   @if (calls.isGroupCall(call)) {
@@ -61,11 +119,6 @@
                 </div>
               }
 
-              @if (call.type === 'Video') {
-                @if (calls.phase() === 'connected' && calls.localStream(); as local) {
-                  <video id="localVideo" class="local-preview" [appMediaStream]="local" muted autoplay playsinline></video>
-                }
-              }
             </div>
 
             <div class="call-controls">
@@ -169,41 +222,43 @@
         }
       </article>
 
-      <article class="panel span-5">
-        <h2>Historial local</h2>
-        <div class="stack">
-          @for (call of calls.history(); track call.id) {
-            <div class="call-row history-row" [class.missed]="historyClass(call) === 'missed'" [class.outgoing]="historyClass(call) === 'outgoing'" [class.incoming]="historyClass(call) === 'incoming'">
-              <div class="history-main">
-                <div class="history-avatar">
-                  @if (historyPhoto(call)) {
-                    <img [src]="historyPhoto(call)" alt="">
+      @if (!isCallMode()) {
+        <article class="panel span-5">
+          <h2>Historial local</h2>
+          <div class="stack">
+            @for (call of calls.history(); track call.id) {
+              <div class="call-row history-row" [class.missed]="historyClass(call) === 'missed'" [class.outgoing]="historyClass(call) === 'outgoing'" [class.incoming]="historyClass(call) === 'incoming'">
+                <div class="history-main">
+                  <div class="history-avatar">
+                    @if (historyPhoto(call)) {
+                      <img [src]="historyPhoto(call)" alt="">
+                    } @else {
+                      <span>{{ historyInitials(call) }}</span>
+                    }
+                  </div>
+                  <div class="history-copy">
+                    <strong>{{ historyTitle(call) }}</strong>
+                    <span>{{ historySubtitle(call) }}</span>
+                    <small>{{ call.startedAt | date:'short' }}</small>
+                  </div>
+                </div>
+                <div class="history-actions">
+                  <ion-icon class="direction" [name]="historyIcon(call)"></ion-icon>
+                  @if (canRejoin(call.id) && call.status !== 'Ended' && !call.endedAt) {
+                    <ion-button mode="ios" fill="clear" (click)="rejoin(call.id)" aria-label="Reentrar">
+                      <ion-icon name="enter-outline"></ion-icon>
+                    </ion-button>
                   } @else {
-                    <span>{{ historyInitials(call) }}</span>
+                    <ion-icon class="kind" [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
                   }
                 </div>
-                <div class="history-copy">
-                  <strong>{{ historyTitle(call) }}</strong>
-                  <span>{{ historySubtitle(call) }}</span>
-                  <small>{{ call.startedAt | date:'short' }}</small>
-                </div>
               </div>
-              <div class="history-actions">
-                <ion-icon class="direction" [name]="historyIcon(call)"></ion-icon>
-                @if (canRejoin(call.id) && call.status !== 'Ended' && !call.endedAt) {
-                  <ion-button mode="ios" fill="clear" (click)="rejoin(call.id)" aria-label="Reentrar">
-                    <ion-icon name="enter-outline"></ion-icon>
-                  </ion-button>
-                } @else {
-                  <ion-icon class="kind" [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
-                }
-              </div>
-            </div>
-          } @empty {
-            <div class="empty-copy">Las llamadas entrantes apareceran aqui.</div>
-          }
-        </div>
-      </article>
+            } @empty {
+              <div class="empty-copy">Las llamadas entrantes apareceran aqui.</div>
+            }
+          </div>
+        </article>
+      }
     </section>
   </main>
 

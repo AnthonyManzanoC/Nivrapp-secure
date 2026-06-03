@@ -15,12 +15,74 @@
   font-size: 12px;
 }
 
+.surface.call-mode {
+  height: 100dvh;
+  overflow: hidden;
+  padding: 0;
+  background:
+    radial-gradient(circle at 16% 10%, rgba(24, 214, 162, .12), transparent 26%),
+    radial-gradient(circle at 86% 16%, rgba(107, 168, 255, .10), transparent 28%),
+    #030607;
+}
+
+.surface.call-mode .page-head {
+  display: none;
+}
+
+.call-grid-active {
+  height: 100dvh;
+  gap: 0;
+}
+
+.surface.call-mode .calls-panel {
+  position: relative;
+  min-height: 100dvh;
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #030607;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.surface.call-mode .panel-head {
+  position: absolute;
+  z-index: 8;
+  top: calc(18px + env(safe-area-inset-top));
+  left: 20px;
+  right: 20px;
+  pointer-events: none;
+}
+
+.surface.call-mode .panel-head h2 {
+  margin: 0;
+  color: rgba(244, 251, 247, .92);
+  text-shadow: 0 8px 28px rgba(0, 0, 0, .48);
+}
+
+.surface.call-mode .panel-head span {
+  border-color: rgba(255, 255, 255, .16);
+  color: rgba(244, 251, 247, .72);
+  background: rgba(4, 8, 10, .46);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+  backdrop-filter: blur(18px) saturate(140%);
+}
+
 .call-active {
   min-height: 520px;
   display: grid;
   grid-template-rows: minmax(0, 1fr) auto;
   gap: 12px;
   text-align: center;
+}
+
+.surface.call-mode .call-active {
+  position: relative;
+  height: 100dvh;
+  min-height: 100dvh;
+  gap: 0;
+  grid-template-rows: minmax(0, 1fr);
 }
 
 .call-stage {
@@ -36,6 +98,17 @@
     radial-gradient(circle at 50% 20%, rgba(255, 255, 255, .08), transparent 34%),
     rgba(5, 9, 11, .78);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08), 0 18px 46px rgba(0, 0, 0, .28);
+}
+
+.surface.call-mode .call-stage {
+  min-height: 100%;
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, .08), rgba(0, 0, 0, .72)),
+    radial-gradient(circle at 50% 18%, rgba(24, 214, 162, .13), transparent 36%),
+    #030607;
+  box-shadow: none;
 }
 
 .call-stage.has-local-video {
@@ -91,6 +164,11 @@
     linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2)) border-box;
   border: 2px solid transparent;
   box-shadow: 0 24px 80px rgba(0, 0, 0, .36), 0 0 0 12px rgba(24, 214, 162, .035);
+}
+
+.call-avatar.small {
+  width: 118px;
+  height: 118px;
 }
 
 .call-avatar.ringing {
@@ -163,38 +241,193 @@
   margin-left: 0;
 }
 
+.video-composition,
 .remote-tile,
-.remote-tile video {
+.remote-tile video,
+.remote-tile audio {
   width: 100%;
   height: 100%;
 }
 
+.video-composition {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #030607;
+}
+
+.remote-tile {
+  position: relative;
+  overflow: hidden;
+}
+
+.main-video::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, .34), transparent 24%, rgba(0, 0, 0, .62)),
+    radial-gradient(circle at 50% 18%, transparent, rgba(0, 0, 0, .2));
+}
+
 .remote-tile video {
+  display: block;
   object-fit: cover;
 }
 
 .remote-tile span {
   position: absolute;
-  left: 12px;
-  bottom: 12px;
+  z-index: 2;
+  left: 14px;
+  bottom: 14px;
   border-radius: 999px;
-  padding: 5px 10px;
+  max-width: min(70%, 360px);
+  padding: 7px 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   color: var(--nivra-soft);
-  background: rgba(0, 0, 0, .46);
+  background: rgba(0, 0, 0, .48);
+  border: 1px solid rgba(255, 255, 255, .12);
   font-size: 12px;
+  font-weight: 850;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .28);
+  backdrop-filter: blur(14px) saturate(130%);
+}
+
+.video-audio-fallback,
+.pip-avatar {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 35%, rgba(24, 214, 162, .16), transparent 34%),
+    linear-gradient(135deg, rgba(24, 214, 162, .13), rgba(107, 168, 255, .1)),
+    #05090b;
+}
+
+.video-audio-fallback img,
+.video-audio-fallback strong,
+.pip-avatar img,
+.pip-avatar strong {
+  width: min(34vw, 180px);
+  height: min(34vw, 180px);
+  border: 2px solid rgba(255, 255, 255, .16);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  object-fit: cover;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .03)),
+    linear-gradient(135deg, rgba(24, 214, 162, .42), rgba(107, 168, 255, .22));
+  font-size: 42px;
+  font-weight: 950;
 }
 
 .local-preview {
   position: absolute;
-  right: 12px;
-  bottom: 12px;
-  width: min(34%, 180px);
+  z-index: 5;
+  right: 18px;
+  bottom: calc(96px + env(safe-area-inset-bottom));
+  width: clamp(118px, 18vw, 214px);
   aspect-ratio: 9 / 12;
   border: 1px solid rgba(255, 255, 255, .2);
   border-radius: 8px;
-  object-fit: cover;
+  overflow: hidden;
+  padding: 0;
   background: #030607;
   box-shadow: 0 16px 40px rgba(0, 0, 0, .36), 0 0 0 1px rgba(114, 240, 202, .12);
+  cursor: pointer;
+  transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+}
+
+.local-preview:hover,
+.local-preview:focus-visible {
+  border-color: rgba(114, 240, 202, .5);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, .44), 0 0 0 3px rgba(114, 240, 202, .16);
+  transform: translateY(-2px);
+}
+
+.local-preview video,
+.local-preview .pip-avatar {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.local-preview span {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  border-radius: 999px;
+  padding: 5px 8px;
+  overflow: hidden;
+  color: var(--nivra-soft);
+  background: rgba(0, 0, 0, .48);
+  font-size: 11px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  backdrop-filter: blur(12px);
+}
+
+.participant-strip {
+  position: absolute;
+  z-index: 4;
+  left: 18px;
+  right: 18px;
+  top: calc(70px + env(safe-area-inset-top));
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.participant-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.participant-strip div {
+  flex: 0 0 auto;
+  min-width: 92px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  padding: 7px 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: var(--nivra-soft);
+  background: rgba(4, 8, 10, .5);
+  backdrop-filter: blur(14px) saturate(130%);
+}
+
+.participant-strip img,
+.participant-strip span {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  object-fit: cover;
+  color: var(--nivra-text);
+  background: linear-gradient(135deg, rgba(24, 214, 162, .4), rgba(107, 168, 255, .24));
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.participant-strip small {
+  overflow: hidden;
+  color: var(--nivra-soft);
+  font-size: 11px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .local-preview-main {
@@ -230,14 +463,66 @@
   gap: 10px;
 }
 
+.surface.call-mode .call-controls {
+  position: absolute;
+  z-index: 8;
+  left: 50%;
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  width: min(92vw, 560px);
+  padding: 10px;
+  border: 1px solid rgba(255, 255, 255, .13);
+  border-radius: 999px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .095), rgba(255, 255, 255, .045)),
+    rgba(5, 9, 11, .72);
+  box-shadow: 0 18px 54px rgba(0, 0, 0, .46), inset 0 1px 0 rgba(255, 255, 255, .08);
+  transform: translateX(-50%);
+  backdrop-filter: blur(24px) saturate(160%);
+}
+
 .call-controls ion-button {
   --border-radius: 999px;
   min-height: 42px;
 }
 
+.surface.call-mode .call-controls ion-button {
+  width: 48px;
+  height: 48px;
+  margin: 0;
+  --padding-start: 0;
+  --padding-end: 0;
+  --background: rgba(255, 255, 255, .08);
+  --background-hover: rgba(255, 255, 255, .13);
+  --color: var(--nivra-soft);
+  --box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+}
+
+.surface.call-mode .call-controls ion-button[color="danger"] {
+  width: auto;
+  min-width: 108px;
+  --padding-start: 16px;
+  --padding-end: 18px;
+  --background: linear-gradient(135deg, #ff6b6b, #ff8aa3);
+  --color: #2a0508;
+  font-weight: 950;
+}
+
 .call-controls .accept {
   --background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
   --color: #03100d;
+}
+
+.voice-connected {
+  display: grid;
+  place-items: center;
+  gap: 12px;
+  color: var(--nivra-muted);
+}
+
+.voice-connected strong {
+  color: var(--nivra-text);
+  font-size: clamp(26px, 4vw, 42px);
+  line-height: 1.1;
 }
 
 ion-modal.invite-modal {

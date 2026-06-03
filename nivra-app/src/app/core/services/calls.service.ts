@@ -1,6 +1,6 @@
 import { DestroyRef, Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Room, RoomEvent } from 'livekit-client';
+import { Room, RoomEvent, type AudioCaptureOptions } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { CallPhase, CallSession, CallSignalEvent, GroupCallRoom, PublicKeyDirectory, RecipientCipherRequest } from '../models/nivra.models';
@@ -34,6 +34,11 @@ interface LiveKitRoomTokenResponse {
 }
 
 const CALL_RING_TIMEOUT_MS = 45_000;
+const CALL_AUDIO_PROCESSING: AudioCaptureOptions = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+};
 
 @Injectable({ providedIn: 'root' })
 export class CallsService implements OnDestroy {
@@ -327,7 +332,9 @@ export class CallsService implements OnDestroy {
       return;
     }
     this.disconnectLiveKitRoom();
-    const room = new Room();
+    const room = new Room({
+      audioCaptureDefaults: CALL_AUDIO_PROCESSING,
+    });
     this.liveKitRoom = room;
     room.on(RoomEvent.TrackSubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
       this.addLiveKitRemoteTrack(participant?.identity || crypto.randomUUID(), track);
@@ -344,9 +351,9 @@ export class CallsService implements OnDestroy {
     });
     await room.connect(credentials.serverUrl, credentials.token);
     await (room.localParticipant as unknown as {
-      setMicrophoneEnabled: (enabled: boolean) => Promise<unknown>;
+      setMicrophoneEnabled: (enabled: boolean, options?: AudioCaptureOptions) => Promise<unknown>;
       setCameraEnabled: (enabled: boolean) => Promise<unknown>;
-    }).setMicrophoneEnabled(true);
+    }).setMicrophoneEnabled(true, CALL_AUDIO_PROCESSING);
     if (call.type === 'Video') {
       await (room.localParticipant as unknown as {
         setCameraEnabled: (enabled: boolean) => Promise<unknown>;
@@ -458,17 +465,27 @@ export class CallsService implements OnDestroy {
     if (conversation) {
       return this.chat.conversationTitle(conversation);
     }
+    const participantNames = call
+      ? this.callParticipantIds(call).map((userId) => this.chat.participantDisplayName(userId)).filter(Boolean)
+      : [];
+    if (participantNames.length) {
+      return participantNames.join(', ');
+    }
     return call?.type === 'Video' ? 'Videollamada' : 'Llamada';
   }
 
   callPhoto(call: CallSession | null | undefined): string {
     const conversation = this.conversationForCall(call);
-    return conversation ? this.chat.conversationPhoto(conversation) : '';
+    if (conversation) {
+      return this.chat.conversationPhoto(conversation);
+    }
+    const participantId = call ? this.callParticipantIds(call)[0] : null;
+    return this.chat.participantPhoto(participantId);
   }
 
   callInitials(call: CallSession | null | undefined): string {
     const conversation = this.conversationForCall(call);
-    return conversation ? this.chat.avatarLabel(conversation) : 'NV';
+    return conversation ? this.chat.avatarLabel(conversation) : this.initials(this.callTitle(call));
   }
 
   callStatusLabel(call: CallSession | null | undefined): string {
@@ -507,12 +524,12 @@ export class CallsService implements OnDestroy {
       ? conversation.participants.filter((participant) => !participant.removedAt && participant.userId !== currentUserId)
       : fallbackParticipants;
     return participants.slice(0, 6).map((participant) => {
-      const label = participant.displayName || participant.phone || participant.alias || 'Contacto';
+      const label = this.chat.participantDisplayName(participant.userId, participant);
       return {
         id: participant.userId,
         label,
-        photo: participant.profilePhotoDataUrl || '',
-        initials: label.split(/\s|,|-/).filter(Boolean).slice(0, 2).map((part: string) => part[0]?.toUpperCase()).join('') || 'N',
+        photo: this.chat.participantPhoto(participant.userId, participant),
+        initials: this.initials(label),
       };
     });
   }
@@ -560,7 +577,7 @@ export class CallsService implements OnDestroy {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('Este navegador no expone microfono/camara.');
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: withVideo })
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: CALL_AUDIO_PROCESSING, video: withVideo })
       .catch(() => {
         throw new Error(withVideo ? 'Permite camara y microfono para la videollamada.' : 'Permite el microfono para la llamada.');
       });
@@ -1020,6 +1037,21 @@ export class CallsService implements OnDestroy {
   private otherParticipantIds(call: CallSession): string[] {
     const currentUserId = this.currentUserId();
     return (call.participantUserIds ?? []).filter((userId) => userId && userId !== currentUserId);
+  }
+
+  private callParticipantIds(call: CallSession): string[] {
+    const currentUserId = this.currentUserId();
+    return [...new Set([call.initiatorUserId, ...(call.participantUserIds ?? [])])]
+      .filter((userId) => userId && userId !== currentUserId);
+  }
+
+  private initials(value: string | null | undefined): string {
+    return (value || 'Nivra')
+      .split(/\s|,|-/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'N';
   }
 
   private currentUserId(): string | null {
