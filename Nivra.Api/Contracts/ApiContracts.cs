@@ -41,6 +41,7 @@ public sealed record UserResponse(
     DateTimeOffset CreatedAt);
 
 public sealed record PatchProfileRequest(
+    string? Alias,
     string? DisplayName,
     string? Email,
     string? Phone,

@@ -3,6 +3,8 @@ import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Keyboard, KeyboardStyle } from '@capacitor/keyboard';
+import { Subject, Subscription, from, of } from 'rxjs';
+import { catchError, debounceTime, distinctUntilChanged, map, switchMap } from 'rxjs/operators';
 import {
   IonButton,
   IonContent,
@@ -22,6 +24,9 @@ import { PrivacySettings } from '../../core/models/nivra.models';
 import { PushService } from '../../core/services/push.service';
 
 const THEME_STORAGE_KEY = 'nivra.theme';
+const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
+
+type AliasStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 
 @Component({
   selector: 'app-account',
@@ -36,6 +41,8 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly calls = inject(CallsService);
   readonly push = inject(PushService);
   private readonly router = inject(Router);
+  alias = '';
+  private originalAlias = '';
   displayName = '';
   email = '';
   phone = '';
@@ -60,6 +67,9 @@ export class AccountPage implements OnInit, OnDestroy {
   lightTheme = false;
   private qrScanner: import('html5-qrcode').Html5Qrcode | null = null;
   private contactScanner: import('html5-qrcode').Html5Qrcode | null = null;
+  private readonly aliasChecks = new Subject<string>();
+  private aliasCheckSub?: Subscription;
+  aliasStatus: AliasStatus = 'idle';
 
   constructor() {
     addIcons({ cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline });
@@ -67,10 +77,12 @@ export class AccountPage implements OnInit, OnDestroy {
 
   async ngOnInit(): Promise<void> {
     this.initializeTheme();
+    this.listenForAliasChecks();
     await this.reload();
   }
 
   ngOnDestroy(): void {
+    this.aliasCheckSub?.unsubscribe();
     void this.stopQrScanner();
     void this.stopContactScanner();
   }
@@ -79,6 +91,9 @@ export class AccountPage implements OnInit, OnDestroy {
     await this.account.load();
     const user = this.auth.session()?.user;
     if (user) {
+      this.alias = user.alias ?? '';
+      this.originalAlias = this.normalizeAlias(user.alias);
+      this.aliasStatus = 'idle';
       this.displayName = user.displayName ?? '';
       this.email = user.email ?? '';
       this.phone = user.phone ?? '';
@@ -90,8 +105,19 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async saveProfile(): Promise<void> {
+    if (!this.canSaveProfile()) {
+      this.error = this.aliasStatus === 'taken'
+        ? 'Alias no disponible.'
+        : this.aliasStatus === 'checking'
+          ? 'Espera la validacion del alias.'
+          : 'Revisa el alias antes de guardar.';
+      return;
+    }
+
     await this.run(async () => {
+      const alias = this.normalizeAlias(this.alias);
       await this.account.updateProfile({
+        alias,
         displayName: this.displayName || null,
         email: this.email || null,
         phone: this.phone || null,
@@ -99,9 +125,38 @@ export class AccountPage implements OnInit, OnDestroy {
         ...(this.profilePhotoDirty ? { profilePhotoDataUrl: this.profilePhotoDataUrl } : {}),
         isDiscoverable: this.isDiscoverable,
       });
+      this.alias = this.auth.session()?.user?.alias ?? alias;
+      this.originalAlias = this.normalizeAlias(this.alias);
+      this.aliasStatus = 'idle';
       this.profilePhotoDirty = false;
       this.notice = 'Perfil actualizado.';
     });
+  }
+
+  aliasChanged(value: string | number | null | undefined): void {
+    this.alias = this.normalizeAlias(String(value ?? ''));
+    const alias = this.normalizeAlias(this.alias);
+    if (alias === this.originalAlias) {
+      this.aliasStatus = 'idle';
+      return;
+    }
+    if (!ALIAS_PATTERN.test(alias)) {
+      this.aliasStatus = 'invalid';
+      return;
+    }
+    this.aliasStatus = 'checking';
+    this.aliasChecks.next(alias);
+  }
+
+  canSaveProfile(): boolean {
+    const alias = this.normalizeAlias(this.alias);
+    if (!ALIAS_PATTERN.test(alias)) {
+      return false;
+    }
+    if (alias === this.originalAlias) {
+      return true;
+    }
+    return this.aliasStatus === 'available';
   }
 
   async pickProfilePhoto(event: Event): Promise<void> {
@@ -470,6 +525,24 @@ export class AccountPage implements OnInit, OnDestroy {
     }
   }
 
+  private listenForAliasChecks(): void {
+    this.aliasCheckSub = this.aliasChecks.pipe(
+      debounceTime(500),
+      distinctUntilChanged(),
+      switchMap((alias) => from(this.account.checkAliasAvailable(alias)).pipe(
+        map((available) => ({ alias, available, failed: false })),
+        catchError(() => of({ alias, available: false, failed: true })),
+      )),
+    ).subscribe(({ alias, available, failed }) => {
+      if (alias !== this.normalizeAlias(this.alias) || alias === this.originalAlias) {
+        return;
+      }
+      this.aliasStatus = failed
+        ? 'idle'
+        : available ? 'available' : 'taken';
+    });
+  }
+
   private async ensureShareQr(): Promise<void> {
     if (this.shareQrDataUrl) {
       return;
@@ -551,6 +624,10 @@ export class AccountPage implements OnInit, OnDestroy {
   private normalizeContactAlias(value: string): string | null {
     const alias = value.trim().replace(/^@/, '');
     return /^[a-zA-Z0-9_.-]{3,32}$/.test(alias) ? alias.toLowerCase() : null;
+  }
+
+  private normalizeAlias(value: string): string {
+    return value.trim().replace(/^@+/, '').toLowerCase();
   }
 
   private async resizeProfilePhoto(file: File): Promise<string> {

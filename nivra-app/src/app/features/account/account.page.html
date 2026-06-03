@@ -14,18 +14,21 @@
       <article class="panel span-7">
         <h2>Perfil</h2>
         <div class="profile-photo-row">
-          <div class="profile-photo">
+          <input #profilePhotoInput type="file" accept="image/*" hidden (change)="pickProfilePhoto($event)">
+          <button type="button" class="profile-photo" [class.has-photo]="!!profilePhotoDataUrl" (click)="profilePhotoInput.click()" [disabled]="saving" aria-label="Actualizar foto de perfil">
             @if (profilePhotoDataUrl) {
               <img [src]="profilePhotoDataUrl" alt="">
             } @else {
               <span>{{ (displayName || auth.session()?.user?.alias || 'N').slice(0, 2).toUpperCase() }}</span>
             }
-          </div>
+            <small class="photo-edit-badge">
+              <ion-icon name="camera-outline"></ion-icon>
+            </small>
+          </button>
           <div class="profile-photo-actions">
-            <input #profilePhotoInput type="file" accept="image/*" hidden (change)="pickProfilePhoto($event)">
             <ion-button mode="ios" fill="outline" (click)="profilePhotoInput.click()" [disabled]="saving">
               <ion-icon name="camera-outline"></ion-icon>
-              Subir foto
+              {{ profilePhotoDataUrl ? 'Cambiar foto' : 'Subir foto' }}
             </ion-button>
             @if (profilePhotoDataUrl) {
               <ion-button mode="ios" fill="clear" color="danger" (click)="removeProfilePhoto()" [disabled]="saving">
@@ -36,6 +39,21 @@
           </div>
         </div>
         <div class="form-grid">
+          <label class="alias-field">
+            <span>Alias</span>
+            <ion-input mode="ios" fill="outline" [ngModel]="alias" (ngModelChange)="aliasChanged($event)" maxlength="32" autocomplete="off"></ion-input>
+            @if (aliasStatus === 'checking') {
+              <small class="alias-hint">Validando alias...</small>
+            } @else if (aliasStatus === 'taken') {
+              <small class="alias-error">Alias no disponible</small>
+            } @else if (aliasStatus === 'invalid') {
+              <small class="alias-error">Usa 3 a 32 caracteres: letras, numeros, punto, guion o _.</small>
+            } @else if (aliasStatus === 'available') {
+              <small class="alias-ok">Alias disponible</small>
+            } @else {
+              <small class="alias-hint">Tu alias es unico y puede compartirse como @{{ alias || auth.session()?.user?.alias }}.</small>
+            }
+          </label>
           <label>
             <span>Nombre</span>
             <ion-input mode="ios" fill="outline" [(ngModel)]="displayName"></ion-input>
@@ -57,7 +75,7 @@
             <ion-toggle mode="ios" [checked]="isDiscoverable" (ionChange)="isDiscoverable = $event.detail.checked"></ion-toggle>
           </label>
         </div>
-        <ion-button mode="ios" (click)="saveProfile()" [disabled]="saving">
+        <ion-button mode="ios" (click)="saveProfile()" [disabled]="saving || !canSaveProfile()">
           <ion-icon name="shield-checkmark-outline"></ion-icon>
           Guardar perfil
         </ion-button>

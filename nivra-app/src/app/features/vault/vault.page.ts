@@ -2,7 +2,7 @@ import { CommonModule, DatePipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
-import { IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea } from '@ionic/angular/standalone';
+import { IonButton, IonContent, IonFooter, IonHeader, IonIcon, IonInput, IonSpinner, IonTextarea, IonToolbar } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
   addCircleOutline,
@@ -34,7 +34,7 @@ import { MediaStreamDirective } from '../../shared/media-stream.directive';
 @Component({
   selector: 'app-vault',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
+  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonFooter, IonHeader, IonIcon, IonInput, IonSpinner, IonTextarea, IonToolbar, MediaStreamDirective],
   templateUrl: './vault.page.html',
   styleUrls: ['./vault.page.scss'],
 })
@@ -190,6 +190,10 @@ export class VaultPage implements OnInit, OnDestroy {
       return;
     }
     await this.joinRoom(room);
+  }
+
+  closeRoomView(): void {
+    this.vault.closeRoomView();
   }
 
   async joinRoom(room: VaultRoom): Promise<void> {

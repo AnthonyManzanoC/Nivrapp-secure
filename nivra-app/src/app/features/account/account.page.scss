@@ -221,6 +221,9 @@
 }
 
 .profile-photo {
+  position: relative;
+  padding: 0;
+  flex: 0 0 auto;
   width: 76px;
   height: 76px;
   border: 1px solid rgba(114, 240, 202, .22);
@@ -236,10 +239,38 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, .12), var(--nivra-shadow-tiny);
 }
 
+.profile-photo:disabled {
+  cursor: not-allowed;
+}
+
+.profile-photo.has-photo {
+  border-color: rgba(114, 240, 202, .36);
+}
+
 .profile-photo img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+}
+
+.photo-edit-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  width: 28px;
+  height: 28px;
+  border: 2px solid rgba(8, 13, 15, .94);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #04100d;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+  box-shadow: 0 8px 20px rgba(0, 0, 0, .24);
+}
+
+.photo-edit-badge ion-icon {
+  width: 15px;
+  height: 15px;
 }
 
 .profile-photo-actions {
@@ -247,6 +278,36 @@
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.alias-field {
+  position: relative;
+}
+
+.alias-field ion-input {
+  --padding-start: 14px;
+}
+
+.alias-hint,
+.alias-error,
+.alias-ok {
+  display: block;
+  min-height: 18px;
+  margin-top: 5px;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.alias-hint {
+  color: var(--nivra-muted);
+}
+
+.alias-error {
+  color: #ff9d9d;
+}
+
+.alias-ok {
+  color: var(--nivra-brand-2);
 }
 
 .danger-zone {
@@ -424,6 +485,14 @@ ion-modal.share-modal {
     linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(242, 244, 247, .86)),
     linear-gradient(135deg, rgba(24, 214, 162, .24), rgba(52, 120, 246, .12));
   box-shadow: var(--nivra-shadow-tiny);
+}
+
+:host-context(.nivra-light-theme) .photo-edit-badge {
+  border-color: #ffffff;
+}
+
+:host-context(.nivra-light-theme) .alias-error {
+  color: #b42318;
 }
 
 :host-context(.nivra-light-theme) .qr-scanner {

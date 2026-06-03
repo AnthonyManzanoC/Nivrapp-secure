@@ -9,6 +9,7 @@ import {
   PrivacySettings,
 } from '../models/nivra.models';
 import { AuthService } from './auth.service';
+import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
@@ -16,6 +17,7 @@ import { SignalrService } from './signalr.service';
 export class AccountService {
   private readonly api = inject(NivraApiService);
   private readonly auth = inject(AuthService);
+  private readonly crypto = inject(CryptoService);
   private readonly realtime = inject(SignalrService);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -56,9 +58,36 @@ export class AccountService {
   }
 
   async updateProfile(patch: PatchProfileRequest): Promise<NivraUser> {
+    const current = this.auth.session();
+    const requestedAlias = this.normalizeAlias(patch.alias);
+    const shouldMoveLocalKeys = Boolean(
+      current?.device?.id &&
+      requestedAlias &&
+      requestedAlias !== this.normalizeAlias(current.user.alias),
+    );
+    const currentKeys = shouldMoveLocalKeys && current
+      ? await this.crypto.currentKeyMaterial(current.user.alias, current.device.id)
+      : null;
+
     const user = await firstValueFrom(this.api.patch<NivraUser>('/me', patch));
+    if (currentKeys && current?.device?.id) {
+      await this.crypto.saveDeviceKeys(
+        user.alias,
+        current.device.id,
+        this.crypto.materialToDeviceKeys(currentKeys),
+        { userId: user.id },
+      );
+    }
     this.auth.updateUser(user);
     return user;
+  }
+
+  async checkAliasAvailable(alias: string): Promise<boolean> {
+    const normalizedAlias = this.normalizeAlias(alias);
+    if (!normalizedAlias) {
+      return false;
+    }
+    return firstValueFrom(this.api.get<boolean>(`/users/check-alias?alias=${encodeURIComponent(normalizedAlias)}`));
   }
 
   async updatePrivacy(patch: PrivacySettings): Promise<PrivacySettings> {
@@ -78,5 +107,9 @@ export class AccountService {
 
   async requestDataDelete(confirmation: string): Promise<void> {
     await firstValueFrom(this.api.post('/data/delete-request', { confirmation }));
+  }
+
+  private normalizeAlias(value: string | null | undefined): string {
+    return String(value || '').trim().replace(/^@/, '').toLowerCase();
   }
 }

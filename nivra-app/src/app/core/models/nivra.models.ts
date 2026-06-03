@@ -296,6 +296,7 @@ export interface MessageSyncResponse {
 }
 
 export interface PatchProfileRequest {
+  alias?: string | null;
   displayName?: string | null;
   email?: string | null;
   phone?: string | null;

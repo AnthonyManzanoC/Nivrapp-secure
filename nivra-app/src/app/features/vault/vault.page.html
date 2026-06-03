@@ -1,3 +1,183 @@
+@if (vault.activeRoom(); as room) {
+  <ion-header class="vault-room-header ion-no-border">
+    <ion-toolbar>
+      <div class="vault-room-toolbar">
+        <div class="vault-room-title">
+          <ion-button mode="ios" fill="clear" (click)="closeRoomView()" aria-label="Volver a salas">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+          <span class="room-avatar">{{ initials(room) }}</span>
+          <div>
+            <h1>{{ room.name }}</h1>
+            <p>{{ vault.accessLabel(room.accessMode) }} - {{ activeMembers(room).length }} activos</p>
+          </div>
+        </div>
+        <div class="vault-room-header-actions">
+          @if (vault.canInviteGuests(room)) {
+            <ion-button mode="ios" class="invite-link-action" fill="outline" (click)="shareRoomInvite(room)" [disabled]="isBusy('share:' + room.id)">
+              @if (isBusy('share:' + room.id)) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="link-outline"></ion-icon> }
+              Enlace
+            </ion-button>
+          }
+          <ion-button mode="ios" class="voice-start" fill="outline" (click)="startVoice(room)" [disabled]="vault.voicePhase() === 'connecting' || (vault.voiceConnected() && vault.voiceRoomId() === room.id)">
+            @if (vault.voicePhase() === 'connecting') { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="headset-outline"></ion-icon> }
+            Audio
+          </ion-button>
+        </div>
+      </div>
+    </ion-toolbar>
+  </ion-header>
+
+  <ion-content class="vault-room-content">
+    <main class="vault-room-scroll">
+      <div class="room-head room-head-inline">
+        <div class="room-main static">
+          <span class="room-avatar large">{{ initials(room) }}</span>
+          <span>
+            <strong>{{ room.name }}</strong>
+            <small>{{ vault.accessLabel(room.accessMode) }} - {{ activeMembers(room).length }} activos</small>
+          </span>
+        </div>
+        <div class="member-dots">
+          @for (member of activeMembers(room).slice(0, 5); track member.userId) {
+            <span title="{{ vault.memberLabel(member) }}">{{ vault.memberLabel(member)[0] }}</span>
+          }
+        </div>
+      </div>
+
+      @if (waitingMembers(room).length && vault.canModerate(room)) {
+        <div class="waiting-list">
+          @for (member of waitingMembers(room); track member.userId) {
+            <div class="vault-row">
+              <div>
+                <strong>{{ vault.memberLabel(member) }}</strong>
+                <span class="card-sub">Esperando aprobacion</span>
+              </div>
+              <ion-button mode="ios" fill="clear" (click)="approve(room, member)" [disabled]="isBusy('approve:' + member.userId)">
+                <ion-icon name="checkmark-circle-outline"></ion-icon>
+              </ion-button>
+            </div>
+          }
+        </div>
+      }
+
+      @if (vault.canInviteGuests(room)) {
+        <div class="owner-invite-panel">
+          <div class="owner-invite-title">
+            <ion-icon name="people-outline"></ion-icon>
+            <span>
+              <strong>Anadir invitados</strong>
+              <small>Solo el dueno puede abrir la puerta. El PIN solo funciona despues de estar invitado.</small>
+            </span>
+          </div>
+          <div class="invite-bar">
+            <div class="search-box">
+              <ion-icon name="search-outline"></ion-icon>
+              <ion-input mode="ios" [(ngModel)]="inviteQuery" placeholder="@alias, nombre o telefono" (ionInput)="searchInvites()"></ion-input>
+            </div>
+            <ion-button mode="ios" fill="outline" (click)="inviteActiveRoom()" [disabled]="!selectedInviteIds.size || isBusy('invite:' + room.id)">
+              Invitar
+            </ion-button>
+          </div>
+          @if (availableInvitePeople(room).length) {
+            <div class="people-strip compact">
+              @for (person of availableInvitePeople(room); track person.id) {
+                <button type="button" class="person-pill" [class.selected]="inviteSelected(person)" (click)="toggleInvite(person, room)">
+                  <span>{{ (person.displayName || person.alias || 'N')[0] }}</span>
+                  {{ person.displayName || person.alias }}
+                </button>
+              }
+            </div>
+          }
+        </div>
+      }
+
+      @if (vault.voiceRoomId() === room.id || vault.voicePhase() === 'connecting' || vault.voiceError()) {
+        <div class="voice-widget" [class.connected]="vault.voiceConnected()" [class.failed]="vault.voicePhase() === 'failed'">
+          <div class="voice-roster">
+            <ion-icon name="headset-outline"></ion-icon>
+            @if (vault.voiceConnected()) {
+              @for (member of vault.voiceRoster(room); track member.userId) {
+                <span class="voice-avatar" [class.speaking]="vault.voiceActiveSpeakers().includes(member.userId)" title="{{ vault.memberLabel(member) }}">
+                  {{ vault.memberLabel(member)[0] }}
+                </span>
+              }
+              <strong>{{ vault.voiceRoster(room).length || 1 }} en audio</strong>
+            } @else if (vault.voicePhase() === 'connecting') {
+              <strong>Conectando audio seguro...</strong>
+            } @else {
+              <strong>{{ vault.voiceError() || 'Audio no disponible' }}</strong>
+            }
+          </div>
+          <div class="voice-controls">
+            @for (entry of vault.voiceRemoteEntries(); track entry[0]) {
+              <audio [appMediaStream]="entry[1]" autoplay></audio>
+            }
+            <ion-button mode="ios" fill="clear" (click)="toggleVoiceMute()" [disabled]="!vault.voiceConnected() || isBusy('voice:mute')" aria-label="Mutear">
+              <ion-icon [name]="vault.voiceMuted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
+            </ion-button>
+            <ion-button mode="ios" fill="clear" color="danger" (click)="leaveVoice()" [disabled]="!vault.voiceRoomId() && vault.voicePhase() !== 'failed'" aria-label="Salir del audio">
+              <ion-icon name="close-outline"></ion-icon>
+            </ion-button>
+          </div>
+        </div>
+      }
+
+      <div class="vault-chat vault-chat-room">
+        @for (message of vault.activeMessages(); track message.id) {
+          <div class="vault-message" [class.mine]="message.mine" [class.system]="message.payload.type === 'system'">
+            <small>{{ vault.messageSender(message) }} - {{ message.at | date:'shortTime' }}</small>
+            @if (messageFile(message); as file) {
+              <div class="file-bubble">
+                @if (vault.mediaPreviews()[file.fileId || file.downloadFile || file.previewFile || '']; as media) {
+                  @if (vault.isImage(file)) {
+                    <img [src]="media.url" [alt]="vault.fileName(file)" />
+                  } @else if (vault.isVideo(file)) {
+                    <video [src]="media.url" controls playsinline></video>
+                  } @else if (vault.isAudio(file)) {
+                    <audio [src]="media.url" controls></audio>
+                  }
+                }
+                <strong>{{ vault.fileName(file) }}</strong>
+                <span>{{ vault.fileSize(file) }}</span>
+                <div class="file-actions">
+                  <ion-button mode="ios" fill="clear" (click)="previewFile(file)">
+                    <ion-icon name="shield-checkmark-outline"></ion-icon>
+                    Ver
+                  </ion-button>
+                  <ion-button mode="ios" fill="clear" (click)="downloadFile(file)">
+                    <ion-icon name="cloud-download-outline"></ion-icon>
+                    Descargar
+                  </ion-button>
+                </div>
+              </div>
+            } @else {
+              <p>{{ vault.preview(message.payload) }}</p>
+            }
+          </div>
+        } @empty {
+          <div class="empty-copy">Sala lista para mensajes cifrados.</div>
+        }
+      </div>
+
+      @if (notice) { <p class="notice">{{ notice }}</p> }
+      @if (error) { <p class="error">{{ error }}</p> }
+    </main>
+  </ion-content>
+
+  <ion-footer class="vault-room-footer ion-no-border">
+    <form class="composer vault-room-composer" (ngSubmit)="sendMessage()">
+      <input #vaultFile hidden type="file" (change)="fileSelected($event)" />
+      <ion-button mode="ios" fill="clear" type="button" (click)="vaultFile.click()" aria-label="Adjuntar" [disabled]="vault.uploading()">
+        @if (vault.uploading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="attach-outline"></ion-icon> }
+      </ion-button>
+      <ion-textarea mode="ios" autoGrow="true" rows="1" [(ngModel)]="roomMessage" name="roomMessage" placeholder="Mensaje Vault"></ion-textarea>
+      <ion-button mode="ios" type="submit" [disabled]="!roomMessage.trim() || vault.sending()">
+        @if (vault.sending()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
+      </ion-button>
+    </form>
+  </ion-footer>
+} @else {
 <ion-content fullscreen class="page">
   <main class="surface vault-surface">
     <header class="page-head vault-hero">
@@ -428,3 +608,4 @@
     @if (error) { <p class="error">{{ error }}</p> }
   </main>
 </ion-content>
+}

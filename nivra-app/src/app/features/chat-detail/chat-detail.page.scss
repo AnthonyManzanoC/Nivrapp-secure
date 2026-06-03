@@ -792,12 +792,15 @@ ion-popover.attachment-popover {
 }
 
 .composer {
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto auto;
+  width: 100%;
+  min-width: 0;
+  display: flex;
   align-items: center;
+  flex-wrap: nowrap;
   gap: 7px;
   padding: 9px max(12px, env(safe-area-inset-right)) calc(9px + env(safe-area-inset-bottom)) max(12px, env(safe-area-inset-left));
   border-top: 1px solid rgba(255, 255, 255, .14);
+  overflow: hidden;
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .045)),
     rgba(8, 13, 15, .92);
@@ -810,6 +813,8 @@ ion-popover.attachment-popover {
   --padding-end: 0;
   width: 42px;
   min-width: 42px;
+  flex: 0 0 42px;
+  flex-shrink: 0;
   min-height: 42px;
   margin: 0;
 }
@@ -834,6 +839,8 @@ ion-popover.attachment-popover {
 }
 
 .composer ion-textarea {
+  flex: 1 1 auto;
+  min-width: 0;
   --background: rgba(255, 255, 255, .075);
   --border-radius: 999px;
   --color: var(--nivra-text);
@@ -1833,18 +1840,14 @@ ion-modal.forward-modal {
   }
 
   .composer {
-    grid-template-columns: 38px minmax(0, 1fr) 38px 38px;
     gap: 6px;
     padding: 7px max(8px, env(safe-area-inset-right)) calc(7px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
-  }
-
-  .composer .emoji {
-    display: none;
   }
 
   .composer ion-button {
     width: 38px;
     min-width: 38px;
+    flex-basis: 38px;
     min-height: 38px;
   }
 

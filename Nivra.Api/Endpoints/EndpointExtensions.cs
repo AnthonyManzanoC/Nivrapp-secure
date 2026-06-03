@@ -461,6 +461,24 @@ public static partial class EndpointExtensions
 
     private static void MapProfileEndpoints(this WebApplication app)
     {
+        app.MapGet("/users/check-alias", async Task<IResult> (string alias, HttpContext http, NivraDbContext db, CancellationToken cancellationToken) =>
+        {
+            var normalizedAlias = NormalizeAliasCandidate(alias);
+            if (normalizedAlias is null)
+            {
+                return Results.Ok(false);
+            }
+
+            var current = http.GetCurrentUser();
+            var occupied = await db.Users.AsNoTracking().AnyAsync(candidate =>
+                candidate.Alias == normalizedAlias &&
+                candidate.DisabledAt == null &&
+                (current == null || candidate.Id != current.UserId),
+                cancellationToken);
+
+            return Results.Ok(!occupied);
+        });
+
         app.MapGet("/me", async Task<IResult> (HttpContext http, INivraStore store, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
@@ -487,6 +505,26 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            string? normalizedAlias = null;
+            if (request.Alias is not null)
+            {
+                normalizedAlias = NormalizeAliasCandidate(request.Alias);
+                if (normalizedAlias is null)
+                {
+                    return Error("invalid_alias", "El alias debe tener 3 a 32 caracteres: letras, numeros, guion, punto o guion bajo.");
+                }
+
+                if (!string.Equals(normalizedAlias, user.Alias, StringComparison.Ordinal) &&
+                    await db.Users.AnyAsync(candidate =>
+                        candidate.Id != user.Id &&
+                        candidate.Alias == normalizedAlias &&
+                        candidate.DisabledAt == null,
+                        cancellationToken))
+                {
+                    return Error("alias_taken", "Ese alias ya esta ocupado.", StatusCodes.Status409Conflict);
+                }
+            }
+
             string? normalizedPhone = null;
             if (request.Phone is not null)
             {
@@ -506,6 +544,7 @@ public static partial class EndpointExtensions
 
             var previousPhoneHash = user.PhoneHash;
             var wasDiscoverable = user.IsDiscoverable;
+            user.Alias = normalizedAlias ?? user.Alias;
             user.DisplayName = request.DisplayName?.Trim() ?? user.DisplayName;
             user.Email = NormalizeOptional(request.Email) ?? user.Email;
             user.Phone = request.Phone is null ? user.Phone : normalizedPhone;
@@ -523,7 +562,7 @@ public static partial class EndpointExtensions
             catch (DbUpdateException)
             {
                 db.ChangeTracker.Clear();
-                return Error("phone_taken", "Ese telefono ya esta asociado a otra cuenta Nivra.", StatusCodes.Status409Conflict);
+                return Error("profile_conflict", "Ese alias o telefono ya esta asociado a otra cuenta Nivra.", StatusCodes.Status409Conflict);
             }
             if (user.PhoneHash is not null &&
                 user.IsDiscoverable &&
@@ -3922,6 +3961,14 @@ public static partial class EndpointExtensions
     {
         var trimmed = value?.Trim();
         return string.IsNullOrWhiteSpace(trimmed) ? null : trimmed;
+    }
+
+    private static string? NormalizeAliasCandidate(string? value)
+    {
+        var alias = NormalizeOptional(value)?.TrimStart('@');
+        return alias is not null && AliasPattern.IsMatch(alias)
+            ? PgSqlNivraStore.NormalizeAlias(alias)
+            : null;
     }
 
     private static string? FirstNonBlank(params string?[] values)
