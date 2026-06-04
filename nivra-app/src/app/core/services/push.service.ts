@@ -675,6 +675,7 @@ export class PushService {
       duration: visual.requireInteraction ? 9000 : 3600,
       position: 'top',
       color: 'dark',
+      cssClass: 'nivra-premium-toast nivra-safe-toast',
       buttons: [
         {
           text: 'Abrir',

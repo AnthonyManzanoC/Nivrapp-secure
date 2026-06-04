@@ -3,17 +3,17 @@
     <aside class="sidebar">
       <header class="side-head">
         <div>
-          <h1>Chats</h1>
-          <span>{{ conversationsForFolder().length }} conversaciones</span>
+          <h1>{{ 'CHATS.TITLE' | translate:'Chats' }}</h1>
+          <span>{{ conversationsForFolder().length }} {{ 'CHATS.CONVERSATIONS' | translate:'conversaciones' }}</span>
         </div>
         <div class="side-actions">
-          <ion-button mode="ios" fill="clear" size="small" (click)="openShareAccount()" aria-label="Compartir Nivra">
+          <ion-button mode="ios" fill="clear" size="small" (click)="openShareAccount()" [attr.aria-label]="'CHATS.SHARE_NIVRA' | translate:'Compartir Nivra'">
             <ion-icon name="share-social-outline"></ion-icon>
           </ion-button>
-          <ion-button mode="ios" fill="clear" size="small" (click)="openGroupModal()" aria-label="Nuevo grupo">
+          <ion-button mode="ios" fill="clear" size="small" (click)="openGroupModal()" [attr.aria-label]="'CHATS.NEW_GROUP' | translate:'Nuevo grupo'">
             <ion-icon name="people-outline"></ion-icon>
           </ion-button>
-          <ion-button mode="ios" fill="clear" size="small" (click)="refresh()" aria-label="Sincronizar">
+          <ion-button mode="ios" fill="clear" size="small" (click)="refresh()" [attr.aria-label]="'CHATS.SYNC' | translate:'Sincronizar'">
             @if (chat.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="sync-outline"></ion-icon> }
           </ion-button>
         </div>
@@ -21,9 +21,9 @@
 
       <div class="search-box" [class.has-value]="query">
         <ion-icon name="search-outline"></ion-icon>
-        <ion-input mode="ios" [(ngModel)]="query" (ionFocus)="onSearchFocus()" (ionInput)="onSearchChange()" placeholder="Buscar"></ion-input>
+        <ion-input mode="ios" [(ngModel)]="query" (ionFocus)="onSearchFocus()" (ionInput)="onSearchChange()" [placeholder]="'CHATS.SEARCH' | translate:'Buscar'"></ion-input>
         @if (query) {
-          <button type="button" (click)="clearSearch()" aria-label="Limpiar busqueda">
+          <button type="button" (click)="clearSearch()" [attr.aria-label]="'CHATS.CLEAR_SEARCH' | translate:'Limpiar busqueda'">
             <ion-icon name="close-outline"></ion-icon>
           </button>
         }
@@ -50,8 +50,8 @@
           } @empty {
             @if (!searching) {
               <div class="empty compact">
-                <strong>Sin resultados</strong>
-                <span>Prueba otro alias o nombre.</span>
+                <strong>{{ 'CHATS.NO_RESULTS' | translate:'Sin resultados' }}</strong>
+                <span>{{ 'CHATS.TRY_ALIAS' | translate:'Prueba otro alias o nombre.' }}</span>
               </div>
             }
           }
@@ -59,12 +59,12 @@
       } @else if (query.length < 2 && recentSearches.length && showRecentSearches && !recentCollapsed) {
         <div class="recent-searches">
           <div class="recent-head">
-            <span>Busquedas recientes</span>
+            <span>{{ 'CHATS.RECENT_SEARCHES' | translate:'Busquedas recientes' }}</span>
             <div class="recent-actions">
-              <button type="button" (click)="hideRecent($event)" aria-label="Cerrar busquedas recientes">
+              <button type="button" (click)="hideRecent($event)" [attr.aria-label]="'CHATS.CLOSE_RECENT' | translate:'Cerrar busquedas recientes'">
                 <ion-icon name="close-outline"></ion-icon>
               </button>
-              <button type="button" (click)="clearRecent()" aria-label="Eliminar busquedas recientes">
+              <button type="button" (click)="clearRecent()" [attr.aria-label]="'CHATS.DELETE_RECENT' | translate:'Eliminar busquedas recientes'">
                 <ion-icon name="trash-outline"></ion-icon>
               </button>
             </div>
@@ -96,10 +96,10 @@
             class="chat-folders"
             [value]="selectedFolder"
             (ionChange)="setFolder($event.detail.value)">
-            <ion-segment-button value="all">Todos</ion-segment-button>
-            <ion-segment-button value="pinned">Fijados</ion-segment-button>
-            <ion-segment-button value="unread">No leidos</ion-segment-button>
-            <ion-segment-button value="archived">Archivados</ion-segment-button>
+            <ion-segment-button value="all">{{ 'CHATS.ALL' | translate:'Todos' }}</ion-segment-button>
+            <ion-segment-button value="pinned">{{ 'CHATS.PINNED' | translate:'Fijados' }}</ion-segment-button>
+            <ion-segment-button value="unread">{{ 'CHATS.UNREAD' | translate:'No leidos' }}</ion-segment-button>
+            <ion-segment-button value="archived">{{ 'CHATS.ARCHIVED' | translate:'Archivados' }}</ion-segment-button>
           </ion-segment>
 
           <ion-list class="list" lines="none">
@@ -108,7 +108,7 @@
                 <ion-item-options side="start">
                   <ion-item-option color="primary" (click)="togglePinned(conversation, $event)">
                     <ion-icon slot="start" name="pin-outline"></ion-icon>
-                    {{ chat.isConversationPinned(conversation.id) ? 'Desfijar' : 'Fijar' }}
+                    {{ chat.isConversationPinned(conversation.id) ? ('CHATS.UNPIN' | translate:'Desfijar') : ('CHATS.PIN' | translate:'Fijar') }}
                   </ion-item-option>
                 </ion-item-options>
 
@@ -130,9 +130,9 @@
                     <small>{{ chat.conversationSubtitle(conversation) }}</small>
                     @if (chat.isConversationPinned(conversation.id) || chat.isConversationMuted(conversation.id) || chat.hasUnreadConversation(conversation)) {
                       <span class="chat-meta">
-                        @if (chat.isConversationPinned(conversation.id)) { <b>Fijado</b> }
-                        @if (chat.isConversationMuted(conversation.id)) { <b>Silenciado</b> }
-                        @if (chat.hasUnreadConversation(conversation)) { <b>No leido</b> }
+                        @if (chat.isConversationPinned(conversation.id)) { <b>{{ 'CHATS.PINNED_TAG' | translate:'Fijado' }}</b> }
+                        @if (chat.isConversationMuted(conversation.id)) { <b>{{ 'CHATS.MUTED_TAG' | translate:'Silenciado' }}</b> }
+                        @if (chat.hasUnreadConversation(conversation)) { <b>{{ 'CHATS.UNREAD_TAG' | translate:'No leido' }}</b> }
                       </span>
                     }
                     @if (appSettings.settings().chatListDensity === 'three-line') {
@@ -145,21 +145,21 @@
                 <ion-item-options side="end">
                   <ion-item-option color="medium" (click)="toggleMuted(conversation, $event)">
                     <ion-icon slot="start" [name]="chat.isConversationMuted(conversation.id) ? 'notifications-outline' : 'notifications-off-outline'"></ion-icon>
-                    {{ chat.isConversationMuted(conversation.id) ? 'Activar' : 'Silenciar' }}
+                    {{ chat.isConversationMuted(conversation.id) ? ('CHATS.UNMUTE' | translate:'Activar') : ('CHATS.MUTE' | translate:'Silenciar') }}
                   </ion-item-option>
                   <ion-item-option color="tertiary" (click)="toggleArchived(conversation, $event)">
                     <ion-icon slot="start" name="archive-outline"></ion-icon>
-                    {{ chat.isConversationArchived(conversation.id) ? 'Desarchivar' : 'Archivar' }}
+                    {{ chat.isConversationArchived(conversation.id) ? ('CHATS.UNARCHIVE' | translate:'Desarchivar') : ('CHATS.ARCHIVE' | translate:'Archivar') }}
                   </ion-item-option>
                 </ion-item-options>
               </ion-item-sliding>
             } @empty {
               <div class="empty">
                 <strong>Nivra</strong>
-                <span>Busca un alias para abrir tu primer chat.</span>
+                <span>{{ 'CHATS.EMPTY_COPY' | translate:'Busca un alias para abrir tu primer chat.' }}</span>
                 <ion-button mode="ios" fill="outline" size="small" (click)="openShareAccount()">
                   <ion-icon name="share-social-outline"></ion-icon>
-                  Compartir pase
+                  {{ 'CHATS.SHARE_PASS' | translate:'Compartir pase' }}
                 </ion-button>
               </div>
             }
@@ -174,7 +174,7 @@
         <div class="empty-detail">
           <img src="assets/brand/nivra-mark.svg" alt="">
           <h2>Nivra</h2>
-          <p>Selecciona un chat para continuar.</p>
+          <p>{{ 'CHATS.SELECT_TO_CONTINUE' | translate:'Selecciona un chat para continuar.' }}</p>
         </div>
       }
     </section>
@@ -185,8 +185,8 @@
       <section class="group-builder">
         <header>
           <div>
-            <h2>Nuevo grupo</h2>
-            <p>{{ selectedGroupUserIds.size }} participantes seleccionados</p>
+            <h2>{{ 'CHATS.NEW_GROUP' | translate:'Nuevo grupo' }}</h2>
+            <p>{{ selectedGroupUserIds.size }} {{ 'CHATS.GROUP_PARTICIPANTS_SELECTED' | translate:'participantes seleccionados' }}</p>
           </div>
           <ion-button mode="ios" fill="clear" (click)="closeGroupModal()" aria-label="Cerrar">
             <ion-icon name="close-outline"></ion-icon>

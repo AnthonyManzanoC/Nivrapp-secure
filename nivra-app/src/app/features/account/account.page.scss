@@ -1,5 +1,19 @@
 @use "../shared-page";
 
+:host .page {
+  --padding-bottom: calc(var(--nivra-bottom-nav-height) + 32px + env(safe-area-inset-bottom));
+}
+
+:host .surface {
+  scroll-padding-bottom: calc(var(--nivra-bottom-nav-height) + 42px + env(safe-area-inset-bottom));
+}
+
+@media (max-width: 860px) {
+  :host .surface {
+    padding-bottom: calc(var(--nivra-bottom-nav-height) + 46px + env(safe-area-inset-bottom));
+  }
+}
+
 .account-actions {
   display: flex;
   flex-wrap: wrap;
@@ -430,9 +444,10 @@
   scroll-snap-align: start;
 }
 
-.wallpaper-tile.active {
-  border-color: rgba(114, 240, 202, .56);
-  box-shadow: 0 0 0 2px rgba(114, 240, 202, .12);
+.wallpaper-tile.active,
+.wallpaper-tile.selected {
+  border: 3px solid var(--ion-color-primary) !important;
+  box-shadow: 0 0 0 2px rgba(var(--ion-color-primary-rgb), .18), 0 12px 26px rgba(var(--ion-color-primary-rgb), .18);
 }
 
 .wallpaper-tile > span {

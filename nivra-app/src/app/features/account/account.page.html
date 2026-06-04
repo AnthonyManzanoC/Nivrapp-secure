@@ -2,7 +2,7 @@
   <main class="surface">
     <header class="page-head">
       <div>
-        <h1>Cuenta</h1>
+        <h1>{{ 'ACCOUNT.TITLE' | translate:'Cuenta' }}</h1>
         <p>@{{ auth.session()?.user?.alias }}</p>
       </div>
       <ion-button mode="ios" fill="clear" (click)="reload()" aria-label="Actualizar">
@@ -12,7 +12,7 @@
 
     <section class="grid">
       <article class="panel span-7">
-        <h2>Perfil</h2>
+        <h2>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</h2>
         <div class="profile-photo-row">
           <input #profilePhotoInput type="file" accept="image/*" hidden (change)="pickProfilePhoto($event)">
           <button type="button" class="profile-photo" [class.has-photo]="!!profilePhotoDataUrl" (click)="profilePhotoInput.click()" [disabled]="saving" aria-label="Actualizar foto de perfil">
@@ -28,56 +28,56 @@
           <div class="profile-photo-actions">
             <ion-button mode="ios" fill="outline" (click)="profilePhotoInput.click()" [disabled]="saving">
               <ion-icon name="camera-outline"></ion-icon>
-              {{ profilePhotoDataUrl ? 'Cambiar foto' : 'Subir foto' }}
+              {{ profilePhotoDataUrl ? ('ACCOUNT.CHANGE_PHOTO' | translate:'Cambiar foto') : ('ACCOUNT.UPLOAD_PHOTO' | translate:'Subir foto') }}
             </ion-button>
             @if (profilePhotoDataUrl) {
               <ion-button mode="ios" fill="clear" color="danger" (click)="removeProfilePhoto()" [disabled]="saving">
                 <ion-icon name="trash-outline"></ion-icon>
-                Quitar
+                {{ 'ACCOUNT.REMOVE' | translate:'Quitar' }}
               </ion-button>
             }
           </div>
         </div>
         <div class="form-grid">
           <label class="alias-field">
-            <span>Alias</span>
+            <span>{{ 'ACCOUNT.ALIAS' | translate:'Alias' }}</span>
             <ion-input mode="ios" fill="outline" [ngModel]="alias" (ngModelChange)="aliasChanged($event)" maxlength="32" autocomplete="off"></ion-input>
             @if (aliasStatus === 'checking') {
-              <small class="alias-hint">Validando alias...</small>
+              <small class="alias-hint">{{ 'ACCOUNT.ALIAS_CHECKING' | translate:'Validando alias...' }}</small>
             } @else if (aliasStatus === 'taken') {
-              <small class="alias-error">Alias no disponible</small>
+              <small class="alias-error">{{ 'ACCOUNT.ALIAS_TAKEN' | translate:'Alias no disponible' }}</small>
             } @else if (aliasStatus === 'invalid') {
-              <small class="alias-error">Usa 3 a 32 caracteres: letras, numeros, punto, guion o _.</small>
+              <small class="alias-error">{{ 'ACCOUNT.ALIAS_INVALID' | translate:'Usa 3 a 32 caracteres: letras, numeros, punto, guion o _.' }}</small>
             } @else if (aliasStatus === 'available') {
-              <small class="alias-ok">Alias disponible</small>
+              <small class="alias-ok">{{ 'ACCOUNT.ALIAS_AVAILABLE' | translate:'Alias disponible' }}</small>
             } @else {
-              <small class="alias-hint">Tu alias es unico y puede compartirse como @{{ alias || auth.session()?.user?.alias }}.</small>
+              <small class="alias-hint">{{ 'ACCOUNT.ALIAS_HINT' | translate:'Tu alias es unico y puede compartirse como' }} @{{ alias || auth.session()?.user?.alias }}.</small>
             }
           </label>
           <label>
-            <span>Nombre</span>
+            <span>{{ 'ACCOUNT.NAME' | translate:'Nombre' }}</span>
             <ion-input mode="ios" fill="outline" [(ngModel)]="displayName"></ion-input>
           </label>
           <label>
-            <span>Email</span>
+            <span>{{ 'ACCOUNT.EMAIL' | translate:'Email' }}</span>
             <ion-input mode="ios" fill="outline" [(ngModel)]="email" type="email"></ion-input>
           </label>
           <label>
-            <span>Telefono</span>
+            <span>{{ 'ACCOUNT.PHONE' | translate:'Telefono' }}</span>
             <ion-input mode="ios" fill="outline" [(ngModel)]="phone" type="tel"></ion-input>
           </label>
           <label class="wide">
-            <span>Bio</span>
+            <span>{{ 'ACCOUNT.BIO' | translate:'Bio' }}</span>
             <ion-textarea mode="ios" fill="outline" [(ngModel)]="bio" rows="4"></ion-textarea>
           </label>
           <label class="toggle-row wide">
-            <span>Visible en directorio</span>
+            <span>{{ 'ACCOUNT.VISIBLE_DIRECTORY' | translate:'Visible en directorio' }}</span>
             <ion-toggle mode="ios" [checked]="isDiscoverable" (ionChange)="isDiscoverable = $event.detail.checked"></ion-toggle>
           </label>
         </div>
         <ion-button mode="ios" (click)="saveProfile()" [disabled]="saving || !canSaveProfile()">
           <ion-icon name="shield-checkmark-outline"></ion-icon>
-          Guardar perfil
+          {{ 'ACCOUNT.SAVE_PROFILE' | translate:'Guardar perfil' }}
         </ion-button>
       </article>
 
@@ -97,14 +97,14 @@
             <ion-icon [name]="lightTheme ? 'sunny-outline' : 'moon-outline'"></ion-icon>
           </div>
           <div>
-            <h2>Apariencia</h2>
+            <h2>{{ 'ACCOUNT.APPEARANCE' | translate:'Apariencia' }}</h2>
             <p class="card-sub">{{ lightTheme ? 'Grises iOS, texto nitido y sombras suaves.' : 'Oscuro Nivra con contraste nocturno.' }}</p>
           </div>
         </div>
         <label class="toggle-row theme-toggle-row">
           <span>
-            <strong>{{ lightTheme ? 'Tema claro' : 'Tema oscuro' }}</strong>
-            <small>{{ lightTheme ? 'Limpio, legible y luminoso.' : 'Privado, profundo y enfocado.' }}</small>
+            <strong>{{ lightTheme ? ('ACCOUNT.LIGHT_THEME' | translate:'Tema claro') : ('ACCOUNT.DARK_THEME' | translate:'Tema oscuro') }}</strong>
+            <small>{{ lightTheme ? ('ACCOUNT.LIGHT_COPY' | translate:'Limpio, legible y luminoso.') : ('ACCOUNT.DARK_COPY' | translate:'Privado, profundo y enfocado.') }}</small>
           </span>
           <ion-toggle mode="ios" [checked]="lightTheme" (ionChange)="setLightTheme($event.detail.checked)" aria-label="Cambiar tema claro"></ion-toggle>
         </label>
@@ -129,7 +129,12 @@
           </select>
         </div>
 
-        <div class="chat-settings-preview" [style.--preview-radius]="appSettings.settings().messageCornerRadius + 'px'" [style.--preview-font]="appSettings.settings().messageTextSize + 'px'">
+        <div
+          class="chat-settings-preview"
+          [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
+          [style.background]="appSettings.chatBackgroundCss()"
+          [style.--preview-radius]="appSettings.settings().messageCornerRadius + 'px'"
+          [style.--preview-font]="appSettings.settings().messageTextSize + 'px'">
           <div class="preview-message">
             <strong>{{ displayName || auth.session()?.user?.alias || 'Nivra' }}</strong>
             <span>{{ t('settings.chat.previewIncoming', 'Asi se veran tus mensajes con el ajuste actual.') }}</span>
@@ -232,14 +237,14 @@
             <ion-icon [name]="appLock.isNativePlatform() ? 'finger-print-outline' : 'keypad-outline'"></ion-icon>
           </div>
           <div>
-            <h2>Modo Seguro</h2>
+            <h2>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</h2>
             <p class="card-sub">{{ appLock.isNativePlatform() ? 'APK con biometria nativa al abrir o volver.' : 'Web y PC con PIN local cifrado.' }}</p>
           </div>
         </div>
         <label class="toggle-row app-lock-toggle-row">
           <span>
-            <strong>Bloqueo de App</strong>
-            <small>{{ appLock.isEnabled() ? 'Activo' : 'Desactivado' }} - {{ appLock.isNativePlatform() ? appLock.biometryLabel() : 'PIN de 4 digitos' }}</small>
+            <strong>{{ 'ACCOUNT.APP_LOCK' | translate:'Bloqueo de App' }}</strong>
+            <small>{{ appLock.isEnabled() ? ('ACCOUNT.ACTIVE' | translate:'Activo') : ('ACCOUNT.DISABLED' | translate:'Desactivado') }} - {{ appLock.isNativePlatform() ? appLock.biometryLabel() : 'PIN de 4 digitos' }}</small>
           </span>
           <ion-toggle mode="ios" [checked]="appLock.isEnabled()" (ionChange)="setSecureMode($event.detail.checked)" aria-label="Activar Modo Seguro"></ion-toggle>
         </label>
@@ -291,19 +296,19 @@
       </article>
 
       <article class="panel span-6">
-        <h2>Privacidad</h2>
+        <h2>{{ 'ACCOUNT.PRIVACY' | translate:'Privacidad' }}</h2>
         @if (account.privacy(); as privacy) {
           <div class="privacy-preset-grid">
             <label>
-              <span>Preset</span>
+              <span>{{ 'ACCOUNT.PRESET' | translate:'Preset' }}</span>
               <select class="native-select" [value]="privacy.privacyPreset || 'balanced'" (change)="applyPrivacyPreset($any($event.target).value)">
-                <option value="private">Privado</option>
-                <option value="balanced">Equilibrado</option>
-                <option value="open">Abierto</option>
+                <option value="private">{{ 'ACCOUNT.PRIVATE' | translate:'Privado' }}</option>
+                <option value="balanced">{{ 'ACCOUNT.BALANCED' | translate:'Equilibrado' }}</option>
+                <option value="open">{{ 'ACCOUNT.OPEN' | translate:'Abierto' }}</option>
               </select>
             </label>
             <label>
-              <span>Autoeliminar mensajes nuevos</span>
+              <span>{{ 'ACCOUNT.AUTO_DELETE_NEW' | translate:'Autoeliminar mensajes nuevos' }}</span>
               <select class="native-select" [value]="privacy.defaultMessageTtlSeconds ?? 0" (change)="patchPrivacyTtl($any($event.target).value)">
                 @for (option of defaultTtlOptions; track option.value) {
                   <option [value]="option.value">{{ option.label }}</option>
@@ -313,36 +318,36 @@
           </div>
           <div class="toggles">
             <label class="toggle-row">
-              <span>Ocultar contenido en avisos</span>
+              <span>{{ 'ACCOUNT.HIDE_NOTIFICATION_CONTENT' | translate:'Ocultar contenido en avisos' }}</span>
               <ion-toggle mode="ios" [checked]="privacy.hideNotificationContent" (ionChange)="patchPrivacy('hideNotificationContent', $event.detail.checked)"></ion-toggle>
             </label>
             <label class="toggle-row">
-              <span>Permitir reenviar</span>
+              <span>{{ 'ACCOUNT.ALLOW_FORWARDING' | translate:'Permitir reenviar' }}</span>
               <ion-toggle mode="ios" [checked]="privacy.allowForwarding" (ionChange)="patchPrivacy('allowForwarding', $event.detail.checked)"></ion-toggle>
             </label>
             <label class="toggle-row">
-              <span>Permitir capturas</span>
+              <span>{{ 'ACCOUNT.ALLOW_SCREENSHOTS' | translate:'Permitir capturas' }}</span>
               <ion-toggle mode="ios" [checked]="privacy.allowScreenshots" (ionChange)="patchPrivacy('allowScreenshots', $event.detail.checked)"></ion-toggle>
             </label>
             <label class="toggle-row">
-              <span>Confirmaciones de lectura</span>
+              <span>{{ 'ACCOUNT.READ_RECEIPTS' | translate:'Confirmaciones de lectura' }}</span>
               <ion-toggle mode="ios" [checked]="privacy.readReceipts" (ionChange)="patchPrivacy('readReceipts', $event.detail.checked)"></ion-toggle>
             </label>
           </div>
-          <ion-button mode="ios" fill="outline" (click)="savePrivacy()" [disabled]="saving">Guardar privacidad</ion-button>
+          <ion-button mode="ios" fill="outline" (click)="savePrivacy()" [disabled]="saving">{{ 'ACCOUNT.SAVE_PRIVACY' | translate:'Guardar privacidad' }}</ion-button>
         }
         <div class="local-privacy-block">
           <div class="subsection-head">
-            <strong>Visibilidad avanzada local</strong>
-            <small>Local</small>
+            <strong>{{ 'ACCOUNT.ADVANCED_VISIBILITY' | translate:'Visibilidad avanzada local' }}</strong>
+            <small>{{ 'ACCOUNT.LOCAL' | translate:'Local' }}</small>
           </div>
           <div class="visibility-list">
             @for (row of visibilityRows; track row.key) {
               <label>
-                <span>{{ row.label }}</span>
+                <span>{{ row.labelKey | translate:row.label }}</span>
                 <select class="native-select compact" [value]="settingValue(row.key)" (change)="setVisibilitySetting(row.key, $any($event.target).value)">
                   @for (option of visibilityOptions; track option.value) {
-                    <option [value]="option.value">{{ option.label }}</option>
+                    <option [value]="option.value">{{ option.labelKey | translate:option.label }}</option>
                   }
                 </select>
               </label>

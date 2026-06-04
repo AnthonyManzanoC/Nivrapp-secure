@@ -318,22 +318,31 @@ export class AppSettingsService {
     root.dataset['nivraChatTone'] = this.chatBackgroundTone(settings);
     root.lang = settings.language;
     root.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
-    root.style.setProperty('--nivra-message-font-size', `${settings.messageTextSize}px`);
-    root.style.setProperty('--nivra-message-radius', `${settings.messageCornerRadius}px`);
-    root.style.setProperty('--nivra-brand', accent.primary);
-    root.style.setProperty('--nivra-brand-2', light ? accent.contrast : accent.secondary);
-    root.style.setProperty('--nivra-brand-rgb', this.rgbString(accent.primary));
-    root.style.setProperty('--nivra-brand-shade', this.mixColor(accent.primary, '#000000', light ? .18 : .28));
-    root.style.setProperty('--nivra-brand-tint', this.mixColor(accent.primary, '#ffffff', light ? .18 : .30));
-    root.style.setProperty('--nivra-brand-contrast', this.readableTextColor(accent.primary));
-    root.style.setProperty('--nivra-chat-background', this.chatBackgroundCss(settings));
-    root.style.setProperty('--nivra-chat-on-background', this.chatBackgroundTone(settings) === 'light' ? '#111827' : '#f8fafc');
-    root.style.setProperty('--ion-color-primary', accent.primary);
-    root.style.setProperty('--ion-color-primary-rgb', this.rgbString(accent.primary));
-    root.style.setProperty('--ion-color-primary-contrast', this.readableTextColor(accent.primary));
-    root.style.setProperty('--ion-color-primary-contrast-rgb', this.rgbString(this.readableTextColor(accent.primary)));
-    root.style.setProperty('--ion-color-primary-shade', this.mixColor(accent.primary, '#000000', light ? .18 : .28));
-    root.style.setProperty('--ion-color-primary-tint', this.mixColor(accent.primary, '#ffffff', light ? .18 : .30));
+    const shade = this.mixColor(accent.primary, '#000000', light ? .18 : .28);
+    const tint = this.mixColor(accent.primary, '#ffffff', light ? .18 : .30);
+    const contrast = this.readableTextColor(accent.primary);
+    const primaryRgb = this.rgbString(accent.primary);
+    const styleTargets = [root, document.body, document.querySelector('ion-app') as HTMLElement | null]
+      .filter((target): target is HTMLElement => !!target);
+    const setGlobalVar = (name: string, value: string) => {
+      styleTargets.forEach((target) => target.style.setProperty(name, value, 'important'));
+    };
+    setGlobalVar('--nivra-message-font-size', `${settings.messageTextSize}px`);
+    setGlobalVar('--nivra-message-radius', `${settings.messageCornerRadius}px`);
+    setGlobalVar('--nivra-brand', accent.primary);
+    setGlobalVar('--nivra-brand-2', light ? accent.contrast : accent.secondary);
+    setGlobalVar('--nivra-brand-rgb', primaryRgb);
+    setGlobalVar('--nivra-brand-shade', shade);
+    setGlobalVar('--nivra-brand-tint', tint);
+    setGlobalVar('--nivra-brand-contrast', contrast);
+    setGlobalVar('--nivra-chat-background', this.chatBackgroundCss(settings));
+    setGlobalVar('--nivra-chat-on-background', this.chatBackgroundTone(settings) === 'light' ? '#111827' : '#f8fafc');
+    setGlobalVar('--ion-color-primary', accent.primary);
+    setGlobalVar('--ion-color-primary-rgb', primaryRgb);
+    setGlobalVar('--ion-color-primary-contrast', contrast);
+    setGlobalVar('--ion-color-primary-contrast-rgb', this.rgbString(contrast));
+    setGlobalVar('--ion-color-primary-shade', shade);
+    setGlobalVar('--ion-color-primary-tint', tint);
     void this.syncNativeKeyboard(light);
   }
 

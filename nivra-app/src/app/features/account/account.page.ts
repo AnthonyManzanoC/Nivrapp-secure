@@ -23,7 +23,8 @@ import { CallsService } from '../../core/services/calls.service';
 import { PrivacySettings } from '../../core/models/nivra.models';
 import { AppLockService } from '../../core/services/app-lock.service';
 import { AppSettingsService, NivraAppSettings, NivraVisibility } from '../../core/services/app-settings.service';
-import { NivraI18nService } from '../../core/services/nivra-i18n.service';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
 
@@ -35,7 +36,7 @@ type AliasStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss'],
 })
@@ -45,7 +46,7 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly appLock = inject(AppLockService);
   readonly appSettings = inject(AppSettingsService);
   readonly calls = inject(CallsService);
-  readonly i18n = inject(NivraI18nService);
+  readonly translate = inject(TranslateService);
   readonly panicPin = inject(PanicPinService);
   readonly push = inject(PushService);
   private readonly router = inject(Router);
@@ -126,24 +127,24 @@ export class AccountPage implements OnInit, OnDestroy {
     { label: 'En roaming', value: 'roaming' },
     { label: 'Siempre', value: 'always' },
   ];
-  readonly visibilityOptions: Array<{ label: string; value: NivraVisibility }> = [
-    { label: 'Todos', value: 'everyone' },
-    { label: 'Mis contactos', value: 'contacts' },
-    { label: 'Nadie', value: 'nobody' },
+  readonly visibilityOptions: Array<{ label: string; labelKey: string; value: NivraVisibility }> = [
+    { label: 'Todos', labelKey: 'ACCOUNT.EVERYONE', value: 'everyone' },
+    { label: 'Mis contactos', labelKey: 'ACCOUNT.CONTACTS', value: 'contacts' },
+    { label: 'Nadie', labelKey: 'ACCOUNT.NOBODY', value: 'nobody' },
   ];
-  readonly visibilityRows: Array<{ label: string; key: keyof NivraAppSettings }> = [
-    { label: 'Numero de telefono', key: 'phoneVisibility' },
-    { label: 'Ultima vez y en linea', key: 'lastSeenVisibility' },
-    { label: 'Fotos del perfil', key: 'profilePhotoVisibility' },
-    { label: 'Mensajes reenviados', key: 'forwardedMessagesVisibility' },
-    { label: 'Llamadas', key: 'callsVisibility' },
-    { label: 'Mensajes de voz', key: 'voiceMessagesVisibility' },
-    { label: 'Mensajes', key: 'messagesVisibility' },
-    { label: 'Cumpleanos', key: 'birthdayVisibility' },
-    { label: 'Regalos', key: 'giftsVisibility' },
-    { label: 'Biografia', key: 'bioVisibility' },
-    { label: 'Musica guardada', key: 'savedMusicVisibility' },
-    { label: 'Invitaciones', key: 'invitesVisibility' },
+  readonly visibilityRows: Array<{ label: string; labelKey: string; key: keyof NivraAppSettings }> = [
+    { label: 'Numero de telefono', labelKey: 'ACCOUNT.PHONE_NUMBER', key: 'phoneVisibility' },
+    { label: 'Ultima vez y en linea', labelKey: 'ACCOUNT.LAST_SEEN', key: 'lastSeenVisibility' },
+    { label: 'Fotos del perfil', labelKey: 'ACCOUNT.PROFILE_PHOTOS', key: 'profilePhotoVisibility' },
+    { label: 'Mensajes reenviados', labelKey: 'ACCOUNT.FORWARDED_MESSAGES', key: 'forwardedMessagesVisibility' },
+    { label: 'Llamadas', labelKey: 'TABS.CALLS', key: 'callsVisibility' },
+    { label: 'Mensajes de voz', labelKey: 'ACCOUNT.VOICE_MESSAGES', key: 'voiceMessagesVisibility' },
+    { label: 'Mensajes', labelKey: 'ACCOUNT.MESSAGES', key: 'messagesVisibility' },
+    { label: 'Cumpleanos', labelKey: 'ACCOUNT.BIRTHDAY', key: 'birthdayVisibility' },
+    { label: 'Regalos', labelKey: 'ACCOUNT.GIFTS', key: 'giftsVisibility' },
+    { label: 'Biografia', labelKey: 'ACCOUNT.BIO', key: 'bioVisibility' },
+    { label: 'Musica guardada', labelKey: 'ACCOUNT.SAVED_MUSIC', key: 'savedMusicVisibility' },
+    { label: 'Invitaciones', labelKey: 'ACCOUNT.INVITES', key: 'invitesVisibility' },
   ];
   readonly defaultTtlOptions = [
     { label: 'Sin expiracion', value: 0 },
@@ -406,7 +407,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   t(key: string, fallback = ''): string {
-    return this.i18n.t(key, fallback);
+    return this.translate.instant(key, fallback);
   }
 
   setThemeMode(value: string): void {
@@ -442,7 +443,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   setLanguage(value: string): void {
-    this.i18n.use(value);
+    this.translate.use(value);
     this.notice = this.t('settings.notice.languageApplied', 'Idioma aplicado en tiempo real.');
   }
 

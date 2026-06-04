@@ -178,6 +178,7 @@ ion-button {
   position: fixed;
   right: 18px;
   bottom: 18px;
+  z-index: 40;
   max-width: min(420px, calc(100vw - 36px));
   border: 1px solid var(--nivra-line);
   border-radius: 8px;
@@ -207,6 +208,13 @@ ion-button {
       max(14px, env(safe-area-inset-right))
       calc(var(--nivra-bottom-nav-height) + 24px + env(safe-area-inset-bottom))
       max(14px, env(safe-area-inset-left));
+  }
+
+  .notice,
+  .error {
+    right: max(14px, env(safe-area-inset-right));
+    bottom: calc(var(--nivra-bottom-nav-height) + 18px + env(safe-area-inset-bottom));
+    max-width: min(420px, calc(100vw - 28px));
   }
 
   .grid {

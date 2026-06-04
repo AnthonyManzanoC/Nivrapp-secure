@@ -136,6 +136,16 @@ ion-toast.nivra-premium-toast {
   font-weight: 800;
 }
 
+ion-toast.nivra-safe-toast {
+  margin-top: max(10px, env(safe-area-inset-top));
+}
+
+@media (max-width: 768px) {
+  ion-toast.nivra-safe-toast {
+    margin-bottom: calc(var(--nivra-bottom-nav-height) + env(safe-area-inset-bottom) + 12px);
+  }
+}
+
 ion-modal,
 ion-popover {
   --background: var(--nivra-panel-solid);

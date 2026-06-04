@@ -8,13 +8,13 @@
       @for (item of nav; track item.path) {
         <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active">
           <ion-icon [name]="item.icon"></ion-icon>
-          <span>{{ item.label }}</span>
+          <span>{{ item.labelKey | translate:item.label }}</span>
         </a>
       }
       <span class="nav-spacer"></span>
       <button class="nav-btn logout" type="button" (click)="logout()">
         <ion-icon name="log-out-outline"></ion-icon>
-        <span>Salir</span>
+        <span>{{ 'TABS.LOGOUT' | translate:'Salir' }}</span>
       </button>
     </nav>
 
@@ -28,7 +28,7 @@
           <div class="incoming-call-card">
             <span class="incoming-kind">
               <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
-              {{ call.type === 'Video' ? 'Videollamada entrante' : 'Llamada entrante' }}
+              {{ call.type === 'Video' ? ('CALLS.INCOMING_VIDEO' | translate:'Videollamada entrante') : ('CALLS.INCOMING_AUDIO' | translate:'Llamada entrante') }}
             </span>
             <div class="incoming-avatar">
               @if (calls.callPhoto(call)) {
@@ -42,11 +42,11 @@
             <div class="incoming-actions">
               <button class="incoming-action reject" type="button" (click)="declineCall()" aria-label="Rechazar llamada">
                 <ion-icon name="close-outline"></ion-icon>
-                <span>Rechazar</span>
+                <span>{{ 'CALLS.REJECT' | translate:'Rechazar' }}</span>
               </button>
               <button class="incoming-action accept" type="button" (click)="acceptCall()" aria-label="Aceptar llamada">
                 <ion-icon name="call-outline"></ion-icon>
-                <span>Aceptar</span>
+                <span>{{ 'CALLS.ACCEPT' | translate:'Aceptar' }}</span>
               </button>
             </div>
           </div>

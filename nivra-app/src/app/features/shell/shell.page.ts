@@ -18,11 +18,12 @@ import {
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
 
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CommonModule, RouterLink, RouterLinkActive, RouterOutlet, IonApp, IonIcon],
+  imports: [CommonModule, RouterLink, RouterLinkActive, RouterOutlet, TranslatePipe, IonApp, IonIcon],
   templateUrl: './shell.page.html',
   styleUrls: ['./shell.page.scss'],
 })
@@ -34,11 +35,11 @@ export class ShellPage {
   readonly hideMobileNav = signal(this.isChatDetailRoute(this.router.url));
 
   readonly nav = [
-    { path: '/app/chats', icon: 'chatbubble-ellipses-outline', label: 'Chats' },
-    { path: '/app/world', icon: 'globe-outline', label: 'Mundo' },
-    { path: '/app/vault', icon: 'lock-closed-outline', label: 'Boveda' },
-    { path: '/app/calls', icon: 'call-outline', label: 'Llamadas' },
-    { path: '/app/account', icon: 'person-circle-outline', label: 'Cuenta' },
+    { path: '/app/chats', icon: 'chatbubble-ellipses-outline', label: 'Chats', labelKey: 'TABS.CHATS' },
+    { path: '/app/world', icon: 'globe-outline', label: 'Mundo', labelKey: 'TABS.WORLD' },
+    { path: '/app/vault', icon: 'lock-closed-outline', label: 'Boveda', labelKey: 'TABS.VAULT' },
+    { path: '/app/calls', icon: 'call-outline', label: 'Llamadas', labelKey: 'TABS.CALLS' },
+    { path: '/app/account', icon: 'person-circle-outline', label: 'Cuenta', labelKey: 'TABS.ACCOUNT' },
   ];
 
   constructor() {

@@ -26,6 +26,7 @@ import { Contact, Conversation, UserSummary } from '../../core/models/nivra.mode
 import { AuthService } from '../../core/services/auth.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { ChatFolderFilter, ChatService } from '../../core/services/chat.service';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
 
 @Component({
   selector: 'app-chats',
@@ -35,6 +36,7 @@ import { ChatFolderFilter, ChatService } from '../../core/services/chat.service'
     DatePipe,
     FormsModule,
     RouterOutlet,
+    TranslatePipe,
     IonAvatar,
     IonButton,
     IonContent,

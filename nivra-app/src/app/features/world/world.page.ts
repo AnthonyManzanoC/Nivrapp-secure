@@ -546,8 +546,8 @@ export class WorldPage implements OnInit, OnDestroy {
     const toast = await this.toastController.create({
       message,
       duration: 3200,
-      position: 'bottom',
-      cssClass: 'nivra-premium-toast',
+      position: 'top',
+      cssClass: 'nivra-premium-toast nivra-safe-toast',
     });
     await toast.present();
   }
