@@ -44,6 +44,7 @@ import {
   closeOutline,
   createOutline,
   informationCircleOutline,
+  languageOutline,
   lockOpenOutline,
   personCircleOutline,
   personAddOutline,
@@ -59,6 +60,7 @@ import {
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
+import { AppSettingsService } from '../../core/services/app-settings.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
@@ -101,6 +103,7 @@ interface PendingAttachmentPreview {
 export class ChatDetailPage implements OnInit, OnDestroy {
   @ViewChild(IonContent) private content?: IonContent;
   readonly chat = inject(ChatService);
+  readonly appSettings = inject(AppSettingsService);
   readonly realtime = inject(SignalrService);
   readonly calls = inject(CallsService);
   readonly social = inject(SocialService);
@@ -155,11 +158,12 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   busyAction = '';
   notice = '';
   deleteAfterRead = false;
-  ttlSeconds: number | null = null;
+  ttlSeconds = -1;
   recordingVoice = false;
   audioState: Record<string, { current: number; duration: number; playing: boolean }> = {};
   readonly ttlOptions = [
-    { label: 'Sin expirar', value: null },
+    { label: 'Predeterminado', value: -1 },
+    { label: 'Sin expirar', value: 0 },
     { label: '1 h', value: 3600 },
     { label: '24 h', value: 86400 },
     { label: '7 dias', value: 604800 },
@@ -200,6 +204,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       closeOutline,
       createOutline,
       informationCircleOutline,
+      languageOutline,
       lockOpenOutline,
       personCircleOutline,
       personAddOutline,
@@ -486,7 +491,11 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   async toggleAudio(audio: HTMLAudioElement, message: ChatMessageVm): Promise<void> {
     this.syncAudioState(message, audio);
     if (audio.paused) {
-      this.pauseOtherAudio(audio);
+      if (this.appSettings.settings().pauseMediaOnPlayback) {
+        this.pauseAmbientMedia(audio);
+      } else {
+        this.pauseOtherAudio(audio);
+      }
       await this.chat.markMessageOpened(message);
       await audio.play().catch(() => undefined);
       this.markAudioPlaying(message, audio);
@@ -874,6 +883,9 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
     this.attachmentError = '';
     try {
+      if (this.appSettings.settings().pauseMediaOnRecord) {
+        this.pauseAmbientMedia();
+      }
       this.voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
       const mimeType = this.supportedVoiceMimeType();
       this.voiceRecorder = mimeType
@@ -1172,6 +1184,34 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       .reverse();
   }
 
+  onComposerEnter(event: Event): void {
+    const keyboardEvent = event as KeyboardEvent;
+    if (!this.appSettings.settings().enterToSend || keyboardEvent.shiftKey || keyboardEvent.isComposing) {
+      return;
+    }
+    keyboardEvent.preventDefault();
+    void this.send();
+  }
+
+  canTranslate(message: ChatMessageVm | null): boolean {
+    return Boolean(this.appSettings.settings().showTranslateButton && (message?.payload.text || this.chat.preview(message?.payload ?? { type: 'text', text: '' }).trim()));
+  }
+
+  async translateMessage(message: ChatMessageVm): Promise<void> {
+    const text = (message.payload.text || this.chat.preview(message.payload)).trim();
+    if (!text) {
+      return;
+    }
+    const target = this.targetTranslateLanguage();
+    const url = `https://translate.google.com/?sl=auto&tl=${encodeURIComponent(target)}&text=${encodeURIComponent(text)}&op=translate`;
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!opened) {
+      await navigator.clipboard.writeText(text).catch(() => undefined);
+      this.notice = 'Texto copiado.';
+    }
+    this.closeMessageActions();
+  }
+
   private scrollBottom(): void {
     setTimeout(() => {
       void this.content?.scrollToBottom(220);
@@ -1268,12 +1308,33 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   }
 
   private currentPolicy(): MessagePolicyOptions {
-    const ttlSeconds = Number(this.ttlSeconds || 0);
+    const selectedTtl = Number(this.ttlSeconds);
+    const defaultTtl = Number(this.auth.session()?.user.privacySettings?.defaultMessageTtlSeconds || 0);
+    const ttlSeconds = selectedTtl < 0 ? defaultTtl : selectedTtl;
     return {
       deleteAfterRead: this.deleteAfterRead,
       ttlSeconds: ttlSeconds > 0 ? ttlSeconds : null,
       replyTo: this.replyReference(this.replyingMessage),
     };
+  }
+
+  private targetTranslateLanguage(): string {
+    const language = this.appSettings.settings().language;
+    if (language === 'zh-Hans') {
+      return 'zh-CN';
+    }
+    if (language === 'zh-Hant') {
+      return 'zh-TW';
+    }
+    return language.split('-')[0] || 'es';
+  }
+
+  private pauseAmbientMedia(except?: HTMLMediaElement): void {
+    document.querySelectorAll<HTMLMediaElement>('audio, video').forEach((media) => {
+      if (media !== except && !media.paused) {
+        media.pause();
+      }
+    });
   }
 
   private prepareGroupInfoDraft(conversation: Conversation): void {

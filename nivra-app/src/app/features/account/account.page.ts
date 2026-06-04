@@ -2,7 +2,6 @@ import { CommonModule, DatePipe } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { Keyboard, KeyboardStyle } from '@capacitor/keyboard';
 import { Subject, Subscription, from, of } from 'rxjs';
 import { catchError, debounceTime, distinctUntilChanged, map, switchMap } from 'rxjs/operators';
 import {
@@ -23,10 +22,11 @@ import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { PrivacySettings } from '../../core/models/nivra.models';
 import { AppLockService } from '../../core/services/app-lock.service';
+import { AppSettingsService, NivraAppSettings, NivraVisibility } from '../../core/services/app-settings.service';
+import { NivraI18nService } from '../../core/services/nivra-i18n.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
 
-const THEME_STORAGE_KEY = 'nivra.theme';
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const PIN_LENGTH = 4;
 
@@ -43,7 +43,9 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
   readonly account = inject(AccountService);
   readonly appLock = inject(AppLockService);
+  readonly appSettings = inject(AppSettingsService);
   readonly calls = inject(CallsService);
+  readonly i18n = inject(NivraI18nService);
   readonly panicPin = inject(PanicPinService);
   readonly push = inject(PushService);
   private readonly router = inject(Router);
@@ -78,6 +80,77 @@ export class AccountPage implements OnInit, OnDestroy {
   contactScannerBusy = false;
   contactScannerStatus = 'Listo para escanear contacto.';
   lightTheme = false;
+  storageUsageBytes = 0;
+  storageQuotaBytes = 0;
+  readonly themeModeOptions = [
+    { label: 'Sistema', value: 'system' },
+    { label: 'Oscuro', value: 'dark' },
+    { label: 'Claro', value: 'light' },
+  ];
+  readonly accentChoices = [
+    { label: 'Nivra', value: 'nivra', color: '#18d6a2', second: '#72f0ca' },
+    { label: 'Azul', value: 'blue', color: '#2f8cff', second: '#7cc7ff' },
+    { label: 'Verde', value: 'green', color: '#34c759', second: '#8ee99f' },
+    { label: 'Ambar', value: 'amber', color: '#f59f00', second: '#ffd166' },
+    { label: 'Rosa', value: 'rose', color: '#e04f85', second: '#ff9fbd' },
+    { label: 'Violeta', value: 'violet', color: '#8b5cf6', second: '#c4a5ff' },
+    { label: 'Cian', value: 'cyan', color: '#12b5cb', second: '#75e6f2' },
+    { label: 'Slate', value: 'slate', color: '#64748b', second: '#b6c2d1' },
+  ];
+  readonly wallpaperChoices = [
+    { label: 'Nivra', value: 'nivra' },
+    { label: 'Limpio', value: 'clean' },
+    { label: 'Botanico', value: 'botanic' },
+    { label: 'Nocturno', value: 'midnight' },
+    { label: 'Papel', value: 'paper' },
+  ];
+  readonly densityOptions = [
+    { label: 'Dos lineas', value: 'two-line' },
+    { label: 'Tres lineas', value: 'three-line' },
+  ];
+  readonly languageOptions = [
+    { native: 'Espanol', label: 'Spanish', value: 'es' },
+    { native: 'English', label: 'English', value: 'en' },
+    { native: 'العربية', label: 'Arabic', value: 'ar' },
+    { native: 'Беларуская', label: 'Belarusian', value: 'be' },
+    { native: 'Catala', label: 'Catalan', value: 'ca' },
+    { native: '简体中文', label: 'Chinese (Simplified)', value: 'zh-Hans' },
+    { native: '繁體中文', label: 'Chinese (Traditional)', value: 'zh-Hant' },
+    { native: 'Hrvatski', label: 'Croatian', value: 'hr' },
+    { native: 'Portugues', label: 'Portuguese', value: 'pt' },
+    { native: 'Francais', label: 'French', value: 'fr' },
+  ];
+  readonly lowDataOptions = [
+    { label: 'Nunca', value: 'never' },
+    { label: 'Datos moviles', value: 'mobile' },
+    { label: 'En roaming', value: 'roaming' },
+    { label: 'Siempre', value: 'always' },
+  ];
+  readonly visibilityOptions: Array<{ label: string; value: NivraVisibility }> = [
+    { label: 'Todos', value: 'everyone' },
+    { label: 'Mis contactos', value: 'contacts' },
+    { label: 'Nadie', value: 'nobody' },
+  ];
+  readonly visibilityRows: Array<{ label: string; key: keyof NivraAppSettings }> = [
+    { label: 'Numero de telefono', key: 'phoneVisibility' },
+    { label: 'Ultima vez y en linea', key: 'lastSeenVisibility' },
+    { label: 'Fotos del perfil', key: 'profilePhotoVisibility' },
+    { label: 'Mensajes reenviados', key: 'forwardedMessagesVisibility' },
+    { label: 'Llamadas', key: 'callsVisibility' },
+    { label: 'Mensajes de voz', key: 'voiceMessagesVisibility' },
+    { label: 'Mensajes', key: 'messagesVisibility' },
+    { label: 'Cumpleanos', key: 'birthdayVisibility' },
+    { label: 'Regalos', key: 'giftsVisibility' },
+    { label: 'Biografia', key: 'bioVisibility' },
+    { label: 'Musica guardada', key: 'savedMusicVisibility' },
+    { label: 'Invitaciones', key: 'invitesVisibility' },
+  ];
+  readonly defaultTtlOptions = [
+    { label: 'Sin expiracion', value: 0 },
+    { label: '1 hora', value: 3600 },
+    { label: '24 horas', value: 86400 },
+    { label: '7 dias', value: 604800 },
+  ];
   private qrScanner: import('html5-qrcode').Html5Qrcode | null = null;
   private contactScanner: import('html5-qrcode').Html5Qrcode | null = null;
   private readonly aliasChecks = new Subject<string>();
@@ -94,6 +167,7 @@ export class AccountPage implements OnInit, OnDestroy {
     this.initializeTheme();
     this.listenForAliasChecks();
     await this.reload();
+    await this.refreshStorageEstimate();
   }
 
   ngOnDestroy(): void {
@@ -117,6 +191,7 @@ export class AccountPage implements OnInit, OnDestroy {
       this.profilePhotoDirty = false;
       this.isDiscoverable = user.isDiscoverable;
     }
+    await this.refreshStorageEstimate();
   }
 
   async saveProfile(): Promise<void> {
@@ -209,8 +284,12 @@ export class AccountPage implements OnInit, OnDestroy {
     });
   }
 
-  patchPrivacy(key: keyof PrivacySettings, value: boolean | number | null): void {
+  patchPrivacy(key: keyof PrivacySettings, value: boolean | number | string | null): void {
     this.account.privacy.update((privacy) => privacy ? { ...privacy, [key]: value } : privacy);
+  }
+
+  patchPrivacyTtl(value: string): void {
+    this.patchPrivacy('defaultMessageTtlSeconds', Number(value || 0));
   }
 
   async setSecureMode(enabled: boolean): Promise<void> {
@@ -323,9 +402,144 @@ export class AccountPage implements OnInit, OnDestroy {
 
   setLightTheme(enabled: boolean): void {
     this.lightTheme = enabled;
-    this.applyTheme(enabled);
-    this.writeStoredTheme(enabled);
-    void this.syncNativeKeyboard(enabled);
+    this.appSettings.set('themeMode', enabled ? 'light' : 'dark');
+  }
+
+  t(key: string, fallback = ''): string {
+    return this.i18n.t(key, fallback);
+  }
+
+  setThemeMode(value: string): void {
+    if (value === 'system' || value === 'dark' || value === 'light') {
+      this.appSettings.set('themeMode', value);
+      this.lightTheme = this.appSettings.resolvedLightTheme();
+      this.notice = this.t('settings.notice.themeApplied', 'Tema aplicado.');
+    }
+  }
+
+  setTextSetting(key: keyof NivraAppSettings, value: unknown): void {
+    if (key === 'language') {
+      this.setLanguage(String(value ?? 'es'));
+      return;
+    }
+    this.appSettings.update({ [key]: String(value ?? '') } as Partial<NivraAppSettings>);
+    this.notice = this.t('settings.notice.applied', 'Ajuste aplicado.');
+  }
+
+  setNumberSetting(key: keyof NivraAppSettings, value: string | number): void {
+    this.appSettings.update({ [key]: Number(value) } as Partial<NivraAppSettings>);
+    this.notice = this.t('settings.notice.applied', 'Ajuste aplicado.');
+  }
+
+  setBooleanSetting(key: keyof NivraAppSettings, value: boolean): void {
+    this.appSettings.update({ [key]: value } as Partial<NivraAppSettings>);
+    this.notice = this.t('settings.notice.applied', 'Ajuste aplicado.');
+  }
+
+  setAccent(value: string): void {
+    this.appSettings.set('accentColor', value);
+    this.notice = this.t('settings.notice.colorApplied', 'Color aplicado.');
+  }
+
+  setLanguage(value: string): void {
+    this.i18n.use(value);
+    this.notice = this.t('settings.notice.languageApplied', 'Idioma aplicado en tiempo real.');
+  }
+
+  setVisibilitySetting(key: keyof NivraAppSettings, value: string): void {
+    if (value === 'everyone' || value === 'contacts' || value === 'nobody') {
+      this.appSettings.update({ [key]: value } as Partial<NivraAppSettings>);
+      this.notice = 'Regla local de privacidad guardada.';
+    }
+  }
+
+  resetAppSettings(): void {
+    this.appSettings.reset();
+    this.lightTheme = this.appSettings.resolvedLightTheme();
+    this.notice = 'Ajustes locales restaurados.';
+  }
+
+  applyPrivacyPreset(value: string): void {
+    const patches: Record<string, PrivacySettings> = {
+      private: {
+        hideNotificationContent: true,
+        allowForwarding: false,
+        allowScreenshots: false,
+        readReceipts: true,
+        defaultMessageTtlSeconds: 86400,
+        privacyPreset: 'private',
+      },
+      balanced: {
+        hideNotificationContent: true,
+        allowForwarding: true,
+        allowScreenshots: false,
+        readReceipts: true,
+        defaultMessageTtlSeconds: null,
+        privacyPreset: 'balanced',
+      },
+      open: {
+        hideNotificationContent: false,
+        allowForwarding: true,
+        allowScreenshots: true,
+        readReceipts: true,
+        defaultMessageTtlSeconds: null,
+        privacyPreset: 'open',
+      },
+    };
+    const patch = patches[value] ?? patches['balanced'];
+    this.account.privacy.update((privacy) => privacy ? { ...privacy, ...patch } : privacy);
+    this.notice = 'Preset listo. Guarda privacidad para sincronizarlo.';
+  }
+
+  async clearDraftsAndPreviews(): Promise<void> {
+    await this.run(async () => {
+      const keys: string[] = [];
+      for (let index = 0; index < localStorage.length; index += 1) {
+        const key = localStorage.key(index);
+        if (key?.startsWith('nivra.draft.') || key?.startsWith('nivra.pendingAttachment.')) {
+          keys.push(key);
+        }
+      }
+      keys.forEach((key) => localStorage.removeItem(key));
+      this.notice = keys.length ? 'Borradores locales eliminados.' : 'No habia borradores locales guardados.';
+      await this.refreshStorageEstimate();
+    });
+  }
+
+  async copyDiagnostics(): Promise<void> {
+    await this.run(async () => {
+      const payload = {
+        userId: this.auth.session()?.user.id,
+        alias: this.auth.session()?.user.alias,
+        deviceId: this.auth.session()?.device.id,
+        deviceName: this.auth.session()?.device.name,
+        pushPermission: this.push.permission(),
+        pushServerReady: this.push.serverReady(),
+        settings: this.appSettings.settings(),
+        storage: {
+          usage: this.storageUsageBytes,
+          quota: this.storageQuotaBytes,
+        },
+        createdAt: new Date().toISOString(),
+      };
+      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      this.notice = 'Diagnostico copiado.';
+    });
+  }
+
+  storageUsageLabel(): string {
+    if (!this.storageUsageBytes && !this.storageQuotaBytes) {
+      return 'No disponible';
+    }
+    return `${this.formatBytes(this.storageUsageBytes)} de ${this.formatBytes(this.storageQuotaBytes)}`;
+  }
+
+  visibilityLabel(value: NivraVisibility): string {
+    return this.visibilityOptions.find((option) => option.value === value)?.label ?? 'Todos';
+  }
+
+  settingValue(key: keyof NivraAppSettings): string {
+    return String(this.appSettings.settings()[key] ?? '');
   }
 
   identityMode(): 'ghost' | 'public' {
@@ -365,7 +579,7 @@ export class AccountPage implements OnInit, OnDestroy {
         url: this.shareUrl(),
       };
       const share = navigator as Navigator & { share?: (data: typeof payload) => Promise<void> };
-      if (share.share) {
+      if (share.share && this.appSettings.settings().directShare) {
         await share.share(payload);
         this.notice = 'Invitacion lista para enviar.';
         return;
@@ -697,47 +911,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   private initializeTheme(): void {
-    this.lightTheme = this.readStoredTheme();
-    this.applyTheme(this.lightTheme);
-  }
-
-  private applyTheme(enabled: boolean): void {
-    if (typeof document === 'undefined') {
-      return;
-    }
-    document.body.classList.toggle('nivra-light-theme', enabled);
-    document.documentElement.classList.toggle('nivra-light-theme', enabled);
-  }
-
-  private readStoredTheme(): boolean {
-    try {
-      const value = localStorage.getItem(THEME_STORAGE_KEY);
-      if (value === 'light') {
-        return true;
-      }
-      if (value === 'dark') {
-        return false;
-      }
-      return window.matchMedia?.('(prefers-color-scheme: light)').matches ?? false;
-    } catch {
-      return false;
-    }
-  }
-
-  private writeStoredTheme(enabled: boolean): void {
-    try {
-      localStorage.setItem(THEME_STORAGE_KEY, enabled ? 'light' : 'dark');
-    } catch {
-      // Theme preference is nice to keep, but private modes can block storage.
-    }
-  }
-
-  private async syncNativeKeyboard(enabled: boolean): Promise<void> {
-    try {
-      await Keyboard.setStyle({ style: enabled ? KeyboardStyle.Light : KeyboardStyle.Dark });
-    } catch {
-      // Web and desktop do not expose the native keyboard bridge.
-    }
+    this.lightTheme = this.appSettings.resolvedLightTheme();
   }
 
   private contactAliasFromQr(text: string): string | null {
@@ -806,5 +980,30 @@ export class AccountPage implements OnInit, OnDestroy {
     }).finally(() => {
       setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
     });
+  }
+
+  async refreshStorageEstimate(): Promise<void> {
+    try {
+      const estimate = await navigator.storage?.estimate?.();
+      this.storageUsageBytes = Math.round(estimate?.usage ?? 0);
+      this.storageQuotaBytes = Math.round(estimate?.quota ?? 0);
+    } catch {
+      this.storageUsageBytes = 0;
+      this.storageQuotaBytes = 0;
+    }
+  }
+
+  private formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      return '0 B';
+    }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
   }
 }

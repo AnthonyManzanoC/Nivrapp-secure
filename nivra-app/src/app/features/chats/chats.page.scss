@@ -115,6 +115,36 @@ time {
   background: rgba(255, 255, 255, .055);
 }
 
+.chat-list-shell {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.chat-folders {
+  width: auto;
+  margin: 0 10px 10px;
+  padding: 4px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, .058);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+
+.chat-folders ion-segment-button {
+  min-width: 96px;
+  min-height: 34px;
+  --border-radius: 6px;
+  --color: var(--nivra-muted);
+  --color-checked: var(--nivra-text);
+  --indicator-color: rgba(114, 240, 202, .18);
+  --indicator-box-shadow: inset 0 0 0 1px rgba(114, 240, 202, .28);
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0;
+}
+
 .list {
   min-height: 0;
   background: transparent;
@@ -134,6 +164,21 @@ time {
   --detail-icon-color: var(--nivra-muted);
   min-height: 68px;
   margin-bottom: 6px;
+}
+
+.three-line-list .list-item {
+  --min-height: 82px;
+  min-height: 82px;
+}
+
+.conversation-item.has-flags {
+  --min-height: 82px;
+  min-height: 82px;
+}
+
+.three-line-list .conversation-item.has-flags {
+  --min-height: 96px;
+  min-height: 96px;
 }
 
 .list-item ion-label {
@@ -189,6 +234,9 @@ ion-item-sliding .list-item {
 ion-item-option {
   --border-radius: 8px;
   margin: 0 0 6px 6px;
+  min-width: 96px;
+  font-weight: 750;
+  letter-spacing: 0;
 }
 
 .avatar {
@@ -225,10 +273,48 @@ ion-item-option {
 }
 
 .item-copy strong,
-.item-copy small {
+.item-copy small,
+.item-copy em {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.item-copy em {
+  color: var(--nivra-muted);
+  font-size: 11px;
+  font-style: normal;
+  opacity: .84;
+}
+
+.chat-meta {
+  display: flex;
+  min-width: 0;
+  gap: 5px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.chat-meta b {
+  flex: 0 1 auto;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 999px;
+  padding: 2px 7px;
+  color: var(--nivra-text);
+  background: rgba(114, 240, 202, .12);
+  box-shadow: inset 0 0 0 1px rgba(114, 240, 202, .18);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.conversation-item.muted .avatar {
+  opacity: .78;
+}
+
+.conversation-item.pinned::part(native) {
+  border-color: rgba(114, 240, 202, .28);
 }
 
 time {

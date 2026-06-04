@@ -112,6 +112,11 @@ export interface Conversation {
   lastMessageAt?: string | null;
   archivedAt?: string | null;
   blockedAt?: string | null;
+  pinnedAt?: string | null;
+  mutedAt?: string | null;
+  isArchived?: boolean;
+  isPinned?: boolean;
+  isMuted?: boolean;
 }
 
 export interface Contact {

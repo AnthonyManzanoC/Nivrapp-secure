@@ -116,6 +116,116 @@
         </div>
       </article>
 
+      <article class="panel span-7 advanced-chat-panel">
+        <div class="settings-panel-head">
+          <div>
+            <h2>{{ t('settings.chat.title', 'Ajustes de chats') }}</h2>
+            <p class="card-sub">{{ appSettings.settings().messageTextSize }} px - {{ appSettings.settings().chatListDensity === 'three-line' ? t('settings.chat.threeLines', 'Tres lineas') : t('settings.chat.twoLines', 'Dos lineas') }}</p>
+          </div>
+          <select class="native-select compact" [value]="appSettings.settings().themeMode" (change)="setThemeMode($any($event.target).value)" aria-label="Modo de tema">
+            @for (option of themeModeOptions; track option.value) {
+              <option [value]="option.value">{{ t('settings.theme.' + option.value, option.label) }}</option>
+            }
+          </select>
+        </div>
+
+        <div class="chat-settings-preview" [style.--preview-radius]="appSettings.settings().messageCornerRadius + 'px'" [style.--preview-font]="appSettings.settings().messageTextSize + 'px'">
+          <div class="preview-message">
+            <strong>{{ displayName || auth.session()?.user?.alias || 'Nivra' }}</strong>
+            <span>{{ t('settings.chat.previewIncoming', 'Asi se veran tus mensajes con el ajuste actual.') }}</span>
+          </div>
+          <div class="preview-message mine">
+            <span>{{ t('settings.chat.previewOutgoing', 'Listo, aplicado en el chat real.') }}</span>
+          </div>
+        </div>
+
+        <div class="range-grid">
+          <label class="range-field">
+            <span>{{ t('settings.chat.textSize', 'Tamano del texto del mensaje') }} <strong>{{ appSettings.settings().messageTextSize }}</strong></span>
+            <input type="range" min="12" max="22" [value]="appSettings.settings().messageTextSize" (input)="setNumberSetting('messageTextSize', $any($event.target).value)">
+          </label>
+          <label class="range-field">
+            <span>{{ t('settings.chat.radius', 'Esquinas de los mensajes') }} <strong>{{ appSettings.settings().messageCornerRadius }}</strong></span>
+            <input type="range" min="4" max="24" [value]="appSettings.settings().messageCornerRadius" (input)="setNumberSetting('messageCornerRadius', $any($event.target).value)">
+          </label>
+        </div>
+
+        <div class="settings-choice-grid">
+          <div>
+            <span class="choice-title">{{ t('settings.chat.wallpaper', 'Fondo') }}</span>
+            <div class="wallpaper-row">
+              @for (wallpaper of wallpaperChoices; track wallpaper.value) {
+                <button type="button" class="wallpaper-tile" [class.active]="appSettings.settings().chatWallpaper === wallpaper.value" [attr.data-wallpaper]="wallpaper.value" (click)="setTextSetting('chatWallpaper', wallpaper.value)">
+                  <span></span>
+                  <strong>{{ t('settings.wallpaper.' + wallpaper.value, wallpaper.label) }}</strong>
+                </button>
+              }
+            </div>
+          </div>
+          <div>
+            <span class="choice-title">{{ t('settings.chat.color', 'Color') }}</span>
+            <div class="accent-row">
+              @for (accent of accentChoices; track accent.value) {
+                <button type="button" class="accent-dot" [class.active]="appSettings.settings().accentColor === accent.value" [style.--accent-a]="accent.color" [style.--accent-b]="accent.second" (click)="setAccent(accent.value)" [attr.aria-label]="accent.label"></button>
+              }
+            </div>
+          </div>
+        </div>
+
+        <div class="segmented-row">
+          @for (density of densityOptions; track density.value) {
+            <button type="button" [class.active]="appSettings.settings().chatListDensity === density.value" (click)="setTextSetting('chatListDensity', density.value)">
+              {{ density.value === 'three-line' ? t('settings.chat.threeLines', density.label) : t('settings.chat.twoLines', density.label) }}
+            </button>
+          }
+        </div>
+
+        <div class="toggles compact-toggles">
+          <label class="toggle-row">
+            <span>{{ t('settings.chat.enterToSend', 'Enviar con la tecla Intro') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().enterToSend" (ionChange)="setBooleanSetting('enterToSend', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.chat.animations', 'Animaciones') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().animationsEnabled" (ionChange)="setBooleanSetting('animationsEnabled', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.chat.showNextMedia', 'Mostrar siguiente al tocar multimedia') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().showNextMediaOnTap" (ionChange)="setBooleanSetting('showNextMediaOnTap', $event.detail.checked)"></ion-toggle>
+          </label>
+        </div>
+      </article>
+
+      <article class="panel span-5 language-panel">
+        <div class="settings-panel-head">
+          <div>
+            <h2>{{ t('settings.language.title', 'Idioma') }}</h2>
+            <p class="card-sub">{{ appSettings.settings().language }}</p>
+          </div>
+        </div>
+        <div class="toggles compact-toggles">
+          <label class="toggle-row">
+            <span>{{ t('settings.language.showTranslate', 'Mostrar boton Traducir') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().showTranslateButton" (ionChange)="setBooleanSetting('showTranslateButton', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.language.translateChats', 'Traducir chats enteros') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().translateEntireChats" (ionChange)="setBooleanSetting('translateEntireChats', $event.detail.checked)"></ion-toggle>
+          </label>
+        </div>
+        <div class="language-list">
+          @for (language of languageOptions; track language.value) {
+            <button type="button" [class.active]="appSettings.settings().language === language.value" (click)="setLanguage(language.value)">
+              <span class="radio-dot"></span>
+              <span>
+                <strong>{{ language.native }}</strong>
+                <small>{{ language.label }}</small>
+              </span>
+            </button>
+          }
+        </div>
+      </article>
+
       <article class="panel span-5 app-lock-panel" [class.enabled]="appLock.isEnabled()">
         <div class="app-lock-heading">
           <div class="app-lock-icon">
@@ -183,6 +293,24 @@
       <article class="panel span-6">
         <h2>Privacidad</h2>
         @if (account.privacy(); as privacy) {
+          <div class="privacy-preset-grid">
+            <label>
+              <span>Preset</span>
+              <select class="native-select" [value]="privacy.privacyPreset || 'balanced'" (change)="applyPrivacyPreset($any($event.target).value)">
+                <option value="private">Privado</option>
+                <option value="balanced">Equilibrado</option>
+                <option value="open">Abierto</option>
+              </select>
+            </label>
+            <label>
+              <span>Autoeliminar mensajes nuevos</span>
+              <select class="native-select" [value]="privacy.defaultMessageTtlSeconds ?? 0" (change)="patchPrivacyTtl($any($event.target).value)">
+                @for (option of defaultTtlOptions; track option.value) {
+                  <option [value]="option.value">{{ option.label }}</option>
+                }
+              </select>
+            </label>
+          </div>
           <div class="toggles">
             <label class="toggle-row">
               <span>Ocultar contenido en avisos</span>
@@ -203,6 +331,35 @@
           </div>
           <ion-button mode="ios" fill="outline" (click)="savePrivacy()" [disabled]="saving">Guardar privacidad</ion-button>
         }
+        <div class="local-privacy-block">
+          <div class="subsection-head">
+            <strong>Visibilidad avanzada local</strong>
+            <small>Local</small>
+          </div>
+          <div class="visibility-list">
+            @for (row of visibilityRows; track row.key) {
+              <label>
+                <span>{{ row.label }}</span>
+                <select class="native-select compact" [value]="settingValue(row.key)" (change)="setVisibilitySetting(row.key, $any($event.target).value)">
+                  @for (option of visibilityOptions; track option.value) {
+                    <option [value]="option.value">{{ option.label }}</option>
+                  }
+                </select>
+              </label>
+            }
+          </div>
+          <label class="select-row">
+            <span>Eliminar mi cuenta si estoy fuera</span>
+            <select class="native-select compact" [value]="appSettings.settings().deleteAccountIfAwayMonths" (change)="setNumberSetting('deleteAccountIfAwayMonths', $any($event.target).value)">
+              <option value="1">1 mes</option>
+              <option value="3">3 meses</option>
+              <option value="6">6 meses</option>
+              <option value="12">12 meses</option>
+              <option value="18">18 meses</option>
+              <option value="24">24 meses</option>
+            </select>
+          </label>
+        </div>
         <div class="panic-pin-box">
           <div class="panic-pin-heading">
             <ion-icon name="warning-outline"></ion-icon>
@@ -256,6 +413,119 @@
         @if (push.error()) {
           <p class="error">{{ push.error() }}</p>
         }
+      </article>
+
+      <article class="panel span-6 data-storage-panel">
+        <div class="settings-panel-head">
+          <div>
+            <h2>{{ t('settings.data.title', 'Datos y almacenamiento') }}</h2>
+            <p class="card-sub">{{ storageUsageLabel() }}</p>
+          </div>
+          <ion-button mode="ios" fill="clear" (click)="refreshStorageEstimate()" [attr.aria-label]="t('settings.data.refresh', 'Actualizar almacenamiento')">
+            <ion-icon name="refresh-outline"></ion-icon>
+          </ion-button>
+        </div>
+        <div class="toggles compact-toggles">
+          <label class="toggle-row">
+            <span>{{ t('settings.data.savePrivate', 'Guardar chats privados en galeria') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().savePrivateMedia" (ionChange)="setBooleanSetting('savePrivateMedia', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.data.saveGroups', 'Guardar grupos en galeria') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().saveGroupMedia" (ionChange)="setBooleanSetting('saveGroupMedia', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.data.saveChannels', 'Guardar canales en galeria') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().saveChannelMedia" (ionChange)="setBooleanSetting('saveChannelMedia', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.data.streaming', 'Streaming de video y audio') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().mediaStreaming" (ionChange)="setBooleanSetting('mediaStreaming', $event.detail.checked)"></ion-toggle>
+          </label>
+        </div>
+        <div class="settings-select-stack">
+          <label class="select-row">
+            <span>{{ t('settings.data.lowDataCalls', 'Usar menos datos en llamadas') }}</span>
+            <select class="native-select compact" [value]="appSettings.settings().lowDataCalls" (change)="setTextSetting('lowDataCalls', $any($event.target).value)">
+              @for (option of lowDataOptions; track option.value) {
+                <option [value]="option.value">{{ option.label }}</option>
+              }
+            </select>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.data.proxy', 'Proxy') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().proxyEnabled" (ionChange)="setBooleanSetting('proxyEnabled', $event.detail.checked)"></ion-toggle>
+          </label>
+          @if (appSettings.settings().proxyEnabled) {
+            <label>
+              <span>Servidor proxy</span>
+              <ion-input mode="ios" fill="outline" [ngModel]="appSettings.settings().proxyHost" (ngModelChange)="setTextSetting('proxyHost', $event)" placeholder="host:puerto"></ion-input>
+            </label>
+          }
+        </div>
+        <div class="account-actions compact">
+          <ion-button mode="ios" fill="outline" (click)="clearDraftsAndPreviews()" [disabled]="saving">
+            <ion-icon name="trash-outline"></ion-icon>
+            {{ t('settings.data.deleteDrafts', 'Eliminar borradores') }}
+          </ion-button>
+        </div>
+      </article>
+
+      <article class="panel span-6 behavior-panel">
+        <h2>{{ t('settings.behavior.title', 'Otros ajustes') }}</h2>
+        <div class="toggles compact-toggles">
+          <label class="toggle-row">
+            <span>{{ t('settings.behavior.directShare', 'Direct Share') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().directShare" (ionChange)="setBooleanSetting('directShare', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.behavior.appBrowser', 'Navegador en la app') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().appBrowser" (ionChange)="setBooleanSetting('appBrowser', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.behavior.adultContent', 'Mostrar contenido +18') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().showAdultContent" (ionChange)="setBooleanSetting('showAdultContent', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.behavior.raiseListen', 'Levantar para escuchar') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().raiseToListen" (ionChange)="setBooleanSetting('raiseToListen', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.behavior.raiseTalk', 'Levantar para hablar') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().raiseToTalk" (ionChange)="setBooleanSetting('raiseToTalk', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.behavior.pauseRecord', 'Pausar musica al grabar') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().pauseMediaOnRecord" (ionChange)="setBooleanSetting('pauseMediaOnRecord', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.behavior.pausePlayback', 'Pausar musica al reproducir') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().pauseMediaOnPlayback" (ionChange)="setBooleanSetting('pauseMediaOnPlayback', $event.detail.checked)"></ion-toggle>
+          </label>
+        </div>
+      </article>
+
+      <article class="panel span-6 diagnostics-panel">
+        <h2>{{ t('settings.diagnostics.title', 'Ayuda y depuracion') }}</h2>
+        <div class="toggles compact-toggles">
+          <label class="toggle-row">
+            <span>{{ t('settings.diagnostics.sendLogs', 'Enviar registros') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().diagnosticsSendLogs" (ionChange)="setBooleanSetting('diagnosticsSendLogs', $event.detail.checked)"></ion-toggle>
+          </label>
+          <label class="toggle-row">
+            <span>{{ t('settings.diagnostics.includeRecent', 'Incluir ultimos eventos locales') }}</span>
+            <ion-toggle mode="ios" [checked]="appSettings.settings().diagnosticsIncludeRecent" (ionChange)="setBooleanSetting('diagnosticsIncludeRecent', $event.detail.checked)"></ion-toggle>
+          </label>
+        </div>
+        <div class="account-actions compact">
+          <ion-button mode="ios" fill="outline" (click)="copyDiagnostics()" [disabled]="saving">
+            <ion-icon name="copy-outline"></ion-icon>
+            {{ t('settings.diagnostics.copy', 'Copiar diagnostico') }}
+          </ion-button>
+          <ion-button mode="ios" fill="clear" (click)="resetAppSettings()" [disabled]="saving">
+            {{ t('settings.diagnostics.reset', 'Restaurar ajustes') }}
+          </ion-button>
+        </div>
       </article>
 
       <article class="panel span-6">

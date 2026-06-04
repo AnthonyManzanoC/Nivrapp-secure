@@ -42,7 +42,11 @@
     </div>
   }
 
-  <ion-content class="messages-content" [scrollEvents]="true">
+  <ion-content
+    class="messages-content"
+    [scrollEvents]="true"
+    [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
+    [style.--nivra-chat-background]="appSettings.chatBackgroundCss()">
     <div class="messages">
       @for (message of messages(); track message.id) {
         @if (chat.isCallLog(message.payload)) {
@@ -270,6 +274,7 @@
         name="draft"
         [(ngModel)]="draft"
         (ionInput)="onDraftInput()"
+        (keydown.enter)="onComposerEnter($event)"
         [disabled]="!canSendMessages()"
         autoGrow="true"
         rows="1"
@@ -453,6 +458,12 @@
               <ion-icon name="return-down-back-outline"></ion-icon>
               Responder
             </button>
+            @if (canTranslate(actionMessage)) {
+              <button type="button" (click)="translateMessage(actionMessage)">
+                <ion-icon name="language-outline"></ion-icon>
+                Traducir
+              </button>
+            }
             @if (canEdit(actionMessage)) {
               <button type="button" (click)="beginEdit(actionMessage)">
                 <ion-icon name="create-outline"></ion-icon>

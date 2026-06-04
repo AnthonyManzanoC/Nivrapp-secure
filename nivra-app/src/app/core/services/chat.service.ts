@@ -74,6 +74,13 @@ export interface GroupConversationOptions {
   groupAvatar?: string | null;
 }
 
+export type ChatFolderFilter = 'all' | 'pinned' | 'unread' | 'archived';
+
+type ConversationFlagKind = 'archived' | 'blocked' | 'pinned' | 'muted';
+
+const TTL_SWEEP_INTERVAL_MS = 30_000;
+const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
+
 @Injectable({ providedIn: 'root' })
 export class ChatService implements OnDestroy {
   private readonly api = inject(NivraApiService);
@@ -92,6 +99,7 @@ export class ChatService implements OnDestroy {
   private readonly directConversationInFlight = new Map<string, Promise<Conversation>>();
   private readonly typingTimers = new Map<string, number>();
   private readonly expiryTimers = new Map<string, number>();
+  private ttlSweepTimer: number | null = null;
   private lastTypingSentAt = 0;
   private syncInFlight = false;
   private selectedConversationLoadId = 0;
@@ -101,7 +109,7 @@ export class ChatService implements OnDestroy {
   readonly contacts = signal<Contact[]>([]);
   readonly profilesByUserId = signal<Record<string, LocalProfile>>({});
   readonly messagesByConversation = signal<Record<string, ChatMessageVm[]>>({});
-  readonly visibleConversations = computed(() => this.dedupeVisibleConversations(this.conversations(), this.messagesByConversation()));
+  readonly visibleConversations = computed(() => this.chatFolderConversations('all'));
   readonly mediaPreviews = signal<Record<string, MediaPreview>>({});
   readonly directoryResults = signal<UserSummary[]>([]);
   readonly typingByConversation = signal<Record<string, string[]>>({});
@@ -166,6 +174,7 @@ export class ChatService implements OnDestroy {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
         if (document.visibilityState === 'visible') {
+          void this.purgeExpiredLocalMessages();
           void this.syncMissedMessages();
           void this.refreshPresenceForConversations();
         }
@@ -181,16 +190,21 @@ export class ChatService implements OnDestroy {
     effect(() => {
       if (this.auth.isAuthenticated()) {
         untracked(() => {
+          this.startTtlSweep();
           void this.bootstrap();
           void this.signalr.connect();
         });
       } else {
-        untracked(() => this.pauseForLoggedOutSession());
+        untracked(() => {
+          this.stopTtlSweep();
+          this.pauseForLoggedOutSession();
+        });
       }
     });
   }
 
   ngOnDestroy(): void {
+    this.stopTtlSweep();
     this.resetInMemoryState();
   }
 
@@ -257,6 +271,7 @@ export class ChatService implements OnDestroy {
     } catch {
       // Best-effort foreground sync; realtime/bootstrap remain authoritative.
     } finally {
+      void this.purgeExpiredLocalMessages();
       this.syncInFlight = false;
     }
   }
@@ -1011,11 +1026,48 @@ export class ChatService implements OnDestroy {
     return title.split(/\s|,|-/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toUpperCase()).join('') || 'N';
   }
 
+  chatFolderConversations(folder: ChatFolderFilter): Conversation[] {
+    const conversations = this.dedupeVisibleConversations(this.conversations(), this.messagesByConversation());
+    return conversations
+      .filter((conversation) => {
+        const archived = this.isArchivedConversationRecord(conversation);
+        if (folder === 'archived') {
+          return archived;
+        }
+        if (archived) {
+          return false;
+        }
+        if (folder === 'pinned') {
+          return this.isPinnedConversationRecord(conversation);
+        }
+        if (folder === 'unread') {
+          return this.hasUnreadConversation(conversation);
+        }
+        return true;
+      })
+      .sort(this.compareConversations);
+  }
+
+  hasUnreadConversation(conversation: Conversation | null | undefined): boolean {
+    const current = this.auth.session();
+    if (!conversation?.id || !current?.user?.id) {
+      return false;
+    }
+    return (this.messagesByConversation()[conversation.id] ?? []).some((message) => {
+      if (message.mine || this.readReceiptSentIds.has(message.id)) {
+        return false;
+      }
+      const ownReceipt = message.receipts?.find((receipt) => receipt.userId === current.user.id && receipt.deviceId === current.device.id);
+      return !ownReceipt?.readAt;
+    });
+  }
+
   isConversationArchived(conversationId: string | null | undefined): boolean {
     if (!conversationId) {
       return false;
     }
-    return Boolean(this.conversations().find((conversation) => conversation.id === conversationId)?.archivedAt)
+    const conversation = this.conversations().find((item) => item.id === conversationId);
+    return Boolean(conversation && this.isArchivedConversationRecord(conversation))
       || this.readConversationFlag('archived').has(conversationId);
   }
 
@@ -1023,6 +1075,41 @@ export class ChatService implements OnDestroy {
     this.writeConversationFlag('archived', conversation.id, archived);
     await this.updateConversationLocalState(conversation, {
       archivedAt: archived ? new Date().toISOString() : null,
+      isArchived: archived,
+    });
+  }
+
+  isConversationPinned(conversationId: string | null | undefined): boolean {
+    if (!conversationId) {
+      return false;
+    }
+    const conversation = this.conversations().find((item) => item.id === conversationId);
+    return Boolean(conversation && this.isPinnedConversationRecord(conversation))
+      || this.readConversationFlag('pinned').has(conversationId);
+  }
+
+  async setConversationPinned(conversation: Conversation, pinned: boolean): Promise<void> {
+    this.writeConversationFlag('pinned', conversation.id, pinned);
+    await this.updateConversationLocalState(conversation, {
+      pinnedAt: pinned ? new Date().toISOString() : null,
+      isPinned: pinned,
+    });
+  }
+
+  isConversationMuted(conversationId: string | null | undefined): boolean {
+    if (!conversationId) {
+      return false;
+    }
+    const conversation = this.conversations().find((item) => item.id === conversationId);
+    return Boolean(conversation && this.isMutedConversationRecord(conversation))
+      || this.readConversationFlag('muted').has(conversationId);
+  }
+
+  async setConversationMuted(conversation: Conversation, muted: boolean): Promise<void> {
+    this.writeConversationFlag('muted', conversation.id, muted);
+    await this.updateConversationLocalState(conversation, {
+      mutedAt: muted ? new Date().toISOString() : null,
+      isMuted: muted,
     });
   }
 
@@ -1454,7 +1541,10 @@ export class ChatService implements OnDestroy {
     }
     const groups = await Promise.all(accountKeys.map((accountKey) =>
       this.history.conversationMessagesPage(accountKey, conversationId, 80).catch(() => [])));
-    const messages = this.uniqueMessages(groups.flat()).slice(-80);
+    const now = Date.now();
+    const messages = this.uniqueMessages(groups.flat())
+      .filter((message) => !this.isExpiredMessage(message, now))
+      .slice(-80);
     for (const message of messages) {
       this.upsertMessage(message, { persist: false });
     }
@@ -1462,6 +1552,7 @@ export class ChatService implements OnDestroy {
     if (primary && messages.length) {
       void this.history.putMessages(primary, messages).catch(() => undefined);
     }
+    void this.purgeExpiredLocalMessages();
   }
 
   private async purgeExpiredLocalMessages(): Promise<void> {
@@ -1469,8 +1560,9 @@ export class ChatService implements OnDestroy {
     if (!accountKeys.length) {
       return;
     }
+    const now = Date.now();
     const groups = await Promise.all(accountKeys.map((accountKey) => this.history.purgeExpired(accountKey).catch(() => [])));
-    const expired = this.uniqueMessages(groups.flat());
+    const expired = this.uniqueMessages([...groups.flat(), ...this.expiredInMemoryMessages(now)]);
     if (!expired.length) {
       return;
     }
@@ -1487,6 +1579,10 @@ export class ChatService implements OnDestroy {
       }
       return next;
     });
+    for (const message of expired) {
+      this.clearMessageExpiryTimer(message.conversationId, message.id);
+      this.removeLocalMessage(message.conversationId, message.id);
+    }
   }
 
   private persistLocalMessage(message: ChatMessageVm): void {
@@ -1517,17 +1613,32 @@ export class ChatService implements OnDestroy {
     if (!conversationId || !messageId) {
       return;
     }
+    this.clearMessageExpiryTimer(conversationId, messageId);
+    this.messagesByConversation.update((state) => ({
+      ...state,
+      [conversationId]: (state[conversationId] ?? []).filter((message) => message.id !== messageId),
+    }));
+    this.removeLocalMessage(conversationId, messageId);
+  }
+
+  private expiredInMemoryMessages(now = Date.now()): ChatMessageVm[] {
+    return Object.values(this.messagesByConversation())
+      .flat()
+      .filter((message) => this.isExpiredMessage(message, now));
+  }
+
+  private isExpiredMessage(message: ChatMessageVm | null | undefined, now = Date.now()): boolean {
+    const expiresAtMs = message?.expiresAt ? Date.parse(message.expiresAt) : NaN;
+    return Number.isFinite(expiresAtMs) && expiresAtMs <= now;
+  }
+
+  private clearMessageExpiryTimer(conversationId: string, messageId: string): void {
     const timerKey = `${conversationId}:${messageId}`;
     const timer = this.expiryTimers.get(timerKey);
     if (timer !== undefined) {
       window.clearTimeout(timer);
       this.expiryTimers.delete(timerKey);
     }
-    this.messagesByConversation.update((state) => ({
-      ...state,
-      [conversationId]: (state[conversationId] ?? []).filter((message) => message.id !== messageId),
-    }));
-    this.removeLocalMessage(conversationId, messageId);
   }
 
   private scheduleMessageExpiry(message: ChatMessageVm): void {
@@ -1550,9 +1661,31 @@ export class ChatService implements OnDestroy {
     const delay = Math.max(0, expiresAtMs - Date.now());
     const timer = window.setTimeout(() => {
       this.expiryTimers.delete(timerKey);
-      this.removeMessageFromUiAndLocal(message.conversationId, message.id);
-    }, Math.min(delay, 2_147_483_647));
+      if (this.isExpiredMessage(message)) {
+        this.removeMessageFromUiAndLocal(message.conversationId, message.id);
+      } else {
+        this.scheduleMessageExpiry(message);
+      }
+    }, Math.min(delay, MAX_TIMEOUT_DELAY_MS));
     this.expiryTimers.set(timerKey, timer);
+  }
+
+  private startTtlSweep(): void {
+    if (this.ttlSweepTimer !== null) {
+      return;
+    }
+    void this.purgeExpiredLocalMessages();
+    this.ttlSweepTimer = window.setInterval(() => {
+      void this.purgeExpiredLocalMessages();
+    }, TTL_SWEEP_INTERVAL_MS);
+  }
+
+  private stopTtlSweep(): void {
+    if (this.ttlSweepTimer === null) {
+      return;
+    }
+    window.clearInterval(this.ttlSweepTimer);
+    this.ttlSweepTimer = null;
   }
 
   private findMessage(messageId: string): ChatMessageVm | null {
@@ -2211,7 +2344,19 @@ export class ChatService implements OnDestroy {
     }
   }
 
-  private readConversationFlag(kind: 'archived' | 'blocked'): Set<string> {
+  private isArchivedConversationRecord(conversation: Conversation): boolean {
+    return Boolean(conversation.archivedAt || conversation.isArchived);
+  }
+
+  private isPinnedConversationRecord(conversation: Conversation): boolean {
+    return Boolean(conversation.pinnedAt || conversation.isPinned);
+  }
+
+  private isMutedConversationRecord(conversation: Conversation): boolean {
+    return Boolean(conversation.mutedAt || conversation.isMuted);
+  }
+
+  private readConversationFlag(kind: ConversationFlagKind): Set<string> {
     try {
       const values = JSON.parse(localStorage.getItem(this.conversationFlagKey(kind)) || '[]') as string[];
       return new Set(Array.isArray(values) ? values.filter(Boolean) : []);
@@ -2220,7 +2365,7 @@ export class ChatService implements OnDestroy {
     }
   }
 
-  private writeConversationFlag(kind: 'archived' | 'blocked', conversationId: string, enabled: boolean): void {
+  private writeConversationFlag(kind: ConversationFlagKind, conversationId: string, enabled: boolean): void {
     const values = this.readConversationFlag(kind);
     if (enabled) {
       values.add(conversationId);
@@ -2230,7 +2375,7 @@ export class ChatService implements OnDestroy {
     localStorage.setItem(this.conversationFlagKey(kind), JSON.stringify([...values]));
   }
 
-  private conversationFlagKey(kind: 'archived' | 'blocked'): string {
+  private conversationFlagKey(kind: ConversationFlagKind): string {
     const userId = this.auth.session()?.user.id || 'anonymous';
     return `nivra.${kind}Conversations.${userId}`;
   }
@@ -2238,12 +2383,22 @@ export class ChatService implements OnDestroy {
   private applyLocalConversationState(conversations: Conversation[]): Conversation[] {
     const archived = this.readConversationFlag('archived');
     const blocked = this.readConversationFlag('blocked');
+    const pinned = this.readConversationFlag('pinned');
+    const muted = this.readConversationFlag('muted');
     const now = new Date().toISOString();
     return conversations.map((conversation) => {
+      const isArchived = Boolean(conversation.archivedAt || conversation.isArchived || archived.has(conversation.id));
+      const isPinned = Boolean(conversation.pinnedAt || conversation.isPinned || pinned.has(conversation.id));
+      const isMuted = Boolean(conversation.mutedAt || conversation.isMuted || muted.has(conversation.id));
       const base = {
         ...conversation,
-        archivedAt: conversation.archivedAt ?? (archived.has(conversation.id) ? now : null),
+        archivedAt: isArchived ? conversation.archivedAt || now : null,
         blockedAt: conversation.blockedAt ?? (blocked.has(conversation.id) ? now : null),
+        pinnedAt: isPinned ? conversation.pinnedAt || now : null,
+        mutedAt: isMuted ? conversation.mutedAt || now : null,
+        isArchived,
+        isPinned,
+        isMuted,
       };
       return this.isGroupConversation(base)
         ? {
@@ -2257,12 +2412,15 @@ export class ChatService implements OnDestroy {
     });
   }
 
-  private async updateConversationLocalState(conversation: Conversation, patch: Pick<Conversation, 'archivedAt' | 'blockedAt'>): Promise<void> {
+  private async updateConversationLocalState(
+    conversation: Conversation,
+    patch: Partial<Pick<Conversation, 'archivedAt' | 'blockedAt' | 'pinnedAt' | 'mutedAt' | 'isArchived' | 'isPinned' | 'isMuted'>>,
+  ): Promise<void> {
     const current = this.conversations().find((item) => item.id === conversation.id) ?? conversation;
-    const next: Conversation = {
+    const next = this.applyLocalConversationState([{
       ...current,
       ...patch,
-    };
+    }])[0];
     this.conversations.update((items) => items.map((item) => item.id === next.id ? next : item).sort(this.compareConversations));
     const accountKey = this.localAccountKey();
     if (accountKey) {
@@ -2363,6 +2521,8 @@ export class ChatService implements OnDestroy {
     this.selectedConversationLoadId += 1;
     this.typingTimers.forEach((timer) => window.clearTimeout(timer));
     this.typingTimers.clear();
+    this.expiryTimers.forEach((timer) => window.clearTimeout(timer));
+    this.expiryTimers.clear();
   }
 
   private revokeMediaPreviews(): void {
@@ -2602,6 +2762,18 @@ export class ChatService implements OnDestroy {
   }
 
   private compareConversations(left: Conversation, right: Conversation): number {
+    const leftPinned = Boolean(left.pinnedAt || left.isPinned);
+    const rightPinned = Boolean(right.pinnedAt || right.isPinned);
+    if (leftPinned !== rightPinned) {
+      return leftPinned ? -1 : 1;
+    }
+    if (leftPinned && rightPinned) {
+      const leftPinnedAt = Date.parse(left.pinnedAt || '') || 0;
+      const rightPinnedAt = Date.parse(right.pinnedAt || '') || 0;
+      if (leftPinnedAt !== rightPinnedAt) {
+        return rightPinnedAt - leftPinnedAt;
+      }
+    }
     const leftAt = left.lastMessageAt || left.updatedAt || left.createdAt;
     const rightAt = right.lastMessageAt || right.updatedAt || right.createdAt;
     return new Date(rightAt).getTime() - new Date(leftAt).getTime();

@@ -16,13 +16,16 @@ import {
   IonList,
   IonModal,
   IonNote,
+  IonSegment,
+  IonSegmentButton,
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { addOutline, checkmarkOutline, closeOutline, peopleOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
-import { Contact, UserSummary } from '../../core/models/nivra.models';
+import { addOutline, archiveOutline, checkmarkOutline, closeOutline, notificationsOffOutline, notificationsOutline, peopleOutline, pinOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { Contact, Conversation, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
-import { ChatService } from '../../core/services/chat.service';
+import { AppSettingsService } from '../../core/services/app-settings.service';
+import { ChatFolderFilter, ChatService } from '../../core/services/chat.service';
 
 @Component({
   selector: 'app-chats',
@@ -45,6 +48,8 @@ import { ChatService } from '../../core/services/chat.service';
     IonList,
     IonModal,
     IonNote,
+    IonSegment,
+    IonSegmentButton,
     IonSpinner,
   ],
   templateUrl: './chats.page.html',
@@ -52,6 +57,7 @@ import { ChatService } from '../../core/services/chat.service';
 })
 export class ChatsPage implements OnDestroy {
   readonly chat = inject(ChatService);
+  readonly appSettings = inject(AppSettingsService);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   query = '';
@@ -66,11 +72,25 @@ export class ChatsPage implements OnDestroy {
   groupBusy = false;
   groupError = '';
   selectedGroupUserIds = new Set<string>();
+  selectedFolder: ChatFolderFilter = 'all';
   private timer: number | null = null;
   private searchSeq = 0;
 
   constructor() {
-    addIcons({ addOutline, checkmarkOutline, closeOutline, peopleOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline });
+    addIcons({
+      addOutline,
+      archiveOutline,
+      checkmarkOutline,
+      closeOutline,
+      notificationsOffOutline,
+      notificationsOutline,
+      peopleOutline,
+      pinOutline,
+      searchOutline,
+      shareSocialOutline,
+      syncOutline,
+      trashOutline,
+    });
   }
 
   ngOnDestroy(): void {
@@ -133,6 +153,31 @@ export class ChatsPage implements OnDestroy {
   async openConversation(conversationId: string): Promise<void> {
     await this.router.navigate(['/app/chats', conversationId]);
     void this.chat.selectConversation(conversationId);
+  }
+
+  conversationsForFolder(): Conversation[] {
+    return this.chat.chatFolderConversations(this.selectedFolder);
+  }
+
+  setFolder(value: string | number | undefined): void {
+    if (value === 'all' || value === 'pinned' || value === 'unread' || value === 'archived') {
+      this.selectedFolder = value;
+    }
+  }
+
+  async togglePinned(conversation: Conversation, event?: Event): Promise<void> {
+    event?.stopPropagation();
+    await this.chat.setConversationPinned(conversation, !this.chat.isConversationPinned(conversation.id));
+  }
+
+  async toggleMuted(conversation: Conversation, event?: Event): Promise<void> {
+    event?.stopPropagation();
+    await this.chat.setConversationMuted(conversation, !this.chat.isConversationMuted(conversation.id));
+  }
+
+  async toggleArchived(conversation: Conversation, event?: Event): Promise<void> {
+    event?.stopPropagation();
+    await this.chat.setConversationArchived(conversation, !this.chat.isConversationArchived(conversation.id));
   }
 
   async startConversation(person: UserSummary): Promise<void> {

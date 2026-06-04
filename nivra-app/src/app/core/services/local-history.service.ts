@@ -1120,6 +1120,18 @@ export class LocalHistoryService {
   }
 
   private compareConversations(left: Conversation, right: Conversation): number {
+    const leftPinned = Boolean(left.pinnedAt || left.isPinned);
+    const rightPinned = Boolean(right.pinnedAt || right.isPinned);
+    if (leftPinned !== rightPinned) {
+      return leftPinned ? -1 : 1;
+    }
+    if (leftPinned && rightPinned) {
+      const leftPinnedAt = Date.parse(left.pinnedAt || '') || 0;
+      const rightPinnedAt = Date.parse(right.pinnedAt || '') || 0;
+      if (leftPinnedAt !== rightPinnedAt) {
+        return rightPinnedAt - leftPinnedAt;
+      }
+    }
     const leftAt = left.lastMessageAt || left.updatedAt || left.createdAt;
     const rightAt = right.lastMessageAt || right.updatedAt || right.createdAt;
     return new Date(rightAt).getTime() - new Date(leftAt).getTime();

@@ -9,6 +9,7 @@ import { addIcons } from 'ionicons';
 import { callOutline, videocamOutline } from 'ionicons/icons';
 import { AuthService } from './core/services/auth.service';
 import { AppLockService } from './core/services/app-lock.service';
+import { AppSettingsService } from './core/services/app-settings.service';
 import { CallsService } from './core/services/calls.service';
 import { ContactSyncService } from './core/services/contact-sync.service';
 import { DeviceWipeService } from './core/services/device-wipe.service';
@@ -29,6 +30,7 @@ const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 export class AppComponent {
   private readonly auth = inject(AuthService);
   private readonly appLock = inject(AppLockService);
+  private readonly appSettings = inject(AppSettingsService);
   private readonly contactSync = inject(ContactSyncService);
   private readonly deviceWipe = inject(DeviceWipeService);
   private readonly push = inject(PushService);

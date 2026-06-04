@@ -1,10 +1,10 @@
-<ion-content fullscreen class="chats-page">
+<ion-content fullscreen class="chats-page" [class.three-line-list]="appSettings.settings().chatListDensity === 'three-line'">
   <section class="chat-layout">
     <aside class="sidebar">
       <header class="side-head">
         <div>
           <h1>Chats</h1>
-          <span>{{ chat.visibleConversations().length }} conversaciones</span>
+          <span>{{ conversationsForFolder().length }} conversaciones</span>
         </div>
         <div class="side-actions">
           <ion-button mode="ios" fill="clear" size="small" (click)="openShareAccount()" aria-label="Compartir Nivra">
@@ -89,42 +89,82 @@
           </div>
         </div>
       } @else {
-        <ion-list class="list" lines="none">
-          @for (conversation of chat.visibleConversations(); track conversation.id) {
-            <ion-item-sliding>
-              <ion-item
-                button
-                class="list-item conversation-item"
-                [class.active]="chat.selectedConversationId() === conversation.id"
-                (click)="openConversation(conversation.id)">
-                @if (chat.conversationPhoto(conversation)) {
-                  <img slot="start" class="avatar avatar-img" [src]="chat.conversationPhoto(conversation)" alt="">
-                } @else {
-                  <ion-avatar slot="start" class="avatar">{{ chat.avatarLabel(conversation) }}</ion-avatar>
-                }
-                <ion-label class="item-copy">
-                  <strong>{{ chat.conversationTitle(conversation) }}</strong>
-                  <small>{{ chat.conversationSubtitle(conversation) }}</small>
-                </ion-label>
-                <ion-note slot="end">{{ (conversation.lastMessageAt || conversation.updatedAt) | date:'shortTime' }}</ion-note>
-              </ion-item>
-              <ion-item-options side="end">
-                <ion-item-option color="primary" (click)="openConversation(conversation.id)">
-                  <ion-icon slot="icon-only" name="add-outline"></ion-icon>
-                </ion-item-option>
-              </ion-item-options>
-            </ion-item-sliding>
-          } @empty {
-            <div class="empty">
-              <strong>Nivra</strong>
-              <span>Busca un alias para abrir tu primer chat.</span>
-              <ion-button mode="ios" fill="outline" size="small" (click)="openShareAccount()">
-                <ion-icon name="share-social-outline"></ion-icon>
-                Compartir pase
-              </ion-button>
-            </div>
-          }
-        </ion-list>
+        <section class="chat-list-shell">
+          <ion-segment
+            mode="ios"
+            scrollable="true"
+            class="chat-folders"
+            [value]="selectedFolder"
+            (ionChange)="setFolder($event.detail.value)">
+            <ion-segment-button value="all">Todos</ion-segment-button>
+            <ion-segment-button value="pinned">Fijados</ion-segment-button>
+            <ion-segment-button value="unread">No leidos</ion-segment-button>
+            <ion-segment-button value="archived">Archivados</ion-segment-button>
+          </ion-segment>
+
+          <ion-list class="list" lines="none">
+            @for (conversation of conversationsForFolder(); track conversation.id) {
+              <ion-item-sliding>
+                <ion-item-options side="start">
+                  <ion-item-option color="primary" (click)="togglePinned(conversation, $event)">
+                    <ion-icon slot="start" name="pin-outline"></ion-icon>
+                    {{ chat.isConversationPinned(conversation.id) ? 'Desfijar' : 'Fijar' }}
+                  </ion-item-option>
+                </ion-item-options>
+
+                <ion-item
+                  button
+                  class="list-item conversation-item"
+                  [class.active]="chat.selectedConversationId() === conversation.id"
+                  [class.pinned]="chat.isConversationPinned(conversation.id)"
+                  [class.muted]="chat.isConversationMuted(conversation.id)"
+                  [class.has-flags]="chat.isConversationPinned(conversation.id) || chat.isConversationMuted(conversation.id) || chat.hasUnreadConversation(conversation)"
+                  (click)="openConversation(conversation.id)">
+                  @if (chat.conversationPhoto(conversation)) {
+                    <img slot="start" class="avatar avatar-img" [src]="chat.conversationPhoto(conversation)" alt="">
+                  } @else {
+                    <ion-avatar slot="start" class="avatar">{{ chat.avatarLabel(conversation) }}</ion-avatar>
+                  }
+                  <ion-label class="item-copy">
+                    <strong>{{ chat.conversationTitle(conversation) }}</strong>
+                    <small>{{ chat.conversationSubtitle(conversation) }}</small>
+                    @if (chat.isConversationPinned(conversation.id) || chat.isConversationMuted(conversation.id) || chat.hasUnreadConversation(conversation)) {
+                      <span class="chat-meta">
+                        @if (chat.isConversationPinned(conversation.id)) { <b>Fijado</b> }
+                        @if (chat.isConversationMuted(conversation.id)) { <b>Silenciado</b> }
+                        @if (chat.hasUnreadConversation(conversation)) { <b>No leido</b> }
+                      </span>
+                    }
+                    @if (appSettings.settings().chatListDensity === 'three-line') {
+                      <em>{{ chat.presenceLabel(conversation) }}</em>
+                    }
+                  </ion-label>
+                  <ion-note slot="end">{{ (conversation.lastMessageAt || conversation.updatedAt) | date:'shortTime' }}</ion-note>
+                </ion-item>
+
+                <ion-item-options side="end">
+                  <ion-item-option color="medium" (click)="toggleMuted(conversation, $event)">
+                    <ion-icon slot="start" [name]="chat.isConversationMuted(conversation.id) ? 'notifications-outline' : 'notifications-off-outline'"></ion-icon>
+                    {{ chat.isConversationMuted(conversation.id) ? 'Activar' : 'Silenciar' }}
+                  </ion-item-option>
+                  <ion-item-option color="tertiary" (click)="toggleArchived(conversation, $event)">
+                    <ion-icon slot="start" name="archive-outline"></ion-icon>
+                    {{ chat.isConversationArchived(conversation.id) ? 'Desarchivar' : 'Archivar' }}
+                  </ion-item-option>
+                </ion-item-options>
+              </ion-item-sliding>
+            } @empty {
+              <div class="empty">
+                <strong>Nivra</strong>
+                <span>Busca un alias para abrir tu primer chat.</span>
+                <ion-button mode="ios" fill="outline" size="small" (click)="openShareAccount()">
+                  <ion-icon name="share-social-outline"></ion-icon>
+                  Compartir pase
+                </ion-button>
+              </div>
+            }
+          </ion-list>
+        </section>
       }
     </aside>
 

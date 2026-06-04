@@ -986,6 +986,81 @@ body.nivra-light-theme .voice-range::-webkit-slider-runnable-track {
   background: rgba(17, 24, 39, .14);
 }
 
+html.nivra-animations-off *,
+body.nivra-animations-off * {
+  animation-duration: .01ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: .01ms !important;
+}
+
+body[data-nivra-wallpaper="clean"] app-chat-detail .messages-content,
+body[data-nivra-wallpaper="clean"] app-chat-detail .messages-content::part(background) {
+  --background: var(--nivra-bg);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .022), transparent 24%),
+    var(--nivra-bg) !important;
+}
+
+app-chat-detail .message {
+  border-radius: var(--nivra-message-radius, 16px) var(--nivra-message-radius, 16px) var(--nivra-message-radius, 16px) 0 !important;
+  font-size: var(--nivra-message-font-size, 14px);
+}
+
+app-chat-detail .message.mine {
+  border-radius: var(--nivra-message-radius, 16px) var(--nivra-message-radius, 16px) 0 var(--nivra-message-radius, 16px) !important;
+}
+
+body[data-nivra-wallpaper="botanic"] app-chat-detail .messages-content,
+body[data-nivra-wallpaper="botanic"] app-chat-detail .messages-content::part(background) {
+  --background: var(--nivra-bg);
+  background:
+    radial-gradient(circle at 24px 18px, rgba(114, 240, 202, .08) 3px, transparent 4px),
+    radial-gradient(circle at 68px 72px, rgba(107, 168, 255, .075) 2px, transparent 3px),
+    linear-gradient(135deg, rgba(24, 214, 162, .09), rgba(107, 168, 255, .045)),
+    var(--nivra-bg) !important;
+  background-size: 92px 92px, 84px 84px, auto, auto;
+}
+
+body[data-nivra-wallpaper="midnight"] app-chat-detail .messages-content,
+body[data-nivra-wallpaper="midnight"] app-chat-detail .messages-content::part(background) {
+  --background: #030812;
+  background:
+    radial-gradient(circle at 24% 18%, rgba(107, 168, 255, .12), transparent 30%),
+    radial-gradient(circle at 76% 72%, rgba(114, 240, 202, .08), transparent 26%),
+    linear-gradient(180deg, #030812, #07111b) !important;
+}
+
+body[data-nivra-wallpaper="paper"] app-chat-detail .messages-content,
+body[data-nivra-wallpaper="paper"] app-chat-detail .messages-content::part(background) {
+  --background: #15120d;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(239, 196, 107, .08), rgba(107, 168, 255, .03)),
+    #15120d !important;
+  background-size: 26px 26px, auto, auto;
+}
+
+body.nivra-light-theme[data-nivra-wallpaper="paper"] app-chat-detail .messages-content,
+body.nivra-light-theme[data-nivra-wallpaper="paper"] app-chat-detail .messages-content::part(background) {
+  --background: #f4ebd7;
+  background:
+    linear-gradient(90deg, rgba(17, 24, 39, .055) 1px, transparent 1px),
+    linear-gradient(180deg, #f8f1e4, #eadcc3) !important;
+  background-size: 26px 26px, auto;
+}
+
+body.nivra-light-theme[data-nivra-wallpaper="botanic"] app-chat-detail .messages-content,
+body.nivra-light-theme[data-nivra-wallpaper="botanic"] app-chat-detail .messages-content::part(background) {
+  --background: #eef6ee;
+  background:
+    radial-gradient(circle at 24px 18px, rgba(10, 159, 120, .13) 3px, transparent 4px),
+    radial-gradient(circle at 68px 72px, rgba(52, 120, 246, .08) 2px, transparent 3px),
+    linear-gradient(135deg, rgba(24, 214, 162, .08), rgba(52, 120, 246, .045)),
+    #eef6ee !important;
+  background-size: 92px 92px, 84px 84px, auto, auto;
+}
+
 .voice-card {
   width: min(72vw, 360px);
   display: grid;
