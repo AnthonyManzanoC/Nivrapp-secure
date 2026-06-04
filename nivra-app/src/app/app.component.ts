@@ -1,29 +1,36 @@
 import { CommonModule } from '@angular/common';
 import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { App } from '@capacitor/app';
 import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard';
 import { NavigationEnd, Router } from '@angular/router';
 import { IonApp, IonIcon, IonRouterOutlet } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { callOutline, videocamOutline } from 'ionicons/icons';
 import { AuthService } from './core/services/auth.service';
+import { AppLockService } from './core/services/app-lock.service';
 import { CallsService } from './core/services/calls.service';
 import { ContactSyncService } from './core/services/contact-sync.service';
+import { DeviceWipeService } from './core/services/device-wipe.service';
 import { PushService } from './core/services/push.service';
 import { SignalrService } from './core/services/signalr.service';
+import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 
 const THEME_STORAGE_KEY = 'nivra.theme';
+const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 
 @Component({
   selector: 'app-root',
   templateUrl: 'app.component.html',
   styleUrls: ['app.component.scss'],
   standalone: true,
-  imports: [CommonModule, IonApp, IonIcon, IonRouterOutlet],
+  imports: [CommonModule, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent],
 })
 export class AppComponent {
   private readonly auth = inject(AuthService);
+  private readonly appLock = inject(AppLockService);
   private readonly contactSync = inject(ContactSyncService);
+  private readonly deviceWipe = inject(DeviceWipeService);
   private readonly push = inject(PushService);
   private readonly router = inject(Router);
   private readonly realtime = inject(SignalrService);
@@ -56,6 +63,8 @@ export class AppComponent {
   constructor() {
     this.applyStoredTheme();
     this.bindSystemTheme();
+    this.bindAppLinks();
+    this.bindAppLifecycleLock();
     addIcons({ callOutline, videocamOutline });
     void this.configureNativeKeyboard();
 
@@ -73,15 +82,11 @@ export class AppComponent {
     this.realtime.events$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
-        void this.push.notifyRealtimeEvent(event);
-        if (event.type !== 'device.revoked') {
+        if (this.shouldForceWipe(event)) {
+          void this.deviceWipe.nukeDevice();
           return;
         }
-        const payload = event.payload as { deviceId?: string } | null;
-        const currentDeviceId = this.auth.session()?.device.id;
-        if (!payload?.deviceId || payload.deviceId === currentDeviceId) {
-          void this.auth.logout(true);
-        }
+        void this.push.notifyRealtimeEvent(event);
       });
 
     effect(() => {
@@ -89,6 +94,13 @@ export class AppComponent {
         untracked(() => void this.startAuthenticatedServices());
       } else {
         void this.realtime.disconnect();
+      }
+    });
+
+    effect(() => {
+      const request = this.auth.forceWipeRequested();
+      if (request > 0) {
+        untracked(() => void this.deviceWipe.nukeDevice());
       }
     });
 
@@ -169,6 +181,74 @@ export class AppComponent {
     };
     query.addEventListener('change', listener);
     this.destroyRef.onDestroy(() => query.removeEventListener('change', listener));
+  }
+
+  private bindAppLinks(): void {
+    void App.addListener('appUrlOpen', (event) => this.handleAppUrlOpen(event.url))
+      .then((handle) => this.destroyRef.onDestroy(() => void handle.remove()))
+      .catch(() => undefined);
+  }
+
+  private bindAppLifecycleLock(): void {
+    void App.addListener('appStateChange', (state) => {
+      if (!state.isActive) {
+        this.appLock.lock();
+        return;
+      }
+      void this.appLock.refreshBiometryAvailability();
+    })
+      .then((handle) => this.destroyRef.onDestroy(() => void handle.remove()))
+      .catch(() => undefined);
+  }
+
+  private handleAppUrlOpen(rawUrl: string): void {
+    if (!rawUrl) {
+      return;
+    }
+
+    try {
+      const url = new URL(rawUrl);
+      if (url.hostname.toLowerCase() !== 'nivrapp-secure.vercel.app') {
+        return;
+      }
+
+      const path = url.pathname.replace(/\/+$/, '');
+      if (path === '/contact') {
+        const alias = this.normalizeContactAlias(url.searchParams.get('alias') || '');
+        if (alias) {
+          void this.router.navigate(['/contact'], { queryParams: { alias } });
+        }
+        return;
+      }
+
+      if (path === '/vault/invite') {
+        const code = (url.searchParams.get('code') || '').trim();
+        if (code) {
+          void this.router.navigate(['/vault/invite'], { queryParams: { code } });
+        }
+      }
+    } catch {
+      // Ignore URLs that do not belong to Nivra app links.
+    }
+  }
+
+  private normalizeContactAlias(value: string): string {
+    const alias = value.trim().replace(/^@+/, '');
+    return CONTACT_ALIAS_PATTERN.test(alias) ? alias.toLowerCase() : '';
+  }
+
+  private shouldForceWipe(event: { type: string; payload: unknown }): boolean {
+    const payload = event.payload && typeof event.payload === 'object'
+      ? event.payload as { code?: unknown; deviceId?: unknown }
+      : null;
+    const currentDeviceId = this.auth.session()?.device.id;
+    if (event.type === 'FORCE_WIPE') {
+      return !payload?.deviceId || payload.deviceId === currentDeviceId;
+    }
+    if (payload?.code === 'FORCE_WIPE') {
+      return !payload.deviceId || payload.deviceId === currentDeviceId;
+    }
+    return event.type === 'device.revoked' && (!payload?.deviceId || payload.deviceId === currentDeviceId);
   }
 
   private lightThemeEnabled(): boolean {

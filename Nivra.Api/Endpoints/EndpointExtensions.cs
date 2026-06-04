@@ -16,6 +16,7 @@ public static partial class EndpointExtensions
 {
     private static readonly Regex AliasPattern = new("^[a-zA-Z0-9_.-]{3,32}$", RegexOptions.Compiled);
     private const long MaxEncryptedUploadBytes = 50L * 1024 * 1024;
+    private const string ForceWipeCode = "FORCE_WIPE";
     private const string DefaultFirebaseWebApiKey = "AIzaSyC4TZyBBy6Hj_2vgAngbuN8QD6ND48GEyg";
     private const string DefaultFirebaseWebAuthDomain = "nivra-af67e.firebaseapp.com";
     private const string DefaultFirebaseWebProjectId = "nivra-af67e";
@@ -609,7 +610,7 @@ public static partial class EndpointExtensions
             return Results.Created($"/devices/{device.Id}", ToDeviceResponse(device));
         });
 
-        devices.MapDelete("/{deviceId}", async Task<IResult> (string deviceId, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        async Task<IResult> RevokeDevice(string deviceKey, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken)
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -617,27 +618,40 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            var device = await store.GetDeviceAsync(deviceId, cancellationToken);
-            if (device is null || device.UserId != current.UserId)
+            var normalizedDeviceKey = NormalizeHardwareId(deviceKey);
+            var device = await db.Devices.FirstOrDefaultAsync(candidate =>
+                candidate.UserId == current.UserId &&
+                (candidate.Id == deviceKey ||
+                 (normalizedDeviceKey != null && candidate.HardwareId == normalizedDeviceKey)),
+                cancellationToken);
+            if (device is null)
             {
                 return Results.NotFound();
             }
 
             var revokedAt = timeProvider.GetUtcNow();
-            await store.RevokeDeviceAsync(current.UserId, deviceId, revokedAt, cancellationToken);
-            await store.AddAuditAsync(current.UserId, "device.revoke", ClientIp(http), $"Device={deviceId}", revokedAt, cancellationToken);
-            await hub.Clients.Group(GroupsFor.Device(deviceId)).SendAsync("device.revoked", new
+            await store.RevokeDeviceAsync(current.UserId, device.Id, revokedAt, cancellationToken);
+            await store.AddAuditAsync(current.UserId, "device.revoke", ClientIp(http), $"Device={device.Id}; Hardware={device.HardwareId}", revokedAt, cancellationToken);
+            var payload = new
             {
-                deviceId,
+                code = ForceWipeCode,
+                deviceId = device.Id,
+                device.HardwareId,
                 revokedAt
-            }, cancellationToken);
+            };
+            await hub.Clients.Group(GroupsFor.Device(device.Id)).SendAsync(ForceWipeCode, payload, cancellationToken);
+            await hub.Clients.Group(GroupsFor.Device(device.Id)).SendAsync("device.revoked", payload, cancellationToken);
             await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("device.listChanged", new
             {
-                deviceId,
+                deviceId = device.Id,
+                device.HardwareId,
                 revokedAt
             }, cancellationToken);
             return Results.NoContent();
-        });
+        }
+
+        devices.MapPost("/{deviceKey}/revoke", RevokeDevice);
+        devices.MapDelete("/{deviceKey}", RevokeDevice);
 
         var keys = app.MapGroup("/keys");
 

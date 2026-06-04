@@ -114,6 +114,12 @@ export class CryptoService {
     return this.getDeviceKeys(alias, deviceId);
   }
 
+  async closeLocalStore(): Promise<void> {
+    const db = await this.dbPromise?.catch(() => null);
+    db?.close();
+    this.dbPromise = undefined;
+  }
+
   async currentKeyMaterial(alias: string, deviceId: string): Promise<StoredDeviceKeys> {
     const keys = await this.getDeviceKeys(alias, deviceId);
     if (!keys) {

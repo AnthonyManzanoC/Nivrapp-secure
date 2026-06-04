@@ -1,0 +1,63 @@
+@if (appLock.isLocked()) {
+  <section class="app-lock-screen" [class.native]="appLock.unlockMode() === 'biometric'" aria-modal="true" role="dialog">
+    <div class="lock-shell">
+      <div class="brand-orbit" aria-hidden="true">
+        <img src="assets/brand/nivra-mark.svg" alt="">
+      </div>
+
+      <div class="lock-copy">
+        <span class="lock-chip">
+          <ion-icon name="lock-closed-outline"></ion-icon>
+          Modo Seguro
+        </span>
+        <h1>Nivra</h1>
+        @if (appLock.unlockMode() === 'biometric') {
+          <p>Nivra esta bloqueado. Toca para desbloquear.</p>
+        } @else {
+          <p>Nivra esta bloqueado. Ingresa tu PIN.</p>
+        }
+      </div>
+
+      @if (appLock.unlockMode() === 'biometric') {
+        <button type="button" class="biometric-unlock" (click)="unlockMobile()" [disabled]="appLock.busy()" aria-label="Desbloquear Nivra">
+          @if (appLock.busy()) {
+            <ion-spinner name="crescent"></ion-spinner>
+          } @else {
+            <ion-icon [name]="appLock.biometryLabel().includes('rostro') || appLock.biometryLabel().includes('facial') ? 'scan-outline' : 'finger-print-outline'"></ion-icon>
+          }
+        </button>
+        <small class="lock-hint">{{ appLock.biometryLabel() }}</small>
+      } @else {
+        <div class="pin-entry" aria-label="PIN de Modo Seguro">
+          <div class="pin-dots" aria-hidden="true">
+            @for (filled of pinDots(); track $index) {
+              <span [class.filled]="filled"></span>
+            }
+          </div>
+          <div class="keypad">
+            @for (key of keys; track $index) {
+              @if (key) {
+                <button type="button" class="key" [class.icon-key]="key === 'backspace'" (click)="pressKey(key)" [disabled]="appLock.busy()">
+                  @if (key === 'backspace') {
+                    <ion-icon name="backspace-outline"></ion-icon>
+                  } @else {
+                    {{ key }}
+                  }
+                </button>
+              } @else {
+                <span aria-hidden="true"></span>
+              }
+            }
+          </div>
+        </div>
+      }
+
+      @if (appLock.statusMessage()) {
+        <span class="status">{{ appLock.statusMessage() }}</span>
+      }
+      @if (appLock.unlockError()) {
+        <span class="unlock-error">{{ appLock.unlockError() }}</span>
+      }
+    </div>
+  </section>
+}

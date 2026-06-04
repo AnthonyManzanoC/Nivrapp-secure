@@ -436,38 +436,15 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
 
     public PlanEntitlements EntitlementsFor(UserAccount user)
     {
-        return user.PlanCode switch
+        return new PlanEntitlements
         {
-            "premium" => new PlanEntitlements
-            {
-                PlanCode = "premium",
-                VaultStorageBytes = 10L * 1024 * 1024 * 1024,
-                MaxLinkedDevices = 8,
-                MaxGroupParticipants = 256,
-                AdsEnabled = false,
-                EncryptedBackupsEnabled = true,
-                ProfessionalSpacesEnabled = false
-            },
-            "professional" => new PlanEntitlements
-            {
-                PlanCode = "professional",
-                VaultStorageBytes = 50L * 1024 * 1024 * 1024,
-                MaxLinkedDevices = 12,
-                MaxGroupParticipants = 512,
-                AdsEnabled = false,
-                EncryptedBackupsEnabled = true,
-                ProfessionalSpacesEnabled = true
-            },
-            _ => new PlanEntitlements
-            {
-                PlanCode = "free",
-                VaultStorageBytes = 250L * 1024 * 1024,
-                MaxLinkedDevices = 2,
-                MaxGroupParticipants = 32,
-                AdsEnabled = true,
-                EncryptedBackupsEnabled = false,
-                ProfessionalSpacesEnabled = false
-            }
+            PlanCode = "free",
+            VaultStorageBytes = long.MaxValue,
+            MaxLinkedDevices = int.MaxValue,
+            MaxGroupParticipants = int.MaxValue,
+            AdsEnabled = false,
+            EncryptedBackupsEnabled = false,
+            ProfessionalSpacesEnabled = false
         };
     }
 

@@ -77,6 +77,7 @@ export class AuthService implements OnDestroy {
   readonly session = signal<AuthSession | null>(this.loadSession());
   readonly pendingPhoneAlias = signal<PhoneAliasChallenge | null>(null);
   readonly busy = signal(false);
+  readonly forceWipeRequested = signal(0);
   readonly accessToken = computed(() => this.session()?.tokens.accessToken ?? '');
   readonly isAuthenticated = computed(() => Boolean(this.accessToken()));
   readonly hasFreshAccessToken = computed(() => this.hasUsableAccessToken(this.session()));
@@ -381,13 +382,24 @@ export class AuthService implements OnDestroy {
       return false;
     }
 
+    const currentSession = this.session();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (currentSession?.device?.id) {
+      headers['X-Nivra-Device-Id'] = currentSession.device.id;
+    }
+
     this.authRefreshPromise ??= fetch(this.api.url('/auth/refresh'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ refreshToken }),
     })
       .then(async (response) => {
         if (!response.ok) {
+          if (await this.isForceWipeResponse(response)) {
+            this.forceWipeRequested.update((value) => value + 1);
+            this.refreshHardFailure = true;
+            return false;
+          }
           this.refreshHardFailure = response.status === 401 || response.status === 403;
           if (response.status === 429 || response.status >= 500) {
             this.refreshBackoffUntil = Date.now() + this.refreshRetryDelayMs(response);
@@ -590,6 +602,18 @@ export class AuthService implements OnDestroy {
       return Math.min(5 * 60 * 1000, Math.max(15000, retryDate - Date.now()));
     }
     return response.status === 429 ? 60000 : 30000;
+  }
+
+  private async isForceWipeResponse(response: Response): Promise<boolean> {
+    if (response.headers.get('X-Nivra-Action') === 'FORCE_WIPE') {
+      return true;
+    }
+    try {
+      const body = await response.clone().json() as { code?: unknown };
+      return body?.code === 'FORCE_WIPE';
+    } catch {
+      return false;
+    }
   }
 
   private loadSession(): AuthSession | null {

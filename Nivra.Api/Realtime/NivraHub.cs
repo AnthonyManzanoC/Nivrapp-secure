@@ -20,6 +20,8 @@ public sealed class NivraHub(
     ILogger<NivraHub> logger,
     TimeProvider timeProvider) : Hub
 {
+    private const string ForceWipeCode = "FORCE_WIPE";
+
     public override async Task OnConnectedAsync()
     {
         var http = Context.GetHttpContext();
@@ -66,6 +68,18 @@ public sealed class NivraHub(
         Context.Items["current_user"] = currentUser;
         var now = timeProvider.GetUtcNow();
         var device = await store.GetDeviceAsync(currentUser.DeviceId, Context.ConnectionAborted);
+        if (device is null || device.RevokedAt is not null)
+        {
+            await Clients.Caller.SendAsync(ForceWipeCode, new
+            {
+                code = ForceWipeCode,
+                deviceId = currentUser.DeviceId,
+                revokedAt = device?.RevokedAt
+            }, Context.ConnectionAborted);
+            Context.Abort();
+            return;
+        }
+
         if (device is not null)
         {
             device.LastSeenAt = now;

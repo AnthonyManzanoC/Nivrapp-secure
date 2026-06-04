@@ -116,6 +116,32 @@
         </div>
       </article>
 
+      <article class="panel span-5 app-lock-panel" [class.enabled]="appLock.isEnabled()">
+        <div class="app-lock-heading">
+          <div class="app-lock-icon">
+            <ion-icon [name]="appLock.isNativePlatform() ? 'finger-print-outline' : 'keypad-outline'"></ion-icon>
+          </div>
+          <div>
+            <h2>Modo Seguro</h2>
+            <p class="card-sub">{{ appLock.isNativePlatform() ? 'APK con biometria nativa al abrir o volver.' : 'Web y PC con PIN local cifrado.' }}</p>
+          </div>
+        </div>
+        <label class="toggle-row app-lock-toggle-row">
+          <span>
+            <strong>Bloqueo de App</strong>
+            <small>{{ appLock.isEnabled() ? 'Activo' : 'Desactivado' }} - {{ appLock.isNativePlatform() ? appLock.biometryLabel() : 'PIN de 4 digitos' }}</small>
+          </span>
+          <ion-toggle mode="ios" [checked]="appLock.isEnabled()" (ionChange)="setSecureMode($event.detail.checked)" aria-label="Activar Modo Seguro"></ion-toggle>
+        </label>
+        <div class="app-lock-preview" [class.enabled]="appLock.isEnabled()" aria-hidden="true">
+          <ion-icon name="lock-closed-outline"></ion-icon>
+          <span></span>
+          <span></span>
+          <span></span>
+          <span></span>
+        </div>
+      </article>
+
       <article class="panel span-5 share-account-panel">
         <div>
           <h2>Compartir Nivra</h2>
@@ -141,16 +167,16 @@
         </div>
       </article>
 
-      <article class="panel span-5">
+      <article class="panel span-5 launch-plan-panel">
         <h2>Plan</h2>
         <div class="metric">
-          <strong>{{ account.entitlements()?.planCode || auth.session()?.user?.planCode || 'free' }}</strong>
-          <span>Plan activo</span>
+          <strong>Nivra Ilimitado (Lanzamiento)</strong>
+          <span>Plan free activo</span>
         </div>
         <div class="mini-list">
-          <span>Dispositivos: {{ account.devices().length }} / {{ account.entitlements()?.maxLinkedDevices || 'sin limite' }}</span>
-          <span>Boveda: {{ (account.entitlements()?.vaultStorageBytes || 0) / 1048576 | number:'1.0-0' }} MB</span>
-          <span>Backups cifrados: {{ account.entitlements()?.encryptedBackupsEnabled ? 'si' : 'no' }}</span>
+          <span>Dispositivos: Ilimitados</span>
+          <span>Boveda: Ilimitada</span>
+          <span>Zero Trust: cifrado extremo a extremo</span>
         </div>
       </article>
 
@@ -211,8 +237,9 @@
                 <span>{{ device.lastSeenAt | date:'short' }}</span>
               </div>
               @if (device.id !== auth.session()?.device?.id) {
-                <ion-button mode="ios" fill="clear" color="danger" (click)="revoke(device.id)" aria-label="Revocar">
+                <ion-button mode="ios" fill="outline" color="danger" (click)="revoke(device.hardwareId || device.id)" aria-label="Revocar y destruir">
                   <ion-icon name="trash-outline"></ion-icon>
+                  Revocar y Destruir
                 </ion-button>
               } @else {
                 <small>Este equipo</small>
@@ -281,6 +308,65 @@
         </ion-button>
       </article>
     </section>
+
+    <ion-modal class="pin-setup-modal" [isOpen]="pinSetupModalOpen" (didDismiss)="closePinSetupModal()">
+      <ng-template>
+        <section class="pin-setup-sheet">
+          <header>
+            <div>
+              <h2>Modo Seguro</h2>
+              <p>{{ setupPin.length < 4 ? 'Crea un PIN de 4 digitos.' : 'Confirma el PIN.' }}</p>
+            </div>
+            <ion-button mode="ios" fill="clear" (click)="closePinSetupModal()" aria-label="Cerrar">
+              <ion-icon name="close-outline"></ion-icon>
+            </ion-button>
+          </header>
+
+          <div class="pin-setup-stage">
+            <div class="pin-setup-mark">
+              <ion-icon name="keypad-outline"></ion-icon>
+            </div>
+            <div class="pin-setup-progress" aria-hidden="true">
+              <div>
+                @for (slot of pinSlots; track slot) {
+                  <span [class.filled]="slot < setupPin.length"></span>
+                }
+              </div>
+              <div>
+                @for (slot of pinSlots; track slot) {
+                  <span [class.filled]="slot < setupPinConfirm.length"></span>
+                }
+              </div>
+            </div>
+          </div>
+
+          <div class="pin-setup-keypad">
+            @for (key of setupPinKeys; track $index) {
+              @if (key) {
+                <button type="button" class="pin-setup-key" [class.icon-key]="key === 'backspace'" (click)="pressSetupPinKey(key)" [disabled]="saving">
+                  @if (key === 'backspace') {
+                    <ion-icon name="backspace-outline"></ion-icon>
+                  } @else {
+                    {{ key }}
+                  }
+                </button>
+              } @else {
+                <span aria-hidden="true"></span>
+              }
+            }
+          </div>
+
+          @if (pinSetupError) {
+            <p class="pin-setup-error">{{ pinSetupError }}</p>
+          }
+
+          <ion-button mode="ios" (click)="confirmWebPin()" [disabled]="saving || setupPin.length !== 4 || setupPinConfirm.length !== 4 || setupPin !== setupPinConfirm">
+            <ion-icon name="lock-closed-outline"></ion-icon>
+            Activar Modo Seguro
+          </ion-button>
+        </section>
+      </ng-template>
+    </ion-modal>
 
     <ion-modal class="share-modal" [isOpen]="shareModalOpen" (didDismiss)="closeShareModal()">
       <ng-template>

@@ -17,15 +17,17 @@ import {
   IonToggle,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline } from 'ionicons/icons';
+import { backspaceOutline, cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline } from 'ionicons/icons';
 import { AccountService } from '../../core/services/account.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { PrivacySettings } from '../../core/models/nivra.models';
+import { AppLockService } from '../../core/services/app-lock.service';
 import { PushService } from '../../core/services/push.service';
 
 const THEME_STORAGE_KEY = 'nivra.theme';
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
+const PIN_LENGTH = 4;
 
 type AliasStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 
@@ -39,6 +41,7 @@ type AliasStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 export class AccountPage implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
   readonly account = inject(AccountService);
+  readonly appLock = inject(AppLockService);
   readonly calls = inject(CallsService);
   readonly push = inject(PushService);
   private readonly router = inject(Router);
@@ -63,6 +66,10 @@ export class AccountPage implements OnInit, OnDestroy {
   shareModalOpen = false;
   shareQrDataUrl = '';
   shareBusy = false;
+  pinSetupModalOpen = false;
+  setupPin = '';
+  setupPinConfirm = '';
+  pinSetupError = '';
   contactScannerOpen = false;
   contactScannerBusy = false;
   contactScannerStatus = 'Listo para escanear contacto.';
@@ -72,9 +79,11 @@ export class AccountPage implements OnInit, OnDestroy {
   private readonly aliasChecks = new Subject<string>();
   private aliasCheckSub?: Subscription;
   aliasStatus: AliasStatus = 'idle';
+  readonly setupPinKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'backspace'];
+  readonly pinSlots = [0, 1, 2, 3];
 
   constructor() {
-    addIcons({ cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline });
+    addIcons({ backspaceOutline, cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline });
   }
 
   async ngOnInit(): Promise<void> {
@@ -198,6 +207,85 @@ export class AccountPage implements OnInit, OnDestroy {
 
   patchPrivacy(key: keyof PrivacySettings, value: boolean | number | null): void {
     this.account.privacy.update((privacy) => privacy ? { ...privacy, [key]: value } : privacy);
+  }
+
+  async setSecureMode(enabled: boolean): Promise<void> {
+    if (!enabled) {
+      await this.run(async () => {
+        this.appLock.disable();
+        this.notice = 'Modo Seguro desactivado.';
+      });
+      return;
+    }
+
+    if (this.appLock.isNativePlatform()) {
+      await this.run(async () => {
+        await this.appLock.enableMobileBiometrics();
+        this.notice = `Modo Seguro activado con ${this.appLock.biometryLabel()}.`;
+      });
+      return;
+    }
+
+    this.openPinSetupModal();
+  }
+
+  openPinSetupModal(): void {
+    this.setupPin = '';
+    this.setupPinConfirm = '';
+    this.pinSetupError = '';
+    this.pinSetupModalOpen = true;
+  }
+
+  closePinSetupModal(): void {
+    this.pinSetupModalOpen = false;
+    this.setupPin = '';
+    this.setupPinConfirm = '';
+    this.pinSetupError = '';
+  }
+
+  pressSetupPinKey(key: string): void {
+    if (!key || this.saving) {
+      return;
+    }
+    if (key === 'backspace') {
+      if (this.setupPinConfirm) {
+        this.setupPinConfirm = this.setupPinConfirm.slice(0, -1);
+      } else {
+        this.setupPin = this.setupPin.slice(0, -1);
+      }
+      this.pinSetupError = '';
+      return;
+    }
+
+    if (this.setupPin.length < PIN_LENGTH) {
+      this.setupPin = this.appLock.normalizePin(`${this.setupPin}${key}`);
+      return;
+    }
+    if (this.setupPinConfirm.length < PIN_LENGTH) {
+      this.setupPinConfirm = this.appLock.normalizePin(`${this.setupPinConfirm}${key}`);
+      if (this.setupPinConfirm.length === PIN_LENGTH && this.setupPinConfirm !== this.setupPin) {
+        this.pinSetupError = 'Los PIN no coinciden.';
+      } else {
+        this.pinSetupError = '';
+      }
+    }
+  }
+
+  async confirmWebPin(): Promise<void> {
+    if (!this.appLock.isValidPin(this.setupPin) || !this.appLock.isValidPin(this.setupPinConfirm)) {
+      this.pinSetupError = 'Crea y confirma un PIN de 4 digitos.';
+      return;
+    }
+    if (this.setupPin !== this.setupPinConfirm) {
+      this.pinSetupError = 'Los PIN no coinciden.';
+      return;
+    }
+
+    await this.run(async () => {
+      await this.appLock.enableWebPin(this.setupPin);
+      this.notice = 'Modo Seguro activado con PIN.';
+      this.closePinSetupModal();
+    });
   }
 
   setLightTheme(enabled: boolean): void {

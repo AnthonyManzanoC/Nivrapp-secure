@@ -611,6 +611,23 @@ export class LocalHistoryService {
       } satisfies SyncWatermarkRecord);
   }
 
+  async wipeAllLocalData(): Promise<void> {
+    const db = await this.dbPromise?.catch(() => null);
+    db?.close();
+    this.dbPromise = undefined;
+
+    const sqlite = await this.sqlitePromise?.catch(() => null);
+    if (sqlite) {
+      await sqlite.close().catch(() => undefined);
+    }
+    this.sqlitePromise = undefined;
+
+    await Promise.all([
+      this.deleteIndexedDatabases(),
+      this.deleteNativeSqliteDatabase(),
+    ]);
+  }
+
   private async open(): Promise<IDBPDatabase | null> {
     if (typeof window === 'undefined' || !('indexedDB' in window)) {
       return null;
@@ -732,6 +749,55 @@ export class LocalHistoryService {
     }
     this.sqlitePromise ??= this.createNativeSqliteConnection();
     return this.sqlitePromise;
+  }
+
+  private async deleteIndexedDatabases(): Promise<void> {
+    if (typeof window === 'undefined' || !('indexedDB' in window)) {
+      return;
+    }
+
+    const indexedDb = window.indexedDB as IDBFactory & {
+      databases?: () => Promise<Array<{ name?: string | null }>>;
+    };
+    const names = typeof indexedDb.databases === 'function'
+      ? (await indexedDb.databases()).map((database) => database.name).filter((name): name is string => Boolean(name))
+      : [LOCAL_DB_NAME];
+
+    await Promise.all([...new Set(names)].map((name) => this.deleteIndexedDatabase(name)));
+  }
+
+  private deleteIndexedDatabase(name: string): Promise<void> {
+    return new Promise((resolve) => {
+      const request = window.indexedDB.deleteDatabase(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+      request.onblocked = () => resolve();
+    });
+  }
+
+  private async deleteNativeSqliteDatabase(): Promise<void> {
+    if (!this.shouldUseNativeSqlite()) {
+      return;
+    }
+
+    try {
+      const { CapacitorSQLite, SQLiteConnection } = await import('@capacitor-community/sqlite');
+      const connection = new SQLiteConnection(CapacitorSQLite);
+      const api = connection as unknown as {
+        deleteDatabase?: (database: string, readOnly: boolean) => Promise<void>;
+      };
+      if (api.deleteDatabase) {
+        await api.deleteDatabase(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
+        return;
+      }
+
+      const bridge = CapacitorSQLite as unknown as {
+        deleteDatabase?: (options: { database: string; readonly?: boolean }) => Promise<void>;
+      };
+      await bridge.deleteDatabase?.({ database: NATIVE_SQLITE_DB_NAME, readonly: false }).catch(() => undefined);
+    } catch {
+      // Best-effort: web builds and unsupported native bridges have no SQLite database to remove.
+    }
   }
 
   private shouldUseNativeSqlite(): boolean {

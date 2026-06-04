@@ -101,8 +101,8 @@ export class AccountService {
   }
 
   async revokeDevice(deviceId: string): Promise<void> {
-    await firstValueFrom(this.api.delete(`/devices/${encodeURIComponent(deviceId)}`));
-    this.devices.update((devices) => devices.filter((device) => device.id !== deviceId));
+    await firstValueFrom(this.api.post(`/devices/${encodeURIComponent(deviceId)}/revoke`, {}));
+    this.devices.update((devices) => devices.filter((device) => device.id !== deviceId && device.hardwareId !== deviceId));
   }
 
   async requestDataDelete(confirmation: string): Promise<void> {

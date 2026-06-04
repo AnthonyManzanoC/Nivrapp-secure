@@ -1,0 +1,304 @@
+:host {
+  display: contents;
+}
+
+.app-lock-screen {
+  position: fixed;
+  z-index: 9999;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding:
+    max(22px, env(safe-area-inset-top))
+    max(18px, env(safe-area-inset-right))
+    max(22px, env(safe-area-inset-bottom))
+    max(18px, env(safe-area-inset-left));
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(114, 240, 202, .055), transparent 26%),
+    linear-gradient(180deg, #071012 0%, var(--nivra-bg) 42%, #020405 100%);
+  overflow: hidden;
+}
+
+.app-lock-screen::before {
+  content: "";
+  position: absolute;
+  pointer-events: none;
+  inset: 0;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(255, 255, 255, .028) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(180deg, transparent, #000 18%, #000 76%, transparent);
+  opacity: .28;
+}
+
+.lock-shell {
+  position: relative;
+  z-index: 1;
+  width: min(100%, 430px);
+  min-height: min(720px, calc(100dvh - 44px));
+  display: grid;
+  grid-template-rows: 1fr auto auto auto;
+  align-items: center;
+  justify-items: center;
+  gap: 18px;
+  text-align: center;
+}
+
+.brand-orbit {
+  width: clamp(136px, 28vw, 190px);
+  aspect-ratio: 1;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .035)),
+    rgba(13, 22, 26, .78);
+  box-shadow:
+    0 24px 80px rgba(0, 0, 0, .48),
+    0 0 0 1px rgba(114, 240, 202, .08),
+    inset 0 1px 0 rgba(255, 255, 255, .12);
+  animation: nivraBreath 2.8s ease-in-out infinite;
+}
+
+.brand-orbit img {
+  width: 58%;
+  height: 58%;
+  object-fit: contain;
+  filter: drop-shadow(0 16px 34px rgba(114, 240, 202, .22));
+}
+
+.lock-copy {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+}
+
+.lock-chip {
+  min-height: 30px;
+  border: 1px solid rgba(114, 240, 202, .22);
+  border-radius: 999px;
+  padding: 6px 11px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--nivra-brand-2);
+  background: rgba(114, 240, 202, .08);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.lock-chip ion-icon {
+  width: 15px;
+  height: 15px;
+}
+
+h1 {
+  margin: 0;
+  color: var(--nivra-text);
+  font-size: 42px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+p {
+  max-width: 310px;
+  margin: 0;
+  color: var(--nivra-muted);
+  font-size: 14px;
+  line-height: 1.45;
+  font-weight: 700;
+}
+
+.biometric-unlock {
+  width: 92px;
+  height: 92px;
+  border: 1px solid rgba(114, 240, 202, .36);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #03100d;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .48), rgba(255, 255, 255, .1)),
+    linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+  box-shadow:
+    0 22px 54px rgba(24, 214, 162, .2),
+    0 0 0 12px rgba(114, 240, 202, .055);
+  transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
+}
+
+.biometric-unlock:active {
+  transform: scale(.97);
+}
+
+.biometric-unlock:disabled {
+  opacity: .72;
+}
+
+.biometric-unlock ion-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.lock-hint,
+.status,
+.unlock-error {
+  display: block;
+  min-height: 18px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.lock-hint,
+.status {
+  color: var(--nivra-muted);
+}
+
+.unlock-error {
+  max-width: 320px;
+  color: #ffb7b7;
+}
+
+.pin-entry {
+  display: grid;
+  justify-items: center;
+  gap: 18px;
+}
+
+.pin-dots {
+  min-height: 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pin-dots span {
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgba(255, 255, 255, .24);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .08);
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+
+.pin-dots span.filled {
+  border-color: var(--nivra-brand-2);
+  background: var(--nivra-brand-2);
+  transform: scale(1.08);
+}
+
+.keypad {
+  width: min(100%, 310px);
+  display: grid;
+  grid-template-columns: repeat(3, 74px);
+  justify-content: center;
+  gap: 12px;
+}
+
+.key {
+  width: 74px;
+  height: 62px;
+  border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .035)),
+    rgba(255, 255, 255, .055);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+  font-size: 24px;
+  font-weight: 850;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+.key:hover {
+  border-color: rgba(114, 240, 202, .34);
+  background:
+    linear-gradient(180deg, rgba(114, 240, 202, .14), rgba(255, 255, 255, .04)),
+    rgba(255, 255, 255, .06);
+}
+
+.key:active {
+  transform: scale(.97);
+}
+
+.key:disabled {
+  opacity: .58;
+}
+
+.icon-key ion-icon {
+  width: 23px;
+  height: 23px;
+}
+
+:host-context(.nivra-light-theme) .app-lock-screen {
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(24, 214, 162, .065), transparent 28%),
+    linear-gradient(180deg, #ffffff 0%, #f2f2f7 58%, #e8ecf3 100%);
+}
+
+:host-context(.nivra-light-theme) .app-lock-screen::before {
+  background:
+    linear-gradient(90deg, rgba(17, 24, 39, .045) 1px, transparent 1px),
+    linear-gradient(180deg, rgba(17, 24, 39, .04) 1px, transparent 1px);
+  opacity: .42;
+}
+
+:host-context(.nivra-light-theme) .brand-orbit {
+  border-color: rgba(17, 24, 39, .08);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .98), rgba(247, 248, 251, .84)),
+    #ffffff;
+  box-shadow:
+    0 20px 54px rgba(15, 23, 42, .12),
+    0 0 0 1px rgba(24, 214, 162, .12),
+    inset 0 1px 0 rgba(255, 255, 255, .9);
+}
+
+:host-context(.nivra-light-theme) .key {
+  border-color: rgba(17, 24, 39, .1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(247, 248, 251, .78)),
+    #ffffff;
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+:host-context(.nivra-light-theme) .unlock-error {
+  color: #b42318;
+}
+
+@media (max-width: 430px) {
+  .lock-shell {
+    min-height: calc(100dvh - 36px);
+  }
+
+  .keypad {
+    grid-template-columns: repeat(3, 68px);
+    gap: 10px;
+  }
+
+  .key {
+    width: 68px;
+    height: 58px;
+  }
+
+  h1 {
+    font-size: 36px;
+  }
+}
+
+@keyframes nivraBreath {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.045);
+  }
+}

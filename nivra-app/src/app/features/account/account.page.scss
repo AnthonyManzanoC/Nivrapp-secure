@@ -142,6 +142,109 @@
   margin: 0;
 }
 
+.app-lock-panel {
+  display: grid;
+  align-content: space-between;
+  gap: 16px;
+  border-color: rgba(114, 240, 202, .24);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .12), rgba(239, 196, 107, .055)),
+    rgba(13, 20, 22, .76);
+}
+
+.app-lock-panel.enabled {
+  border-color: rgba(114, 240, 202, .38);
+  box-shadow: 0 0 0 1px rgba(114, 240, 202, .08), var(--nivra-shadow-tiny);
+}
+
+.app-lock-heading {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+
+.app-lock-heading h2,
+.app-lock-heading p {
+  margin: 0;
+}
+
+.app-lock-icon {
+  width: 52px;
+  height: 52px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #04100d;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-amber));
+  box-shadow: 0 12px 28px rgba(24, 214, 162, .18);
+}
+
+.app-lock-icon ion-icon {
+  width: 27px;
+  height: 27px;
+}
+
+.app-lock-toggle-row {
+  margin: 0;
+}
+
+.app-lock-toggle-row > span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.app-lock-toggle-row strong,
+.app-lock-toggle-row small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-lock-toggle-row strong {
+  color: var(--nivra-text);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.app-lock-toggle-row small {
+  color: var(--nivra-muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.app-lock-preview {
+  min-height: 68px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 44px repeat(4, minmax(0, 1fr));
+  align-items: center;
+  gap: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, .025)),
+    rgba(255, 255, 255, .035);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+
+.app-lock-preview ion-icon {
+  width: 30px;
+  height: 30px;
+  color: var(--nivra-brand-2);
+}
+
+.app-lock-preview span {
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .15);
+}
+
+.app-lock-preview.enabled span {
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+}
+
 .share-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -157,6 +260,16 @@
   background:
     linear-gradient(180deg, rgba(255, 107, 107, .075), rgba(255, 255, 255, .025)),
     rgba(13, 20, 22, .74);
+}
+
+.launch-plan-panel .metric strong {
+  font-size: 26px;
+  line-height: 1.08;
+  overflow-wrap: anywhere;
+}
+
+.device-row ion-button {
+  min-width: max-content;
 }
 
 .logout-action {
@@ -368,6 +481,142 @@ ion-modal.share-modal {
   color: var(--nivra-text);
 }
 
+ion-modal.pin-setup-modal {
+  --width: min(92vw, 410px);
+  --height: auto;
+  --border-radius: 8px;
+  --background: var(--nivra-panel-solid);
+  --box-shadow: 0 24px 70px rgba(0, 0, 0, .42);
+  color: var(--nivra-text);
+}
+
+.pin-setup-sheet {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .06), rgba(255, 255, 255, .02)),
+    var(--nivra-panel-solid);
+}
+
+.pin-setup-sheet header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pin-setup-sheet h2,
+.pin-setup-sheet p {
+  margin: 0;
+}
+
+.pin-setup-sheet header p {
+  color: var(--nivra-muted);
+  font-size: 13px;
+}
+
+.pin-setup-stage {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+}
+
+.pin-setup-mark {
+  width: 74px;
+  height: 74px;
+  border: 1px solid rgba(114, 240, 202, .28);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #04100d;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .4), rgba(255, 255, 255, .1)),
+    linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+  box-shadow: 0 16px 34px rgba(24, 214, 162, .18);
+}
+
+.pin-setup-mark ion-icon {
+  width: 34px;
+  height: 34px;
+}
+
+.pin-setup-progress {
+  display: grid;
+  gap: 10px;
+}
+
+.pin-setup-progress div {
+  display: flex;
+  justify-content: center;
+  gap: 10px;
+}
+
+.pin-setup-progress span {
+  width: 11px;
+  height: 11px;
+  border: 1px solid rgba(255, 255, 255, .22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .07);
+}
+
+.pin-setup-progress span.filled {
+  border-color: var(--nivra-brand-2);
+  background: var(--nivra-brand-2);
+}
+
+.pin-setup-keypad {
+  display: grid;
+  grid-template-columns: repeat(3, 68px);
+  justify-content: center;
+  gap: 10px;
+}
+
+.pin-setup-key {
+  width: 68px;
+  height: 56px;
+  border: 1px solid rgba(255, 255, 255, .11);
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .035)),
+    rgba(255, 255, 255, .055);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
+  font-size: 22px;
+  font-weight: 850;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+.pin-setup-key:hover {
+  border-color: rgba(114, 240, 202, .34);
+  background:
+    linear-gradient(180deg, rgba(114, 240, 202, .14), rgba(255, 255, 255, .04)),
+    rgba(255, 255, 255, .06);
+}
+
+.pin-setup-key:active {
+  transform: scale(.97);
+}
+
+.pin-setup-key:disabled {
+  opacity: .58;
+}
+
+.pin-setup-key.icon-key ion-icon {
+  width: 22px;
+  height: 22px;
+}
+
+.pin-setup-error {
+  color: #ffb7b7;
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
 .share-sheet {
   display: grid;
   gap: 16px;
@@ -436,12 +685,18 @@ ion-modal.share-modal {
 }
 
 :host-context(.nivra-light-theme) .appearance-panel,
+:host-context(.nivra-light-theme) .app-lock-panel,
 :host-context(.nivra-light-theme) .share-account-panel,
 :host-context(.nivra-light-theme) .identity-mode-panel {
   border-color: rgba(24, 214, 162, .2);
   background:
     linear-gradient(135deg, rgba(24, 214, 162, .1), rgba(52, 120, 246, .045)),
     #ffffff;
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+:host-context(.nivra-light-theme) .app-lock-panel.enabled {
+  border-color: rgba(24, 214, 162, .3);
   box-shadow: var(--nivra-shadow-tiny);
 }
 
@@ -478,6 +733,17 @@ ion-modal.share-modal {
     rgba(24, 214, 162, .08);
 }
 
+:host-context(.nivra-light-theme) .app-lock-preview {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .95), rgba(247, 248, 251, .82)),
+    #ffffff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), var(--nivra-shadow-tiny);
+}
+
+:host-context(.nivra-light-theme) .app-lock-preview span {
+  background: rgba(17, 24, 39, .12);
+}
+
 :host-context(.nivra-light-theme) .profile-photo {
   border-color: rgba(24, 214, 162, .22);
   color: #03100d;
@@ -510,13 +776,38 @@ ion-modal.share-modal {
     #ffffff;
 }
 
+:host-context(.nivra-light-theme) .pin-setup-sheet {
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(247, 248, 251, .9)),
+    #ffffff;
+}
+
+:host-context(.nivra-light-theme) .pin-setup-key {
+  border-color: rgba(17, 24, 39, .1);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(247, 248, 251, .78)),
+    #ffffff;
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+:host-context(.nivra-light-theme) .pin-setup-progress span {
+  border-color: rgba(17, 24, 39, .18);
+  background: rgba(17, 24, 39, .07);
+}
+
+:host-context(.nivra-light-theme) .pin-setup-error {
+  color: #b42318;
+}
+
 :host-context(.nivra-light-theme) .share-link {
   border-color: var(--nivra-line);
   color: var(--nivra-soft);
   background: rgba(17, 24, 39, .04);
 }
 
-:host-context(.nivra-light-theme) ion-modal.share-modal {
+:host-context(.nivra-light-theme) ion-modal.share-modal,
+:host-context(.nivra-light-theme) ion-modal.pin-setup-modal {
   --box-shadow: var(--nivra-shadow-soft);
 }
 
@@ -552,13 +843,32 @@ ion-modal.share-modal {
     height: 46px;
   }
 
+  .app-lock-heading {
+    grid-template-columns: 46px minmax(0, 1fr);
+  }
+
+  .app-lock-icon {
+    width: 46px;
+    height: 46px;
+  }
+
   .share-actions,
   .account-actions.compact {
     display: grid;
     grid-template-columns: 1fr;
   }
 
-  ion-modal.share-modal {
+  .device-row {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .device-row ion-button {
+    width: 100%;
+  }
+
+  ion-modal.share-modal,
+  ion-modal.pin-setup-modal {
     --width: calc(100vw - 24px);
   }
 }

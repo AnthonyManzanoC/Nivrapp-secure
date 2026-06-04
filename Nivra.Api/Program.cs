@@ -81,7 +81,7 @@ builder.Services.AddCors(options =>
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials()
-            .WithExposedHeaders("WWW-Authenticate")
+            .WithExposedHeaders("WWW-Authenticate", "X-Nivra-Action")
             .SetPreflightMaxAge(TimeSpan.FromHours(1));
     });
 });

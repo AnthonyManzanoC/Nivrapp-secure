@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.nivra.app",
+      "sha256_cert_fingerprints": [
+        "E4:55:85:01:44:D6:6B:C3:F9:6B:02:4A:D1:5B:6E:D7:2B:AA:B3:25:94:24:DE:BF:42:86:51:49:2F:B7:8E:60"
+      ]
+    }
+  }
+]

@@ -8,6 +8,8 @@ namespace Nivra.Api.Security;
 public static class AuthExtensions
 {
     private const string CurrentUserItem = "__nivra_current_user";
+    private const string ForceWipeCode = "FORCE_WIPE";
+    private const string DeviceIdHeader = "X-Nivra-Device-Id";
     private static readonly ConcurrentDictionary<string, DateTimeOffset> LastSeenWrites = new(StringComparer.Ordinal);
     private static readonly TimeSpan LastSeenWriteInterval = TimeSpan.FromSeconds(45);
 
@@ -46,23 +48,38 @@ public static class AuthExtensions
                 {
                     context.Items[CurrentUserItem] = currentUser;
                     var now = TimeProvider.System.GetUtcNow();
-                    if (ShouldTouchDevice(currentUser.DeviceId, now))
+                    try
                     {
-                        try
+                        var device = await store.GetDeviceAsync(currentUser.DeviceId, context.RequestAborted);
+                        if (device?.RevokedAt is not null)
                         {
-                            var device = await store.GetDeviceAsync(currentUser.DeviceId, context.RequestAborted);
-                            if (device is not null)
-                            {
-                                device.LastSeenAt = now;
-                                await store.SaveChangesAsync(context.RequestAborted);
-                            }
+                            await WriteForceWipeAsync(context, currentUser.DeviceId, device.RevokedAt);
+                            return;
                         }
-                        catch (Exception exception) when (IsTransientAuthStoreFailure(exception))
+
+                        if (device is not null && ShouldTouchDevice(currentUser.DeviceId, now))
                         {
-                            logger.LogWarning(exception, "Could not update device last-seen for {DeviceId}.", currentUser.DeviceId);
+                            device.LastSeenAt = now;
+                            await store.SaveChangesAsync(context.RequestAborted);
                         }
                     }
+                    catch (Exception exception) when (IsTransientAuthStoreFailure(exception))
+                    {
+                        logger.LogWarning(exception, "Could not validate device state for {DeviceId}.", currentUser.DeviceId);
+                    }
                 }
+                else if (await TryWriteForceWipeForRevokedDeviceAsync(context, store, logger))
+                {
+                    return;
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(context.Request.Headers[DeviceIdHeader].FirstOrDefault()) &&
+                await TryWriteForceWipeForRevokedDeviceAsync(
+                    context,
+                    context.RequestServices.GetRequiredService<INivraStore>(),
+                    context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("Nivra.Api.Security.AuthExtensions")))
+            {
+                return;
             }
 
             await next();
@@ -99,5 +116,45 @@ public static class AuthExtensions
         }
 
         return false;
+    }
+
+    private static async Task<bool> TryWriteForceWipeForRevokedDeviceAsync(HttpContext context, INivraStore store, ILogger logger)
+    {
+        var deviceId = context.Request.Headers[DeviceIdHeader].FirstOrDefault()?.Trim();
+        if (string.IsNullOrWhiteSpace(deviceId))
+        {
+            return false;
+        }
+
+        try
+        {
+            var device = await store.GetDeviceAsync(deviceId, context.RequestAborted);
+            if (device?.RevokedAt is null)
+            {
+                return false;
+            }
+
+            await WriteForceWipeAsync(context, device.Id, device.RevokedAt);
+            return true;
+        }
+        catch (Exception exception) when (IsTransientAuthStoreFailure(exception))
+        {
+            logger.LogWarning(exception, "Could not check revoked device state for {DeviceId}.", deviceId);
+            return false;
+        }
+    }
+
+    private static Task WriteForceWipeAsync(HttpContext context, string deviceId, DateTimeOffset? revokedAt)
+    {
+        context.Response.StatusCode = StatusCodes.Status403Forbidden;
+        context.Response.ContentType = "application/json";
+        context.Response.Headers.TryAdd("X-Nivra-Action", ForceWipeCode);
+        return context.Response.WriteAsJsonAsync(new
+        {
+            code = ForceWipeCode,
+            message = "This device was revoked and must wipe local Nivra data.",
+            deviceId,
+            revokedAt
+        });
     }
 }

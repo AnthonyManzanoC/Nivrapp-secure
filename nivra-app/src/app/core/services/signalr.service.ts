@@ -191,6 +191,7 @@ export class SignalrService implements OnDestroy {
       'call.timeout',
       'CallTimeout',
       'call.failed',
+      'FORCE_WIPE',
       'device.revoked',
       'device.listChanged',
     ].forEach((eventName) => connection.on(eventName, forward(eventName)));
@@ -240,6 +241,7 @@ export class SignalrService implements OnDestroy {
       'call.timeout',
       'CallTimeout',
       'call.failed',
+      'FORCE_WIPE',
       'device.revoked',
       'device.listChanged',
     ].forEach((eventName) => connection.off(eventName));
