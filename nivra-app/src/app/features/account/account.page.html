@@ -203,6 +203,37 @@
           </div>
           <ion-button mode="ios" fill="outline" (click)="savePrivacy()" [disabled]="saving">Guardar privacidad</ion-button>
         }
+        <div class="panic-pin-box">
+          <div class="panic-pin-heading">
+            <ion-icon name="warning-outline"></ion-icon>
+            <span>
+              <strong>PIN de Panico (Opcional)</strong>
+              <small>{{ panicPin.isConfigured() ? 'Configurado en este dispositivo.' : 'Sin configurar.' }}</small>
+            </span>
+          </div>
+          <div class="panic-pin-grid">
+            <label>
+              <span>PIN falso</span>
+              <ion-input mode="ios" fill="outline" [(ngModel)]="panicPinValue" type="password" inputmode="numeric" maxlength="6" placeholder="4 a 6 digitos"></ion-input>
+            </label>
+            <label>
+              <span>Confirmar</span>
+              <ion-input mode="ios" fill="outline" [(ngModel)]="panicPinConfirm" type="password" inputmode="numeric" maxlength="6" placeholder="Repetir PIN"></ion-input>
+            </label>
+          </div>
+          <div class="account-actions compact">
+            <ion-button mode="ios" fill="outline" (click)="savePanicPin()" [disabled]="saving || !panicPinValue || !panicPinConfirm">
+              <ion-icon name="shield-checkmark-outline"></ion-icon>
+              Guardar PIN de panico
+            </ion-button>
+            @if (panicPin.isConfigured()) {
+              <ion-button mode="ios" fill="clear" color="danger" (click)="clearPanicPin()" [disabled]="saving">
+                <ion-icon name="trash-outline"></ion-icon>
+                Quitar
+              </ion-button>
+            }
+          </div>
+        </div>
       </article>
 
       <article class="panel span-6">

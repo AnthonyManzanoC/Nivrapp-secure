@@ -26,10 +26,11 @@ import {
 import { AuthService } from './auth.service';
 import { CryptoService, PublicKeyRecipient } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
+import { E2EE_UPLOAD_LIMIT_BYTES, EncryptedUploadMode, MediaOptimizerService } from './media-optimizer.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
-const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 const QUICK_REACTIONS = ['\u{1F44D}', '\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F64F}'];
 const DEFAULT_GROUP_SETTINGS: GroupSettings = {
   editInfo: 'admins',
@@ -79,6 +80,7 @@ export class ChatService implements OnDestroy {
   private readonly auth = inject(AuthService);
   private readonly crypto = inject(CryptoService);
   private readonly history = inject(LocalHistoryService);
+  private readonly mediaOptimizer = inject(MediaOptimizerService);
   private readonly signalr = inject(SignalrService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly directories = new Map<string, PublicKeyDirectory>();
@@ -106,6 +108,7 @@ export class ChatService implements OnDestroy {
   readonly presenceByUser = signal<Record<string, PresenceResponse>>({});
   readonly loading = signal(false);
   readonly uploading = signal(false);
+  readonly uploadStatus = signal('');
   readonly selectedConversationId = signal<string | null>(this.initialSelectedConversationId());
   readonly selectedConversation = computed(() => {
     const id = this.selectedConversationId();
@@ -553,20 +556,22 @@ export class ChatService implements OnDestroy {
   async sendFile(
     conversation: Conversation,
     file: File,
-    options: { forwardedFrom?: unknown; voiceNote?: boolean; policy?: MessagePolicyOptions } = {},
+    options: { forwardedFrom?: unknown; voiceNote?: boolean; policy?: MessagePolicyOptions; mode?: EncryptedUploadMode; caption?: string } = {},
   ): Promise<MessageResponse | null> {
-    if (file.size > MAX_ATTACHMENT_BYTES) {
-      throw new Error('Maximo 50 MB por archivo cifrado.');
-    }
-
     this.uploading.set(true);
+    this.uploadStatus.set('Optimizando y sellando (E2EE)...');
     try {
       const sendOptions = this.policyToSendOptions(options.policy ?? {});
-      const encrypted = await this.crypto.encryptAttachment(await file.arrayBuffer());
+      const prepared = await this.mediaOptimizer.prepareForEncryptedUpload(file, {
+        mode: options.mode ?? 'document',
+        maxBytes: MAX_ATTACHMENT_BYTES,
+      });
+      const uploadFile = prepared.file;
+      const encrypted = await this.crypto.encryptAttachment(await uploadFile.arrayBuffer());
       const allowedUserIds = conversation.participants
         .filter((participant) => !participant.removedAt)
         .map((participant) => participant.userId);
-      const mime = file.type || 'application/octet-stream';
+      const mime = uploadFile.type || 'application/octet-stream';
       const fileRecord = await firstValueFrom(this.api.post<FileResponse>('/files', {
         encryptedSize: encrypted.bytes.byteLength,
         mimeTypeCiphertext: this.crypto.b64(new TextEncoder().encode(mime)),
@@ -575,27 +580,29 @@ export class ChatService implements OnDestroy {
         expiresAt: sendOptions.expiresAt,
       }));
       await firstValueFrom(this.api.putRaw<FileResponse>(`/files/${encodeURIComponent(fileRecord.id)}/blob`, encrypted.bytes));
-      this.rememberMediaPreview(fileRecord.id, file, mime, file.name);
+      this.rememberMediaPreview(fileRecord.id, uploadFile, mime, uploadFile.name);
 
       return this.sendPayload(
         conversation,
         {
           type: 'file',
+          text: options.caption?.trim() || undefined,
           fileId: fileRecord.id,
-          fileName: file.name,
+          fileName: uploadFile.name,
           mime,
-          size: file.size,
+          size: uploadFile.size,
           fileKey: encrypted.key,
           fileIv: encrypted.iv,
           voiceNote: options.voiceNote ?? false,
           forwardedFrom: options.forwardedFrom,
         },
-        this.fileKind(file),
+        this.fileKind(uploadFile),
         fileRecord.id,
         sendOptions,
       );
     } finally {
       this.uploading.set(false);
+      this.uploadStatus.set('');
     }
   }
 
@@ -949,7 +956,9 @@ export class ChatService implements OnDestroy {
     }
     const file = this.asFile(payload);
     if (file) {
-      return file.voiceNote ? 'Nota de voz' : this.fileName(file);
+      const caption = typeof file.text === 'string' && file.text.trim() ? file.text.trim() : '';
+      const label = file.voiceNote ? 'Nota de voz' : this.fileName(file);
+      return caption ? `${label}: ${caption}` : label;
     }
     return payload.text || payload.title || 'Mensaje cifrado';
   }
@@ -2500,6 +2509,7 @@ export class ChatService implements OnDestroy {
       await this.sendFile(conversation, forwardedFile, {
         forwardedFrom,
         voiceNote: Boolean(file.voiceNote),
+        caption: typeof file.text === 'string' ? file.text : '',
       });
       return true;
     }

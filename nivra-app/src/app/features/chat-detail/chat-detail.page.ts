@@ -19,6 +19,7 @@ import {
   IonTextarea,
   IonToggle,
   IonToolbar,
+  ToastController,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
@@ -56,13 +57,20 @@ import {
   volumeHighOutline,
 } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
-import { ChatMessageVm, Contact, Conversation, GroupSettings, MediaPreview, Participant, Story } from '../../core/models/nivra.models';
+import { ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
 import { SocialService } from '../../core/services/social.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
+
+type AttachmentMode = 'media' | 'document' | 'audio';
+
+interface PendingAttachmentPreview {
+  file: File;
+  url: string | null;
+}
 
 @Component({
   selector: 'app-chat-detail',
@@ -100,6 +108,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   private readonly cdr = inject(ChangeDetectorRef);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly toastController = inject(ToastController);
   private routeSub?: Subscription;
   private keyboardHandles: PluginListenerHandle[] = [];
 
@@ -118,6 +127,10 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   chatMenuEvent: Event | null = null;
   attachmentMenuOpen = false;
   attachmentMenuEvent: Event | null = null;
+  pendingAttachmentMode: AttachmentMode = 'document';
+  pendingAttachmentFiles: PendingAttachmentPreview[] = [];
+  pendingAttachmentCaption = '';
+  private pendingAttachmentDraftSeed = '';
   messageActionsOpen = false;
   messageActionEvent: Event | null = null;
   actionMessage: ChatMessageVm | null = null;
@@ -125,6 +138,8 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   mediaGalleryOpen = false;
   activeAudioPreview: MediaPreview | null = null;
   activeAudioName = '';
+  activeMediaPreview: MediaPreview | null = null;
+  activeMediaFile: FileChatPayload | null = null;
   groupNameDraft = '';
   groupAvatarDraft: string | null = null;
   groupSettingsDraft: GroupSettings = {
@@ -225,6 +240,8 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     this.keyboardHandles.forEach((handle) => void handle.remove());
     this.cancelMessagePress();
     this.closeAudioPreview();
+    this.closeMediaViewer();
+    this.clearPendingAttachments(false);
     void this.cancelVoiceNote();
     document.documentElement.style.setProperty('--keyboard-bottom', '0px');
   }
@@ -264,7 +281,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     await this.router.navigateByUrl('/app/chats');
   }
 
-  async attachFiles(event: Event): Promise<void> {
+  attachFiles(event: Event, mode: AttachmentMode = 'document'): void {
     const input = event.target as HTMLInputElement;
     const files = Array.from(input.files ?? []);
     input.value = '';
@@ -278,17 +295,91 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
 
     this.attachmentError = '';
+    this.pendingAttachmentMode = mode;
+    this.pendingAttachmentDraftSeed = this.draft.trim();
+    this.pendingAttachmentCaption = this.pendingAttachmentDraftSeed;
+    this.pendingAttachmentFiles = files.map((file) => ({
+      file,
+      url: this.canPreviewPendingFile(file) ? URL.createObjectURL(file) : null,
+    }));
+  }
+
+  async sendPendingAttachments(): Promise<void> {
+    const conversation = this.conversation();
+    const items = [...this.pendingAttachmentFiles];
+    if (!conversation || !items.length || this.sending) {
+      return;
+    }
+    if (!this.canSendMessages()) {
+      this.attachmentError = 'Solo los admins pueden enviar archivos en este grupo.';
+      return;
+    }
+
+    const caption = this.pendingAttachmentCaption.trim();
+    const draftSeed = this.pendingAttachmentDraftSeed;
+    this.attachmentError = '';
     this.sending = true;
+    let lastError = '';
+    let sent = 0;
     try {
-      for (const file of files) {
-        await this.chat.sendFile(conversation, file, { policy: this.currentPolicy() });
+      for (const [index, item] of items.entries()) {
+        try {
+          await this.chat.sendFile(conversation, item.file, {
+            policy: this.currentPolicy(),
+            mode: this.pendingAttachmentMode === 'media' ? 'media' : 'document',
+            caption: index === 0 ? caption : '',
+          });
+          sent += 1;
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : 'No se pudo subir el adjunto.';
+          if (this.isUploadLimitError(lastError)) {
+            await this.showPremiumToast(lastError);
+          }
+        }
       }
-      this.scrollBottom();
+      this.attachmentError = lastError;
+      if (sent > 0) {
+        if (draftSeed && this.draft.trim() === draftSeed) {
+          this.draft = '';
+          await this.chat.sendTyping(conversation.id, 'stopped', { force: true });
+        }
+        this.clearPendingAttachments(false);
+        this.scrollBottom();
+      }
     } catch (error) {
       this.attachmentError = error instanceof Error ? error.message : 'No se pudo subir el adjunto.';
     } finally {
       this.sending = false;
     }
+  }
+
+  cancelPendingAttachments(): void {
+    this.clearPendingAttachments(true);
+  }
+
+  pendingAttachmentTitle(): string {
+    const count = this.pendingAttachmentFiles.length;
+    if (!count) {
+      return 'Adjunto';
+    }
+    return count === 1 ? this.pendingAttachmentFiles[0].file.name : `${count} archivos`;
+  }
+
+  pendingAttachmentSubtitle(): string {
+    const total = this.pendingAttachmentFiles.reduce((sum, item) => sum + item.file.size, 0);
+    return `${this.formatBytes(total)} cifrado extremo a extremo`;
+  }
+
+  pendingFileSize(file: File): string {
+    return this.formatBytes(file.size);
+  }
+
+  isPendingImage(file: File): boolean {
+    return file.type.startsWith('image/');
+  }
+
+  isPendingVideo(file: File): boolean {
+    return file.type.startsWith('video/');
   }
 
   async download(message: ChatMessageVm): Promise<void> {
@@ -332,7 +423,28 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       await this.openAudioPreview(message);
       return;
     }
-    await this.preview(message);
+    if (!this.chat.isImage(file) && !this.chat.isVideo(file)) {
+      await this.preview(message);
+      return;
+    }
+    if (this.downloadingId) {
+      return;
+    }
+
+    this.downloadingId = message.id;
+    this.attachmentError = '';
+    try {
+      const preview = await this.chat.ensureMediaPreview(message.payload);
+      await this.chat.markMessageOpened(message);
+      if (preview) {
+        this.activeMediaPreview = preview;
+        this.activeMediaFile = file;
+      }
+    } catch (error) {
+      this.attachmentError = error instanceof Error ? error.message : 'No se pudo abrir el adjunto.';
+    } finally {
+      this.downloadingId = null;
+    }
   }
 
   async openAudioPreview(message: ChatMessageVm): Promise<void> {
@@ -360,6 +472,11 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   closeAudioPreview(): void {
     this.activeAudioPreview = null;
     this.activeAudioName = '';
+  }
+
+  closeMediaViewer(): void {
+    this.activeMediaPreview = null;
+    this.activeMediaFile = null;
   }
 
   async markMessageOpened(message: ChatMessageVm): Promise<void> {
@@ -789,7 +906,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
     this.sending = true;
     try {
-      await this.chat.sendFile(conversation, file, { voiceNote: true, policy: this.currentPolicy() });
+      await this.chat.sendFile(conversation, file, { voiceNote: true, policy: this.currentPolicy(), mode: 'document' });
       this.scrollBottom();
     } catch (error) {
       this.attachmentError = error instanceof Error ? error.message : 'No se pudo enviar la nota de voz.';
@@ -843,6 +960,19 @@ export class ChatDetailPage implements OnInit, OnDestroy {
 
   replyPreview(message: ChatMessageVm | null): string {
     return message ? this.chat.preview(message.payload) : '';
+  }
+
+  replyChipLabel(message: ChatMessageVm): string {
+    const reply = message.payload.replyTo as { kind?: unknown; preview?: unknown; mediaMime?: unknown } | null | undefined;
+    if (reply?.kind === 'story') {
+      const preview = typeof reply.preview === 'string' && reply.preview.trim()
+        ? reply.preview.trim()
+        : typeof reply.mediaMime === 'string' && reply.mediaMime
+          ? reply.mediaMime
+          : 'Instantanea';
+      return `Historia: ${preview}`;
+    }
+    return 'Respuesta cifrada';
   }
 
   replyReference(message: ChatMessageVm | null): unknown {
@@ -1048,6 +1178,39 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }, 40);
   }
 
+  private clearPendingAttachments(restoreDraft: boolean): void {
+    this.pendingAttachmentFiles.forEach((item) => {
+      if (item.url) {
+        URL.revokeObjectURL(item.url);
+      }
+    });
+    if (restoreDraft && this.pendingAttachmentDraftSeed && !this.draft.trim()) {
+      this.draft = this.pendingAttachmentDraftSeed;
+    }
+    this.pendingAttachmentFiles = [];
+    this.pendingAttachmentMode = 'document';
+    this.pendingAttachmentCaption = '';
+    this.pendingAttachmentDraftSeed = '';
+  }
+
+  private canPreviewPendingFile(file: File): boolean {
+    return file.type.startsWith('image/') || file.type.startsWith('video/') || file.type.startsWith('audio/');
+  }
+
+  private formatBytes(bytes: number): string {
+    if (!Number.isFinite(bytes) || bytes <= 0) {
+      return '0 B';
+    }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = bytes;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+  }
+
   private pauseOtherAudio(active: HTMLAudioElement): void {
     document.querySelectorAll<HTMLAudioElement>('audio.voice-source').forEach((audio) => {
       if (audio !== active && !audio.paused) {
@@ -1088,6 +1251,20 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     } catch {
       this.keyboardHandles = [];
     }
+  }
+
+  private isUploadLimitError(message: string): boolean {
+    return message.includes('limite robusto de cifrado local');
+  }
+
+  private async showPremiumToast(message: string): Promise<void> {
+    const toast = await this.toastController.create({
+      message,
+      duration: 3200,
+      position: 'bottom',
+      cssClass: 'nivra-premium-toast',
+    });
+    await toast.present();
   }
 
   private currentPolicy(): MessagePolicyOptions {

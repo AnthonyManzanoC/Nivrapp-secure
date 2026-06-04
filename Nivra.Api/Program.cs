@@ -10,10 +10,15 @@ using Nivra.Api.Security;
 using Nivra.Api.Services;
 
 var builder = WebApplication.CreateBuilder(args);
+const long maxEncryptedUploadBytes = 256L * 1024 * 1024 + 4096;
 
 builder.Logging.ClearProviders();
 builder.Logging.AddConsole();
 builder.Logging.AddDebug();
+builder.WebHost.ConfigureKestrel(options =>
+{
+    options.Limits.MaxRequestBodySize = maxEncryptedUploadBytes;
+});
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {

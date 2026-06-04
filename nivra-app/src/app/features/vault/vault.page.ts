@@ -4,7 +4,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
 import { StatusBar } from '@capacitor/status-bar';
-import { IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea } from '@ionic/angular/standalone';
+import { IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, LoadingController } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
   addCircleOutline,
@@ -32,6 +32,8 @@ import {
   trashOutline,
 } from 'ionicons/icons';
 import { DecodedVaultItem, FileChatPayload, UserSummary, VaultNoteAttachment, VaultRoom, VaultRoomMember, VaultRoomMessageVm } from '../../core/models/nivra.models';
+import { DeviceWipeService } from '../../core/services/device-wipe.service';
+import { PanicPinService } from '../../core/services/panic-pin.service';
 import { VaultService } from '../../core/services/vault.service';
 import { MediaStreamDirective } from '../../shared/media-stream.directive';
 
@@ -44,6 +46,9 @@ import { MediaStreamDirective } from '../../shared/media-stream.directive';
 })
 export class VaultPage implements OnInit, OnDestroy {
   readonly vault = inject(VaultService);
+  private readonly deviceWipe = inject(DeviceWipeService);
+  private readonly panicPin = inject(PanicPinService);
+  private readonly loadingController = inject(LoadingController);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   pin = '';
@@ -113,7 +118,12 @@ export class VaultPage implements OnInit, OnDestroy {
 
   async unlock(): Promise<void> {
     await this.run('unlock', async () => {
-      await this.vault.unlock(this.pin);
+      const enteredPin = this.pin;
+      if (await this.panicPin.matches(enteredPin)) {
+        await this.triggerPanicWipe();
+        return;
+      }
+      await this.vault.unlock(enteredPin);
       this.pin = '';
       this.notice = 'Boveda desbloqueada.';
     });
@@ -452,6 +462,23 @@ export class VaultPage implements OnInit, OnDestroy {
       queryParamsHandling: 'merge',
       replaceUrl: true,
     });
+  }
+
+  private async triggerPanicWipe(): Promise<void> {
+    this.error = '';
+    this.notice = 'Desbloqueando...';
+    const loading = await this.loadingController.create({
+      message: 'Desbloqueando...',
+      spinner: 'crescent',
+      backdropDismiss: false,
+    });
+    await loading.present();
+    try {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000));
+      await this.deviceWipe.nukeDevice('PANIC_PIN');
+    } finally {
+      await loading.dismiss().catch(() => undefined);
+    }
   }
 
   private isRoomParticipant(room: VaultRoom | null, userId: string): boolean {

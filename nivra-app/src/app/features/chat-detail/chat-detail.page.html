@@ -82,7 +82,7 @@
               </div>
             }
             @if (message.payload.replyTo) {
-              <div class="reply-chip">Respuesta cifrada</div>
+              <div class="reply-chip">{{ replyChipLabel(message) }}</div>
             }
             @if (chat.asFile(message.payload); as file) {
               @if (chat.isAudio(file) || file.voiceNote) {
@@ -128,10 +128,13 @@
                       Cargar audio
                     </button>
                   }
+                  @if (file.text) {
+                    <p class="file-caption">{{ file.text }}</p>
+                  }
                 </div>
               } @else {
                 <div class="file-card">
-                  <button type="button" class="file-thumb" (click)="preview(message)" [attr.aria-label]="'Abrir ' + chat.fileName(file)">
+                  <button type="button" class="file-thumb" (click)="openMediaItem(message)" [attr.aria-label]="'Abrir ' + chat.fileName(file)">
                     @if (chat.mediaPreview(file.fileId || file.downloadFile || file.previewFile); as media) {
                       @if (chat.isImage(file)) {
                         <img [src]="media.url" [alt]="chat.fileName(file)">
@@ -158,6 +161,9 @@
                     }
                   </ion-button>
                 </div>
+                @if (file.text) {
+                  <p class="file-caption">{{ file.text }}</p>
+                }
               }
             } @else {
               <p>{{ message.payload.text || chat.preview(message.payload) }}</p>
@@ -250,9 +256,9 @@
       </div>
     }
     <form class="composer" (ngSubmit)="send()">
-      <input #galleryInput type="file" accept="image/*,video/*" multiple hidden (change)="attachFiles($event)">
-      <input #documentInput type="file" multiple hidden (change)="attachFiles($event)">
-      <input #audioInput type="file" accept="audio/*" multiple hidden (change)="attachFiles($event)">
+      <input #galleryInput type="file" accept="image/*,video/*" multiple hidden (change)="attachFiles($event, 'media')">
+      <input #documentInput type="file" multiple hidden (change)="attachFiles($event, 'document')">
+      <input #audioInput type="file" accept="audio/*" multiple hidden (change)="attachFiles($event, 'audio')">
       <ion-button class="composer-icon attach" type="button" mode="ios" fill="clear" aria-label="Adjuntar" [disabled]="sending || chat.uploading() || !canSendMessages()" (click)="openAttachmentMenu($event)">
         <ion-icon name="attach-outline"></ion-icon>
       </ion-button>
@@ -276,6 +282,12 @@
         <ion-icon [name]="editingMessage ? 'checkmark-outline' : 'send-outline'"></ion-icon>
       </ion-button>
     </form>
+    @if (chat.uploading()) {
+      <div class="composer-busy">
+        <ion-spinner name="crescent"></ion-spinner>
+        <span>{{ chat.uploadStatus() || 'Optimizando y sellando (E2EE)...' }}</span>
+      </div>
+    }
     @if (isBlocked()) {
       <p class="composer-notice">Chat bloqueado en este dispositivo.</p>
     }
@@ -311,7 +323,7 @@
           <ion-icon name="document-attach-outline"></ion-icon>
           <span>
             <strong>Documento</strong>
-            <small>Archivos cifrados</small>
+            <small>Calidad original</small>
           </span>
         </button>
         <button type="button" (click)="chooseAttachment(audioInput)">
@@ -324,6 +336,59 @@
       </div>
     </ng-template>
   </ion-popover>
+
+  <ion-modal class="attachment-review-modal" [isOpen]="pendingAttachmentFiles.length > 0" (didDismiss)="cancelPendingAttachments()">
+    <ng-template>
+      <section class="attachment-review">
+        <header>
+          <div>
+            <strong>{{ pendingAttachmentTitle() }}</strong>
+            <span>{{ pendingAttachmentSubtitle() }}</span>
+          </div>
+          <ion-button mode="ios" fill="clear" (click)="cancelPendingAttachments()" aria-label="Cerrar adjunto">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </header>
+        <div class="attachment-review-list">
+          @for (item of pendingAttachmentFiles; track item.file.name + item.file.size + item.file.lastModified) {
+            <article class="attachment-review-item">
+              <span class="attachment-review-thumb">
+                @if (item.url && isPendingImage(item.file)) {
+                  <img [src]="item.url" [alt]="item.file.name">
+                } @else if (item.url && isPendingVideo(item.file)) {
+                  <video [src]="item.url" muted playsinline preload="metadata"></video>
+                } @else {
+                  <ion-icon [name]="item.file.type.startsWith('audio/') ? 'mic-outline' : 'document-attach-outline'"></ion-icon>
+                }
+              </span>
+              <span class="attachment-review-copy">
+                <strong>{{ item.file.name }}</strong>
+                <small>{{ item.file.type || 'Archivo' }} - {{ pendingFileSize(item.file) }}</small>
+              </span>
+            </article>
+          }
+        </div>
+        <footer>
+          <ion-textarea
+            mode="ios"
+            name="pendingAttachmentCaption"
+            [(ngModel)]="pendingAttachmentCaption"
+            autoGrow="true"
+            rows="1"
+            maxlength="1200"
+            placeholder="Agregar mensaje al adjunto">
+          </ion-textarea>
+          <ion-button mode="ios" class="send" (click)="sendPendingAttachments()" [disabled]="sending || chat.uploading()">
+            @if (sending || chat.uploading()) {
+              <ion-spinner name="crescent"></ion-spinner>
+            } @else {
+              <ion-icon name="send-outline"></ion-icon>
+            }
+          </ion-button>
+        </footer>
+      </section>
+    </ng-template>
+  </ion-modal>
 
   <ion-popover
     class="chat-options-popover"
@@ -695,6 +760,28 @@
             </ion-button>
           </header>
           <audio controls autoplay [src]="activeAudioPreview.url"></audio>
+        </section>
+      }
+    </ng-template>
+  </ion-modal>
+
+  <ion-modal class="chat-media-viewer-modal" [isOpen]="!!activeMediaPreview" (didDismiss)="closeMediaViewer()">
+    <ng-template>
+      @if (activeMediaPreview && activeMediaFile) {
+        <section class="chat-media-viewer">
+          <header>
+            <strong>{{ chat.fileName(activeMediaFile) }}</strong>
+            <ion-button mode="ios" fill="clear" (click)="closeMediaViewer()" aria-label="Cerrar archivo">
+              <ion-icon name="close-outline"></ion-icon>
+            </ion-button>
+          </header>
+          <div class="chat-media-viewer-body">
+            @if (chat.isImage(activeMediaFile)) {
+              <img [src]="activeMediaPreview.url" [alt]="chat.fileName(activeMediaFile)">
+            } @else if (chat.isVideo(activeMediaFile)) {
+              <video [src]="activeMediaPreview.url" controls playsinline autoplay></video>
+            }
+          </div>
         </section>
       }
     </ng-template>

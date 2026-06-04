@@ -15,10 +15,11 @@ import {
 import { AuthService } from './auth.service';
 import { CryptoService } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
+import { E2EE_UPLOAD_LIMIT_BYTES, MediaOptimizerService } from './media-optimizer.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
-const MAX_STORY_MEDIA_BYTES = 50 * 1024 * 1024;
+const MAX_STORY_MEDIA_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 
 @Injectable({ providedIn: 'root' })
 export class SocialService {
@@ -26,6 +27,7 @@ export class SocialService {
   private readonly auth = inject(AuthService);
   private readonly crypto = inject(CryptoService);
   private readonly history = inject(LocalHistoryService);
+  private readonly mediaOptimizer = inject(MediaOptimizerService);
   private readonly realtime = inject(SignalrService);
   private readonly destroyRef = inject(DestroyRef);
 
@@ -41,6 +43,7 @@ export class SocialService {
   readonly loading = signal(false);
   readonly radarLoading = signal(false);
   readonly publishing = signal(false);
+  readonly publishingStatus = signal('');
 
   constructor() {
     this.realtime.events$
@@ -49,17 +52,14 @@ export class SocialService {
       if (event.type === 'story.created' || event.type === 'story.worldCreated') {
         const story = event.payload as Story;
         if (story?.id) {
-          const normalized = this.normalizeStory(story);
-          this.stories.update((items) => [normalized, ...items.filter((item) => item.id !== normalized.id)]);
-          if (story.visibility === 'PublicWorld') {
-            this.worldStories.update((items) => [normalized, ...items.filter((item) => item.id !== normalized.id)]);
-          }
-          this.persistStories([normalized]);
+          this.applyStoryUpdate(story);
         }
       }
-      if (event.type === 'story.viewed') {
-        const payload = event.payload as { storyId?: string };
-        if (payload?.storyId) {
+      if (event.type === 'story.viewed' || event.type === 'story.reacted' || event.type === 'story.commented') {
+        const payload = event.payload as Story & { storyId?: string };
+        if (payload?.id) {
+          this.applyStoryUpdate(payload);
+        } else if (payload?.storyId) {
           this.stories.update((items) => items.map((story) =>
             story.id === payload.storyId ? { ...story, viewCount: story.viewCount + 1 } : story));
         }
@@ -205,11 +205,9 @@ export class SocialService {
     if (!text && !file) {
       return;
     }
-    if (file && file.size > MAX_STORY_MEDIA_BYTES) {
-      throw new Error('Maximo 50 MB por historia cifrada.');
-    }
 
     this.publishing.set(true);
+    this.publishingStatus.set(file ? 'Optimizando y sellando (E2EE)...' : '');
     try {
       const durationSeconds = options.durationSeconds ?? 24 * 60 * 60;
       const allowedUserIds = [...new Set((options.allowedUserIds ?? []).filter(Boolean))];
@@ -217,8 +215,13 @@ export class SocialService {
       let media: StoryPayload['media'] = null;
 
       if (file) {
-        const encrypted = await this.crypto.encryptAttachment(await file.arrayBuffer());
-        const mime = file.type || 'application/octet-stream';
+        const prepared = await this.mediaOptimizer.prepareForEncryptedUpload(file, {
+          mode: 'media',
+          maxBytes: MAX_STORY_MEDIA_BYTES,
+        });
+        const uploadFile = prepared.file;
+        const encrypted = await this.crypto.encryptAttachment(await uploadFile.arrayBuffer());
+        const mime = uploadFile.type || 'application/octet-stream';
         const expiresAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
         const fileRecord = await firstValueFrom(this.api.post<FileResponse>('/files', {
           encryptedSize: encrypted.bytes.byteLength,
@@ -231,13 +234,13 @@ export class SocialService {
         mediaFileObjectId = fileRecord.id;
         media = {
           fileId: fileRecord.id,
-          fileName: file.name,
+          fileName: uploadFile.name,
           mime,
-          size: file.size,
+          size: uploadFile.size,
           fileKey: encrypted.key,
           fileIv: encrypted.iv,
         };
-        this.rememberMediaPreview(`story-file:${fileRecord.id}`, file, mime, file.name);
+        this.rememberMediaPreview(`story-file:${fileRecord.id}`, uploadFile, mime, uploadFile.name);
       }
 
       const payload = this.encodeStoryPayload({ v: 2, type: media ? 'media' : 'text', text, media });
@@ -257,6 +260,7 @@ export class SocialService {
       await this.load();
     } finally {
       this.publishing.set(false);
+      this.publishingStatus.set('');
     }
   }
 
@@ -266,11 +270,36 @@ export class SocialService {
 
   async viewStory(story: Story): Promise<void> {
     const fresh = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/view`, {}));
-    this.activeStory.set(fresh);
-    this.stories.update((items) => [fresh, ...items.filter((item) => item.id !== fresh.id)]);
+    const normalized = this.normalizeStory(fresh);
+    this.activeStory.set(normalized);
+    this.applyStoryUpdate(normalized);
     if (this.storyPayload(fresh).media) {
       await this.ensureStoryMedia(fresh).catch(() => null);
     }
+  }
+
+  async reactStory(story: Story, emoji: string): Promise<Story> {
+    const updated = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/react`, {
+      emoji,
+    }));
+    return this.applyStoryUpdate(updated);
+  }
+
+  async commentStory(story: Story, messageId: string | null): Promise<Story> {
+    const updated = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/comment`, {
+      messageId,
+    }));
+    return this.applyStoryUpdate(updated);
+  }
+
+  async repostStory(story: Story, visibility = 'Contacts'): Promise<Story> {
+    const repost = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/repost`, {
+      visibility,
+      durationSeconds: 24 * 60 * 60,
+    }));
+    this.applyStoryUpdate(repost);
+    await this.load().catch(() => undefined);
+    return repost;
   }
 
   async deleteStory(story: Story): Promise<void> {
@@ -412,7 +441,29 @@ export class SocialService {
       ...story,
       targetType: story.targetType ?? (story.targetId ? 'group' : 'contacts'),
       targetId: story.targetId ?? null,
+      allowedUserIds: story.allowedUserIds ?? [],
+      views: story.views ?? [],
+      reactions: story.reactions ?? [],
+      comments: story.comments ?? [],
+      myReaction: story.myReaction ?? null,
+      originalStoryId: story.originalStoryId ?? null,
+      originalAuthor: story.originalAuthor ?? null,
     };
+  }
+
+  private applyStoryUpdate(story: Story): Story {
+    const normalized = this.normalizeStory(story);
+    this.stories.update((items) => [normalized, ...items.filter((item) => item.id !== normalized.id)]
+      .sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || '')));
+    this.worldStories.update((items) => normalized.visibility === 'PublicWorld'
+      ? [normalized, ...items.filter((item) => item.id !== normalized.id)]
+        .sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || ''))
+      : items.filter((item) => item.id !== normalized.id));
+    if (this.activeStory()?.id === normalized.id) {
+      this.activeStory.set(normalized);
+    }
+    this.persistStories([normalized]);
+    return normalized;
   }
 
   private activeStories(stories: Story[]): Story[] {

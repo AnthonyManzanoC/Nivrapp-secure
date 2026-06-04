@@ -51,6 +51,15 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             value => value.Order(StringComparer.Ordinal).Aggregate(0, (hash, item) => HashCode.Combine(hash, item.GetHashCode(StringComparison.Ordinal))),
             value => new HashSet<string>(value, StringComparer.Ordinal));
 
+        static ValueConverter<List<T>, string> JsonListConverter<T>() => new(
+            value => JsonSerializer.Serialize(value, JsonOptions),
+            value => JsonSerializer.Deserialize<List<T>>(value, JsonOptions) ?? new List<T>());
+
+        static ValueComparer<List<T>> JsonListComparer<T>() => new(
+            (left, right) => JsonSerializer.Serialize(left ?? new List<T>(), JsonOptions) == JsonSerializer.Serialize(right ?? new List<T>(), JsonOptions),
+            value => StringComparer.Ordinal.GetHashCode(JsonSerializer.Serialize(value ?? new List<T>(), JsonOptions)),
+            value => JsonSerializer.Deserialize<List<T>>(JsonSerializer.Serialize(value ?? new List<T>(), JsonOptions), JsonOptions) ?? new List<T>());
+
         modelBuilder.Entity<PlanEntitlements>().HasNoKey().ToView(null);
 
         modelBuilder.Entity<UserAccount>(entity =>
@@ -299,9 +308,13 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(story => story.Id).HasMaxLength(64);
             entity.Property(story => story.OwnerUserId).HasMaxLength(64).IsRequired();
             entity.Property(story => story.Visibility).HasConversion<string>().HasMaxLength(32).IsRequired();
+            entity.Property(story => story.TargetType).HasMaxLength(32).HasDefaultValue("contacts").IsRequired();
+            entity.Property(story => story.TargetId).HasMaxLength(64);
             entity.Property(story => story.EncryptedPayload).IsRequired();
             entity.Property(story => story.Caption).HasMaxLength(500);
             entity.Property(story => story.MediaFileObjectId).HasMaxLength(64);
+            entity.Property(story => story.OriginalStoryId).HasMaxLength(64);
+            entity.Property(story => story.OriginalAuthorId).HasMaxLength(64);
             entity.Property(story => story.AllowedUserIds)
                 .HasColumnName("allowed_user_ids")
                 .HasColumnType("jsonb")
@@ -312,8 +325,24 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
                 .HasColumnType("jsonb")
                 .HasConversion(stringSetConverter)
                 .Metadata.SetValueComparer(stringSetComparer);
+            entity.Property(story => story.ViewEvents)
+                .HasColumnName("view_events")
+                .HasColumnType("jsonb")
+                .HasConversion(JsonListConverter<StoryViewEvent>())
+                .Metadata.SetValueComparer(JsonListComparer<StoryViewEvent>());
+            entity.Property(story => story.Reactions)
+                .HasColumnName("reactions")
+                .HasColumnType("jsonb")
+                .HasConversion(JsonListConverter<StoryReactionRecord>())
+                .Metadata.SetValueComparer(JsonListComparer<StoryReactionRecord>());
+            entity.Property(story => story.Comments)
+                .HasColumnName("comments")
+                .HasColumnType("jsonb")
+                .HasConversion(JsonListConverter<StoryCommentRecord>())
+                .Metadata.SetValueComparer(JsonListComparer<StoryCommentRecord>());
             entity.HasIndex(story => new { story.Visibility, story.ExpiresAt });
             entity.HasIndex(story => new { story.OwnerUserId, story.CreatedAt });
+            entity.HasIndex(story => new { story.TargetType, story.TargetId });
             entity.HasIndex(story => story.DeletedAt);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(story => story.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<FileObject>().WithMany().HasForeignKey(story => story.MediaFileObjectId).OnDelete(DeleteBehavior.SetNull);

@@ -330,8 +330,33 @@ export interface Story {
   viewOnce: boolean;
   viewedByMe: boolean;
   viewCount: number;
+  myReaction?: string | null;
+  originalStoryId?: string | null;
+  originalAuthor?: UserSummary | null;
+  views?: StoryView[];
+  reactions?: StoryReaction[];
+  comments?: StoryComment[];
   createdAt: string;
   expiresAt: string;
+}
+
+export interface StoryView {
+  user: UserSummary;
+  viewedAt: string;
+}
+
+export interface StoryReaction {
+  id: string;
+  user: UserSummary;
+  emoji: string;
+  reactedAt: string;
+}
+
+export interface StoryComment {
+  id: string;
+  user: UserSummary;
+  messageId?: string | null;
+  commentedAt: string;
 }
 
 export interface StoryMediaPayload {

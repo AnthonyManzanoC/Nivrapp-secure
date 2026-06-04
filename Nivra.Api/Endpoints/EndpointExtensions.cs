@@ -15,7 +15,9 @@ namespace Nivra.Api.Endpoints;
 public static partial class EndpointExtensions
 {
     private static readonly Regex AliasPattern = new("^[a-zA-Z0-9_.-]{3,32}$", RegexOptions.Compiled);
-    private const long MaxEncryptedUploadBytes = 50L * 1024 * 1024;
+    private const long MaxPlainUploadBytes = 256L * 1024 * 1024;
+    private const long MaxEncryptedUploadBytes = MaxPlainUploadBytes + 4096;
+    private const string MaxUploadLabel = "256 MB";
     private const string ForceWipeCode = "FORCE_WIPE";
     private const string DefaultFirebaseWebApiKey = "AIzaSyC4TZyBBy6Hj_2vgAngbuN8QD6ND48GEyg";
     private const string DefaultFirebaseWebAuthDomain = "nivra-af67e.firebaseapp.com";
@@ -25,6 +27,8 @@ public static partial class EndpointExtensions
     private const string DefaultFirebaseWebAppId = "1:1052459577646:web:104a77188d9e03b0b10abf";
     private const string DefaultFirebaseWebVapidKey = "BI-QXrOQJ14bj9GWZ5_ZniwQ63HxBW1E2n0qOLCe-fHME72yyuXQz2nRdEjSqstpw7IQNOE9U8fx8l9tGrbYHBY";
     private const string DefaultFirebaseSdkVersion = "12.14.0";
+    private const string StoryTargetContacts = "contacts";
+    private const string StoryTargetGroup = "group";
 
     public static void MapNivraApi(this WebApplication app)
     {
@@ -1878,12 +1882,31 @@ public static partial class EndpointExtensions
             }
 
             var durationSeconds = Math.Clamp(request.DurationSeconds ?? 24 * 60 * 60, 30, 7 * 24 * 60 * 60);
+            var targetType = NormalizeStoryTargetType(request.TargetType, request.TargetId);
+            var targetId = targetType == StoryTargetGroup ? NormalizeOptional(request.TargetId) : null;
+            var visibility = targetType == StoryTargetGroup ? StoryVisibility.SelectedUsers : request.Visibility;
             var allowed = (request.AllowedUserIds ?? [])
                 .Where(id => !string.IsNullOrWhiteSpace(id))
                 .Distinct(StringComparer.Ordinal)
                 .ToHashSet(StringComparer.Ordinal);
 
-            if (request.Visibility == StoryVisibility.CloseFriends && allowed.Count == 0)
+            if (targetType == StoryTargetGroup)
+            {
+                if (targetId is null)
+                {
+                    return Error("invalid_story_group", "La historia grupal necesita un grupo valido.");
+                }
+
+                var groupMemberIds = await ActiveConversationParticipantIdsAsync(db, targetId, cancellationToken);
+                if (groupMemberIds.Count == 0 || !groupMemberIds.Contains(current.UserId))
+                {
+                    return Error("invalid_story_group", "Solo miembros activos del grupo pueden publicar historias ahi.", StatusCodes.Status403Forbidden);
+                }
+
+                allowed = groupMemberIds;
+            }
+
+            if (visibility == StoryVisibility.CloseFriends && allowed.Count == 0)
             {
                 allowed = (await db.Contacts
                     .Where(contact => contact.OwnerUserId == current.UserId && contact.IsFavorite)
@@ -1892,7 +1915,7 @@ public static partial class EndpointExtensions
                     .ToHashSet(StringComparer.Ordinal);
             }
 
-            if ((request.Visibility is StoryVisibility.SelectedUsers or StoryVisibility.CloseFriends) &&
+            if ((visibility is StoryVisibility.SelectedUsers or StoryVisibility.CloseFriends) &&
                 (allowed.Count == 0 || await db.Users.CountAsync(user => allowed.Contains(user.Id) && user.DisabledAt == null, cancellationToken) != allowed.Count))
             {
                 return Error("invalid_story_acl", "Los usuarios permitidos deben existir.");
@@ -1912,12 +1935,17 @@ public static partial class EndpointExtensions
             {
                 Id = NivraIds.NewId("sty"),
                 OwnerUserId = current.UserId,
-                Visibility = request.Visibility,
+                Visibility = visibility,
+                TargetType = targetType,
+                TargetId = targetId,
                 EncryptedPayload = request.EncryptedPayload,
                 Caption = NormalizeOptional(request.Caption),
                 MediaFileObjectId = request.MediaFileObjectId,
                 AllowedUserIds = allowed,
                 ViewedByUserIds = [],
+                ViewEvents = [],
+                Reactions = [],
+                Comments = [],
                 ViewOnce = request.ViewOnce,
                 CreatedAt = now,
                 ExpiresAt = now.AddSeconds(durationSeconds)
@@ -1965,19 +1993,205 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
+            var now = timeProvider.GetUtcNow();
             if (story.OwnerUserId != current.UserId)
             {
-                story.ViewedByUserIds.Add(current.UserId);
-                await db.SaveChangesAsync(cancellationToken);
-                await hub.Clients.Group(GroupsFor.User(story.OwnerUserId)).SendAsync("story.viewed", new
+                var added = story.ViewedByUserIds.Add(current.UserId);
+                if (!story.ViewEvents.Any(view => view.UserId == current.UserId))
                 {
-                    storyId,
-                    viewerUserId = current.UserId,
-                    viewedAt = timeProvider.GetUtcNow()
-                }, cancellationToken);
+                    story.ViewEvents.Add(new StoryViewEvent
+                    {
+                        UserId = current.UserId,
+                        ViewedAt = now
+                    });
+                    added = true;
+                }
+
+                if (added)
+                {
+                    await db.SaveChangesAsync(cancellationToken);
+                    await hub.Clients.Group(GroupsFor.User(story.OwnerUserId)).SendAsync(
+                        "story.viewed",
+                        await ToStoryResponseAsync(story, story.OwnerUserId, db, cancellationToken),
+                        cancellationToken);
+                }
             }
 
             return Results.Ok(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
+        });
+
+        group.MapPost("/{storyId}/react", async Task<IResult> (string storyId, StoryReactRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var emoji = NormalizeStoryEmoji(request.Emoji);
+            if (emoji is null)
+            {
+                return Error("invalid_story_reaction", "Selecciona una reaccion valida.");
+            }
+
+            var story = await db.Stories.FirstOrDefaultAsync(candidate => candidate.Id == storyId, cancellationToken);
+            if (story is null ||
+                story.DeletedAt is not null ||
+                story.ExpiresAt <= timeProvider.GetUtcNow() ||
+                !await CanViewStoryAsync(db, story, current.UserId, cancellationToken))
+            {
+                return Results.NotFound();
+            }
+
+            if (story.OwnerUserId == current.UserId)
+            {
+                return Error("invalid_story_reaction", "No puedes reaccionar a tu propia historia.");
+            }
+
+            var now = timeProvider.GetUtcNow();
+            story.ViewedByUserIds.Add(current.UserId);
+            if (!story.ViewEvents.Any(view => view.UserId == current.UserId))
+            {
+                story.ViewEvents.Add(new StoryViewEvent
+                {
+                    UserId = current.UserId,
+                    ViewedAt = now
+                });
+            }
+
+            story.Reactions.RemoveAll(reaction => reaction.UserId == current.UserId);
+            story.Reactions.Add(new StoryReactionRecord
+            {
+                Id = NivraIds.NewId("sre"),
+                UserId = current.UserId,
+                Emoji = emoji,
+                ReactedAt = now
+            });
+
+            await db.SaveChangesAsync(cancellationToken);
+            var ownerResponse = await ToStoryResponseAsync(story, story.OwnerUserId, db, cancellationToken);
+            await hub.Clients.Group(GroupsFor.User(story.OwnerUserId)).SendAsync("story.reacted", ownerResponse, cancellationToken);
+            return Results.Ok(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
+        });
+
+        group.MapPost("/{storyId}/comment", async Task<IResult> (string storyId, StoryCommentRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var story = await db.Stories.FirstOrDefaultAsync(candidate => candidate.Id == storyId, cancellationToken);
+            if (story is null ||
+                story.DeletedAt is not null ||
+                story.ExpiresAt <= timeProvider.GetUtcNow() ||
+                !await CanViewStoryAsync(db, story, current.UserId, cancellationToken))
+            {
+                return Results.NotFound();
+            }
+
+            if (story.OwnerUserId == current.UserId)
+            {
+                return Error("invalid_story_comment", "No puedes responder tu propia historia.");
+            }
+
+            var now = timeProvider.GetUtcNow();
+            story.ViewedByUserIds.Add(current.UserId);
+            if (!story.ViewEvents.Any(view => view.UserId == current.UserId))
+            {
+                story.ViewEvents.Add(new StoryViewEvent
+                {
+                    UserId = current.UserId,
+                    ViewedAt = now
+                });
+            }
+            story.Comments.Add(new StoryCommentRecord
+            {
+                Id = NivraIds.NewId("scm"),
+                UserId = current.UserId,
+                MessageId = NormalizeOptional(request.MessageId),
+                CommentedAt = now
+            });
+
+            await db.SaveChangesAsync(cancellationToken);
+            var ownerResponse = await ToStoryResponseAsync(story, story.OwnerUserId, db, cancellationToken);
+            await hub.Clients.Group(GroupsFor.User(story.OwnerUserId)).SendAsync("story.commented", ownerResponse, cancellationToken);
+            return Results.Ok(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
+        });
+
+        group.MapPost("/{storyId}/repost", async Task<IResult> (string storyId, StoryRepostRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var original = await db.Stories.FirstOrDefaultAsync(candidate => candidate.Id == storyId, cancellationToken);
+            if (original is null ||
+                original.DeletedAt is not null ||
+                original.ExpiresAt <= timeProvider.GetUtcNow() ||
+                !await CanViewStoryAsync(db, original, current.UserId, cancellationToken))
+            {
+                return Results.NotFound();
+            }
+
+            if (original.OwnerUserId == current.UserId)
+            {
+                return Error("invalid_story_repost", "No necesitas repostear tu propia historia.");
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var durationSeconds = Math.Clamp(request.DurationSeconds ?? 24 * 60 * 60, 30, 7 * 24 * 60 * 60);
+            var visibility = request.Visibility is StoryVisibility.PublicWorld or StoryVisibility.Contacts or StoryVisibility.MutualContacts
+                ? request.Visibility.Value
+                : StoryVisibility.Contacts;
+            var repost = new StoryRecord
+            {
+                Id = NivraIds.NewId("sty"),
+                OwnerUserId = current.UserId,
+                Visibility = visibility,
+                TargetType = StoryTargetContacts,
+                TargetId = null,
+                EncryptedPayload = original.EncryptedPayload,
+                Caption = original.Caption,
+                MediaFileObjectId = original.MediaFileObjectId,
+                AllowedUserIds = [],
+                ViewedByUserIds = [],
+                ViewEvents = [],
+                Reactions = [],
+                Comments = [],
+                OriginalStoryId = original.OriginalStoryId ?? original.Id,
+                OriginalAuthorId = original.OriginalAuthorId ?? original.OwnerUserId,
+                ViewOnce = false,
+                CreatedAt = now,
+                ExpiresAt = now.AddSeconds(durationSeconds)
+            };
+
+            db.Stories.Add(repost);
+            await db.SaveChangesAsync(cancellationToken);
+
+            var response = await ToStoryResponseAsync(repost, current.UserId, db, cancellationToken);
+            if (repost.Visibility == StoryVisibility.PublicWorld)
+            {
+                await hub.Clients.All.SendAsync("story.worldCreated", response, cancellationToken);
+            }
+            else
+            {
+                var audience = await StoryAudienceAsync(db, repost, cancellationToken);
+                await NotifyUsers(hub, audience, "story.created", response);
+                foreach (var userId in audience.Where(userId => userId != current.UserId).Distinct(StringComparer.Ordinal))
+                {
+                    await pushNotifications.SendEventAsync(userId, "Nivra", "Historia reposteada", "story", $"nivra-story-{repost.Id}", new Dictionary<string, string>
+                    {
+                        ["storyId"] = repost.Id,
+                        ["ownerUserId"] = current.UserId
+                    }, cancellationToken);
+                }
+            }
+
+            return Results.Created($"/stories/{repost.Id}", response);
         });
 
         group.MapGet("/{storyId}/media", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
@@ -2048,7 +2262,7 @@ public static partial class EndpointExtensions
 
             if (request.EncryptedSize > MaxEncryptedUploadBytes)
             {
-                return Error("file_too_large", "El archivo cifrado supera el limite de 50 MB.", StatusCodes.Status413PayloadTooLarge);
+                return Error("file_too_large", $"El archivo cifrado supera el limite de {MaxUploadLabel}.", StatusCodes.Status413PayloadTooLarge);
             }
 
             var allowed = (request.AllowedUserIds ?? [])
@@ -2120,7 +2334,7 @@ public static partial class EndpointExtensions
 
             if (http.Request.ContentLength > MaxEncryptedUploadBytes)
             {
-                return Error("file_too_large", "El archivo cifrado supera el limite de 50 MB.", StatusCodes.Status413PayloadTooLarge);
+                return Error("file_too_large", $"El archivo cifrado supera el limite de {MaxUploadLabel}.", StatusCodes.Status413PayloadTooLarge);
             }
 
             var written = await storage.SaveAsync(file, http.Request.Body, http.Request.ContentLength, cancellationToken);
@@ -3801,19 +4015,127 @@ public static partial class EndpointExtensions
     private static async Task<StoryResponse> ToStoryResponseAsync(StoryRecord story, string currentUserId, NivraDbContext db, CancellationToken cancellationToken)
     {
         var owner = await db.Users.FirstAsync(user => user.Id == story.OwnerUserId, cancellationToken);
+        var includeStats = story.OwnerUserId == currentUserId;
+        var originalAuthor = story.OriginalAuthorId is null
+            ? null
+            : await db.Users
+                .Where(user => user.Id == story.OriginalAuthorId && user.DisabledAt == null)
+                .FirstOrDefaultAsync(cancellationToken);
+        var viewCount = story.ViewedByUserIds
+            .Concat(story.ViewEvents.Select(view => view.UserId))
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .Count();
         return new StoryResponse(
             story.Id,
             await ToUserSummaryAsync(owner, currentUserId, db, cancellationToken),
             story.Visibility,
+            NormalizeStoryTargetType(story.TargetType, story.TargetId),
+            story.TargetId,
             story.EncryptedPayload,
             story.Caption,
             story.MediaFileObjectId,
             story.AllowedUserIds.ToList(),
             story.ViewOnce,
             story.ViewedByUserIds.Contains(currentUserId),
-            story.ViewedByUserIds.Count,
+            viewCount,
+            story.Reactions
+                .OrderByDescending(reaction => reaction.ReactedAt)
+                .FirstOrDefault(reaction => reaction.UserId == currentUserId)
+                ?.Emoji,
+            story.OriginalStoryId,
+            originalAuthor is null ? null : await ToUserSummaryAsync(originalAuthor, currentUserId, db, cancellationToken),
+            includeStats ? await ToStoryViewResponsesAsync(story, currentUserId, db, cancellationToken) : [],
+            includeStats ? await ToStoryReactionResponsesAsync(story, currentUserId, db, cancellationToken) : [],
+            includeStats ? await ToStoryCommentResponsesAsync(story, currentUserId, db, cancellationToken) : [],
             story.CreatedAt,
             story.ExpiresAt);
+    }
+
+    private static async Task<List<StoryViewResponse>> ToStoryViewResponsesAsync(StoryRecord story, string currentUserId, NivraDbContext db, CancellationToken cancellationToken)
+    {
+        var events = story.ViewEvents
+            .GroupBy(view => view.UserId, StringComparer.Ordinal)
+            .Select(group => group.OrderBy(view => view.ViewedAt).First())
+            .Concat(story.ViewedByUserIds
+                .Where(userId => story.ViewEvents.All(view => view.UserId != userId))
+                .Select(userId => new StoryViewEvent
+                {
+                    UserId = userId,
+                    ViewedAt = story.CreatedAt
+                }))
+            .OrderByDescending(view => view.ViewedAt)
+            .ToList();
+        var users = await UsersByIdAsync(db, events.Select(view => view.UserId), cancellationToken);
+        var responses = new List<StoryViewResponse>();
+        foreach (var view in events)
+        {
+            if (users.TryGetValue(view.UserId, out var user))
+            {
+                responses.Add(new StoryViewResponse(
+                    await ToUserSummaryAsync(user, currentUserId, db, cancellationToken),
+                    view.ViewedAt));
+            }
+        }
+
+        return responses;
+    }
+
+    private static async Task<List<StoryReactionResponse>> ToStoryReactionResponsesAsync(StoryRecord story, string currentUserId, NivraDbContext db, CancellationToken cancellationToken)
+    {
+        var reactions = story.Reactions
+            .OrderByDescending(reaction => reaction.ReactedAt)
+            .ToList();
+        var users = await UsersByIdAsync(db, reactions.Select(reaction => reaction.UserId), cancellationToken);
+        var responses = new List<StoryReactionResponse>();
+        foreach (var reaction in reactions)
+        {
+            if (users.TryGetValue(reaction.UserId, out var user))
+            {
+                responses.Add(new StoryReactionResponse(
+                    reaction.Id,
+                    await ToUserSummaryAsync(user, currentUserId, db, cancellationToken),
+                    reaction.Emoji,
+                    reaction.ReactedAt));
+            }
+        }
+
+        return responses;
+    }
+
+    private static async Task<List<StoryCommentResponse>> ToStoryCommentResponsesAsync(StoryRecord story, string currentUserId, NivraDbContext db, CancellationToken cancellationToken)
+    {
+        var comments = story.Comments
+            .OrderByDescending(comment => comment.CommentedAt)
+            .ToList();
+        var users = await UsersByIdAsync(db, comments.Select(comment => comment.UserId), cancellationToken);
+        var responses = new List<StoryCommentResponse>();
+        foreach (var comment in comments)
+        {
+            if (users.TryGetValue(comment.UserId, out var user))
+            {
+                responses.Add(new StoryCommentResponse(
+                    comment.Id,
+                    await ToUserSummaryAsync(user, currentUserId, db, cancellationToken),
+                    comment.MessageId,
+                    comment.CommentedAt));
+            }
+        }
+
+        return responses;
+    }
+
+    private static Task<Dictionary<string, UserAccount>> UsersByIdAsync(NivraDbContext db, IEnumerable<string> userIds, CancellationToken cancellationToken)
+    {
+        var ids = userIds
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        return ids.Count == 0
+            ? Task.FromResult(new Dictionary<string, UserAccount>(StringComparer.Ordinal))
+            : db.Users
+                .Where(user => ids.Contains(user.Id) && user.DisabledAt == null)
+                .ToDictionaryAsync(user => user.Id, StringComparer.Ordinal, cancellationToken);
     }
 
     private static async Task<VaultRoomResponse> ToVaultRoomResponseAsync(VaultRoom room, string currentUserId, NivraDbContext db, CancellationToken cancellationToken)
@@ -3961,6 +4283,12 @@ public static partial class EndpointExtensions
             return false;
         }
 
+        if (NormalizeStoryTargetType(story.TargetType, story.TargetId) == StoryTargetGroup)
+        {
+            return story.TargetId is not null &&
+                await IsActiveConversationParticipantAsync(db, story.TargetId, viewerUserId, cancellationToken);
+        }
+
         return story.Visibility switch
         {
             StoryVisibility.PublicWorld => true,
@@ -3973,6 +4301,11 @@ public static partial class EndpointExtensions
 
     private static async Task<List<string>> StoryAudienceAsync(NivraDbContext db, StoryRecord story, CancellationToken cancellationToken)
     {
+        if (NormalizeStoryTargetType(story.TargetType, story.TargetId) == StoryTargetGroup && story.TargetId is not null)
+        {
+            return (await ActiveConversationParticipantIdsAsync(db, story.TargetId, cancellationToken)).ToList();
+        }
+
         return story.Visibility switch
         {
             StoryVisibility.SelectedUsers or StoryVisibility.CloseFriends => story.AllowedUserIds.ToList(),
@@ -3982,6 +4315,44 @@ public static partial class EndpointExtensions
                 .ToListAsync(cancellationToken),
             _ => []
         };
+    }
+
+    private static string NormalizeStoryTargetType(string? targetType, string? targetId)
+    {
+        var normalized = NormalizeOptional(targetType)?.ToLowerInvariant();
+        return normalized == StoryTargetGroup || NormalizeOptional(targetId) is not null
+            ? StoryTargetGroup
+            : StoryTargetContacts;
+    }
+
+    private static Task<bool> IsActiveConversationParticipantAsync(NivraDbContext db, string conversationId, string userId, CancellationToken cancellationToken)
+    {
+        return db.Conversations.AnyAsync(conversation =>
+            conversation.Id == conversationId &&
+            conversation.Type == ConversationType.Group &&
+            conversation.Participants.Any(participant => participant.UserId == userId && participant.RemovedAt == null),
+            cancellationToken);
+    }
+
+    private static async Task<HashSet<string>> ActiveConversationParticipantIdsAsync(NivraDbContext db, string conversationId, CancellationToken cancellationToken)
+    {
+        var conversation = await db.Conversations.FirstOrDefaultAsync(candidate => candidate.Id == conversationId && candidate.Type == ConversationType.Group, cancellationToken);
+        return conversation?.Participants
+            .Where(participant => participant.RemovedAt is null)
+            .Select(participant => participant.UserId)
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .ToHashSet(StringComparer.Ordinal) ?? [];
+    }
+
+    private static string? NormalizeStoryEmoji(string? emoji)
+    {
+        var value = NormalizeOptional(emoji);
+        if (value is null || value.Length > 16)
+        {
+            return null;
+        }
+
+        return value;
     }
 
     private static Task<List<string>> VaultRoomAudienceAsync(NivraDbContext db, string roomId, CancellationToken cancellationToken)

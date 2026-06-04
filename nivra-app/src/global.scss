@@ -127,6 +127,15 @@ ion-textarea {
   caret-color: var(--nivra-brand-2);
 }
 
+ion-toast.nivra-premium-toast {
+  --background: rgba(8, 13, 15, .96);
+  --border-radius: 8px;
+  --box-shadow: 0 18px 52px rgba(0, 0, 0, .34);
+  --color: var(--nivra-text);
+  --max-width: min(420px, calc(100vw - 28px));
+  font-weight: 800;
+}
+
 ion-modal,
 ion-popover {
   --background: var(--nivra-panel-solid);
@@ -156,6 +165,67 @@ ion-modal.media-audio-modal {
   --background: var(--nivra-panel-solid);
   --box-shadow: var(--nivra-shadow-soft);
   color: var(--nivra-text);
+}
+
+ion-modal.chat-media-viewer-modal {
+  --width: 100vw;
+  --height: 100dvh;
+  --border-radius: 0;
+  --background: #030607;
+  color: var(--nivra-text);
+}
+
+ion-modal.chat-media-viewer-modal::part(content) {
+  background: #030607;
+}
+
+.chat-media-viewer {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  background: #030607;
+}
+
+.chat-media-viewer header {
+  min-height: 60px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding:
+    calc(10px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+    max(12px, env(safe-area-inset-right))
+    10px
+    max(12px, env(safe-area-inset-left));
+  background: rgba(0, 0, 0, .44);
+}
+
+.chat-media-viewer header strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-media-viewer ion-button {
+  --border-radius: 999px;
+  width: 40px;
+  min-height: 40px;
+}
+
+.chat-media-viewer-body {
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+}
+
+.chat-media-viewer-body img,
+.chat-media-viewer-body video {
+  max-width: 100%;
+  max-height: 100%;
+  border-radius: 8px;
+  object-fit: contain;
 }
 
 .audio-player-sheet {
@@ -202,6 +272,195 @@ ion-modal.media-audio-modal {
 
 .audio-player-sheet audio {
   width: 100%;
+}
+
+.composer-busy {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 max(14px, env(safe-area-inset-right)) 10px max(14px, env(safe-area-inset-left));
+  color: var(--nivra-brand-2);
+  background: rgba(8, 13, 15, .82);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.composer-busy ion-spinner {
+  width: 16px;
+  height: 16px;
+}
+
+body.nivra-light-theme .composer-busy {
+  color: #047857;
+  background: rgba(255, 255, 255, .94);
+}
+
+.file-caption {
+  width: 100%;
+  margin: 7px 0 0;
+  line-height: 1.38;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+ion-modal.attachment-review-modal {
+  --width: min(520px, calc(100vw - 22px));
+  --height: auto;
+  --border-radius: 8px;
+  --background: var(--nivra-panel-solid);
+  --box-shadow: var(--nivra-shadow-soft);
+  color: var(--nivra-text);
+}
+
+.attachment-review {
+  max-height: min(760px, calc(100dvh - 24px));
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, .025)),
+    var(--nivra-panel-solid);
+}
+
+.attachment-review header,
+.attachment-review footer {
+  display: grid;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: rgba(8, 13, 15, .88);
+}
+
+.attachment-review header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  border-bottom: 1px solid var(--nivra-line);
+}
+
+.attachment-review header div,
+.attachment-review-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.attachment-review strong,
+.attachment-review span,
+.attachment-review small {
+  min-width: 0;
+}
+
+.attachment-review header strong,
+.attachment-review-copy strong,
+.attachment-review-copy small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-review header span,
+.attachment-review-copy small {
+  color: var(--nivra-muted);
+  font-size: 12px;
+}
+
+.attachment-review header ion-button,
+.attachment-review footer ion-button {
+  --border-radius: 999px;
+  margin: 0;
+}
+
+.attachment-review-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  padding: 12px;
+}
+
+.attachment-review-item {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: 54px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  background: rgba(255, 255, 255, .055);
+}
+
+.attachment-review-thumb {
+  width: 54px;
+  height: 54px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--nivra-brand-2);
+  background: rgba(255, 255, 255, .08);
+}
+
+.attachment-review-thumb img,
+.attachment-review-thumb video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.attachment-review-thumb ion-icon {
+  font-size: 24px;
+}
+
+.attachment-review footer {
+  grid-template-columns: minmax(0, 1fr) 44px;
+  border-top: 1px solid var(--nivra-line);
+}
+
+.attachment-review footer ion-textarea {
+  --background: rgba(255, 255, 255, .075);
+  --border-radius: 999px;
+  --color: var(--nivra-text);
+  --placeholder-color: var(--nivra-muted);
+  --padding-top: 10px;
+  --padding-bottom: 10px;
+  --padding-start: 15px;
+  --padding-end: 15px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 999px;
+  min-height: 42px;
+  max-height: 118px;
+  overflow: auto;
+}
+
+.attachment-review footer .send {
+  --background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+  --color: #04100d;
+  --box-shadow: 0 12px 26px rgba(24, 214, 162, .22);
+  width: 44px;
+  min-height: 44px;
+}
+
+body.nivra-light-theme .attachment-review {
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(247, 248, 251, .9)),
+    #ffffff;
+}
+
+body.nivra-light-theme .attachment-review header,
+body.nivra-light-theme .attachment-review footer {
+  background: rgba(255, 255, 255, .88);
+}
+
+body.nivra-light-theme .attachment-review-item,
+body.nivra-light-theme .attachment-review-thumb {
+  border-color: var(--nivra-line);
+  background: rgba(var(--ion-text-color-rgb), .055);
 }
 
 .contact-info .media-head {

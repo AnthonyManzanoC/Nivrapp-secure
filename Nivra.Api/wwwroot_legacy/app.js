@@ -10,7 +10,7 @@ const LOCAL_MESSAGE_STORE = "messages";
 const LOCAL_KEY_STORE = "deviceKeys";
 const LOCAL_PROFILE_STORE = "profilesStore";
 const VIEW_ONCE_DELETE_DELAY_MS = 15000;
-const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024;
+const MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024;
 const SYSTEM_MISSED_CALL_POLICY = "system:missed-call";
 const RINGTONE_SRC = "";
 const QR_LOGIN_TTL_MS = 2 * 60 * 1000;
@@ -5682,7 +5682,7 @@ function handleStoryMediaSelected(event) {
     return;
   }
   if (file.size > MAX_ATTACHMENT_BYTES) {
-    toast("Maximo 50 MB por instantanea cifrada.");
+    toast("Maximo 256 MB por instantanea cifrada.");
     return;
   }
   state.pendingStoryFile = file;
@@ -5971,8 +5971,8 @@ async function handleVaultFileSelected(event) {
   event.target.value = "";
   const room = activeVaultRoom();
   if (!file || !room) return;
-  if (file.size > 50 * 1024 * 1024) {
-    toast("Maximo 50 MB por archivo cifrado.");
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    toast("Maximo 256 MB por archivo cifrado.");
     return;
   }
   try {
@@ -6328,7 +6328,7 @@ async function sendFileAttachment(file, options = {}) {
 async function sendFileAttachmentToConversation(conversation, file, options = {}) {
   if (!file || !conversation) return;
   if (file.size > MAX_ATTACHMENT_BYTES) {
-    if (!options.quiet) toast("Maximo 50 MB por archivo cifrado.");
+    if (!options.quiet) toast("Maximo 256 MB por archivo cifrado.");
     return;
   }
   try {

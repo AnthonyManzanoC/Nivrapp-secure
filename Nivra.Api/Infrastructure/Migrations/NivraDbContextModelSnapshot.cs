@@ -613,6 +613,11 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .HasMaxLength(500)
                         .HasColumnType("character varying(500)");
 
+                    b.Property<string>("Comments")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("comments");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -635,8 +640,36 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("OriginalAuthorId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("OriginalStoryId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Reactions")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("reactions");
+
+                    b.Property<string>("TargetId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("TargetType")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)")
+                        .HasDefaultValue("contacts");
+
                     b.Property<bool>("ViewOnce")
                         .HasColumnType("boolean");
+
+                    b.Property<string>("ViewEvents")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("view_events");
 
                     b.Property<string>("ViewedByUserIds")
                         .IsRequired()
@@ -655,6 +688,8 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasIndex("MediaFileObjectId");
 
                     b.HasIndex("OwnerUserId", "CreatedAt");
+
+                    b.HasIndex("TargetType", "TargetId");
 
                     b.HasIndex("Visibility", "ExpiresAt");
 

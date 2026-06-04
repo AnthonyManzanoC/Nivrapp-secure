@@ -23,6 +23,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { PrivacySettings } from '../../core/models/nivra.models';
 import { AppLockService } from '../../core/services/app-lock.service';
+import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
 
 const THEME_STORAGE_KEY = 'nivra.theme';
@@ -43,6 +44,7 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly account = inject(AccountService);
   readonly appLock = inject(AppLockService);
   readonly calls = inject(CallsService);
+  readonly panicPin = inject(PanicPinService);
   readonly push = inject(PushService);
   private readonly router = inject(Router);
   private readonly loadingController = inject(LoadingController);
@@ -70,6 +72,8 @@ export class AccountPage implements OnInit, OnDestroy {
   setupPin = '';
   setupPinConfirm = '';
   pinSetupError = '';
+  panicPinValue = '';
+  panicPinConfirm = '';
   contactScannerOpen = false;
   contactScannerBusy = false;
   contactScannerStatus = 'Listo para escanear contacto.';
@@ -285,6 +289,35 @@ export class AccountPage implements OnInit, OnDestroy {
       await this.appLock.enableWebPin(this.setupPin);
       this.notice = 'Modo Seguro activado con PIN.';
       this.closePinSetupModal();
+    });
+  }
+
+  async savePanicPin(): Promise<void> {
+    const pin = this.panicPin.normalizePin(this.panicPinValue);
+    const confirm = this.panicPin.normalizePin(this.panicPinConfirm);
+    if (!this.panicPin.isValidPin(pin)) {
+      this.error = 'El PIN de panico debe tener de 4 a 6 digitos.';
+      return;
+    }
+    if (pin !== confirm) {
+      this.error = 'Confirma el mismo PIN de panico.';
+      return;
+    }
+
+    await this.run(async () => {
+      await this.panicPin.configure(pin);
+      this.panicPinValue = '';
+      this.panicPinConfirm = '';
+      this.notice = 'PIN de panico configurado localmente.';
+    });
+  }
+
+  async clearPanicPin(): Promise<void> {
+    await this.run(async () => {
+      this.panicPin.clear();
+      this.panicPinValue = '';
+      this.panicPinConfirm = '';
+      this.notice = 'PIN de panico quitado.';
     });
   }
 

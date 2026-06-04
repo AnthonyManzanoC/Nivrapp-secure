@@ -282,6 +282,8 @@ public sealed record VaultItemResponse(
 
 public sealed record CreateStoryRequest(
     StoryVisibility Visibility,
+    string? TargetType,
+    string? TargetId,
     string EncryptedPayload,
     string? Caption,
     string? MediaFileObjectId,
@@ -289,10 +291,34 @@ public sealed record CreateStoryRequest(
     bool ViewOnce,
     int? DurationSeconds);
 
+public sealed record StoryReactRequest(string Emoji);
+
+public sealed record StoryCommentRequest(string? MessageId);
+
+public sealed record StoryRepostRequest(StoryVisibility? Visibility, int? DurationSeconds);
+
+public sealed record StoryViewResponse(
+    UserSummaryResponse User,
+    DateTimeOffset ViewedAt);
+
+public sealed record StoryReactionResponse(
+    string Id,
+    UserSummaryResponse User,
+    string Emoji,
+    DateTimeOffset ReactedAt);
+
+public sealed record StoryCommentResponse(
+    string Id,
+    UserSummaryResponse User,
+    string? MessageId,
+    DateTimeOffset CommentedAt);
+
 public sealed record StoryResponse(
     string Id,
     UserSummaryResponse Owner,
     StoryVisibility Visibility,
+    string TargetType,
+    string? TargetId,
     string EncryptedPayload,
     string? Caption,
     string? MediaFileObjectId,
@@ -300,6 +326,12 @@ public sealed record StoryResponse(
     bool ViewOnce,
     bool ViewedByMe,
     int ViewCount,
+    string? MyReaction,
+    string? OriginalStoryId,
+    UserSummaryResponse? OriginalAuthor,
+    List<StoryViewResponse> Views,
+    List<StoryReactionResponse> Reactions,
+    List<StoryCommentResponse> Comments,
     DateTimeOffset CreatedAt,
     DateTimeOffset ExpiresAt);
 

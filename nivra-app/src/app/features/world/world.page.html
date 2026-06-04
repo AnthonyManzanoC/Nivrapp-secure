@@ -213,6 +213,12 @@
             @if (social.publishing()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
             Publicar
           </ion-button>
+          @if (social.publishingStatus()) {
+            <div class="story-compose-status">
+              <ion-spinner name="crescent"></ion-spinner>
+              <span>{{ social.publishingStatus() }}</span>
+            </div>
+          }
         </div>
       </article>
 
@@ -246,71 +252,88 @@
       <article class="panel span-12">
         <div class="panel-headline">
           <div>
-            <h2>Historias de contactos</h2>
-            <span class="card-sub">{{ contactStories().length }} visibles</span>
+            <h2>Mis historias</h2>
+            <span class="card-sub">{{ myStoryBuckets().length }} activas</span>
           </div>
         </div>
         <div class="story-grid">
-          @for (story of contactStories(); track story.id) {
-            @if (social.storyPayload(story); as payload) {
-              <div class="story-row">
-                <button type="button" class="story-open" (click)="openStory(story)">
-                  <span class="story-avatar">{{ (story.owner.displayName || story.owner.alias || 'N')[0] }}</span>
-                  <span>
-                    <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
-                    <small>{{ social.storyText(story) }}</small>
-                    <em>{{ payload.media ? payload.media.mime : story.visibility }} - {{ story.viewCount }} vistas</em>
-                  </span>
-                </button>
-                <div class="row-actions">
-                  <ion-button mode="ios" fill="clear" (click)="openStory(story)" [disabled]="busyId === 'story:' + story.id" aria-label="Ver historia">
-                    <ion-icon name="eye-outline"></ion-icon>
-                  </ion-button>
-                  @if (isMine(story)) {
-                    <ion-button mode="ios" fill="clear" color="danger" (click)="deleteStory(story)" aria-label="Eliminar historia">
-                      <ion-icon name="trash-outline"></ion-icon>
-                    </ion-button>
-                  }
-                </div>
+          @for (bucket of myStoryBuckets(); track bucket.id) {
+            <div class="story-row story-bucket-row mine-bucket" [class.group-story-row]="bucket.isGroup">
+              <button type="button" class="story-open" (click)="openStoryBucket(bucket)">
+                <span class="story-avatar">{{ (bucket.title || 'N')[0] }}</span>
+                <span>
+                  <strong>{{ bucket.title }}</strong>
+                  <small>{{ bucket.subtitle }} - {{ bucket.stories.length }} historia{{ bucket.stories.length === 1 ? '' : 's' }}</small>
+                  <em>{{ latestStory(bucket).viewCount }} vistas - {{ bucket.latestAt | date:'short' }}</em>
+                </span>
+              </button>
+              <div class="row-actions">
+                <ion-button mode="ios" fill="clear" (click)="openStoryBucket(bucket)" aria-label="Ver historia">
+                  <ion-icon name="eye-outline"></ion-icon>
+                </ion-button>
+                <ion-button mode="ios" fill="clear" color="danger" (click)="deleteStory(latestStory(bucket))" aria-label="Eliminar ultima historia">
+                  <ion-icon name="trash-outline"></ion-icon>
+                </ion-button>
               </div>
-            }
+            </div>
           } @empty {
-            <div class="empty-copy">Aun no hay historias de contactos visibles.</div>
+            <div class="empty-copy">Tus historias activas apareceran aqui.</div>
           }
         </div>
         <div class="story-section-separator"></div>
         <div class="panel-headline">
           <div>
-            <h2>Historias de tus grupos</h2>
-            <span class="card-sub">{{ groupStories().length }} visibles</span>
+            <h2>Actualizaciones recientes</h2>
+            <span class="card-sub">{{ recentStoryBuckets().length }} con historias nuevas</span>
           </div>
         </div>
         <div class="story-grid">
-          @for (story of groupStories(); track story.id) {
-            @if (social.storyPayload(story); as payload) {
-              <div class="story-row group-story-row">
-                <button type="button" class="story-open" (click)="openStory(story)">
-                  <span class="story-avatar">{{ (story.owner.displayName || story.owner.alias || 'N')[0] }}</span>
-                  <span>
-                    <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
-                    <small>{{ storyGroupTitle(story) }} - {{ social.storyText(story) }}</small>
-                    <em>{{ payload.media ? payload.media.mime : 'Grupo' }} - {{ story.viewCount }} vistas</em>
-                  </span>
-                </button>
-                <div class="row-actions">
-                  <ion-button mode="ios" fill="clear" (click)="openStory(story)" [disabled]="busyId === 'story:' + story.id" aria-label="Ver historia">
-                    <ion-icon name="eye-outline"></ion-icon>
-                  </ion-button>
-                  @if (isMine(story)) {
-                    <ion-button mode="ios" fill="clear" color="danger" (click)="deleteStory(story)" aria-label="Eliminar historia">
-                      <ion-icon name="trash-outline"></ion-icon>
-                    </ion-button>
-                  }
-                </div>
+          @for (bucket of recentStoryBuckets(); track bucket.id) {
+            <div class="story-row story-bucket-row unviewed" [class.group-story-row]="bucket.isGroup">
+              <button type="button" class="story-open" (click)="openStoryBucket(bucket)">
+                <span class="story-avatar story-ringed">{{ (bucket.title || 'N')[0] }}</span>
+                <span>
+                  <strong>{{ bucket.title }}</strong>
+                  <small>{{ bucket.subtitle }} - {{ bucket.unviewedCount }} nueva{{ bucket.unviewedCount === 1 ? '' : 's' }}</small>
+                  <em>{{ social.storyText(latestStory(bucket)) }} - {{ bucket.latestAt | date:'short' }}</em>
+                </span>
+              </button>
+              <div class="row-actions">
+                <ion-button mode="ios" fill="clear" (click)="openStoryBucket(bucket)" aria-label="Ver historia">
+                  <ion-icon name="eye-outline"></ion-icon>
+                </ion-button>
               </div>
-            }
+            </div>
           } @empty {
-            <div class="empty-copy">Aun no hay historias grupales visibles.</div>
+            <div class="empty-copy">No hay actualizaciones nuevas.</div>
+          }
+        </div>
+        <div class="story-section-separator"></div>
+        <div class="panel-headline">
+          <div>
+            <h2>Vistos</h2>
+            <span class="card-sub">{{ viewedStoryBuckets().length }} al dia</span>
+          </div>
+        </div>
+        <div class="story-grid viewed-grid">
+          @for (bucket of viewedStoryBuckets(); track bucket.id) {
+            <div class="story-row story-bucket-row viewed" [class.group-story-row]="bucket.isGroup">
+              <button type="button" class="story-open" (click)="openStoryBucket(bucket)">
+                <span class="story-avatar">{{ (bucket.title || 'N')[0] }}</span>
+                <span>
+                  <strong>{{ bucket.title }}</strong>
+                  <small>{{ bucket.subtitle }} - {{ bucket.stories.length }} vista{{ bucket.stories.length === 1 ? '' : 's' }}</small>
+                  <em>{{ social.storyText(latestStory(bucket)) }} - {{ bucket.latestAt | date:'short' }}</em>
+                </span>
+              </button>
+              <div class="row-actions">
+                <ion-button mode="ios" fill="clear" (click)="openStoryBucket(bucket)" aria-label="Ver historia">
+                  <ion-icon name="eye-outline"></ion-icon>
+                </ion-button>
+              </div>
+            </div>
+          } @empty {
+            <div class="empty-copy">Las historias vistas pasaran aqui.</div>
           }
         </div>
       </article>
@@ -318,23 +341,44 @@
 
     @if (social.activeStory(); as story) {
       @if (social.storyPayload(story); as payload) {
-        <section class="story-viewer">
+        <section class="story-viewer" [class.mine]="isMine(story)" [class.ui-hidden]="viewerUiHidden">
+          <div class="story-progress">
+            @for (item of viewerQueue; track item.id; let index = $index) {
+              <span><i [style.width.%]="progressFor(index)"></i></span>
+            }
+          </div>
           <div class="story-viewer-top">
             <div>
               <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
-              <span>{{ story.expiresAt | date:'shortTime' }}</span>
+              <span>{{ viewerSubtitle(story) }}</span>
             </div>
-            <button type="button" (click)="social.closeStory()" aria-label="Cerrar">
+            <button type="button" (click)="closeStoryViewer()" aria-label="Cerrar">
               <ion-icon name="close-outline"></ion-icon>
             </button>
           </div>
           <div class="story-viewer-body">
+            <button
+              type="button"
+              class="tap-zone tap-left"
+              (pointerdown)="onStoryPointerDown($event)"
+              (pointerup)="onStoryPointerUp($event, 'left')"
+              (pointercancel)="onStoryPointerCancel()"
+              aria-label="Historia anterior">
+            </button>
+            <button
+              type="button"
+              class="tap-zone tap-right"
+              (pointerdown)="onStoryPointerDown($event)"
+              (pointerup)="onStoryPointerUp($event, 'right')"
+              (pointercancel)="onStoryPointerCancel()"
+              aria-label="Historia siguiente">
+            </button>
             @if (payload.media; as mediaPayload) {
               @if (social.storyMedia(story); as media) {
                 @if (social.isImage(media.mime)) {
                   <img [src]="media.url" [alt]="media.name">
                 } @else if (social.isVideo(media.mime)) {
-                  <video [src]="media.url" controls playsinline autoplay></video>
+                  <video [src]="media.url" playsinline autoplay></video>
                 } @else {
                   <audio [src]="media.url" controls autoplay></audio>
                 }
@@ -348,12 +392,114 @@
               <p>{{ payload.text || story.caption || 'Instantanea' }}</p>
             }
           </div>
-          @if (payload.text) {
-            <footer>{{ payload.text }}</footer>
+          @if (story.originalAuthor?.alias) {
+            <div class="story-repost-badge">
+              <ion-icon name="repeat-outline"></ion-icon>
+              Reposteado de @{{ story.originalAuthor?.alias }}
+            </div>
           }
+          @if (payload.text && payload.media) {
+            <div class="story-caption">{{ payload.text }}</div>
+          }
+          <footer class="story-action-bar">
+            @if (isMine(story)) {
+              <button type="button" class="story-stats-trigger" (click)="openStats()">
+                <ion-icon name="bar-chart-outline"></ion-icon>
+                <span>{{ statsViews(story) }} vistas</span>
+              </button>
+            } @else {
+              <form class="story-reply" (submit)="$event.preventDefault(); sendStoryReply(story)">
+                <ion-input mode="ios" [(ngModel)]="storyReply" name="storyReply" placeholder="Responder historia..." [disabled]="busyId === 'reply:' + story.id"></ion-input>
+                <button type="submit" [disabled]="!storyReply.trim() || busyId === 'reply:' + story.id" aria-label="Enviar respuesta">
+                  <ion-icon name="send-outline"></ion-icon>
+                </button>
+              </form>
+              <div class="story-quick-actions">
+                <button type="button" class="heart-action" [class.active]="story.myReaction === '\u2764\uFE0F'" (click)="reactToStory(story, '\u2764\uFE0F')" aria-label="Me encanta">
+                  <ion-icon [name]="story.myReaction === '\u2764\uFE0F' ? 'heart' : 'heart-outline'"></ion-icon>
+                </button>
+                <button type="button" (click)="reactionsOpen = !reactionsOpen" aria-label="Reacciones">
+                  <ion-icon name="happy-outline"></ion-icon>
+                </button>
+                <button type="button" (click)="repostStory(story)" [disabled]="busyId === 'repost:' + story.id" aria-label="Repostear">
+                  <ion-icon name="repeat-outline"></ion-icon>
+                </button>
+              </div>
+              @if (reactionsOpen) {
+                <div class="story-reaction-menu">
+                  @for (emoji of storyReactionOptions; track emoji) {
+                    <button type="button" (click)="reactToStory(story, emoji)" [attr.aria-label]="'Reaccionar ' + emoji">{{ emoji }}</button>
+                  }
+                </div>
+              }
+            }
+          </footer>
         </section>
       }
     }
+
+    <ion-modal class="story-stats-modal" [isOpen]="statsOpen" [breakpoints]="[0, .55, .9]" [initialBreakpoint]=".55" (didDismiss)="closeStats()">
+      <ng-template>
+        @if (social.activeStory(); as story) {
+          <section class="story-stats-sheet">
+            <header>
+              <div>
+                <h2>Actividad</h2>
+                <span>{{ statsViews(story) }} vistas - {{ statsReactions(story) }} reacciones - {{ statsComments(story) }} comentarios</span>
+              </div>
+              <button type="button" (click)="closeStats()" aria-label="Cerrar estadisticas">
+                <ion-icon name="close-outline"></ion-icon>
+              </button>
+            </header>
+            <div class="stats-columns">
+              <article>
+                <h3>Vistas</h3>
+                @for (view of story.views || []; track view.user.id) {
+                  <div class="stats-row">
+                    <span class="stats-avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span>
+                    <span>
+                      <strong>{{ view.user.displayName || view.user.alias }}</strong>
+                      <small>@{{ view.user.alias }} - {{ view.viewedAt | date:'shortTime' }}</small>
+                    </span>
+                  </div>
+                } @empty {
+                  <p class="stats-empty">Sin vistas todavia.</p>
+                }
+              </article>
+              <article>
+                <h3>Reacciones</h3>
+                @for (reaction of story.reactions || []; track reaction.id) {
+                  <div class="stats-row">
+                    <span class="stats-avatar">{{ reaction.emoji }}</span>
+                    <span>
+                      <strong>{{ reaction.user.displayName || reaction.user.alias }}</strong>
+                      <small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | date:'shortTime' }}</small>
+                    </span>
+                  </div>
+                } @empty {
+                  <p class="stats-empty">Sin reacciones aun.</p>
+                }
+              </article>
+              <article>
+                <h3>Comentarios</h3>
+                @for (comment of story.comments || []; track comment.id) {
+                  <div class="stats-row comment-row">
+                    <span class="stats-avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span>
+                    <span>
+                      <strong>{{ comment.user.displayName || comment.user.alias }}</strong>
+                      <small>@{{ comment.user.alias }} - {{ comment.commentedAt | date:'shortTime' }}</small>
+                      <em>{{ storyCommentText(story, comment) }}</em>
+                    </span>
+                  </div>
+                } @empty {
+                  <p class="stats-empty">Sin comentarios aun.</p>
+                }
+              </article>
+            </div>
+          </section>
+        }
+      </ng-template>
+    </ion-modal>
 
     @if (notice) { <p class="notice">{{ notice }}</p> }
     @if (error) { <p class="error">{{ error }}</p> }

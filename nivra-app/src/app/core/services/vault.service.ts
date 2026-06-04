@@ -27,7 +27,7 @@ import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
 const VAULT_META_PREFIX = 'nivra.vault.';
-const MAX_VAULT_FILE_BYTES = 50 * 1024 * 1024;
+const MAX_VAULT_FILE_BYTES = 256 * 1024 * 1024;
 const MAX_NOTE_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 const MAX_NOTE_ATTACHMENTS = 8;
 
@@ -334,7 +334,7 @@ export class VaultService {
       throw new Error('Abre una sala Vault primero.');
     }
     if (file.size > MAX_VAULT_FILE_BYTES) {
-      throw new Error('Maximo 50 MB por archivo cifrado.');
+      throw new Error('Maximo 256 MB por archivo cifrado.');
     }
 
     this.uploading.set(true);

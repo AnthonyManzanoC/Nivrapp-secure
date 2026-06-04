@@ -321,15 +321,44 @@ public sealed class StoryRecord
     public required string Id { get; init; }
     public required string OwnerUserId { get; init; }
     public StoryVisibility Visibility { get; set; }
+    public string TargetType { get; set; } = "contacts";
+    public string? TargetId { get; set; }
     public required string EncryptedPayload { get; set; }
     public string? Caption { get; set; }
     public string? MediaFileObjectId { get; set; }
     public HashSet<string> AllowedUserIds { get; set; } = new(StringComparer.Ordinal);
     public HashSet<string> ViewedByUserIds { get; set; } = new(StringComparer.Ordinal);
+    public List<StoryViewEvent> ViewEvents { get; set; } = [];
+    public List<StoryReactionRecord> Reactions { get; set; } = [];
+    public List<StoryCommentRecord> Comments { get; set; } = [];
+    public string? OriginalStoryId { get; set; }
+    public string? OriginalAuthorId { get; set; }
     public bool ViewOnce { get; set; }
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
+}
+
+public sealed class StoryViewEvent
+{
+    public required string UserId { get; set; }
+    public DateTimeOffset ViewedAt { get; set; }
+}
+
+public sealed class StoryReactionRecord
+{
+    public required string Id { get; set; }
+    public required string UserId { get; set; }
+    public required string Emoji { get; set; }
+    public DateTimeOffset ReactedAt { get; set; }
+}
+
+public sealed class StoryCommentRecord
+{
+    public required string Id { get; set; }
+    public required string UserId { get; set; }
+    public string? MessageId { get; set; }
+    public DateTimeOffset CommentedAt { get; set; }
 }
 
 public sealed class VaultRoom
