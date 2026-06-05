@@ -46,8 +46,13 @@
     class="messages-content"
     [scrollEvents]="true"
     [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
-    [style.--nivra-chat-background]="appSettings.chatBackgroundCss()">
-    <div class="chat-bg" aria-hidden="true"></div>
+    [style.--nivra-chat-background]="appSettings.chatPreviewBackgroundCss()">
+    <div
+      class="real-chat-bg"
+      aria-hidden="true"
+      [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
+      [style.background]="appSettings.chatPreviewBackgroundCss()">
+    </div>
     <div class="messages">
       @for (message of messages(); track message.id) {
         @if (chat.isCallLog(message.payload)) {

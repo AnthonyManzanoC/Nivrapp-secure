@@ -4,7 +4,7 @@
   position: relative;
   z-index: 6;
   isolation: isolate;
-  background: var(--nivra-bg) !important;
+  background: transparent !important;
 }
 
 .chat-detail {
@@ -13,7 +13,7 @@
   height: 100%;
   min-height: 0;
   overflow: hidden;
-  background: var(--nivra-bg) !important;
+  background: transparent !important;
 }
 
 .chat-header {
@@ -292,22 +292,16 @@ ion-popover.attachment-popover {
 
 .messages-content {
   --background: transparent !important;
-  background-size: auto, 28px 28px;
+  position: relative;
+  z-index: 0;
+  isolation: isolate;
   background: transparent !important;
   --padding-bottom: 0;
 }
 
-.messages-content::part(background) {
+.messages-content::part(background),
+.messages-content::part(scroll) {
   background: transparent !important;
-}
-
-.chat-bg {
-  position: fixed;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-  background: var(--nivra-chat-background, var(--nivra-bg)) !important;
-  background-size: auto, 92px 92px, 84px 84px, auto;
 }
 
 .messages {
@@ -1590,7 +1584,7 @@ ion-modal.forward-modal {
 :host-context(.nivra-light-theme),
 :host-context(.nivra-light-theme) .chat-detail {
   color: #111827;
-  background: #f2f2f7 !important;
+  background: transparent !important;
 }
 
 :host-context(.nivra-light-theme) .chat-header,
@@ -1633,7 +1627,8 @@ ion-modal.forward-modal {
 }
 
 :host-context(.nivra-light-theme) .messages-content,
-:host-context(.nivra-light-theme) .messages-content::part(background) {
+:host-context(.nivra-light-theme) .messages-content::part(background),
+:host-context(.nivra-light-theme) .messages-content::part(scroll) {
   --background: transparent !important;
   background: transparent !important;
 }

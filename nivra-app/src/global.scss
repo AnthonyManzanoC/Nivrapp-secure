@@ -1072,13 +1072,41 @@ body.nivra-light-theme[data-nivra-wallpaper="botanic"] app-chat-detail .messages
 }
 
 app-chat-detail .messages-content,
-app-chat-detail .messages-content::part(background) {
+app-chat-detail .messages-content::part(background),
+app-chat-detail .messages-content::part(scroll) {
   --background: transparent !important;
   background: transparent !important;
 }
 
-app-chat-detail .chat-bg {
+body[data-nivra-wallpaper] app-chat-detail .messages-content,
+body[data-nivra-wallpaper] app-chat-detail .messages-content::part(background),
+body[data-nivra-wallpaper] app-chat-detail .messages-content::part(scroll),
+body.nivra-light-theme[data-nivra-wallpaper] app-chat-detail .messages-content,
+body.nivra-light-theme[data-nivra-wallpaper] app-chat-detail .messages-content::part(background),
+body.nivra-light-theme[data-nivra-wallpaper] app-chat-detail .messages-content::part(scroll) {
+  --background: transparent !important;
+  background: transparent !important;
+}
+
+app-chat-detail .real-chat-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 1 !important;
   background: var(--nivra-chat-background, var(--nivra-bg)) !important;
+  background-size: 92px 92px, 84px 84px, auto, auto;
+  background-repeat: repeat, repeat, no-repeat, no-repeat;
+}
+
+app-chat-detail .real-chat-bg[data-wallpaper="paper"] {
+  background-size: 26px 26px, auto !important;
+  background-repeat: repeat, no-repeat !important;
+}
+
+app-chat-detail .real-chat-bg[data-wallpaper="clean"] {
+  background-size: auto !important;
+  background-repeat: no-repeat !important;
 }
 
 .voice-card {
