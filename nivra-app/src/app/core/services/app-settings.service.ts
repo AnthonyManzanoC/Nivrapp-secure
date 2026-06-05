@@ -208,6 +208,22 @@ export class AppSettingsService {
     return this.resolvedLightTheme(settings) ? 'light' : 'dark';
   }
 
+  chatPreviewBackgroundCss(settings = this.settings()): string {
+    switch (settings.chatWallpaper) {
+      case 'clean':
+        return 'linear-gradient(180deg, #ffffff 0%, #e8edf5 100%)';
+      case 'botanic':
+        return 'radial-gradient(circle at 24px 18px, rgba(80, 190, 118, .35) 4px, transparent 5px), linear-gradient(135deg, #bfe6b8, #6bae8c)';
+      case 'midnight':
+        return 'radial-gradient(circle at 28px 20px, rgba(124, 199, 255, .35) 2px, transparent 3px), linear-gradient(135deg, #06101a, #111b2d)';
+      case 'paper':
+        return 'linear-gradient(90deg, rgba(17, 24, 39, .1) 1px, transparent 1px), linear-gradient(180deg, #fbf3df, #dfcfae)';
+      case 'nivra':
+      default:
+        return 'radial-gradient(circle at 20px 20px, rgba(114, 240, 202, .16) 2px, transparent 3px), linear-gradient(135deg, rgba(var(--ion-color-primary-rgb), .22), rgba(47, 140, 255, .12)), #10272c';
+    }
+  }
+
   private reloadForAccount(_userId: string): void {
     const nextKey = this.storageKey();
     if (nextKey === this.currentStorageKey) {

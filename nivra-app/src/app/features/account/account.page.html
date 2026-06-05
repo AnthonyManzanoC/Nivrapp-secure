@@ -132,7 +132,7 @@
         <div
           class="chat-settings-preview"
           [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
-          [style.background]="appSettings.chatBackgroundCss()"
+          [style.background]="appSettings.chatPreviewBackgroundCss()"
           [style.--preview-radius]="appSettings.settings().messageCornerRadius + 'px'"
           [style.--preview-font]="appSettings.settings().messageTextSize + 'px'">
           <div class="preview-message">

@@ -61,7 +61,8 @@ export class AccountPage implements OnInit, OnDestroy {
   profilePhotoDirty = false;
   isDiscoverable = true;
   saving = false;
-  notice = '';
+  private noticeValue = '';
+  private noticeTimer: number | null = null;
   error = '';
   deleteConfirmation = '';
   qrText = '';
@@ -173,8 +174,30 @@ export class AccountPage implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.aliasCheckSub?.unsubscribe();
+    if (this.noticeTimer !== null) {
+      window.clearTimeout(this.noticeTimer);
+    }
     void this.stopQrScanner();
     void this.stopContactScanner();
+  }
+
+  get notice(): string {
+    return this.noticeValue;
+  }
+
+  set notice(value: string) {
+    this.noticeValue = value;
+    if (this.noticeTimer !== null) {
+      window.clearTimeout(this.noticeTimer);
+      this.noticeTimer = null;
+    }
+    if (value) {
+      this.noticeTimer = window.setTimeout(() => {
+        if (this.noticeValue === value) {
+          this.noticeValue = '';
+        }
+      }, 2500);
+    }
   }
 
   async reload(): Promise<void> {

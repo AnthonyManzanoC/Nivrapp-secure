@@ -34,6 +34,7 @@ import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary 
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { ContactSyncService } from '../../core/services/contact-sync.service';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { SocialService } from '../../core/services/social.service';
 import { Router } from '@angular/router';
 
@@ -52,7 +53,7 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })
@@ -545,7 +546,8 @@ export class WorldPage implements OnInit, OnDestroy {
   private async showPremiumToast(message: string): Promise<void> {
     const toast = await this.toastController.create({
       message,
-      duration: 3200,
+      duration: 2500,
+      animated: true,
       position: 'top',
       cssClass: 'nivra-premium-toast nivra-safe-toast',
     });

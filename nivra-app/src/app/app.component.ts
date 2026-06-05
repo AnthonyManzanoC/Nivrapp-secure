@@ -15,6 +15,7 @@ import { ContactSyncService } from './core/services/contact-sync.service';
 import { DeviceWipeService } from './core/services/device-wipe.service';
 import { PushService } from './core/services/push.service';
 import { SignalrService } from './core/services/signalr.service';
+import { TranslateService } from './core/services/translate.service';
 import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 
 const THEME_STORAGE_KEY = 'nivra.theme';
@@ -36,6 +37,7 @@ export class AppComponent {
   private readonly push = inject(PushService);
   private readonly router = inject(Router);
   private readonly realtime = inject(SignalrService);
+  private readonly translate = inject(TranslateService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly systemThemeQuery = typeof window !== 'undefined' && 'matchMedia' in window
     ? window.matchMedia('(prefers-color-scheme: light)')
@@ -63,6 +65,7 @@ export class AppComponent {
   });
 
   constructor() {
+    void this.translate;
     this.applyStoredTheme();
     this.bindSystemTheme();
     this.bindAppLinks();

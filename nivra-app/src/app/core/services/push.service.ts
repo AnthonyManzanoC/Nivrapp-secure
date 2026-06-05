@@ -672,7 +672,8 @@ export class PushService {
     const toast = await this.toastController.create({
       header: visual.title,
       message: visual.body,
-      duration: visual.requireInteraction ? 9000 : 3600,
+      duration: 2500,
+      animated: true,
       position: 'top',
       color: 'dark',
       cssClass: 'nivra-premium-toast nivra-safe-toast',

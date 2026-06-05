@@ -1071,6 +1071,16 @@ body.nivra-light-theme[data-nivra-wallpaper="botanic"] app-chat-detail .messages
   background-size: 92px 92px, 84px 84px, auto, auto;
 }
 
+app-chat-detail .messages-content,
+app-chat-detail .messages-content::part(background) {
+  --background: transparent !important;
+  background: transparent !important;
+}
+
+app-chat-detail .chat-bg {
+  background: var(--nivra-chat-background, var(--nivra-bg)) !important;
+}
+
 .voice-card {
   width: min(72vw, 360px);
   display: grid;

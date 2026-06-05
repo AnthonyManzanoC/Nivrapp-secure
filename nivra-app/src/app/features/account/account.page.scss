@@ -506,6 +506,26 @@
   display: none;
 }
 
+@media (pointer: fine) {
+  .wallpaper-row,
+  .accent-row {
+    scrollbar-width: thin;
+    scrollbar-color: var(--ion-color-step-300, rgba(var(--ion-color-primary-rgb), .36)) transparent;
+  }
+
+  .wallpaper-row::-webkit-scrollbar,
+  .accent-row::-webkit-scrollbar {
+    display: block;
+    height: 6px;
+  }
+
+  .wallpaper-row::-webkit-scrollbar-thumb,
+  .accent-row::-webkit-scrollbar-thumb {
+    border-radius: 10px;
+    background: var(--ion-color-step-300, rgba(var(--ion-color-primary-rgb), .36));
+  }
+}
+
 .accent-dot {
   flex: 0 0 34px;
   width: 34px;

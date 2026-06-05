@@ -17,6 +17,8 @@ import { addIcons } from 'ionicons';
 import { callOutline, keyOutline, logInOutline, qrCodeOutline, shieldCheckmarkOutline } from 'ionicons/icons';
 import * as QRCode from 'qrcode';
 import { AuthService, QrLoginChallenge } from '../../core/services/auth.service';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 
 @Component({
   selector: 'app-auth',
@@ -24,6 +26,7 @@ import { AuthService, QrLoginChallenge } from '../../core/services/auth.service'
   imports: [
     CommonModule,
     FormsModule,
+    TranslatePipe,
     IonButton,
     IonContent,
     IonIcon,
@@ -40,6 +43,7 @@ import { AuthService, QrLoginChallenge } from '../../core/services/auth.service'
 })
 export class AuthPage implements OnDestroy {
   readonly auth = inject(AuthService);
+  readonly translate = inject(TranslateService);
   mode: 'phone' | 'alias' | 'qr' = 'phone';
   aliasMode: 'login' | 'register' = 'login';
   phone = '';
@@ -63,7 +67,7 @@ export class AuthPage implements OnDestroy {
   async sendOtp(): Promise<void> {
     await this.run(async () => {
       await this.auth.sendFirebaseOtp(this.phone);
-      this.notice = 'Codigo enviado.';
+      this.notice = this.translate.instant('LOGIN.CODE_SENT', 'Codigo enviado.');
     });
   }
 
@@ -71,14 +75,14 @@ export class AuthPage implements OnDestroy {
     await this.run(async () => {
       await this.auth.verifyFirebaseOtp(this.phone, this.code);
       if (this.auth.pendingPhoneAlias()) {
-        this.notice = 'Telefono verificado.';
+        this.notice = this.translate.instant('LOGIN.PHONE_VERIFIED', 'Telefono verificado.');
       }
     });
   }
 
   async completeAlias(): Promise<void> {
     if (!this.isAliasValid(this.alias)) {
-      this.error = 'El alias debe tener 3 a 32 caracteres: letras, numeros, guion, punto o guion bajo.';
+      this.error = this.translate.instant('LOGIN.ALIAS_ERROR', 'El alias debe tener 3 a 32 caracteres: letras, numeros, guion, punto o guion bajo.');
       return;
     }
     await this.run(() => this.auth.completePhoneAlias(this.alias, this.displayName));
@@ -86,7 +90,7 @@ export class AuthPage implements OnDestroy {
 
   async submitAlias(): Promise<void> {
     if (!this.isAliasValid(this.alias)) {
-      this.error = 'El alias debe tener 3 a 32 caracteres: letras, numeros, guion, punto o guion bajo.';
+      this.error = this.translate.instant('LOGIN.ALIAS_ERROR', 'El alias debe tener 3 a 32 caracteres: letras, numeros, guion, punto o guion bajo.');
       return;
     }
     await this.run(() => this.auth.loginWithAlias(this.alias, this.password, this.aliasMode, this.displayName));
@@ -102,7 +106,7 @@ export class AuthPage implements OnDestroy {
         color: { dark: '#04100d', light: '#f4fbf7' },
         errorCorrectionLevel: 'L',
       });
-      this.notice = 'QR activo.';
+      this.notice = this.translate.instant('LOGIN.QR_ACTIVE', 'QR activo.');
     });
   }
 

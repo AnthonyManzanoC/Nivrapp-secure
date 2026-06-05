@@ -32,6 +32,7 @@ import {
   trashOutline,
 } from 'ionicons/icons';
 import { DecodedVaultItem, FileChatPayload, UserSummary, VaultNoteAttachment, VaultRoom, VaultRoomMember, VaultRoomMessageVm } from '../../core/models/nivra.models';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { DeviceWipeService } from '../../core/services/device-wipe.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
 import { VaultService } from '../../core/services/vault.service';
@@ -40,7 +41,7 @@ import { MediaStreamDirective } from '../../shared/media-stream.directive';
 @Component({
   selector: 'app-vault',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
   templateUrl: './vault.page.html',
   styleUrls: ['./vault.page.scss'],
 })

@@ -1300,7 +1300,8 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   private async showPremiumToast(message: string): Promise<void> {
     const toast = await this.toastController.create({
       message,
-      duration: 3200,
+      duration: 2500,
+      animated: true,
       position: 'top',
       cssClass: 'nivra-premium-toast nivra-safe-toast',
     });

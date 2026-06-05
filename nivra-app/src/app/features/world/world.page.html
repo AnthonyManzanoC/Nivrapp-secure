@@ -2,8 +2,8 @@
   <main class="surface">
     <header class="page-head">
       <div>
-        <h1>Mundo</h1>
-        <p>Contactos, solicitudes e historias privadas.</p>
+        <h1>{{ 'WORLD.TITLE' | translate:'Mundo' }}</h1>
+        <p>{{ 'WORLD.COPY' | translate:'Contactos, solicitudes e historias privadas.' }}</p>
       </div>
       <ion-button mode="ios" fill="clear" (click)="social.load()" aria-label="Actualizar">
         @if (social.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
@@ -17,21 +17,21 @@
             <ion-icon [name]="isGhostMode() ? 'finger-print-outline' : 'shield-checkmark-outline'"></ion-icon>
           </span>
           <div>
-            <h2>{{ isGhostMode() ? 'Modo fantasma' : 'Modo publico controlado' }}</h2>
-            <p>{{ isGhostMode() ? 'Tu alias no aparece por agendas. Comparte @' + auth.session()?.user?.alias + ' o tu QR cuando quieras conectar.' : 'Tu telefono vinculado puede aparecer en radares cifrados de contactos que ya lo tienen.' }}</p>
+            <h2>{{ isGhostMode() ? ('WORLD.GHOST_MODE' | translate:'Modo fantasma') : ('WORLD.PUBLIC_MODE' | translate:'Modo publico controlado') }}</h2>
+            <p>{{ isGhostMode() ? (('WORLD.GHOST_COPY' | translate:'Tu alias no aparece por agendas. Comparte @') + auth.session()?.user?.alias + ('WORLD.GHOST_COPY_SUFFIX' | translate:' o tu QR cuando quieras conectar.')) : ('WORLD.PUBLIC_COPY' | translate:'Tu telefono vinculado puede aparecer en radares cifrados de contactos que ya lo tienen.') }}</p>
           </div>
         </div>
         <ion-button mode="ios" fill="outline" (click)="openAccount()">
           <ion-icon [name]="isGhostMode() ? 'phone-portrait-outline' : 'shield-checkmark-outline'"></ion-icon>
-          Cuenta
+          {{ 'TABS.ACCOUNT' | translate:'Cuenta' }}
         </ion-button>
       </article>
 
       <article class="panel span-5">
         <div class="panel-headline">
           <div>
-            <h2>Contactos</h2>
-            <span class="card-sub">{{ social.contacts().length }} guardados</span>
+            <h2>{{ 'WORLD.CONTACTS' | translate:'Contactos' }}</h2>
+            <span class="card-sub">{{ social.contacts().length }} {{ 'WORLD.SAVED' | translate:'guardados' }}</span>
           </div>
         </div>
         <div class="contact-list">
@@ -57,16 +57,16 @@
               </div>
             </div>
           } @empty {
-            <div class="empty-copy">Tus contactos apareceran aqui.</div>
+            <div class="empty-copy">{{ 'WORLD.CONTACTS_EMPTY' | translate:'Tus contactos apareceran aqui.' }}</div>
           }
         </div>
       </article>
 
       <article class="panel span-7">
-        <h2>Buscar personas</h2>
+        <h2>{{ 'WORLD.SEARCH_PEOPLE' | translate:'Buscar personas' }}</h2>
         <label class="search-line">
           <ion-icon name="search-outline"></ion-icon>
-          <ion-input mode="ios" [(ngModel)]="query" (ionInput)="searchChanged()" placeholder="Alias o nombre"></ion-input>
+          <ion-input mode="ios" [(ngModel)]="query" (ionInput)="searchChanged()" [placeholder]="'WORLD.ALIAS_OR_NAME' | translate:'Alias o nombre'"></ion-input>
         </label>
         <div class="stack">
           @for (person of social.people(); track person.id) {
@@ -92,7 +92,7 @@
               </div>
             </div>
           } @empty {
-            <div class="empty-copy">Busca un alias para conectar.</div>
+            <div class="empty-copy">{{ 'WORLD.SEARCH_EMPTY' | translate:'Busca un alias para conectar.' }}</div>
           }
         </div>
       </article>
