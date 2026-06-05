@@ -85,9 +85,9 @@ export class AccountPage implements OnInit, OnDestroy {
   storageUsageBytes = 0;
   storageQuotaBytes = 0;
   readonly themeModeOptions = [
-    { label: 'Sistema', value: 'system' },
-    { label: 'Oscuro', value: 'dark' },
-    { label: 'Claro', value: 'light' },
+    { label: 'Sistema', labelKey: 'settings.theme.system', value: 'system' },
+    { label: 'Oscuro', labelKey: 'settings.theme.dark', value: 'dark' },
+    { label: 'Claro', labelKey: 'settings.theme.light', value: 'light' },
   ];
   readonly accentChoices = [
     { label: 'Nivra', value: 'nivra', color: '#18d6a2', second: '#72f0ca' },
@@ -100,33 +100,33 @@ export class AccountPage implements OnInit, OnDestroy {
     { label: 'Slate', value: 'slate', color: '#64748b', second: '#b6c2d1' },
   ];
   readonly wallpaperChoices = [
-    { label: 'Nivra', value: 'nivra' },
-    { label: 'Limpio', value: 'clean' },
-    { label: 'Botanico', value: 'botanic' },
-    { label: 'Nocturno', value: 'midnight' },
-    { label: 'Papel', value: 'paper' },
+    { label: 'Nivra', labelKey: 'settings.wallpaper.nivra', value: 'nivra' },
+    { label: 'Limpio', labelKey: 'settings.wallpaper.clean', value: 'clean' },
+    { label: 'Botanico', labelKey: 'settings.wallpaper.botanic', value: 'botanic' },
+    { label: 'Nocturno', labelKey: 'settings.wallpaper.midnight', value: 'midnight' },
+    { label: 'Papel', labelKey: 'settings.wallpaper.paper', value: 'paper' },
   ];
   readonly densityOptions = [
-    { label: 'Dos lineas', value: 'two-line' },
-    { label: 'Tres lineas', value: 'three-line' },
+    { label: 'Dos lineas', labelKey: 'settings.chat.twoLines', value: 'two-line' },
+    { label: 'Tres lineas', labelKey: 'settings.chat.threeLines', value: 'three-line' },
   ];
   readonly languageOptions = [
-    { native: 'Espanol', label: 'Spanish', value: 'es' },
-    { native: 'English', label: 'English', value: 'en' },
-    { native: 'العربية', label: 'Arabic', value: 'ar' },
-    { native: 'Беларуская', label: 'Belarusian', value: 'be' },
-    { native: 'Catala', label: 'Catalan', value: 'ca' },
-    { native: '简体中文', label: 'Chinese (Simplified)', value: 'zh-Hans' },
-    { native: '繁體中文', label: 'Chinese (Traditional)', value: 'zh-Hant' },
-    { native: 'Hrvatski', label: 'Croatian', value: 'hr' },
-    { native: 'Portugues', label: 'Portuguese', value: 'pt' },
-    { native: 'Francais', label: 'French', value: 'fr' },
+    { native: 'Español', label: 'Spanish', labelKey: 'LANGUAGE.ES', value: 'es' },
+    { native: 'English', label: 'English', labelKey: 'LANGUAGE.EN', value: 'en' },
+    { native: '简体中文', label: 'Chinese (Simplified)', labelKey: 'LANGUAGE.ZH_HANS', value: 'zh-Hans' },
+    { native: 'हिन्दी', label: 'Hindi', labelKey: 'LANGUAGE.HI', value: 'hi' },
+    { native: 'العربية', label: 'Arabic', labelKey: 'LANGUAGE.AR', value: 'ar' },
+    { native: 'Português', label: 'Portuguese', labelKey: 'LANGUAGE.PT', value: 'pt' },
+    { native: 'Русский', label: 'Russian', labelKey: 'LANGUAGE.RU', value: 'ru' },
+    { native: '日本語', label: 'Japanese', labelKey: 'LANGUAGE.JA', value: 'ja' },
+    { native: 'Français', label: 'French', labelKey: 'LANGUAGE.FR', value: 'fr' },
+    { native: 'Deutsch', label: 'German', labelKey: 'LANGUAGE.DE', value: 'de' },
   ];
   readonly lowDataOptions = [
-    { label: 'Nunca', value: 'never' },
-    { label: 'Datos moviles', value: 'mobile' },
-    { label: 'En roaming', value: 'roaming' },
-    { label: 'Siempre', value: 'always' },
+    { label: 'Nunca', labelKey: 'settings.lowData.never', value: 'never' },
+    { label: 'Datos moviles', labelKey: 'settings.lowData.mobile', value: 'mobile' },
+    { label: 'En roaming', labelKey: 'settings.lowData.roaming', value: 'roaming' },
+    { label: 'Siempre', labelKey: 'settings.lowData.always', value: 'always' },
   ];
   readonly visibilityOptions: Array<{ label: string; labelKey: string; value: NivraVisibility }> = [
     { label: 'Todos', labelKey: 'ACCOUNT.EVERYONE', value: 'everyone' },
@@ -148,10 +148,10 @@ export class AccountPage implements OnInit, OnDestroy {
     { label: 'Invitaciones', labelKey: 'ACCOUNT.INVITES', key: 'invitesVisibility' },
   ];
   readonly defaultTtlOptions = [
-    { label: 'Sin expiracion', value: 0 },
-    { label: '1 hora', value: 3600 },
-    { label: '24 horas', value: 86400 },
-    { label: '7 dias', value: 604800 },
+    { label: 'Sin expiracion', labelKey: 'ACCOUNT.NO_EXPIRATION', value: 0 },
+    { label: '1 hora', labelKey: 'COMMON.1_HOUR', value: 3600 },
+    { label: '24 horas', labelKey: 'COMMON.24_HOURS', value: 86400 },
+    { label: '7 dias', labelKey: 'COMMON.7_DAYS', value: 604800 },
   ];
   private qrScanner: import('html5-qrcode').Html5Qrcode | null = null;
   private contactScanner: import('html5-qrcode').Html5Qrcode | null = null;
@@ -221,10 +221,10 @@ export class AccountPage implements OnInit, OnDestroy {
   async saveProfile(): Promise<void> {
     if (!this.canSaveProfile()) {
       this.error = this.aliasStatus === 'taken'
-        ? 'Alias no disponible.'
+        ? this.t('ACCOUNT.ALIAS_TAKEN_DOT', 'Alias no disponible.')
         : this.aliasStatus === 'checking'
-          ? 'Espera la validacion del alias.'
-          : 'Revisa el alias antes de guardar.';
+          ? this.t('ACCOUNT.WAIT_ALIAS_VALIDATION', 'Espera la validacion del alias.')
+          : this.t('ACCOUNT.REVIEW_ALIAS', 'Revisa el alias antes de guardar.');
       return;
     }
 
@@ -243,7 +243,7 @@ export class AccountPage implements OnInit, OnDestroy {
       this.originalAlias = this.normalizeAlias(this.alias);
       this.aliasStatus = 'idle';
       this.profilePhotoDirty = false;
-      this.notice = 'Perfil actualizado.';
+      this.notice = this.t('ACCOUNT.PROFILE_UPDATED', 'Perfil actualizado.');
     });
   }
 
@@ -281,20 +281,20 @@ export class AccountPage implements OnInit, OnDestroy {
       return;
     }
     if (!file.type.startsWith('image/')) {
-      this.error = 'Selecciona una imagen valida.';
+      this.error = this.t('ACCOUNT.SELECT_VALID_IMAGE', 'Selecciona una imagen valida.');
       return;
     }
     await this.run(async () => {
       this.profilePhotoDataUrl = await this.resizeProfilePhoto(file);
       this.profilePhotoDirty = true;
-      this.notice = 'Foto lista. Guarda el perfil para publicarla.';
+      this.notice = this.t('ACCOUNT.PHOTO_READY', 'Foto lista. Guarda el perfil para publicarla.');
     });
   }
 
   removeProfilePhoto(): void {
     this.profilePhotoDataUrl = '';
     this.profilePhotoDirty = true;
-    this.notice = 'Foto quitada. Guarda el perfil para confirmar.';
+    this.notice = this.t('ACCOUNT.PHOTO_REMOVED', 'Foto quitada. Guarda el perfil para confirmar.');
   }
 
   async savePrivacy(): Promise<void> {
@@ -304,7 +304,7 @@ export class AccountPage implements OnInit, OnDestroy {
     }
     await this.run(async () => {
       await this.account.updatePrivacy(privacy);
-      this.notice = 'Privacidad actualizada.';
+      this.notice = this.t('ACCOUNT.PRIVACY_UPDATED', 'Privacidad actualizada.');
     });
   }
 
@@ -320,7 +320,7 @@ export class AccountPage implements OnInit, OnDestroy {
     if (!enabled) {
       await this.run(async () => {
         this.appLock.disable();
-        this.notice = 'Modo Seguro desactivado.';
+        this.notice = this.t('ACCOUNT.SAFE_MODE_DISABLED', 'Modo Seguro desactivado.');
       });
       return;
     }
@@ -328,7 +328,7 @@ export class AccountPage implements OnInit, OnDestroy {
     if (this.appLock.isNativePlatform()) {
       await this.run(async () => {
         await this.appLock.enableMobileBiometrics();
-        this.notice = `Modo Seguro activado con ${this.appLock.biometryLabel()}.`;
+        this.notice = `${this.t('ACCOUNT.SAFE_MODE_ENABLED_WITH', 'Modo Seguro activado con')} ${this.appLock.biometryLabel()}.`;
       });
       return;
     }
@@ -371,7 +371,7 @@ export class AccountPage implements OnInit, OnDestroy {
     if (this.setupPinConfirm.length < PIN_LENGTH) {
       this.setupPinConfirm = this.appLock.normalizePin(`${this.setupPinConfirm}${key}`);
       if (this.setupPinConfirm.length === PIN_LENGTH && this.setupPinConfirm !== this.setupPin) {
-        this.pinSetupError = 'Los PIN no coinciden.';
+        this.pinSetupError = this.t('ACCOUNT.PINS_DO_NOT_MATCH', 'Los PIN no coinciden.');
       } else {
         this.pinSetupError = '';
       }
@@ -380,17 +380,17 @@ export class AccountPage implements OnInit, OnDestroy {
 
   async confirmWebPin(): Promise<void> {
     if (!this.appLock.isValidPin(this.setupPin) || !this.appLock.isValidPin(this.setupPinConfirm)) {
-      this.pinSetupError = 'Crea y confirma un PIN de 4 digitos.';
+      this.pinSetupError = this.t('ACCOUNT.CREATE_CONFIRM_PIN_4', 'Crea y confirma un PIN de 4 digitos.');
       return;
     }
     if (this.setupPin !== this.setupPinConfirm) {
-      this.pinSetupError = 'Los PIN no coinciden.';
+      this.pinSetupError = this.t('ACCOUNT.PINS_DO_NOT_MATCH', 'Los PIN no coinciden.');
       return;
     }
 
     await this.run(async () => {
       await this.appLock.enableWebPin(this.setupPin);
-      this.notice = 'Modo Seguro activado con PIN.';
+      this.notice = this.t('ACCOUNT.SAFE_MODE_PIN_ENABLED', 'Modo Seguro activado con PIN.');
       this.closePinSetupModal();
     });
   }
@@ -399,11 +399,11 @@ export class AccountPage implements OnInit, OnDestroy {
     const pin = this.panicPin.normalizePin(this.panicPinValue);
     const confirm = this.panicPin.normalizePin(this.panicPinConfirm);
     if (!this.panicPin.isValidPin(pin)) {
-      this.error = 'El PIN de panico debe tener de 4 a 6 digitos.';
+      this.error = this.t('ACCOUNT.PANIC_PIN_LENGTH_ERROR', 'El PIN de panico debe tener de 4 a 6 digitos.');
       return;
     }
     if (pin !== confirm) {
-      this.error = 'Confirma el mismo PIN de panico.';
+      this.error = this.t('ACCOUNT.PANIC_PIN_CONFIRM_ERROR', 'Confirma el mismo PIN de panico.');
       return;
     }
 
@@ -411,7 +411,7 @@ export class AccountPage implements OnInit, OnDestroy {
       await this.panicPin.configure(pin);
       this.panicPinValue = '';
       this.panicPinConfirm = '';
-      this.notice = 'PIN de panico configurado localmente.';
+      this.notice = this.t('ACCOUNT.PANIC_PIN_CONFIGURED', 'PIN de panico configurado localmente.');
     });
   }
 
@@ -420,7 +420,7 @@ export class AccountPage implements OnInit, OnDestroy {
       this.panicPin.clear();
       this.panicPinValue = '';
       this.panicPinConfirm = '';
-      this.notice = 'PIN de panico quitado.';
+      this.notice = this.t('ACCOUNT.PANIC_PIN_REMOVED', 'PIN de panico quitado.');
     });
   }
 
@@ -473,14 +473,14 @@ export class AccountPage implements OnInit, OnDestroy {
   setVisibilitySetting(key: keyof NivraAppSettings, value: string): void {
     if (value === 'everyone' || value === 'contacts' || value === 'nobody') {
       this.appSettings.update({ [key]: value } as Partial<NivraAppSettings>);
-      this.notice = 'Regla local de privacidad guardada.';
+      this.notice = this.t('ACCOUNT.LOCAL_PRIVACY_SAVED', 'Regla local de privacidad guardada.');
     }
   }
 
   resetAppSettings(): void {
     this.appSettings.reset();
     this.lightTheme = this.appSettings.resolvedLightTheme();
-    this.notice = 'Ajustes locales restaurados.';
+    this.notice = this.t('ACCOUNT.LOCAL_SETTINGS_RESTORED', 'Ajustes locales restaurados.');
   }
 
   applyPrivacyPreset(value: string): void {
@@ -512,7 +512,7 @@ export class AccountPage implements OnInit, OnDestroy {
     };
     const patch = patches[value] ?? patches['balanced'];
     this.account.privacy.update((privacy) => privacy ? { ...privacy, ...patch } : privacy);
-    this.notice = 'Preset listo. Guarda privacidad para sincronizarlo.';
+    this.notice = this.t('ACCOUNT.PRESET_READY', 'Preset listo. Guarda privacidad para sincronizarlo.');
   }
 
   async clearDraftsAndPreviews(): Promise<void> {
@@ -525,7 +525,7 @@ export class AccountPage implements OnInit, OnDestroy {
         }
       }
       keys.forEach((key) => localStorage.removeItem(key));
-      this.notice = keys.length ? 'Borradores locales eliminados.' : 'No habia borradores locales guardados.';
+      this.notice = keys.length ? this.t('ACCOUNT.DRAFTS_DELETED', 'Borradores locales eliminados.') : this.t('ACCOUNT.NO_DRAFTS', 'No habia borradores locales guardados.');
       await this.refreshStorageEstimate();
     });
   }
@@ -547,19 +547,19 @@ export class AccountPage implements OnInit, OnDestroy {
         createdAt: new Date().toISOString(),
       };
       await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
-      this.notice = 'Diagnostico copiado.';
+      this.notice = this.t('ACCOUNT.DIAGNOSTICS_COPIED', 'Diagnostico copiado.');
     });
   }
 
   storageUsageLabel(): string {
     if (!this.storageUsageBytes && !this.storageQuotaBytes) {
-      return 'No disponible';
+      return this.t('COMMON.NOT_AVAILABLE', 'No disponible');
     }
     return `${this.formatBytes(this.storageUsageBytes)} de ${this.formatBytes(this.storageQuotaBytes)}`;
   }
 
   visibilityLabel(value: NivraVisibility): string {
-    return this.visibilityOptions.find((option) => option.value === value)?.label ?? 'Todos';
+    return this.visibilityOptions.find((option) => option.value === value)?.label ?? this.t('ACCOUNT.EVERYONE', 'Todos');
   }
 
   settingValue(key: keyof NivraAppSettings): string {
@@ -581,9 +581,9 @@ export class AccountPage implements OnInit, OnDestroy {
     const alias = user?.alias || '';
     const name = user?.displayName || alias;
     return [
-      `${name} te invita a Nivra, mensajeria privada con chat y boveda cifrada.`,
-      `Buscame como @${alias}.`,
-      'Si ya tienes Nivra, abre este enlace para iniciar el chat:',
+      `${name} ${this.t('ACCOUNT.SHARE_LINE_1_SUFFIX', 'te invita a Nivra, mensajeria privada con chat y boveda cifrada.')}`,
+      `${this.t('ACCOUNT.SHARE_LINE_2_PREFIX', 'Buscame como')} @${alias}.`,
+      this.t('ACCOUNT.SHARE_LINE_3', 'Si ya tienes Nivra, abre este enlace para iniciar el chat:'),
       this.shareUrl(),
     ].join('\n');
   }
@@ -591,7 +591,7 @@ export class AccountPage implements OnInit, OnDestroy {
   async copyShareMessage(): Promise<void> {
     await this.run(async () => {
       await navigator.clipboard.writeText(this.shareMessage());
-      this.notice = 'Invitacion copiada.';
+      this.notice = this.t('ACCOUNT.INVITE_COPIED', 'Invitacion copiada.');
     });
   }
 
@@ -605,11 +605,11 @@ export class AccountPage implements OnInit, OnDestroy {
       const share = navigator as Navigator & { share?: (data: typeof payload) => Promise<void> };
       if (share.share && this.appSettings.settings().directShare) {
         await share.share(payload);
-        this.notice = 'Invitacion lista para enviar.';
+        this.notice = this.t('ACCOUNT.INVITE_READY', 'Invitacion lista para enviar.');
         return;
       }
       await navigator.clipboard.writeText(this.shareMessage());
-      this.notice = 'Tu navegador no comparte directo; copie la invitacion.';
+      this.notice = this.t('ACCOUNT.SHARE_FALLBACK_COPIED', 'Tu navegador no comparte directo; copie la invitacion.');
     });
   }
 
@@ -630,7 +630,7 @@ export class AccountPage implements OnInit, OnDestroy {
     }
     this.contactScannerOpen = true;
     this.contactScannerBusy = true;
-    this.contactScannerStatus = 'Preparando camara...';
+    this.contactScannerStatus = this.t('ACCOUNT.PREPARING_CAMERA', 'Preparando camara...');
     try {
       await new Promise((resolve) => setTimeout(resolve, 0));
       const { Html5Qrcode } = await import('html5-qrcode');
@@ -648,9 +648,9 @@ export class AccountPage implements OnInit, OnDestroy {
         (text) => void this.handleContactQr(text),
         () => undefined,
       );
-      this.contactScannerStatus = 'Apunta la camara al QR de contacto.';
+      this.contactScannerStatus = this.t('ACCOUNT.POINT_CONTACT_QR', 'Apunta la camara al QR de contacto.');
     } catch (error) {
-      this.contactScannerStatus = error instanceof Error ? error.message : 'No se pudo abrir la camara.';
+      this.contactScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.CAMERA_OPEN_ERROR', 'No se pudo abrir la camara.');
       await this.stopContactScanner({ keepOpen: true });
     } finally {
       this.contactScannerBusy = false;
@@ -682,7 +682,7 @@ export class AccountPage implements OnInit, OnDestroy {
     }
     this.contactScannerOpen = true;
     this.contactScannerBusy = true;
-    this.contactScannerStatus = 'Leyendo imagen...';
+    this.contactScannerStatus = this.t('ACCOUNT.READING_IMAGE', 'Leyendo imagen...');
     let tempScanner: import('html5-qrcode').Html5Qrcode | null = null;
     try {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -692,7 +692,7 @@ export class AccountPage implements OnInit, OnDestroy {
       const text = await tempScanner.scanFile(file, true);
       await this.handleContactQr(text, { allowWhileBusy: true });
     } catch (error) {
-      this.contactScannerStatus = error instanceof Error ? error.message : 'No se pudo leer ese QR.';
+      this.contactScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.QR_READ_ERROR', 'No se pudo leer ese QR.');
     } finally {
       if (tempScanner && tempScanner !== this.contactScanner) {
         try {
@@ -708,21 +708,21 @@ export class AccountPage implements OnInit, OnDestroy {
   async revoke(deviceId: string): Promise<void> {
     await this.run(async () => {
       await this.account.revokeDevice(deviceId);
-      this.notice = 'Dispositivo revocado.';
+      this.notice = this.t('ACCOUNT.DEVICE_REVOKED', 'Dispositivo revocado.');
     });
   }
 
   async enablePush(): Promise<void> {
     await this.run(async () => {
       const ok = await this.push.requestPermissionAndRegister();
-      this.notice = ok ? 'Notificaciones activadas.' : 'No se pudo activar notificaciones en este navegador.';
+      this.notice = ok ? this.t('ACCOUNT.NOTIFICATIONS_ENABLED', 'Notificaciones activadas.') : this.t('ACCOUNT.NOTIFICATIONS_ENABLE_ERROR', 'No se pudo activar notificaciones en este navegador.');
     });
   }
 
   async revokePush(): Promise<void> {
     await this.run(async () => {
       await this.push.revokeCurrentToken();
-      this.notice = 'Token de notificaciones revocado.';
+      this.notice = this.t('ACCOUNT.NOTIFICATION_TOKEN_REVOKED', 'Token de notificaciones revocado.');
     });
   }
 
@@ -740,7 +740,7 @@ export class AccountPage implements OnInit, OnDestroy {
   async authorizeQr(): Promise<void> {
     await this.run(async () => {
       const loading = await this.loadingController.create({
-        message: 'Vinculando dispositivo seguro...',
+        message: this.t('ACCOUNT.LINKING_SECURE_DEVICE', 'Vinculando dispositivo seguro...'),
         spinner: 'crescent',
         backdropDismiss: false,
       });
@@ -750,7 +750,7 @@ export class AccountPage implements OnInit, OnDestroy {
         this.qrText = '';
         await this.stopQrScanner();
         await this.account.load();
-        this.notice = 'Dispositivo vinculado por QR.';
+        this.notice = this.t('ACCOUNT.DEVICE_LINKED_QR', 'Dispositivo vinculado por QR.');
       } finally {
         await loading.dismiss().catch(() => undefined);
       }
@@ -763,7 +763,7 @@ export class AccountPage implements OnInit, OnDestroy {
     }
     this.qrScannerOpen = true;
     this.qrScannerBusy = true;
-    this.qrScannerStatus = 'Preparando camara segura...';
+    this.qrScannerStatus = this.t('ACCOUNT.PREPARING_SECURE_CAMERA', 'Preparando camara segura...');
     try {
       await new Promise((resolve) => setTimeout(resolve, 0));
       const { Html5Qrcode } = await import('html5-qrcode');
@@ -781,9 +781,9 @@ export class AccountPage implements OnInit, OnDestroy {
         (text) => void this.handleScannedQr(text),
         () => undefined,
       );
-      this.qrScannerStatus = 'Apunta la camara al QR de Nivra.';
+      this.qrScannerStatus = this.t('ACCOUNT.POINT_NIVRA_QR', 'Apunta la camara al QR de Nivra.');
     } catch (error) {
-      this.qrScannerStatus = error instanceof Error ? error.message : 'No se pudo abrir la camara.';
+      this.qrScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.CAMERA_OPEN_ERROR', 'No se pudo abrir la camara.');
       await this.stopQrScanner({ keepOpen: true });
     } finally {
       this.qrScannerBusy = false;
@@ -815,7 +815,7 @@ export class AccountPage implements OnInit, OnDestroy {
     }
     this.qrScannerOpen = true;
     this.qrScannerBusy = true;
-    this.qrScannerStatus = 'Leyendo imagen...';
+    this.qrScannerStatus = this.t('ACCOUNT.READING_IMAGE', 'Leyendo imagen...');
     let tempScanner: import('html5-qrcode').Html5Qrcode | null = null;
     try {
       await new Promise((resolve) => setTimeout(resolve, 0));
@@ -825,7 +825,7 @@ export class AccountPage implements OnInit, OnDestroy {
       const text = await tempScanner.scanFile(file, true);
       await this.handleScannedQr(text, { allowWhileBusy: true });
     } catch (error) {
-      this.qrScannerStatus = error instanceof Error ? error.message : 'No se pudo leer ese QR.';
+      this.qrScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.QR_READ_ERROR', 'No se pudo leer ese QR.');
     } finally {
       if (tempScanner && tempScanner !== this.qrScanner) {
         try {
@@ -844,7 +844,7 @@ export class AccountPage implements OnInit, OnDestroy {
     }
     this.qrScannerBusy = true;
     this.qrText = text;
-    this.qrScannerStatus = 'QR detectado. Autorizando dispositivo...';
+    this.qrScannerStatus = this.t('ACCOUNT.QR_DETECTED_AUTHORIZING', 'QR detectado. Autorizando dispositivo...');
     try {
       await this.authorizeQr();
     } finally {
@@ -857,29 +857,29 @@ export class AccountPage implements OnInit, OnDestroy {
       return;
     }
     this.contactScannerBusy = true;
-    this.contactScannerStatus = 'QR detectado. Abriendo contacto...';
+    this.contactScannerStatus = this.t('ACCOUNT.QR_DETECTED_OPENING_CONTACT', 'QR detectado. Abriendo contacto...');
     try {
       const alias = this.contactAliasFromQr(text);
       if (!alias) {
-        throw new Error('Ese QR no parece ser de contacto Nivra.');
+        throw new Error(this.t('ACCOUNT.INVALID_CONTACT_QR', 'Ese QR no parece ser de contacto Nivra.'));
       }
       await this.stopContactScanner();
       await this.router.navigate(['/contact'], { queryParams: { alias } });
     } catch (error) {
-      this.contactScannerStatus = error instanceof Error ? error.message : 'No se pudo abrir ese contacto.';
+      this.contactScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.CONTACT_OPEN_ERROR', 'No se pudo abrir ese contacto.');
     } finally {
       this.contactScannerBusy = false;
     }
   }
 
   async deleteAccount(): Promise<void> {
-    if (this.deleteConfirmation !== 'DELETE' || !window.confirm('Esto desactiva la cuenta, revoca sesiones y minimiza datos. Continuar?')) {
+    if (this.deleteConfirmation !== 'DELETE' || !window.confirm(this.t('ACCOUNT.DELETE_CONFIRM', 'Esto desactiva la cuenta, revoca sesiones y minimiza datos. Continuar?'))) {
       return;
     }
     await this.run(async () => {
       await this.account.requestDataDelete(this.deleteConfirmation);
       await this.auth.logout();
-      this.notice = 'Cuenta desactivada.';
+      this.notice = this.t('ACCOUNT.ACCOUNT_DISABLED', 'Cuenta desactivada.');
     });
   }
 
@@ -890,7 +890,7 @@ export class AccountPage implements OnInit, OnDestroy {
     try {
       await action();
     } catch (error) {
-      this.error = error instanceof Error ? error.message : 'No se pudo completar la accion.';
+      this.error = error instanceof Error ? error.message : this.t('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
     } finally {
       this.saving = false;
     }
@@ -999,7 +999,7 @@ export class AccountPage implements OnInit, OnDestroy {
     return new Promise<HTMLImageElement>((resolve, reject) => {
       const image = new Image();
       image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error('No se pudo leer la imagen.'));
+      image.onerror = () => reject(new Error(this.t('ACCOUNT.IMAGE_READ_ERROR', 'No se pudo leer la imagen.')));
       image.src = objectUrl;
     }).finally(() => {
       setTimeout(() => URL.revokeObjectURL(objectUrl), 0);

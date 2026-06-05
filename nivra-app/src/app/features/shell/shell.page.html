@@ -40,11 +40,11 @@
             <h2>{{ calls.callTitle(call) }}</h2>
             <p>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | date:'shortTime' }}</p>
             <div class="incoming-actions">
-              <button class="incoming-action reject" type="button" (click)="declineCall()" aria-label="Rechazar llamada">
+              <button class="incoming-action reject" type="button" (click)="declineCall()" [attr.aria-label]="'CALLS.REJECT_CALL' | translate:'Rechazar llamada'">
                 <ion-icon name="close-outline"></ion-icon>
                 <span>{{ 'CALLS.REJECT' | translate:'Rechazar' }}</span>
               </button>
-              <button class="incoming-action accept" type="button" (click)="acceptCall()" aria-label="Aceptar llamada">
+              <button class="incoming-action accept" type="button" (click)="acceptCall()" [attr.aria-label]="'CALLS.ACCEPT_CALL' | translate:'Aceptar llamada'">
                 <ion-icon name="call-outline"></ion-icon>
                 <span>{{ 'CALLS.ACCEPT' | translate:'Aceptar' }}</span>
               </button>

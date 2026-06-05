@@ -1,18 +1,18 @@
 <section class="media-gallery">
   <header class="gallery-head">
-    <ion-button mode="ios" fill="clear" (click)="dismiss.emit()" aria-label="Cerrar galeria">
+    <ion-button mode="ios" fill="clear" (click)="dismiss.emit()" [attr.aria-label]="'CHAT_MEDIA.CLOSE_GALLERY' | translate:'Cerrar galeria'">
       <ion-icon name="close-outline"></ion-icon>
     </ion-button>
     <div>
-      <h2>Multimedia</h2>
-      <p>{{ items.length }} archivos del chat</p>
+      <h2>{{ 'CHAT.MEDIA' | translate:'Multimedia' }}</h2>
+      <p>{{ items.length }} {{ 'CHAT_MEDIA.CHAT_FILES' | translate:'archivos del chat' }}</p>
     </div>
   </header>
 
   <div class="gallery-grid">
     @for (message of items; track message.id) {
       @if (chat.asFile(message.payload); as file) {
-        <button type="button" class="gallery-tile" [class.audio]="isAudio(file)" (click)="open(message)" [attr.aria-label]="'Abrir ' + chat.fileName(file)">
+        <button type="button" class="gallery-tile" [class.audio]="isAudio(file)" (click)="open(message)" [attr.aria-label]="('COMMON.OPEN' | translate:'Abrir') + ' ' + chat.fileName(file)">
           @if (previewFor(file); as media) {
             @if (chat.isImage(file)) {
               <img [src]="media.url" [alt]="chat.fileName(file)">
@@ -54,8 +54,8 @@
     } @empty {
       <div class="gallery-empty">
         <ion-icon name="image-outline"></ion-icon>
-        <strong>Sin multimedia visible</strong>
-        <span>Los archivos apareceran cuando existan en este dispositivo.</span>
+        <strong>{{ 'CHAT_MEDIA.EMPTY_TITLE' | translate:'Sin multimedia visible' }}</strong>
+        <span>{{ 'CHAT_MEDIA.EMPTY_COPY' | translate:'Los archivos apareceran cuando existan en este dispositivo.' }}</span>
       </div>
     }
   </div>
@@ -71,7 +71,7 @@
       <section class="media-viewer">
         <header>
           <strong>{{ chat.fileName(viewerFile) }}</strong>
-          <ion-button mode="ios" fill="clear" (click)="closeViewer()" aria-label="Cerrar archivo">
+          <ion-button mode="ios" fill="clear" (click)="closeViewer()" [attr.aria-label]="'CHAT.CLOSE_FILE' | translate:'Cerrar archivo'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
         </header>
@@ -97,9 +97,9 @@
           </span>
           <div>
             <strong>{{ audioName || audioPreview.name }}</strong>
-            <small>Audio cifrado local</small>
+            <small>{{ 'CHAT.LOCAL_ENCRYPTED_AUDIO' | translate:'Audio cifrado local' }}</small>
           </div>
-          <ion-button mode="ios" fill="clear" (click)="closeAudioPlayer()" aria-label="Cerrar audio">
+          <ion-button mode="ios" fill="clear" (click)="closeAudioPlayer()" [attr.aria-label]="'CHAT.CLOSE_AUDIO' | translate:'Cerrar audio'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
         </header>

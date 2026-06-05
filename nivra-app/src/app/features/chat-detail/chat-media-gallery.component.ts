@@ -18,12 +18,15 @@ import {
 } from 'ionicons/icons';
 import { ChatMessageVm, FileChatPayload, MediaPreview } from '../../core/models/nivra.models';
 import { ChatService } from '../../core/services/chat.service';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 
 @Component({
   selector: 'app-chat-media-gallery',
   standalone: true,
   imports: [
     CommonModule,
+    TranslatePipe,
     IonButton,
     IonIcon,
     IonModal,
@@ -37,6 +40,7 @@ export class ChatMediaGalleryComponent implements OnDestroy {
   @Output() dismiss = new EventEmitter<void>();
 
   readonly chat = inject(ChatService);
+  readonly translate = inject(TranslateService);
   loadingId: string | null = null;
   error = '';
   audioPreview: MediaPreview | null = null;
@@ -93,7 +97,7 @@ export class ChatMediaGalleryComponent implements OnDestroy {
       const preview = await this.chat.ensureMediaPreview(message.payload);
       await this.chat.markMessageOpened(message);
       if (!preview) {
-        this.error = 'No se pudo descifrar este archivo en este dispositivo.';
+        this.error = this.tr('CHAT_MEDIA.DECRYPT_ERROR', 'No se pudo descifrar este archivo en este dispositivo.');
         return;
       }
       if (!hadPreview && fileId) {
@@ -102,14 +106,14 @@ export class ChatMediaGalleryComponent implements OnDestroy {
 
       if (this.isAudio(file)) {
         this.audioPreview = preview;
-        this.audioName = file.voiceNote ? 'Nota de voz' : this.chat.fileName(file);
+        this.audioName = file.voiceNote ? this.tr('CHAT.VOICE_NOTE', 'Nota de voz') : this.chat.fileName(file);
         return;
       }
 
       this.viewerPreview = preview;
       this.viewerFile = file;
     } catch (error) {
-      this.error = error instanceof Error ? error.message : 'No se pudo abrir el archivo.';
+      this.error = error instanceof Error ? error.message : this.tr('CHAT_MEDIA.OPEN_ERROR', 'No se pudo abrir el archivo.');
     } finally {
       this.loadingId = null;
     }
@@ -141,5 +145,9 @@ export class ChatMediaGalleryComponent implements OnDestroy {
   private messageTime(message: ChatMessageVm): number {
     const value = Date.parse(message.at);
     return Number.isFinite(value) ? value : 0;
+  }
+
+  private tr(key: string, fallback: string): string {
+    return this.translate.instant(key, fallback);
   }
 }

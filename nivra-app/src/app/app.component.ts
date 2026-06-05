@@ -15,6 +15,7 @@ import { ContactSyncService } from './core/services/contact-sync.service';
 import { DeviceWipeService } from './core/services/device-wipe.service';
 import { PushService } from './core/services/push.service';
 import { SignalrService } from './core/services/signalr.service';
+import { TranslatePipe } from './core/pipes/translate.pipe';
 import { TranslateService } from './core/services/translate.service';
 import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 
@@ -26,7 +27,7 @@ const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
   templateUrl: 'app.component.html',
   styleUrls: ['app.component.scss'],
   standalone: true,
-  imports: [CommonModule, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent],
+  imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent],
 })
 export class AppComponent {
   private readonly auth = inject(AuthService);

@@ -70,6 +70,8 @@ import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
 import { SocialService } from '../../core/services/social.service';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
@@ -102,6 +104,7 @@ type VoiceComposerMode = 'idle' | 'holding' | 'locked' | 'cancelling';
     IonTextarea,
     IonToggle,
     IonToolbar,
+    TranslatePipe,
     ChatMediaGalleryComponent,
   ],
   templateUrl: './chat-detail.page.html',
@@ -115,6 +118,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   readonly realtime = inject(SignalrService);
   readonly calls = inject(CallsService);
   readonly social = inject(SocialService);
+  readonly translate = inject(TranslateService);
   private readonly auth = inject(AuthService);
   private readonly cdr = inject(ChangeDetectorRef);
   private readonly route = inject(ActivatedRoute);
@@ -179,11 +183,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   voiceSlideX = 0;
   audioState: Record<string, { current: number; duration: number; playing: boolean }> = {};
   readonly ttlOptions = [
-    { label: 'Predeterminado', value: -1 },
-    { label: 'Sin expirar', value: 0 },
-    { label: '1 h', value: 3600 },
-    { label: '24 h', value: 86400 },
-    { label: '7 dias', value: 604800 },
+    { label: 'Predeterminado', labelKey: 'CHAT.TTL_DEFAULT', value: -1 },
+    { label: 'Sin expirar', labelKey: 'CHAT.TTL_NONE', value: 0 },
+    { label: '1 h', labelKey: 'COMMON.1_HOUR_SHORT', value: 3600 },
+    { label: '24 h', labelKey: 'COMMON.24_HOURS_SHORT', value: 86400 },
+    { label: '7 dias', labelKey: 'COMMON.7_DAYS', value: 604800 },
   ];
   readonly conversation = computed(() => this.chat.selectedConversation());
   readonly messages = computed(() => this.chat.selectedMessages());
@@ -295,7 +299,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     if (!this.canSendMessages()) {
-      this.attachmentError = 'Solo los admins pueden enviar mensajes en este grupo.';
+      this.attachmentError = this.tr('CHAT.ADMINS_ONLY_MESSAGES', 'Solo los admins pueden enviar mensajes en este grupo.');
       return;
     }
     const text = this.draft;
@@ -310,7 +314,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.scrollBottom();
     } catch (error) {
       this.draft = text;
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo enviar el mensaje.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_MESSAGE', 'No se pudo enviar el mensaje.');
     } finally {
       this.sending = false;
     }
@@ -329,7 +333,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     if (!this.canSendMessages()) {
-      this.attachmentError = 'Solo los admins pueden enviar archivos en este grupo.';
+      this.attachmentError = this.tr('CHAT.ADMINS_ONLY_FILES', 'Solo los admins pueden enviar archivos en este grupo.');
       return;
     }
 
@@ -350,7 +354,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     if (!this.canSendMessages()) {
-      this.attachmentError = 'Solo los admins pueden enviar archivos en este grupo.';
+      this.attachmentError = this.tr('CHAT.ADMINS_ONLY_FILES', 'Solo los admins pueden enviar archivos en este grupo.');
       return;
     }
 
@@ -370,7 +374,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
           });
           sent += 1;
         } catch (error) {
-          lastError = error instanceof Error ? error.message : 'No se pudo subir el adjunto.';
+          lastError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_UPLOAD_ATTACHMENT', 'No se pudo subir el adjunto.');
           if (this.isUploadLimitError(lastError)) {
             await this.showPremiumToast(lastError);
           }
@@ -386,7 +390,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.scrollBottom();
       }
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo subir el adjunto.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_UPLOAD_ATTACHMENT', 'No se pudo subir el adjunto.');
     } finally {
       this.sending = false;
     }
@@ -399,14 +403,14 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   pendingAttachmentTitle(): string {
     const count = this.pendingAttachmentFiles.length;
     if (!count) {
-      return 'Adjunto';
+      return this.tr('CHAT.ATTACHMENT', 'Adjunto');
     }
-    return count === 1 ? this.pendingAttachmentFiles[0].file.name : `${count} archivos`;
+    return count === 1 ? this.pendingAttachmentFiles[0].file.name : `${count} ${this.tr('COMMON.FILES', 'archivos')}`;
   }
 
   pendingAttachmentSubtitle(): string {
     const total = this.pendingAttachmentFiles.reduce((sum, item) => sum + item.file.size, 0);
-    return `${this.formatBytes(total)} cifrado extremo a extremo`;
+    return `${this.formatBytes(total)} ${this.tr('COMMON.E2EE_ENCRYPTED', 'cifrado extremo a extremo')}`;
   }
 
   pendingFileSize(file: File): string {
@@ -431,7 +435,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       await this.chat.downloadAttachment(message.payload);
       await this.chat.markMessageOpened(message);
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo abrir el adjunto.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_ATTACHMENT', 'No se pudo abrir el adjunto.');
     } finally {
       this.downloadingId = null;
     }
@@ -447,7 +451,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       await this.chat.ensureMediaPreview(message.payload);
       await this.chat.markMessageOpened(message);
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo previsualizar el adjunto.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_PREVIEW_ATTACHMENT', 'No se pudo previsualizar el adjunto.');
     } finally {
       this.downloadingId = null;
     }
@@ -480,7 +484,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.activeMediaFile = file;
       }
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo abrir el adjunto.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_ATTACHMENT', 'No se pudo abrir el adjunto.');
     } finally {
       this.downloadingId = null;
     }
@@ -499,10 +503,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       await this.chat.markMessageOpened(message);
       if (preview) {
         this.activeAudioPreview = preview;
-        this.activeAudioName = file.voiceNote ? 'Nota de voz' : this.chat.fileName(file);
+        this.activeAudioName = file.voiceNote ? this.tr('CHAT.VOICE_NOTE', 'Nota de voz') : this.chat.fileName(file);
       }
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo reproducir el audio.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_PLAY_AUDIO', 'No se pudo reproducir el audio.');
     } finally {
       this.downloadingId = null;
     }
@@ -627,34 +631,34 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.emojiPanelOpen = false;
     const buttons = [
       {
-        text: 'Responder',
+        text: this.tr('CHAT_ACTIONS.REPLY', 'Responder'),
         icon: 'return-down-back-outline',
         handler: () => this.beginReply(message),
       },
       ...(this.canTranslate(message) ? [{
-        text: 'Traducir',
+        text: this.tr('CHAT_ACTIONS.TRANSLATE', 'Traducir'),
         icon: 'language-outline',
         handler: () => {
           void this.translateMessage(message);
         },
       }] : []),
       ...(this.canEdit(message) ? [{
-        text: 'Editar',
+        text: this.tr('CHAT_ACTIONS.EDIT', 'Editar'),
         icon: 'create-outline',
         handler: () => this.beginEdit(message),
       }] : []),
       {
-        text: 'Reenviar',
+        text: this.tr('CHAT_ACTIONS.FORWARD', 'Reenviar'),
         icon: 'arrow-redo-outline',
         handler: () => this.openForward(message),
       },
       {
-        text: 'Info. del mensaje',
+        text: this.tr('CHAT_ACTIONS.MESSAGE_INFO', 'Info. del mensaje'),
         icon: 'information-circle-outline',
         handler: () => this.openMessageInfo(message),
       },
       {
-        text: 'Eliminar para mi',
+        text: this.tr('CHAT.DELETE_FOR_ME', 'Eliminar para mi'),
         icon: 'trash-outline',
         role: 'destructive',
         handler: () => {
@@ -662,7 +666,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         },
       },
       ...(message.mine ? [{
-        text: 'Eliminar para todos',
+        text: this.tr('CHAT.DELETE_FOR_EVERYONE', 'Eliminar para todos'),
         icon: 'trash-outline',
         role: 'destructive',
         handler: () => {
@@ -670,12 +674,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         },
       }] : []),
       {
-        text: 'Cancelar',
+        text: this.tr('COMMON.CANCEL', 'Cancelar'),
         role: 'cancel',
       },
     ];
     const sheet = await this.actionSheetController.create({
-      header: 'Mensaje',
+      header: this.tr('CHAT.MESSAGE', 'Mensaje'),
       cssClass: 'nivra-message-action-sheet',
       buttons,
     });
@@ -762,25 +766,25 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.closeChatMenu();
     this.closeMessageActions();
     const sheet = await this.actionSheetController.create({
-      header: 'Camara',
+      header: this.tr('COMMON.CAMERA', 'Camara'),
       cssClass: 'nivra-camera-sheet',
       buttons: [
         {
-          text: 'Tomar foto',
+          text: this.tr('CHAT.TAKE_PHOTO', 'Tomar foto'),
           icon: 'camera-outline',
           handler: () => {
             void this.captureNativePhotoOrFallback(photoInput);
           },
         },
         {
-          text: 'Grabar video',
+          text: this.tr('CHAT.RECORD_VIDEO', 'Grabar video'),
           icon: 'videocam-outline',
           handler: () => {
             videoInput.click();
           },
         },
         {
-          text: 'Cancelar',
+          text: this.tr('COMMON.CANCEL', 'Cancelar'),
           role: 'cancel',
         },
       ],
@@ -836,7 +840,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     if (!this.canSendMessages()) {
-      this.attachmentError = 'Solo los admins pueden enviar archivos en este grupo.';
+      this.attachmentError = this.tr('CHAT.ADMINS_ONLY_FILES', 'Solo los admins pueden enviar archivos en este grupo.');
       return;
     }
     this.attachmentError = '';
@@ -848,7 +852,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       });
       this.scrollBottom();
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo enviar la captura.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_CAPTURE', 'No se pudo enviar la captura.');
     } finally {
       this.sending = false;
     }
@@ -946,38 +950,38 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       await this.chat.editMessage(conversation, message, text);
       this.cancelEdit();
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo editar el mensaje.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_EDIT_MESSAGE', 'No se pudo editar el mensaje.');
     } finally {
       this.sending = false;
     }
   }
 
   async deleteForMe(message: ChatMessageVm): Promise<void> {
-    if (!window.confirm('Eliminar este mensaje solo para ti?')) {
+    if (!window.confirm(this.tr('CHAT.CONFIRM_DELETE_FOR_ME', 'Eliminar este mensaje solo para ti?'))) {
       return;
     }
     await this.runAction(`delete-me:${message.id}`, async () => {
       await this.chat.deleteMessage(message, false);
       this.closeMessageActions();
-      this.notice = 'Mensaje eliminado para ti.';
+      this.notice = this.tr('CHAT.MESSAGE_DELETED_FOR_ME', 'Mensaje eliminado para ti.');
     });
   }
 
   async deleteForEveryone(message: ChatMessageVm): Promise<void> {
-    if (!message.mine || !window.confirm('Eliminar este mensaje para todos?')) {
+    if (!message.mine || !window.confirm(this.tr('CHAT.CONFIRM_DELETE_FOR_EVERYONE', 'Eliminar este mensaje para todos?'))) {
       return;
     }
     await this.runAction(`delete-all:${message.id}`, async () => {
       await this.chat.deleteMessage(message, true);
       this.closeMessageActions();
-      this.notice = 'Mensaje eliminado para todos.';
+      this.notice = this.tr('CHAT.MESSAGE_DELETED_FOR_EVERYONE', 'Mensaje eliminado para todos.');
     });
   }
 
   openForward(message: ChatMessageVm): void {
     const availability = this.chat.forwardAvailability(message);
     if (!availability.ok) {
-      this.attachmentError = availability.reason || 'Ese mensaje no se puede reenviar.';
+      this.attachmentError = availability.reason || this.tr('CHAT.CANNOT_FORWARD', 'Ese mensaje no se puede reenviar.');
       return;
     }
     this.forwardingMessage = message;
@@ -1013,26 +1017,26 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
     await this.runAction('forward', async () => {
       const sent = await this.chat.forwardMessageToConversations(message, [...this.selectedForwardIds]);
-      this.notice = sent ? `Reenviado a ${sent} chat${sent === 1 ? '' : 's'}.` : 'No se pudo reenviar.';
+      this.notice = sent ? `${this.tr('CHAT.FORWARDED_TO', 'Reenviado a')} ${sent} ${sent === 1 ? this.tr('CHAT.CHAT_SINGULAR', 'chat') : this.tr('CHAT.CHAT_PLURAL', 'chats')}.` : this.tr('CHAT.ERROR_FORWARD', 'No se pudo reenviar.');
       this.closeForward();
     });
   }
 
   async clearChat(scope: 'me' | 'everyone'): Promise<void> {
     const conversation = this.conversation();
-    if (!conversation || !window.confirm(scope === 'everyone' ? 'Vaciar este chat para todos?' : 'Vaciar este chat solo para ti?')) {
+    if (!conversation || !window.confirm(scope === 'everyone' ? this.tr('CHAT.CONFIRM_CLEAR_EVERYONE', 'Vaciar este chat para todos?') : this.tr('CHAT.CONFIRM_CLEAR_ME', 'Vaciar este chat solo para ti?'))) {
       return;
     }
     await this.runAction(`clear:${scope}`, async () => {
       await this.chat.clearConversation(conversation, scope);
       this.closeChatMenu();
-      this.notice = scope === 'everyone' ? 'Chat vaciado para todos.' : 'Chat vaciado para ti.';
+      this.notice = scope === 'everyone' ? this.tr('CHAT.CLEARED_EVERYONE', 'Chat vaciado para todos.') : this.tr('CHAT.CLEARED_ME', 'Chat vaciado para ti.');
     });
   }
 
   async deleteChat(scope: 'me' | 'everyone'): Promise<void> {
     const conversation = this.conversation();
-    if (!conversation || !window.confirm(scope === 'everyone' ? 'Eliminar este chat para todos?' : 'Eliminar este chat solo para ti?')) {
+    if (!conversation || !window.confirm(scope === 'everyone' ? this.tr('CHAT.CONFIRM_DELETE_CHAT_EVERYONE', 'Eliminar este chat para todos?') : this.tr('CHAT.CONFIRM_DELETE_CHAT_ME', 'Eliminar este chat solo para ti?'))) {
       return;
     }
     await this.runAction(`delete-chat:${scope}`, async () => {
@@ -1051,7 +1055,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     await this.runAction(`archive:${conversation.id}`, async () => {
       await this.chat.setConversationArchived(conversation, archived);
       this.closeChatMenu();
-      this.notice = archived ? 'Chat archivado en este dispositivo.' : 'Chat desarchivado.';
+      this.notice = archived ? this.tr('CHAT.ARCHIVED_DEVICE', 'Chat archivado en este dispositivo.') : this.tr('CHAT.UNARCHIVED', 'Chat desarchivado.');
     });
   }
 
@@ -1064,7 +1068,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     await this.runAction(`block:${conversation.id}`, async () => {
       await this.chat.setConversationBlocked(conversation, blocked);
       this.closeChatMenu();
-      this.notice = blocked ? 'Chat bloqueado en este dispositivo.' : 'Chat desbloqueado.';
+      this.notice = blocked ? this.tr('CHAT.BLOCKED_DEVICE', 'Chat bloqueado en este dispositivo.') : this.tr('CHAT.UNBLOCKED', 'Chat desbloqueado.');
     });
   }
 
@@ -1108,11 +1112,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
     const conversation = this.conversation();
     if (!conversation || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
-      this.attachmentError = 'Este dispositivo no permite grabar audio desde la app.';
+      this.attachmentError = this.tr('CHAT.ERROR_RECORDING_UNSUPPORTED', 'Este dispositivo no permite grabar audio desde la app.');
       return;
     }
     if (!this.canSendMessages()) {
-      this.attachmentError = 'Solo los admins pueden enviar notas de voz en este grupo.';
+      this.attachmentError = this.tr('CHAT.ADMINS_ONLY_VOICE', 'Solo los admins pueden enviar notas de voz en este grupo.');
       return;
     }
     this.attachmentError = '';
@@ -1143,7 +1147,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     } catch (error) {
       this.cleanupVoiceRecorder();
       this.resetVoiceUi();
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo abrir el microfono.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_MIC', 'No se pudo abrir el microfono.');
     }
   }
 
@@ -1163,7 +1167,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       await this.chat.sendFile(conversation, file, { voiceNote: true, policy: this.currentPolicy(), mode: 'document' });
       this.scrollBottom();
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo enviar la nota de voz.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_VOICE', 'No se pudo enviar la nota de voz.');
     } finally {
       this.sending = false;
       this.resetVoiceUi();
@@ -1257,7 +1261,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     return reaction.displayName
       || reaction.alias
       || this.chat.participantDisplayName(reaction.userId)
-      || 'Alguien';
+      || this.tr('COMMON.SOMEONE', 'Alguien');
   }
 
   reactionSubtitle(reaction: MessageReaction): string {
@@ -1279,7 +1283,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   receiptDisplayName(receipt: DeliveryReceipt): string {
-    return this.chat.participantDisplayName(receipt.userId) || 'Dispositivo';
+    return this.chat.participantDisplayName(receipt.userId) || this.tr('COMMON.DEVICE', 'Dispositivo');
   }
 
   receiptAvatar(receipt: DeliveryReceipt): string {
@@ -1292,15 +1296,15 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   receiptStatus(receipt: DeliveryReceipt): string {
     if (receipt.deletedAt) {
-      return `Eliminado ${this.shortDateTime(receipt.deletedAt)}`;
+      return `${this.tr('CHAT.DELETED', 'Eliminado')} ${this.shortDateTime(receipt.deletedAt)}`;
     }
     if (receipt.readAt) {
-      return `Leido ${this.shortDateTime(receipt.readAt)}`;
+      return `${this.tr('CHAT.READ', 'Leido')} ${this.shortDateTime(receipt.readAt)}`;
     }
     if (receipt.deliveredAt) {
-      return `Entregado ${this.shortDateTime(receipt.deliveredAt)}`;
+      return `${this.tr('CHAT.DELIVERED', 'Entregado')} ${this.shortDateTime(receipt.deliveredAt)}`;
     }
-    return 'Pendiente';
+    return this.tr('CHAT.PENDING', 'Pendiente');
   }
 
   messageInfoSummary(message: ChatMessageVm | null = this.messageInfoMessage): string {
@@ -1310,15 +1314,15 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const rows = this.messageInfoRows(message);
     const read = rows.filter((receipt) => receipt.readAt).length;
     const delivered = rows.filter((receipt) => receipt.deliveredAt).length;
-    return `${delivered} entregado${delivered === 1 ? '' : 's'} - ${read} leido${read === 1 ? '' : 's'}`;
+    return `${delivered} ${delivered === 1 ? this.tr('CHAT.DELIVERED_ONE', 'entregado') : this.tr('CHAT.DELIVERED_MANY', 'entregados')} - ${read} ${read === 1 ? this.tr('CHAT.READ_ONE', 'leido') : this.tr('CHAT.READ_MANY', 'leidos')}`;
   }
 
   forwardedLabel(message: ChatMessageVm): string {
     const value = message.payload.forwardedFrom;
     if (typeof value === 'object' && value !== null && 'senderAlias' in value) {
-      return `Reenviado de ${String((value as { senderAlias?: unknown }).senderAlias || 'Nivra')}`;
+      return `${this.tr('CHAT.FORWARDED_FROM', 'Reenviado de')} ${String((value as { senderAlias?: unknown }).senderAlias || 'Nivra')}`;
     }
-    return value ? 'Reenviado' : '';
+    return value ? this.tr('CHAT.FORWARDED', 'Reenviado') : '';
   }
 
   replyPreview(message: ChatMessageVm | null): string {
@@ -1332,10 +1336,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         ? reply.preview.trim()
         : typeof reply.mediaMime === 'string' && reply.mediaMime
           ? reply.mediaMime
-          : 'Instantanea';
-      return `Historia: ${preview}`;
+          : this.tr('STORY.SNAPSHOT', 'Instantanea');
+      return `${this.tr('STORY.TITLE', 'Historia')}: ${preview}`;
     }
-    return 'Respuesta cifrada';
+    return this.tr('CHAT.ENCRYPTED_REPLY', 'Respuesta cifrada');
   }
 
   replyReference(message: ChatMessageVm | null): unknown {
@@ -1407,7 +1411,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   participantSubtitle(participant: Participant): string {
-    const role = this.isGroupAdmin(participant.userId) ? 'Admin' : 'Miembro';
+    const role = this.isGroupAdmin(participant.userId) ? this.tr('CHAT.ADMIN', 'Admin') : this.tr('CHAT.MEMBER', 'Miembro');
     const alias = this.chat.participantAlias(participant.userId, participant);
     const phone = participant.phone || '';
     return [role, alias || phone].filter(Boolean).join(' - ');
@@ -1437,7 +1441,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     try {
       this.groupAvatarDraft = await this.fileToDataUrl(file);
     } catch {
-      this.groupInfoError = 'No se pudo cargar la foto del grupo.';
+      this.groupInfoError = this.tr('CHAT.ERROR_GROUP_PHOTO', 'No se pudo cargar la foto del grupo.');
     }
   }
 
@@ -1451,7 +1455,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         groupName: this.groupNameDraft.trim(),
         groupAvatar: this.groupAvatarDraft,
       });
-      this.notice = 'Grupo actualizado.';
+      this.notice = this.tr('CHAT.GROUP_UPDATED', 'Grupo actualizado.');
       this.prepareGroupInfoDraft(this.conversation() ?? conversation);
     });
   }
@@ -1516,7 +1520,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       await this.chat.addGroupParticipants(conversation, [...this.selectedGroupAddIds]);
       this.selectedGroupAddIds.clear();
       this.groupAddOpen = false;
-      this.notice = 'Participantes agregados.';
+      this.notice = this.tr('CHAT.PARTICIPANTS_ADDED', 'Participantes agregados.');
       this.prepareGroupInfoDraft(this.conversation() ?? conversation);
     });
   }
@@ -1558,7 +1562,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const opened = window.open(url, '_blank', 'noopener,noreferrer');
     if (!opened) {
       await navigator.clipboard.writeText(text).catch(() => undefined);
-      this.notice = 'Texto copiado.';
+      this.notice = this.tr('CHAT.TEXT_COPIED', 'Texto copiado.');
     }
     this.closeMessageActions();
   }
@@ -1789,7 +1793,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private isUploadLimitError(message: string): boolean {
-    return message.includes('limite robusto de cifrado local');
+    return message.includes('limite robusto de cifrado local') || message.includes('local encryption limit');
   }
 
   private async showPremiumToast(message: string): Promise<void> {
@@ -1860,7 +1864,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     try {
       await action();
     } catch (error) {
-      this.groupInfoError = error instanceof Error ? error.message : 'No se pudo actualizar el grupo.';
+      this.groupInfoError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_UPDATE_GROUP', 'No se pudo actualizar el grupo.');
     } finally {
       this.groupInfoBusy = false;
     }
@@ -1921,6 +1925,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? '';
   }
 
+  private tr(key: string, fallback: string): string {
+    return this.translate.instant(key, fallback);
+  }
+
   private async runAction(id: string, action: () => Promise<void>): Promise<void> {
     this.busyAction = id;
     this.attachmentError = '';
@@ -1928,7 +1936,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     try {
       await action();
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : 'No se pudo completar la accion.';
+      this.attachmentError = error instanceof Error ? error.message : this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
     } finally {
       this.busyAction = '';
     }

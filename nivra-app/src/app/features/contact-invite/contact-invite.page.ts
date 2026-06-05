@@ -6,6 +6,8 @@ import { addIcons } from 'ionicons';
 import { chatbubbleEllipsesOutline, personAddOutline } from 'ionicons/icons';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 
 const PENDING_CONTACT_ALIAS_KEY = 'nivra.pendingContactAlias';
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
@@ -13,7 +15,7 @@ const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 @Component({
   selector: 'app-contact-invite',
   standalone: true,
-  imports: [CommonModule, IonButton, IonContent, IonIcon, IonSpinner],
+  imports: [CommonModule, TranslatePipe, IonButton, IonContent, IonIcon, IonSpinner],
   templateUrl: './contact-invite.page.html',
   styleUrls: ['./contact-invite.page.scss'],
 })
@@ -22,6 +24,7 @@ export class ContactInvitePage implements OnInit {
   private readonly router = inject(Router);
   private readonly auth = inject(AuthService);
   private readonly chat = inject(ChatService);
+  private readonly translate = inject(TranslateService);
   alias = '';
   loading = true;
   error = '';
@@ -33,7 +36,7 @@ export class ContactInvitePage implements OnInit {
   async ngOnInit(): Promise<void> {
     this.alias = this.normalizeAlias(this.route.snapshot.queryParamMap.get('alias') || '');
     if (!this.alias) {
-      this.fail('Invitacion de contacto invalida.');
+      this.fail(this.tr('CONTACT_INVITE.INVALID', 'Invitacion de contacto invalida.'));
       return;
     }
 
@@ -59,21 +62,21 @@ export class ContactInvitePage implements OnInit {
   private async openContact(): Promise<void> {
     try {
       if (this.auth.session()?.user?.alias?.toLowerCase() === this.alias.toLowerCase()) {
-        this.fail('Este QR pertenece a tu propia cuenta.');
+        this.fail(this.tr('CONTACT_INVITE.OWN_ACCOUNT', 'Este QR pertenece a tu propia cuenta.'));
         return;
       }
 
       const people = await this.chat.searchPeople(this.alias);
       const person = people.find((item) => item.alias.toLowerCase() === this.alias.toLowerCase());
       if (!person) {
-        this.fail(`No encontre @${this.alias}.`);
+        this.fail(`${this.tr('CONTACT_INVITE.NOT_FOUND', 'No encontre')} @${this.alias}.`);
         return;
       }
 
       const conversation = await this.chat.createDirectConversation(person);
       await this.router.navigate(['/app/chats', conversation.id]);
     } catch (error) {
-      this.fail(error instanceof Error ? error.message : 'No se pudo abrir este contacto.');
+      this.fail(error instanceof Error ? error.message : this.tr('CONTACT_INVITE.OPEN_ERROR', 'No se pudo abrir este contacto.'));
     }
   }
 
@@ -85,5 +88,9 @@ export class ContactInvitePage implements OnInit {
   private fail(message: string): void {
     this.loading = false;
     this.error = message;
+  }
+
+  private tr(key: string, fallback: string): string {
+    return this.translate.instant(key, fallback);
   }
 }

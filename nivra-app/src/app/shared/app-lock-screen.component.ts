@@ -4,11 +4,12 @@ import { IonIcon, IonSpinner } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { backspaceOutline, fingerPrintOutline, lockClosedOutline, scanOutline } from 'ionicons/icons';
 import { AppLockService } from '../core/services/app-lock.service';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 
 @Component({
   selector: 'app-lock-screen',
   standalone: true,
-  imports: [CommonModule, IonIcon, IonSpinner],
+  imports: [CommonModule, TranslatePipe, IonIcon, IonSpinner],
   templateUrl: './app-lock-screen.component.html',
   styleUrls: ['./app-lock-screen.component.scss'],
 })

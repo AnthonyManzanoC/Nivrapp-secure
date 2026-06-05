@@ -2,6 +2,7 @@ import { Injectable, computed, effect, inject } from '@angular/core';
 import { AppSettingsService } from './app-settings.service';
 
 type TranslationDictionary = Record<string, Record<string, string>>;
+const SUPPORTED_LANGUAGES = new Set(['es', 'en', 'zh-Hans', 'hi', 'ar', 'pt', 'ru', 'ja', 'fr', 'de']);
 
 const TRANSLATIONS: TranslationDictionary = {
   es: {
@@ -538,10 +539,17 @@ export class NivraI18nService {
   }
 
   private normalizeLanguage(language: string): string {
-    if (TRANSLATIONS[language]) {
+    if (language.startsWith('zh')) {
+      return 'zh-Hans';
+    }
+    const base = language.split('-')[0];
+    if (SUPPORTED_LANGUAGES.has(language)) {
       return language;
     }
-    return language.startsWith('zh') ? 'zh-Hans' : (language.startsWith('es') ? 'es' : 'en');
+    if (SUPPORTED_LANGUAGES.has(base)) {
+      return base;
+    }
+    return 'en';
   }
 
   private applyDocumentLanguage(language: string): void {

@@ -28,6 +28,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { ChatFolderFilter, ChatService } from '../../core/services/chat.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 
 @Component({
   selector: 'app-chats',
@@ -61,6 +62,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 export class ChatsPage implements OnDestroy {
   readonly chat = inject(ChatService);
   readonly appSettings = inject(AppSettingsService);
+  private readonly translate = inject(TranslateService);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   query = '';
@@ -265,11 +267,11 @@ export class ChatsPage implements OnDestroy {
   }
 
   contactLabel(contact: Contact): string {
-    return contact.displayName || contact.phone || contact.alias || 'Contacto';
+    return contact.displayName || contact.phone || contact.alias || this.tr('COMMON.CONTACT', 'Contacto');
   }
 
   contactSubLabel(contact: Contact): string {
-    return contact.phone || (contact.alias ? `@${contact.alias}` : 'Contacto cifrado');
+    return contact.phone || (contact.alias ? `@${contact.alias}` : this.tr('CALLS.ENCRYPTED_CONTACT', 'Contacto cifrado'));
   }
 
   async createGroup(): Promise<void> {
@@ -278,7 +280,7 @@ export class ChatsPage implements OnDestroy {
     }
     const participantUserIds = [...this.selectedGroupUserIds];
     if (!participantUserIds.length) {
-      this.groupError = 'Selecciona al menos un contacto.';
+      this.groupError = this.tr('CHATS.SELECT_ONE_CONTACT', 'Selecciona al menos un contacto.');
       return;
     }
     this.groupBusy = true;
@@ -291,7 +293,7 @@ export class ChatsPage implements OnDestroy {
       this.groupModalOpen = false;
       await this.router.navigate(['/app/chats', conversation.id]);
     } catch (error) {
-      this.groupError = error instanceof Error ? error.message : 'No se pudo crear el grupo.';
+      this.groupError = error instanceof Error ? error.message : this.tr('CHATS.ERROR_CREATE_GROUP', 'No se pudo crear el grupo.');
     } finally {
       this.groupBusy = false;
     }
@@ -328,5 +330,9 @@ export class ChatsPage implements OnDestroy {
     if (!conversationId) {
       this.chat.clearSelectedConversation();
     }
+  }
+
+  private tr(key: string, fallback: string): string {
+    return this.translate.instant(key, fallback);
   }
 }

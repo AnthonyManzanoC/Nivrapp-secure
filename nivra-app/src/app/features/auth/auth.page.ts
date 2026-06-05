@@ -131,7 +131,7 @@ export class AuthPage implements OnDestroy {
     try {
       await action();
     } catch (error) {
-      this.error = error instanceof Error ? error.message : 'Nivra no pudo completar la accion.';
+      this.error = error instanceof Error ? error.message : this.translate.instant('COMMON.ACTION_ERROR_NIVRA', 'Nivra no pudo completar la accion.');
     }
   }
 }

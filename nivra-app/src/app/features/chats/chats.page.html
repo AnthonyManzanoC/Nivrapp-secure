@@ -81,7 +81,7 @@
                   <strong>{{ person.displayName || person.phone || person.alias }}</strong>
                   <small>{{ person.phone || '@' + person.alias }}</small>
                 </button>
-                <button type="button" class="recent-remove" (click)="removeRecent(person, $event)" aria-label="Quitar busqueda reciente">
+                <button type="button" class="recent-remove" (click)="removeRecent(person, $event)" [attr.aria-label]="'CHATS.REMOVE_RECENT_SEARCH' | translate:'Quitar busqueda reciente'">
                   <ion-icon name="close-outline"></ion-icon>
                 </button>
               </div>
@@ -188,14 +188,14 @@
             <h2>{{ 'CHATS.NEW_GROUP' | translate:'Nuevo grupo' }}</h2>
             <p>{{ selectedGroupUserIds.size }} {{ 'CHATS.GROUP_PARTICIPANTS_SELECTED' | translate:'participantes seleccionados' }}</p>
           </div>
-          <ion-button mode="ios" fill="clear" (click)="closeGroupModal()" aria-label="Cerrar">
+          <ion-button mode="ios" fill="clear" (click)="closeGroupModal()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
         </header>
 
         <label class="group-name">
-          <span>Nombre del grupo</span>
-          <input [(ngModel)]="groupName" type="text" maxlength="48" placeholder="Familia, equipo, amigos">
+          <span>{{ 'CHAT.GROUP_NAME' | translate:'Nombre del grupo' }}</span>
+          <input [(ngModel)]="groupName" type="text" maxlength="48" [placeholder]="'CHATS.GROUP_NAME_PLACEHOLDER' | translate:'Familia, equipo, amigos'">
         </label>
 
         <div class="group-contact-list">
@@ -218,8 +218,8 @@
             </button>
           } @empty {
             <div class="empty group-empty">
-              <strong>Sin contactos</strong>
-              <span>Busca contactos primero para armar un grupo.</span>
+              <strong>{{ 'CHATS.NO_CONTACTS' | translate:'Sin contactos' }}</strong>
+              <span>{{ 'CHATS.NO_CONTACTS_GROUP_COPY' | translate:'Busca contactos primero para armar un grupo.' }}</span>
             </div>
           }
         </div>
@@ -229,10 +229,10 @@
         }
 
         <footer>
-          <ion-button mode="ios" fill="clear" (click)="closeGroupModal()">Cancelar</ion-button>
+          <ion-button mode="ios" fill="clear" (click)="closeGroupModal()">{{ 'COMMON.CANCEL' | translate:'Cancelar' }}</ion-button>
           <ion-button mode="ios" [disabled]="groupBusy || !selectedGroupUserIds.size" (click)="createGroup()">
             @if (groupBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="people-outline"></ion-icon> }
-            Crear grupo
+            {{ 'CHATS.CREATE_GROUP' | translate:'Crear grupo' }}
           </ion-button>
         </footer>
       </section>

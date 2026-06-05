@@ -35,6 +35,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { ContactSyncService } from '../../core/services/contact-sync.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 import { SocialService } from '../../core/services/social.service';
 import { Router } from '@angular/router';
 
@@ -62,6 +63,7 @@ export class WorldPage implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
   readonly chat = inject(ChatService);
   readonly contactSync = inject(ContactSyncService);
+  readonly translate = inject(TranslateService);
   private readonly router = inject(Router);
   private readonly toastController = inject(ToastController);
   query = '';
@@ -156,14 +158,14 @@ export class WorldPage implements OnInit, OnDestroy {
   async request(person: UserSummary): Promise<void> {
     await this.run(person.id, async () => {
       await this.social.requestFriend(person);
-      this.notice = 'Solicitud enviada.';
+      this.notice = this.tr('WORLD.NOTICE_REQUEST_SENT', 'Solicitud enviada.');
     });
   }
 
   async addContact(person: UserSummary): Promise<void> {
     await this.run(`contact:${person.id}`, async () => {
       await this.social.addContact(person);
-      this.notice = 'Contacto guardado.';
+      this.notice = this.tr('WORLD.NOTICE_CONTACT_SAVED', 'Contacto guardado.');
     });
   }
 
@@ -175,7 +177,7 @@ export class WorldPage implements OnInit, OnDestroy {
           ? `${this.social.radarNewCount()} contacto nuevo en Nivra.`
           : `${response.matched} contacto${response.matched === 1 ? '' : 's'} detectado${response.matched === 1 ? '' : 's'}.`;
       } else {
-        this.notice = response.submitted ? 'Sin coincidencias por ahora.' : 'Agrega telefonos para escanear.';
+        this.notice = response.submitted ? this.tr('WORLD.NO_MATCHES_NOW', 'Sin coincidencias por ahora.') : this.tr('WORLD.ADD_PHONES_SCAN', 'Agrega telefonos para escanear.');
       }
       this.contactSync.clearContactJoinedHint();
     });
@@ -210,7 +212,7 @@ export class WorldPage implements OnInit, OnDestroy {
     }
     await this.run(`remove:${contact.userId}`, async () => {
       await this.social.deleteContact(contact);
-      this.notice = 'Contacto eliminado.';
+      this.notice = this.tr('WORLD.NOTICE_CONTACT_DELETED', 'Contacto eliminado.');
     });
   }
 
@@ -251,7 +253,7 @@ export class WorldPage implements OnInit, OnDestroy {
       this.storyFile = null;
       this.viewOnce = false;
       this.storyAudience = 'contacts';
-      this.notice = 'Historia publicada.';
+      this.notice = this.tr('WORLD.NOTICE_STORY_PUBLISHED', 'Historia publicada.');
     });
   }
 
@@ -377,7 +379,7 @@ export class WorldPage implements OnInit, OnDestroy {
     await this.run(`react:${story.id}`, async () => {
       await this.social.reactStory(story, emoji);
       this.reactionsOpen = false;
-      this.notice = emoji === '\u2764\uFE0F' ? 'Me encanta enviado.' : 'Reaccion enviada.';
+      this.notice = emoji === '\u2764\uFE0F' ? this.tr('WORLD.NOTICE_LOVE_SENT', 'Me encanta enviado.') : this.tr('WORLD.NOTICE_REACTION_SENT', 'Reaccion enviada.');
     });
   }
 
@@ -387,7 +389,7 @@ export class WorldPage implements OnInit, OnDestroy {
     }
     await this.run(`repost:${story.id}`, async () => {
       await this.social.repostStory(story);
-      this.notice = `Reposteado de @${story.owner.alias}.`;
+      this.notice = `${this.tr('WORLD.REPOSTED_FROM', 'Reposteado de')} @${story.owner.alias}.`;
     });
   }
 
@@ -403,14 +405,14 @@ export class WorldPage implements OnInit, OnDestroy {
       });
       await this.social.commentStory(story, message?.id ?? null);
       this.storyReply = '';
-      this.notice = 'Respuesta enviada al chat.';
+      this.notice = this.tr('WORLD.NOTICE_REPLY_SENT', 'Respuesta enviada al chat.');
     });
   }
 
   async deleteStory(story: Story): Promise<void> {
     await this.run(`delete:${story.id}`, async () => {
       await this.social.deleteStory(story);
-      this.notice = 'Historia eliminada.';
+      this.notice = this.tr('WORLD.NOTICE_STORY_DELETED', 'Historia eliminada.');
     });
   }
 
@@ -530,13 +532,17 @@ export class WorldPage implements OnInit, OnDestroy {
     try {
       await action();
     } catch (error) {
-      this.error = error instanceof Error ? error.message : 'No se pudo completar la accion.';
+      this.error = error instanceof Error ? error.message : this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
       if (this.isUploadLimitError(this.error)) {
         await this.showPremiumToast(this.error);
       }
     } finally {
       this.busyId = '';
     }
+  }
+
+  private tr(key: string, fallback: string): string {
+    return this.translate.instant(key, fallback);
   }
 
   private isUploadLimitError(message: string): boolean {

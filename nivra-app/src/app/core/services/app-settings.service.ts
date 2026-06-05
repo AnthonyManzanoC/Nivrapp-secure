@@ -281,7 +281,7 @@ export class AppSettingsService {
     next.chatWallpaper = this.oneOf(next.chatWallpaper, ['nivra', 'clean', 'botanic', 'midnight', 'paper'], DEFAULT_SETTINGS.chatWallpaper);
     next.chatListDensity = this.oneOf(next.chatListDensity, ['two-line', 'three-line'], DEFAULT_SETTINGS.chatListDensity);
     next.lowDataCalls = this.oneOf(next.lowDataCalls, ['never', 'mobile', 'roaming', 'always'], DEFAULT_SETTINGS.lowDataCalls);
-    next.language = this.oneOf(next.language, ['es', 'en', 'ar', 'be', 'ca', 'zh-Hans', 'zh-Hant', 'hr', 'pt', 'fr'], DEFAULT_SETTINGS.language);
+    next.language = this.oneOf(next.language, ['es', 'en', 'zh-Hans', 'hi', 'ar', 'pt', 'ru', 'ja', 'fr', 'de'], DEFAULT_SETTINGS.language);
     next.phoneVisibility = this.visibility(next.phoneVisibility, DEFAULT_SETTINGS.phoneVisibility);
     next.lastSeenVisibility = this.visibility(next.lastSeenVisibility, DEFAULT_SETTINGS.lastSeenVisibility);
     next.profilePhotoVisibility = this.visibility(next.profilePhotoVisibility, DEFAULT_SETTINGS.profilePhotoVisibility);

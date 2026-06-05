@@ -33,6 +33,7 @@ import {
 } from 'ionicons/icons';
 import { DecodedVaultItem, FileChatPayload, UserSummary, VaultNoteAttachment, VaultRoom, VaultRoomMember, VaultRoomMessageVm } from '../../core/models/nivra.models';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 import { DeviceWipeService } from '../../core/services/device-wipe.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
 import { VaultService } from '../../core/services/vault.service';
@@ -47,6 +48,7 @@ import { MediaStreamDirective } from '../../shared/media-stream.directive';
 })
 export class VaultPage implements OnInit, OnDestroy {
   readonly vault = inject(VaultService);
+  private readonly translate = inject(TranslateService);
   private readonly deviceWipe = inject(DeviceWipeService);
   private readonly panicPin = inject(PanicPinService);
   private readonly loadingController = inject(LoadingController);
@@ -126,7 +128,7 @@ export class VaultPage implements OnInit, OnDestroy {
       }
       await this.vault.unlock(enteredPin);
       this.pin = '';
-      this.notice = 'Boveda desbloqueada.';
+      this.notice = this.tr('VAULT.NOTICE_UNLOCKED', 'Boveda desbloqueada.');
     });
   }
 
@@ -136,7 +138,7 @@ export class VaultPage implements OnInit, OnDestroy {
       this.title = '';
       this.body = '';
       this.noteAttachments = [];
-      this.notice = 'Nota cifrada guardada.';
+      this.notice = this.tr('VAULT.NOTICE_NOTE_SAVED', 'Nota cifrada guardada.');
     });
   }
 
@@ -173,7 +175,7 @@ export class VaultPage implements OnInit, OnDestroy {
       this.inviteQuery = '';
       this.selectedInviteIds.clear();
       this.vault.people.set([]);
-      this.notice = `Sala ${room.name} lista.`;
+      this.notice = `${this.tr('VAULT.NOTICE_ROOM_READY', 'Sala')} ${room.name} ${this.tr('VAULT.NOTICE_READY', 'lista')}.`;
     });
   }
 
@@ -207,7 +209,7 @@ export class VaultPage implements OnInit, OnDestroy {
     if (this.vault.currentMember(room)?.status === 'Active') {
       await this.run(`room:${room.id}`, async () => {
         await this.vault.selectRoom(room.id);
-        this.notice = 'Sala Vault abierta.';
+        this.notice = this.tr('VAULT.NOTICE_ROOM_OPENED', 'Sala Vault abierta.');
       });
       return;
     }
@@ -219,7 +221,7 @@ export class VaultPage implements OnInit, OnDestroy {
       const joined = await this.vault.joinRoom(room, this.roomPinById[room.id] || null);
       const member = this.vault.currentMember(joined);
       this.roomPinById[room.id] = '';
-      this.notice = member?.status === 'Waiting' ? 'Solicitud enviada al propietario.' : 'Boveda abierta.';
+      this.notice = member?.status === 'Waiting' ? this.tr('VAULT.NOTICE_REQUEST_SENT_OWNER', 'Solicitud enviada al propietario.') : this.tr('VAULT.NOTICE_OPENED', 'Boveda abierta.');
     });
   }
 
@@ -229,7 +231,7 @@ export class VaultPage implements OnInit, OnDestroy {
         await this.exitVaultFullscreen();
       }
       await this.vault.leaveRoom(room.id);
-      this.notice = 'Saliste de la sala.';
+      this.notice = this.tr('VAULT.NOTICE_LEFT_ROOM', 'Saliste de la sala.');
     });
   }
 
@@ -249,7 +251,7 @@ export class VaultPage implements OnInit, OnDestroy {
       return;
     }
     if (!this.vault.canInviteGuests(room)) {
-      this.error = 'Solo el dueno de la sala puede agregar invitados.';
+      this.error = this.tr('VAULT.ERROR_OWNER_INVITES', 'Solo el dueno de la sala puede agregar invitados.');
       return;
     }
     await this.run(`invite:${room.id}`, async () => {
@@ -257,7 +259,7 @@ export class VaultPage implements OnInit, OnDestroy {
       this.selectedInviteIds.clear();
       this.inviteQuery = '';
       this.vault.people.set([]);
-      this.notice = 'Invitaciones enviadas.';
+      this.notice = this.tr('VAULT.NOTICE_INVITES_SENT', 'Invitaciones enviadas.');
     });
   }
 
@@ -270,7 +272,7 @@ export class VaultPage implements OnInit, OnDestroy {
       });
       const text = this.vault.inviteShareText(room, invite);
       await this.shareText(text, invite.acceptUrl);
-      this.notice = 'Invitacion Vault lista.';
+      this.notice = this.tr('VAULT.NOTICE_INVITE_READY', 'Invitacion Vault lista.');
     });
   }
 
@@ -284,14 +286,14 @@ export class VaultPage implements OnInit, OnDestroy {
       this.pendingInvitePin = '';
       await this.clearInviteQuery();
       const member = this.vault.currentMember(room);
-      this.notice = member?.status === 'Waiting' ? 'Solicitud enviada al propietario.' : 'Sala Vault agregada.';
+      this.notice = member?.status === 'Waiting' ? this.tr('VAULT.NOTICE_REQUEST_SENT_OWNER', 'Solicitud enviada al propietario.') : this.tr('VAULT.NOTICE_ROOM_ADDED', 'Sala Vault agregada.');
     });
   }
 
   async approve(room: VaultRoom, member: VaultRoomMember): Promise<void> {
     await this.run(`approve:${member.userId}`, async () => {
       await this.vault.approveMember(room.id, member.userId);
-      this.notice = 'Acceso aprobado.';
+      this.notice = this.tr('VAULT.NOTICE_ACCESS_APPROVED', 'Acceso aprobado.');
     });
   }
 
@@ -311,7 +313,7 @@ export class VaultPage implements OnInit, OnDestroy {
     }
     await this.run('vault:file', async () => {
       await this.vault.sendRoomFile(file);
-      this.notice = 'Archivo cifrado enviado.';
+      this.notice = this.tr('VAULT.NOTICE_FILE_SENT', 'Archivo cifrado enviado.');
     });
   }
 
@@ -334,7 +336,7 @@ export class VaultPage implements OnInit, OnDestroy {
   async startVoice(room: VaultRoom): Promise<void> {
     await this.run(`voice:${room.id}`, async () => {
       await this.vault.startVoiceChat(room);
-      this.notice = 'Chat de voz activo.';
+      this.notice = this.tr('VAULT.NOTICE_VOICE_ACTIVE', 'Chat de voz activo.');
     });
   }
 
@@ -344,7 +346,7 @@ export class VaultPage implements OnInit, OnDestroy {
 
   leaveVoice(): void {
     this.vault.leaveVoiceChat();
-    this.notice = 'Saliste del chat de voz.';
+    this.notice = this.tr('VAULT.NOTICE_LEFT_VOICE', 'Saliste del chat de voz.');
   }
 
   fullscreenLabel(): string {
@@ -393,7 +395,7 @@ export class VaultPage implements OnInit, OnDestroy {
     try {
       await action();
     } catch (error) {
-      this.error = error instanceof Error ? error.message : 'No se pudo completar la accion.';
+      this.error = error instanceof Error ? error.message : this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
     } finally {
       this.busyId = '';
     }
@@ -465,11 +467,15 @@ export class VaultPage implements OnInit, OnDestroy {
     });
   }
 
+  private tr(key: string, fallback: string): string {
+    return this.translate.instant(key, fallback);
+  }
+
   private async triggerPanicWipe(): Promise<void> {
     this.error = '';
-    this.notice = 'Desbloqueando...';
+    this.notice = this.tr('VAULT.UNLOCKING', 'Desbloqueando...');
     const loading = await this.loadingController.create({
-      message: 'Desbloqueando...',
+      message: this.tr('VAULT.UNLOCKING', 'Desbloqueando...'),
       spinner: 'crescent',
       backdropDismiss: false,
     });

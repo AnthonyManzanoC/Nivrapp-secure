@@ -23,7 +23,7 @@
         </ion-segment-button>
         <ion-segment-button value="qr">
           <ion-icon name="qr-code-outline"></ion-icon>
-          <ion-label>QR</ion-label>
+          <ion-label>{{ 'LOGIN.QR' | translate:'QR' }}</ion-label>
         </ion-segment-button>
       </ion-segment>
 
@@ -56,7 +56,7 @@
               <span>{{ 'LOGIN.CODE' | translate:'Codigo' }}</span>
               <ion-input mode="ios" fill="outline" name="code" [(ngModel)]="code" inputmode="numeric" autocomplete="one-time-code"></ion-input>
             </label>
-            <ion-button type="button" mode="ios" fill="outline" [disabled]="auth.busy()" (click)="sendOtp()">SMS</ion-button>
+            <ion-button type="button" mode="ios" fill="outline" [disabled]="auth.busy()" (click)="sendOtp()">{{ 'LOGIN.SMS' | translate:'SMS' }}</ion-button>
           </div>
           <ion-button type="submit" expand="block" mode="ios" [disabled]="auth.busy()">
             @if (auth.busy()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="log-in-outline"></ion-icon> }
@@ -119,9 +119,9 @@
         <div class="mini-bubble">{{ 'LOGIN.KEYS_READY' | translate:'Llaves listas en este dispositivo.' }}</div>
         <div class="mini-bubble mine">{{ 'LOGIN.ENCRYPTED_BEFORE_SEND' | translate:'Mensaje cifrado antes de salir.' }}</div>
         <div class="signal-strip">
-          <span>SignalR</span>
-          <span>E2EE</span>
-          <span>Firebase</span>
+          <span>{{ 'LOGIN.SIGNALR' | translate:'SignalR' }}</span>
+          <span>{{ 'LOGIN.E2EE' | translate:'E2EE' }}</span>
+          <span>{{ 'LOGIN.FIREBASE' | translate:'Firebase' }}</span>
         </div>
       </div>
     </section>

@@ -2,29 +2,29 @@
   <ion-header class="chat-header">
     <ion-toolbar>
       <ion-buttons slot="start">
-        <ion-button mode="ios" fill="clear" class="mobile-back" (click)="back()" aria-label="Volver">
+        <ion-button mode="ios" fill="clear" class="mobile-back" (click)="back()" [attr.aria-label]="'COMMON.BACK' | translate:'Volver'">
           <ion-icon name="arrow-back-outline"></ion-icon>
         </ion-button>
       </ion-buttons>
-      <button type="button" class="title-wrap" (click)="openContactInfo()" [disabled]="!conversation()" aria-label="Info del contacto">
+      <button type="button" class="title-wrap" (click)="openContactInfo()" [disabled]="!conversation()" [attr.aria-label]="'CHAT.CONTACT_INFO' | translate:'Info del contacto'">
         @if (conversationPhoto()) {
           <img class="avatar avatar-img" [src]="conversationPhoto()" alt="">
         } @else {
           <span class="avatar">{{ conversation() ? chat.avatarLabel(conversation()!) : 'N' }}</span>
         }
         <div>
-          <h1>{{ conversation() ? chat.conversationTitle(conversation()!) : 'Chat' }}</h1>
+          <h1>{{ conversation() ? chat.conversationTitle(conversation()!) : ('CHAT.TITLE' | translate:'Chat') }}</h1>
           <p>{{ chat.presenceLabel(conversation()) }}</p>
         </div>
       </button>
       <ion-buttons slot="end">
-        <ion-button mode="ios" fill="clear" (click)="startCall('Voice')" aria-label="Llamada">
+        <ion-button mode="ios" fill="clear" (click)="startCall('Voice')" [attr.aria-label]="'COMMON.CALL' | translate:'Llamada'">
           <ion-icon name="call-outline"></ion-icon>
         </ion-button>
-        <ion-button mode="ios" fill="clear" (click)="startCall('Video')" aria-label="Video">
+        <ion-button mode="ios" fill="clear" (click)="startCall('Video')" [attr.aria-label]="'COMMON.VIDEO' | translate:'Video'">
           <ion-icon name="videocam-outline"></ion-icon>
         </ion-button>
-        <ion-button mode="ios" fill="clear" aria-label="Menu" (click)="openChatMenu($event)">
+        <ion-button mode="ios" fill="clear" [attr.aria-label]="'COMMON.MENU' | translate:'Menu'" (click)="openChatMenu($event)">
           <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
         </ion-button>
       </ion-buttons>
@@ -35,10 +35,10 @@
     <div class="group-call-banner">
       <div>
         <ion-icon name="call-outline"></ion-icon>
-        <span>Llamada en curso...</span>
-        <small>{{ room.call.type === 'Video' ? 'Videollamada grupal cifrada' : 'Llamada grupal cifrada' }}</small>
+        <span>{{ 'CHAT.CALL_IN_PROGRESS' | translate:'Llamada en curso...' }}</span>
+        <small>{{ room.call.type === 'Video' ? ('CHAT.ENCRYPTED_GROUP_VIDEO_CALL' | translate:'Videollamada grupal cifrada') : ('CHAT.ENCRYPTED_GROUP_CALL' | translate:'Llamada grupal cifrada') }}</small>
       </div>
-      <ion-button mode="ios" size="small" (click)="joinGroupCall()">Unirse</ion-button>
+      <ion-button mode="ios" size="small" (click)="joinGroupCall()">{{ 'COMMON.JOIN' | translate:'Unirse' }}</ion-button>
     </div>
   }
 
@@ -64,11 +64,11 @@
                 <span>{{ chat.callLogText(message.payload) }}</span>
               </div>
             </div>
-            <small>{{ message.at | date:'shortTime' }} - {{ message.payload.callType === 'Video' ? 'video' : 'voz' }}</small>
+            <small>{{ message.at | date:'shortTime' }} - {{ message.payload.callType === 'Video' ? ('COMMON.VIDEO_LOWER' | translate:'video') : ('COMMON.VOICE_LOWER' | translate:'voz') }}</small>
           </div>
         } @else if (message.payload.type === 'system') {
           <div class="system-message">
-            {{ message.payload.text || message.payload.title || 'Evento de sistema' }}
+            {{ message.payload.text || message.payload.title || ('CHAT.SYSTEM_EVENT' | translate:'Evento de sistema') }}
           </div>
         } @else {
           <article
@@ -82,7 +82,7 @@
             (touchstart)="startMessagePress(message, $event)"
             (touchend)="cancelMessagePress()"
             (touchcancel)="cancelMessagePress()">
-            <button type="button" class="message-more" (click)="toggleActions(message, $event)" aria-label="Acciones">
+            <button type="button" class="message-more" (click)="toggleActions(message, $event)" [attr.aria-label]="'COMMON.ACTIONS' | translate:'Acciones'">
               <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
             </button>
             @if (forwardedLabel(message)) {
@@ -102,7 +102,7 @@
                       <ion-icon name="mic-outline"></ion-icon>
                     </span>
                     <span>
-                      <strong>{{ file.voiceNote ? 'Nota de voz' : chat.fileName(file) }}</strong>
+                      <strong>{{ file.voiceNote ? ('CHAT.VOICE_NOTE' | translate:'Nota de voz') : chat.fileName(file) }}</strong>
                       <small>{{ chat.fileSize(file) }}</small>
                     </span>
                   </div>
@@ -119,7 +119,7 @@
                         (pause)="markAudioPaused(message)"
                         (ended)="audioEnded(message)">
                       </audio>
-                      <button type="button" class="voice-play" (click)="toggleAudio(voiceAudio, message)" aria-label="Reproducir nota de voz">
+                      <button type="button" class="voice-play" (click)="toggleAudio(voiceAudio, message)" [attr.aria-label]="'CHAT.PLAY_VOICE_NOTE' | translate:'Reproducir nota de voz'">
                         <ion-icon [name]="isAudioPlaying(message.id) ? 'pause-circle-outline' : 'play-circle-outline'"></ion-icon>
                       </button>
                       <input
@@ -129,13 +129,13 @@
                         [max]="audioDuration(message.id)"
                         [value]="audioCurrent(message.id)"
                         (input)="seekAudio(voiceAudio, $event)"
-                        aria-label="Progreso de audio">
+                        [attr.aria-label]="'CHAT.AUDIO_PROGRESS' | translate:'Progreso de audio'">
                       <time>{{ audioTimeLabel(message.id) }}</time>
                     </div>
                   } @else {
                     <button type="button" class="voice-load" (click)="preview(message)">
                       <ion-icon name="play-circle-outline"></ion-icon>
-                      Cargar audio
+                      {{ 'CHAT.LOAD_AUDIO' | translate:'Cargar audio' }}
                     </button>
                   }
                   @if (file.text) {
@@ -144,7 +144,7 @@
                 </div>
               } @else {
                 <div class="file-card">
-                  <button type="button" class="file-thumb" (click)="openMediaItem(message)" [attr.aria-label]="'Abrir ' + chat.fileName(file)">
+                  <button type="button" class="file-thumb" (click)="openMediaItem(message)" [attr.aria-label]="('COMMON.OPEN' | translate:'Abrir') + ' ' + chat.fileName(file)">
                     @if (chat.mediaPreview(file.fileId || file.downloadFile || file.previewFile); as media) {
                       @if (chat.isImage(file)) {
                         <img [src]="media.url" [alt]="chat.fileName(file)">
@@ -163,7 +163,7 @@
                     <strong>{{ chat.fileName(file) }}</strong>
                     <span>{{ chat.fileSize(file) }}</span>
                   </div>
-                  <ion-button mode="ios" fill="clear" type="button" (click)="download(message)" [disabled]="downloadingId === message.id" aria-label="Descargar">
+                  <ion-button mode="ios" fill="clear" type="button" (click)="download(message)" [disabled]="downloadingId === message.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
                     @if (downloadingId === message.id) {
                       <ion-spinner name="crescent"></ion-spinner>
                     } @else {
@@ -180,11 +180,11 @@
             }
             <div class="quick-reaction-row">
               @for (emoji of chat.quickReactions; track emoji) {
-                <button type="button" (click)="react(message, emoji)" [attr.aria-label]="'Reaccionar ' + emoji">{{ emoji }}</button>
+                <button type="button" (click)="react(message, emoji)" [attr.aria-label]="('CHAT.REACT' | translate:'Reaccionar') + ' ' + emoji">{{ emoji }}</button>
               }
             </div>
             @if (reactions(message).length) {
-              <button type="button" class="reactions" [title]="chat.reactionSummary(message)" (click)="openReactionViewer(message, $event)" aria-label="Ver reacciones">
+              <button type="button" class="reactions" [title]="chat.reactionSummary(message)" (click)="openReactionViewer(message, $event)" [attr.aria-label]="'CHAT.VIEW_REACTIONS' | translate:'Ver reacciones'">
                 @for (group of chat.reactionGroups(message); track group.emoji) {
                   <span>{{ group.emoji }}@if (group.count > 1) { <strong>{{ group.count }}</strong> }</span>
                 }
@@ -193,7 +193,7 @@
             <footer>
               <time>{{ message.at | date:'shortTime' }}</time>
               @if (message.status === 'editado') {
-                <span>editado</span>
+                <span>{{ 'CHAT.EDITED' | translate:'editado' }}</span>
               }
               @if (message.mine) {
                 <ion-icon name="checkmark-done-outline"></ion-icon>
@@ -209,7 +209,7 @@
             <span class="avatar large">{{ conversation() ? chat.avatarLabel(conversation()!) : 'N' }}</span>
           }
           <h2>{{ conversation() ? chat.conversationTitle(conversation()!) : 'Nivra' }}</h2>
-          <p>Chat cifrado listo.</p>
+          <p>{{ 'CHAT.ENCRYPTED_READY' | translate:'Chat cifrado listo.' }}</p>
         </div>
       }
     </div>
@@ -220,10 +220,10 @@
       <div class="edit-bar">
         <ion-icon name="create-outline"></ion-icon>
         <div>
-          <strong>Editando mensaje</strong>
+          <strong>{{ 'CHAT.EDITING_MESSAGE' | translate:'Editando mensaje' }}</strong>
           <span>{{ editingMessage.payload.text }}</span>
         </div>
-        <ion-button type="button" mode="ios" fill="clear" (click)="cancelEdit()" aria-label="Cancelar edicion">
+        <ion-button type="button" mode="ios" fill="clear" (click)="cancelEdit()" [attr.aria-label]="'CHAT.CANCEL_EDIT' | translate:'Cancelar edicion'">
           <ion-icon name="close-outline"></ion-icon>
         </ion-button>
       </div>
@@ -232,10 +232,10 @@
       <div class="edit-bar reply-bar">
         <ion-icon name="return-down-back-outline"></ion-icon>
         <div>
-          <strong>Respondiendo</strong>
+          <strong>{{ 'CHAT.REPLYING' | translate:'Respondiendo' }}</strong>
           <span>{{ replyPreview(replyingMessage) }}</span>
         </div>
-        <ion-button type="button" mode="ios" fill="clear" (click)="cancelReply()" aria-label="Cancelar respuesta">
+        <ion-button type="button" mode="ios" fill="clear" (click)="cancelReply()" [attr.aria-label]="'CHAT.CANCEL_REPLY' | translate:'Cancelar respuesta'">
           <ion-icon name="close-outline"></ion-icon>
         </ion-button>
       </div>
@@ -243,11 +243,11 @@
     <div class="policy-row">
       <label class="policy-toggle">
         <ion-toggle mode="ios" [(ngModel)]="deleteAfterRead" [disabled]="sending" name="deleteAfterRead"></ion-toggle>
-        <span>Ver una vez</span>
+        <span>{{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }}</span>
       </label>
-      <ion-select mode="ios" interface="popover" [(ngModel)]="ttlSeconds" [disabled]="sending" name="ttlSeconds" aria-label="Expiracion">
+      <ion-select mode="ios" interface="popover" [(ngModel)]="ttlSeconds" [disabled]="sending" name="ttlSeconds" [attr.aria-label]="'CHAT.EXPIRATION' | translate:'Expiracion'">
         @for (option of ttlOptions; track option.label) {
-          <ion-select-option [value]="option.value">{{ option.label }}</ion-select-option>
+          <ion-select-option [value]="option.value">{{ option.labelKey | translate:option.label }}</ion-select-option>
         }
       </ion-select>
     </div>
@@ -277,13 +277,13 @@
       <input #cameraPhotoInput type="file" accept="image/*" capture="environment" hidden (change)="captureCameraFile($event)">
       <input #cameraVideoInput type="file" accept="video/*" capture="environment" hidden (change)="captureCameraFile($event)">
       @if (!voiceComposerActive()) {
-        <ion-button class="composer-icon attach" type="button" mode="ios" fill="clear" aria-label="Adjuntar" [disabled]="sending || chat.uploading() || !canSendMessages()" (click)="openAttachmentMenu($event)">
+        <ion-button class="composer-icon attach" type="button" mode="ios" fill="clear" [attr.aria-label]="'CHAT.ATTACH' | translate:'Adjuntar'" [disabled]="sending || chat.uploading() || !canSendMessages()" (click)="openAttachmentMenu($event)">
           <ion-icon name="attach-outline"></ion-icon>
         </ion-button>
-        <ion-button class="composer-icon camera" type="button" mode="ios" fill="clear" aria-label="Camara" [disabled]="sending || chat.uploading() || !canSendMessages()" (click)="openCameraMenu(cameraPhotoInput, cameraVideoInput, $event)">
+        <ion-button class="composer-icon camera" type="button" mode="ios" fill="clear" [attr.aria-label]="'COMMON.CAMERA' | translate:'Camara'" [disabled]="sending || chat.uploading() || !canSendMessages()" (click)="openCameraMenu(cameraPhotoInput, cameraVideoInput, $event)">
           <ion-icon name="camera-outline"></ion-icon>
         </ion-button>
-        <ion-button class="composer-icon emoji" type="button" mode="ios" fill="clear" aria-label="Emojis" [disabled]="sending" (click)="emojiPanelOpen = !emojiPanelOpen">
+        <ion-button class="composer-icon emoji" type="button" mode="ios" fill="clear" [attr.aria-label]="'CHAT.EMOJIS' | translate:'Emojis'" [disabled]="sending" (click)="emojiPanelOpen = !emojiPanelOpen">
           <ion-icon name="happy-outline"></ion-icon>
         </ion-button>
         <ion-textarea
@@ -295,38 +295,38 @@
           [disabled]="!canSendMessages()"
           autoGrow="true"
           rows="1"
-          placeholder="Mensaje">
+          [placeholder]="'CHAT.MESSAGE_PLACEHOLDER' | translate:'Mensaje'">
         </ion-textarea>
       } @else {
         <div class="voice-recorder-panel" [style.transform]="voiceSlideTransform()">
           @if (voiceMode === 'locked') {
-            <button type="button" class="voice-trash" (click)="cancelLockedVoiceNote()" aria-label="Descartar nota de voz">
+            <button type="button" class="voice-trash" (click)="cancelLockedVoiceNote()" [attr.aria-label]="'CHAT.DISCARD_VOICE_NOTE' | translate:'Descartar nota de voz'">
               <ion-icon name="trash-outline"></ion-icon>
             </button>
             <div class="voice-clock">
               <span class="record-dot"></span>
               <strong>{{ voiceTimerLabel() }}</strong>
             </div>
-            <button type="button" class="voice-pause" (click)="toggleVoicePause()" [attr.aria-label]="voicePaused ? 'Reanudar nota de voz' : 'Pausar nota de voz'">
+            <button type="button" class="voice-pause" (click)="toggleVoicePause()" [attr.aria-label]="voicePaused ? ('CHAT.RESUME_VOICE_NOTE' | translate:'Reanudar nota de voz') : ('CHAT.PAUSE_VOICE_NOTE' | translate:'Pausar nota de voz')">
               <ion-icon [name]="voicePaused ? 'play-circle-outline' : 'pause-circle-outline'"></ion-icon>
             </button>
-            <button type="button" class="voice-send" (click)="sendLockedVoiceNote()" [disabled]="sending" aria-label="Enviar nota de voz">
+            <button type="button" class="voice-send" (click)="sendLockedVoiceNote()" [disabled]="sending" [attr.aria-label]="'CHAT.SEND_VOICE_NOTE' | translate:'Enviar nota de voz'">
               @if (sending) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
             </button>
           } @else if (voiceMode === 'cancelling') {
             <div class="voice-cancelled">
               <ion-icon name="trash-outline"></ion-icon>
-              <span>Nota descartada</span>
+              <span>{{ 'CHAT.VOICE_DISCARDED' | translate:'Nota descartada' }}</span>
             </div>
           } @else {
             <div class="voice-clock">
               <span class="record-dot"></span>
               <strong>{{ voiceTimerLabel() }}</strong>
             </div>
-            <span class="voice-slide-copy">&lt; Desliza para cancelar</span>
+            <span class="voice-slide-copy">{{ 'CHAT.SLIDE_CANCEL' | translate:'< Desliza para cancelar' }}</span>
             <span class="voice-lock-copy">
               <ion-icon name="lock-closed-outline"></ion-icon>
-              Arriba bloquea
+              {{ 'CHAT.SWIPE_UP_LOCKS' | translate:'Arriba bloquea' }}
             </span>
           }
         </div>
@@ -340,12 +340,12 @@
           fill="clear"
           [class.recording]="recordingVoice || voiceComposerActive()"
           [disabled]="(sending && !recordingVoice) || !canSendMessages() || isBlocked()"
-          aria-label="Mantener para nota de voz">
+          [attr.aria-label]="'CHAT.HOLD_FOR_VOICE_NOTE' | translate:'Mantener para nota de voz'">
           <ion-icon [name]="voiceComposerActive() ? 'lock-closed-outline' : 'mic-outline'"></ion-icon>
         </ion-button>
       }
       @if (!voiceComposerActive()) {
-        <ion-button type="submit" mode="ios" class="send" [disabled]="sending || isBlocked() || !canSendMessages() || !draft.trim()" aria-label="Enviar">
+        <ion-button type="submit" mode="ios" class="send" [disabled]="sending || isBlocked() || !canSendMessages() || !draft.trim()" [attr.aria-label]="'COMMON.SEND' | translate:'Enviar'">
           <ion-icon [name]="editingMessage ? 'checkmark-outline' : 'send-outline'"></ion-icon>
         </ion-button>
       }
@@ -353,14 +353,14 @@
     @if (chat.uploading()) {
       <div class="composer-busy">
         <ion-spinner name="crescent"></ion-spinner>
-        <span>{{ chat.uploadStatus() || 'Optimizando y sellando (E2EE)...' }}</span>
+        <span>{{ chat.uploadStatus() || ('CHAT.UPLOAD_SEALING' | translate:'Optimizando y sellando (E2EE)...') }}</span>
       </div>
     }
     @if (isBlocked()) {
-      <p class="composer-notice">Chat bloqueado en este dispositivo.</p>
+      <p class="composer-notice">{{ 'CHAT.BLOCKED_DEVICE' | translate:'Chat bloqueado en este dispositivo.' }}</p>
     }
     @if (!isBlocked() && !canSendMessages()) {
-      <p class="composer-notice">Solo los admins pueden enviar mensajes en este grupo.</p>
+      <p class="composer-notice">{{ 'CHAT.ADMINS_ONLY_MESSAGES' | translate:'Solo los admins pueden enviar mensajes en este grupo.' }}</p>
     }
     @if (attachmentError) {
       <p class="composer-error">{{ attachmentError }}</p>
@@ -383,22 +383,22 @@
         <button type="button" (click)="chooseAttachment(galleryInput)">
           <ion-icon name="image-outline"></ion-icon>
           <span>
-            <strong>Galeria</strong>
-            <small>Imagenes y videos</small>
+            <strong>{{ 'COMMON.GALLERY' | translate:'Galeria' }}</strong>
+            <small>{{ 'CHAT.IMAGES_AND_VIDEOS' | translate:'Imagenes y videos' }}</small>
           </span>
         </button>
         <button type="button" (click)="chooseAttachment(documentInput)">
           <ion-icon name="document-attach-outline"></ion-icon>
           <span>
-            <strong>Documento</strong>
-            <small>Calidad original</small>
+            <strong>{{ 'COMMON.DOCUMENT' | translate:'Documento' }}</strong>
+            <small>{{ 'CHAT.ORIGINAL_QUALITY' | translate:'Calidad original' }}</small>
           </span>
         </button>
         <button type="button" (click)="chooseAttachment(audioInput)">
           <ion-icon name="mic-outline"></ion-icon>
           <span>
-            <strong>Audio</strong>
-            <small>Canciones o notas guardadas</small>
+            <strong>{{ 'COMMON.AUDIO' | translate:'Audio' }}</strong>
+            <small>{{ 'CHAT.SAVED_SONGS_NOTES' | translate:'Canciones o notas guardadas' }}</small>
           </span>
         </button>
       </div>
@@ -413,7 +413,7 @@
             <strong>{{ pendingAttachmentTitle() }}</strong>
             <span>{{ pendingAttachmentSubtitle() }}</span>
           </div>
-          <ion-button mode="ios" fill="clear" (click)="cancelPendingAttachments()" aria-label="Cerrar adjunto">
+          <ion-button mode="ios" fill="clear" (click)="cancelPendingAttachments()" [attr.aria-label]="'CHAT.CLOSE_ATTACHMENT' | translate:'Cerrar adjunto'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
         </header>
@@ -431,7 +431,7 @@
               </span>
               <span class="attachment-review-copy">
                 <strong>{{ item.file.name }}</strong>
-                <small>{{ item.file.type || 'Archivo' }} - {{ pendingFileSize(item.file) }}</small>
+                <small>{{ item.file.type || ('COMMON.FILE' | translate:'Archivo') }} - {{ pendingFileSize(item.file) }}</small>
               </span>
             </article>
           }
@@ -444,7 +444,7 @@
             autoGrow="true"
             rows="1"
             maxlength="1200"
-            placeholder="Agregar mensaje al adjunto">
+            [placeholder]="'CHAT.ATTACHMENT_CAPTION' | translate:'Agregar mensaje al adjunto'">
           </ion-textarea>
           <ion-button mode="ios" class="send" (click)="sendPendingAttachments()" [disabled]="sending || chat.uploading()">
             @if (sending || chat.uploading()) {
@@ -470,31 +470,31 @@
       <div class="popover-menu">
         <button type="button" (click)="openContactInfo()">
           <ion-icon name="information-circle-outline"></ion-icon>
-          Ver info
+          {{ 'CHAT.VIEW_INFO' | translate:'Ver info' }}
         </button>
         <button type="button" (click)="toggleArchive()">
           <ion-icon name="archive-outline"></ion-icon>
-          {{ isArchived() ? 'Desarchivar' : 'Archivar' }}
+          {{ isArchived() ? ('CHATS.UNARCHIVE' | translate:'Desarchivar') : ('CHATS.ARCHIVE' | translate:'Archivar') }}
         </button>
         <button type="button" (click)="toggleBlock()">
           <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'"></ion-icon>
-          {{ isBlocked() ? 'Desbloquear' : 'Bloquear' }}
+          {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : ('CHAT.BLOCK' | translate:'Bloquear') }}
         </button>
         <button type="button" (click)="clearChat('me')">
           <ion-icon name="trash-outline"></ion-icon>
-          Vaciar para mi
+          {{ 'CHAT.CLEAR_FOR_ME' | translate:'Vaciar para mi' }}
         </button>
         <button type="button" (click)="clearChat('everyone')">
           <ion-icon name="trash-outline"></ion-icon>
-          Vaciar para todos
+          {{ 'CHAT.CLEAR_FOR_EVERYONE' | translate:'Vaciar para todos' }}
         </button>
         <button type="button" class="danger" (click)="deleteChat('me')">
           <ion-icon name="trash-outline"></ion-icon>
-          Eliminar para mi
+          {{ 'CHAT.DELETE_FOR_ME' | translate:'Eliminar para mi' }}
         </button>
         <button type="button" class="danger" (click)="deleteChat('everyone')">
           <ion-icon name="trash-outline"></ion-icon>
-          Eliminar para todos
+          {{ 'CHAT.DELETE_FOR_EVERYONE' | translate:'Eliminar para todos' }}
         </button>
       </div>
     </ng-template>
@@ -513,42 +513,42 @@
         <div class="message-popover">
           <div class="popover-reactions">
             @for (emoji of chat.quickReactions; track emoji) {
-              <button type="button" (click)="react(actionMessage, emoji)" [attr.aria-label]="'Reaccionar ' + emoji">{{ emoji }}</button>
+              <button type="button" (click)="react(actionMessage, emoji)" [attr.aria-label]="('CHAT.REACT' | translate:'Reaccionar') + ' ' + emoji">{{ emoji }}</button>
             }
           </div>
           <div class="popover-menu compact">
             <button type="button" (click)="beginReply(actionMessage)">
               <ion-icon name="return-down-back-outline"></ion-icon>
-              Responder
+              {{ 'CHAT_ACTIONS.REPLY' | translate:'Responder' }}
             </button>
             @if (canTranslate(actionMessage)) {
               <button type="button" (click)="translateMessage(actionMessage)">
                 <ion-icon name="language-outline"></ion-icon>
-                Traducir
+                {{ 'CHAT_ACTIONS.TRANSLATE' | translate:'Traducir' }}
               </button>
             }
             @if (canEdit(actionMessage)) {
               <button type="button" (click)="beginEdit(actionMessage)">
                 <ion-icon name="create-outline"></ion-icon>
-                Editar
+                {{ 'CHAT_ACTIONS.EDIT' | translate:'Editar' }}
               </button>
             }
             <button type="button" (click)="openForward(actionMessage)">
               <ion-icon name="arrow-redo-outline"></ion-icon>
-              Reenviar
+              {{ 'CHAT_ACTIONS.FORWARD' | translate:'Reenviar' }}
             </button>
             <button type="button" (click)="openMessageInfo(actionMessage)">
               <ion-icon name="information-circle-outline"></ion-icon>
-              Info. del mensaje
+              {{ 'CHAT_ACTIONS.MESSAGE_INFO' | translate:'Info. del mensaje' }}
             </button>
             <button type="button" (click)="deleteForMe(actionMessage)">
               <ion-icon name="trash-outline"></ion-icon>
-              Para mi
+              {{ 'CHAT_ACTIONS.FOR_ME' | translate:'Para mi' }}
             </button>
             @if (actionMessage.mine) {
               <button type="button" class="danger" (click)="deleteForEveryone(actionMessage)">
                 <ion-icon name="trash-outline"></ion-icon>
-                Para todos
+                {{ 'CHAT_ACTIONS.FOR_EVERYONE' | translate:'Para todos' }}
               </button>
             }
           </div>
@@ -561,8 +561,8 @@
     <ng-template>
       <section class="reaction-viewer">
         <header>
-          <strong>Reacciones</strong>
-          <ion-button mode="ios" fill="clear" (click)="closeReactionViewer()" aria-label="Cerrar reacciones">
+          <strong>{{ 'CHAT.REACTIONS' | translate:'Reacciones' }}</strong>
+          <ion-button mode="ios" fill="clear" (click)="closeReactionViewer()" [attr.aria-label]="'CHAT.CLOSE_REACTIONS' | translate:'Cerrar reacciones'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
         </header>
@@ -577,12 +577,12 @@
                 }
                 <div>
                   <strong>{{ reactionDisplayName(reaction) }}</strong>
-                  <small>{{ reactionSubtitle(reaction) || 'Reacciono al mensaje' }}</small>
+                  <small>{{ reactionSubtitle(reaction) || ('CHAT.REACTED_TO_MESSAGE' | translate:'Reacciono al mensaje') }}</small>
                 </div>
                 <span class="reaction-emoji">{{ reaction.emoji }}</span>
               </article>
             } @empty {
-              <p class="sheet-empty">Sin reacciones.</p>
+              <p class="sheet-empty">{{ 'CHAT.NO_REACTIONS' | translate:'Sin reacciones.' }}</p>
             }
           </div>
         }
@@ -595,18 +595,18 @@
       <section class="message-info-sheet">
         <header>
           <div>
-            <strong>Info. del mensaje</strong>
+            <strong>{{ 'CHAT.MESSAGE_INFO' | translate:'Info. del mensaje' }}</strong>
             @if (messageInfoMessage; as infoMessage) {
-              <small>{{ messageInfoSummary(infoMessage) || 'Estado local' }}</small>
+              <small>{{ messageInfoSummary(infoMessage) || ('CHAT.LOCAL_STATUS' | translate:'Estado local') }}</small>
             }
           </div>
-          <ion-button mode="ios" fill="clear" (click)="closeMessageInfo()" aria-label="Cerrar info">
+          <ion-button mode="ios" fill="clear" (click)="closeMessageInfo()" [attr.aria-label]="'CHAT.CLOSE_INFO' | translate:'Cerrar info'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
         </header>
         @if (messageInfoMessage; as infoMessage) {
           <div class="message-info-card">
-            <span>Enviado</span>
+            <span>{{ 'CHAT.SENT' | translate:'Enviado' }}</span>
             <strong>{{ infoMessage.at | date:'medium' }}</strong>
           </div>
           <div class="receipt-list">
@@ -623,7 +623,7 @@
                 </div>
               </article>
             } @empty {
-              <p class="sheet-empty">Aun no hay confirmaciones de lectura para este mensaje.</p>
+              <p class="sheet-empty">{{ 'CHAT.NO_READ_RECEIPTS' | translate:'Aun no hay confirmaciones de lectura para este mensaje.' }}</p>
             }
           </div>
         }
@@ -635,15 +635,15 @@
     <ng-template>
       <section class="contact-info">
         <header>
-          <ion-button mode="ios" fill="clear" (click)="closeContactInfo()" aria-label="Cerrar">
+          <ion-button mode="ios" fill="clear" (click)="closeContactInfo()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
-          <span>Info</span>
+          <span>{{ 'COMMON.INFO' | translate:'Info' }}</span>
         </header>
         @if (isGroupConversation()) {
           <input #groupAvatarInput type="file" accept="image/*" hidden (change)="onGroupAvatarSelected($event)">
           <div class="contact-hero group-hero">
-            <button type="button" class="story-ring" [disabled]="!canEditGroup()" (click)="canEditGroup() && groupAvatarInput.click()" aria-label="Cambiar foto del grupo">
+            <button type="button" class="story-ring" [disabled]="!canEditGroup()" (click)="canEditGroup() && groupAvatarInput.click()" [attr.aria-label]="'CHAT.CHANGE_GROUP_PHOTO' | translate:'Cambiar foto del grupo'">
               @if (groupAvatarDraft) {
                 <img class="contact-photo" [src]="groupAvatarDraft" alt="">
               } @else if (conversation()) {
@@ -656,17 +656,17 @@
               }
             </button>
             <label class="group-name-field">
-              <span>Nombre del grupo</span>
-              <input [(ngModel)]="groupNameDraft" [disabled]="!canEditGroup() || groupInfoBusy" maxlength="80" placeholder="Nombre del grupo">
+              <span>{{ 'CHAT.GROUP_NAME' | translate:'Nombre del grupo' }}</span>
+              <input [(ngModel)]="groupNameDraft" [disabled]="!canEditGroup() || groupInfoBusy" maxlength="80" [placeholder]="'CHAT.GROUP_NAME' | translate:'Nombre del grupo'">
             </label>
-            <p>{{ groupParticipants().length }} participantes</p>
+            <p>{{ groupParticipants().length }} {{ 'CHAT.PARTICIPANTS' | translate:'participantes' }}</p>
             @if (groupInfoError) {
               <small class="group-error">{{ groupInfoError }}</small>
             }
           </div>
           <section class="contact-section group-stories-section">
             <div class="section-head">
-              <h3>Historias del grupo</h3>
+              <h3>{{ 'CHAT.GROUP_STORIES' | translate:'Historias del grupo' }}</h3>
               <span>{{ activeGroupStories().length }}</span>
             </div>
             <div class="group-story-strip">
@@ -680,64 +680,64 @@
                   <small>{{ story.owner.displayName || story.owner.alias }}</small>
                 </button>
               } @empty {
-                <div class="empty-media compact">Aun no hay historias activas para este grupo.</div>
+                <div class="empty-media compact">{{ 'CHAT.NO_GROUP_STORIES' | translate:'Aun no hay historias activas para este grupo.' }}</div>
               }
             </div>
           </section>
           <div class="contact-actions">
             <button type="button" (click)="startCall('Voice')">
               <ion-icon name="call-outline"></ion-icon>
-              Llamar
+              {{ 'COMMON.CALL' | translate:'Llamar' }}
             </button>
             <button type="button" (click)="startCall('Video')">
               <ion-icon name="videocam-outline"></ion-icon>
-              Video
+              {{ 'COMMON.VIDEO' | translate:'Video' }}
             </button>
             @if (canEditGroup()) {
               <button type="button" (click)="saveGroupInfo()" [disabled]="groupInfoBusy">
                 <ion-icon name="checkmark-outline"></ion-icon>
-                Guardar
+                {{ 'COMMON.SAVE' | translate:'Guardar' }}
               </button>
             }
           </div>
           <section class="contact-section group-settings">
             <div class="section-head">
-              <h3>Configuracion del grupo</h3>
-              <span>{{ isCurrentUserGroupAdmin() ? 'Admin' : 'Lectura' }}</span>
+              <h3>{{ 'CHAT.GROUP_SETTINGS' | translate:'Configuracion del grupo' }}</h3>
+              <span>{{ isCurrentUserGroupAdmin() ? ('CHAT.ADMIN' | translate:'Admin') : ('CHAT.READ_ONLY' | translate:'Lectura') }}</span>
             </div>
             <div class="settings-grid">
               <label>
-                <span>Editar info</span>
+                <span>{{ 'CHAT.EDIT_INFO' | translate:'Editar info' }}</span>
                 <ion-select mode="ios" interface="popover" [ngModel]="groupSettingsDraft.editInfo" [disabled]="!isCurrentUserGroupAdmin() || groupInfoBusy" (ngModelChange)="updateGroupSetting('editInfo', $event)">
-                  <ion-select-option value="all">Todos</ion-select-option>
-                  <ion-select-option value="admins">Solo admins</ion-select-option>
+                  <ion-select-option value="all">{{ 'COMMON.ALL' | translate:'Todos' }}</ion-select-option>
+                  <ion-select-option value="admins">{{ 'CHAT.ADMINS_ONLY' | translate:'Solo admins' }}</ion-select-option>
                 </ion-select>
               </label>
               <label>
-                <span>Enviar mensajes</span>
+                <span>{{ 'CHAT.SEND_MESSAGES' | translate:'Enviar mensajes' }}</span>
                 <ion-select mode="ios" interface="popover" [ngModel]="groupSettingsDraft.sendMessages" [disabled]="!isCurrentUserGroupAdmin() || groupInfoBusy" (ngModelChange)="updateGroupSetting('sendMessages', $event)">
-                  <ion-select-option value="all">Todos</ion-select-option>
-                  <ion-select-option value="admins">Solo admins</ion-select-option>
+                  <ion-select-option value="all">{{ 'COMMON.ALL' | translate:'Todos' }}</ion-select-option>
+                  <ion-select-option value="admins">{{ 'CHAT.ADMINS_ONLY' | translate:'Solo admins' }}</ion-select-option>
                 </ion-select>
               </label>
               <label>
-                <span>Agregar miembros</span>
+                <span>{{ 'CHAT.ADD_MEMBERS' | translate:'Agregar miembros' }}</span>
                 <ion-select mode="ios" interface="popover" [ngModel]="groupSettingsDraft.addMembers" [disabled]="!isCurrentUserGroupAdmin() || groupInfoBusy" (ngModelChange)="updateGroupSetting('addMembers', $event)">
-                  <ion-select-option value="all">Todos</ion-select-option>
-                  <ion-select-option value="admins">Solo admins</ion-select-option>
+                  <ion-select-option value="all">{{ 'COMMON.ALL' | translate:'Todos' }}</ion-select-option>
+                  <ion-select-option value="admins">{{ 'CHAT.ADMINS_ONLY' | translate:'Solo admins' }}</ion-select-option>
                 </ion-select>
               </label>
             </div>
           </section>
           <section class="contact-section add-members-section">
             <div class="section-head">
-              <h3>Agregar participantes</h3>
-              <span>{{ canAddGroupMembers() ? 'Disponible' : 'Solo admins' }}</span>
+              <h3>{{ 'CHAT.ADD_PARTICIPANTS' | translate:'Agregar participantes' }}</h3>
+              <span>{{ canAddGroupMembers() ? ('CHAT.AVAILABLE' | translate:'Disponible') : ('CHAT.ADMINS_ONLY' | translate:'Solo admins') }}</span>
             </div>
             @if (canAddGroupMembers()) {
               <button type="button" class="add-members-toggle" (click)="groupAddOpen = !groupAddOpen">
                 <ion-icon name="person-add-outline"></ion-icon>
-                {{ groupAddOpen ? 'Ocultar contactos' : 'Elegir contactos' }}
+                {{ groupAddOpen ? ('CHAT.HIDE_CONTACTS' | translate:'Ocultar contactos') : ('CHAT.CHOOSE_CONTACTS' | translate:'Elegir contactos') }}
               </button>
               @if (groupAddOpen) {
                 <div class="add-member-list">
@@ -755,21 +755,21 @@
                       <ion-icon [name]="selectedGroupAddIds.has(contact.userId) ? 'checkmark-outline' : 'person-add-outline'"></ion-icon>
                     </button>
                   } @empty {
-                    <div class="empty-media compact">No hay contactos disponibles para agregar.</div>
+                    <div class="empty-media compact">{{ 'CHAT.NO_CONTACTS_TO_ADD' | translate:'No hay contactos disponibles para agregar.' }}</div>
                   }
                   <ion-button mode="ios" (click)="addSelectedGroupParticipants()" [disabled]="!selectedGroupAddIds.size || groupInfoBusy">
                     <ion-icon name="person-add-outline"></ion-icon>
-                    Agregar {{ selectedGroupAddIds.size || '' }}
+                    {{ 'CHAT.ADD' | translate:'Agregar' }} {{ selectedGroupAddIds.size || '' }}
                   </ion-button>
                 </div>
               }
             } @else {
-              <div class="empty-media compact">La configuracion actual no permite agregar miembros.</div>
+              <div class="empty-media compact">{{ 'CHAT.ADD_MEMBERS_NOT_ALLOWED' | translate:'La configuracion actual no permite agregar miembros.' }}</div>
             }
           </section>
           <section class="contact-section participants-section">
             <div class="section-head">
-              <h3>Participantes</h3>
+              <h3>{{ 'CHAT.PARTICIPANTS_TITLE' | translate:'Participantes' }}</h3>
               <span>{{ groupParticipants().length }}</span>
             </div>
             <div class="participant-list">
@@ -787,10 +787,10 @@
                   @if (isCurrentUserGroupAdmin()) {
                     <button type="button" class="admin-toggle" [class.active]="isGroupAdmin(participant.userId)" (click)="toggleParticipantAdmin(participant)" [disabled]="groupInfoBusy">
                       <ion-icon name="shield-checkmark-outline"></ion-icon>
-                      {{ isGroupAdmin(participant.userId) ? 'Quitar admin' : 'Hacer admin' }}
+                      {{ isGroupAdmin(participant.userId) ? ('CHAT.REMOVE_ADMIN' | translate:'Quitar admin') : ('CHAT.MAKE_ADMIN' | translate:'Hacer admin') }}
                     </button>
                   } @else if (isGroupAdmin(participant.userId)) {
-                    <em>Admin</em>
+                    <em>{{ 'CHAT.ADMIN' | translate:'Admin' }}</em>
                   }
                 </div>
               }
@@ -798,14 +798,14 @@
           </section>
         } @else {
         <div class="contact-hero">
-          <button type="button" class="story-ring" aria-label="Ver foto">
+          <button type="button" class="story-ring" [attr.aria-label]="'CHAT.VIEW_PHOTO' | translate:'Ver foto'">
             @if (conversationPhoto()) {
               <img class="contact-photo" [src]="conversationPhoto()" alt="">
             } @else if (conversation()) {
               <span class="contact-photo fallback">{{ chat.avatarLabel(conversation()!) }}</span>
             }
           </button>
-          <h2>{{ conversation() ? chat.conversationTitle(conversation()!) : 'Contacto' }}</h2>
+          <h2>{{ conversation() ? chat.conversationTitle(conversation()!) : ('COMMON.CONTACT' | translate:'Contacto') }}</h2>
           @if (conversationPhone()) {
             <p>{{ conversationPhone() }}</p>
           } @else if (conversationAlias()) {
@@ -818,21 +818,21 @@
         <div class="contact-actions">
           <button type="button" (click)="startCall('Voice')">
             <ion-icon name="call-outline"></ion-icon>
-            Llamar
+            {{ 'COMMON.CALL' | translate:'Llamar' }}
           </button>
           <button type="button" (click)="startCall('Video')">
             <ion-icon name="videocam-outline"></ion-icon>
-            Video
+            {{ 'COMMON.VIDEO' | translate:'Video' }}
           </button>
           <button type="button" (click)="toggleBlock()">
             <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'"></ion-icon>
-            {{ isBlocked() ? 'Desbloquear' : 'Bloquear' }}
+            {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : ('CHAT.BLOCK' | translate:'Bloquear') }}
           </button>
         </div>
         <section class="contact-section">
           <div class="section-head">
-            <h3>Historias</h3>
-            <span>Anillo listo</span>
+            <h3>{{ 'CHAT.STORIES' | translate:'Historias' }}</h3>
+            <span>{{ 'CHAT.RING_READY' | translate:'Anillo listo' }}</span>
           </div>
           <div class="story-placeholder">
             <span class="story-ring small">
@@ -843,20 +843,20 @@
               }
             </span>
             <div>
-              <strong>Sin historias activas</strong>
-              <small>Cuando existan, se abriran desde este anillo.</small>
+              <strong>{{ 'CHAT.NO_ACTIVE_STORIES' | translate:'Sin historias activas' }}</strong>
+              <small>{{ 'CHAT.STORIES_RING_COPY' | translate:'Cuando existan, se abriran desde este anillo.' }}</small>
             </div>
           </div>
         </section>
         }
         <section class="contact-section media-section">
           <div class="section-head media-head">
-            <h3>Multimedia</h3>
+            <h3>{{ 'CHAT.MEDIA' | translate:'Multimedia' }}</h3>
             <div class="media-head-actions">
               <span>{{ sharedMediaMessages().length }}</span>
               @if (sharedMediaMessages().length) {
                 <ion-button mode="ios" fill="clear" size="small" color="primary" (click)="openMediaGallery()">
-                  Ver todo
+                  {{ 'COMMON.VIEW_ALL' | translate:'Ver todo' }}
                   <ion-icon name="chevron-forward-outline"></ion-icon>
                 </ion-button>
               }
@@ -881,7 +881,7 @@
                 </button>
               }
             } @empty {
-              <div class="empty-media">Aun no hay archivos visibles en este dispositivo.</div>
+              <div class="empty-media">{{ 'CHAT.NO_VISIBLE_FILES' | translate:'Aun no hay archivos visibles en este dispositivo.' }}</div>
             }
           </div>
         </section>
@@ -905,9 +905,9 @@
             </span>
             <div>
               <strong>{{ activeAudioName || activeAudioPreview.name }}</strong>
-              <small>Audio cifrado local</small>
+              <small>{{ 'CHAT.LOCAL_ENCRYPTED_AUDIO' | translate:'Audio cifrado local' }}</small>
             </div>
-            <ion-button mode="ios" fill="clear" (click)="closeAudioPreview()" aria-label="Cerrar audio">
+            <ion-button mode="ios" fill="clear" (click)="closeAudioPreview()" [attr.aria-label]="'CHAT.CLOSE_AUDIO' | translate:'Cerrar audio'">
               <ion-icon name="close-outline"></ion-icon>
             </ion-button>
           </header>
@@ -923,7 +923,7 @@
         <section class="chat-media-viewer">
           <header>
             <strong>{{ chat.fileName(activeMediaFile) }}</strong>
-            <ion-button mode="ios" fill="clear" (click)="closeMediaViewer()" aria-label="Cerrar archivo">
+            <ion-button mode="ios" fill="clear" (click)="closeMediaViewer()" [attr.aria-label]="'CHAT.CLOSE_FILE' | translate:'Cerrar archivo'">
               <ion-icon name="close-outline"></ion-icon>
             </ion-button>
           </header>
@@ -949,7 +949,7 @@
                 <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
                 <span>{{ story.expiresAt | date:'shortTime' }}</span>
               </div>
-              <button type="button" (click)="social.closeStory()" aria-label="Cerrar historia">
+              <button type="button" (click)="social.closeStory()" [attr.aria-label]="'STORY.CLOSE' | translate:'Cerrar historia'">
                 <ion-icon name="close-outline"></ion-icon>
               </button>
             </header>
@@ -966,11 +966,11 @@
                 } @else {
                   <div class="story-loading">
                     <ion-spinner name="crescent"></ion-spinner>
-                    <span>Descifrando {{ mediaPayload.mime }}</span>
+                    <span>{{ 'COMMON.DECRYPTING' | translate:'Descifrando' }} {{ mediaPayload.mime }}</span>
                   </div>
                 }
               } @else {
-                <p>{{ payload.text || story.caption || 'Instantanea' }}</p>
+                <p>{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantanea') }}</p>
               }
             </div>
             @if (payload.text) {
@@ -988,16 +988,16 @@
       <section>
         <header>
           <div>
-            <h2>Reenviar</h2>
+            <h2>{{ 'CHAT_ACTIONS.FORWARD' | translate:'Reenviar' }}</h2>
             <p>{{ chat.preview(forwardingMessage.payload) }}</p>
           </div>
-          <ion-button mode="ios" fill="clear" (click)="closeForward()" aria-label="Cerrar">
+          <ion-button mode="ios" fill="clear" (click)="closeForward()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
         </header>
         <div class="forward-search">
           <ion-icon name="search-outline"></ion-icon>
-          <input [(ngModel)]="forwardQuery" placeholder="Buscar chat">
+          <input [(ngModel)]="forwardQuery" [placeholder]="'CHAT.SEARCH_CHAT' | translate:'Buscar chat'">
         </div>
         <div class="forward-list">
           @for (target of forwardTargets(); track target.id) {
@@ -1016,14 +1016,14 @@
               }
             </button>
           } @empty {
-            <div class="empty-forward">No hay chats disponibles.</div>
+            <div class="empty-forward">{{ 'CHAT.NO_CHATS_AVAILABLE' | translate:'No hay chats disponibles.' }}</div>
           }
         </div>
         <footer>
-          <ion-button mode="ios" fill="outline" (click)="closeForward()">Cancelar</ion-button>
+          <ion-button mode="ios" fill="outline" (click)="closeForward()">{{ 'COMMON.CANCEL' | translate:'Cancelar' }}</ion-button>
           <ion-button mode="ios" (click)="sendForward()" [disabled]="!selectedForwardIds.size || busyAction === 'forward'">
             @if (busyAction === 'forward') { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
-            Enviar
+            {{ 'COMMON.SEND' | translate:'Enviar' }}
           </ion-button>
         </footer>
       </section>

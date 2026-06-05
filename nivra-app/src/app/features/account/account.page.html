@@ -5,7 +5,7 @@
         <h1>{{ 'ACCOUNT.TITLE' | translate:'Cuenta' }}</h1>
         <p>@{{ auth.session()?.user?.alias }}</p>
       </div>
-      <ion-button mode="ios" fill="clear" (click)="reload()" aria-label="Actualizar">
+      <ion-button mode="ios" fill="clear" (click)="reload()" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">
         @if (account.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
       </ion-button>
     </header>
@@ -15,7 +15,7 @@
         <h2>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</h2>
         <div class="profile-photo-row">
           <input #profilePhotoInput type="file" accept="image/*" hidden (change)="pickProfilePhoto($event)">
-          <button type="button" class="profile-photo" [class.has-photo]="!!profilePhotoDataUrl" (click)="profilePhotoInput.click()" [disabled]="saving" aria-label="Actualizar foto de perfil">
+          <button type="button" class="profile-photo" [class.has-photo]="!!profilePhotoDataUrl" (click)="profilePhotoInput.click()" [disabled]="saving" [attr.aria-label]="'ACCOUNT.UPDATE_PROFILE_PHOTO' | translate:'Actualizar foto de perfil'">
             @if (profilePhotoDataUrl) {
               <img [src]="profilePhotoDataUrl" alt="">
             } @else {
@@ -86,8 +86,8 @@
           <ion-icon [name]="identityMode() === 'ghost' ? 'finger-print-outline' : 'phone-portrait-outline'"></ion-icon>
         </div>
         <div>
-          <h2>{{ identityMode() === 'ghost' ? 'Fantasma' : 'Publico controlado' }}</h2>
-          <p>{{ identityMode() === 'ghost' ? 'Solo te encuentran por alias exacto, QR o invitacion directa.' : 'Tu telefono entra al radar cifrado si tambien eres visible.' }}</p>
+          <h2>{{ identityMode() === 'ghost' ? ('ACCOUNT.IDENTITY_GHOST' | translate:'Fantasma') : ('ACCOUNT.IDENTITY_PUBLIC' | translate:'Publico controlado') }}</h2>
+          <p>{{ identityMode() === 'ghost' ? ('ACCOUNT.IDENTITY_GHOST_COPY' | translate:'Solo te encuentran por alias exacto, QR o invitacion directa.') : ('ACCOUNT.IDENTITY_PUBLIC_COPY' | translate:'Tu telefono entra al radar cifrado si tambien eres visible.') }}</p>
         </div>
       </article>
 
@@ -98,7 +98,7 @@
           </div>
           <div>
             <h2>{{ 'ACCOUNT.APPEARANCE' | translate:'Apariencia' }}</h2>
-            <p class="card-sub">{{ lightTheme ? 'Grises iOS, texto nitido y sombras suaves.' : 'Oscuro Nivra con contraste nocturno.' }}</p>
+            <p class="card-sub">{{ lightTheme ? ('ACCOUNT.APPEARANCE_LIGHT_COPY' | translate:'Grises iOS, texto nitido y sombras suaves.') : ('ACCOUNT.APPEARANCE_DARK_COPY' | translate:'Oscuro Nivra con contraste nocturno.') }}</p>
           </div>
         </div>
         <label class="toggle-row theme-toggle-row">
@@ -106,7 +106,7 @@
             <strong>{{ lightTheme ? ('ACCOUNT.LIGHT_THEME' | translate:'Tema claro') : ('ACCOUNT.DARK_THEME' | translate:'Tema oscuro') }}</strong>
             <small>{{ lightTheme ? ('ACCOUNT.LIGHT_COPY' | translate:'Limpio, legible y luminoso.') : ('ACCOUNT.DARK_COPY' | translate:'Privado, profundo y enfocado.') }}</small>
           </span>
-          <ion-toggle mode="ios" [checked]="lightTheme" (ionChange)="setLightTheme($event.detail.checked)" aria-label="Cambiar tema claro"></ion-toggle>
+          <ion-toggle mode="ios" [checked]="lightTheme" (ionChange)="setLightTheme($event.detail.checked)" [attr.aria-label]="'ACCOUNT.TOGGLE_LIGHT_THEME' | translate:'Cambiar tema claro'"></ion-toggle>
         </label>
         <div class="theme-preview" [class.light]="lightTheme" aria-hidden="true">
           <span class="preview-pill primary"></span>
@@ -122,9 +122,9 @@
             <h2>{{ t('settings.chat.title', 'Ajustes de chats') }}</h2>
             <p class="card-sub">{{ appSettings.settings().messageTextSize }} px - {{ appSettings.settings().chatListDensity === 'three-line' ? t('settings.chat.threeLines', 'Tres lineas') : t('settings.chat.twoLines', 'Dos lineas') }}</p>
           </div>
-          <select class="native-select compact" [value]="appSettings.settings().themeMode" (change)="setThemeMode($any($event.target).value)" aria-label="Modo de tema">
+          <select class="native-select compact" [value]="appSettings.settings().themeMode" (change)="setThemeMode($any($event.target).value)" [attr.aria-label]="'settings.theme.mode' | translate:'Modo de tema'">
             @for (option of themeModeOptions; track option.value) {
-              <option [value]="option.value">{{ t('settings.theme.' + option.value, option.label) }}</option>
+              <option [value]="option.value">{{ option.labelKey | translate:option.label }}</option>
             }
           </select>
         </div>
@@ -162,7 +162,7 @@
               @for (wallpaper of wallpaperChoices; track wallpaper.value) {
                 <button type="button" class="wallpaper-tile" [class.active]="appSettings.settings().chatWallpaper === wallpaper.value" [attr.data-wallpaper]="wallpaper.value" (click)="setTextSetting('chatWallpaper', wallpaper.value)">
                   <span></span>
-                  <strong>{{ t('settings.wallpaper.' + wallpaper.value, wallpaper.label) }}</strong>
+                  <strong>{{ wallpaper.labelKey | translate:wallpaper.label }}</strong>
                 </button>
               }
             </div>
@@ -180,7 +180,7 @@
         <div class="segmented-row">
           @for (density of densityOptions; track density.value) {
             <button type="button" [class.active]="appSettings.settings().chatListDensity === density.value" (click)="setTextSetting('chatListDensity', density.value)">
-              {{ density.value === 'three-line' ? t('settings.chat.threeLines', density.label) : t('settings.chat.twoLines', density.label) }}
+              {{ density.labelKey | translate:density.label }}
             </button>
           }
         </div>
@@ -224,7 +224,7 @@
               <span class="radio-dot"></span>
               <span>
                 <strong>{{ language.native }}</strong>
-                <small>{{ language.label }}</small>
+                <small>{{ language.labelKey | translate:language.label }}</small>
               </span>
             </button>
           }
@@ -238,15 +238,15 @@
           </div>
           <div>
             <h2>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</h2>
-            <p class="card-sub">{{ appLock.isNativePlatform() ? 'APK con biometria nativa al abrir o volver.' : 'Web y PC con PIN local cifrado.' }}</p>
+            <p class="card-sub">{{ appLock.isNativePlatform() ? ('ACCOUNT.SAFE_MODE_NATIVE_COPY' | translate:'APK con biometria nativa al abrir o volver.') : ('ACCOUNT.SAFE_MODE_WEB_COPY' | translate:'Web y PC con PIN local cifrado.') }}</p>
           </div>
         </div>
         <label class="toggle-row app-lock-toggle-row">
           <span>
             <strong>{{ 'ACCOUNT.APP_LOCK' | translate:'Bloqueo de App' }}</strong>
-            <small>{{ appLock.isEnabled() ? ('ACCOUNT.ACTIVE' | translate:'Activo') : ('ACCOUNT.DISABLED' | translate:'Desactivado') }} - {{ appLock.isNativePlatform() ? appLock.biometryLabel() : 'PIN de 4 digitos' }}</small>
+            <small>{{ appLock.isEnabled() ? ('ACCOUNT.ACTIVE' | translate:'Activo') : ('ACCOUNT.DISABLED' | translate:'Desactivado') }} - {{ appLock.isNativePlatform() ? appLock.biometryLabel() : ('ACCOUNT.PIN_4_DIGITS' | translate:'PIN de 4 digitos') }}</small>
           </span>
-          <ion-toggle mode="ios" [checked]="appLock.isEnabled()" (ionChange)="setSecureMode($event.detail.checked)" aria-label="Activar Modo Seguro"></ion-toggle>
+          <ion-toggle mode="ios" [checked]="appLock.isEnabled()" (ionChange)="setSecureMode($event.detail.checked)" [attr.aria-label]="'ACCOUNT.ENABLE_SAFE_MODE' | translate:'Activar Modo Seguro'"></ion-toggle>
         </label>
         <div class="app-lock-preview" [class.enabled]="appLock.isEnabled()" aria-hidden="true">
           <ion-icon name="lock-closed-outline"></ion-icon>
@@ -259,39 +259,39 @@
 
       <article class="panel span-5 share-account-panel">
         <div>
-          <h2>Compartir Nivra</h2>
-          <p class="card-sub">Invita con enlace, mensaje o QR de contacto.</p>
+          <h2>{{ 'ACCOUNT.SHARE_NIVRA' | translate:'Compartir Nivra' }}</h2>
+          <p class="card-sub">{{ 'ACCOUNT.SHARE_NIVRA_COPY' | translate:'Invita con enlace, mensaje o QR de contacto.' }}</p>
         </div>
         <div class="share-actions">
           <ion-button mode="ios" fill="outline" (click)="copyShareMessage()" [disabled]="saving">
             <ion-icon name="copy-outline"></ion-icon>
-            Copiar
+            {{ 'COMMON.COPY' | translate:'Copiar' }}
           </ion-button>
           <ion-button mode="ios" fill="outline" (click)="shareAccount()" [disabled]="saving">
             <ion-icon name="share-social-outline"></ion-icon>
-            Compartir
+            {{ 'COMMON.SHARE' | translate:'Compartir' }}
           </ion-button>
           <ion-button mode="ios" fill="outline" (click)="openShareModal()" [disabled]="saving || shareBusy">
             @if (shareBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="qr-code-outline"></ion-icon> }
-            Mostrar QR
+            {{ 'ACCOUNT.SHOW_QR' | translate:'Mostrar QR' }}
           </ion-button>
           <ion-button mode="ios" fill="outline" (click)="startContactScanner()" [disabled]="saving || contactScannerBusy">
             @if (contactScannerBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="scan-outline"></ion-icon> }
-            Escanear contacto
+            {{ 'ACCOUNT.SCAN_CONTACT' | translate:'Escanear contacto' }}
           </ion-button>
         </div>
       </article>
 
       <article class="panel span-5 launch-plan-panel">
-        <h2>Plan</h2>
+        <h2>{{ 'ACCOUNT.PLAN' | translate:'Plan' }}</h2>
         <div class="metric">
-          <strong>Nivra Ilimitado (Lanzamiento)</strong>
-          <span>Plan free activo</span>
+          <strong>{{ 'ACCOUNT.PLAN_UNLIMITED' | translate:'Nivra Ilimitado (Lanzamiento)' }}</strong>
+          <span>{{ 'ACCOUNT.PLAN_FREE_ACTIVE' | translate:'Plan free activo' }}</span>
         </div>
         <div class="mini-list">
-          <span>Dispositivos: Ilimitados</span>
-          <span>Boveda: Ilimitada</span>
-          <span>Zero Trust: cifrado extremo a extremo</span>
+          <span>{{ 'ACCOUNT.PLAN_DEVICES' | translate:'Dispositivos: Ilimitados' }}</span>
+          <span>{{ 'ACCOUNT.PLAN_VAULT' | translate:'Boveda: Ilimitada' }}</span>
+          <span>{{ 'ACCOUNT.PLAN_ZERO_TRUST' | translate:'Zero Trust: cifrado extremo a extremo' }}</span>
         </div>
       </article>
 
@@ -311,7 +311,7 @@
               <span>{{ 'ACCOUNT.AUTO_DELETE_NEW' | translate:'Autoeliminar mensajes nuevos' }}</span>
               <select class="native-select" [value]="privacy.defaultMessageTtlSeconds ?? 0" (change)="patchPrivacyTtl($any($event.target).value)">
                 @for (option of defaultTtlOptions; track option.value) {
-                  <option [value]="option.value">{{ option.label }}</option>
+                  <option [value]="option.value">{{ option.labelKey | translate:option.label }}</option>
                 }
               </select>
             </label>
@@ -354,14 +354,14 @@
             }
           </div>
           <label class="select-row">
-            <span>Eliminar mi cuenta si estoy fuera</span>
+            <span>{{ 'ACCOUNT.DELETE_IF_AWAY' | translate:'Eliminar mi cuenta si estoy fuera' }}</span>
             <select class="native-select compact" [value]="appSettings.settings().deleteAccountIfAwayMonths" (change)="setNumberSetting('deleteAccountIfAwayMonths', $any($event.target).value)">
-              <option value="1">1 mes</option>
-              <option value="3">3 meses</option>
-              <option value="6">6 meses</option>
-              <option value="12">12 meses</option>
-              <option value="18">18 meses</option>
-              <option value="24">24 meses</option>
+              <option value="1">{{ 'COMMON.1_MONTH' | translate:'1 mes' }}</option>
+              <option value="3">{{ 'COMMON.3_MONTHS' | translate:'3 meses' }}</option>
+              <option value="6">{{ 'COMMON.6_MONTHS' | translate:'6 meses' }}</option>
+              <option value="12">{{ 'COMMON.12_MONTHS' | translate:'12 meses' }}</option>
+              <option value="18">{{ 'COMMON.18_MONTHS' | translate:'18 meses' }}</option>
+              <option value="24">{{ 'COMMON.24_MONTHS' | translate:'24 meses' }}</option>
             </select>
           </label>
         </div>
@@ -369,29 +369,29 @@
           <div class="panic-pin-heading">
             <ion-icon name="warning-outline"></ion-icon>
             <span>
-              <strong>PIN de Panico (Opcional)</strong>
-              <small>{{ panicPin.isConfigured() ? 'Configurado en este dispositivo.' : 'Sin configurar.' }}</small>
+              <strong>{{ 'ACCOUNT.PANIC_PIN' | translate:'PIN de Panico (Opcional)' }}</strong>
+              <small>{{ panicPin.isConfigured() ? ('ACCOUNT.CONFIGURED_DEVICE' | translate:'Configurado en este dispositivo.') : ('ACCOUNT.NOT_CONFIGURED' | translate:'Sin configurar.') }}</small>
             </span>
           </div>
           <div class="panic-pin-grid">
             <label>
-              <span>PIN falso</span>
-              <ion-input mode="ios" fill="outline" [(ngModel)]="panicPinValue" type="password" inputmode="numeric" maxlength="6" placeholder="4 a 6 digitos"></ion-input>
+              <span>{{ 'ACCOUNT.FALSE_PIN' | translate:'PIN falso' }}</span>
+              <ion-input mode="ios" fill="outline" [(ngModel)]="panicPinValue" type="password" inputmode="numeric" maxlength="6" [placeholder]="'ACCOUNT.PIN_4_TO_6' | translate:'4 a 6 digitos'"></ion-input>
             </label>
             <label>
-              <span>Confirmar</span>
-              <ion-input mode="ios" fill="outline" [(ngModel)]="panicPinConfirm" type="password" inputmode="numeric" maxlength="6" placeholder="Repetir PIN"></ion-input>
+              <span>{{ 'COMMON.CONFIRM' | translate:'Confirmar' }}</span>
+              <ion-input mode="ios" fill="outline" [(ngModel)]="panicPinConfirm" type="password" inputmode="numeric" maxlength="6" [placeholder]="'ACCOUNT.REPEAT_PIN' | translate:'Repetir PIN'"></ion-input>
             </label>
           </div>
           <div class="account-actions compact">
             <ion-button mode="ios" fill="outline" (click)="savePanicPin()" [disabled]="saving || !panicPinValue || !panicPinConfirm">
               <ion-icon name="shield-checkmark-outline"></ion-icon>
-              Guardar PIN de panico
+              {{ 'ACCOUNT.SAVE_PANIC_PIN' | translate:'Guardar PIN de panico' }}
             </ion-button>
             @if (panicPin.isConfigured()) {
               <ion-button mode="ios" fill="clear" color="danger" (click)="clearPanicPin()" [disabled]="saving">
                 <ion-icon name="trash-outline"></ion-icon>
-                Quitar
+                {{ 'ACCOUNT.REMOVE' | translate:'Quitar' }}
               </ion-button>
             }
           </div>
@@ -399,20 +399,20 @@
       </article>
 
       <article class="panel span-6">
-        <h2>Notificaciones</h2>
+        <h2>{{ 'ACCOUNT.NOTIFICATIONS' | translate:'Notificaciones' }}</h2>
         <div class="mini-list">
-          <span>Permiso: {{ push.permission() }}</span>
-          <span>Servidor FCM: {{ push.serverReady() ? 'listo' : 'pendiente' }}</span>
-          <span>Token local: {{ push.tokenId() ? 'registrado' : 'sin registrar' }}</span>
+          <span>{{ 'ACCOUNT.PERMISSION' | translate:'Permiso' }}: {{ push.permission() }}</span>
+          <span>{{ 'ACCOUNT.FCM_SERVER' | translate:'Servidor FCM' }}: {{ push.serverReady() ? ('ACCOUNT.READY' | translate:'listo') : ('ACCOUNT.PENDING' | translate:'pendiente') }}</span>
+          <span>{{ 'ACCOUNT.LOCAL_TOKEN' | translate:'Token local' }}: {{ push.tokenId() ? ('ACCOUNT.REGISTERED' | translate:'registrado') : ('ACCOUNT.UNREGISTERED' | translate:'sin registrar') }}</span>
         </div>
         <div class="account-actions">
           <ion-button mode="ios" fill="outline" (click)="enablePush()" [disabled]="saving || push.permission() === 'unsupported'">
             <ion-icon name="notifications-outline"></ion-icon>
-            Activar avisos
+            {{ 'ACCOUNT.ENABLE_NOTIFICATIONS' | translate:'Activar avisos' }}
           </ion-button>
           <ion-button mode="ios" fill="clear" color="danger" (click)="revokePush()" [disabled]="saving || !push.tokenId()">
             <ion-icon name="notifications-off-outline"></ion-icon>
-            Revocar token
+            {{ 'ACCOUNT.REVOKE_TOKEN' | translate:'Revocar token' }}
           </ion-button>
         </div>
         @if (push.error()) {
@@ -453,7 +453,7 @@
             <span>{{ t('settings.data.lowDataCalls', 'Usar menos datos en llamadas') }}</span>
             <select class="native-select compact" [value]="appSettings.settings().lowDataCalls" (change)="setTextSetting('lowDataCalls', $any($event.target).value)">
               @for (option of lowDataOptions; track option.value) {
-                <option [value]="option.value">{{ option.label }}</option>
+                <option [value]="option.value">{{ option.labelKey | translate:option.label }}</option>
               }
             </select>
           </label>
@@ -463,8 +463,8 @@
           </label>
           @if (appSettings.settings().proxyEnabled) {
             <label>
-              <span>Servidor proxy</span>
-              <ion-input mode="ios" fill="outline" [ngModel]="appSettings.settings().proxyHost" (ngModelChange)="setTextSetting('proxyHost', $event)" placeholder="host:puerto"></ion-input>
+              <span>{{ 'ACCOUNT.PROXY_SERVER' | translate:'Servidor proxy' }}</span>
+              <ion-input mode="ios" fill="outline" [ngModel]="appSettings.settings().proxyHost" (ngModelChange)="setTextSetting('proxyHost', $event)" [placeholder]="'ACCOUNT.PROXY_PLACEHOLDER' | translate:'host:puerto'"></ion-input>
             </label>
           }
         </div>
@@ -534,7 +534,7 @@
       </article>
 
       <article class="panel span-6">
-        <h2>Dispositivos</h2>
+        <h2>{{ 'ACCOUNT.DEVICES' | translate:'Dispositivos' }}</h2>
         <div class="device-list">
           @for (device of account.devices(); track device.id) {
             <div class="device-row">
@@ -543,12 +543,12 @@
                 <span>{{ device.lastSeenAt | date:'short' }}</span>
               </div>
               @if (device.id !== auth.session()?.device?.id) {
-                <ion-button mode="ios" fill="outline" color="danger" (click)="revoke(device.hardwareId || device.id)" aria-label="Revocar y destruir">
+                <ion-button mode="ios" fill="outline" color="danger" (click)="revoke(device.hardwareId || device.id)" [attr.aria-label]="'ACCOUNT.REVOKE_DESTROY' | translate:'Revocar y destruir'">
                   <ion-icon name="trash-outline"></ion-icon>
-                  Revocar y Destruir
+                  {{ 'ACCOUNT.REVOKE_DESTROY' | translate:'Revocar y Destruir' }}
                 </ion-button>
               } @else {
-                <small>Este equipo</small>
+                <small>{{ 'ACCOUNT.THIS_DEVICE' | translate:'Este equipo' }}</small>
               }
             </div>
           }
@@ -556,10 +556,10 @@
       </article>
 
       <article class="panel span-6">
-        <h2>Vincular por QR</h2>
+        <h2>{{ 'ACCOUNT.LINK_QR' | translate:'Vincular por QR' }}</h2>
         <div class="mini-list">
-          <span>Escanea o pega aqui el QR generado en otro equipo.</span>
-          <span>Se envia la llave local cifrada al nuevo dispositivo.</span>
+          <span>{{ 'ACCOUNT.LINK_QR_COPY_1' | translate:'Escanea o pega aqui el QR generado en otro equipo.' }}</span>
+          <span>{{ 'ACCOUNT.LINK_QR_COPY_2' | translate:'Se envia la llave local cifrada al nuevo dispositivo.' }}</span>
         </div>
         @if (qrScannerOpen) {
           <div class="qr-scanner">
@@ -572,45 +572,45 @@
         <div class="account-actions">
           <ion-button mode="ios" fill="outline" (click)="startQrScanner()" [disabled]="saving || qrScannerBusy">
             @if (qrScannerBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="camera-outline"></ion-icon> }
-            Camara
+            {{ 'COMMON.CAMERA' | translate:'Camara' }}
           </ion-button>
           <input #qrFileInput type="file" accept="image/*" hidden (change)="scanQrFile($event)">
           <ion-button mode="ios" fill="outline" (click)="qrFileInput.click()" [disabled]="saving || qrScannerBusy">
             <ion-icon name="image-outline"></ion-icon>
-            Imagen
+            {{ 'COMMON.IMAGE' | translate:'Imagen' }}
           </ion-button>
           @if (qrScannerOpen) {
-            <ion-button mode="ios" fill="clear" (click)="stopQrScanner()" [disabled]="qrScannerBusy">Cerrar</ion-button>
+            <ion-button mode="ios" fill="clear" (click)="stopQrScanner()" [disabled]="qrScannerBusy">{{ 'COMMON.CLOSE' | translate:'Cerrar' }}</ion-button>
           }
         </div>
         <ion-button mode="ios" fill="outline" (click)="authorizeQr()" [disabled]="saving || !qrText.trim()">
           <ion-icon name="qr-code-outline"></ion-icon>
-          Autorizar dispositivo
+          {{ 'ACCOUNT.AUTHORIZE_DEVICE' | translate:'Autorizar dispositivo' }}
         </ion-button>
       </article>
 
       <article class="panel span-6 session-panel">
-        <h2>Sesion</h2>
+        <h2>{{ 'ACCOUNT.SESSION' | translate:'Sesion' }}</h2>
         <div class="mini-list">
-          <span>Usa esta salida en equipos compartidos o cuando quieras abrir otra cuenta.</span>
-          <span>Se cerrara la sesion local de este dispositivo.</span>
+          <span>{{ 'ACCOUNT.SESSION_COPY_1' | translate:'Usa esta salida en equipos compartidos o cuando quieras abrir otra cuenta.' }}</span>
+          <span>{{ 'ACCOUNT.SESSION_COPY_2' | translate:'Se cerrara la sesion local de este dispositivo.' }}</span>
         </div>
         <ion-button class="logout-action" mode="ios" fill="outline" color="danger" (click)="logout()" [disabled]="saving">
           <ion-icon name="log-out-outline"></ion-icon>
-          Cerrar sesion
+          {{ 'ACCOUNT.LOGOUT' | translate:'Cerrar sesion' }}
         </ion-button>
       </article>
 
       <article class="panel span-6 danger-zone">
-        <h2>Zona sensible</h2>
+        <h2>{{ 'ACCOUNT.DANGER_ZONE' | translate:'Zona sensible' }}</h2>
         <div class="mini-list">
-          <span>Desactiva la cuenta, revoca sesiones y minimiza datos almacenados.</span>
-          <span>Escribe DELETE para confirmar.</span>
+          <span>{{ 'ACCOUNT.DANGER_COPY_1' | translate:'Desactiva la cuenta, revoca sesiones y minimiza datos almacenados.' }}</span>
+          <span>{{ 'ACCOUNT.DANGER_COPY_2' | translate:'Escribe DELETE para confirmar.' }}</span>
         </div>
         <ion-input mode="ios" fill="outline" [(ngModel)]="deleteConfirmation" placeholder="DELETE"></ion-input>
         <ion-button mode="ios" color="danger" fill="outline" (click)="deleteAccount()" [disabled]="saving || deleteConfirmation !== 'DELETE'">
           <ion-icon name="warning-outline"></ion-icon>
-          Solicitar borrado
+          {{ 'ACCOUNT.REQUEST_DELETE' | translate:'Solicitar borrado' }}
         </ion-button>
       </article>
     </section>
@@ -620,10 +620,10 @@
         <section class="pin-setup-sheet">
           <header>
             <div>
-              <h2>Modo Seguro</h2>
-              <p>{{ setupPin.length < 4 ? 'Crea un PIN de 4 digitos.' : 'Confirma el PIN.' }}</p>
+              <h2>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</h2>
+              <p>{{ setupPin.length < 4 ? ('ACCOUNT.CREATE_PIN_4' | translate:'Crea un PIN de 4 digitos.') : ('ACCOUNT.CONFIRM_PIN' | translate:'Confirma el PIN.') }}</p>
             </div>
-            <ion-button mode="ios" fill="clear" (click)="closePinSetupModal()" aria-label="Cerrar">
+            <ion-button mode="ios" fill="clear" (click)="closePinSetupModal()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
               <ion-icon name="close-outline"></ion-icon>
             </ion-button>
           </header>
@@ -668,7 +668,7 @@
 
           <ion-button mode="ios" (click)="confirmWebPin()" [disabled]="saving || setupPin.length !== 4 || setupPinConfirm.length !== 4 || setupPin !== setupPinConfirm">
             <ion-icon name="lock-closed-outline"></ion-icon>
-            Activar Modo Seguro
+            {{ 'ACCOUNT.ENABLE_SAFE_MODE' | translate:'Activar Modo Seguro' }}
           </ion-button>
         </section>
       </ng-template>
@@ -679,10 +679,10 @@
         <section class="share-sheet">
           <header>
             <div>
-              <h2>Pase Nivra</h2>
+              <h2>{{ 'ACCOUNT.NIVRA_PASS' | translate:'Pase Nivra' }}</h2>
               <p>@{{ auth.session()?.user?.alias }}</p>
             </div>
-            <ion-button mode="ios" fill="clear" (click)="closeShareModal()" aria-label="Cerrar">
+            <ion-button mode="ios" fill="clear" (click)="closeShareModal()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
               <ion-icon name="close-outline"></ion-icon>
             </ion-button>
           </header>
@@ -697,11 +697,11 @@
           <div class="account-actions compact">
             <ion-button mode="ios" fill="outline" (click)="copyShareMessage()">
               <ion-icon name="copy-outline"></ion-icon>
-              Copiar mensaje
+              {{ 'ACCOUNT.COPY_MESSAGE' | translate:'Copiar mensaje' }}
             </ion-button>
             <ion-button mode="ios" (click)="shareAccount()">
               <ion-icon name="share-social-outline"></ion-icon>
-              Compartir
+              {{ 'COMMON.SHARE' | translate:'Compartir' }}
             </ion-button>
           </div>
         </section>
@@ -713,10 +713,10 @@
         <section class="share-sheet">
           <header>
             <div>
-              <h2>Escanear contacto</h2>
+              <h2>{{ 'ACCOUNT.SCAN_CONTACT' | translate:'Escanear contacto' }}</h2>
               <p>{{ contactScannerStatus }}</p>
             </div>
-            <ion-button mode="ios" fill="clear" (click)="stopContactScanner()" aria-label="Cerrar">
+            <ion-button mode="ios" fill="clear" (click)="stopContactScanner()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
               <ion-icon name="close-outline"></ion-icon>
             </ion-button>
           </header>
@@ -728,11 +728,11 @@
           <div class="account-actions compact">
             <ion-button mode="ios" fill="outline" (click)="contactQrFileInput.click()" [disabled]="contactScannerBusy">
               <ion-icon name="image-outline"></ion-icon>
-              Imagen
+              {{ 'COMMON.IMAGE' | translate:'Imagen' }}
             </ion-button>
             <ion-button mode="ios" (click)="startContactScanner()" [disabled]="contactScannerBusy">
               @if (contactScannerBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="camera-outline"></ion-icon> }
-              Camara
+              {{ 'COMMON.CAMERA' | translate:'Camara' }}
             </ion-button>
           </div>
         </section>

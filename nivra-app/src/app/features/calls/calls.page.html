@@ -2,15 +2,15 @@
   <main class="surface" [class.call-mode]="isCallMode()">
     <header class="page-head">
       <div>
-        <h1>Llamadas</h1>
-        <p>WebRTC con senalizacion real por backend y SignalR.</p>
+        <h1>{{ 'CALLS.TITLE' | translate:'Llamadas' }}</h1>
+        <p>{{ 'CALLS.COPY' | translate:'WebRTC con senalizacion real por backend y SignalR.' }}</p>
       </div>
     </header>
 
     <section class="grid" [class.call-grid-active]="isCallMode()">
       <article class="panel calls-panel" [class.span-12]="isCallMode()" [class.span-7]="!isCallMode()">
         <div class="panel-head">
-          <h2>{{ calls.activeCall() ? 'Activa' : 'Agenda' }}</h2>
+          <h2>{{ calls.activeCall() ? ('CALLS.ACTIVE' | translate:'Activa') : ('CALLS.AGENDA' | translate:'Agenda') }}</h2>
           <span>{{ uiPhase() }}</span>
         </div>
 
@@ -44,7 +44,7 @@
                       </div>
 
                       @if (pipVideoStream(); as pipVideo) {
-                        <button type="button" class="local-preview pip-tile" (click)="toggleVideoSwap()" aria-label="Cambiar video principal">
+                        <button type="button" class="local-preview pip-tile" (click)="toggleVideoSwap()" [attr.aria-label]="'CALLS.SWAP_MAIN_VIDEO' | translate:'Cambiar video principal'">
                           @if (hasVideoTrack(pipVideo)) {
                             <video [appMediaStream]="pipVideo" [muted]="videoMuted(pipVideoParticipantId())" autoplay playsinline></video>
                           } @else {
@@ -62,7 +62,7 @@
                       }
 
                       @if (extraRemoteEntries().length) {
-                        <div class="participant-strip" aria-label="Participantes conectados">
+                        <div class="participant-strip" [attr.aria-label]="'CALLS.CONNECTED_PARTICIPANTS' | translate:'Participantes conectados'">
                           @for (entry of extraRemoteEntries(); track entry[0]) {
                             <div>
                               @if (videoParticipantPhoto(entry[0])) {
@@ -89,7 +89,7 @@
                         }
                       </div>
                       <strong>{{ videoParticipantLabel(entry[0]) }}</strong>
-                      <span>En llamada - {{ call.startedAt | date:'shortTime' }}</span>
+                      <span>{{ 'CALLS.IN_CALL' | translate:'En llamada' }} - {{ call.startedAt | date:'shortTime' }}</span>
                     </div>
                   }
                 }
@@ -104,9 +104,9 @@
                   </div>
                   <strong>{{ activeCallTitle(call) }}</strong>
                   <span>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | date:'shortTime' }}</span>
-                  <small>{{ call.type === 'Video' ? 'Videollamada cifrada' : 'Llamada cifrada' }}</small>
+                  <small>{{ call.type === 'Video' ? ('CALLS.ENCRYPTED_VIDEO_CALL' | translate:'Videollamada cifrada') : ('CALLS.ENCRYPTED_CALL' | translate:'Llamada cifrada') }}</small>
                   @if (calls.isGroupCall(call)) {
-                    <div class="group-call-faces" aria-label="Participantes">
+                    <div class="group-call-faces" [attr.aria-label]="'CALLS.PARTICIPANTS' | translate:'Participantes'">
                       @for (person of calls.callParticipantAvatars(call); track person.id) {
                         @if (person.photo) {
                           <img [src]="person.photo" [alt]="person.label">
@@ -125,11 +125,11 @@
               @if (calls.phase() === 'ringing') {
                 <ion-button mode="ios" class="accept" (click)="accept()">
                   <ion-icon name="call-outline"></ion-icon>
-                  Aceptar
+                  {{ 'COMMON.ACCEPT' | translate:'Aceptar' }}
                 </ion-button>
                 <ion-button mode="ios" color="danger" (click)="decline()">
                   <ion-icon name="close-outline"></ion-icon>
-                  Rechazar
+                  {{ 'COMMON.REJECT' | translate:'Rechazar' }}
                 </ion-button>
               } @else {
                 <ion-button mode="ios" fill="clear" [disabled]="!calls.localStream()" (click)="calls.toggleMute()">
@@ -143,12 +143,12 @@
                 <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()">
                   <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
                 </ion-button>
-                <ion-button mode="ios" fill="clear" (click)="openInviteModal()" aria-label="Anadir participante">
+                <ion-button mode="ios" fill="clear" (click)="openInviteModal()" [attr.aria-label]="'CALLS.ADD_PARTICIPANT' | translate:'Anadir participante'">
                   <ion-icon name="person-add-outline"></ion-icon>
                 </ion-button>
                 <ion-button mode="ios" color="danger" (click)="endActive()">
                   <ion-icon name="close-outline"></ion-icon>
-                  Colgar
+                  {{ 'CALLS.HANG_UP' | translate:'Colgar' }}
                 </ion-button>
               }
             </div>
@@ -160,8 +160,8 @@
                 <ion-icon name="call-outline"></ion-icon>
               </div>
               <div>
-                <strong>Agenda de llamadas</strong>
-                <span>Busca por nombre, alias o telefono y llama sin abrir el chat.</span>
+                <strong>{{ 'CALLS.CALL_AGENDA' | translate:'Agenda de llamadas' }}</strong>
+                <span>{{ 'CALLS.AGENDA_COPY' | translate:'Busca por nombre, alias o telefono y llama sin abrir el chat.' }}</span>
               </div>
             </div>
 
@@ -169,7 +169,7 @@
               mode="ios"
               class="call-search"
               [(ngModel)]="callQuery"
-              placeholder="Buscar contacto o numero"
+              [placeholder]="'CALLS.SEARCH_PLACEHOLDER' | translate:'Buscar contacto o numero'"
               searchIcon="search-outline"
               animated="true"
               showClearButton="focus">
@@ -196,7 +196,7 @@
                         fill="clear"
                         (click)="startContactCall(contact, 'Voice')"
                         [disabled]="callBusyId !== '' || calls.activeCall() !== null"
-                        [attr.aria-label]="'Llamar a ' + contactLabel(contact)">
+                        [attr.aria-label]="('CALLS.CALL_TO' | translate:'Llamar a') + ' ' + contactLabel(contact)">
                         <ion-icon name="call-outline"></ion-icon>
                       </ion-button>
                       <ion-button
@@ -204,13 +204,13 @@
                         fill="clear"
                         (click)="startContactCall(contact, 'Video')"
                         [disabled]="callBusyId !== '' || calls.activeCall() !== null"
-                        [attr.aria-label]="'Videollamar a ' + contactLabel(contact)">
+                        [attr.aria-label]="('CALLS.VIDEO_CALL_TO' | translate:'Videollamar a') + ' ' + contactLabel(contact)">
                         <ion-icon name="videocam-outline"></ion-icon>
                       </ion-button>
                     </div>
                   </div>
                 } @empty {
-                  <div class="empty-copy">No hay contactos que coincidan con la busqueda.</div>
+                  <div class="empty-copy">{{ 'CALLS.NO_MATCHING_CONTACTS' | translate:'No hay contactos que coincidan con la busqueda.' }}</div>
                 }
               }
             </div>
@@ -224,7 +224,7 @@
 
       @if (!isCallMode()) {
         <article class="panel span-5">
-          <h2>Historial local</h2>
+          <h2>{{ 'CALLS.LOCAL_HISTORY' | translate:'Historial local' }}</h2>
           <div class="stack">
             @for (call of calls.history(); track call.id) {
               <div class="call-row history-row" [class.missed]="historyClass(call) === 'missed'" [class.outgoing]="historyClass(call) === 'outgoing'" [class.incoming]="historyClass(call) === 'incoming'">
@@ -245,7 +245,7 @@
                 <div class="history-actions">
                   <ion-icon class="direction" [name]="historyIcon(call)"></ion-icon>
                   @if (canRejoin(call.id) && call.status !== 'Ended' && !call.endedAt) {
-                    <ion-button mode="ios" fill="clear" (click)="rejoin(call.id)" aria-label="Reentrar">
+                    <ion-button mode="ios" fill="clear" (click)="rejoin(call.id)" [attr.aria-label]="'CALLS.REJOIN' | translate:'Reentrar'">
                       <ion-icon name="enter-outline"></ion-icon>
                     </ion-button>
                   } @else {
@@ -254,7 +254,7 @@
                 </div>
               </div>
             } @empty {
-              <div class="empty-copy">Las llamadas entrantes apareceran aqui.</div>
+              <div class="empty-copy">{{ 'CALLS.EMPTY_HISTORY' | translate:'Las llamadas entrantes apareceran aqui.' }}</div>
             }
           </div>
         </article>
@@ -267,10 +267,10 @@
       <section class="invite-sheet">
         <header>
           <div>
-            <h2>Anadir participante</h2>
-            <p>Preparado para migrar esta llamada a sala grupal SFU.</p>
+            <h2>{{ 'CALLS.ADD_PARTICIPANT' | translate:'Anadir participante' }}</h2>
+            <p>{{ 'CALLS.ADD_PARTICIPANT_COPY' | translate:'Preparado para migrar esta llamada a sala grupal SFU.' }}</p>
           </div>
-          <ion-button mode="ios" fill="clear" (click)="closeInviteModal()" aria-label="Cerrar">
+          <ion-button mode="ios" fill="clear" (click)="closeInviteModal()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
         </header>
@@ -286,7 +286,7 @@
               <small>{{ contactSubLabel(contact) }}</small>
             </button>
           } @empty {
-            <p class="empty-copy">No hay contactos disponibles para invitar.</p>
+            <p class="empty-copy">{{ 'CALLS.NO_INVITE_CONTACTS' | translate:'No hay contactos disponibles para invitar.' }}</p>
           }
         </div>
       </section>

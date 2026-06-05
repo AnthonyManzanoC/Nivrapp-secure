@@ -25,6 +25,8 @@ import { CallSession, Contact, Conversation, Participant, UserSummary } from '..
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { ChatService } from '../../core/services/chat.service';
+import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 import { MediaStreamDirective } from '../../shared/media-stream.directive';
 
 type CallIdentityProfile = {
@@ -41,13 +43,14 @@ type RemoteEntry = [string, MediaStream];
 @Component({
   selector: 'app-calls',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, MediaStreamDirective],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, MediaStreamDirective],
   templateUrl: './calls.page.html',
   styleUrls: ['./calls.page.scss'],
 })
 export class CallsPage {
   readonly calls = inject(CallsService);
   readonly chat = inject(ChatService);
+  private readonly translate = inject(TranslateService);
   private readonly auth = inject(AuthService);
   inviteModalOpen = false;
   callQuery = '';
@@ -154,7 +157,7 @@ export class CallsPage {
   }
 
   contactLabel(contact: Contact): string {
-    return this.profileLabel(contact) || 'Contacto';
+    return this.profileLabel(contact) || this.tr('COMMON.CONTACT', 'Contacto');
   }
 
   contactSubLabel(contact: Contact): string {
@@ -167,7 +170,7 @@ export class CallsPage {
     if (alias && label !== contact.alias) {
       return alias;
     }
-    return contact.bio || 'Contacto cifrado';
+    return contact.bio || this.tr('CALLS.ENCRYPTED_CONTACT', 'Contacto cifrado');
   }
 
   contactInitials(contact: Contact): string {
@@ -196,7 +199,7 @@ export class CallsPage {
 
   selectedTitle(): string {
     const conversation = this.chat.selectedConversation();
-    return conversation ? this.chat.conversationTitle(conversation) : 'Selecciona un chat';
+    return conversation ? this.chat.conversationTitle(conversation) : this.tr('CALLS.SELECT_CHAT', 'Selecciona un chat');
   }
 
   historyTitle(call: CallSession): string {
@@ -208,7 +211,7 @@ export class CallsPage {
     if (primaryUserId) {
       return this.participantLabel(primaryUserId);
     }
-    return call.type === 'Video' ? 'Videollamada' : 'Llamada';
+    return call.type === 'Video' ? this.tr('CALLS.VIDEO_CALL', 'Videollamada') : this.tr('CALLS.CALL', 'Llamada');
   }
 
   historyPhoto(call: CallSession): string {
@@ -224,7 +227,7 @@ export class CallsPage {
   }
 
   historySubtitle(call: CallSession): string {
-    const kind = call.type === 'Video' ? 'Videollamada' : 'Llamada';
+    const kind = call.type === 'Video' ? this.tr('CALLS.VIDEO_CALL', 'Videollamada') : this.tr('CALLS.CALL', 'Llamada');
     const direction = this.historyDirectionLabel(call).toLowerCase();
     const status = this.historyStatusLabel(call.status).toLowerCase();
     return `${kind} ${direction} ${status}`;
@@ -233,28 +236,28 @@ export class CallsPage {
   historyStatusLabel(status: string | null | undefined): string {
     const normalized = String(status || '').toLowerCase();
     if (normalized === 'missed') {
-      return 'perdida';
+      return this.tr('CALLS.STATUS_MISSED', 'perdida');
     }
     if (normalized === 'failed') {
-      return 'fallida';
+      return this.tr('CALLS.STATUS_FAILED', 'fallida');
     }
     if (normalized === 'rejected') {
-      return 'rechazada';
+      return this.tr('CALLS.STATUS_REJECTED', 'rechazada');
     }
     if (normalized === 'ringing') {
-      return 'sonando';
+      return this.tr('CALLS.STATUS_RINGING', 'sonando');
     }
     if (normalized === 'active') {
-      return 'activa';
+      return this.tr('CALLS.STATUS_ACTIVE', 'activa');
     }
-    return 'finalizada';
+    return this.tr('CALLS.STATUS_ENDED', 'finalizada');
   }
 
   historyDirectionLabel(call: CallSession): string {
     if (String(call.status || '').toLowerCase() === 'missed') {
-      return 'perdida';
+      return this.tr('CALLS.DIRECTION_MISSED', 'perdida');
     }
-    return call.initiatorUserId === this.auth.session()?.user.id ? 'saliente' : 'entrante';
+    return call.initiatorUserId === this.auth.session()?.user.id ? this.tr('CALLS.DIRECTION_OUTGOING', 'saliente') : this.tr('CALLS.DIRECTION_INCOMING', 'entrante');
   }
 
   historyIcon(call: CallSession): string {
@@ -280,7 +283,7 @@ export class CallsPage {
   activeCallTitle(call: CallSession): string {
     const conversation = this.conversationForCall(call);
     if (conversation) {
-      return this.calls.isGroupCall(call) ? `Llamada de Grupo: ${this.chat.conversationTitle(conversation)}` : this.chat.conversationTitle(conversation);
+      return this.calls.isGroupCall(call) ? `${this.tr('CALLS.GROUP_CALL', 'Llamada de Grupo')}: ${this.chat.conversationTitle(conversation)}` : this.chat.conversationTitle(conversation);
     }
     const labels = this.callParticipantIds(call).map((userId) => this.participantLabel(userId)).filter(Boolean);
     if (labels.length) {
@@ -457,9 +460,9 @@ export class CallsPage {
     const profile = this.profileForUser(userId);
     const label = this.profileLabel(profile) || this.chat.participantDisplayName(userId, profile);
     if (userId && currentUser?.id === userId) {
-      return label && label !== 'Contacto' ? `${label} (Tu)` : 'Tu';
+      return label && label !== this.tr('COMMON.CONTACT', 'Contacto') ? `${label} (${this.tr('COMMON.YOU', 'Tu')})` : this.tr('COMMON.YOU', 'Tu');
     }
-    return label || 'Contacto';
+    return label || this.tr('COMMON.CONTACT', 'Contacto');
   }
 
   private participantPhoto(userId: string | null | undefined): string {
@@ -532,5 +535,9 @@ export class CallsPage {
       return `${digits.slice(0, 3)} ${digits.slice(3, 6)} ${digits.slice(6)}`;
     }
     return raw;
+  }
+
+  private tr(key: string, fallback: string): string {
+    return this.translate.instant(key, fallback);
   }
 }

@@ -6,7 +6,7 @@
         <h1>{{ 'VAULT.TITLE' | translate:'Boveda' }}</h1>
         <p>{{ 'VAULT.COPY' | translate:'Cifrado local, salas privadas y archivos E2EE.' }}</p>
       </div>
-      <ion-button mode="ios" fill="clear" (click)="vault.load()" aria-label="Actualizar">
+      <ion-button mode="ios" fill="clear" (click)="vault.load()" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">
         @if (vault.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
       </ion-button>
     </header>
@@ -18,7 +18,7 @@
             <strong>{{ 'VAULT.PENDING_INVITE' | translate:'Invitacion Vault pendiente' }}</strong>
             <span class="card-sub">{{ 'VAULT.PENDING_INVITE_COPY' | translate:'Si la sala tiene PIN, ingresalo para continuar.' }}</span>
           </div>
-          <ion-input mode="ios" fill="outline" [(ngModel)]="pendingInvitePin" type="password" placeholder="PIN de sala"></ion-input>
+          <ion-input mode="ios" fill="outline" [(ngModel)]="pendingInvitePin" type="password" [placeholder]="'VAULT.ROOM_PIN' | translate:'PIN de sala'"></ion-input>
           <ion-button mode="ios" (click)="acceptPendingInvite()" [disabled]="isBusy('invite:accept')">
             @if (isBusy('invite:accept')) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="enter-outline"></ion-icon> }
             {{ 'VAULT.ENTER' | translate:'Entrar' }}
@@ -36,7 +36,7 @@
         </div>
         @if (!vault.unlocked()) {
           <div class="stack">
-            <ion-input mode="ios" fill="outline" [(ngModel)]="pin" type="password" placeholder="PIN local"></ion-input>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="pin" type="password" [placeholder]="'VAULT.LOCAL_PIN' | translate:'PIN local'"></ion-input>
             <ion-button mode="ios" (click)="unlock()" [disabled]="!pin || isBusy('unlock')">
               @if (isBusy('unlock')) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="lock-closed-outline"></ion-icon> }
               {{ 'VAULT.ENTER' | translate:'Entrar' }}
@@ -84,7 +84,7 @@
         @if (noteAttachments.length) {
           <div class="note-attachment-strip">
             @for (file of noteAttachments; track file.name + file.size + file.lastModified) {
-              <button type="button" class="note-attachment-chip" (click)="removeNoteAttachment(file)" title="Quitar adjunto">
+              <button type="button" class="note-attachment-chip" (click)="removeNoteAttachment(file)" [title]="'VAULT.REMOVE_ATTACHMENT' | translate:'Quitar adjunto'">
                 <ion-icon name="document-attach-outline"></ion-icon>
                 <span>
                   <strong>{{ file.name }}</strong>
@@ -164,11 +164,11 @@
         <div class="form-grid">
           <label>
             <span>{{ 'VAULT.NAME' | translate:'Nombre' }}</span>
-            <ion-input mode="ios" fill="outline" [(ngModel)]="roomName" placeholder="War room"></ion-input>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="roomName" [placeholder]="'VAULT.ROOM_NAME_PLACEHOLDER' | translate:'War room'"></ion-input>
           </label>
           <label>
             <span>PIN</span>
-            <ion-input mode="ios" fill="outline" [(ngModel)]="roomPin" type="password" placeholder="Requerido para modo PIN"></ion-input>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="roomPin" type="password" [placeholder]="'VAULT.PIN_REQUIRED_PLACEHOLDER' | translate:'Requerido para modo PIN'"></ion-input>
           </label>
           <label>
             <span>{{ 'VAULT.ACCESS' | translate:'Acceso' }}</span>
@@ -190,7 +190,7 @@
             <span>{{ 'VAULT.INVITE' | translate:'Invitar' }}</span>
             <div class="search-box">
               <ion-icon name="search-outline"></ion-icon>
-              <ion-input mode="ios" [(ngModel)]="inviteQuery" placeholder="@alias o nombre" (ionInput)="searchInvites()"></ion-input>
+              <ion-input mode="ios" [(ngModel)]="inviteQuery" [placeholder]="'VAULT.INVITE_PLACEHOLDER' | translate:'@alias o nombre'" (ionInput)="searchInvites()"></ion-input>
             </div>
           </label>
         </div>
@@ -236,15 +236,15 @@
               @if (vault.currentMember(room)?.status !== 'Active') {
                 @if (vault.canAttemptJoin(room)) {
                   <div class="join-row">
-                    <ion-input mode="ios" fill="outline" [(ngModel)]="roomPinById[room.id]" type="password" placeholder="PIN de sala"></ion-input>
-                    <ion-button mode="ios" fill="clear" (click)="joinRoom(room)" [disabled]="isBusy('join:' + room.id)" aria-label="Entrar">
+                    <ion-input mode="ios" fill="outline" [(ngModel)]="roomPinById[room.id]" type="password" [placeholder]="'VAULT.ROOM_PIN' | translate:'PIN de sala'"></ion-input>
+                    <ion-button mode="ios" fill="clear" (click)="joinRoom(room)" [disabled]="isBusy('join:' + room.id)" [attr.aria-label]="'VAULT.ENTER' | translate:'Entrar'">
                       <ion-icon name="enter-outline"></ion-icon>
                     </ion-button>
                   </div>
                 } @else {
                   <div class="room-denied">
                     <ion-icon name="lock-closed-outline"></ion-icon>
-                    No estas invitado a esta sala.
+                    {{ 'VAULT.NOT_INVITED_ROOM' | translate:'No estas invitado a esta sala.' }}
                   </div>
                 }
               } @else {
@@ -323,7 +323,7 @@
                   <div class="invite-bar">
                     <div class="search-box">
                       <ion-icon name="search-outline"></ion-icon>
-                      <ion-input mode="ios" [(ngModel)]="inviteQuery" placeholder="@alias, nombre o telefono" (ionInput)="searchInvites()"></ion-input>
+                      <ion-input mode="ios" [(ngModel)]="inviteQuery" [placeholder]="'VAULT.SEARCH_MEMBER_PLACEHOLDER' | translate:'@alias, nombre o telefono'" (ionInput)="searchInvites()"></ion-input>
                     </div>
                     <ion-button mode="ios" fill="outline" (click)="inviteActiveRoom()" [disabled]="!selectedInviteIds.size || isBusy('invite:' + room.id)">
                       {{ 'VAULT.INVITE' | translate:'Invitar' }}
@@ -363,10 +363,10 @@
                     @for (entry of vault.voiceRemoteEntries(); track entry[0]) {
                       <audio [appMediaStream]="entry[1]" autoplay></audio>
                     }
-                    <ion-button mode="ios" fill="clear" (click)="toggleVoiceMute()" [disabled]="!vault.voiceConnected() || isBusy('voice:mute')" aria-label="Mutear">
+                    <ion-button mode="ios" fill="clear" (click)="toggleVoiceMute()" [disabled]="!vault.voiceConnected() || isBusy('voice:mute')" [attr.aria-label]="'VAULT.MUTE' | translate:'Mutear'">
                       <ion-icon [name]="vault.voiceMuted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
                     </ion-button>
-                    <ion-button mode="ios" fill="clear" color="danger" (click)="leaveVoice()" [disabled]="!vault.voiceRoomId() && vault.voicePhase() !== 'failed'" aria-label="Salir del audio">
+                    <ion-button mode="ios" fill="clear" color="danger" (click)="leaveVoice()" [disabled]="!vault.voiceRoomId() && vault.voicePhase() !== 'failed'" [attr.aria-label]="'VAULT.LEAVE_AUDIO' | translate:'Salir del audio'">
                       <ion-icon name="close-outline"></ion-icon>
                     </ion-button>
                   </div>
@@ -413,7 +413,7 @@
 
             <footer class="composer vault-input-area">
               <input #vaultFile hidden type="file" (change)="fileSelected($event)" />
-              <ion-button mode="ios" fill="clear" (click)="vaultFile.click()" aria-label="Adjuntar">
+              <ion-button mode="ios" fill="clear" (click)="vaultFile.click()" [attr.aria-label]="'VAULT.ATTACH' | translate:'Adjuntar'">
                 @if (vault.uploading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="attach-outline"></ion-icon> }
               </ion-button>
               <ion-textarea mode="ios" autoGrow="true" rows="1" [(ngModel)]="roomMessage" [placeholder]="'VAULT.MESSAGE_PLACEHOLDER' | translate:'Mensaje Vault'"></ion-textarea>

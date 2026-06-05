@@ -5,7 +5,7 @@
         <h1>{{ 'WORLD.TITLE' | translate:'Mundo' }}</h1>
         <p>{{ 'WORLD.COPY' | translate:'Contactos, solicitudes e historias privadas.' }}</p>
       </div>
-      <ion-button mode="ios" fill="clear" (click)="social.load()" aria-label="Actualizar">
+      <ion-button mode="ios" fill="clear" (click)="social.load()" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">
         @if (social.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
       </ion-button>
     </header>
@@ -45,13 +45,13 @@
                 </span>
               </button>
               <div class="row-actions">
-                <ion-button mode="ios" fill="clear" (click)="toggleFavorite(contact)" [disabled]="busyId === 'favorite:' + contact.userId" aria-label="Favorito">
+                <ion-button mode="ios" fill="clear" (click)="toggleFavorite(contact)" [disabled]="busyId === 'favorite:' + contact.userId" [attr.aria-label]="'WORLD.FAVORITE' | translate:'Favorito'">
                   <ion-icon [name]="contact.isFavorite ? 'star' : 'star-outline'"></ion-icon>
                 </ion-button>
-                <ion-button mode="ios" fill="clear" (click)="openContact(contact)" aria-label="Abrir chat">
+                <ion-button mode="ios" fill="clear" (click)="openContact(contact)" [attr.aria-label]="'WORLD.OPEN_CHAT' | translate:'Abrir chat'">
                   <ion-icon name="chatbubble-ellipses-outline"></ion-icon>
                 </ion-button>
-                <ion-button mode="ios" fill="clear" color="danger" (click)="deleteContact(contact)" [disabled]="busyId === 'remove:' + contact.userId" aria-label="Eliminar contacto">
+                <ion-button mode="ios" fill="clear" color="danger" (click)="deleteContact(contact)" [disabled]="busyId === 'remove:' + contact.userId" [attr.aria-label]="'WORLD.DELETE_CONTACT' | translate:'Eliminar contacto'">
                   <ion-icon name="person-remove-outline"></ion-icon>
                 </ion-button>
               </div>
@@ -76,11 +76,11 @@
                 <span class="card-sub">@{{ person.alias }} - {{ person.friendshipState }}</span>
               </div>
               <div class="row-actions">
-                <ion-button mode="ios" fill="clear" (click)="openPerson(person)" [disabled]="busyId === 'open:' + person.id" aria-label="Abrir chat">
+                <ion-button mode="ios" fill="clear" (click)="openPerson(person)" [disabled]="busyId === 'open:' + person.id" [attr.aria-label]="'WORLD.OPEN_CHAT' | translate:'Abrir chat'">
                   <ion-icon name="chatbubble-ellipses-outline"></ion-icon>
                 </ion-button>
                 @if (!person.isContact) {
-                  <ion-button mode="ios" fill="clear" (click)="addContact(person)" [disabled]="busyId === 'contact:' + person.id || person.id === auth.session()?.user?.id" aria-label="Guardar contacto">
+                  <ion-button mode="ios" fill="clear" (click)="addContact(person)" [disabled]="busyId === 'contact:' + person.id || person.id === auth.session()?.user?.id" [attr.aria-label]="'WORLD.SAVE_CONTACT' | translate:'Guardar contacto'">
                     <ion-icon name="person-add-outline"></ion-icon>
                   </ion-button>
                 }
@@ -103,7 +103,7 @@
             <h2 class="radar-title">
               Radar cifrado
               @if (contactSync.radarHasNewContact()) {
-                <span class="radar-dot" aria-label="Nuevo contacto en Nivra"></span>
+                <span class="radar-dot" [attr.aria-label]="'WORLD.NEW_CONTACT_NIVRA' | translate:'Nuevo contacto en Nivra'"></span>
               }
             </h2>
             <span class="card-sub">{{ social.radarMatches().length }} coincidencias</span>
@@ -112,7 +112,7 @@
         </div>
         <div class="radar-layout">
           <label class="radar-input">
-            <span>Telefonos</span>
+            <span>{{ 'WORLD.PHONES' | translate:'Telefonos' }}</span>
             <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="radarPhones" placeholder="+57...&#10;+1..."></ion-textarea>
           </label>
           <div class="radar-control">
@@ -122,7 +122,7 @@
             </div>
             <ion-button mode="ios" fill="outline" (click)="pickDeviceContacts()" [disabled]="busyId === 'radar:picker' || social.radarLoading()">
               <ion-icon name="phone-portrait-outline"></ion-icon>
-              Contactos
+              {{ 'WORLD.CONTACTS' | translate:'Contactos' }}
             </ion-button>
             <ion-button mode="ios" (click)="scanRadar()" [disabled]="busyId === 'radar' || social.radarLoading()">
               @if (social.radarLoading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="scan-outline"></ion-icon> }
@@ -138,11 +138,11 @@
                 <span class="card-sub">@{{ person.alias }} - {{ person.friendshipState }}</span>
               </div>
               <div class="row-actions">
-                <ion-button mode="ios" fill="clear" (click)="openPerson(person)" [disabled]="busyId === 'open:' + person.id" aria-label="Abrir chat">
+                <ion-button mode="ios" fill="clear" (click)="openPerson(person)" [disabled]="busyId === 'open:' + person.id" [attr.aria-label]="'WORLD.OPEN_CHAT' | translate:'Abrir chat'">
                   <ion-icon name="chatbubble-ellipses-outline"></ion-icon>
                 </ion-button>
                 @if (!person.isContact) {
-                  <ion-button mode="ios" fill="clear" (click)="addContact(person)" [disabled]="busyId === 'contact:' + person.id" aria-label="Guardar contacto">
+                  <ion-button mode="ios" fill="clear" (click)="addContact(person)" [disabled]="busyId === 'contact:' + person.id" [attr.aria-label]="'WORLD.SAVE_CONTACT' | translate:'Guardar contacto'">
                     <ion-icon name="person-add-outline"></ion-icon>
                   </ion-button>
                 }
@@ -154,19 +154,19 @@
               </div>
             </div>
           } @empty {
-            <div class="empty-copy">Las coincidencias privadas aparecen aqui.</div>
+            <div class="empty-copy">{{ 'WORLD.PRIVATE_MATCHES_EMPTY' | translate:'Las coincidencias privadas aparecen aqui.' }}</div>
           }
         </div>
       </article>
 
       <article class="panel span-5">
-        <h2>Nueva historia</h2>
+        <h2>{{ 'WORLD.NEW_STORY' | translate:'Nueva historia' }}</h2>
         <div class="stack">
           <div class="audience-block">
             <label>
-              <span>Audiencia</span>
+              <span>{{ 'WORLD.AUDIENCE' | translate:'Audiencia' }}</span>
               <select class="native-select" [(ngModel)]="storyAudience">
-                <option value="contacts">Mis contactos</option>
+                <option value="contacts">{{ 'WORLD.MY_CONTACTS' | translate:'Mis contactos' }}</option>
                 @for (group of storyGroups(); track group.id) {
                   <option [value]="group.id">{{ chat.conversationTitle(group) }}</option>
                 }
@@ -174,7 +174,7 @@
             </label>
             <small>{{ storyAudienceLabel() }}</small>
           </div>
-          <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="storyText" placeholder="Comparte una historia cifrada"></ion-textarea>
+          <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="storyText" [placeholder]="'WORLD.STORY_PLACEHOLDER' | translate:'Comparte una historia cifrada'"></ion-textarea>
           <input #storyFileInput type="file" hidden accept="image/*,video/*,audio/*" (change)="storyFileSelected($event)">
           <div class="story-compose-media">
             <button type="button" (click)="storyFileInput.click()">
@@ -182,7 +182,7 @@
               <span>{{ storyFile ? storyFile.name : 'Adjuntar imagen, video o audio' }}</span>
             </button>
             @if (storyFile) {
-              <button type="button" class="clear-file" (click)="clearStoryFile()" aria-label="Quitar archivo">
+              <button type="button" class="clear-file" (click)="clearStoryFile()" [attr.aria-label]="'WORLD.REMOVE_FILE' | translate:'Quitar archivo'">
                 <ion-icon name="close-outline"></ion-icon>
               </button>
             }
@@ -190,24 +190,24 @@
           <div class="story-settings">
             @if (storyAudience === 'contacts') {
               <select class="native-select" [(ngModel)]="visibility">
-                <option value="Contacts">Contactos</option>
-                <option value="MutualContacts">Mutuos</option>
-                <option value="PublicWorld">Mundo</option>
+                <option value="Contacts">{{ 'WORLD.CONTACTS' | translate:'Contactos' }}</option>
+                <option value="MutualContacts">{{ 'WORLD.MUTUALS' | translate:'Mutuos' }}</option>
+                <option value="PublicWorld">{{ 'WORLD.WORLD' | translate:'Mundo' }}</option>
               </select>
             } @else {
               <select class="native-select" disabled>
-                <option>Solo miembros del grupo</option>
+                <option>{{ 'WORLD.GROUP_MEMBERS_ONLY' | translate:'Solo miembros del grupo' }}</option>
               </select>
             }
             <select class="native-select" [(ngModel)]="durationSeconds">
-              <option [ngValue]="3600">1 hora</option>
-              <option [ngValue]="86400">24 horas</option>
-              <option [ngValue]="604800">7 dias</option>
+              <option [ngValue]="3600">{{ 'COMMON.1_HOUR' | translate:'1 hora' }}</option>
+              <option [ngValue]="86400">{{ 'COMMON.24_HOURS' | translate:'24 horas' }}</option>
+              <option [ngValue]="604800">{{ 'COMMON.7_DAYS' | translate:'7 dias' }}</option>
             </select>
           </div>
           <label class="native-check">
             <input type="checkbox" [(ngModel)]="viewOnce">
-            <span>Ver una vez</span>
+            <span>{{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }}</span>
           </label>
           <ion-button mode="ios" (click)="publishStory()" [disabled]="busyId === 'story' || social.publishing() || (!storyText.trim() && !storyFile)">
             @if (social.publishing()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
@@ -223,7 +223,7 @@
       </article>
 
       <article class="panel span-7">
-        <h2>Solicitudes</h2>
+        <h2>{{ 'WORLD.REQUESTS' | translate:'Solicitudes' }}</h2>
         <div class="stack">
           @for (request of social.friendRequests(); track request.id) {
             <div class="result-row">
@@ -239,12 +239,12 @@
               } @else if (request.status === 'Pending' && request.from.id === auth.session()?.user?.id) {
                 <ion-button mode="ios" fill="clear" color="danger" (click)="cancel(request.id)">
                   <ion-icon name="close-outline"></ion-icon>
-                  Cancelar
+                  {{ 'COMMON.CANCEL' | translate:'Cancelar' }}
                 </ion-button>
               }
             </div>
           } @empty {
-            <div class="empty-copy">No hay solicitudes pendientes.</div>
+            <div class="empty-copy">{{ 'WORLD.NO_PENDING_REQUESTS' | translate:'No hay solicitudes pendientes.' }}</div>
           }
         </div>
       </article>
@@ -252,7 +252,7 @@
       <article class="panel span-12">
         <div class="panel-headline">
           <div>
-            <h2>Mis historias</h2>
+            <h2>{{ 'WORLD.MY_STORIES' | translate:'Mis historias' }}</h2>
             <span class="card-sub">{{ myStoryBuckets().length }} activas</span>
           </div>
         </div>
@@ -268,22 +268,22 @@
                 </span>
               </button>
               <div class="row-actions">
-                <ion-button mode="ios" fill="clear" (click)="openStoryBucket(bucket)" aria-label="Ver historia">
+                <ion-button mode="ios" fill="clear" (click)="openStoryBucket(bucket)" [attr.aria-label]="'WORLD.VIEW_STORY' | translate:'Ver historia'">
                   <ion-icon name="eye-outline"></ion-icon>
                 </ion-button>
-                <ion-button mode="ios" fill="clear" color="danger" (click)="deleteStory(latestStory(bucket))" aria-label="Eliminar ultima historia">
+                <ion-button mode="ios" fill="clear" color="danger" (click)="deleteStory(latestStory(bucket))" [attr.aria-label]="'WORLD.DELETE_LAST_STORY' | translate:'Eliminar ultima historia'">
                   <ion-icon name="trash-outline"></ion-icon>
                 </ion-button>
               </div>
             </div>
           } @empty {
-            <div class="empty-copy">Tus historias activas apareceran aqui.</div>
+            <div class="empty-copy">{{ 'WORLD.MY_STORIES_EMPTY' | translate:'Tus historias activas apareceran aqui.' }}</div>
           }
         </div>
         <div class="story-section-separator"></div>
         <div class="panel-headline">
           <div>
-            <h2>Actualizaciones recientes</h2>
+            <h2>{{ 'WORLD.RECENT_UPDATES' | translate:'Actualizaciones recientes' }}</h2>
             <span class="card-sub">{{ recentStoryBuckets().length }} con historias nuevas</span>
           </div>
         </div>
@@ -299,19 +299,19 @@
                 </span>
               </button>
               <div class="row-actions">
-                <ion-button mode="ios" fill="clear" (click)="openStoryBucket(bucket)" aria-label="Ver historia">
+                <ion-button mode="ios" fill="clear" (click)="openStoryBucket(bucket)" [attr.aria-label]="'WORLD.VIEW_STORY' | translate:'Ver historia'">
                   <ion-icon name="eye-outline"></ion-icon>
                 </ion-button>
               </div>
             </div>
           } @empty {
-            <div class="empty-copy">No hay actualizaciones nuevas.</div>
+            <div class="empty-copy">{{ 'WORLD.NO_RECENT_UPDATES' | translate:'No hay actualizaciones nuevas.' }}</div>
           }
         </div>
         <div class="story-section-separator"></div>
         <div class="panel-headline">
           <div>
-            <h2>Vistos</h2>
+            <h2>{{ 'WORLD.SEEN' | translate:'Vistos' }}</h2>
             <span class="card-sub">{{ viewedStoryBuckets().length }} al dia</span>
           </div>
         </div>
@@ -327,13 +327,13 @@
                 </span>
               </button>
               <div class="row-actions">
-                <ion-button mode="ios" fill="clear" (click)="openStoryBucket(bucket)" aria-label="Ver historia">
+                <ion-button mode="ios" fill="clear" (click)="openStoryBucket(bucket)" [attr.aria-label]="'WORLD.VIEW_STORY' | translate:'Ver historia'">
                   <ion-icon name="eye-outline"></ion-icon>
                 </ion-button>
               </div>
             </div>
           } @empty {
-            <div class="empty-copy">Las historias vistas pasaran aqui.</div>
+            <div class="empty-copy">{{ 'WORLD.SEEN_EMPTY' | translate:'Las historias vistas pasaran aqui.' }}</div>
           }
         </div>
       </article>
@@ -352,7 +352,7 @@
               <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
               <span>{{ viewerSubtitle(story) }}</span>
             </div>
-            <button type="button" (click)="closeStoryViewer()" aria-label="Cerrar">
+            <button type="button" (click)="closeStoryViewer()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
               <ion-icon name="close-outline"></ion-icon>
             </button>
           </div>
@@ -363,7 +363,7 @@
               (pointerdown)="onStoryPointerDown($event)"
               (pointerup)="onStoryPointerUp($event, 'left')"
               (pointercancel)="onStoryPointerCancel()"
-              aria-label="Historia anterior">
+              [attr.aria-label]="'WORLD.PREV_STORY' | translate:'Historia anterior'">
             </button>
             <button
               type="button"
@@ -371,7 +371,7 @@
               (pointerdown)="onStoryPointerDown($event)"
               (pointerup)="onStoryPointerUp($event, 'right')"
               (pointercancel)="onStoryPointerCancel()"
-              aria-label="Historia siguiente">
+              [attr.aria-label]="'WORLD.NEXT_STORY' | translate:'Historia siguiente'">
             </button>
             @if (payload.media; as mediaPayload) {
               @if (social.storyMedia(story); as media) {
@@ -409,26 +409,26 @@
               </button>
             } @else {
               <form class="story-reply" (submit)="$event.preventDefault(); sendStoryReply(story)">
-                <ion-input mode="ios" [(ngModel)]="storyReply" name="storyReply" placeholder="Responder historia..." [disabled]="busyId === 'reply:' + story.id"></ion-input>
-                <button type="submit" [disabled]="!storyReply.trim() || busyId === 'reply:' + story.id" aria-label="Enviar respuesta">
+                <ion-input mode="ios" [(ngModel)]="storyReply" name="storyReply" [placeholder]="'WORLD.REPLY_STORY_PLACEHOLDER' | translate:'Responder historia...'" [disabled]="busyId === 'reply:' + story.id"></ion-input>
+                <button type="submit" [disabled]="!storyReply.trim() || busyId === 'reply:' + story.id" [attr.aria-label]="'WORLD.SEND_REPLY' | translate:'Enviar respuesta'">
                   <ion-icon name="send-outline"></ion-icon>
                 </button>
               </form>
               <div class="story-quick-actions">
-                <button type="button" class="heart-action" [class.active]="story.myReaction === '\u2764\uFE0F'" (click)="reactToStory(story, '\u2764\uFE0F')" aria-label="Me encanta">
+                <button type="button" class="heart-action" [class.active]="story.myReaction === '\u2764\uFE0F'" (click)="reactToStory(story, '\u2764\uFE0F')" [attr.aria-label]="'WORLD.LOVE' | translate:'Me encanta'">
                   <ion-icon [name]="story.myReaction === '\u2764\uFE0F' ? 'heart' : 'heart-outline'"></ion-icon>
                 </button>
-                <button type="button" (click)="reactionsOpen = !reactionsOpen" aria-label="Reacciones">
+                <button type="button" (click)="reactionsOpen = !reactionsOpen" [attr.aria-label]="'CHAT.REACTIONS' | translate:'Reacciones'">
                   <ion-icon name="happy-outline"></ion-icon>
                 </button>
-                <button type="button" (click)="repostStory(story)" [disabled]="busyId === 'repost:' + story.id" aria-label="Repostear">
+                <button type="button" (click)="repostStory(story)" [disabled]="busyId === 'repost:' + story.id" [attr.aria-label]="'WORLD.REPOST' | translate:'Repostear'">
                   <ion-icon name="repeat-outline"></ion-icon>
                 </button>
               </div>
               @if (reactionsOpen) {
                 <div class="story-reaction-menu">
                   @for (emoji of storyReactionOptions; track emoji) {
-                    <button type="button" (click)="reactToStory(story, emoji)" [attr.aria-label]="'Reaccionar ' + emoji">{{ emoji }}</button>
+                    <button type="button" (click)="reactToStory(story, emoji)" [attr.aria-label]="('CHAT.REACT' | translate:'Reaccionar') + ' ' + emoji">{{ emoji }}</button>
                   }
                 </div>
               }
@@ -444,16 +444,16 @@
           <section class="story-stats-sheet">
             <header>
               <div>
-                <h2>Actividad</h2>
+                <h2>{{ 'WORLD.ACTIVITY' | translate:'Actividad' }}</h2>
                 <span>{{ statsViews(story) }} vistas - {{ statsReactions(story) }} reacciones - {{ statsComments(story) }} comentarios</span>
               </div>
-              <button type="button" (click)="closeStats()" aria-label="Cerrar estadisticas">
+              <button type="button" (click)="closeStats()" [attr.aria-label]="'WORLD.CLOSE_STATS' | translate:'Cerrar estadisticas'">
                 <ion-icon name="close-outline"></ion-icon>
               </button>
             </header>
             <div class="stats-columns">
               <article>
-                <h3>Vistas</h3>
+                <h3>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</h3>
                 @for (view of story.views || []; track view.user.id) {
                   <div class="stats-row">
                     <span class="stats-avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span>
@@ -463,11 +463,11 @@
                     </span>
                   </div>
                 } @empty {
-                  <p class="stats-empty">Sin vistas todavia.</p>
+                  <p class="stats-empty">{{ 'WORLD.NO_VIEWS' | translate:'Sin vistas todavia.' }}</p>
                 }
               </article>
               <article>
-                <h3>Reacciones</h3>
+                <h3>{{ 'CHAT.REACTIONS' | translate:'Reacciones' }}</h3>
                 @for (reaction of story.reactions || []; track reaction.id) {
                   <div class="stats-row">
                     <span class="stats-avatar">{{ reaction.emoji }}</span>
@@ -477,11 +477,11 @@
                     </span>
                   </div>
                 } @empty {
-                  <p class="stats-empty">Sin reacciones aun.</p>
+                  <p class="stats-empty">{{ 'WORLD.NO_REACTIONS_YET' | translate:'Sin reacciones aun.' }}</p>
                 }
               </article>
               <article>
-                <h3>Comentarios</h3>
+                <h3>{{ 'WORLD.COMMENTS' | translate:'Comentarios' }}</h3>
                 @for (comment of story.comments || []; track comment.id) {
                   <div class="stats-row comment-row">
                     <span class="stats-avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span>
@@ -492,7 +492,7 @@
                     </span>
                   </div>
                 } @empty {
-                  <p class="stats-empty">Sin comentarios aun.</p>
+                  <p class="stats-empty">{{ 'WORLD.NO_COMMENTS_YET' | translate:'Sin comentarios aun.' }}</p>
                 }
               </article>
             </div>
