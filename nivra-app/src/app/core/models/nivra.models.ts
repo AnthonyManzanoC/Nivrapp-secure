@@ -489,6 +489,7 @@ export interface CallSession {
   roomId?: string | null;
   groupId?: string | null;
   initiatorUserId: string;
+  initiatorDeviceId?: string | null;
   type: 'Voice' | 'Video' | string;
   status: 'Ringing' | 'Active' | 'Ended' | 'Missed' | 'Failed' | string;
   participantUserIds: string[];
@@ -611,8 +612,9 @@ export interface QrLoginStatusResponse {
 export type RealtimeEvent =
   | { type: 'message.received'; payload: MessageResponse }
   | { type: 'message.receipt'; payload: unknown }
+  | { type: 'sync_read_receipts'; payload: unknown }
   | { type: 'conversation.created'; payload: Conversation }
   | { type: 'conversation.typing'; payload: unknown }
   | { type: 'presence.changed'; payload: unknown }
-  | { type: 'call.started' | 'incomingCall' | 'call.signal' | 'call.ended'; payload: unknown }
+  | { type: 'call.started' | 'incomingCall' | 'call.signal' | 'call_answered_elsewhere' | 'call.ended'; payload: unknown }
   | { type: string; payload: unknown };

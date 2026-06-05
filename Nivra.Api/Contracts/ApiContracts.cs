@@ -406,7 +406,8 @@ public sealed record CallResponse(
     CallStatus Status,
     List<string> ParticipantUserIds,
     DateTimeOffset StartedAt,
-    DateTimeOffset? EndedAt);
+    DateTimeOffset? EndedAt,
+    string? InitiatorDeviceId = null);
 
 public sealed record PatchPrivacyRequest(
     bool? HideNotificationContent,

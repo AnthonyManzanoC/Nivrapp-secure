@@ -88,6 +88,23 @@ export class SignalrService implements OnDestroy {
     }).catch(() => undefined);
   }
 
+  async syncReadReceipts(conversationId: string, messageIds: string[]): Promise<void> {
+    const ids = [...new Set((messageIds ?? []).filter(Boolean))].slice(0, 500);
+    if (!conversationId || !ids.length) {
+      return;
+    }
+    await this.ensureConnected();
+    await this.connection?.invoke('SyncReadReceipts', conversationId, ids).catch(() => undefined);
+  }
+
+  async callAnsweredElsewhere(callId: string): Promise<void> {
+    if (!callId) {
+      return;
+    }
+    await this.ensureConnected();
+    await this.connection?.invoke('CallAnsweredElsewhere', callId).catch(() => undefined);
+  }
+
   async updateGroupRoles(conversationId: string, admins: string[]): Promise<void> {
     await this.ensureConnected();
     await this.connection?.invoke('UpdateGroupRoles', conversationId, admins).catch(() => undefined);
@@ -164,6 +181,7 @@ export class SignalrService implements OnDestroy {
     [
       'message.received',
       'message.receipt',
+      'sync_read_receipts',
       'conversation.typing',
       'presence.changed',
       'MessageDeleted',
@@ -186,6 +204,7 @@ export class SignalrService implements OnDestroy {
       'incomingCall',
       'call.started',
       'call.signal',
+      'call_answered_elsewhere',
       'call.ended',
       'CallEnded',
       'call.rejected',
@@ -216,6 +235,7 @@ export class SignalrService implements OnDestroy {
     [
       'message.received',
       'message.receipt',
+      'sync_read_receipts',
       'conversation.typing',
       'presence.changed',
       'MessageDeleted',
@@ -238,6 +258,7 @@ export class SignalrService implements OnDestroy {
       'incomingCall',
       'call.started',
       'call.signal',
+      'call_answered_elsewhere',
       'call.ended',
       'CallEnded',
       'call.rejected',

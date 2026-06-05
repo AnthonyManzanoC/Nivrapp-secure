@@ -507,6 +507,12 @@
   font-weight: 950;
 }
 
+.surface.call-mode .call-controls ion-button.screen-share-button.active {
+  --background: linear-gradient(135deg, var(--ion-color-primary), var(--ion-color-primary-tint));
+  --color: var(--ion-color-primary-contrast);
+  box-shadow: 0 0 0 3px rgba(var(--ion-color-primary-rgb), .16);
+}
+
 .call-controls .accept {
   --background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
   --color: #03100d;

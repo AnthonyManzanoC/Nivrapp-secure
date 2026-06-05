@@ -9,6 +9,7 @@ import {
   callOutline,
   closeCircleOutline,
   closeOutline,
+  desktopOutline,
   enterOutline,
   micOffOutline,
   micOutline,
@@ -64,6 +65,7 @@ export class CallsPage {
       callOutline,
       closeCircleOutline,
       closeOutline,
+      desktopOutline,
       enterOutline,
       micOffOutline,
       micOutline,
@@ -132,6 +134,10 @@ export class CallsPage {
   async endActive(): Promise<void> {
     this.videoSwapped = false;
     await this.calls.end();
+  }
+
+  async toggleScreenShare(): Promise<void> {
+    await this.calls.toggleScreenShare();
   }
 
   async rejoin(callId: string): Promise<void> {

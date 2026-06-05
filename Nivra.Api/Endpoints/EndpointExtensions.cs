@@ -1756,14 +1756,16 @@ public static partial class EndpointExtensions
                     receipt.DeliveredAt = now;
                     break;
                 case ReceiptKind.Read:
-                    receipt.ReadAt = now;
+                    foreach (var userReceipt in message.Receipts.Where(candidate => candidate.UserId == current.UserId))
+                    {
+                        userReceipt.DeliveredAt ??= now;
+                        userReceipt.ReadAt ??= now;
+                    }
                     if (message.DeleteAfterRead)
                     {
                         deleteReason = "view_once";
                         foreach (var userReceipt in message.Receipts.Where(candidate => candidate.UserId == current.UserId))
                         {
-                            userReceipt.DeliveredAt ??= now;
-                            userReceipt.ReadAt ??= now;
                             userReceipt.DeletedAt ??= now;
                         }
 
@@ -1781,6 +1783,17 @@ public static partial class EndpointExtensions
             }
 
             await store.SaveChangesAsync(cancellationToken);
+            if (request.Kind == ReceiptKind.Read)
+            {
+                await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("sync_read_receipts", new
+                {
+                    conversationId = message.ConversationId,
+                    messageIds = new[] { messageId },
+                    userId = current.UserId,
+                    sourceDeviceId = current.DeviceId,
+                    at = now
+                }, cancellationToken);
+            }
             await hub.Clients.Group(GroupsFor.User(message.SenderUserId)).SendAsync("message.receipt", new
             {
                 messageId,
@@ -3064,7 +3077,7 @@ public static partial class EndpointExtensions
             };
 
             await store.AddCallAsync(call, cancellationToken);
-            var response = ToCallResponse(call);
+            var response = ToCallResponse(call, current.DeviceId);
             var callerName = await GetCallerNameAsync(store, current.UserId, cancellationToken);
             await NotifyUsers(hub, participants, "call.started", response);
             foreach (var userId in participants.Where(userId => userId != current.UserId))
@@ -3127,6 +3140,16 @@ public static partial class EndpointExtensions
                 request.SignalType,
                 request.PayloadCiphertext
             }, cancellationToken);
+            if (signalType == "accepted")
+            {
+                await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("call_answered_elsewhere", new
+                {
+                    callId,
+                    answeredByUserId = current.UserId,
+                    answeredByDeviceId = current.DeviceId,
+                    at = DateTimeOffset.UtcNow
+                }, cancellationToken);
+            }
 
             return Results.Accepted();
         });
@@ -3918,9 +3941,9 @@ public static partial class EndpointExtensions
         return new VaultItemResponse(item.Id, item.ParentId, item.FileObjectId, item.Kind, item.EncryptedMetadata, item.CreatedAt, item.UpdatedAt);
     }
 
-    private static CallResponse ToCallResponse(CallSession call)
+    private static CallResponse ToCallResponse(CallSession call, string? initiatorDeviceId = null)
     {
-        return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt);
+        return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt, initiatorDeviceId);
     }
 
     private static VaultInviteLinkResponse ToVaultInviteLinkResponse(VaultRoomInvite invite, VaultRoom room, string code, HttpContext http)

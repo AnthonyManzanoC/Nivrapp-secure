@@ -227,6 +227,57 @@ public sealed class NivraHub(
             .ToList();
     }
 
+    public async Task SyncReadReceipts(string conversationId, List<string> messageIds)
+    {
+        if (!TryGetCurrentUser(out var currentUser) ||
+            string.IsNullOrWhiteSpace(conversationId) ||
+            !await store.IsActiveParticipantAsync(conversationId, currentUser.UserId, Context.ConnectionAborted))
+        {
+            return;
+        }
+
+        var ids = (messageIds ?? [])
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .Take(500)
+            .ToList();
+        if (ids.Count == 0)
+        {
+            return;
+        }
+
+        await Clients.Group(GroupsFor.User(currentUser.UserId)).SendAsync("sync_read_receipts", new
+        {
+            conversationId,
+            messageIds = ids,
+            userId = currentUser.UserId,
+            sourceDeviceId = currentUser.DeviceId,
+            at = timeProvider.GetUtcNow()
+        }, Context.ConnectionAborted);
+    }
+
+    public async Task CallAnsweredElsewhere(string callId)
+    {
+        if (!TryGetCurrentUser(out var currentUser) || string.IsNullOrWhiteSpace(callId))
+        {
+            return;
+        }
+
+        var call = await store.GetCallAsync(callId, Context.ConnectionAborted);
+        if (call is null || !call.ParticipantUserIds.Contains(currentUser.UserId))
+        {
+            return;
+        }
+
+        await Clients.Group(GroupsFor.User(currentUser.UserId)).SendAsync("call_answered_elsewhere", new
+        {
+            callId,
+            answeredByUserId = currentUser.UserId,
+            answeredByDeviceId = currentUser.DeviceId,
+            at = timeProvider.GetUtcNow()
+        }, Context.ConnectionAborted);
+    }
+
     public async Task<CallResponse> CallUser(StartCallRequest request)
     {
         if (!TryGetCurrentUser(out var currentUser))
@@ -272,7 +323,7 @@ public sealed class NivraHub(
         };
 
         await store.AddCallAsync(call, Context.ConnectionAborted);
-        var response = ToCallResponse(call);
+        var response = ToCallResponse(call, currentUser.DeviceId);
         await NotifyUsersAsync(participants, "call.started", response);
         await SendIncomingCallPushesAsync(call, currentUser.UserId, participants);
         return response;
@@ -432,9 +483,9 @@ public sealed class NivraHub(
             : caller.DisplayName;
     }
 
-    private static CallResponse ToCallResponse(CallSession call)
+    private static CallResponse ToCallResponse(CallSession call, string? initiatorDeviceId = null)
     {
-        return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt);
+        return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt, initiatorDeviceId);
     }
 
     private bool TryGetCurrentUser(out CurrentUser currentUser)

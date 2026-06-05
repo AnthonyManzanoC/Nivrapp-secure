@@ -20,6 +20,8 @@ interface DecodedCallSignalPayload {
   type?: string;
   payload?: unknown;
   at?: string;
+  sourceDeviceId?: string | null;
+  sourceSessionId?: string | null;
 }
 
 interface SecureCallSignalEnvelope {
@@ -61,6 +63,9 @@ export class CallsService implements OnDestroy {
   private ringToneInterval: number | null = null;
   private ringAudioContext: AudioContext | null = null;
   private ringTonePhase: 'calling' | 'ringing' | null = null;
+  private readonly callSignalSessionId = crypto.randomUUID();
+  private screenShareStream: MediaStream | null = null;
+  private cameraTrackBeforeScreenShare: MediaStreamTrack | null = null;
 
   readonly activeCall = signal<CallSession | null>(null);
   readonly phase = signal<CallPhase>('idle');
@@ -70,6 +75,7 @@ export class CallsService implements OnDestroy {
   readonly muted = signal(false);
   readonly cameraOff = signal(false);
   readonly speaker = signal(true);
+  readonly screenSharing = signal(false);
   readonly error = signal('');
   readonly history = signal<CallSession[]>(this.loadHistory());
   readonly activeGroupRooms = signal<Record<string, GroupCallRoom>>({});
@@ -85,6 +91,9 @@ export class CallsService implements OnDestroy {
       }
       if (event.type === 'call.signal') {
         void this.handleCallSignal(event.payload as CallSignalEvent);
+      }
+      if (event.type === 'call_answered_elsewhere') {
+        this.handleAnsweredElsewhere(event.payload);
       }
       if (event.type === 'call.ended' || event.type === 'CallEnded') {
         const call = event.payload as CallSession;
@@ -185,6 +194,7 @@ export class CallsService implements OnDestroy {
       this.phase.set('connecting');
       this.clearRingTimeout();
       this.stopRingingTone();
+      await this.realtime.callAnsweredElsewhere(call.id).catch(() => undefined);
       await this.connectLiveKitRoom(call);
       return;
     }
@@ -194,6 +204,7 @@ export class CallsService implements OnDestroy {
     this.stopRingingTone();
     await Promise.all(this.otherParticipantIds(call).map((userId) =>
       this.sendCallSignal(call, userId, 'accepted', { accepted: true }).catch(() => undefined)));
+    await this.realtime.callAnsweredElsewhere(call.id).catch(() => undefined);
     await this.establishCallPeers();
     await this.flushPendingCallSignals();
   }
@@ -278,6 +289,9 @@ export class CallsService implements OnDestroy {
 
   toggleCamera(): void {
     const next = !this.cameraOff();
+    if (next && this.screenSharing()) {
+      void this.stopScreenShare();
+    }
     this.cameraOff.set(next);
     this.localStream()?.getVideoTracks().forEach((track) => {
       track.enabled = !next;
@@ -287,6 +301,26 @@ export class CallsService implements OnDestroy {
 
   toggleSpeaker(): void {
     this.speaker.update((value) => !value);
+  }
+
+  canShareScreen(): boolean {
+    const call = this.activeCall();
+    if (!call || call.type !== 'Video' || !['connecting', 'connected'].includes(this.phase())) {
+      return false;
+    }
+    if (this.isGroupCall(call)) {
+      const participant = this.liveKitRoom?.localParticipant as unknown as { setScreenShareEnabled?: (enabled: boolean) => Promise<unknown> } | undefined;
+      return typeof participant?.setScreenShareEnabled === 'function' || Boolean(this.displayMediaApi());
+    }
+    return Boolean(this.displayMediaApi());
+  }
+
+  async toggleScreenShare(): Promise<void> {
+    if (this.screenSharing()) {
+      await this.stopScreenShare();
+    } else {
+      await this.startScreenShare();
+    }
   }
 
   releaseLocalResources(): void {
@@ -319,6 +353,112 @@ export class CallsService implements OnDestroy {
     this.stopRingingTone();
     this.addHistory(call);
     await this.connectLiveKitRoom(call);
+  }
+
+  private async startScreenShare(): Promise<void> {
+    const call = this.activeCall();
+    if (!call || call.type !== 'Video') {
+      return;
+    }
+    this.error.set('');
+
+    if (this.isGroupCall(call) && this.liveKitRoom) {
+      const participant = this.liveKitRoom.localParticipant as unknown as {
+        setScreenShareEnabled?: (enabled: boolean) => Promise<unknown>;
+      };
+      if (typeof participant.setScreenShareEnabled === 'function') {
+        await participant.setScreenShareEnabled(true);
+        this.screenSharing.set(true);
+        this.broadcastControl('screen', 'on');
+        this.syncLiveKitLocalTracks();
+        return;
+      }
+    }
+
+    const getDisplayMedia = this.displayMediaApi();
+    if (!getDisplayMedia) {
+      this.error.set('Compartir pantalla esta disponible desde Web o PC.');
+      return;
+    }
+
+    const displayStream = await getDisplayMedia({ video: true, audio: false }).catch(() => null);
+    const screenTrack = displayStream?.getVideoTracks()[0];
+    if (!displayStream || !screenTrack) {
+      this.error.set('No se pudo iniciar la captura de pantalla.');
+      return;
+    }
+
+    this.screenShareStream = displayStream;
+    this.cameraTrackBeforeScreenShare = this.localStream()?.getVideoTracks()[0] ?? null;
+    await this.replaceOutgoingVideoTrack(screenTrack);
+    this.publishLocalScreenTrack(screenTrack);
+    screenTrack.onended = () => void this.stopScreenShare();
+    this.screenSharing.set(true);
+    this.broadcastControl('screen', 'on');
+  }
+
+  private async stopScreenShare(options: { restoreCamera?: boolean; broadcast?: boolean } = {}): Promise<void> {
+    const restoreCamera = options.restoreCamera !== false;
+    const broadcast = options.broadcast !== false;
+    const call = this.activeCall();
+
+    if (this.liveKitRoom && this.isGroupCall(call)) {
+      const participant = this.liveKitRoom.localParticipant as unknown as {
+        setScreenShareEnabled?: (enabled: boolean) => Promise<unknown>;
+      };
+      if (typeof participant.setScreenShareEnabled === 'function') {
+        await participant.setScreenShareEnabled(false).catch(() => undefined);
+        this.syncLiveKitLocalTracks();
+      }
+    }
+
+    const previousCamera = this.cameraTrackBeforeScreenShare;
+    if (restoreCamera && previousCamera && previousCamera.readyState !== 'ended') {
+      await this.replaceOutgoingVideoTrack(previousCamera).catch(() => undefined);
+      this.publishLocalCameraTrack(previousCamera);
+    }
+
+    this.screenShareStream?.getTracks().forEach((track) => track.stop());
+    this.screenShareStream = null;
+    this.cameraTrackBeforeScreenShare = null;
+    if (this.screenSharing()) {
+      this.screenSharing.set(false);
+      if (broadcast) {
+        this.broadcastControl('screen', 'off');
+      }
+    }
+  }
+
+  private displayMediaApi(): ((constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>) | null {
+    const devices = navigator.mediaDevices as MediaDevices & {
+      getDisplayMedia?: (constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>;
+    };
+    return typeof devices?.getDisplayMedia === 'function'
+      ? devices.getDisplayMedia.bind(devices)
+      : null;
+  }
+
+  private async replaceOutgoingVideoTrack(track: MediaStreamTrack): Promise<void> {
+    const replacements: Promise<void>[] = [];
+    for (const peer of this.peers.values()) {
+      const sender = peer.connection.getSenders().find((item) => item.track?.kind === 'video');
+      if (sender) {
+        replacements.push(sender.replaceTrack(track));
+      }
+    }
+    await Promise.all(replacements);
+  }
+
+  private publishLocalScreenTrack(screenTrack: MediaStreamTrack): void {
+    const current = this.localStream();
+    const audioTracks = current?.getAudioTracks() ?? [];
+    this.localStream.set(new MediaStream([...audioTracks, screenTrack]));
+  }
+
+  private publishLocalCameraTrack(cameraTrack: MediaStreamTrack): void {
+    const current = this.localStream();
+    const audioTracks = current?.getAudioTracks() ?? [];
+    this.localStream.set(new MediaStream([...audioTracks, cameraTrack]));
   }
 
   private async connectLiveKitRoom(call: CallSession): Promise<void> {
@@ -551,11 +691,19 @@ export class CallsService implements OnDestroy {
     }
     const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? call.groupId ?? null, this.isGroupCall(call));
     this.rememberGroupRoom(normalized);
+    if (normalized.initiatorUserId === currentUserId && normalized.initiatorDeviceId && normalized.initiatorDeviceId !== this.currentDeviceId()) {
+      this.addHistory(normalized);
+      return;
+    }
     if (this.activeCall()?.id === normalized.id) {
       this.addHistory(normalized);
       return;
     }
     if (this.activeCall() && this.activeCall()?.id !== normalized.id && this.phase() !== 'idle') {
+      if (this.isGroupCall(normalized)) {
+        this.addHistory(normalized);
+        return;
+      }
       await this.sendCallSignal(normalized, normalized.initiatorUserId, 'busy', { busy: true }).catch(() => undefined);
       return;
     }
@@ -567,6 +715,21 @@ export class CallsService implements OnDestroy {
     this.startRingingTone(this.phase());
     if (this.phase() !== 'ringing') {
       await this.flushPendingCallSignals();
+    }
+  }
+
+  private handleAnsweredElsewhere(payload: unknown): void {
+    const value = payload as { callId?: string; answeredByUserId?: string; answeredByDeviceId?: string | null };
+    const call = this.activeCall();
+    if (!call?.id || call.id !== value.callId || value.answeredByUserId !== this.currentUserId()) {
+      return;
+    }
+    if (!value.answeredByDeviceId || value.answeredByDeviceId === this.currentDeviceId()) {
+      return;
+    }
+    if (['ringing', 'calling', 'connecting'].includes(this.phase())) {
+      this.cleanup({ remember: false });
+      this.addHistory({ ...call, status: 'Active' });
     }
   }
 
@@ -823,6 +986,8 @@ export class CallsService implements OnDestroy {
       type: signalType,
       payload,
       at: new Date().toISOString(),
+      sourceDeviceId: this.currentDeviceId(),
+      sourceSessionId: this.callSignalSessionId,
     });
     return firstValueFrom(this.api.post(`/calls/${encodeURIComponent(call.id)}/signal`, {
       targetUserId,
@@ -831,7 +996,7 @@ export class CallsService implements OnDestroy {
     }));
   }
 
-  private broadcastControl(signalType: 'muted' | 'camera', payload: unknown): void {
+  private broadcastControl(signalType: 'muted' | 'camera' | 'screen', payload: unknown): void {
     const call = this.activeCall();
     if (!call) {
       return;
@@ -950,6 +1115,7 @@ export class CallsService implements OnDestroy {
     const call = this.activeCall();
     this.clearRingTimeout();
     this.stopRingingTone();
+    void this.stopScreenShare({ restoreCamera: false, broadcast: false });
     this.disconnectLiveKitRoom();
     if (call && options.remember !== false) {
       this.addHistory({
@@ -968,6 +1134,7 @@ export class CallsService implements OnDestroy {
     this.remoteStates.set({});
     this.muted.set(false);
     this.cameraOff.set(false);
+    this.screenSharing.set(false);
     this.speaker.set(true);
     if (!this.auth.session()?.user.id) {
       this.activeGroupRooms.set({});
@@ -1056,6 +1223,10 @@ export class CallsService implements OnDestroy {
 
   private currentUserId(): string | null {
     return this.auth.session()?.user.id ?? null;
+  }
+
+  private currentDeviceId(): string | null {
+    return this.auth.session()?.device.id ?? null;
   }
 
   private conversationForCall(call: CallSession | null | undefined) {

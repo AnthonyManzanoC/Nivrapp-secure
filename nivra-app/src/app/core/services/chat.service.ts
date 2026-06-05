@@ -140,6 +140,9 @@ export class ChatService implements OnDestroy {
       if (event.type === 'message.receipt') {
         this.applyReceipt(event.payload);
       }
+      if (event.type === 'sync_read_receipts') {
+        void this.applyReadSync(event.payload);
+      }
       if (event.type === 'MessageDeleted') {
         this.applyMessageDeleted(event.payload);
       }
@@ -1096,8 +1099,8 @@ export class ChatService implements OnDestroy {
       if (message.mine || this.readReceiptSentIds.has(message.id)) {
         return false;
       }
-      const ownReceipt = message.receipts?.find((receipt) => receipt.userId === current.user.id && receipt.deviceId === current.device.id);
-      return !ownReceipt?.readAt;
+      const ownReceipts = (message.receipts ?? []).filter((receipt) => receipt.userId === current.user.id);
+      return !ownReceipts.some((receipt) => receipt.readAt);
     });
   }
 
@@ -1352,7 +1355,7 @@ export class ChatService implements OnDestroy {
       payload = { type: 'system', text: 'Paquete cifrado no disponible para este dispositivo.' };
     }
 
-    const vm: ChatMessageVm = {
+    let vm: ChatMessageVm = {
       id: message.id,
       conversationId: message.conversationId,
       mine: message.senderUserId === current.user.id,
@@ -1365,6 +1368,10 @@ export class ChatService implements OnDestroy {
       deleteAfterRead: message.deleteAfterRead,
       decryptError,
     };
+    if (vm.mine) {
+      vm = this.withLocalReadReceipt(vm, current.user.id, current.device.id, message.serverReceivedAt);
+      this.readReceiptSentIds.add(vm.id);
+    }
     if (payload.type === 'reaction') {
       this.applyReactionPayload(payload, message.conversationId, message.id, message.serverReceivedAt);
       this.persistExistingMessage(this.stringPayload(payload, 'targetMessageId'));
@@ -1404,7 +1411,7 @@ export class ChatService implements OnDestroy {
     if (!current) {
       return;
     }
-    this.upsertMessage({
+    this.upsertMessage(this.withLocalReadReceipt({
       id: response.id,
       conversationId: response.conversationId,
       mine: true,
@@ -1416,7 +1423,7 @@ export class ChatService implements OnDestroy {
       receipts: response.receipts,
       expiresAt: response.expiresAt,
       deleteAfterRead: response.deleteAfterRead,
-    });
+    }, current.user.id, current.device.id, response.serverReceivedAt));
   }
 
   private upsertMessage(message: ChatMessageVm, options: { persist?: boolean } = {}): void {
@@ -1435,16 +1442,19 @@ export class ChatService implements OnDestroy {
 
   async markConversationRead(conversationId: string): Promise<void> {
     const current = this.auth.session();
-    if (!current || current.user.privacySettings?.readReceipts === false || document.visibilityState === 'hidden') {
+    if (!current || document.visibilityState === 'hidden') {
       return;
     }
     const unread = (this.messagesByConversation()[conversationId] ?? []).filter((message) => {
       if (message.mine || this.readReceiptSentIds.has(message.id)) {
         return false;
       }
-      const ownReceipt = message.receipts?.find((receipt) => receipt.userId === current.user.id && receipt.deviceId === current.device.id);
-      return !ownReceipt?.readAt;
+      const ownReceipts = (message.receipts ?? []).filter((receipt) => receipt.userId === current.user.id);
+      return !ownReceipts.some((receipt) => receipt.readAt);
     });
+    if (!unread.length) {
+      return;
+    }
 
     const viewOnceIds = unread.filter((message) => message.deleteAfterRead).map((message) => message.id);
     if (viewOnceIds.length) {
@@ -1458,15 +1468,24 @@ export class ChatService implements OnDestroy {
       }));
     }
 
+    const readAt = new Date().toISOString();
     for (const message of unread) {
       this.readReceiptSentIds.add(message.id);
-      this.applyReceipt({
-        messageId: message.id,
-        userId: current.user.id,
-        deviceId: current.device.id,
-        kind: 'Read',
-        at: new Date().toISOString(),
-      });
+      if (!viewOnceIds.includes(message.id)) {
+        this.applyReceipt({
+          messageId: message.id,
+          userId: current.user.id,
+          deviceId: current.device.id,
+          kind: 'Read',
+          at: readAt,
+        });
+      }
+    }
+    await this.signalr.syncReadReceipts(conversationId, unread.map((message) => message.id)).catch(() => undefined);
+    if (current.user.privacySettings?.readReceipts === false) {
+      return;
+    }
+    for (const message of unread) {
       await this.sendReceipt(message.id, 'Read').catch(() => this.readReceiptSentIds.delete(message.id));
     }
   }
@@ -1991,6 +2010,62 @@ export class ChatService implements OnDestroy {
     this.persistExistingMessage(value.messageId);
   }
 
+  private async applyReadSync(payload: unknown): Promise<void> {
+    const current = this.auth.session();
+    const value = payload as {
+      conversationId?: string;
+      messageIds?: string[];
+      userId?: string;
+      sourceDeviceId?: string;
+      at?: string;
+    };
+    if (!current || value.userId !== current.user.id || !value.conversationId || !Array.isArray(value.messageIds)) {
+      return;
+    }
+
+    const ids = [...new Set(value.messageIds.filter(Boolean))];
+    if (!ids.length) {
+      return;
+    }
+
+    const at = value.at || new Date().toISOString();
+    const viewOnceIds: string[] = [];
+    this.messagesByConversation.update((state) => {
+      const messages = state[value.conversationId!] ?? [];
+      if (!messages.length) {
+        return state;
+      }
+      let changed = false;
+      const next = messages.map((message) => {
+        if (!ids.includes(message.id) || message.mine) {
+          return message;
+        }
+        this.readReceiptSentIds.add(message.id);
+        if (message.deleteAfterRead) {
+          viewOnceIds.push(message.id);
+          changed = true;
+          return message;
+        }
+        changed = true;
+        return this.withLocalReadReceipt(message, current.user.id, current.device.id, at);
+      }).filter((message) => !viewOnceIds.includes(message.id));
+      return changed ? { ...state, [value.conversationId!]: next } : state;
+    });
+
+    if (viewOnceIds.length) {
+      const accountKey = this.localAccountKey();
+      if (accountKey) {
+        await this.history.markMessagesOpened(accountKey, value.conversationId, viewOnceIds).catch(() => undefined);
+      }
+    }
+
+    for (const id of ids) {
+      if (!viewOnceIds.includes(id)) {
+        this.persistExistingMessage(id);
+      }
+    }
+  }
+
   private mergeMessageReceipts(messageId: string, receipts: DeliveryReceipt[]): void {
     this.messagesByConversation.update((state) => {
       let changed = false;
@@ -2007,6 +2082,14 @@ export class ChatService implements OnDestroy {
       return changed ? nextState : state;
     });
     this.persistExistingMessage(messageId);
+  }
+
+  private withLocalReadReceipt(message: ChatMessageVm, userId: string, deviceId: string, at: string): ChatMessageVm {
+    return {
+      ...message,
+      receipts: this.mergeReceipt(message.receipts ?? [], userId, deviceId, 'read', at),
+      status: message.mine ? message.status : 'visto',
+    };
   }
 
   private mergeReceipt(
