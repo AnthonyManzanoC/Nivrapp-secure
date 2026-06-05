@@ -1417,3 +1417,192 @@ body.nivra-light-theme app-chat-detail .voice-pause {
     width: min(82vw, 340px);
   }
 }
+
+app-chat-detail .composer .composer-icon,
+app-chat-detail .composer .send {
+  flex: 0 0 42px !important;
+  width: 42px !important;
+  min-width: 42px !important;
+  opacity: 1;
+  visibility: visible;
+}
+
+@media (max-width: 768px) {
+  app-chat-detail .composer .composer-icon,
+  app-chat-detail .composer .send {
+    flex-basis: 38px !important;
+    width: 38px !important;
+    min-width: 38px !important;
+  }
+}
+
+@media (pointer: coarse) {
+  app-chat-detail .message-more {
+    display: none !important;
+  }
+}
+
+ion-action-sheet.nivra-message-action-sheet,
+ion-action-sheet.nivra-camera-sheet {
+  --background: rgba(12, 18, 21, .98);
+  --backdrop-opacity: .22;
+  color: var(--nivra-text);
+}
+
+ion-action-sheet.nivra-message-action-sheet .action-sheet-wrapper,
+ion-action-sheet.nivra-camera-sheet .action-sheet-wrapper {
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+
+ion-action-sheet.nivra-message-action-sheet .action-sheet-button,
+ion-action-sheet.nivra-camera-sheet .action-sheet-button {
+  color: var(--nivra-text);
+}
+
+ion-action-sheet.nivra-message-action-sheet .action-sheet-button ion-icon,
+ion-action-sheet.nivra-camera-sheet .action-sheet-button ion-icon {
+  color: var(--ion-color-primary);
+}
+
+ion-action-sheet.nivra-message-action-sheet .action-sheet-destructive {
+  color: #ff7a8a;
+}
+
+ion-modal.reaction-viewer-modal,
+ion-modal.message-info-modal {
+  --width: min(430px, 100vw);
+  --height: auto;
+  --max-height: min(72dvh, 620px);
+  --border-radius: 20px 20px 0 0;
+  --background: var(--nivra-panel-solid);
+  align-items: flex-end;
+}
+
+.reaction-viewer,
+.message-info-sheet {
+  max-height: min(72dvh, 620px);
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .08), transparent 38%),
+    var(--nivra-panel-solid);
+}
+
+.reaction-viewer header,
+.message-info-sheet header {
+  min-height: 58px;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--nivra-line);
+}
+
+.message-info-sheet header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.message-info-sheet header small,
+.sheet-empty,
+.reaction-list small,
+.receipt-list small,
+.message-info-card span {
+  color: var(--nivra-muted);
+}
+
+.reaction-list,
+.receipt-list {
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px max(16px, env(safe-area-inset-bottom));
+}
+
+.reaction-list article,
+.receipt-list article {
+  min-height: 56px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  background: rgba(255, 255, 255, .045);
+}
+
+.receipt-list article {
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.reaction-list strong,
+.reaction-list small,
+.receipt-list strong,
+.receipt-list small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheet-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  object-fit: cover;
+  color: #06130f;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.reaction-emoji {
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, .07);
+  font-size: 20px;
+}
+
+.message-info-card {
+  margin: 12px 12px 0;
+  border: 1px solid var(--nivra-line);
+  border-radius: 12px;
+  display: grid;
+  gap: 3px;
+  padding: 11px 12px;
+  background: rgba(255, 255, 255, .05);
+}
+
+.sheet-empty {
+  margin: 0;
+  border: 1px dashed var(--nivra-line);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+}
+
+body.nivra-light-theme ion-action-sheet.nivra-message-action-sheet,
+body.nivra-light-theme ion-action-sheet.nivra-camera-sheet {
+  --background: rgba(255, 255, 255, .98);
+  color: #111827;
+}
+
+body.nivra-light-theme .reaction-viewer,
+body.nivra-light-theme .message-info-sheet {
+  color: #111827;
+  background: #fff;
+}
+
+body.nivra-light-theme .reaction-list article,
+body.nivra-light-theme .receipt-list article,
+body.nivra-light-theme .message-info-card {
+  background: #f8fafc;
+}

@@ -184,11 +184,11 @@
               }
             </div>
             @if (reactions(message).length) {
-              <div class="reactions" [title]="chat.reactionSummary(message)">
+              <button type="button" class="reactions" [title]="chat.reactionSummary(message)" (click)="openReactionViewer(message, $event)" aria-label="Ver reacciones">
                 @for (group of chat.reactionGroups(message); track group.emoji) {
                   <span>{{ group.emoji }}@if (group.count > 1) { <strong>{{ group.count }}</strong> }</span>
                 }
-              </div>
+              </button>
             }
             <footer>
               <time>{{ message.at | date:'shortTime' }}</time>
@@ -274,9 +274,14 @@
       <input #galleryInput type="file" accept="image/*,video/*" multiple hidden (change)="attachFiles($event, 'media')">
       <input #documentInput type="file" multiple hidden (change)="attachFiles($event, 'document')">
       <input #audioInput type="file" accept="audio/*" multiple hidden (change)="attachFiles($event, 'audio')">
+      <input #cameraPhotoInput type="file" accept="image/*" capture="environment" hidden (change)="captureCameraFile($event)">
+      <input #cameraVideoInput type="file" accept="video/*" capture="environment" hidden (change)="captureCameraFile($event)">
       @if (!voiceComposerActive()) {
         <ion-button class="composer-icon attach" type="button" mode="ios" fill="clear" aria-label="Adjuntar" [disabled]="sending || chat.uploading() || !canSendMessages()" (click)="openAttachmentMenu($event)">
           <ion-icon name="attach-outline"></ion-icon>
+        </ion-button>
+        <ion-button class="composer-icon camera" type="button" mode="ios" fill="clear" aria-label="Camara" [disabled]="sending || chat.uploading() || !canSendMessages()" (click)="openCameraMenu(cameraPhotoInput, cameraVideoInput, $event)">
+          <ion-icon name="camera-outline"></ion-icon>
         </ion-button>
         <ion-button class="composer-icon emoji" type="button" mode="ios" fill="clear" aria-label="Emojis" [disabled]="sending" (click)="emojiPanelOpen = !emojiPanelOpen">
           <ion-icon name="happy-outline"></ion-icon>
@@ -532,6 +537,10 @@
               <ion-icon name="arrow-redo-outline"></ion-icon>
               Reenviar
             </button>
+            <button type="button" (click)="openMessageInfo(actionMessage)">
+              <ion-icon name="information-circle-outline"></ion-icon>
+              Info. del mensaje
+            </button>
             <button type="button" (click)="deleteForMe(actionMessage)">
               <ion-icon name="trash-outline"></ion-icon>
               Para mi
@@ -547,6 +556,80 @@
       }
     </ng-template>
   </ion-popover>
+
+  <ion-modal class="reaction-viewer-modal" [isOpen]="!!reactionViewerMessage" (didDismiss)="closeReactionViewer()">
+    <ng-template>
+      <section class="reaction-viewer">
+        <header>
+          <strong>Reacciones</strong>
+          <ion-button mode="ios" fill="clear" (click)="closeReactionViewer()" aria-label="Cerrar reacciones">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </header>
+        @if (reactionViewerMessage; as reactionMessage) {
+          <div class="reaction-list">
+            @for (reaction of reactionRows(reactionMessage); track (reaction.reactionId || reaction.userId + reaction.deviceId + reaction.emoji)) {
+              <article>
+                @if (reactionAvatar(reaction)) {
+                  <img class="sheet-avatar" [src]="reactionAvatar(reaction)" alt="">
+                } @else {
+                  <span class="sheet-avatar fallback">{{ reactionInitials(reaction) }}</span>
+                }
+                <div>
+                  <strong>{{ reactionDisplayName(reaction) }}</strong>
+                  <small>{{ reactionSubtitle(reaction) || 'Reacciono al mensaje' }}</small>
+                </div>
+                <span class="reaction-emoji">{{ reaction.emoji }}</span>
+              </article>
+            } @empty {
+              <p class="sheet-empty">Sin reacciones.</p>
+            }
+          </div>
+        }
+      </section>
+    </ng-template>
+  </ion-modal>
+
+  <ion-modal class="message-info-modal" [isOpen]="!!messageInfoMessage" (didDismiss)="closeMessageInfo()">
+    <ng-template>
+      <section class="message-info-sheet">
+        <header>
+          <div>
+            <strong>Info. del mensaje</strong>
+            @if (messageInfoMessage; as infoMessage) {
+              <small>{{ messageInfoSummary(infoMessage) || 'Estado local' }}</small>
+            }
+          </div>
+          <ion-button mode="ios" fill="clear" (click)="closeMessageInfo()" aria-label="Cerrar info">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+        </header>
+        @if (messageInfoMessage; as infoMessage) {
+          <div class="message-info-card">
+            <span>Enviado</span>
+            <strong>{{ infoMessage.at | date:'medium' }}</strong>
+          </div>
+          <div class="receipt-list">
+            @for (receipt of messageInfoRows(infoMessage); track receipt.userId + receipt.deviceId) {
+              <article>
+                @if (receiptAvatar(receipt)) {
+                  <img class="sheet-avatar" [src]="receiptAvatar(receipt)" alt="">
+                } @else {
+                  <span class="sheet-avatar fallback">{{ receiptInitials(receipt) }}</span>
+                }
+                <div>
+                  <strong>{{ receiptDisplayName(receipt) }}</strong>
+                  <small>{{ receiptStatus(receipt) }}</small>
+                </div>
+              </article>
+            } @empty {
+              <p class="sheet-empty">Aun no hay confirmaciones de lectura para este mensaje.</p>
+            }
+          </div>
+        }
+      </section>
+    </ng-template>
+  </ion-modal>
 
   <ion-modal class="contact-info-modal" [isOpen]="contactInfoOpen" (didDismiss)="closeContactInfo()">
     <ng-template>

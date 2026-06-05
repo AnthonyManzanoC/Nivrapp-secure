@@ -2,9 +2,11 @@ import { CommonModule, DatePipe } from '@angular/common';
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
+import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Keyboard } from '@capacitor/keyboard';
 import type { PluginListenerHandle } from '@capacitor/core';
 import {
+  ActionSheetController,
   IonButton,
   IonButtons,
   IonContent,
@@ -40,6 +42,7 @@ import {
   albumsOutline,
   atOutline,
   banOutline,
+  cameraOutline,
   checkmarkOutline,
   chevronForwardOutline,
   closeOutline,
@@ -60,7 +63,7 @@ import {
   volumeHighOutline,
 } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
-import { ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, Participant, Story } from '../../core/models/nivra.models';
+import { ChatMessageVm, Contact, Conversation, DeliveryReceipt, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -118,6 +121,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly gestureController = inject(GestureController);
   private readonly toastController = inject(ToastController);
+  private readonly actionSheetController = inject(ActionSheetController);
   private routeSub?: Subscription;
   private keyboardHandles: PluginListenerHandle[] = [];
   private micGesture?: ReturnType<GestureController['create']>;
@@ -144,6 +148,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   messageActionsOpen = false;
   messageActionEvent: Event | null = null;
   actionMessage: ChatMessageVm | null = null;
+  reactionViewerMessage: ChatMessageVm | null = null;
+  messageInfoMessage: ChatMessageVm | null = null;
   contactInfoOpen = false;
   mediaGalleryOpen = false;
   activeAudioPreview: MediaPreview | null = null;
@@ -214,6 +220,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       albumsOutline,
       atOutline,
       banOutline,
+      cameraOutline,
       checkmarkOutline,
       chevronForwardOutline,
       closeOutline,
@@ -611,11 +618,104 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.emojiPanelOpen = false;
   }
 
+  async openMessageActionSheet(message: ChatMessageVm): Promise<void> {
+    this.actionMessage = message;
+    this.actionMessageId = message.id;
+    this.messageActionsOpen = false;
+    this.messageActionEvent = null;
+    this.closeChatMenu();
+    this.emojiPanelOpen = false;
+    const buttons = [
+      {
+        text: 'Responder',
+        icon: 'return-down-back-outline',
+        handler: () => this.beginReply(message),
+      },
+      ...(this.canTranslate(message) ? [{
+        text: 'Traducir',
+        icon: 'language-outline',
+        handler: () => {
+          void this.translateMessage(message);
+        },
+      }] : []),
+      ...(this.canEdit(message) ? [{
+        text: 'Editar',
+        icon: 'create-outline',
+        handler: () => this.beginEdit(message),
+      }] : []),
+      {
+        text: 'Reenviar',
+        icon: 'arrow-redo-outline',
+        handler: () => this.openForward(message),
+      },
+      {
+        text: 'Info. del mensaje',
+        icon: 'information-circle-outline',
+        handler: () => this.openMessageInfo(message),
+      },
+      {
+        text: 'Eliminar para mi',
+        icon: 'trash-outline',
+        role: 'destructive',
+        handler: () => {
+          void this.deleteForMe(message);
+        },
+      },
+      ...(message.mine ? [{
+        text: 'Eliminar para todos',
+        icon: 'trash-outline',
+        role: 'destructive',
+        handler: () => {
+          void this.deleteForEveryone(message);
+        },
+      }] : []),
+      {
+        text: 'Cancelar',
+        role: 'cancel',
+      },
+    ];
+    const sheet = await this.actionSheetController.create({
+      header: 'Mensaje',
+      cssClass: 'nivra-message-action-sheet',
+      buttons,
+    });
+    sheet.onDidDismiss().then(() => {
+      if (this.actionMessageId === message.id && !this.messageActionsOpen && !this.reactionViewerMessage && !this.messageInfoMessage) {
+        this.actionMessage = null;
+        this.actionMessageId = null;
+      }
+    });
+    await sheet.present();
+  }
+
   closeMessageActions(): void {
     this.messageActionsOpen = false;
     this.messageActionEvent = null;
     this.actionMessage = null;
     this.actionMessageId = null;
+  }
+
+  openReactionViewer(message: ChatMessageVm, event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (!message.payload.reactions?.length) {
+      return;
+    }
+    this.reactionViewerMessage = message;
+    this.closeMessageActions();
+  }
+
+  closeReactionViewer(): void {
+    this.reactionViewerMessage = null;
+  }
+
+  openMessageInfo(message: ChatMessageVm): void {
+    this.messageInfoMessage = message;
+    this.closeMessageActions();
+  }
+
+  closeMessageInfo(): void {
+    this.messageInfoMessage = null;
   }
 
   openChatMenu(event: Event): void {
@@ -652,6 +752,108 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     input.click();
   }
 
+  async openCameraMenu(photoInput: HTMLInputElement, videoInput: HTMLInputElement, event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (this.sending || this.chat.uploading() || !this.canSendMessages()) {
+      return;
+    }
+    this.closeAttachmentMenu();
+    this.closeChatMenu();
+    this.closeMessageActions();
+    const sheet = await this.actionSheetController.create({
+      header: 'Camara',
+      cssClass: 'nivra-camera-sheet',
+      buttons: [
+        {
+          text: 'Tomar foto',
+          icon: 'camera-outline',
+          handler: () => {
+            void this.captureNativePhotoOrFallback(photoInput);
+          },
+        },
+        {
+          text: 'Grabar video',
+          icon: 'videocam-outline',
+          handler: () => {
+            videoInput.click();
+          },
+        },
+        {
+          text: 'Cancelar',
+          role: 'cancel',
+        },
+      ],
+    });
+    await sheet.present();
+  }
+
+  captureCameraFile(event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (file) {
+      void this.sendCameraCapture(file);
+    }
+  }
+
+  private async captureNativePhotoOrFallback(input: HTMLInputElement): Promise<void> {
+    const file = await this.captureNativePhoto().catch(() => null);
+    if (file) {
+      await this.sendCameraCapture(file);
+      return;
+    }
+    input.click();
+  }
+
+  private async captureNativePhoto(): Promise<File | null> {
+    let photo: { webPath?: string; path?: string; format?: string };
+    try {
+      photo = await Camera.getPhoto({
+        quality: 86,
+        allowEditing: false,
+        saveToGallery: false,
+        resultType: CameraResultType.Uri,
+        source: CameraSource.Camera,
+      });
+    } catch {
+      return null;
+    }
+    const source = photo.webPath || photo.path;
+    if (!source) {
+      return null;
+    }
+    const response = await fetch(source);
+    const blob = await response.blob();
+    const format = (photo.format || blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+    const mime = blob.type || `image/${format === 'jpg' ? 'jpeg' : format}`;
+    return new File([blob], `nivra-camera-${Date.now()}.${format}`, { type: mime });
+  }
+
+  private async sendCameraCapture(file: File): Promise<void> {
+    const conversation = this.conversation();
+    if (!conversation || this.sending) {
+      return;
+    }
+    if (!this.canSendMessages()) {
+      this.attachmentError = 'Solo los admins pueden enviar archivos en este grupo.';
+      return;
+    }
+    this.attachmentError = '';
+    this.sending = true;
+    try {
+      await this.chat.sendFile(conversation, file, {
+        policy: this.currentPolicy(),
+        mode: 'media',
+      });
+      this.scrollBottom();
+    } catch (error) {
+      this.attachmentError = error instanceof Error ? error.message : 'No se pudo enviar la captura.';
+    } finally {
+      this.sending = false;
+    }
+  }
+
   openContactInfo(): void {
     const conversation = this.conversation();
     if (!conversation) {
@@ -681,11 +883,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   startMessagePress(message: ChatMessageVm, event: TouchEvent): void {
+    event.stopPropagation();
     if (this.messagePressTimer !== null) {
       window.clearTimeout(this.messagePressTimer);
     }
     this.messagePressTimer = window.setTimeout(() => {
-      this.openMessageActions(message, event);
+      void this.openMessageActionSheet(message);
       this.messagePressTimer = null;
     }, 420);
   }
@@ -1044,6 +1247,70 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   reactions(message: ChatMessageVm): string[] {
     const reactions = message.payload.reactions ?? [];
     return [...new Set(reactions.map((reaction) => reaction.emoji).filter(Boolean))].slice(0, 4);
+  }
+
+  reactionRows(message: ChatMessageVm | null = this.reactionViewerMessage): MessageReaction[] {
+    return message?.payload.reactions ?? [];
+  }
+
+  reactionDisplayName(reaction: MessageReaction): string {
+    return reaction.displayName
+      || reaction.alias
+      || this.chat.participantDisplayName(reaction.userId)
+      || 'Alguien';
+  }
+
+  reactionSubtitle(reaction: MessageReaction): string {
+    const alias = reaction.alias || this.chat.participantAlias(reaction.userId);
+    const at = reaction.at ? this.shortDateTime(reaction.at) : '';
+    return [alias ? `@${alias.replace(/^@/, '')}` : '', at].filter(Boolean).join(' - ');
+  }
+
+  reactionAvatar(reaction: MessageReaction): string {
+    return reaction.profilePhotoDataUrl || this.chat.participantPhoto(reaction.userId);
+  }
+
+  reactionInitials(reaction: MessageReaction): string {
+    return this.initialsFromName(this.reactionDisplayName(reaction));
+  }
+
+  messageInfoRows(message: ChatMessageVm | null = this.messageInfoMessage): DeliveryReceipt[] {
+    return message?.receipts ?? [];
+  }
+
+  receiptDisplayName(receipt: DeliveryReceipt): string {
+    return this.chat.participantDisplayName(receipt.userId) || 'Dispositivo';
+  }
+
+  receiptAvatar(receipt: DeliveryReceipt): string {
+    return this.chat.participantPhoto(receipt.userId);
+  }
+
+  receiptInitials(receipt: DeliveryReceipt): string {
+    return this.initialsFromName(this.receiptDisplayName(receipt));
+  }
+
+  receiptStatus(receipt: DeliveryReceipt): string {
+    if (receipt.deletedAt) {
+      return `Eliminado ${this.shortDateTime(receipt.deletedAt)}`;
+    }
+    if (receipt.readAt) {
+      return `Leido ${this.shortDateTime(receipt.readAt)}`;
+    }
+    if (receipt.deliveredAt) {
+      return `Entregado ${this.shortDateTime(receipt.deliveredAt)}`;
+    }
+    return 'Pendiente';
+  }
+
+  messageInfoSummary(message: ChatMessageVm | null = this.messageInfoMessage): string {
+    if (!message) {
+      return '';
+    }
+    const rows = this.messageInfoRows(message);
+    const read = rows.filter((receipt) => receipt.readAt).length;
+    const delivered = rows.filter((receipt) => receipt.deliveredAt).length;
+    return `${delivered} entregado${delivered === 1 ? '' : 's'} - ${read} leido${read === 1 ? '' : 's'}`;
   }
 
   forwardedLabel(message: ChatMessageVm): string {
@@ -1452,6 +1719,31 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       unit += 1;
     }
     return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)} ${units[unit]}`;
+  }
+
+  private shortDateTime(value: string | null | undefined): string {
+    if (!value) {
+      return '';
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return '';
+    }
+    return date.toLocaleString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+      day: '2-digit',
+      month: 'short',
+    });
+  }
+
+  private initialsFromName(value: string): string {
+    return value
+      .split(/\s|,|-/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((part) => part[0]?.toUpperCase())
+      .join('') || 'N';
   }
 
   private pauseOtherAudio(active: HTMLAudioElement): void {

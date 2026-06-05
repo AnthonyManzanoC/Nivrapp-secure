@@ -31,6 +31,7 @@ import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
 const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
+const LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
 const QUICK_REACTIONS = ['\u{1F44D}', '\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F64F}'];
 const DEFAULT_GROUP_SETTINGS: GroupSettings = {
   editInfo: 'admins',
@@ -588,19 +589,29 @@ export class ChatService implements OnDestroy {
         maxBytes: MAX_ATTACHMENT_BYTES,
       });
       const uploadFile = prepared.file;
-      const encrypted = await this.crypto.encryptAttachment(await uploadFile.arrayBuffer());
+      const encrypted = uploadFile.size > LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES
+        ? await this.crypto.encryptAttachmentFile(uploadFile, {
+            onProgress: ({ processedBytes, totalBytes }) => {
+              this.uploadStatus.set(`Sellando archivo grande (E2EE) ${Math.min(99, Math.round((processedBytes / Math.max(1, totalBytes)) * 100))}%...`);
+            },
+          })
+        : await this.crypto.encryptAttachment(await uploadFile.arrayBuffer());
       const allowedUserIds = conversation.participants
         .filter((participant) => !participant.removedAt)
         .map((participant) => participant.userId);
       const mime = uploadFile.type || 'application/octet-stream';
       const fileRecord = await firstValueFrom(this.api.post<FileResponse>('/files', {
-        encryptedSize: encrypted.bytes.byteLength,
+        encryptedSize: 'body' in encrypted ? encrypted.encryptedSize : encrypted.bytes.byteLength,
         mimeTypeCiphertext: this.crypto.b64(new TextEncoder().encode(mime)),
         clientSha256: null,
         allowedUserIds,
         expiresAt: sendOptions.expiresAt,
       }));
-      await firstValueFrom(this.api.putRaw<FileResponse>(`/files/${encodeURIComponent(fileRecord.id)}/blob`, encrypted.bytes));
+      this.uploadStatus.set(uploadFile.size > LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES ? 'Subiendo archivo grande cifrado...' : 'Subiendo archivo cifrado...');
+      await firstValueFrom(this.api.putRaw<FileResponse>(
+        `/files/${encodeURIComponent(fileRecord.id)}/blob`,
+        'body' in encrypted ? encrypted.body : encrypted.bytes,
+      ));
       this.rememberMediaPreview(fileRecord.id, uploadFile, mime, uploadFile.name);
 
       return this.sendPayload(
@@ -677,12 +688,15 @@ export class ChatService implements OnDestroy {
       at: new Date().toISOString(),
       reactionId: `local-${crypto.randomUUID()}`,
     };
-    const pendingKey = `${message.id}:${this.reactionActorKey(reaction)}:${emoji}`;
+    const actorKey = this.reactionActorKey(reaction);
+    const previous = (message.payload.reactions ?? []).find((item) => this.reactionActorKey(item) === actorKey);
+    const reactionAction: 'set' | 'remove' = previous?.emoji === emoji ? 'remove' : 'set';
+    const pendingKey = `${message.id}:${actorKey}`;
     if (this.pendingReactionSends.has(pendingKey)) {
       return;
     }
-    const added = this.applyReaction(message.id, reaction, conversation.id);
-    if (!added) {
+    const applied = this.applyReaction(message.id, reaction, conversation.id, reactionAction);
+    if (!applied) {
       return;
     }
     this.persistExistingMessage(message.id);
@@ -695,6 +709,7 @@ export class ChatService implements OnDestroy {
           type: 'reaction',
           targetMessageId: message.id,
           emoji,
+          reactionAction,
           userId: reaction.userId,
           deviceId: reaction.deviceId,
           alias: reaction.alias,
@@ -1977,7 +1992,8 @@ export class ChatService implements OnDestroy {
   private applyReactionPayload(payload: ChatPayload, conversationId: string, reactionMessageId: string, fallbackAt: string): void {
     const targetMessageId = this.stringPayload(payload, 'targetMessageId');
     const emoji = typeof payload.emoji === 'string' ? payload.emoji : '';
-    if (!targetMessageId || !emoji) {
+    const reactionAction = this.stringPayload(payload, 'reactionAction') === 'remove' ? 'remove' : 'set';
+    if (!targetMessageId || (!emoji && reactionAction !== 'remove')) {
       return;
     }
     const reaction: MessageReaction = {
@@ -1990,14 +2006,19 @@ export class ChatService implements OnDestroy {
       at: this.stringPayload(payload, 'reactionAt') || fallbackAt,
       reactionId: reactionMessageId,
     };
-    const applied = this.applyReaction(targetMessageId, reaction, conversationId);
+    const applied = this.applyReaction(targetMessageId, reaction, conversationId, reactionAction);
     if (!applied) {
       this.queuePendingReaction(targetMessageId, reaction);
     }
   }
 
-  private applyReaction(targetMessageId: string, reaction: MessageReaction, conversationId?: string | null): boolean {
-    let changed = false;
+  private applyReaction(
+    targetMessageId: string,
+    reaction: MessageReaction,
+    conversationId?: string | null,
+    action: 'set' | 'remove' = 'set',
+  ): boolean {
+    let found = false;
     this.messagesByConversation.update((state) => {
       const conversationIds = conversationId ? [conversationId] : Object.keys(state);
       const nextState = { ...state };
@@ -2007,13 +2028,18 @@ export class ChatService implements OnDestroy {
         if (index < 0) {
           continue;
         }
+        found = true;
         const target = messages[index];
         const existing = target.payload.reactions ?? [];
         const actorKey = this.reactionActorKey(reaction);
-        const alreadyApplied = existing.some((item) =>
-          item.reactionId === reaction.reactionId ||
-          `${this.reactionActorKey(item)}:${item.emoji}` === `${actorKey}:${reaction.emoji}`);
-        if (alreadyApplied) {
+        const withoutActor = existing.filter((item) => this.reactionActorKey(item) !== actorKey);
+        const nextReactions = action === 'remove' ? withoutActor : [...withoutActor, reaction];
+        if (
+          existing.length === nextReactions.length &&
+          existing.every((item, itemIndex) =>
+            item.emoji === nextReactions[itemIndex]?.emoji &&
+            this.reactionActorKey(item) === this.reactionActorKey(nextReactions[itemIndex] ?? item))
+        ) {
           return state;
         }
         const nextMessages = [...messages];
@@ -2021,16 +2047,15 @@ export class ChatService implements OnDestroy {
           ...target,
           payload: {
             ...target.payload,
-            reactions: [...existing, reaction],
+            reactions: nextReactions,
           },
         };
         nextState[id] = nextMessages;
-        changed = true;
         break;
       }
-      return changed ? nextState : state;
+      return found ? nextState : state;
     });
-    return changed;
+    return found;
   }
 
   private applyEditPayload(payload: ChatPayload, conversationId: string): void {
@@ -2544,14 +2569,16 @@ export class ChatService implements OnDestroy {
       return message;
     }
 
-    const nextReactions = [...(message.payload.reactions ?? [])];
+    let nextReactions = [...(message.payload.reactions ?? [])];
     let changed = false;
     for (const reaction of pending) {
       const actorKey = this.reactionActorKey(reaction);
-      const exists = nextReactions.some((item) =>
-        item.reactionId === reaction.reactionId ||
-        `${this.reactionActorKey(item)}:${item.emoji}` === `${actorKey}:${reaction.emoji}`);
-      if (!exists) {
+      const withoutActor = nextReactions.filter((item) => this.reactionActorKey(item) !== actorKey);
+      if (withoutActor.length !== nextReactions.length) {
+        changed = true;
+      }
+      nextReactions = withoutActor;
+      if (reaction.emoji) {
         nextReactions.push(reaction);
         changed = true;
       }
@@ -2569,12 +2596,10 @@ export class ChatService implements OnDestroy {
     }
     const pending = this.pendingReactionsByMessageId.get(messageId) ?? [];
     const actorKey = this.reactionActorKey(reaction);
-    const exists = pending.some((item) =>
-      item.reactionId === reaction.reactionId ||
-      `${this.reactionActorKey(item)}:${item.emoji}` === `${actorKey}:${reaction.emoji}`);
-    if (!exists) {
-      this.pendingReactionsByMessageId.set(messageId, [...pending, reaction]);
-    }
+    this.pendingReactionsByMessageId.set(messageId, [
+      ...pending.filter((item) => this.reactionActorKey(item) !== actorKey),
+      reaction,
+    ]);
   }
 
   private reactionActorKey(reaction: MessageReaction): string {

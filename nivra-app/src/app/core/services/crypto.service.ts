@@ -20,6 +20,8 @@ const LOCAL_CONTACT_STORE = 'contacts';
 const LOCAL_SYNC_STORE = 'syncWatermarks';
 const LOCAL_CALL_STORE = 'calls';
 const LOCAL_STORY_STORE = 'stories';
+const CHUNKED_ATTACHMENT_PREFIX = 'nivra-chunks:';
+const DEFAULT_ATTACHMENT_CHUNK_SIZE = 2 * 1024 * 1024;
 
 interface QrEphemeralKeys {
   publicKey: CryptoKey;
@@ -32,6 +34,26 @@ export interface PublicKeyRecipient {
   userId: string;
   deviceId: string;
   publicJwk: JsonWebKey;
+}
+
+export interface EncryptedAttachmentFile {
+  body: Blob;
+  encryptedSize: number;
+  key: string;
+  iv: string;
+  chunked: true;
+}
+
+interface ChunkedAttachmentMeta {
+  v: 1;
+  alg: 'AES-GCM';
+  chunkSize: number;
+  size: number;
+  chunks: Array<{
+    iv: string;
+    size: number;
+    encryptedSize: number;
+  }>;
 }
 
 @Injectable({ providedIn: 'root' })
@@ -373,10 +395,77 @@ export class CryptoService {
     };
   }
 
+  async encryptAttachmentFile(
+    file: Blob,
+    options: {
+      chunkSize?: number;
+      onProgress?: (progress: { processedBytes: number; totalBytes: number }) => void;
+    } = {},
+  ): Promise<EncryptedAttachmentFile> {
+    await this.yieldToMainThread();
+    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
+    const rawKey = await crypto.subtle.exportKey('raw', key);
+    const chunkSize = Math.max(256 * 1024, options.chunkSize ?? DEFAULT_ATTACHMENT_CHUNK_SIZE);
+    const parts: BlobPart[] = [];
+    const chunks: ChunkedAttachmentMeta['chunks'] = [];
+    let encryptedSize = 0;
+
+    for (let offset = 0; offset < file.size; offset += chunkSize) {
+      await this.yieldToMainThread();
+      const end = Math.min(file.size, offset + chunkSize);
+      const plain = await file.slice(offset, end).arrayBuffer();
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain);
+      parts.push(encrypted);
+      encryptedSize += encrypted.byteLength;
+      chunks.push({
+        iv: this.b64(iv),
+        size: end - offset,
+        encryptedSize: encrypted.byteLength,
+      });
+      options.onProgress?.({ processedBytes: end, totalBytes: file.size });
+    }
+
+    const meta: ChunkedAttachmentMeta = {
+      v: 1,
+      alg: 'AES-GCM',
+      chunkSize,
+      size: file.size,
+      chunks,
+    };
+    return {
+      body: new Blob(parts, { type: 'application/octet-stream' }),
+      encryptedSize,
+      key: this.b64(new Uint8Array(rawKey)),
+      iv: `${CHUNKED_ATTACHMENT_PREFIX}${this.b64(textEncoder.encode(JSON.stringify(meta)))}`,
+      chunked: true,
+    };
+  }
+
   async decryptAttachment(buffer: ArrayBuffer, rawKey: string, iv: string): Promise<ArrayBuffer> {
     await this.yieldToMainThread();
+    if (iv.startsWith(CHUNKED_ATTACHMENT_PREFIX)) {
+      return this.decryptChunkedAttachment(buffer, rawKey, iv);
+    }
     const key = await crypto.subtle.importKey('raw', this.ub64Buffer(rawKey), { name: 'AES-GCM' }, false, ['decrypt']);
     return crypto.subtle.decrypt({ name: 'AES-GCM', iv: this.ub64Buffer(iv) }, key, buffer);
+  }
+
+  private async decryptChunkedAttachment(buffer: ArrayBuffer, rawKey: string, iv: string): Promise<ArrayBuffer> {
+    const metaText = textDecoder.decode(this.ub64(iv.slice(CHUNKED_ATTACHMENT_PREFIX.length)));
+    const meta = JSON.parse(metaText) as ChunkedAttachmentMeta;
+    const key = await crypto.subtle.importKey('raw', this.ub64Buffer(rawKey), { name: 'AES-GCM' }, false, ['decrypt']);
+    const parts: BlobPart[] = [];
+    let offset = 0;
+    for (const chunk of meta.chunks ?? []) {
+      await this.yieldToMainThread();
+      const end = offset + Number(chunk.encryptedSize || 0);
+      const encryptedChunk = buffer.slice(offset, end);
+      const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: this.ub64Buffer(chunk.iv) }, key, encryptedChunk);
+      parts.push(plain);
+      offset = end;
+    }
+    return new Blob(parts).arrayBuffer();
   }
 
   async deriveVaultKey(pin: string, salt: Uint8Array): Promise<CryptoKey> {
