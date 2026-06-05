@@ -302,6 +302,12 @@ export class ChatService implements OnDestroy {
     await this.refreshPresenceForConversations();
   }
 
+  clearSelectedConversation(): void {
+    this.selectedConversationLoadId += 1;
+    this.selectedConversationId.set(null);
+    this.persistSelectedConversationId(null);
+  }
+
   async loadMessages(conversationId: string): Promise<void> {
     const messages = await firstValueFrom(
       this.api.get<MessageResponse[]>(`/conversations/${encodeURIComponent(conversationId)}/messages?take=80`),
@@ -2442,9 +2448,8 @@ export class ChatService implements OnDestroy {
       this.persistSelectedConversationId(selected);
       return;
     }
-    const nextId = conversations[0]?.id ?? null;
-    this.selectedConversationId.set(nextId);
-    this.persistSelectedConversationId(nextId);
+    this.selectedConversationId.set(null);
+    this.persistSelectedConversationId(null);
   }
 
   private initialSelectedConversationId(): string | null {

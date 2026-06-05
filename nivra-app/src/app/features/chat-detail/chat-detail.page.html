@@ -265,33 +265,85 @@
         </div>
       </div>
     }
-    <form class="composer" (ngSubmit)="send()">
+    <form
+      class="composer"
+      [class.voice-active]="voiceComposerActive()"
+      [class.voice-locked]="voiceMode === 'locked'"
+      [class.voice-cancelling]="voiceMode === 'cancelling'"
+      (ngSubmit)="send()">
       <input #galleryInput type="file" accept="image/*,video/*" multiple hidden (change)="attachFiles($event, 'media')">
       <input #documentInput type="file" multiple hidden (change)="attachFiles($event, 'document')">
       <input #audioInput type="file" accept="audio/*" multiple hidden (change)="attachFiles($event, 'audio')">
-      <ion-button class="composer-icon attach" type="button" mode="ios" fill="clear" aria-label="Adjuntar" [disabled]="sending || chat.uploading() || !canSendMessages()" (click)="openAttachmentMenu($event)">
-        <ion-icon name="attach-outline"></ion-icon>
-      </ion-button>
-      <ion-button class="composer-icon emoji" type="button" mode="ios" fill="clear" aria-label="Emojis" [disabled]="sending" (click)="emojiPanelOpen = !emojiPanelOpen">
-        <ion-icon name="happy-outline"></ion-icon>
-      </ion-button>
-      <ion-textarea
-        mode="ios"
-        name="draft"
-        [(ngModel)]="draft"
-        (ionInput)="onDraftInput()"
-        (keydown.enter)="onComposerEnter($event)"
-        [disabled]="!canSendMessages()"
-        autoGrow="true"
-        rows="1"
-        placeholder="Mensaje">
-      </ion-textarea>
-      <ion-button class="composer-icon mic" type="button" mode="ios" fill="clear" [class.recording]="recordingVoice" [disabled]="(sending && !recordingVoice) || !canSendMessages()" (click)="toggleVoiceNote()" aria-label="Voz">
-        <ion-icon [name]="recordingVoice ? 'close-outline' : 'mic-outline'"></ion-icon>
-      </ion-button>
-      <ion-button type="submit" mode="ios" class="send" [disabled]="sending || isBlocked() || !canSendMessages() || !draft.trim()" aria-label="Enviar">
-        <ion-icon [name]="editingMessage ? 'checkmark-outline' : 'send-outline'"></ion-icon>
-      </ion-button>
+      @if (!voiceComposerActive()) {
+        <ion-button class="composer-icon attach" type="button" mode="ios" fill="clear" aria-label="Adjuntar" [disabled]="sending || chat.uploading() || !canSendMessages()" (click)="openAttachmentMenu($event)">
+          <ion-icon name="attach-outline"></ion-icon>
+        </ion-button>
+        <ion-button class="composer-icon emoji" type="button" mode="ios" fill="clear" aria-label="Emojis" [disabled]="sending" (click)="emojiPanelOpen = !emojiPanelOpen">
+          <ion-icon name="happy-outline"></ion-icon>
+        </ion-button>
+        <ion-textarea
+          mode="ios"
+          name="draft"
+          [(ngModel)]="draft"
+          (ionInput)="onDraftInput()"
+          (keydown.enter)="onComposerEnter($event)"
+          [disabled]="!canSendMessages()"
+          autoGrow="true"
+          rows="1"
+          placeholder="Mensaje">
+        </ion-textarea>
+      } @else {
+        <div class="voice-recorder-panel" [style.transform]="voiceSlideTransform()">
+          @if (voiceMode === 'locked') {
+            <button type="button" class="voice-trash" (click)="cancelLockedVoiceNote()" aria-label="Descartar nota de voz">
+              <ion-icon name="trash-outline"></ion-icon>
+            </button>
+            <div class="voice-clock">
+              <span class="record-dot"></span>
+              <strong>{{ voiceTimerLabel() }}</strong>
+            </div>
+            <button type="button" class="voice-pause" (click)="toggleVoicePause()" [attr.aria-label]="voicePaused ? 'Reanudar nota de voz' : 'Pausar nota de voz'">
+              <ion-icon [name]="voicePaused ? 'play-circle-outline' : 'pause-circle-outline'"></ion-icon>
+            </button>
+            <button type="button" class="voice-send" (click)="sendLockedVoiceNote()" [disabled]="sending" aria-label="Enviar nota de voz">
+              @if (sending) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
+            </button>
+          } @else if (voiceMode === 'cancelling') {
+            <div class="voice-cancelled">
+              <ion-icon name="trash-outline"></ion-icon>
+              <span>Nota descartada</span>
+            </div>
+          } @else {
+            <div class="voice-clock">
+              <span class="record-dot"></span>
+              <strong>{{ voiceTimerLabel() }}</strong>
+            </div>
+            <span class="voice-slide-copy">&lt; Desliza para cancelar</span>
+            <span class="voice-lock-copy">
+              <ion-icon name="lock-closed-outline"></ion-icon>
+              Arriba bloquea
+            </span>
+          }
+        </div>
+      }
+      @if (voiceMode !== 'locked') {
+        <ion-button
+          #micButton
+          class="composer-icon mic"
+          type="button"
+          mode="ios"
+          fill="clear"
+          [class.recording]="recordingVoice || voiceComposerActive()"
+          [disabled]="(sending && !recordingVoice) || !canSendMessages() || isBlocked()"
+          aria-label="Mantener para nota de voz">
+          <ion-icon [name]="voiceComposerActive() ? 'lock-closed-outline' : 'mic-outline'"></ion-icon>
+        </ion-button>
+      }
+      @if (!voiceComposerActive()) {
+        <ion-button type="submit" mode="ios" class="send" [disabled]="sending || isBlocked() || !canSendMessages() || !draft.trim()" aria-label="Enviar">
+          <ion-icon [name]="editingMessage ? 'checkmark-outline' : 'send-outline'"></ion-icon>
+        </ion-button>
+      }
     </form>
     @if (chat.uploading()) {
       <div class="composer-busy">

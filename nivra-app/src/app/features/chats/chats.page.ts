@@ -1,7 +1,7 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { Component, OnDestroy, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router, RouterOutlet } from '@angular/router';
+import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import {
   IonAvatar,
   IonButton,
@@ -22,6 +22,7 @@ import {
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { addOutline, archiveOutline, checkmarkOutline, closeOutline, notificationsOffOutline, notificationsOutline, peopleOutline, pinOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { Subscription } from 'rxjs';
 import { Contact, Conversation, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
@@ -77,6 +78,7 @@ export class ChatsPage implements OnDestroy {
   selectedFolder: ChatFolderFilter = 'all';
   private timer: number | null = null;
   private searchSeq = 0;
+  private routeSub?: Subscription;
 
   constructor() {
     addIcons({
@@ -93,12 +95,19 @@ export class ChatsPage implements OnDestroy {
       syncOutline,
       trashOutline,
     });
+    this.routeSub = this.router.events.subscribe((event) => {
+      if (event instanceof NavigationEnd) {
+        this.syncSelectedConversationFromUrl(event.urlAfterRedirects);
+      }
+    });
+    queueMicrotask(() => this.syncSelectedConversationFromUrl(this.router.url));
   }
 
   ngOnDestroy(): void {
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
     }
+    this.routeSub?.unsubscribe();
   }
 
   refresh(): void {
@@ -155,6 +164,11 @@ export class ChatsPage implements OnDestroy {
   async openConversation(conversationId: string): Promise<void> {
     await this.router.navigate(['/app/chats', conversationId]);
     void this.chat.selectConversation(conversationId);
+  }
+
+  onDetailDeactivate(): void {
+    this.detailActive = false;
+    this.syncSelectedConversationFromUrl(this.router.url);
   }
 
   conversationsForFolder(): Conversation[] {
@@ -305,5 +319,14 @@ export class ChatsPage implements OnDestroy {
   private recentKey(): string {
     const session = this.auth.session();
     return session?.user?.id ? `nivra_recent_searches.${session.user.id}` : 'nivra_recent_searches';
+  }
+
+  private syncSelectedConversationFromUrl(url: string): void {
+    const segments = this.router.parseUrl(url).root.children['primary']?.segments.map((segment) => segment.path) ?? [];
+    const chatsIndex = segments.findIndex((segment) => segment === 'chats');
+    const conversationId = chatsIndex >= 0 ? segments[chatsIndex + 1] : null;
+    if (!conversationId) {
+      this.chat.clearSelectedConversation();
+    }
   }
 }

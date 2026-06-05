@@ -169,7 +169,7 @@
     </aside>
 
     <section class="detail-stage" [class.detail-active]="detailActive">
-      <router-outlet (activate)="detailActive = true" (deactivate)="detailActive = false"></router-outlet>
+      <router-outlet (activate)="detailActive = true" (deactivate)="onDetailDeactivate()"></router-outlet>
       @if (!detailActive) {
         <div class="empty-detail">
           <img src="assets/brand/nivra-mark.svg" alt="">

@@ -1,5 +1,5 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { ChangeDetectorRef, Component, OnDestroy, OnInit, ViewChild, computed, inject } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Keyboard } from '@capacitor/keyboard';
@@ -19,6 +19,7 @@ import {
   IonTextarea,
   IonToggle,
   IonToolbar,
+  GestureController,
   ToastController,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -45,6 +46,7 @@ import {
   createOutline,
   informationCircleOutline,
   languageOutline,
+  lockClosedOutline,
   lockOpenOutline,
   personCircleOutline,
   personAddOutline,
@@ -74,6 +76,8 @@ interface PendingAttachmentPreview {
   url: string | null;
 }
 
+type VoiceComposerMode = 'idle' | 'holding' | 'locked' | 'cancelling';
+
 @Component({
   selector: 'app-chat-detail',
   standalone: true,
@@ -100,8 +104,9 @@ interface PendingAttachmentPreview {
   templateUrl: './chat-detail.page.html',
   styleUrls: ['./chat-detail.page.scss'],
 })
-export class ChatDetailPage implements OnInit, OnDestroy {
+export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild(IonContent) private content?: IonContent;
+  @ViewChild('micButton', { read: ElementRef }) private micButton?: ElementRef<HTMLElement>;
   readonly chat = inject(ChatService);
   readonly appSettings = inject(AppSettingsService);
   readonly realtime = inject(SignalrService);
@@ -111,9 +116,11 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   private readonly cdr = inject(ChangeDetectorRef);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
+  private readonly gestureController = inject(GestureController);
   private readonly toastController = inject(ToastController);
   private routeSub?: Subscription;
   private keyboardHandles: PluginListenerHandle[] = [];
+  private micGesture?: ReturnType<GestureController['create']>;
 
   draft = '';
   sending = false;
@@ -160,6 +167,10 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   deleteAfterRead = false;
   ttlSeconds = -1;
   recordingVoice = false;
+  voiceMode: VoiceComposerMode = 'idle';
+  voiceElapsedSeconds = 0;
+  voicePaused = false;
+  voiceSlideX = 0;
   audioState: Record<string, { current: number; duration: number; playing: boolean }> = {};
   readonly ttlOptions = [
     { label: 'Predeterminado', value: -1 },
@@ -174,6 +185,10 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   private voiceStream: MediaStream | null = null;
   private voiceChunks: Blob[] = [];
   private voiceStartedAt = 0;
+  private voicePauseStartedAt = 0;
+  private voicePausedDurationMs = 0;
+  private voiceTimer: number | null = null;
+  private voiceStartPromise: Promise<void> | null = null;
   private messagePressTimer: number | null = null;
   readonly emojiChoices = [
     '\u{1F600}', '\u{1F602}', '\u{1F60D}', '\u{1F914}', '\u{1F62E}', '\u{1F622}',
@@ -205,6 +220,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       createOutline,
       informationCircleOutline,
       languageOutline,
+      lockClosedOutline,
       lockOpenOutline,
       personCircleOutline,
       personAddOutline,
@@ -227,6 +243,15 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       }
     });
     void this.bindKeyboard();
+    queueMicrotask(() => this.cdr.detectChanges());
+  }
+
+  ngAfterViewInit(): void {
+    this.bindVoiceGesture();
+    window.requestAnimationFrame(() => {
+      this.bindVoiceGesture();
+      this.cdr.detectChanges();
+    });
   }
 
   ionViewDidEnter(): void {
@@ -243,10 +268,12 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
     this.routeSub?.unsubscribe();
     this.keyboardHandles.forEach((handle) => void handle.remove());
+    this.micGesture?.destroy();
     this.cancelMessagePress();
     this.closeAudioPreview();
     this.closeMediaViewer();
     this.clearPendingAttachments(false);
+    this.stopVoiceTimer();
     void this.cancelVoiceNote();
     document.documentElement.style.setProperty('--keyboard-bottom', '0px');
   }
@@ -861,11 +888,15 @@ export class ChatDetailPage implements OnInit, OnDestroy {
   }
 
   async toggleVoiceNote(): Promise<void> {
-    if (this.recordingVoice) {
-      await this.stopVoiceNote();
+    if (this.voiceMode === 'locked') {
+      await this.sendLockedVoiceNote();
       return;
     }
-    await this.startVoiceNote();
+    if (this.recordingVoice || this.voiceMode === 'holding') {
+      await this.cancelVoiceGesture();
+      return;
+    }
+    this.beginVoiceHold();
   }
 
   async startVoiceNote(): Promise<void> {
@@ -893,6 +924,10 @@ export class ChatDetailPage implements OnInit, OnDestroy {
         : new MediaRecorder(this.voiceStream);
       this.voiceChunks = [];
       this.voiceStartedAt = Date.now();
+      this.voicePausedDurationMs = 0;
+      this.voicePauseStartedAt = 0;
+      this.voicePaused = false;
+      this.voiceElapsedSeconds = 0;
       this.voiceRecorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           this.voiceChunks.push(event.data);
@@ -900,8 +935,11 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       };
       this.voiceRecorder.start();
       this.recordingVoice = true;
+      this.startVoiceTimer();
+      this.cdr.detectChanges();
     } catch (error) {
       this.cleanupVoiceRecorder();
+      this.resetVoiceUi();
       this.attachmentError = error instanceof Error ? error.message : 'No se pudo abrir el microfono.';
     }
   }
@@ -914,6 +952,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }
     const file = await this.stopVoiceCapture(true);
     if (!file) {
+      this.resetVoiceUi();
       return;
     }
     this.sending = true;
@@ -924,11 +963,56 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       this.attachmentError = error instanceof Error ? error.message : 'No se pudo enviar la nota de voz.';
     } finally {
       this.sending = false;
+      this.resetVoiceUi();
     }
   }
 
   async cancelVoiceNote(): Promise<void> {
     await this.stopVoiceCapture(false);
+  }
+
+  voiceComposerActive(): boolean {
+    return this.voiceMode !== 'idle';
+  }
+
+  voiceTimerLabel(): string {
+    return this.formatAudioTime(this.voiceElapsedSeconds);
+  }
+
+  voiceSlideTransform(): string {
+    return `translateX(${Math.round(this.voiceSlideX)}px)`;
+  }
+
+  async sendLockedVoiceNote(): Promise<void> {
+    if (this.voiceMode !== 'locked' && !this.recordingVoice) {
+      return;
+    }
+    await this.voiceStartPromise?.catch(() => undefined);
+    await this.stopVoiceNote();
+  }
+
+  async cancelLockedVoiceNote(): Promise<void> {
+    await this.cancelVoiceGesture();
+  }
+
+  toggleVoicePause(): void {
+    const recorder = this.voiceRecorder;
+    if (!recorder || this.voiceMode !== 'locked') {
+      return;
+    }
+    if (recorder.state === 'recording') {
+      recorder.pause();
+      this.voicePaused = true;
+      this.voicePauseStartedAt = Date.now();
+    } else if (recorder.state === 'paused') {
+      recorder.resume();
+      if (this.voicePauseStartedAt) {
+        this.voicePausedDurationMs += Date.now() - this.voicePauseStartedAt;
+      }
+      this.voicePauseStartedAt = 0;
+      this.voicePaused = false;
+    }
+    this.cdr.detectChanges();
   }
 
   onDraftInput(): void {
@@ -1218,6 +1302,125 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     }, 40);
   }
 
+  private bindVoiceGesture(): void {
+    const element = this.micButton?.nativeElement;
+    if (!element) {
+      return;
+    }
+    this.micGesture?.destroy();
+    this.micGesture = this.gestureController.create({
+      el: element,
+      gestureName: 'nivra-voice-recorder',
+      threshold: 0,
+      disableScroll: true,
+      onStart: () => this.beginVoiceHold(),
+      onMove: (event: { deltaX: number; deltaY: number }) => this.handleVoiceMove(event.deltaX, event.deltaY),
+      onEnd: () => void this.finishVoiceHold(),
+    }, true);
+    this.micGesture.enable(true);
+  }
+
+  private beginVoiceHold(): void {
+    if (this.voiceMode !== 'idle' || this.sending || this.isBlocked() || !this.canSendMessages()) {
+      return;
+    }
+    this.voiceMode = 'holding';
+    this.voiceSlideX = 0;
+    this.attachmentError = '';
+    this.notice = '';
+    this.voiceStartPromise = this.startVoiceNote();
+    void this.voiceStartPromise.finally(() => {
+      if (!this.recordingVoice && this.voiceMode !== 'cancelling') {
+        this.resetVoiceUi();
+      }
+      this.cdr.detectChanges();
+    });
+    this.cdr.detectChanges();
+  }
+
+  private handleVoiceMove(deltaX: number, deltaY: number): void {
+    if (this.voiceMode !== 'holding') {
+      return;
+    }
+    this.voiceSlideX = Math.max(-96, Math.min(0, deltaX));
+    if (deltaX <= -82) {
+      void this.cancelVoiceGesture();
+      return;
+    }
+    if (deltaY <= -72) {
+      this.voiceMode = 'locked';
+      this.voiceSlideX = 0;
+    }
+    this.cdr.detectChanges();
+  }
+
+  private async finishVoiceHold(): Promise<void> {
+    if (this.voiceMode === 'locked' || this.voiceMode === 'cancelling' || this.voiceMode === 'idle') {
+      return;
+    }
+    await this.voiceStartPromise?.catch(() => undefined);
+    if (this.voiceMode !== 'holding') {
+      return;
+    }
+    await this.stopVoiceNote();
+  }
+
+  private async cancelVoiceGesture(): Promise<void> {
+    if (this.voiceMode === 'idle') {
+      return;
+    }
+    this.voiceMode = 'cancelling';
+    this.voiceSlideX = -110;
+    this.cdr.detectChanges();
+    await this.voiceStartPromise?.catch(() => undefined);
+    await this.cancelVoiceNote();
+    window.setTimeout(() => {
+      if (this.voiceMode === 'cancelling') {
+        this.resetVoiceUi();
+        this.cdr.detectChanges();
+      }
+    }, 260);
+  }
+
+  private resetVoiceUi(): void {
+    this.voiceMode = 'idle';
+    this.voiceSlideX = 0;
+    this.voiceStartPromise = null;
+    this.voiceElapsedSeconds = 0;
+    this.voicePaused = false;
+    this.voicePauseStartedAt = 0;
+    this.voicePausedDurationMs = 0;
+    window.requestAnimationFrame(() => this.bindVoiceGesture());
+  }
+
+  private startVoiceTimer(): void {
+    this.stopVoiceTimer();
+    this.voiceTimer = window.setInterval(() => {
+      if (!this.recordingVoice) {
+        this.stopVoiceTimer();
+        return;
+      }
+      this.voiceElapsedSeconds = Math.floor(this.currentVoiceDurationMs() / 1000);
+      this.cdr.detectChanges();
+    }, 250);
+  }
+
+  private stopVoiceTimer(): void {
+    if (this.voiceTimer !== null) {
+      window.clearInterval(this.voiceTimer);
+      this.voiceTimer = null;
+    }
+  }
+
+  private currentVoiceDurationMs(): number {
+    if (!this.voiceStartedAt) {
+      return 0;
+    }
+    const now = Date.now();
+    const activePauseMs = this.voicePaused && this.voicePauseStartedAt ? now - this.voicePauseStartedAt : 0;
+    return Math.max(0, now - this.voiceStartedAt - this.voicePausedDurationMs - activePauseMs);
+  }
+
   private clearPendingAttachments(restoreDraft: boolean): void {
     this.pendingAttachmentFiles.forEach((item) => {
       if (item.url) {
@@ -1390,7 +1593,7 @@ export class ChatDetailPage implements OnInit, OnDestroy {
       recorder.onstop = () => {
         const mime = recorder.mimeType || this.supportedVoiceMimeType() || 'audio/webm';
         const chunks = [...this.voiceChunks];
-        const durationMs = Math.max(0, Date.now() - this.voiceStartedAt);
+        const durationMs = this.currentVoiceDurationMs();
         this.cleanupVoiceRecorder();
         if (!send || !chunks.length) {
           resolve(null);
@@ -1414,6 +1617,10 @@ export class ChatDetailPage implements OnInit, OnDestroy {
     this.voiceStream = null;
     this.voiceChunks = [];
     this.voiceStartedAt = 0;
+    this.voicePauseStartedAt = 0;
+    this.voicePausedDurationMs = 0;
+    this.voicePaused = false;
+    this.stopVoiceTimer();
     this.recordingVoice = false;
   }
 
