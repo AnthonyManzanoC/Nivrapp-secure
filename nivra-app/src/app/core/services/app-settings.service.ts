@@ -1,5 +1,6 @@
 import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Keyboard, KeyboardStyle } from '@capacitor/keyboard';
+import { Config } from '@ionic/angular/standalone';
 import { AuthService } from './auth.service';
 
 export type NivraThemeMode = 'system' | 'dark' | 'light';
@@ -120,6 +121,7 @@ const ACCENTS: Record<string, AccentTheme> = {
 export class AppSettingsService {
   private readonly auth = inject(AuthService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly ionicConfig = inject(Config, { optional: true });
   private readonly systemThemeQuery = typeof window !== 'undefined' && 'matchMedia' in window
     ? window.matchMedia('(prefers-color-scheme: light)')
     : null;
@@ -326,6 +328,7 @@ export class AppSettingsService {
     root.classList.toggle('nivra-light-theme', light);
     document.body.classList.toggle('nivra-animations-off', !settings.animationsEnabled);
     root.classList.toggle('nivra-animations-off', !settings.animationsEnabled);
+    this.syncIonicAnimations(settings.animationsEnabled);
     document.body.dataset['nivraWallpaper'] = settings.chatWallpaper;
     document.body.dataset['nivraListDensity'] = settings.chatListDensity;
     document.body.dataset['nivraChatTone'] = this.chatBackgroundTone(settings);
@@ -360,6 +363,13 @@ export class AppSettingsService {
     setGlobalVar('--ion-color-primary-shade', shade);
     setGlobalVar('--ion-color-primary-tint', tint);
     void this.syncNativeKeyboard(light);
+  }
+
+  private syncIonicAnimations(enabled: boolean): void {
+    const runtimeConfig = this.ionicConfig as unknown as { set?: (key: string, value: unknown) => void } | null;
+    runtimeConfig?.set?.('animated', enabled);
+    const ionicGlobal = (globalThis as { Ionic?: { config?: { set?: (key: string, value: unknown) => void } } }).Ionic;
+    ionicGlobal?.config?.set?.('animated', enabled);
   }
 
   private readableTextColor(hex: string): '#04100d' | '#ffffff' {

@@ -965,6 +965,7 @@ ion-modal.contact-info-modal {
 .contact-photo.fallback {
   width: 100%;
   height: 100%;
+  aspect-ratio: 1 / 1;
   border-radius: 999px;
   display: grid;
   place-items: center;

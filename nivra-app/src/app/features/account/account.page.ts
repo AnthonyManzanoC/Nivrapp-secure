@@ -27,6 +27,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
+import { NativeDeviceService } from '../../core/services/native-device.service';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const PIN_LENGTH = 4;
@@ -49,6 +50,7 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly translate = inject(TranslateService);
   readonly panicPin = inject(PanicPinService);
   readonly push = inject(PushService);
+  readonly nativeDevice = inject(NativeDeviceService);
   private readonly router = inject(Router);
   private readonly loadingController = inject(LoadingController);
   alias = '';
@@ -310,6 +312,19 @@ export class AccountPage implements OnInit, OnDestroy {
 
   patchPrivacy(key: keyof PrivacySettings, value: boolean | number | string | null): void {
     this.account.privacy.update((privacy) => privacy ? { ...privacy, [key]: value } : privacy);
+    const current = this.auth.session();
+    if (current) {
+      this.auth.updateUser({
+        ...current.user,
+        privacySettings: {
+          ...(current.user.privacySettings ?? {}),
+          [key]: value,
+        },
+      });
+    }
+    if (key === 'allowScreenshots') {
+      void this.nativeDevice.setScreenshotsAllowed(value !== false);
+    }
   }
 
   patchPrivacyTtl(value: string): void {
@@ -512,6 +527,17 @@ export class AccountPage implements OnInit, OnDestroy {
     };
     const patch = patches[value] ?? patches['balanced'];
     this.account.privacy.update((privacy) => privacy ? { ...privacy, ...patch } : privacy);
+    const current = this.auth.session();
+    if (current) {
+      this.auth.updateUser({
+        ...current.user,
+        privacySettings: {
+          ...(current.user.privacySettings ?? {}),
+          ...patch,
+        },
+      });
+      void this.nativeDevice.setScreenshotsAllowed(patch.allowScreenshots !== false);
+    }
     this.notice = this.t('ACCOUNT.PRESET_READY', 'Preset listo. Guarda privacidad para sincronizarlo.');
   }
 
@@ -533,20 +559,15 @@ export class AccountPage implements OnInit, OnDestroy {
   async copyDiagnostics(): Promise<void> {
     await this.run(async () => {
       const payload = {
-        userId: this.auth.session()?.user.id,
-        alias: this.auth.session()?.user.alias,
-        deviceId: this.auth.session()?.device.id,
-        deviceName: this.auth.session()?.device.name,
+        ...(await this.nativeDevice.diagnostics()),
         pushPermission: this.push.permission(),
         pushServerReady: this.push.serverReady(),
-        settings: this.appSettings.settings(),
         storage: {
           usage: this.storageUsageBytes,
           quota: this.storageQuotaBytes,
         },
-        createdAt: new Date().toISOString(),
       };
-      await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+      await this.nativeDevice.copyToClipboard(JSON.stringify(payload, null, 2), 'Nivra diagnostics');
       this.notice = this.t('ACCOUNT.DIAGNOSTICS_COPIED', 'Diagnostico copiado.');
     });
   }

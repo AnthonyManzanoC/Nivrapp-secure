@@ -72,6 +72,7 @@ import { SignalrService } from '../../core/services/signalr.service';
 import { SocialService } from '../../core/services/social.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
+import { NativeDeviceService, type RaiseGestureEvent } from '../../core/services/native-device.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
@@ -126,8 +127,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private readonly gestureController = inject(GestureController);
   private readonly toastController = inject(ToastController);
   private readonly actionSheetController = inject(ActionSheetController);
+  private readonly nativeDevice = inject(NativeDeviceService);
   private routeSub?: Subscription;
   private keyboardHandles: PluginListenerHandle[] = [];
+  private raiseGestureHandle: PluginListenerHandle | null = null;
   private micGesture?: ReturnType<GestureController['create']>;
 
   draft = '';
@@ -155,6 +158,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   reactionViewerMessage: ChatMessageVm | null = null;
   messageInfoMessage: ChatMessageVm | null = null;
   contactInfoOpen = false;
+  profilePhotoViewerUrl = '';
+  profilePhotoViewerTitle = '';
   mediaGalleryOpen = false;
   activeAudioPreview: MediaPreview | null = null;
   activeAudioName = '';
@@ -254,6 +259,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       }
     });
     void this.bindKeyboard();
+    void this.bindRaiseGestures();
     queueMicrotask(() => this.cdr.detectChanges());
   }
 
@@ -279,6 +285,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
     this.routeSub?.unsubscribe();
     this.keyboardHandles.forEach((handle) => void handle.remove());
+    void this.raiseGestureHandle?.remove();
     this.micGesture?.destroy();
     this.cancelMessagePress();
     this.closeAudioPreview();
@@ -432,7 +439,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.downloadingId = message.id;
     this.attachmentError = '';
     try {
-      await this.chat.downloadAttachment(message.payload);
+      await this.chat.downloadAttachment(message.payload, this.conversation());
       await this.chat.markMessageOpened(message);
     } catch (error) {
       this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_ATTACHMENT', 'No se pudo abrir el adjunto.');
@@ -530,6 +537,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.syncAudioState(message, audio);
     if (audio.paused) {
       if (this.appSettings.settings().pauseMediaOnPlayback) {
+        await this.nativeDevice.setAudioFocus(true, 'playback');
         this.pauseAmbientMedia(audio);
       } else {
         this.pauseOtherAudio(audio);
@@ -548,6 +556,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   markAudioPaused(message: ChatMessageVm): void {
+    void this.nativeDevice.setAudioFocus(false, 'playback');
     this.audioState = {
       ...this.audioState,
       [message.id]: {
@@ -562,6 +571,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   audioEnded(message: ChatMessageVm): void {
+    void this.nativeDevice.setAudioFocus(false, 'playback');
     this.audioState = {
       ...this.audioState,
       [message.id]: {
@@ -875,6 +885,21 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.contactInfoOpen = false;
   }
 
+  openProfilePhotoViewer(event?: Event, photoUrl = this.conversationPhoto()): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (!photoUrl) {
+      return;
+    }
+    this.profilePhotoViewerUrl = photoUrl;
+    this.profilePhotoViewerTitle = this.conversation() ? this.chat.conversationTitle(this.conversation()!) : this.tr('COMMON.CONTACT', 'Contacto');
+  }
+
+  closeProfilePhotoViewer(): void {
+    this.profilePhotoViewerUrl = '';
+    this.profilePhotoViewerTitle = '';
+  }
+
   openMediaGallery(): void {
     if (!this.sharedMediaMessages().length) {
       return;
@@ -1122,6 +1147,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.attachmentError = '';
     try {
       if (this.appSettings.settings().pauseMediaOnRecord) {
+        await this.nativeDevice.setAudioFocus(true, 'record');
         this.pauseAmbientMedia();
       }
       this.voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
@@ -1792,6 +1818,63 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
+  private async bindRaiseGestures(): Promise<void> {
+    await this.raiseGestureHandle?.remove().catch(() => undefined);
+    this.raiseGestureHandle = await this.nativeDevice.onRaiseGesture((event) => {
+      void this.handleRaiseGesture(event);
+    }).catch(() => null);
+  }
+
+  private async handleRaiseGesture(event: RaiseGestureEvent): Promise<void> {
+    if (!event.near || !this.conversation()) {
+      return;
+    }
+    const settings = this.appSettings.settings();
+    if (event.kind === 'talk' && settings.raiseToTalk) {
+      await this.startLockedVoiceFromRaise();
+      return;
+    }
+    if (settings.raiseToListen) {
+      await this.playLatestIncomingVoice();
+    }
+  }
+
+  private async startLockedVoiceFromRaise(): Promise<void> {
+    if (this.voiceMode !== 'idle' || this.recordingVoice || this.sending || this.draft.trim() || this.isBlocked() || !this.canSendMessages()) {
+      return;
+    }
+    this.voiceMode = 'locked';
+    this.voiceSlideX = 0;
+    this.attachmentError = '';
+    this.notice = '';
+    this.voiceStartPromise = this.startVoiceNote();
+    await this.voiceStartPromise.catch(() => undefined);
+    if (!this.recordingVoice) {
+      this.resetVoiceUi();
+    }
+    this.cdr.detectChanges();
+  }
+
+  private async playLatestIncomingVoice(): Promise<void> {
+    const audios = Array.from(document.querySelectorAll<HTMLAudioElement>('article.message:not(.mine) audio.voice-source'));
+    const audio = audios.reverse().find((item) => item.src && !item.ended) ?? audios[0];
+    if (!audio) {
+      return;
+    }
+    const messageId = audio.dataset['messageId'] || '';
+    const message = this.messages().find((item) => item.id === messageId);
+    if (this.appSettings.settings().pauseMediaOnPlayback) {
+      await this.nativeDevice.setAudioFocus(true, 'playback');
+      this.pauseAmbientMedia(audio);
+    } else {
+      this.pauseOtherAudio(audio);
+    }
+    await audio.play().catch(() => undefined);
+    if (message) {
+      this.markAudioPlaying(message, audio);
+    }
+  }
+
   private isUploadLimitError(message: string): boolean {
     return message.includes('limite robusto de cifrado local') || message.includes('local encryption limit');
   }
@@ -1918,6 +2001,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.voicePaused = false;
     this.stopVoiceTimer();
     this.recordingVoice = false;
+    void this.nativeDevice.setAudioFocus(false, 'record');
   }
 
   private supportedVoiceMimeType(): string {

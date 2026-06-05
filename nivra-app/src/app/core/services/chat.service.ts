@@ -29,6 +29,8 @@ import { LocalHistoryService } from './local-history.service';
 import { E2EE_UPLOAD_LIMIT_BYTES, EncryptedUploadMode, MediaOptimizerService } from './media-optimizer.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
+import { AppSettingsService } from './app-settings.service';
+import { NativeDeviceService } from './native-device.service';
 
 const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 const LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
@@ -90,6 +92,8 @@ export class ChatService implements OnDestroy {
   private readonly history = inject(LocalHistoryService);
   private readonly mediaOptimizer = inject(MediaOptimizerService);
   private readonly signalr = inject(SignalrService);
+  private readonly appSettings = inject(AppSettingsService);
+  private readonly nativeDevice = inject(NativeDeviceService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly directories = new Map<string, PublicKeyDirectory>();
   private readonly readReceiptSentIds = new Set<string>();
@@ -914,16 +918,30 @@ export class ChatService implements OnDestroy {
     return this.rememberMediaPreview(fileId, new Blob([plain], { type: this.fileMime(file) }), this.fileMime(file), this.fileName(file));
   }
 
-  async downloadAttachment(payload: ChatPayload): Promise<void> {
+  async downloadAttachment(payload: ChatPayload, conversation?: Conversation | null): Promise<void> {
     const preview = await this.ensureMediaPreview(payload);
     const file = this.asFile(payload);
     if (!preview || !file) {
       return;
     }
 
+    const mimeType = this.fileMime(file);
+    const fileName = this.fileName(file);
+    if (this.nativeDevice.native) {
+      const blob = await fetch(preview.url).then((response) => response.blob());
+      await this.nativeDevice.saveBlob(
+        blob,
+        fileName,
+        mimeType,
+        this.shouldSaveAttachmentPublic(file, conversation ?? this.selectedConversation()),
+        this.mediaKindForMime(mimeType),
+      );
+      return;
+    }
+
     const link = document.createElement('a');
     link.href = preview.url;
-    link.download = this.fileName(file);
+    link.download = fileName;
     link.click();
   }
 
@@ -1496,6 +1514,35 @@ export class ChatService implements OnDestroy {
 
   isVideo(payload: FileChatPayload): boolean {
     return this.fileMime(payload).startsWith('video/');
+  }
+
+  private shouldSaveAttachmentPublic(file: FileChatPayload, conversation: Conversation | null | undefined): boolean {
+    const mimeType = this.fileMime(file);
+    if (!mimeType.startsWith('image/') && !mimeType.startsWith('video/')) {
+      return false;
+    }
+    const settings = this.appSettings.settings();
+    const type = String(conversation?.type || '').toLowerCase();
+    if (type === 'group') {
+      return settings.saveGroupMedia;
+    }
+    if (type === 'channel') {
+      return settings.saveChannelMedia;
+    }
+    return settings.savePrivateMedia;
+  }
+
+  private mediaKindForMime(mimeType: string): 'image' | 'video' | 'audio' | 'document' {
+    if (mimeType.startsWith('image/')) {
+      return 'image';
+    }
+    if (mimeType.startsWith('video/')) {
+      return 'video';
+    }
+    if (mimeType.startsWith('audio/')) {
+      return 'audio';
+    }
+    return 'document';
   }
 
   private async loadCachedSelectedMessages(): Promise<void> {

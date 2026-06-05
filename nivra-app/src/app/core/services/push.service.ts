@@ -792,6 +792,9 @@ export class PushService {
   private async visualForData(data: Record<string, string>): Promise<{ title: string; body: string; tag: string; requireInteraction: boolean }> {
     const type = this.normalizePushType(data['type']);
     const tag = data['tag'] || data['callId'] || data['messageId'] || 'nivra-event';
+    if (this.hideNotificationContent() && type === 'message') {
+      return { title: 'Nivra', body: 'Nuevo mensaje', tag, requireInteraction: false };
+    }
     const preview = await this.decryptPreviewIfPresent(data);
     if (preview) {
       return {
@@ -817,6 +820,10 @@ export class PushService {
       return { title: 'Nivra', body: 'Un contacto de tu agenda se ha unido a Nivra.', tag, requireInteraction: false };
     }
     return { title: 'Nivra', body: 'Nueva actividad privada', tag, requireInteraction: false };
+  }
+
+  private hideNotificationContent(): boolean {
+    return this.auth.session()?.user.privacySettings?.hideNotificationContent === true;
   }
 
   private async decryptPreviewIfPresent(data: Record<string, string>): Promise<{ title?: string; body?: string } | null> {

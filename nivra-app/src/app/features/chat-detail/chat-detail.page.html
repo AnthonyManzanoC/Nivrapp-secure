@@ -112,6 +112,7 @@
                         #voiceAudio
                         class="voice-source"
                         [src]="media.url"
+                        [attr.data-message-id]="message.id"
                         preload="metadata"
                         (loadedmetadata)="syncAudioState(message, voiceAudio)"
                         (timeupdate)="syncAudioState(message, voiceAudio)"
@@ -643,14 +644,14 @@
         @if (isGroupConversation()) {
           <input #groupAvatarInput type="file" accept="image/*" hidden (change)="onGroupAvatarSelected($event)">
           <div class="contact-hero group-hero">
-            <button type="button" class="story-ring" [disabled]="!canEditGroup()" (click)="canEditGroup() && groupAvatarInput.click()" [attr.aria-label]="'CHAT.CHANGE_GROUP_PHOTO' | translate:'Cambiar foto del grupo'">
+            <button type="button" class="story-ring" [disabled]="!groupAvatarDraft && !canEditGroup()" (click)="groupAvatarDraft ? openProfilePhotoViewer($event, groupAvatarDraft) : (canEditGroup() && groupAvatarInput.click())" [attr.aria-label]="groupAvatarDraft ? ('CHAT.VIEW_PHOTO' | translate:'Ver foto') : ('CHAT.CHANGE_GROUP_PHOTO' | translate:'Cambiar foto del grupo')">
               @if (groupAvatarDraft) {
                 <img class="contact-photo" [src]="groupAvatarDraft" alt="">
               } @else if (conversation()) {
                 <span class="contact-photo fallback">{{ chat.avatarLabel(conversation()!) }}</span>
               }
               @if (canEditGroup()) {
-                <span class="photo-edit">
+                <span class="photo-edit" (click)="$event.stopPropagation(); groupAvatarInput.click()">
                   <ion-icon name="image-outline"></ion-icon>
                 </span>
               }
@@ -798,7 +799,7 @@
           </section>
         } @else {
         <div class="contact-hero">
-          <button type="button" class="story-ring" [attr.aria-label]="'CHAT.VIEW_PHOTO' | translate:'Ver foto'">
+          <button type="button" class="story-ring" [disabled]="!conversationPhoto()" (click)="openProfilePhotoViewer($event)" [attr.aria-label]="'CHAT.VIEW_PHOTO' | translate:'Ver foto'">
             @if (conversationPhoto()) {
               <img class="contact-photo" [src]="conversationPhoto()" alt="">
             } @else if (conversation()) {
@@ -885,6 +886,24 @@
             }
           </div>
         </section>
+      </section>
+    </ng-template>
+  </ion-modal>
+
+  <ion-modal class="profile-photo-viewer-modal" [isOpen]="!!profilePhotoViewerUrl" (didDismiss)="closeProfilePhotoViewer()">
+    <ng-template>
+      <section class="profile-photo-viewer">
+        <header>
+          <ion-button mode="ios" fill="clear" (click)="closeProfilePhotoViewer()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+          <span>{{ profilePhotoViewerTitle }}</span>
+        </header>
+        <button type="button" class="profile-photo-stage" (click)="closeProfilePhotoViewer()">
+          @if (profilePhotoViewerUrl) {
+            <img [src]="profilePhotoViewerUrl" [alt]="profilePhotoViewerTitle">
+          }
+        </button>
       </section>
     </ng-template>
   </ion-modal>

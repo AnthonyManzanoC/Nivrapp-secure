@@ -17,6 +17,7 @@ import { PushService } from './core/services/push.service';
 import { SignalrService } from './core/services/signalr.service';
 import { TranslatePipe } from './core/pipes/translate.pipe';
 import { TranslateService } from './core/services/translate.service';
+import { NativeDeviceService } from './core/services/native-device.service';
 import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 
 const THEME_STORAGE_KEY = 'nivra.theme';
@@ -39,6 +40,7 @@ export class AppComponent {
   private readonly router = inject(Router);
   private readonly realtime = inject(SignalrService);
   private readonly translate = inject(TranslateService);
+  private readonly nativeDevice = inject(NativeDeviceService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly systemThemeQuery = typeof window !== 'undefined' && 'matchMedia' in window
     ? window.matchMedia('(prefers-color-scheme: light)')
@@ -94,6 +96,16 @@ export class AppComponent {
         }
         void this.push.notifyRealtimeEvent(event);
       });
+
+    effect(() => {
+      const privacy = this.auth.session()?.user.privacySettings;
+      untracked(() => void this.nativeDevice.setScreenshotsAllowed(privacy?.allowScreenshots !== false));
+    });
+
+    effect(() => {
+      const settings = this.appSettings.settings();
+      untracked(() => void this.nativeDevice.configureRaiseGestures(settings));
+    });
 
     effect(() => {
       if (this.auth.isAuthenticated()) {
