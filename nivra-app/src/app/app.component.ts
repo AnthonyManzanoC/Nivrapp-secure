@@ -3,6 +3,7 @@ import { Component, DestroyRef, computed, effect, inject, signal, untracked } fr
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { App } from '@capacitor/app';
 import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard';
+import { StatusBar, Style } from '@capacitor/status-bar';
 import { NavigationEnd, Router } from '@angular/router';
 import { IonApp, IonIcon, IonRouterOutlet } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -108,6 +109,12 @@ export class AppComponent {
     });
 
     effect(() => {
+      const light = this.appSettings.resolvedLightTheme();
+      const darkCallSurface = this.onCallsRoute() && Boolean(this.calls.activeCall());
+      untracked(() => void this.configureNativeSystemBars(light, darkCallSurface));
+    });
+
+    effect(() => {
       if (this.auth.isAuthenticated()) {
         untracked(() => void this.startAuthenticatedServices());
       } else {
@@ -156,6 +163,16 @@ export class AppComponent {
     }
   }
 
+  private async configureNativeSystemBars(light: boolean, darkSurface: boolean): Promise<void> {
+    try {
+      await StatusBar.setOverlaysWebView({ overlay: false });
+      await StatusBar.setStyle({ style: light && !darkSurface ? Style.Dark : Style.Light });
+      await StatusBar.setBackgroundColor({ color: light && !darkSurface ? '#f8fafc' : '#030607' });
+    } catch {
+      // Web, desktop, and some Android shells do not expose the native status bar bridge.
+    }
+  }
+
   private applyStoredTheme(): void {
     if (typeof document === 'undefined') {
       return;
@@ -196,6 +213,7 @@ export class AppComponent {
       }
       this.applyStoredTheme();
       void Keyboard.setStyle({ style: this.lightThemeEnabled() ? KeyboardStyle.Light : KeyboardStyle.Dark }).catch(() => undefined);
+      void this.configureNativeSystemBars(this.lightThemeEnabled(), this.onCallsRoute() && Boolean(this.calls.activeCall()));
     };
     query.addEventListener('change', listener);
     this.destroyRef.onDestroy(() => query.removeEventListener('change', listener));

@@ -208,14 +208,28 @@
 }
 
 .surface.call-mode .waiting-tile:not(.over-video) {
-  align-self: center;
-  justify-self: center;
-  width: min(92vw, 520px);
-  padding-inline: 18px;
+  position: absolute;
+  z-index: 3;
+  inset:
+    calc(84px + env(safe-area-inset-top))
+    24px
+    calc(126px + env(safe-area-inset-bottom));
+  width: auto;
+  max-width: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
 }
 
 .surface.call-mode .waiting-tile:not(.over-video) .call-avatar {
-  margin-bottom: 12px;
+  flex: 0 0 auto;
+  width: clamp(116px, 10vw, 158px);
+  height: clamp(116px, 10vw, 158px);
+  margin: 0 0 12px;
 }
 
 .surface.call-mode .waiting-tile:not(.over-video) strong {
@@ -232,6 +246,24 @@
 .surface.call-mode .waiting-tile:not(.over-video) small {
   max-width: min(84vw, 440px);
   text-align: center;
+}
+
+.surface.call-mode .voice-connected {
+  position: absolute;
+  z-index: 3;
+  inset:
+    calc(84px + env(safe-area-inset-top))
+    24px
+    calc(126px + env(safe-area-inset-bottom));
+  width: auto;
+  height: auto;
+  padding: 0;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  background: transparent;
 }
 
 .waiting-tile small {
@@ -292,6 +324,13 @@
   background: #030607;
 }
 
+.remote-tile.main-video {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  contain: layout size paint;
+}
+
 .main-video::after {
   content: "";
   position: absolute;
@@ -303,8 +342,13 @@
 }
 
 .remote-tile video {
+  position: absolute;
+  inset: 0;
   display: block;
+  width: 100%;
+  height: 100%;
   object-fit: contain !important;
+  object-position: center center !important;
   background: #030607;
 }
 
@@ -525,6 +569,8 @@
 .surface.call-mode .remote-tile video,
 .surface.call-mode .local-preview video,
 .surface.call-mode .local-preview-main {
+  position: absolute !important;
+  inset: 0 !important;
   width: 100% !important;
   height: 100% !important;
   max-width: 100% !important;
@@ -915,11 +961,20 @@ ion-modal.invite-modal {
   }
 
   .surface.call-mode .waiting-tile:not(.over-video) {
-    align-self: center;
-    justify-self: center;
-    width: min(calc(100vw - 36px), 420px);
-    padding: calc(16px + env(safe-area-inset-top)) 14px calc(162px + env(safe-area-inset-bottom));
+    inset:
+      calc(74px + env(safe-area-inset-top))
+      18px
+      calc(188px + env(safe-area-inset-bottom));
+    width: auto;
+    padding: 0;
     gap: 9px;
+  }
+
+  .surface.call-mode .voice-connected {
+    inset:
+      calc(74px + env(safe-area-inset-top))
+      18px
+      calc(188px + env(safe-area-inset-bottom));
   }
 
   .surface.call-mode .waiting-tile:not(.over-video) .call-avatar {
@@ -936,6 +991,8 @@ ion-modal.invite-modal {
     font-size: clamp(24px, 7vw, 34px);
     line-height: 1.08;
     text-align: center;
+    max-height: 2.18em;
+    overflow: hidden;
   }
 
   .surface.call-mode .waiting-tile:not(.over-video) span,
@@ -971,6 +1028,15 @@ ion-modal.invite-modal {
     left: 16px;
     bottom: calc(166px + env(safe-area-inset-bottom));
     max-width: calc(100vw - 52px);
+  }
+
+  .surface.call-mode .voice-connected strong {
+    max-width: min(86vw, 360px);
+    max-height: 2.18em;
+    overflow: hidden;
+    font-size: clamp(24px, 7vw, 34px);
+    line-height: 1.08;
+    text-align: center;
   }
 
   .surface.call-mode .participant-strip {

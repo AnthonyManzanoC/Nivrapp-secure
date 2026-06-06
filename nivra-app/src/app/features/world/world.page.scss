@@ -514,10 +514,10 @@
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto auto auto;
   overflow: hidden;
-  color: var(--nivra-text);
+  color: #fff;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, .08), transparent 30%),
-    rgba(3, 6, 7, .96);
+    linear-gradient(180deg, rgba(255, 255, 255, .04), transparent 30%),
+    #030607;
   box-shadow: 0 28px 90px rgba(0, 0, 0, .56);
 }
 
@@ -540,11 +540,16 @@
 }
 
 .story-progress {
+  position: relative;
+  z-index: 5;
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(22px, 1fr));
   gap: 5px;
-  padding: 10px 12px 0;
-  background: rgba(0, 0, 0, .2);
+  padding:
+    calc(10px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+    12px
+    0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .82), rgba(0, 0, 0, .38));
 }
 
 .story-progress span {
@@ -564,13 +569,19 @@
 }
 
 .story-viewer-top {
+  position: relative;
+  z-index: 5;
   min-height: 58px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   padding: 12px 14px;
-  background: rgba(0, 0, 0, .24);
+  color: #fff;
+  background:
+    linear-gradient(180deg, rgba(0, 0, 0, .54), rgba(0, 0, 0, .22));
+  text-shadow: 0 2px 10px rgba(0, 0, 0, .68);
+  backdrop-filter: blur(16px) saturate(130%);
 }
 
 .story-viewer-top div {
@@ -579,7 +590,7 @@
 }
 
 .story-viewer-top span {
-  color: var(--nivra-muted);
+  color: rgba(232, 255, 249, .74);
   font-size: 12px;
 }
 
@@ -590,8 +601,9 @@
   border-radius: 999px;
   display: grid;
   place-items: center;
-  color: var(--nivra-text);
-  background: rgba(255, 255, 255, .08);
+  color: #fff;
+  background: rgba(255, 255, 255, .14);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .28);
 }
 
 .story-viewer-body {
@@ -601,6 +613,7 @@
   place-items: center;
   padding: 18px;
   overflow: hidden;
+  background: #030607;
 }
 
 .story-viewer-body img,
@@ -933,6 +946,7 @@ ion-modal.story-stats-modal {
   .story-viewer {
     inset: 0;
     border-radius: 0;
+    border: 0;
   }
 
   .story-action-bar {
