@@ -56,7 +56,11 @@
     <div class="messages">
       @for (message of messages(); track message.id) {
         @if (chat.isCallLog(message.payload)) {
-          <div class="call-log-message" [class.missed]="message.payload.event === 'missed-call' || message.payload['status'] === 'missed'">
+          <div
+            class="call-log-message"
+            [attr.id]="messageElementId(message.id)"
+            [attr.data-message-id]="message.id"
+            [class.missed]="message.payload.event === 'missed-call' || message.payload['status'] === 'missed'">
             <div class="call-log-bubble">
               <ion-icon [name]="(message.payload.event === 'missed-call' || message.payload['status'] === 'missed') ? 'call-outline' : 'checkmark-done-outline'"></ion-icon>
               <div>
@@ -67,12 +71,14 @@
             <small>{{ message.at | date:'shortTime' }} - {{ message.payload.callType === 'Video' ? ('COMMON.VIDEO_LOWER' | translate:'video') : ('COMMON.VOICE_LOWER' | translate:'voz') }}</small>
           </div>
         } @else if (message.payload.type === 'system') {
-          <div class="system-message">
+          <div class="system-message" [attr.id]="messageElementId(message.id)" [attr.data-message-id]="message.id">
             {{ message.payload.text || message.payload.title || ('CHAT.SYSTEM_EVENT' | translate:'Evento de sistema') }}
           </div>
         } @else {
           <article
             class="message"
+            [attr.id]="messageElementId(message.id)"
+            [attr.data-message-id]="message.id"
             tabindex="0"
             [class.mine]="message.mine"
             [class.decrypt-error]="message.decryptError"

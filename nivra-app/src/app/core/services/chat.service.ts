@@ -104,6 +104,7 @@ export class ChatService implements OnDestroy {
   private readonly directConversationInFlight = new Map<string, Promise<Conversation>>();
   private readonly typingTimers = new Map<string, number>();
   private readonly expiryTimers = new Map<string, number>();
+  private readonly openScrollAnchors = new Map<string, string>();
   private ttlSweepTimer: number | null = null;
   private lastTypingSentAt = 0;
   private syncInFlight = false;
@@ -306,8 +307,16 @@ export class ChatService implements OnDestroy {
     if (loadId !== this.selectedConversationLoadId || this.selectedConversationId() !== conversationId) {
       return;
     }
+    this.rememberOpenScrollAnchor(conversationId);
     await this.markConversationRead(conversationId);
     await this.refreshPresenceForConversations();
+  }
+
+  initialScrollMessageId(conversationId: string | null | undefined): string | null {
+    if (!conversationId) {
+      return null;
+    }
+    return this.openScrollAnchors.get(conversationId) ?? null;
   }
 
   clearSelectedConversation(): void {
@@ -1487,6 +1496,26 @@ export class ChatService implements OnDestroy {
     }
     for (const message of unread) {
       await this.sendReceipt(message.id, 'Read').catch(() => this.readReceiptSentIds.delete(message.id));
+    }
+  }
+
+  private rememberOpenScrollAnchor(conversationId: string): void {
+    const current = this.auth.session();
+    if (!current) {
+      this.openScrollAnchors.delete(conversationId);
+      return;
+    }
+    const firstUnread = (this.messagesByConversation()[conversationId] ?? []).find((message) => {
+      if (message.mine) {
+        return false;
+      }
+      const ownReceipts = (message.receipts ?? []).filter((receipt) => receipt.userId === current.user.id);
+      return !ownReceipts.some((receipt) => receipt.readAt);
+    });
+    if (firstUnread?.id) {
+      this.openScrollAnchors.set(conversationId, firstUnread.id);
+    } else {
+      this.openScrollAnchors.delete(conversationId);
     }
   }
 

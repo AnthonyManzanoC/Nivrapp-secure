@@ -207,6 +207,33 @@
   font-size: 28px;
 }
 
+.surface.call-mode .waiting-tile:not(.over-video) {
+  align-self: center;
+  justify-self: center;
+  width: min(92vw, 520px);
+  padding-inline: 18px;
+}
+
+.surface.call-mode .waiting-tile:not(.over-video) .call-avatar {
+  margin-bottom: 12px;
+}
+
+.surface.call-mode .waiting-tile:not(.over-video) strong {
+  width: 100%;
+  max-width: min(88vw, 480px);
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: clamp(26px, 3.2vw, 42px);
+  line-height: 1.08;
+  text-align: center;
+}
+
+.surface.call-mode .waiting-tile:not(.over-video) span,
+.surface.call-mode .waiting-tile:not(.over-video) small {
+  max-width: min(84vw, 440px);
+  text-align: center;
+}
+
 .waiting-tile small {
   color: var(--nivra-muted);
 }
@@ -489,10 +516,22 @@
 .surface.call-mode .panel-head,
 .surface.call-mode .call-controls,
 .surface.call-mode .waiting-tile,
-.surface.call-mode .remote-tile span,
 .surface.call-mode .participant-strip,
 .surface.call-mode .local-preview {
   transition: opacity .24s ease, transform .24s ease;
+}
+
+.surface.call-mode video,
+.surface.call-mode .remote-tile video,
+.surface.call-mode .local-preview video,
+.surface.call-mode .local-preview-main {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  object-fit: contain !important;
+  object-position: center center !important;
+  background: #030607 !important;
 }
 
 .call-controls ion-button {
@@ -875,6 +914,36 @@ ion-modal.invite-modal {
     padding: 14px;
   }
 
+  .surface.call-mode .waiting-tile:not(.over-video) {
+    align-self: center;
+    justify-self: center;
+    width: min(calc(100vw - 36px), 420px);
+    padding: calc(16px + env(safe-area-inset-top)) 14px calc(162px + env(safe-area-inset-bottom));
+    gap: 9px;
+  }
+
+  .surface.call-mode .waiting-tile:not(.over-video) .call-avatar {
+    width: clamp(112px, 34vw, 152px);
+    height: clamp(112px, 34vw, 152px);
+  }
+
+  .surface.call-mode .waiting-tile:not(.over-video) strong {
+    width: 100%;
+    max-width: min(86vw, 360px);
+    display: block;
+    overflow-wrap: anywhere;
+    color: var(--nivra-soft);
+    font-size: clamp(24px, 7vw, 34px);
+    line-height: 1.08;
+    text-align: center;
+  }
+
+  .surface.call-mode .waiting-tile:not(.over-video) span,
+  .surface.call-mode .waiting-tile:not(.over-video) small {
+    max-width: min(84vw, 340px);
+    text-align: center;
+  }
+
   .surface.call-mode .call-controls {
     bottom: calc(92px + env(safe-area-inset-bottom));
     width: min(calc(100vw - 28px), 520px);
@@ -918,7 +987,6 @@ ion-modal.invite-modal {
 
   .surface.call-mode.call-chrome-hidden .panel-head,
   .surface.call-mode.call-chrome-hidden .waiting-tile,
-  .surface.call-mode.call-chrome-hidden .remote-tile span,
   .surface.call-mode.call-chrome-hidden .participant-strip {
     opacity: 0;
     pointer-events: none;
