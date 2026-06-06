@@ -1,5 +1,6 @@
 import { DestroyRef, Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { Router } from '@angular/router';
 import { Room, RoomEvent, type AudioCaptureOptions } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
@@ -8,6 +9,7 @@ import { AuthService } from './auth.service';
 import { ChatService } from './chat.service';
 import { CryptoService } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
+import { NativeDeviceService, type NativeCallActionEvent } from './native-device.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
@@ -49,7 +51,9 @@ export class CallsService implements OnDestroy {
   private readonly chat = inject(ChatService);
   private readonly crypto = inject(CryptoService);
   private readonly historyStore = inject(LocalHistoryService);
+  private readonly nativeDevice = inject(NativeDeviceService);
   private readonly realtime = inject(SignalrService);
+  private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
   private readonly peers = new Map<string, PeerState>();
   private readonly pendingRemoteStreams = new Map<string, MediaStream>();
@@ -128,6 +132,10 @@ export class CallsService implements OnDestroy {
       }
     });
 
+    void this.nativeDevice.onNativeCallAction((event) => {
+      void this.handleNativeCallAction(event);
+    }).catch(() => undefined);
+
     effect(() => {
       const userId = this.auth.session()?.user.id;
       untracked(() => {
@@ -190,6 +198,7 @@ export class CallsService implements OnDestroy {
       return;
     }
     this.error.set('');
+    void this.nativeDevice.clearIncomingCall(call.id);
     if (this.isGroupCall(call)) {
       this.phase.set('connecting');
       this.clearRingTimeout();
@@ -214,6 +223,7 @@ export class CallsService implements OnDestroy {
     if (!call) {
       return;
     }
+    void this.nativeDevice.clearIncomingCall(call.id);
     this.phase.set('rejected');
     await Promise.all(this.otherParticipantIds(call).map((userId) =>
       this.sendCallSignal(call, userId, 'declined', { declined: true }).catch(() => undefined)));
@@ -231,6 +241,7 @@ export class CallsService implements OnDestroy {
     if (!callId) {
       return;
     }
+    void this.nativeDevice.clearIncomingCall(callId);
     const activeBeforeEnd = this.activeCall();
     this.phase.set('ended');
     const call = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(callId)}/end`, {}));
@@ -713,6 +724,15 @@ export class CallsService implements OnDestroy {
     this.addHistory(normalized);
     this.scheduleRingTimeout(normalized);
     this.startRingingTone(this.phase());
+    if (this.phase() === 'ringing') {
+      void this.nativeDevice.showIncomingCall({
+        callId: normalized.id,
+        callerName: this.callTitle(normalized),
+        callerUserId: normalized.initiatorUserId,
+        callType: normalized.type,
+        conversationId: normalized.conversationId ?? normalized.groupId ?? '',
+      });
+    }
     if (this.phase() !== 'ringing') {
       await this.flushPendingCallSignals();
     }
@@ -727,10 +747,53 @@ export class CallsService implements OnDestroy {
     if (!value.answeredByDeviceId || value.answeredByDeviceId === this.currentDeviceId()) {
       return;
     }
+    void this.nativeDevice.clearIncomingCall(call.id);
     if (['ringing', 'calling', 'connecting'].includes(this.phase())) {
       this.cleanup({ remember: false });
       this.addHistory({ ...call, status: 'Active' });
     }
+  }
+
+  private async handleNativeCallAction(event: NativeCallActionEvent): Promise<void> {
+    const action = event.action;
+    const callId = event.callId || '';
+    if (!action || !callId) {
+      return;
+    }
+    await this.nativeDevice.clearIncomingCall(callId).catch(() => undefined);
+    if (action === 'open') {
+      await this.router.navigateByUrl('/app/calls');
+      return;
+    }
+    if (action === 'answer') {
+      await this.router.navigateByUrl('/app/calls');
+      if (this.activeCall()?.id === callId) {
+        await this.accept();
+        return;
+      }
+      await this.rejoin(callId).catch((error) => {
+        this.error.set(error instanceof Error ? error.message : 'No se pudo contestar la llamada.');
+      });
+      return;
+    }
+    if (action === 'reject') {
+      if (this.activeCall()?.id === callId) {
+        await this.decline();
+        return;
+      }
+      await this.rejectIncomingCallById(callId);
+    }
+  }
+
+  private async rejectIncomingCallById(callId: string): Promise<void> {
+    const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`)).catch(() => null);
+    if (!call || call.endedAt || call.status === 'Ended') {
+      return;
+    }
+    const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? call.groupId ?? null, this.isGroupCall(call));
+    this.activeCall.set(normalized);
+    this.phase.set('ringing');
+    await this.decline();
   }
 
   private async prepareMedia(withVideo: boolean): Promise<MediaStream> {
@@ -1113,6 +1176,9 @@ export class CallsService implements OnDestroy {
 
   private cleanup(options: { remember?: boolean; historyStatus?: string } = {}): void {
     const call = this.activeCall();
+    if (call?.id) {
+      void this.nativeDevice.clearIncomingCall(call.id);
+    }
     this.clearRingTimeout();
     this.stopRingingTone();
     void this.stopScreenShare({ restoreCamera: false, broadcast: false });

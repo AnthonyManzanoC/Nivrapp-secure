@@ -6,6 +6,15 @@ import { AuthService } from './auth.service';
 type AudioFocusMode = 'record' | 'playback';
 type MediaKind = 'image' | 'video' | 'audio' | 'document';
 export type RaiseGestureEvent = { kind: 'listen' | 'talk'; near: boolean; at: number };
+export type NativeCallActionEvent = {
+  action: 'answer' | 'reject' | 'open';
+  callId?: string;
+  callerName?: string;
+  callerUserId?: string;
+  callType?: string;
+  conversationId?: string;
+  at?: number;
+};
 
 interface NativeDiagnostics {
   platform?: string;
@@ -40,7 +49,16 @@ interface NivraNativePlugin {
   saveFileChunk(options: { sessionId: string; base64: string }): Promise<void>;
   saveFileChunkedFinish(options: { sessionId: string }): Promise<SaveFileResponse>;
   saveFileChunkedAbort(options: { sessionId: string }): Promise<void>;
+  showIncomingCall(options: {
+    callId: string;
+    callerName: string;
+    callerUserId?: string;
+    callType?: string;
+    conversationId?: string;
+  }): Promise<void>;
+  clearIncomingCall(options: { callId: string }): Promise<void>;
   addListener(eventName: 'raiseGesture', listener: (event: RaiseGestureEvent) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'nativeCallAction', listener: (event: NativeCallActionEvent) => void): Promise<PluginListenerHandle>;
 }
 
 const NivraNative = registerPlugin<NivraNativePlugin>('NivraNative');
@@ -85,6 +103,33 @@ export class NativeDeviceService {
       return null;
     }
     return NivraNative.addListener('raiseGesture', listener);
+  }
+
+  async showIncomingCall(options: {
+    callId: string;
+    callerName: string;
+    callerUserId?: string;
+    callType?: string;
+    conversationId?: string;
+  }): Promise<void> {
+    if (!this.native || !options.callId) {
+      return;
+    }
+    await NivraNative.showIncomingCall(options).catch(() => undefined);
+  }
+
+  async clearIncomingCall(callId: string | null | undefined): Promise<void> {
+    if (!this.native || !callId) {
+      return;
+    }
+    await NivraNative.clearIncomingCall({ callId }).catch(() => undefined);
+  }
+
+  async onNativeCallAction(listener: (event: NativeCallActionEvent) => void): Promise<PluginListenerHandle | null> {
+    if (!this.native) {
+      return null;
+    }
+    return NivraNative.addListener('nativeCallAction', listener);
   }
 
   async copyToClipboard(value: string, label = 'Nivra'): Promise<void> {

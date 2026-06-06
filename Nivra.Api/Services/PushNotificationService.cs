@@ -167,6 +167,7 @@ public sealed class PushNotificationService(
                 ["callId"] = callId,
                 ["callerId"] = callerUserId,
                 ["callerUserId"] = callerUserId,
+                ["callerName"] = callerName,
                 ["callType"] = callType.ToString(),
                 ["conversationId"] = conversationId ?? "",
                 ["pushIntent"] = "wake_call",

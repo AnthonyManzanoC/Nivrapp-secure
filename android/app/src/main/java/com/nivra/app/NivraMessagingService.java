@@ -40,6 +40,12 @@ public class NivraMessagingService extends MessagingService {
         String callId = stringValue(data, "callId");
         if (type.equals("end-call") || type.equals("call-ended") || type.equals("call-rejected")) {
             cancelNotification(notificationId(callId.isEmpty() ? stringValue(data, "tag") : callId));
+            NivraNativePlugin.clearIncomingCallNotification(this, callId);
+            return;
+        }
+
+        if (type.equals("incoming-call") || type.equals("incomingcall")) {
+            NivraNativePlugin.showIncomingCallNotification(this, data);
             return;
         }
 

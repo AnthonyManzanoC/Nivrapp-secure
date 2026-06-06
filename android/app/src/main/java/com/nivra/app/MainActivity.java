@@ -3,6 +3,7 @@ package com.nivra.app;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 
@@ -14,6 +15,14 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NivraNativePlugin.class);
         super.onCreate(savedInstanceState);
         createNotificationChannels();
+        NivraNativePlugin.handleCallIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        NivraNativePlugin.handleCallIntent(intent);
     }
 
     private void createNotificationChannels() {

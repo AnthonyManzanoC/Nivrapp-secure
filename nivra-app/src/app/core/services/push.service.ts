@@ -12,6 +12,7 @@ import { AuthService } from './auth.service';
 import { ContactSyncService } from './contact-sync.service';
 import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
+import { NativeDeviceService } from './native-device.service';
 import { SignalrService } from './signalr.service';
 
 type PushSource = 'web-fcm' | 'native-fcm' | 'service-worker-click' | 'native-action' | 'realtime';
@@ -46,6 +47,7 @@ export class PushService {
   private readonly auth = inject(AuthService);
   private readonly contactSync = inject(ContactSyncService);
   private readonly crypto = inject(CryptoService);
+  private readonly nativeDevice = inject(NativeDeviceService);
   private readonly realtime = inject(SignalrService);
   private readonly toastController = inject(ToastController);
   private foregroundBound = false;
@@ -849,6 +851,7 @@ export class PushService {
     if (!callId || !Capacitor.isNativePlatform()) {
       return;
     }
+    await this.nativeDevice.clearIncomingCall(callId).catch(() => undefined);
     await LocalNotifications.cancel({
       notifications: [{ id: this.callNotificationId(callId) }],
     }).catch(() => undefined);

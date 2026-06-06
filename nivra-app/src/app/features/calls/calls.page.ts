@@ -57,6 +57,8 @@ export class CallsPage {
   callQuery = '';
   callBusyId = '';
   videoSwapped = false;
+  controlsVisible = true;
+  private controlsHideTimer: number | null = null;
 
   constructor() {
     addIcons({
@@ -85,10 +87,12 @@ export class CallsPage {
     if (!this.calls.activeCall()) {
       this.resetIdleUi(false);
     }
+    this.revealCallChrome();
   }
 
   ionViewWillLeave(): void {
     this.calls.clearInactiveCallUi();
+    this.clearControlsAutoHide();
     if (!this.calls.activeCall()) {
       this.resetIdleUi(true);
     }
@@ -100,6 +104,7 @@ export class CallsPage {
       return;
     }
     this.videoSwapped = false;
+    this.revealCallChrome();
     const currentUserId = this.auth.session()?.user.id;
     const participantUserIds = conversation.participants
       .filter((participant) => !participant.removedAt && participant.userId !== currentUserId)
@@ -112,6 +117,7 @@ export class CallsPage {
       return;
     }
     this.videoSwapped = false;
+    this.revealCallChrome();
     this.callBusyId = `${type}:${contact.userId}`;
     try {
       const conversation = await this.chat.createDirectConversation(this.contactAsPerson(contact));
@@ -123,25 +129,31 @@ export class CallsPage {
 
   async accept(): Promise<void> {
     this.videoSwapped = false;
+    this.revealCallChrome();
     await this.calls.accept();
+    this.revealCallChrome();
   }
 
   async decline(): Promise<void> {
     this.videoSwapped = false;
+    this.revealCallChrome();
     await this.calls.decline();
   }
 
   async endActive(): Promise<void> {
     this.videoSwapped = false;
+    this.revealCallChrome();
     await this.calls.end();
   }
 
   async toggleScreenShare(): Promise<void> {
+    this.revealCallChrome();
     await this.calls.toggleScreenShare();
   }
 
   async rejoin(callId: string): Promise<void> {
     this.videoSwapped = false;
+    this.revealCallChrome();
     await this.calls.rejoin(callId);
   }
 
@@ -348,6 +360,12 @@ export class CallsPage {
       return;
     }
     this.videoSwapped = !this.videoSwapped;
+    this.revealCallChrome();
+  }
+
+  revealCallChrome(): void {
+    this.controlsVisible = true;
+    this.armControlsAutoHide();
   }
 
   videoParticipantLabel(userId: string | null | undefined): string {
@@ -374,8 +392,30 @@ export class CallsPage {
     this.callBusyId = '';
     this.inviteModalOpen = false;
     this.videoSwapped = false;
+    this.controlsVisible = true;
+    this.clearControlsAutoHide();
     if (clearSearch) {
       this.callQuery = '';
+    }
+  }
+
+  private armControlsAutoHide(): void {
+    this.clearControlsAutoHide();
+    if (!this.isCallMode()) {
+      return;
+    }
+    this.controlsHideTimer = window.setTimeout(() => {
+      const phase = this.calls.phase();
+      if (this.isCallMode() && (phase === 'connected' || phase === 'connecting')) {
+        this.controlsVisible = false;
+      }
+    }, 5000);
+  }
+
+  private clearControlsAutoHide(): void {
+    if (this.controlsHideTimer !== null) {
+      window.clearTimeout(this.controlsHideTimer);
+      this.controlsHideTimer = null;
     }
   }
 

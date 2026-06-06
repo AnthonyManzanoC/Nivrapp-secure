@@ -2,12 +2,19 @@ package com.nivra.app;
 
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
+import android.Manifest;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageInfo;
+import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -15,6 +22,7 @@ import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.hardware.Sensor;
@@ -34,12 +42,24 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
+import java.lang.ref.WeakReference;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+
 @CapacitorPlugin(name = "NivraNative")
 public class NivraNativePlugin extends Plugin {
+    static final String CHANNEL_CALLS = "nivra_calls";
+    static final String ACTION_CALL_OPEN = "com.nivra.app.CALL_OPEN";
+    static final String ACTION_CALL_ANSWER = "com.nivra.app.CALL_ANSWER";
+    static final String ACTION_CALL_REJECT = "com.nivra.app.CALL_REJECT";
+    private static WeakReference<NivraNativePlugin> activePlugin = new WeakReference<>(null);
+    private static final List<JSObject> pendingCallActions = new ArrayList<>();
     private final Map<String, SaveSession> saveSessions = new HashMap<>();
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
@@ -82,6 +102,12 @@ public class NivraNativePlugin extends Plugin {
         public void onAccuracyChanged(Sensor sensor, int accuracy) {
         }
     };
+
+    @Override
+    public void load() {
+        activePlugin = new WeakReference<>(this);
+        flushPendingCallActions();
+    }
 
     @PluginMethod
     public void setSecureScreen(PluginCall call) {
@@ -250,6 +276,228 @@ public class NivraNativePlugin extends Plugin {
             deleteSessionTarget(session);
         }
         call.resolve();
+    }
+
+    @PluginMethod
+    public void showIncomingCall(PluginCall call) {
+        Map<String, String> data = new HashMap<>();
+        data.put("callId", call.getString("callId", ""));
+        data.put("callerName", call.getString("callerName", "Nivra"));
+        data.put("callerUserId", call.getString("callerUserId", ""));
+        data.put("callType", call.getString("callType", "Voice"));
+        data.put("conversationId", call.getString("conversationId", ""));
+        showIncomingCallNotification(getContext(), data);
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void clearIncomingCall(PluginCall call) {
+        String callId = call.getString("callId", "");
+        clearIncomingCallNotification(getContext(), callId);
+        call.resolve();
+    }
+
+    public static void showIncomingCallNotification(Context context, Map<String, String> data) {
+        if (context == null || data == null) {
+            return;
+        }
+        String callId = firstNonBlank(data.get("callId"), data.get("tag"), "nivra-call");
+        int notificationId = notificationId(callId);
+        ensureCallChannel(context);
+        wakeForIncomingCall(context);
+
+        PendingIntent openIntent = activityIntent(context, ACTION_CALL_OPEN, data, notificationId);
+        PendingIntent answerIntent = receiverIntent(context, ACTION_CALL_ANSWER, data, notificationId);
+        PendingIntent rejectIntent = receiverIntent(context, ACTION_CALL_REJECT, data, notificationId);
+        String callerName = firstNonBlank(data.get("callerName"), data.get("title"), "Nivra");
+        String callType = firstNonBlank(data.get("callType"), "Voice", "Voice");
+        boolean video = "Video".equalsIgnoreCase(callType);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_CALLS)
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(callerName)
+            .setContentText(video ? "Videollamada entrante" : "Llamada entrante")
+            .setContentIntent(openIntent)
+            .setFullScreenIntent(openIntent, true)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(false)
+            .setVibrate(new long[] { 320, 140, 320, 140, 480 })
+            .setTimeoutAfter(75_000)
+            .addAction(android.R.drawable.ic_menu_call, "Contestar", answerIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Rechazar", rejectIntent);
+
+        if (!canPostNotifications(context)) {
+            return;
+        }
+        NotificationManagerCompat.from(context).notify(notificationId, builder.build());
+    }
+
+    public static void clearIncomingCallNotification(Context context, String callId) {
+        if (context == null || callId == null || callId.trim().isEmpty()) {
+            return;
+        }
+        NotificationManagerCompat.from(context).cancel(notificationId(callId));
+    }
+
+    public static boolean handleCallIntent(Intent intent) {
+        if (intent == null) {
+            return false;
+        }
+        String action = intent.getAction();
+        String mappedAction = "";
+        if (ACTION_CALL_ANSWER.equals(action)) {
+            mappedAction = "answer";
+        } else if (ACTION_CALL_REJECT.equals(action)) {
+            mappedAction = "reject";
+        } else if (ACTION_CALL_OPEN.equals(action) || "com.nivra.app.OPEN_PUSH".equals(action)) {
+            String pushAction = intent.getStringExtra("action");
+            if ("accept".equals(pushAction)) {
+                mappedAction = "answer";
+            } else if ("decline".equals(pushAction) || "reject".equals(pushAction)) {
+                mappedAction = "reject";
+            } else if (hasCallId(intent)) {
+                mappedAction = "open";
+            }
+        }
+        if (mappedAction.isEmpty()) {
+            return false;
+        }
+        JSObject payload = callPayload(intent, mappedAction);
+        NivraNativePlugin plugin = activePlugin.get();
+        if (plugin != null) {
+            plugin.notifyListeners("nativeCallAction", payload, true);
+            return true;
+        } else {
+            synchronized (pendingCallActions) {
+                pendingCallActions.add(payload);
+            }
+        }
+        return false;
+    }
+
+    public static boolean hasActivePlugin() {
+        return activePlugin.get() != null;
+    }
+
+    private void flushPendingCallActions() {
+        synchronized (pendingCallActions) {
+            for (JSObject payload : pendingCallActions) {
+                notifyListeners("nativeCallAction", payload, true);
+            }
+            pendingCallActions.clear();
+        }
+    }
+
+    private static void ensureCallChannel(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+        NotificationChannel calls = new NotificationChannel(
+            CHANNEL_CALLS,
+            "Llamadas Nivra",
+            NotificationManager.IMPORTANCE_HIGH
+        );
+        calls.setDescription("Llamadas y videollamadas entrantes");
+        calls.enableVibration(true);
+        calls.setVibrationPattern(new long[] { 320, 140, 320, 140, 480 });
+        calls.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager != null) {
+            manager.createNotificationChannel(calls);
+        }
+    }
+
+    private static void wakeForIncomingCall(Context context) {
+        PowerManager manager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        if (manager == null) {
+            return;
+        }
+        int flags = PowerManager.PARTIAL_WAKE_LOCK;
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
+            flags |= PowerManager.ACQUIRE_CAUSES_WAKEUP;
+        }
+        PowerManager.WakeLock wakeLock = manager.newWakeLock(flags, "Nivra:IncomingCall");
+        wakeLock.setReferenceCounted(false);
+        wakeLock.acquire(8000);
+    }
+
+    private static PendingIntent activityIntent(Context context, String action, Map<String, String> data, int notificationId) {
+        Intent intent = new Intent(context, MainActivity.class);
+        intent.setAction(action);
+        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+        putCallExtras(intent, data, notificationId);
+        return PendingIntent.getActivity(
+            context,
+            notificationId + action.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+    }
+
+    private static PendingIntent receiverIntent(Context context, String action, Map<String, String> data, int notificationId) {
+        Intent intent = new Intent(context, NivraCallActionReceiver.class);
+        intent.setAction(action);
+        putCallExtras(intent, data, notificationId);
+        return PendingIntent.getBroadcast(
+            context,
+            notificationId + action.hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
+        );
+    }
+
+    private static void putCallExtras(Intent intent, Map<String, String> data, int notificationId) {
+        for (Map.Entry<String, String> entry : data.entrySet()) {
+            intent.putExtra(entry.getKey(), entry.getValue());
+        }
+        intent.putExtra("notificationId", notificationId);
+        intent.putExtra("nivraRouteIntent", "tap");
+        intent.putExtra("type", firstNonBlank(data.get("type"), "incoming_call", "incoming_call"));
+    }
+
+    private static boolean canPostNotifications(Context context) {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            context.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private static boolean hasCallId(Intent intent) {
+        String value = intent.getStringExtra("callId");
+        return value != null && !value.trim().isEmpty();
+    }
+
+    private static JSObject callPayload(Intent intent, String action) {
+        JSObject payload = new JSObject();
+        payload.put("action", action);
+        payload.put("callId", intent.getStringExtra("callId"));
+        payload.put("callerName", intent.getStringExtra("callerName"));
+        payload.put("callerUserId", firstNonBlank(intent.getStringExtra("callerUserId"), intent.getStringExtra("callerId"), ""));
+        payload.put("callType", intent.getStringExtra("callType"));
+        payload.put("conversationId", intent.getStringExtra("conversationId"));
+        payload.put("at", System.currentTimeMillis());
+        return payload;
+    }
+
+    private static String firstNonBlank(String first, String second, String fallback) {
+        if (first != null && !first.trim().isEmpty()) {
+            return first;
+        }
+        if (second != null && !second.trim().isEmpty()) {
+            return second;
+        }
+        return fallback;
+    }
+
+    private static int notificationId(String value) {
+        String source = value == null || value.isEmpty() ? "nivra" : value;
+        int hash = 0;
+        for (int index = 0; index < source.length(); index += 1) {
+            hash = ((hash << 5) - hash + source.charAt(index));
+        }
+        return Math.abs(hash == 0 ? 1 : hash);
     }
 
     private void requestAudioFocus(String mode) {

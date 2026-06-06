@@ -1,5 +1,9 @@
 <ion-content fullscreen class="page">
-  <main class="surface" [class.call-mode]="isCallMode()">
+  <main
+    class="surface"
+    [class.call-mode]="isCallMode()"
+    [class.call-chrome-hidden]="isCallMode() && !controlsVisible"
+    (pointerdown)="revealCallChrome()">
     <header class="page-head">
       <div>
         <h1>{{ 'CALLS.TITLE' | translate:'Llamadas' }}</h1>
