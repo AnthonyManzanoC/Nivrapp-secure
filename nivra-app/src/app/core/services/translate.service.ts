@@ -24,7 +24,8 @@ export class TranslateService {
 
   instant(key: string, fallback = ''): string {
     const terms = this.loadedTerms();
-    return terms[key] ?? this.fallbackTerms()[key] ?? this.i18n.t(key, fallback || key);
+    const localTerm = this.i18n.currentTerm(key);
+    return localTerm || terms[key] || this.fallbackTerms()[key] || this.i18n.t(key, fallback || key);
   }
 
   private async loadLanguage(language: string): Promise<void> {

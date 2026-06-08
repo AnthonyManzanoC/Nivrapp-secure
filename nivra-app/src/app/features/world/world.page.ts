@@ -189,7 +189,7 @@ export class WorldPage implements OnInit, OnDestroy {
       this.radarPhones = phones.join('\n');
       await this.scanRadar();
       if (!this.social.radarMatches().length && this.contactSync.lastDeviceContactCount()) {
-        this.notice = `${this.contactSync.lastDeviceContactCount()} telefonos sincronizados. Si alguno visible usa Nivra, aparecera aqui.`;
+        this.notice = `${this.contactSync.lastDeviceContactCount()} ${this.tr('WORLD.CONTACTS_SYNCED_HINT', 'telefonos sincronizados. Si alguno visible usa Nivra, aparecera aqui.')}`;
       }
     });
   }
@@ -524,13 +524,13 @@ export class WorldPage implements OnInit, OnDestroy {
 
   radarStateLabel(): string {
     if (this.contactSync.syncing()) {
-      return 'Sincronizando agenda';
+      return this.tr('WORLD.SYNCING_AGENDA', 'Sincronizando agenda');
     }
     const contactCount = this.contactSync.lastDeviceContactCount();
     if (contactCount > 0) {
-      return `${contactCount} telefonos listos`;
+      return `${contactCount} ${this.tr('WORLD.PHONES_READY', 'telefonos listos')}`;
     }
-    return this.isGhostMode() ? 'Invisible para agendas' : 'Disponible para coincidencias';
+    return this.isGhostMode() ? this.tr('WORLD.INVISIBLE_AGENDAS', 'Invisible para agendas') : this.tr('WORLD.AVAILABLE_MATCHES', 'Disponible para coincidencias');
   }
 
   async openAccount(): Promise<void> {

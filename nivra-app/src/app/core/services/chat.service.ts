@@ -161,6 +161,10 @@ export class ChatService implements OnDestroy {
       if (event.type === 'conversation.updated') {
         const conversation = this.applyLocalConversationState([event.payload as Conversation])[0];
         if (conversation?.id) {
+          if (!this.isCurrentUserActiveInConversation(conversation)) {
+            void this.removeConversationLocally(conversation.id);
+            return;
+          }
           this.rememberConversationParticipants([conversation]);
           this.conversations.update((items) => items.map((item) => item.id === conversation.id ? conversation : item).sort(this.compareConversations));
           void this.hydrateConversationProfiles([conversation]);
@@ -1337,6 +1341,19 @@ export class ChatService implements OnDestroy {
       participants: next.participants,
     });
     await this.signalr.updateGroupParticipants(next.id, nextParticipantIds).catch(() => undefined);
+  }
+
+  async leaveGroupConversation(conversation: Conversation): Promise<void> {
+    if (!this.isGroupConversation(conversation)) {
+      throw new Error('Solo puedes salir de chats grupales.');
+    }
+    if (!this.auth.session()?.user.id) {
+      throw new Error('No hay sesion activa.');
+    }
+    if (!conversation.id.startsWith('local-group-')) {
+      await firstValueFrom(this.api.post<Conversation>(`/conversations/${encodeURIComponent(conversation.id)}/leave`, {}));
+    }
+    await this.removeConversationLocally(conversation.id);
   }
 
   private async ingestMessage(message: MessageResponse, markDelivered: boolean): Promise<boolean> {
@@ -2615,6 +2632,30 @@ export class ChatService implements OnDestroy {
     const accountKey = this.localAccountKey();
     if (accountKey) {
       await this.history.putConversations(accountKey, [next]).catch(() => undefined);
+    }
+  }
+
+  private isCurrentUserActiveInConversation(conversation: Conversation): boolean {
+    const currentUserId = this.auth.session()?.user.id;
+    if (!currentUserId) {
+      return true;
+    }
+    return conversation.participants.some((participant) => participant.userId === currentUserId && !participant.removedAt);
+  }
+
+  private async removeConversationLocally(conversationId: string): Promise<void> {
+    if (!conversationId) {
+      return;
+    }
+    this.conversations.update((items) => items.filter((item) => item.id !== conversationId));
+    const accountKey = this.localAccountKey();
+    if (accountKey) {
+      await this.history.removeConversation(accountKey, conversationId).catch(() => undefined);
+    }
+    if (this.selectedConversationId() === conversationId) {
+      const nextId = this.conversations()[0]?.id ?? null;
+      this.selectedConversationId.set(nextId);
+      this.persistSelectedConversationId(nextId);
     }
   }
 

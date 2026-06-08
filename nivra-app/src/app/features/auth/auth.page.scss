@@ -32,17 +32,30 @@
   backdrop-filter: var(--nivra-glass);
 }
 
+.auth-topline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 34px;
+}
+
 .brand-row {
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 34px;
 }
 
 .brand-row img {
   width: 42px;
   height: 42px;
+  flex: 0 0 auto;
   filter: drop-shadow(0 10px 22px rgba(24, 214, 162, .22));
+}
+
+.brand-row > div {
+  min-width: 0;
 }
 
 .brand-row strong,
@@ -59,6 +72,37 @@
 label span,
 ion-note {
   color: var(--nivra-muted);
+}
+
+.language-picker {
+  min-width: 0;
+  width: min(210px, 46vw);
+  min-height: 42px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 0 10px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  background: rgba(var(--ion-text-color-rgb), .06);
+}
+
+.language-picker ion-icon {
+  color: var(--nivra-brand-2);
+  font-size: 18px;
+}
+
+.language-picker select {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  color: var(--nivra-text);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 800;
 }
 
 h1 {
@@ -319,6 +363,10 @@ ion-button {
   background: rgba(17, 24, 39, .045);
 }
 
+:host-context(.nivra-light-theme) .language-picker {
+  background: rgba(17, 24, 39, .045);
+}
+
 .recaptcha-slot {
   width: 1px;
   height: 1px;
@@ -359,6 +407,10 @@ ion-button {
     font-size: 36px;
   }
 
+  .auth-topline {
+    align-items: flex-start;
+  }
+
   .inline-row {
     grid-template-columns: 1fr;
     align-items: stretch;
@@ -376,6 +428,17 @@ ion-button {
 
   .inline-row {
     gap: 8px;
+  }
+
+  .auth-topline {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 12px;
+    margin-bottom: 26px;
+  }
+
+  .language-picker {
+    width: 100%;
   }
 
   ion-segment-button {

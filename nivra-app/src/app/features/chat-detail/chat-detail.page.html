@@ -705,6 +705,10 @@
               <ion-icon name="videocam-outline"></ion-icon>
               {{ 'COMMON.VIDEO' | translate:'Video' }}
             </button>
+            <button type="button" class="danger-action" (click)="leaveGroup()" [disabled]="groupInfoBusy" [attr.aria-label]="'CHAT.LEAVE_GROUP_ARIA' | translate:'Salir del grupo'">
+              <ion-icon name="log-out-outline"></ion-icon>
+              {{ 'CHAT.LEAVE_GROUP' | translate:'Salir' }}
+            </button>
             @if (canEditGroup()) {
               <button type="button" (click)="saveGroupInfo()" [disabled]="groupInfoBusy">
                 <ion-icon name="checkmark-outline"></ion-icon>

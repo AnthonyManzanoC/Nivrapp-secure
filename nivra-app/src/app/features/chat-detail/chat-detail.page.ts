@@ -51,6 +51,7 @@ import {
   languageOutline,
   lockClosedOutline,
   lockOpenOutline,
+  logOutOutline,
   personCircleOutline,
   personAddOutline,
   playCircleOutline,
@@ -244,6 +245,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       languageOutline,
       lockClosedOutline,
       lockOpenOutline,
+      logOutOutline,
       personCircleOutline,
       personAddOutline,
       playCircleOutline,
@@ -1560,6 +1562,24 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.groupAddOpen = false;
       this.notice = this.tr('CHAT.PARTICIPANTS_ADDED', 'Participantes agregados.');
       this.prepareGroupInfoDraft(this.conversation() ?? conversation);
+    });
+  }
+
+  async leaveGroup(): Promise<void> {
+    const conversation = this.conversation();
+    if (!conversation || !this.isGroupConversation()) {
+      return;
+    }
+    const title = this.chat.conversationTitle(conversation);
+    const confirmCopy = this.tr('CHAT.LEAVE_GROUP_CONFIRM', 'Salir de este grupo? No podras volver a entrar a menos que un administrador te agregue.');
+    if (!window.confirm(`${confirmCopy}\n\n${title}`)) {
+      return;
+    }
+    await this.runGroupInfoAction(async () => {
+      await this.chat.leaveGroupConversation(conversation);
+      this.notice = this.tr('CHAT.LEFT_GROUP', 'Saliste del grupo.');
+      this.closeContactInfo();
+      await this.router.navigateByUrl('/app/chats');
     });
   }
 

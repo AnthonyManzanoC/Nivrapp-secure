@@ -7,6 +7,7 @@ import { NativeDeviceService, type NativeDeviceContact } from './native-device.s
 import { NivraApiService } from './nivra-api.service';
 
 const CONTACT_HASH_CACHE_PREFIX = 'nivra.contactHashes.';
+const CONTACT_PHONE_CACHE_PREFIX = 'nivra.contactPhones.';
 const RADAR_JOINED_HINT_PREFIX = 'nivra.radar.contactJoined.';
 const MAX_CONTACT_HASHES = 5000;
 
@@ -33,6 +34,13 @@ export class ContactSyncService {
       return;
     }
 
+    const phones = this.readCachedPhones();
+    if (phones.length) {
+      this.lastDeviceContactCount.set(phones.length);
+      await this.syncContactPhones(phones).catch(() => undefined);
+      return;
+    }
+
     const hashes = this.readCachedHashes();
     if (!hashes.length) {
       return;
@@ -42,8 +50,15 @@ export class ContactSyncService {
   }
 
   async syncContactPhones(rawPhones: readonly string[]): Promise<number> {
-    const hashes = await this.hashPhones(rawPhones);
-    return this.syncContactHashes(hashes, { updateCache: true });
+    const phones = this.normalizePhones(rawPhones);
+    if (!phones.length) {
+      return 0;
+    }
+    const hashes = await this.hashPhones(phones);
+    const stored = await this.syncContactHashes(hashes, { updateCache: true });
+    this.cachePhones(phones);
+    this.lastDeviceContactCount.set(Math.max(this.lastDeviceContactCount(), phones.length));
+    return stored;
   }
 
   async pickAndSyncDeviceContacts(): Promise<string[]> {
@@ -56,21 +71,45 @@ export class ContactSyncService {
         if (!phones.length) {
           throw new Error('No encontre telefonos legibles en tu agenda.');
         }
-        this.lastDeviceContactCount.set(phones.length);
-        await this.syncContactPhones(phones);
-        return this.normalizePhones(phones);
+        const normalized = this.normalizePhones(phones);
+        this.lastDeviceContactCount.set(normalized.length);
+        this.cachePhones(normalized);
+        await this.syncContactPhones(normalized).catch(() => undefined);
+        return normalized;
       } catch (error) {
+        const cached = this.readCachedPhones();
+        if (cached.length) {
+          this.lastDeviceContactCount.set(cached.length);
+          await this.syncContactPhones(cached).catch(() => undefined);
+          return cached;
+        }
         throw new Error(this.contactAccessErrorMessage(error));
       }
     }
 
-    const phones = await this.pickWebContactPhones();
+    const phones = await this.pickWebContactPhones().catch((error) => {
+      const cached = this.readCachedPhones();
+      if (cached.length) {
+        return cached;
+      }
+      throw error;
+    });
     if (!phones.length) {
       throw new Error('No encontre telefonos legibles en los contactos seleccionados.');
     }
-    this.lastDeviceContactCount.set(phones.length);
-    await this.syncContactPhones(phones);
-    return this.normalizePhones(phones);
+    const normalized = this.normalizePhones(phones);
+    this.lastDeviceContactCount.set(normalized.length);
+    this.cachePhones(normalized);
+    await this.syncContactPhones(normalized).catch(() => undefined);
+    return normalized;
+  }
+
+  cachedContactPhones(): string[] {
+    const phones = this.readCachedPhones();
+    if (phones.length) {
+      this.lastDeviceContactCount.set(Math.max(this.lastDeviceContactCount(), phones.length));
+    }
+    return phones;
   }
 
   markContactJoinedHint(): void {
@@ -185,8 +224,10 @@ export class ContactSyncService {
     if (!phones.length) {
       return 0;
     }
-    this.lastDeviceContactCount.set(phones.length);
-    return this.syncContactPhones(phones);
+    const normalized = this.normalizePhones(phones);
+    this.lastDeviceContactCount.set(normalized.length);
+    this.cachePhones(normalized);
+    return this.syncContactPhones(normalized);
   }
 
   private phoneNumbersFromContacts(contacts: readonly NativeDeviceContact[]): string[] {
@@ -241,6 +282,18 @@ export class ContactSyncService {
     }
   }
 
+  private cachePhones(phones: readonly string[]): void {
+    const accountKey = this.accountKey();
+    if (!accountKey) {
+      return;
+    }
+    try {
+      localStorage.setItem(`${CONTACT_PHONE_CACHE_PREFIX}${accountKey}`, JSON.stringify(this.normalizePhones(phones)));
+    } catch {
+      // Local cache only; hashes remain the synced source of truth.
+    }
+  }
+
   private readCachedHashes(): string[] {
     const accountKey = this.accountKey();
     if (!accountKey) {
@@ -249,6 +302,19 @@ export class ContactSyncService {
     try {
       const value = JSON.parse(localStorage.getItem(`${CONTACT_HASH_CACHE_PREFIX}${accountKey}`) || '[]') as unknown;
       return Array.isArray(value) ? this.normalizeHashes(value.map(String)) : [];
+    } catch {
+      return [];
+    }
+  }
+
+  private readCachedPhones(): string[] {
+    const accountKey = this.accountKey();
+    if (!accountKey) {
+      return [];
+    }
+    try {
+      const value = JSON.parse(localStorage.getItem(`${CONTACT_PHONE_CACHE_PREFIX}${accountKey}`) || '[]') as unknown;
+      return Array.isArray(value) ? this.normalizePhones(value.map(String)) : [];
     } catch {
       return [];
     }

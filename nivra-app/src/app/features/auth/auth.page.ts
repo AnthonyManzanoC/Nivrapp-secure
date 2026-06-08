@@ -14,7 +14,7 @@ import {
   IonText,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { callOutline, keyOutline, logInOutline, qrCodeOutline, shieldCheckmarkOutline } from 'ionicons/icons';
+import { callOutline, globeOutline, keyOutline, logInOutline, qrCodeOutline, shieldCheckmarkOutline } from 'ionicons/icons';
 import * as QRCode from 'qrcode';
 import { AuthService, QrLoginChallenge } from '../../core/services/auth.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
@@ -44,6 +44,18 @@ import { TranslateService } from '../../core/services/translate.service';
 export class AuthPage implements OnDestroy {
   readonly auth = inject(AuthService);
   readonly translate = inject(TranslateService);
+  readonly languageOptions = [
+    { native: 'Español', label: 'Spanish', labelKey: 'LANGUAGE.ES', value: 'es' },
+    { native: 'English', label: 'English', labelKey: 'LANGUAGE.EN', value: 'en' },
+    { native: '简体中文', label: 'Chinese (Simplified)', labelKey: 'LANGUAGE.ZH_HANS', value: 'zh-Hans' },
+    { native: 'हिन्दी', label: 'Hindi', labelKey: 'LANGUAGE.HI', value: 'hi' },
+    { native: 'العربية', label: 'Arabic', labelKey: 'LANGUAGE.AR', value: 'ar' },
+    { native: 'Português', label: 'Portuguese', labelKey: 'LANGUAGE.PT', value: 'pt' },
+    { native: 'Русский', label: 'Russian', labelKey: 'LANGUAGE.RU', value: 'ru' },
+    { native: '日本語', label: 'Japanese', labelKey: 'LANGUAGE.JA', value: 'ja' },
+    { native: 'Français', label: 'French', labelKey: 'LANGUAGE.FR', value: 'fr' },
+    { native: 'Deutsch', label: 'German', labelKey: 'LANGUAGE.DE', value: 'de' },
+  ];
   mode: 'phone' | 'alias' | 'qr' = 'phone';
   aliasMode: 'login' | 'register' = 'login';
   phone = '';
@@ -57,7 +69,7 @@ export class AuthPage implements OnDestroy {
   error = '';
 
   constructor() {
-    addIcons({ callOutline, keyOutline, logInOutline, qrCodeOutline, shieldCheckmarkOutline });
+    addIcons({ callOutline, globeOutline, keyOutline, logInOutline, qrCodeOutline, shieldCheckmarkOutline });
   }
 
   ngOnDestroy(): void {
@@ -119,6 +131,14 @@ export class AuthPage implements OnDestroy {
       this.qrDataUrl = '';
       void this.auth.stopQrLogin();
     }
+  }
+
+  currentLanguage(): string {
+    return this.translate.currentLanguage();
+  }
+
+  setLanguage(language: string): void {
+    this.translate.use(language);
   }
 
   isAliasValid(value = this.alias): boolean {

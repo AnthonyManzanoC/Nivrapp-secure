@@ -264,6 +264,24 @@ export class LocalHistoryService {
     } satisfies StoredConversation)));
   }
 
+  async removeConversation(accountKey: string, conversationId: string): Promise<void> {
+    if (!accountKey || !conversationId) {
+      return;
+    }
+    const sqlite = await this.openNativeSqlite();
+    if (sqlite) {
+      await sqlite.run('DELETE FROM local_conversations WHERE account_key = ? AND id = ?', [accountKey, conversationId]);
+      return;
+    }
+    const db = await this.open();
+    if (!db) {
+      return;
+    }
+    await db.transaction(LOCAL_CONVERSATION_STORE, 'readwrite')
+      .objectStore(LOCAL_CONVERSATION_STORE)
+      .delete(this.conversationStorageKey(accountKey, conversationId));
+  }
+
   async contacts(accountKey: string): Promise<Contact[]> {
     if (!accountKey) {
       return [];

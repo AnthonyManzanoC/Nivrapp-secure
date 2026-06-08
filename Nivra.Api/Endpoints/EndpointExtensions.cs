@@ -1280,6 +1280,60 @@ public static partial class EndpointExtensions
             return Results.Ok(ToConversationResponse(conversation));
         });
 
+        conversations.MapPost("/{conversationId}/leave", async Task<IResult> (string conversationId, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var conversation = await store.GetConversationAsync(conversationId, cancellationToken);
+            if (conversation is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (conversation.Type != ConversationType.Group)
+            {
+                return Error("invalid_conversation", "Solo puedes salir de chats grupales.", StatusCodes.Status400BadRequest);
+            }
+
+            var participant = conversation.Participants.FirstOrDefault(candidate => candidate.UserId == current.UserId && candidate.RemovedAt is null);
+            if (participant is null)
+            {
+                return Results.NotFound();
+            }
+
+            var now = timeProvider.GetUtcNow();
+            participant.RemovedAt = now;
+            participant.Role = ParticipantRole.Member;
+            participant.CanInvite = false;
+            participant.CanChangePrivacy = false;
+
+            var remainingActive = conversation.Participants
+                .Where(candidate => candidate.RemovedAt is null)
+                .OrderBy(candidate => candidate.JoinedAt)
+                .ToList();
+            var hasActiveAdmin = remainingActive.Any(candidate =>
+                candidate.Role is ParticipantRole.Owner or ParticipantRole.Admin ||
+                candidate.CanInvite ||
+                candidate.CanChangePrivacy);
+            if (!hasActiveAdmin && remainingActive.Count > 0)
+            {
+                var nextAdmin = remainingActive[0];
+                nextAdmin.Role = ParticipantRole.Owner;
+                nextAdmin.CanInvite = true;
+                nextAdmin.CanChangePrivacy = true;
+            }
+
+            conversation.UpdatedAt = now;
+            await store.SaveChangesAsync(cancellationToken);
+            var response = ToConversationResponse(conversation);
+            await NotifyUsers(hub, conversation.Participants.Select(item => item.UserId), "conversation.updated", response);
+            return Results.Ok(response);
+        });
+
         conversations.MapPost("/{conversationId}/messages", async Task<IResult> (string conversationId, SendMessageRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();

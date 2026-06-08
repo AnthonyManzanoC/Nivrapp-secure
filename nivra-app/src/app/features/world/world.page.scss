@@ -34,6 +34,20 @@
   overflow-x: hidden;
 }
 
+@media (max-width: 768px) {
+  .surface::after {
+    content: "";
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 30;
+    height: calc(8px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)));
+    background: var(--nivra-bg);
+    pointer-events: none;
+  }
+}
+
 .panel {
   overflow: hidden;
 }

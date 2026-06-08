@@ -1,12 +1,22 @@
 <ion-content fullscreen class="auth-page">
   <main class="auth-shell">
     <section class="auth-panel">
-      <div class="brand-row">
-        <img src="assets/brand/nivra-mark.svg" alt="">
-        <div>
-          <strong>Nivra</strong>
-          <span>{{ 'LOGIN.TAGLINE' | translate:'Private messenger' }}</span>
+      <div class="auth-topline">
+        <div class="brand-row">
+          <img src="assets/brand/nivra-mark.svg" alt="">
+          <div>
+            <strong>Nivra</strong>
+            <span>{{ 'LOGIN.TAGLINE' | translate:'Private messenger' }}</span>
+          </div>
         </div>
+        <label class="language-picker" [attr.aria-label]="'LOGIN.LANGUAGE_LABEL' | translate:'Elegir idioma'">
+          <ion-icon name="globe-outline"></ion-icon>
+          <select name="loginLanguage" [ngModel]="currentLanguage()" (ngModelChange)="setLanguage($event)">
+            @for (option of languageOptions; track option.value) {
+              <option [value]="option.value">{{ option.native }} · {{ option.labelKey | translate:option.label }}</option>
+            }
+          </select>
+        </label>
       </div>
 
       <h1>{{ 'LOGIN.TITLE' | translate:'Entra a tu espacio privado' }}</h1>

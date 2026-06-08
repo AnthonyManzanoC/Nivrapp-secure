@@ -926,7 +926,7 @@ ion-modal.contact-info-modal {
   z-index: 4;
   min-height: 52px;
   padding:
-    calc(8px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+    calc(12px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
     max(10px, env(safe-area-inset-right))
     8px
     max(10px, env(safe-area-inset-left));
@@ -935,7 +935,6 @@ ion-modal.contact-info-modal {
   gap: 8px;
   border-bottom: 1px solid rgba(255, 255, 255, .1);
   background: var(--nivra-panel-solid);
-  backdrop-filter: var(--nivra-glass);
 }
 
 .contact-info header span {
@@ -1061,7 +1060,7 @@ ion-modal.contact-info-modal {
 
 .contact-actions {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
   gap: 8px;
   padding: 0 14px 14px;
 }
@@ -1085,7 +1084,11 @@ ion-modal.contact-info-modal {
 
 .contact-actions ion-icon {
   color: var(--nivra-brand-2);
-  font-size: 20px;
+}
+
+.contact-actions .danger-action,
+.contact-actions .danger-action ion-icon {
+  color: #ff6b6b;
 }
 
 .contact-section {

@@ -101,7 +101,7 @@
         <div class="panel-headline">
           <div class="radar-heading">
             <h2 class="radar-title">
-              <span>Radar cifrado</span>
+              <span>{{ 'WORLD.RADAR_TITLE' | translate:'Radar cifrado' }}</span>
               @if (contactSync.radarHasNewContact()) {
                 <span class="radar-dot" [attr.aria-label]="'WORLD.NEW_CONTACT_NIVRA' | translate:'Nuevo contacto en Nivra'"></span>
               }
@@ -126,7 +126,7 @@
             </ion-button>
             <ion-button mode="ios" (click)="scanRadar()" [disabled]="busyId === 'radar' || social.radarLoading()">
               @if (social.radarLoading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="scan-outline"></ion-icon> }
-              Escanear
+              {{ 'WORLD.SCAN' | translate:'Escanear' }}
             </ion-button>
           </div>
         </div>
@@ -159,8 +159,8 @@
         </div>
         @if (contactSync.lastDeviceContactCount() > 0) {
           <div class="radar-sync-summary">
-            <strong>Agenda sincronizada</strong>
-            <span>{{ contactSync.lastDeviceContactCount() }} telefonos revisados. Solo aparecen contactos visibles en directorio.</span>
+            <strong>{{ 'WORLD.AGENDA_SYNCED' | translate:'Agenda sincronizada' }}</strong>
+            <span>{{ contactSync.lastDeviceContactCount() }} {{ 'WORLD.PHONES_REVIEWED' | translate:'telefonos revisados' }}. {{ 'WORLD.AGENDA_SYNCED_COPY' | translate:'Solo aparecen contactos visibles en directorio.' }}</span>
           </div>
         }
       </article>
