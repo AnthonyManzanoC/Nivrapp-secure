@@ -28,6 +28,7 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
+import android.provider.ContactsContract;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -38,10 +39,13 @@ import android.view.WindowManager;
 import android.webkit.MimeTypeMap;
 
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -51,27 +55,39 @@ import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import org.json.JSONArray;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 
-@CapacitorPlugin(name = "NivraNative")
+@CapacitorPlugin(
+    name = "NivraNative",
+    permissions = {
+        @Permission(strings = { Manifest.permission.READ_CONTACTS }, alias = NivraNativePlugin.CONTACTS)
+    }
+)
 public class NivraNativePlugin extends Plugin {
+    static final String CONTACTS = "contacts";
     static final String CHANNEL_CALLS = "nivra_calls";
     static final String ACTION_CALL_OPEN = "com.nivra.app.CALL_OPEN";
     static final String ACTION_CALL_ANSWER = "com.nivra.app.CALL_ANSWER";
     static final String ACTION_CALL_REJECT = "com.nivra.app.CALL_REJECT";
+    private static final int MAX_DEVICE_CONTACTS = 5000;
     private static WeakReference<NivraNativePlugin> activePlugin = new WeakReference<>(null);
     private static final List<JSObject> pendingCallActions = new ArrayList<>();
     private static final List<JSObject> pendingShareIntents = new ArrayList<>();
     private static final Set<String> knownSharedUris = new HashSet<>();
     private final Map<String, SaveSession> saveSessions = new HashMap<>();
+    private final ExecutorService contactsExecutor = Executors.newSingleThreadExecutor();
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
     private SensorManager sensorManager;
@@ -218,6 +234,29 @@ public class NivraNativePlugin extends Plugin {
             clipboard.setPrimaryClip(ClipData.newPlainText(label, value));
         }
         call.resolve();
+    }
+
+    @PluginMethod
+    public void getDeviceContacts(PluginCall call) {
+        boolean requestPermission = call.getBoolean("requestPermission", true);
+        if (getPermissionState(CONTACTS) != PermissionState.GRANTED) {
+            if (!requestPermission) {
+                call.reject("Permiso de contactos no concedido.");
+                return;
+            }
+            requestPermissionForAlias(CONTACTS, call, "deviceContactsPermissionCallback");
+            return;
+        }
+        readDeviceContacts(call);
+    }
+
+    @PermissionCallback
+    private void deviceContactsPermissionCallback(PluginCall call) {
+        if (getPermissionState(CONTACTS) != PermissionState.GRANTED) {
+            call.reject("Permiso de contactos no concedido.");
+            return;
+        }
+        readDeviceContacts(call);
     }
 
     @PluginMethod
@@ -499,6 +538,66 @@ public class NivraNativePlugin extends Plugin {
                 notifyListeners("nativeShareIntent", payload, true);
             }
         }
+    }
+
+    private void readDeviceContacts(PluginCall call) {
+        int limit = Math.max(1, Math.min(call.getInt("limit", MAX_DEVICE_CONTACTS), MAX_DEVICE_CONTACTS));
+        contactsExecutor.execute(() -> {
+            try {
+                JSObject result = new JSObject();
+                result.put("permission", "granted");
+                result.put("contacts", queryDeviceContacts(limit));
+                call.resolve(result);
+            } catch (SecurityException error) {
+                call.reject("Nivra no tiene permiso para leer contactos.", error);
+            } catch (Exception error) {
+                call.reject("No se pudieron leer los contactos del dispositivo.", error);
+            }
+        });
+    }
+
+    private JSONArray queryDeviceContacts(int limit) {
+        ContentResolver resolver = getContext().getContentResolver();
+        String[] projection = {
+            ContactsContract.CommonDataKinds.Phone.CONTACT_ID,
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY,
+            ContactsContract.CommonDataKinds.Phone.NUMBER
+        };
+        Map<String, DeviceContact> contacts = new LinkedHashMap<>();
+
+        try (Cursor cursor = resolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            projection,
+            null,
+            null,
+            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME_PRIMARY + " COLLATE LOCALIZED ASC"
+        )) {
+            if (cursor == null) {
+                return new JSONArray();
+            }
+
+            while (cursor.moveToNext() && contacts.size() < limit) {
+                String contactId = cursor.getString(0);
+                String displayName = cursor.getString(1);
+                String number = cursor.getString(2);
+                if (number == null || number.trim().isEmpty()) {
+                    continue;
+                }
+                String key = firstNonBlank(contactId, displayName, number);
+                DeviceContact contact = contacts.get(key);
+                if (contact == null) {
+                    contact = new DeviceContact(contactId, displayName);
+                    contacts.put(key, contact);
+                }
+                contact.addNumber(number);
+            }
+        }
+
+        JSONArray items = new JSONArray();
+        for (DeviceContact contact : contacts.values()) {
+            items.put(contact.toJson());
+        }
+        return items;
     }
 
     private static boolean isShareAction(String action) {
@@ -929,6 +1028,36 @@ public class NivraNativePlugin extends Plugin {
     private String sanitizeFileName(String value) {
         String cleaned = value == null ? "" : value.replaceAll("[\\\\/:*?\"<>|\\n\\r\\t]", "_").trim();
         return cleaned.isEmpty() ? "nivra-file.bin" : cleaned;
+    }
+
+    private static class DeviceContact {
+        final String id;
+        final String displayName;
+        final Set<String> numbers = new LinkedHashSet<>();
+
+        DeviceContact(String id, String displayName) {
+            this.id = id == null ? "" : id;
+            this.displayName = displayName == null ? "" : displayName;
+        }
+
+        void addNumber(String number) {
+            String cleaned = number == null ? "" : number.trim();
+            if (!cleaned.isEmpty()) {
+                numbers.add(cleaned);
+            }
+        }
+
+        JSObject toJson() {
+            JSObject item = new JSObject();
+            item.put("id", id);
+            item.put("displayName", displayName);
+            JSONArray tel = new JSONArray();
+            for (String number : numbers) {
+                tel.put(number);
+            }
+            item.put("tel", tel);
+            return item;
+        }
     }
 
     private static class SaveSession {

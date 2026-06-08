@@ -391,19 +391,47 @@ export class SocialService {
       .map((value) => value.trim())
       .filter(Boolean);
     return [...new Set(candidates
-      .map((value) => this.normalizePhone(value))
-      .filter((value): value is string => Boolean(value)))]
+      .flatMap((value) => this.normalizePhoneCandidates(value)))]
       .slice(0, 512);
   }
 
-  private normalizePhone(value: string): string | null {
-    const trimmed = value.trim();
+  private normalizePhoneCandidates(value: string): string[] {
+    const trimmed = String(value || '').trim();
     const hasPlus = trimmed.startsWith('+');
     const digits = trimmed.replace(/\D/g, '');
     if (digits.length < 7 || digits.length > 15) {
+      return [];
+    }
+    if (hasPlus) {
+      return [`+${digits}`];
+    }
+
+    const candidates = [digits];
+    if (digits.length >= 11) {
+      candidates.push(`+${digits}`);
+    }
+    const localInternational = this.localInternationalCandidate(digits);
+    if (localInternational) {
+      candidates.push(localInternational);
+    }
+    return [...new Set(candidates)];
+  }
+
+  private localInternationalCandidate(digits: string): string | null {
+    const ownPhone = String(this.auth.session()?.user.phone || '').trim();
+    if (!ownPhone.startsWith('+')) {
       return null;
     }
-    return hasPlus ? `+${digits}` : digits;
+    const ownDigits = ownPhone.replace(/\D/g, '');
+    const localDigits = digits.replace(/^0+/, '');
+    if (ownDigits.length < 8 || localDigits.length < 7 || localDigits.length > 12) {
+      return null;
+    }
+    const countryCodeLength = ownDigits.length - localDigits.length;
+    if (countryCodeLength < 1 || countryCodeLength > 3) {
+      return null;
+    }
+    return `+${ownDigits.slice(0, countryCodeLength)}${localDigits}`;
   }
 
   private async hashPhone(normalizedPhone: string): Promise<string> {

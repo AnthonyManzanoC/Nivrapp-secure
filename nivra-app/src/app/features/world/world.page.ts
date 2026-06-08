@@ -188,6 +188,9 @@ export class WorldPage implements OnInit, OnDestroy {
       const phones = await this.contactSync.pickAndSyncDeviceContacts();
       this.radarPhones = phones.join('\n');
       await this.scanRadar();
+      if (!this.social.radarMatches().length && this.contactSync.lastDeviceContactCount()) {
+        this.notice = `${this.contactSync.lastDeviceContactCount()} telefonos sincronizados. Si alguno visible usa Nivra, aparecera aqui.`;
+      }
     });
   }
 
@@ -503,7 +506,31 @@ export class WorldPage implements OnInit, OnDestroy {
   }
 
   isGhostMode(): boolean {
-    return !this.auth.session()?.user?.phone;
+    const user = this.auth.session()?.user;
+    return !user?.phone || user.isDiscoverable === false;
+  }
+
+  radarCountLabel(): string {
+    const count = this.social.radarMatches().length;
+    return `${count} coincidencia${count === 1 ? '' : 's'}`;
+  }
+
+  radarStateIcon(): string {
+    if (this.contactSync.syncing()) {
+      return 'refresh-outline';
+    }
+    return this.isGhostMode() ? 'finger-print-outline' : 'shield-checkmark-outline';
+  }
+
+  radarStateLabel(): string {
+    if (this.contactSync.syncing()) {
+      return 'Sincronizando agenda';
+    }
+    const contactCount = this.contactSync.lastDeviceContactCount();
+    if (contactCount > 0) {
+      return `${contactCount} telefonos listos`;
+    }
+    return this.isGhostMode() ? 'Invisible para agendas' : 'Disponible para coincidencias';
   }
 
   async openAccount(): Promise<void> {

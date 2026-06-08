@@ -99,14 +99,14 @@
 
       <article class="panel span-12 radar-panel">
         <div class="panel-headline">
-          <div>
+          <div class="radar-heading">
             <h2 class="radar-title">
-              Radar cifrado
+              <span>Radar cifrado</span>
               @if (contactSync.radarHasNewContact()) {
                 <span class="radar-dot" [attr.aria-label]="'WORLD.NEW_CONTACT_NIVRA' | translate:'Nuevo contacto en Nivra'"></span>
               }
             </h2>
-            <span class="card-sub">{{ social.radarMatches().length }} coincidencias</span>
+            <span class="card-sub">{{ radarCountLabel() }}</span>
           </div>
           <ion-icon name="scan-outline"></ion-icon>
         </div>
@@ -117,8 +117,8 @@
           </label>
           <div class="radar-control">
             <div class="radar-state" [class.ghost]="isGhostMode()">
-              <ion-icon [name]="isGhostMode() ? 'finger-print-outline' : 'shield-checkmark-outline'"></ion-icon>
-              <span>{{ isGhostMode() ? 'Invisible para agendas' : 'Disponible para coincidencias' }}</span>
+              <ion-icon [name]="radarStateIcon()"></ion-icon>
+              <span>{{ radarStateLabel() }}</span>
             </div>
             <ion-button mode="ios" fill="outline" (click)="pickDeviceContacts()" [disabled]="busyId === 'radar:picker' || social.radarLoading()">
               <ion-icon name="phone-portrait-outline"></ion-icon>
@@ -157,6 +157,12 @@
             <div class="empty-copy">{{ 'WORLD.PRIVATE_MATCHES_EMPTY' | translate:'Las coincidencias privadas aparecen aqui.' }}</div>
           }
         </div>
+        @if (contactSync.lastDeviceContactCount() > 0) {
+          <div class="radar-sync-summary">
+            <strong>Agenda sincronizada</strong>
+            <span>{{ contactSync.lastDeviceContactCount() }} telefonos revisados. Solo aparecen contactos visibles en directorio.</span>
+          </div>
+        }
       </article>
 
       <article class="panel span-5">

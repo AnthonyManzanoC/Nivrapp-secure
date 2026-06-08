@@ -30,6 +30,11 @@ export type NativeCallActionEvent = {
   conversationId?: string;
   at?: number;
 };
+export type NativeDeviceContact = {
+  id?: string;
+  displayName?: string;
+  tel: string[];
+};
 
 interface NativeDiagnostics {
   platform?: string;
@@ -64,6 +69,11 @@ interface SharedChunkResponse {
   eof?: boolean;
 }
 
+interface DeviceContactsResponse {
+  contacts?: NativeDeviceContact[];
+  permission?: string;
+}
+
 interface NivraNativePlugin {
   setSecureScreen(options: { enabled: boolean }): Promise<{ enabled: boolean }>;
   setAudioFocus(options: { active: boolean; mode: AudioFocusMode }): Promise<{ active: boolean }>;
@@ -85,6 +95,7 @@ interface NivraNativePlugin {
   getPendingShareIntent(): Promise<PendingShareResponse>;
   clearPendingShareIntent(options: { id?: string }): Promise<void>;
   readSharedFileChunk(options: { uri: string; offset: number; length: number }): Promise<SharedChunkResponse>;
+  getDeviceContacts(options: { requestPermission?: boolean; limit?: number }): Promise<DeviceContactsResponse>;
   addListener(eventName: 'raiseGesture', listener: (event: RaiseGestureEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'nativeCallAction', listener: (event: NativeCallActionEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'nativeShareIntent', listener: (event: NativeShareIntent) => void): Promise<PluginListenerHandle>;
@@ -181,6 +192,24 @@ export class NativeDeviceService {
       return;
     }
     await NivraNative.clearPendingShareIntent({ id }).catch(() => undefined);
+  }
+
+  async readDeviceContacts(options: { requestPermission?: boolean; limit?: number } = {}): Promise<NativeDeviceContact[]> {
+    if (!this.native) {
+      return [];
+    }
+    const response = await NivraNative.getDeviceContacts({
+      requestPermission: options.requestPermission ?? true,
+      limit: options.limit ?? 5000,
+    });
+    const contacts = Array.isArray(response.contacts) ? response.contacts : [];
+    return contacts
+      .map((contact) => ({
+        id: typeof contact.id === 'string' ? contact.id : '',
+        displayName: typeof contact.displayName === 'string' ? contact.displayName : '',
+        tel: Array.isArray(contact.tel) ? contact.tel.map(String).filter(Boolean) : [],
+      }))
+      .filter((contact) => contact.tel.length > 0);
   }
 
   async sharedFileToFile(item: NativeShareFile): Promise<File> {

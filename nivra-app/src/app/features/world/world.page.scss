@@ -152,10 +152,24 @@
   background: rgba(114, 240, 202, .08);
 }
 
+.radar-heading {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
 .radar-title {
-  display: inline-flex;
+  min-width: 0;
+  display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.radar-title span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .radar-dot {
@@ -210,13 +224,42 @@
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  line-height: 1.18;
 }
 
 .radar-results {
   display: grid;
   gap: 8px;
   margin-top: 12px;
+}
+
+.radar-sync-summary {
+  min-width: 0;
+  margin-top: 10px;
+  border: 1px solid rgba(114, 240, 202, .16);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 3px;
+  color: var(--nivra-soft);
+  background: rgba(114, 240, 202, .055);
+}
+
+.radar-sync-summary strong,
+.radar-sync-summary span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.radar-sync-summary strong {
+  color: var(--nivra-text);
+}
+
+.radar-sync-summary span {
+  color: var(--nivra-muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .contact-list,
