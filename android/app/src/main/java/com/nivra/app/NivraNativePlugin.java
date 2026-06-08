@@ -15,6 +15,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.database.Cursor;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
@@ -22,9 +23,11 @@ import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
+import android.os.Parcelable;
 import android.os.PowerManager;
 import android.os.SystemClock;
 import android.provider.MediaStore;
+import android.provider.OpenableColumns;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -32,6 +35,7 @@ import android.hardware.SensorManager;
 import android.util.Base64;
 import android.view.Window;
 import android.view.WindowManager;
+import android.webkit.MimeTypeMap;
 
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -41,13 +45,18 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+
+import org.json.JSONArray;
 
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
@@ -60,6 +69,8 @@ public class NivraNativePlugin extends Plugin {
     static final String ACTION_CALL_REJECT = "com.nivra.app.CALL_REJECT";
     private static WeakReference<NivraNativePlugin> activePlugin = new WeakReference<>(null);
     private static final List<JSObject> pendingCallActions = new ArrayList<>();
+    private static final List<JSObject> pendingShareIntents = new ArrayList<>();
+    private static final Set<String> knownSharedUris = new HashSet<>();
     private final Map<String, SaveSession> saveSessions = new HashMap<>();
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
@@ -107,6 +118,7 @@ public class NivraNativePlugin extends Plugin {
     public void load() {
         activePlugin = new WeakReference<>(this);
         flushPendingCallActions();
+        flushPendingShareIntents();
     }
 
     @PluginMethod
@@ -297,6 +309,73 @@ public class NivraNativePlugin extends Plugin {
         call.resolve();
     }
 
+    @PluginMethod
+    public void getPendingShareIntent(PluginCall call) {
+        JSObject result = new JSObject();
+        synchronized (pendingShareIntents) {
+            result.put(
+                "share",
+                pendingShareIntents.isEmpty() ? null : pendingShareIntents.get(pendingShareIntents.size() - 1)
+            );
+        }
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void clearPendingShareIntent(PluginCall call) {
+        String id = call.getString("id", "");
+        synchronized (pendingShareIntents) {
+            if (id.trim().isEmpty()) {
+                pendingShareIntents.clear();
+            } else {
+                for (int index = pendingShareIntents.size() - 1; index >= 0; index -= 1) {
+                    if (id.equals(pendingShareIntents.get(index).optString("id", ""))) {
+                        pendingShareIntents.remove(index);
+                    }
+                }
+            }
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void readSharedFileChunk(PluginCall call) {
+        String uriValue = call.getString("uri", "");
+        if (uriValue.trim().isEmpty() || !isKnownSharedUri(uriValue)) {
+            call.reject("Archivo compartido no disponible.");
+            return;
+        }
+
+        int offset = Math.max(0, call.getInt("offset", 0));
+        int length = Math.max(1, Math.min(call.getInt("length", 384 * 1024), 512 * 1024));
+        Uri uri = Uri.parse(uriValue);
+        try (InputStream input = getContext().getContentResolver().openInputStream(uri)) {
+            if (input == null) {
+                call.reject("No se pudo abrir el archivo compartido.");
+                return;
+            }
+            skipFully(input, offset);
+            byte[] buffer = new byte[length];
+            int total = 0;
+            while (total < length) {
+                int read = input.read(buffer, total, length - total);
+                if (read < 0) {
+                    break;
+                }
+                total += read;
+            }
+
+            byte[] out = total == buffer.length ? buffer : java.util.Arrays.copyOf(buffer, total);
+            JSObject result = new JSObject();
+            result.put("base64", Base64.encodeToString(out, Base64.NO_WRAP));
+            result.put("bytesRead", total);
+            result.put("eof", total < length);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("No se pudo leer el archivo compartido.", error);
+        }
+    }
+
     public static void showIncomingCallNotification(Context context, Map<String, String> data) {
         if (context == null || data == null) {
             return;
@@ -379,6 +458,28 @@ public class NivraNativePlugin extends Plugin {
         return false;
     }
 
+    public static boolean handleShareIntent(Context context, Intent intent) {
+        if (context == null || intent == null || !isShareAction(intent.getAction())) {
+            return false;
+        }
+
+        JSObject payload = sharePayload(context, intent);
+        if (payload == null || sharePayloadIsEmpty(payload)) {
+            return false;
+        }
+
+        synchronized (pendingShareIntents) {
+            pendingShareIntents.add(payload);
+        }
+
+        NivraNativePlugin plugin = activePlugin.get();
+        if (plugin != null) {
+            plugin.notifyListeners("nativeShareIntent", payload, true);
+            return true;
+        }
+        return false;
+    }
+
     public static boolean hasActivePlugin() {
         return activePlugin.get() != null;
     }
@@ -389,6 +490,165 @@ public class NivraNativePlugin extends Plugin {
                 notifyListeners("nativeCallAction", payload, true);
             }
             pendingCallActions.clear();
+        }
+    }
+
+    private void flushPendingShareIntents() {
+        synchronized (pendingShareIntents) {
+            for (JSObject payload : pendingShareIntents) {
+                notifyListeners("nativeShareIntent", payload, true);
+            }
+        }
+    }
+
+    private static boolean isShareAction(String action) {
+        return Intent.ACTION_SEND.equals(action) || Intent.ACTION_SEND_MULTIPLE.equals(action);
+    }
+
+    private static JSObject sharePayload(Context context, Intent intent) {
+        JSObject payload = new JSObject();
+        payload.put("id", UUID.randomUUID().toString());
+        payload.put("action", intent.getAction());
+        payload.put("mimeType", firstNonBlank(intent.getType(), "", ""));
+        payload.put("subject", charSequenceExtra(intent, Intent.EXTRA_SUBJECT));
+        payload.put("text", charSequenceExtra(intent, Intent.EXTRA_TEXT));
+        payload.put("at", System.currentTimeMillis());
+
+        JSONArray files = new JSONArray();
+        List<Uri> uris = sharedUris(intent);
+        for (int index = 0; index < uris.size(); index += 1) {
+            files.put(sharedFilePayload(context, uris.get(index), intent.getType(), index));
+        }
+        payload.put("files", files);
+        return payload;
+    }
+
+    private static boolean sharePayloadIsEmpty(JSObject payload) {
+        JSONArray files = payload.optJSONArray("files");
+        return (files == null || files.length() == 0)
+            && payload.optString("text", "").trim().isEmpty()
+            && payload.optString("subject", "").trim().isEmpty();
+    }
+
+    private static List<Uri> sharedUris(Intent intent) {
+        List<Uri> result = new ArrayList<>();
+        Set<String> seen = new HashSet<>();
+
+        ClipData clipData = intent.getClipData();
+        if (clipData != null) {
+            for (int index = 0; index < clipData.getItemCount(); index += 1) {
+                addSharedUri(result, seen, clipData.getItemAt(index).getUri());
+            }
+        }
+
+        ArrayList<Parcelable> streams = intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+        if (streams != null) {
+            for (Parcelable stream : streams) {
+                if (stream instanceof Uri) {
+                    addSharedUri(result, seen, (Uri) stream);
+                }
+            }
+        }
+
+        Parcelable stream = intent.getParcelableExtra(Intent.EXTRA_STREAM);
+        if (stream instanceof Uri) {
+            addSharedUri(result, seen, (Uri) stream);
+        }
+
+        return result;
+    }
+
+    private static void addSharedUri(List<Uri> result, Set<String> seen, Uri uri) {
+        if (uri == null) {
+            return;
+        }
+        String value = uri.toString();
+        if (seen.add(value)) {
+            result.add(uri);
+            synchronized (knownSharedUris) {
+                knownSharedUris.add(value);
+            }
+        }
+    }
+
+    private static JSObject sharedFilePayload(Context context, Uri uri, String fallbackMime, int index) {
+        ContentResolver resolver = context.getContentResolver();
+        String mimeType = firstNonBlank(safeMimeType(resolver, uri), fallbackMime, "application/octet-stream");
+        String name = "";
+        long size = -1;
+
+        try (Cursor cursor = resolver.query(uri, null, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (nameIndex >= 0) {
+                    name = firstNonBlank(cursor.getString(nameIndex), "", "");
+                }
+                int sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) {
+                    size = cursor.getLong(sizeIndex);
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        if (name.trim().isEmpty()) {
+            name = fileNameFromUri(uri, mimeType, index);
+        }
+
+        JSObject item = new JSObject();
+        item.put("uri", uri.toString());
+        item.put("name", sanitizeSharedFileName(name));
+        item.put("mimeType", mimeType);
+        item.put("size", size);
+        return item;
+    }
+
+    private static String safeMimeType(ContentResolver resolver, Uri uri) {
+        try {
+            return resolver.getType(uri);
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
+    private static String fileNameFromUri(Uri uri, String mimeType, int index) {
+        String last = uri.getLastPathSegment();
+        String clean = last == null ? "" : last.replaceAll(".*/", "").trim();
+        if (!clean.isEmpty() && clean.length() <= 96) {
+            return clean;
+        }
+        String extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType);
+        return "nivra-share-" + (index + 1) + (extension == null || extension.isEmpty() ? ".bin" : "." + extension);
+    }
+
+    private static String sanitizeSharedFileName(String value) {
+        String cleaned = value == null ? "" : value.replaceAll("[\\\\/:*?\"<>|\\n\\r\\t]", "_").trim();
+        return cleaned.isEmpty() ? "nivra-share.bin" : cleaned;
+    }
+
+    private static String charSequenceExtra(Intent intent, String key) {
+        CharSequence value = intent.getCharSequenceExtra(key);
+        return value == null ? "" : value.toString();
+    }
+
+    private static boolean isKnownSharedUri(String uriValue) {
+        synchronized (knownSharedUris) {
+            return knownSharedUris.contains(uriValue);
+        }
+    }
+
+    private static void skipFully(InputStream input, int offset) throws Exception {
+        long remaining = offset;
+        while (remaining > 0) {
+            long skipped = input.skip(remaining);
+            if (skipped > 0) {
+                remaining -= skipped;
+                continue;
+            }
+            if (input.read() < 0) {
+                break;
+            }
+            remaining -= 1;
         }
     }
 

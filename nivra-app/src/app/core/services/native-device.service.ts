@@ -6,6 +6,21 @@ import { AuthService } from './auth.service';
 type AudioFocusMode = 'record' | 'playback';
 type MediaKind = 'image' | 'video' | 'audio' | 'document';
 export type RaiseGestureEvent = { kind: 'listen' | 'talk'; near: boolean; at: number };
+export type NativeShareFile = {
+  uri: string;
+  name?: string;
+  mimeType?: string;
+  size?: number;
+};
+export type NativeShareIntent = {
+  id: string;
+  action?: string;
+  mimeType?: string;
+  subject?: string;
+  text?: string;
+  files?: NativeShareFile[];
+  at?: number;
+};
 export type NativeCallActionEvent = {
   action: 'answer' | 'reject' | 'open';
   callId?: string;
@@ -39,6 +54,16 @@ interface SaveFileResponse {
   public?: boolean;
 }
 
+interface PendingShareResponse {
+  share?: NativeShareIntent | null;
+}
+
+interface SharedChunkResponse {
+  base64?: string;
+  bytesRead?: number;
+  eof?: boolean;
+}
+
 interface NivraNativePlugin {
   setSecureScreen(options: { enabled: boolean }): Promise<{ enabled: boolean }>;
   setAudioFocus(options: { active: boolean; mode: AudioFocusMode }): Promise<{ active: boolean }>;
@@ -57,8 +82,12 @@ interface NivraNativePlugin {
     conversationId?: string;
   }): Promise<void>;
   clearIncomingCall(options: { callId: string }): Promise<void>;
+  getPendingShareIntent(): Promise<PendingShareResponse>;
+  clearPendingShareIntent(options: { id?: string }): Promise<void>;
+  readSharedFileChunk(options: { uri: string; offset: number; length: number }): Promise<SharedChunkResponse>;
   addListener(eventName: 'raiseGesture', listener: (event: RaiseGestureEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'nativeCallAction', listener: (event: NativeCallActionEvent) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'nativeShareIntent', listener: (event: NativeShareIntent) => void): Promise<PluginListenerHandle>;
 }
 
 const NivraNative = registerPlugin<NivraNativePlugin>('NivraNative');
@@ -130,6 +159,56 @@ export class NativeDeviceService {
       return null;
     }
     return NivraNative.addListener('nativeCallAction', listener);
+  }
+
+  async onNativeShareIntent(listener: (event: NativeShareIntent) => void): Promise<PluginListenerHandle | null> {
+    if (!this.native) {
+      return null;
+    }
+    return NivraNative.addListener('nativeShareIntent', listener);
+  }
+
+  async getPendingShareIntent(): Promise<NativeShareIntent | null> {
+    if (!this.native) {
+      return null;
+    }
+    const response = await NivraNative.getPendingShareIntent().catch(() => ({ share: null }));
+    return response.share ?? null;
+  }
+
+  async clearPendingShareIntent(id?: string): Promise<void> {
+    if (!this.native) {
+      return;
+    }
+    await NivraNative.clearPendingShareIntent({ id }).catch(() => undefined);
+  }
+
+  async sharedFileToFile(item: NativeShareFile): Promise<File> {
+    if (!this.native || !item.uri) {
+      throw new Error('Archivo compartido no disponible.');
+    }
+    const chunkSize = 384 * 1024;
+    const chunks: Uint8Array[] = [];
+    let offset = 0;
+    for (;;) {
+      const chunk = await NivraNative.readSharedFileChunk({
+        uri: item.uri,
+        offset,
+        length: chunkSize,
+      });
+      const bytes = this.base64ToBytes(chunk.base64 || '');
+      if (bytes.length) {
+        chunks.push(bytes);
+        offset += bytes.length;
+      }
+      if (chunk.eof || !bytes.length) {
+        break;
+      }
+    }
+    const mimeType = item.mimeType || 'application/octet-stream';
+    const fileName = this.safeSharedFileName(item.name, mimeType);
+    const parts = chunks.map((bytes) => bytes.slice().buffer as ArrayBuffer);
+    return new File(parts, fileName, { type: mimeType, lastModified: Date.now() });
   }
 
   async copyToClipboard(value: string, label = 'Nivra'): Promise<void> {
@@ -205,5 +284,29 @@ export class NativeDeviceService {
       reader.onerror = () => reject(reader.error);
       reader.readAsDataURL(blob);
     });
+  }
+
+  private base64ToBytes(value: string): Uint8Array {
+    if (!value) {
+      return new Uint8Array();
+    }
+    const binary = atob(value);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
+  }
+
+  private safeSharedFileName(name: string | null | undefined, mimeType: string): string {
+    const cleaned = (name || '').replace(/[\\/:*?"<>|\n\r\t]/g, '_').trim();
+    if (cleaned) {
+      return cleaned;
+    }
+    const extension = mimeType.startsWith('image/') ? mimeType.slice(6)
+      : mimeType.startsWith('video/') ? mimeType.slice(6)
+        : mimeType.startsWith('audio/') ? mimeType.slice(6)
+          : 'bin';
+    return `nivra-share.${extension || 'bin'}`;
   }
 }

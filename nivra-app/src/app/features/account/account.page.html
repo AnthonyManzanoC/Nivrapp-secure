@@ -94,21 +94,29 @@
       <article class="panel span-5 appearance-panel">
         <div class="appearance-heading">
           <div class="appearance-icon">
-            <ion-icon [name]="lightTheme ? 'sunny-outline' : 'moon-outline'"></ion-icon>
+            <ion-icon [name]="themeModeIcon()"></ion-icon>
           </div>
           <div>
             <h2>{{ 'ACCOUNT.APPEARANCE' | translate:'Apariencia' }}</h2>
-            <p class="card-sub">{{ lightTheme ? ('ACCOUNT.APPEARANCE_LIGHT_COPY' | translate:'Grises iOS, texto nitido y sombras suaves.') : ('ACCOUNT.APPEARANCE_DARK_COPY' | translate:'Oscuro Nivra con contraste nocturno.') }}</p>
+            <p class="card-sub">{{ appearanceCopy() }}</p>
           </div>
         </div>
-        <label class="toggle-row theme-toggle-row">
-          <span>
-            <strong>{{ lightTheme ? ('ACCOUNT.LIGHT_THEME' | translate:'Tema claro') : ('ACCOUNT.DARK_THEME' | translate:'Tema oscuro') }}</strong>
-            <small>{{ lightTheme ? ('ACCOUNT.LIGHT_COPY' | translate:'Limpio, legible y luminoso.') : ('ACCOUNT.DARK_COPY' | translate:'Privado, profundo y enfocado.') }}</small>
-          </span>
-          <ion-toggle mode="ios" [checked]="lightTheme" (ionChange)="setLightTheme($event.detail.checked)" [attr.aria-label]="'ACCOUNT.TOGGLE_LIGHT_THEME' | translate:'Cambiar tema claro'"></ion-toggle>
-        </label>
-        <div class="theme-preview" [class.light]="lightTheme" aria-hidden="true">
+        <div class="theme-mode-grid" role="group" [attr.aria-label]="'settings.theme.mode' | translate:'Modo de tema'">
+          @for (option of themeModeOptions; track option.value) {
+            <button type="button" class="theme-mode-option" [class.active]="currentThemeMode() === option.value" [attr.aria-pressed]="currentThemeMode() === option.value" (click)="setThemeMode(option.value)">
+              <ion-icon [name]="themeModeIcon(option.value)"></ion-icon>
+              <span>
+                <strong>{{ option.labelKey | translate:option.label }}</strong>
+                <small>{{ themeModeDescription(option.value) }}</small>
+              </span>
+            </button>
+          }
+        </div>
+        <div class="theme-resolved-row">
+          <span>{{ t('settings.theme.activeNow', 'Activo ahora') }}</span>
+          <strong>{{ resolvedThemeLabel() }}</strong>
+        </div>
+        <div class="theme-preview" [class.light]="resolvedLightTheme()" aria-hidden="true">
           <span class="preview-pill primary"></span>
           <span class="preview-pill secondary"></span>
           <span class="preview-line long"></span>

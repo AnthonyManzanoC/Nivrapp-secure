@@ -17,18 +17,17 @@
 }
 
 .chat-header {
-  background: var(--nivra-bg) !important;
+  background: #080d0f !important;
   box-shadow: none;
 }
 
 ion-toolbar {
   position: relative;
-  --background: rgba(8, 13, 15, .88);
-  --border-color: var(--nivra-line);
+  --background: #080d0f;
+  --border-color: transparent;
   --color: var(--nivra-text);
   min-height: 68px;
   padding-inline: 8px;
-  backdrop-filter: var(--nivra-glass);
 }
 
 .group-call-banner {
@@ -1597,14 +1596,21 @@ ion-modal.forward-modal {
 :host-context(.nivra-light-theme) .chat-header,
 :host-context(.nivra-light-theme) .composer-footer {
   color: #000;
+}
+
+:host-context(.nivra-light-theme) .chat-header {
+  background: #ffffff !important;
+  box-shadow: none;
+}
+
+:host-context(.nivra-light-theme) .composer-footer {
   background: rgba(255, 255, 255, .94) !important;
-  box-shadow: 0 1px 0 rgba(60, 60, 67, .12);
-  backdrop-filter: blur(18px) saturate(160%);
+  box-shadow: 0 -1px 0 rgba(60, 60, 67, .1);
 }
 
 :host-context(.nivra-light-theme) ion-toolbar {
-  --background: rgba(255, 255, 255, .94);
-  --border-color: rgba(60, 60, 67, .14);
+  --background: #ffffff;
+  --border-color: transparent;
   --color: #000;
   color: #000;
 }

@@ -48,6 +48,10 @@ export const routes: Routes = [
         loadComponent: () => import('./features/calls/calls.page').then((m) => m.CallsPage),
       },
       {
+        path: 'share',
+        loadComponent: () => import('./features/share-target/share-target.page').then((m) => m.ShareTargetPage),
+      },
+      {
         path: 'account',
         loadComponent: () => import('./features/account/account.page').then((m) => m.AccountPage),
       },

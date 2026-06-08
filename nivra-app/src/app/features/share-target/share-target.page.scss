@@ -1,0 +1,361 @@
+:host {
+  display: block;
+  height: 100%;
+}
+
+.share-page {
+  --background: transparent;
+  color: var(--nivra-text);
+}
+
+.share-shell {
+  min-height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
+  gap: 12px;
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .09), transparent 30%),
+    linear-gradient(220deg, rgba(255, 122, 122, .07), transparent 28%),
+    linear-gradient(180deg, #070b0d, #0d1417);
+}
+
+.share-head {
+  min-height: 58px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.share-head ion-button,
+.send-bar ion-button {
+  --border-radius: 999px;
+}
+
+.share-head h1,
+.share-head p {
+  margin: 0;
+}
+
+.share-head h1 {
+  color: var(--nivra-text);
+  font-size: clamp(22px, 3vw, 30px);
+  line-height: 1.05;
+}
+
+.share-head p,
+.preview-head span,
+.file-row small,
+.shared-text p,
+.message-box span,
+.target-copy small,
+.send-bar span,
+.target-empty {
+  color: var(--nivra-muted);
+}
+
+.share-layout {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.share-preview,
+.target-panel,
+.send-bar,
+.share-empty {
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .075), rgba(255, 255, 255, .028)),
+    rgba(8, 13, 15, .78);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 18px 46px rgba(0, 0, 0, .24);
+  backdrop-filter: blur(18px) saturate(135%);
+}
+
+.share-preview {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, auto) auto minmax(0, 1fr);
+  align-content: start;
+  gap: 12px;
+  padding: 12px;
+  overflow: hidden;
+}
+
+.preview-head,
+.send-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.preview-head strong,
+.send-bar strong {
+  color: var(--nivra-text);
+}
+
+.preview-head span {
+  min-width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  background: rgba(24, 214, 162, .1);
+  font-weight: 850;
+}
+
+.file-stack {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow: auto;
+}
+
+.file-row {
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px;
+  background: rgba(255, 255, 255, .04);
+}
+
+.file-row > span {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: #04100d;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+}
+
+.file-row ion-icon {
+  font-size: 21px;
+}
+
+.file-row div,
+.target-copy,
+.send-bar div {
+  min-width: 0;
+}
+
+.file-row strong,
+.file-row small,
+.target-copy strong,
+.target-copy small,
+.send-bar strong,
+.send-bar span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shared-text {
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 8px;
+  padding: 10px;
+  background: rgba(255, 255, 255, .035);
+}
+
+.shared-text strong {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.shared-text p {
+  max-height: 96px;
+  margin: 0;
+  overflow: auto;
+  line-height: 1.35;
+}
+
+.message-box {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+}
+
+.message-box ion-textarea {
+  --background: rgba(255, 255, 255, .055);
+  --border-radius: 8px;
+  --color: var(--nivra-text);
+  --placeholder-color: var(--nivra-muted);
+  --padding-start: 12px;
+  --padding-end: 12px;
+  --padding-top: 10px;
+  --padding-bottom: 10px;
+}
+
+.target-panel {
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding: 12px;
+  overflow: hidden;
+}
+
+.target-search {
+  min-height: 44px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: rgba(255, 255, 255, .055);
+}
+
+.target-search ion-icon {
+  color: var(--nivra-muted);
+}
+
+.target-search input {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  color: var(--nivra-text);
+  background: transparent;
+}
+
+.target-list {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  align-content: start;
+  gap: 7px;
+  padding-top: 10px;
+}
+
+.target-list button {
+  min-height: 62px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .04);
+  text-align: left;
+  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+}
+
+.target-list button:hover {
+  border-color: rgba(24, 214, 162, .22);
+  background: rgba(24, 214, 162, .07);
+}
+
+.target-list button.selected {
+  border-color: rgba(24, 214, 162, .38);
+  background:
+    linear-gradient(90deg, rgba(24, 214, 162, .13), rgba(107, 168, 255, .07)),
+    rgba(255, 255, 255, .045);
+}
+
+.target-avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  object-fit: cover;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .17), rgba(255, 255, 255, .035)),
+    linear-gradient(135deg, rgba(24, 214, 162, .38), rgba(107, 168, 255, .22));
+  font-weight: 900;
+}
+
+.target-check {
+  width: 30px;
+  height: 30px;
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #04100d;
+  background: rgba(255, 255, 255, .045);
+}
+
+.target-list button.selected .target-check {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+}
+
+.target-empty,
+.share-empty {
+  display: grid;
+  place-items: center;
+  text-align: center;
+}
+
+.target-empty {
+  min-height: 180px;
+  border: 1px dashed var(--nivra-line);
+  border-radius: 8px;
+}
+
+.share-empty {
+  min-height: 320px;
+  gap: 10px;
+  padding: 24px;
+}
+
+.share-empty ion-icon {
+  font-size: 42px;
+  color: var(--nivra-brand-2);
+}
+
+.send-bar {
+  min-height: 70px;
+  padding: 10px 12px;
+}
+
+.send-bar .error {
+  color: #ffb4b4;
+}
+
+.send-bar .send {
+  min-width: 126px;
+  --background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+  --color: #04100d;
+  font-weight: 950;
+}
+
+@media (max-width: 820px) {
+  .share-shell {
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    padding-bottom: calc(var(--nivra-bottom-nav-height) + env(safe-area-inset-bottom) + 12px);
+  }
+
+  .share-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .share-preview {
+    max-height: 42dvh;
+  }
+
+  .target-panel {
+    min-height: 280px;
+  }
+
+  .send-bar {
+    position: sticky;
+    bottom: 0;
+  }
+}

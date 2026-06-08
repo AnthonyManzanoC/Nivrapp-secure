@@ -96,6 +96,91 @@
   font-weight: 650;
 }
 
+.theme-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.theme-mode-option {
+  min-height: 72px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 10px;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .08), rgba(255, 255, 255, .025)),
+    rgba(255, 255, 255, .04);
+  text-align: left;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+
+.theme-mode-option ion-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--nivra-brand-2);
+}
+
+.theme-mode-option span {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.theme-mode-option strong,
+.theme-mode-option small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.theme-mode-option strong {
+  color: var(--nivra-text);
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+
+.theme-mode-option small {
+  color: var(--nivra-muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.theme-mode-option.active {
+  border-color: rgba(114, 240, 202, .45);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .18), rgba(107, 168, 255, .08)),
+    rgba(255, 255, 255, .06);
+  box-shadow: 0 0 0 1px rgba(114, 240, 202, .12), var(--nivra-shadow-tiny);
+}
+
+.theme-resolved-row {
+  min-height: 38px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  color: var(--nivra-muted);
+  background: rgba(255, 255, 255, .035);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.theme-resolved-row strong {
+  color: var(--nivra-text);
+  font-size: 13px;
+}
+
 .theme-preview {
   min-height: 68px;
   border: 1px solid var(--nivra-line);
@@ -1212,6 +1297,32 @@ ion-modal.pin-setup-modal {
     rgba(24, 214, 162, .08);
 }
 
+:host-context(.nivra-light-theme) .theme-mode-option,
+:host-context(.nivra-light-theme) .theme-resolved-row {
+  border-color: var(--nivra-line);
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .95), rgba(247, 248, 251, .76)),
+    #ffffff;
+  box-shadow: var(--nivra-shadow-tiny);
+}
+
+:host-context(.nivra-light-theme) .theme-mode-option.active {
+  border-color: rgba(24, 214, 162, .38);
+  background:
+    linear-gradient(135deg, rgba(24, 214, 162, .16), rgba(52, 120, 246, .07)),
+    #ffffff;
+}
+
+:host-context(.nivra-light-theme) .theme-mode-option ion-icon {
+  color: var(--nivra-brand-contrast);
+}
+
+:host-context(.nivra-light-theme) .theme-mode-option small,
+:host-context(.nivra-light-theme) .theme-resolved-row {
+  color: var(--nivra-soft);
+}
+
 :host-context(.nivra-light-theme) .app-lock-preview {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .95), rgba(247, 248, 251, .82)),
@@ -1369,6 +1480,14 @@ ion-modal.pin-setup-modal {
   .appearance-icon {
     width: 46px;
     height: 46px;
+  }
+
+  .theme-mode-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .theme-mode-option {
+    min-height: 56px;
   }
 
   .app-lock-heading {

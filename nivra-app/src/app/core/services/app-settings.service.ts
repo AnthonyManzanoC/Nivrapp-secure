@@ -125,13 +125,14 @@ export class AppSettingsService {
   private readonly systemThemeQuery = typeof window !== 'undefined' && 'matchMedia' in window
     ? window.matchMedia('(prefers-color-scheme: light)')
     : null;
+  private readonly systemLightTheme = signal(this.systemThemeQuery?.matches ?? false);
   private currentStorageKey = this.storageKey();
 
   readonly settings = signal<NivraAppSettings>(this.loadSettings(this.currentStorageKey));
   readonly accent = computed(() => ACCENTS[this.settings().accentColor] ?? ACCENTS['nivra']);
 
   constructor() {
-    const systemThemeListener = () => this.applyToDocument(this.settings());
+    const systemThemeListener = () => this.systemLightTheme.set(this.systemThemeQuery?.matches ?? false);
     this.systemThemeQuery?.addEventListener('change', systemThemeListener);
     this.destroyRef.onDestroy(() => this.systemThemeQuery?.removeEventListener('change', systemThemeListener));
 
@@ -170,7 +171,7 @@ export class AppSettingsService {
     if (settings.themeMode === 'dark') {
       return false;
     }
-    return this.systemThemeQuery?.matches ?? false;
+    return this.systemLightTheme();
   }
 
   formatSettingValue(key: keyof NivraAppSettings): string {
@@ -326,9 +327,13 @@ export class AppSettingsService {
     const root = document.documentElement;
     document.body.classList.toggle('nivra-light-theme', light);
     root.classList.toggle('nivra-light-theme', light);
+    document.body.classList.toggle('ion-palette-dark', !light);
+    root.classList.toggle('ion-palette-dark', !light);
     document.body.classList.toggle('nivra-animations-off', !settings.animationsEnabled);
     root.classList.toggle('nivra-animations-off', !settings.animationsEnabled);
     this.syncIonicAnimations(settings.animationsEnabled);
+    document.body.dataset['nivraThemeMode'] = settings.themeMode;
+    root.dataset['nivraThemeMode'] = settings.themeMode;
     document.body.dataset['nivraWallpaper'] = settings.chatWallpaper;
     document.body.dataset['nivraListDensity'] = settings.chatListDensity;
     document.body.dataset['nivraChatTone'] = this.chatBackgroundTone(settings);

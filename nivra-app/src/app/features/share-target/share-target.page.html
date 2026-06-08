@@ -1,0 +1,124 @@
+<ion-content fullscreen class="share-page">
+  <main class="share-shell">
+    <header class="share-head">
+      <ion-button mode="ios" fill="clear" (click)="back()" [attr.aria-label]="'COMMON.BACK' | translate:'Volver'">
+        <ion-icon name="arrow-back-outline"></ion-icon>
+      </ion-button>
+      <div>
+        <h1>{{ 'SHARE.TITLE' | translate:'Enviar a' }}</h1>
+        <p>{{ selectedCount() ? (selectedCount() + ' ' + ('SHARE.SELECTED' | translate:'seleccionados')) : ('SHARE.CHOOSE_CONTACTS' | translate:'Elige contactos') }}</p>
+      </div>
+      <ion-button mode="ios" fill="clear" (click)="discardShare()" [disabled]="sending" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+        <ion-icon name="close-outline"></ion-icon>
+      </ion-button>
+    </header>
+
+    @if (loading) {
+      <section class="share-empty">
+        <ion-spinner name="crescent"></ion-spinner>
+        <span>{{ 'COMMON.LOADING' | translate:'Cargando' }}</span>
+      </section>
+    } @else if (!hasShareContent()) {
+      <section class="share-empty">
+        <ion-icon name="document-attach-outline"></ion-icon>
+        <strong>{{ 'SHARE.EMPTY' | translate:'No hay contenido pendiente' }}</strong>
+        <ion-button mode="ios" (click)="refreshShare()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</ion-button>
+      </section>
+    } @else {
+      <section class="share-layout">
+        <aside class="share-preview">
+          <div class="preview-head">
+            <strong>{{ 'SHARE.CONTENT' | translate:'Contenido' }}</strong>
+            <span>{{ sharedFiles().length || (sharedText() ? 1 : 0) }}</span>
+          </div>
+          @if (sharedFiles().length) {
+            <div class="file-stack">
+              @for (item of sharedFiles(); track item.uri) {
+                <article class="file-row">
+                  <span>
+                    <ion-icon [name]="fileIcon(item)"></ion-icon>
+                  </span>
+                  <div>
+                    <strong>{{ item.name || fileKindLabel(item) }}</strong>
+                    <small>{{ fileKindLabel(item) }} - {{ fileSize(item) }}</small>
+                  </div>
+                </article>
+              }
+            </div>
+          }
+          @if (sharedText()) {
+            <div class="shared-text">
+              <strong>{{ 'COMMON.MESSAGE' | translate:'Mensaje' }}</strong>
+              <p>{{ sharedText() }}</p>
+            </div>
+          }
+          <label class="message-box">
+            <span>{{ 'SHARE.ADD_MESSAGE' | translate:'Agregar mensaje' }}</span>
+            <ion-textarea
+              mode="ios"
+              name="note"
+              [(ngModel)]="note"
+              autoGrow="true"
+              rows="3"
+              maxlength="1200"
+              [disabled]="sending"
+              [placeholder]="'CHAT.ATTACHMENT_CAPTION' | translate:'Agregar mensaje al adjunto'">
+            </ion-textarea>
+          </label>
+        </aside>
+
+        <section class="target-panel">
+          <div class="target-search">
+            <ion-icon name="search-outline"></ion-icon>
+            <input [(ngModel)]="query" [disabled]="sending" [placeholder]="'CHAT.SEARCH_CHAT' | translate:'Buscar chat'">
+          </div>
+          <div class="target-list">
+            @for (target of visibleTargets(); track target.id) {
+              <button type="button" [class.selected]="selectedTargetIds.has(target.id)" (click)="toggleTarget(target)" [disabled]="sending">
+                @if (target.photo) {
+                  <img class="target-avatar" [src]="target.photo" alt="">
+                } @else {
+                  <span class="target-avatar">{{ target.initials }}</span>
+                }
+                <span class="target-copy">
+                  <strong>{{ target.title }}</strong>
+                  <small>{{ target.subtitle }}</small>
+                </span>
+                <span class="target-check">
+                  @if (selectedTargetIds.has(target.id)) {
+                    <ion-icon name="checkmark-outline"></ion-icon>
+                  }
+                </span>
+              </button>
+            } @empty {
+              <div class="target-empty">{{ 'CHAT.NO_CHATS_AVAILABLE' | translate:'No hay chats disponibles.' }}</div>
+            }
+          </div>
+        </section>
+      </section>
+
+      <footer class="send-bar">
+        <div>
+          @if (error) {
+            <strong class="error">{{ error }}</strong>
+          } @else if (notice) {
+            <strong>{{ notice }}</strong>
+          } @else if (sendProgress) {
+            <strong>{{ sendProgress }}</strong>
+          } @else {
+            <strong>{{ selectedCount() ? selectedCount() + ' ' + ('SHARE.READY' | translate:'listos') : ('SHARE.SELECT_DESTINATION' | translate:'Selecciona destino') }}</strong>
+          }
+          <span>{{ 'COMMON.E2EE_ENCRYPTED' | translate:'cifrado extremo a extremo' }}</span>
+        </div>
+        <ion-button mode="ios" class="send" (click)="sendShare()" [disabled]="sending || !selectedCount()">
+          @if (sending) {
+            <ion-spinner name="crescent"></ion-spinner>
+          } @else {
+            <ion-icon name="send-outline"></ion-icon>
+          }
+          {{ 'COMMON.SEND' | translate:'Enviar' }}
+        </ion-button>
+      </footer>
+    }
+  </main>
+</ion-content>

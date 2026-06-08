@@ -22,7 +22,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { PrivacySettings } from '../../core/models/nivra.models';
 import { AppLockService } from '../../core/services/app-lock.service';
-import { AppSettingsService, NivraAppSettings, NivraVisibility } from '../../core/services/app-settings.service';
+import { AppSettingsService, NivraAppSettings, NivraThemeMode, NivraVisibility } from '../../core/services/app-settings.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
@@ -86,7 +86,7 @@ export class AccountPage implements OnInit, OnDestroy {
   lightTheme = false;
   storageUsageBytes = 0;
   storageQuotaBytes = 0;
-  readonly themeModeOptions = [
+  readonly themeModeOptions: Array<{ label: string; labelKey: string; value: NivraThemeMode }> = [
     { label: 'Sistema', labelKey: 'settings.theme.system', value: 'system' },
     { label: 'Oscuro', labelKey: 'settings.theme.dark', value: 'dark' },
     { label: 'Claro', labelKey: 'settings.theme.light', value: 'light' },
@@ -442,6 +442,48 @@ export class AccountPage implements OnInit, OnDestroy {
   setLightTheme(enabled: boolean): void {
     this.lightTheme = enabled;
     this.appSettings.set('themeMode', enabled ? 'light' : 'dark');
+  }
+
+  currentThemeMode(): NivraThemeMode {
+    return this.appSettings.settings().themeMode;
+  }
+
+  resolvedLightTheme(): boolean {
+    return this.appSettings.resolvedLightTheme();
+  }
+
+  themeModeIcon(value: NivraThemeMode = this.currentThemeMode()): string {
+    if (value === 'system') {
+      return 'phone-portrait-outline';
+    }
+    return value === 'light' ? 'sunny-outline' : 'moon-outline';
+  }
+
+  appearanceCopy(): string {
+    const mode = this.currentThemeMode();
+    if (mode === 'system') {
+      return this.resolvedLightTheme()
+        ? this.t('settings.theme.systemLightCopy', 'Siguiendo al celular: Nivra esta en claro.')
+        : this.t('settings.theme.systemDarkCopy', 'Siguiendo al celular: Nivra esta en oscuro.');
+    }
+    return mode === 'light'
+      ? this.t('ACCOUNT.APPEARANCE_LIGHT_COPY', 'Grises iOS, texto nitido y sombras suaves.')
+      : this.t('ACCOUNT.APPEARANCE_DARK_COPY', 'Oscuro Nivra con contraste nocturno.');
+  }
+
+  themeModeDescription(value: NivraThemeMode): string {
+    if (value === 'system') {
+      return this.t('settings.theme.systemDescription', 'Sigue el modo del celular.');
+    }
+    return value === 'light'
+      ? this.t('settings.theme.lightDescription', 'Siempre claro.')
+      : this.t('settings.theme.darkDescription', 'Siempre oscuro.');
+  }
+
+  resolvedThemeLabel(): string {
+    return this.resolvedLightTheme()
+      ? this.t('settings.theme.light', 'Claro')
+      : this.t('settings.theme.dark', 'Oscuro');
   }
 
   t(key: string, fallback = ''): string {

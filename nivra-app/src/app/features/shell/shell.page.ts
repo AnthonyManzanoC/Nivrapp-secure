@@ -32,7 +32,7 @@ export class ShellPage {
   readonly calls = inject(CallsService);
   readonly realtime = inject(SignalrService);
   private readonly router = inject(Router);
-  readonly hideMobileNav = signal(this.isChatDetailRoute(this.router.url));
+  readonly hideMobileNav = signal(this.isMobileImmersiveRoute(this.router.url));
 
   readonly nav = [
     { path: '/app/chats', icon: 'chatbubble-ellipses-outline', label: 'Chats', labelKey: 'TABS.CHATS' },
@@ -59,7 +59,7 @@ export class ShellPage {
       .pipe(takeUntilDestroyed())
       .subscribe((event) => {
         if (event instanceof NavigationEnd) {
-          this.hideMobileNav.set(this.isChatDetailRoute(event.urlAfterRedirects));
+          this.hideMobileNav.set(this.isMobileImmersiveRoute(event.urlAfterRedirects));
         }
       });
   }
@@ -90,7 +90,7 @@ export class ShellPage {
     await this.router.navigateByUrl('/auth');
   }
 
-  private isChatDetailRoute(url: string): boolean {
-    return /^\/app\/chats\/[^/?#]+/.test(url);
+  private isMobileImmersiveRoute(url: string): boolean {
+    return /^\/app\/chats\/[^/?#]+/.test(url) || /^\/app\/share(?:[/?#]|$)/.test(url);
   }
 }

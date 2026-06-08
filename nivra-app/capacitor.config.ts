@@ -20,6 +20,11 @@ const config: CapacitorConfig = {
     contentInset: 'never',
   },
   plugins: {
+    StatusBar: {
+      overlaysWebView: false,
+      style: 'DARK',
+      backgroundColor: '#070b0d',
+    },
     Keyboard: {
       resize: 'body',
       style: 'DEFAULT',

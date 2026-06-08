@@ -18,11 +18,15 @@ import { PushService } from './core/services/push.service';
 import { SignalrService } from './core/services/signalr.service';
 import { TranslatePipe } from './core/pipes/translate.pipe';
 import { TranslateService } from './core/services/translate.service';
-import { NativeDeviceService } from './core/services/native-device.service';
+import { NativeDeviceService, type NativeShareIntent } from './core/services/native-device.service';
 import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 
-const THEME_STORAGE_KEY = 'nivra.theme';
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
+
+interface NativeStatusBarSurface {
+  color: string;
+  style: Style;
+}
 
 @Component({
   selector: 'app-root',
@@ -43,14 +47,13 @@ export class AppComponent {
   private readonly translate = inject(TranslateService);
   private readonly nativeDevice = inject(NativeDeviceService);
   private readonly destroyRef = inject(DestroyRef);
-  private readonly systemThemeQuery = typeof window !== 'undefined' && 'matchMedia' in window
-    ? window.matchMedia('(prefers-color-scheme: light)')
-    : null;
   readonly calls = inject(CallsService);
   private readonly now = signal(Date.now());
+  private readonly currentUrl = signal(this.router.url);
   private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
   private startServicesPromise: Promise<void> | null = null;
   private lastPushRouteKey = '';
+  private lastNativeShareId = '';
   readonly showCallBanner = computed(() => {
     const phase = this.calls.phase();
     return this.auth.isAuthenticated()
@@ -70,9 +73,8 @@ export class AppComponent {
 
   constructor() {
     void this.translate;
-    this.applyStoredTheme();
-    this.bindSystemTheme();
     this.bindAppLinks();
+    this.bindNativeShares();
     this.bindAppLifecycleLock();
     addIcons({ callOutline, videocamOutline });
     void this.configureNativeKeyboard();
@@ -84,7 +86,9 @@ export class AppComponent {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
         if (event instanceof NavigationEnd) {
-          this.onCallsRoute.set(event.urlAfterRedirects.startsWith('/app/calls'));
+          const url = event.urlAfterRedirects || event.url;
+          this.currentUrl.set(url);
+          this.onCallsRoute.set(url.startsWith('/app/calls'));
         }
       });
 
@@ -110,13 +114,16 @@ export class AppComponent {
 
     effect(() => {
       const light = this.appSettings.resolvedLightTheme();
-      const darkCallSurface = this.onCallsRoute() && Boolean(this.calls.activeCall());
-      untracked(() => void this.configureNativeSystemBars(light, darkCallSurface));
+      const url = this.currentUrl();
+      const activeCall = Boolean(this.calls.activeCall());
+      const surface = this.nativeStatusBarSurface(light, url, activeCall);
+      untracked(() => void this.configureNativeSystemBars(surface));
     });
 
     effect(() => {
       if (this.auth.isAuthenticated()) {
         untracked(() => void this.startAuthenticatedServices());
+        untracked(() => void this.openPendingNativeShare());
       } else {
         void this.realtime.disconnect();
       }
@@ -157,72 +164,96 @@ export class AppComponent {
   private async configureNativeKeyboard(): Promise<void> {
     try {
       await Keyboard.setResizeMode({ mode: KeyboardResize.Body });
-      await Keyboard.setStyle({ style: this.lightThemeEnabled() ? KeyboardStyle.Light : KeyboardStyle.Dark });
+      await Keyboard.setStyle({ style: this.appSettings.resolvedLightTheme() ? KeyboardStyle.Light : KeyboardStyle.Dark });
     } catch {
       // Web and desktop do not expose the native keyboard bridge.
     }
   }
 
-  private async configureNativeSystemBars(light: boolean, darkSurface: boolean): Promise<void> {
+  private async configureNativeSystemBars(surface: NativeStatusBarSurface): Promise<void> {
     try {
       await StatusBar.setOverlaysWebView({ overlay: false });
-      await StatusBar.setStyle({ style: light && !darkSurface ? Style.Dark : Style.Light });
-      await StatusBar.setBackgroundColor({ color: light && !darkSurface ? '#f8fafc' : '#030607' });
+      await StatusBar.setStyle({ style: surface.style });
+      await StatusBar.setBackgroundColor({ color: surface.color });
     } catch {
       // Web, desktop, and some Android shells do not expose the native status bar bridge.
     }
   }
 
-  private applyStoredTheme(): void {
-    if (typeof document === 'undefined') {
-      return;
+  private nativeStatusBarSurface(light: boolean, url: string, activeCall: boolean): NativeStatusBarSurface {
+    const path = this.pathFromUrl(url);
+    const darkSurface = (color = '#070b0d'): NativeStatusBarSurface => ({ color, style: Style.Dark });
+    const lightSurface = (color = '#f8fafc'): NativeStatusBarSurface => ({ color, style: Style.Light });
+
+    if (activeCall && path.startsWith('/app/calls')) {
+      return darkSurface('#030607');
     }
-    const enabled = this.prefersLightTheme();
-    document.body.classList.toggle('nivra-light-theme', enabled);
-    document.documentElement.classList.toggle('nivra-light-theme', enabled);
+
+    if (this.isChatDetailPath(path)) {
+      return light ? lightSurface('#ffffff') : darkSurface('#080d0f');
+    }
+
+    if (path.startsWith('/app/chats')) {
+      return light ? lightSurface('#ffffff') : darkSurface('#080d0f');
+    }
+
+    if (
+      path.startsWith('/app/account')
+      || path.startsWith('/app/world')
+      || path.startsWith('/app/vault')
+      || path.startsWith('/app/share')
+      || path.startsWith('/contact')
+      || path.startsWith('/vault/invite')
+      || path.startsWith('/auth')
+    ) {
+      return light ? lightSurface('#f8fafc') : darkSurface('#070b0d');
+    }
+
+    return light ? lightSurface('#f8fafc') : darkSurface('#070b0d');
   }
 
-  private readStoredTheme(): 'dark' | 'light' | 'system' {
-    try {
-      const value = localStorage.getItem(THEME_STORAGE_KEY);
-      return value === 'light' || value === 'dark' ? value : 'system';
-    } catch {
-      return 'system';
-    }
+  private pathFromUrl(url: string): string {
+    return (url || '/').split(/[?#]/)[0] || '/';
   }
 
-  private prefersLightTheme(): boolean {
-    const stored = this.readStoredTheme();
-    if (stored === 'light') {
-      return true;
-    }
-    if (stored === 'dark') {
-      return false;
-    }
-    return this.systemThemeQuery?.matches ?? false;
-  }
-
-  private bindSystemTheme(): void {
-    const query = this.systemThemeQuery;
-    if (!query) {
-      return;
-    }
-    const listener = () => {
-      if (this.readStoredTheme() !== 'system') {
-        return;
-      }
-      this.applyStoredTheme();
-      void Keyboard.setStyle({ style: this.lightThemeEnabled() ? KeyboardStyle.Light : KeyboardStyle.Dark }).catch(() => undefined);
-      void this.configureNativeSystemBars(this.lightThemeEnabled(), this.onCallsRoute() && Boolean(this.calls.activeCall()));
-    };
-    query.addEventListener('change', listener);
-    this.destroyRef.onDestroy(() => query.removeEventListener('change', listener));
+  private isChatDetailPath(path: string): boolean {
+    return /^\/app\/chats\/[^/]+/.test(path);
   }
 
   private bindAppLinks(): void {
     void App.addListener('appUrlOpen', (event) => this.handleAppUrlOpen(event.url))
       .then((handle) => this.destroyRef.onDestroy(() => void handle.remove()))
       .catch(() => undefined);
+  }
+
+  private bindNativeShares(): void {
+    void this.nativeDevice.onNativeShareIntent((share) => {
+      void this.openNativeShare(share);
+    })
+      .then((handle) => {
+        if (handle) {
+          this.destroyRef.onDestroy(() => void handle.remove());
+        }
+      })
+      .catch(() => undefined);
+
+    window.setTimeout(() => void this.openPendingNativeShare(), 0);
+  }
+
+  private async openPendingNativeShare(): Promise<void> {
+    const share = await this.nativeDevice.getPendingShareIntent();
+    await this.openNativeShare(share);
+  }
+
+  private async openNativeShare(share: NativeShareIntent | null | undefined): Promise<void> {
+    if (!this.auth.isAuthenticated() || !this.hasNativeShareContent(share)) {
+      return;
+    }
+    if (share.id === this.lastNativeShareId && this.router.url.startsWith('/app/share')) {
+      return;
+    }
+    this.lastNativeShareId = share.id;
+    await this.router.navigate(['/app/share'], { queryParams: { share: share.id } });
   }
 
   private bindAppLifecycleLock(): void {
@@ -273,6 +304,13 @@ export class AppComponent {
     return CONTACT_ALIAS_PATTERN.test(alias) ? alias.toLowerCase() : '';
   }
 
+  private hasNativeShareContent(share: NativeShareIntent | null | undefined): share is NativeShareIntent {
+    return Boolean(
+      share?.id
+      && ((share.files?.length ?? 0) > 0 || share.text?.trim() || share.subject?.trim()),
+    );
+  }
+
   private shouldForceWipe(event: { type: string; payload: unknown }): boolean {
     const payload = event.payload && typeof event.payload === 'object'
       ? event.payload as { code?: unknown; deviceId?: unknown }
@@ -285,10 +323,6 @@ export class AppComponent {
       return !payload.deviceId || payload.deviceId === currentDeviceId;
     }
     return event.type === 'device.revoked' && (!payload?.deviceId || payload.deviceId === currentDeviceId);
-  }
-
-  private lightThemeEnabled(): boolean {
-    return typeof document !== 'undefined' && document.body.classList.contains('nivra-light-theme');
   }
 
   async openActiveCall(): Promise<void> {

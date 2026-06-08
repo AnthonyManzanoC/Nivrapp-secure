@@ -16,6 +16,7 @@ public class MainActivity extends BridgeActivity {
         super.onCreate(savedInstanceState);
         createNotificationChannels();
         NivraNativePlugin.handleCallIntent(getIntent());
+        NivraNativePlugin.handleShareIntent(this, getIntent());
     }
 
     @Override
@@ -23,6 +24,7 @@ public class MainActivity extends BridgeActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         NivraNativePlugin.handleCallIntent(intent);
+        NivraNativePlugin.handleShareIntent(this, intent);
     }
 
     private void createNotificationChannels() {
