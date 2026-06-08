@@ -717,6 +717,7 @@ ion-popover.attachment-popover {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: nowrap;
   gap: 7px;
   padding: 4px max(12px, env(safe-area-inset-right)) 3px max(12px, env(safe-area-inset-left));
   color: var(--nivra-muted);
@@ -733,6 +734,7 @@ ion-popover.attachment-popover {
 }
 
 .policy-toggle {
+  flex: 0 0 auto;
   min-height: 26px;
   border: 1px solid rgba(255, 255, 255, .08);
   border-radius: 999px;
@@ -746,7 +748,13 @@ ion-popover.attachment-popover {
   font-weight: 800;
 }
 
+.policy-toggle span {
+  white-space: nowrap;
+}
+
 .policy-row ion-select {
+  flex: 1 1 150px;
+  min-width: 0;
   min-height: 26px;
   border: 1px solid var(--nivra-line);
   border-radius: 999px;
@@ -1843,7 +1851,7 @@ ion-modal.forward-modal {
   }
 
   .messages {
-    padding: 12px 9px 10px;
+    padding: 12px 9px 12px;
   }
 
   .message {
@@ -1879,7 +1887,6 @@ ion-modal.forward-modal {
 
   .policy-row {
     justify-content: flex-end;
-    gap: 6px;
     min-height: 28px;
     padding-block: 3px;
   }
@@ -1960,4 +1967,5 @@ ion-modal.forward-modal {
     width: 34px;
     height: 34px;
   }
+
 }

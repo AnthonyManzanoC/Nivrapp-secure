@@ -15,6 +15,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
+import android.content.pm.Signature;
 import android.database.Cursor;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
@@ -63,6 +64,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.security.MessageDigest;
 
 import org.json.JSONArray;
 
@@ -214,6 +216,7 @@ public class NivraNativePlugin extends Plugin {
             result.put("appVersion", "");
             result.put("appBuild", "");
         }
+        putSigningDiagnostics(result);
         ActivityManager manager = (ActivityManager) getContext().getSystemService(Context.ACTIVITY_SERVICE);
         if (manager != null) {
             ActivityManager.MemoryInfo memoryInfo = new ActivityManager.MemoryInfo();
@@ -221,6 +224,15 @@ public class NivraNativePlugin extends Plugin {
             result.put("memoryClassMb", manager.getMemoryClass());
             result.put("availableMemoryMb", memoryInfo.availMem / 1024 / 1024);
             result.put("lowMemory", memoryInfo.lowMemory);
+        }
+        PowerManager powerManager = (PowerManager) getContext().getSystemService(Context.POWER_SERVICE);
+        if (powerManager != null) {
+            result.put("powerSaveMode", Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && powerManager.isPowerSaveMode());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                result.put("thermalStatus", powerManager.getCurrentThermalStatus());
+            } else {
+                result.put("thermalStatus", 0);
+            }
         }
         call.resolve(result);
     }
@@ -538,6 +550,50 @@ public class NivraNativePlugin extends Plugin {
                 notifyListeners("nativeShareIntent", payload, true);
             }
         }
+    }
+
+    private void putSigningDiagnostics(JSObject result) {
+        try {
+            PackageInfo info;
+            Signature[] signatures;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                info = getContext().getPackageManager().getPackageInfo(
+                    getContext().getPackageName(),
+                    PackageManager.GET_SIGNING_CERTIFICATES
+                );
+                signatures = info.signingInfo == null
+                    ? new Signature[0]
+                    : info.signingInfo.hasMultipleSigners()
+                        ? info.signingInfo.getApkContentsSigners()
+                        : info.signingInfo.getSigningCertificateHistory();
+            } else {
+                info = getContext().getPackageManager().getPackageInfo(
+                    getContext().getPackageName(),
+                    PackageManager.GET_SIGNATURES
+                );
+                signatures = info.signatures;
+            }
+            if (signatures != null && signatures.length > 0) {
+                byte[] cert = signatures[0].toByteArray();
+                result.put("signingSha1", digestHex("SHA-1", cert));
+                result.put("signingSha256", digestHex("SHA-256", cert));
+            }
+        } catch (Exception ignored) {
+            result.put("signingSha1", "");
+            result.put("signingSha256", "");
+        }
+    }
+
+    private static String digestHex(String algorithm, byte[] value) throws Exception {
+        byte[] digest = MessageDigest.getInstance(algorithm).digest(value);
+        StringBuilder builder = new StringBuilder();
+        for (byte item : digest) {
+            if (builder.length() > 0) {
+                builder.append(':');
+            }
+            builder.append(String.format("%02X", item));
+        }
+        return builder.toString();
     }
 
     private void readDeviceContacts(PluginCall call) {

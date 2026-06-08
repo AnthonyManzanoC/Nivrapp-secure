@@ -44,9 +44,13 @@ interface NativeDiagnostics {
   model?: string;
   appVersion?: string;
   appBuild?: string;
+  signingSha1?: string;
+  signingSha256?: string;
   memoryClassMb?: number;
   availableMemoryMb?: number;
   lowMemory?: boolean;
+  powerSaveMode?: boolean;
+  thermalStatus?: number;
 }
 
 interface SaveSessionResponse {

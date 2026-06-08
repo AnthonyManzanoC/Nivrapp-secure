@@ -73,6 +73,7 @@ import { SocialService } from '../../core/services/social.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { NativeDeviceService, type RaiseGestureEvent } from '../../core/services/native-device.service';
+import { PerformanceModeService } from '../../core/services/performance-mode.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
@@ -128,11 +129,15 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private readonly toastController = inject(ToastController);
   private readonly actionSheetController = inject(ActionSheetController);
   private readonly nativeDevice = inject(NativeDeviceService);
+  private readonly performanceMode = inject(PerformanceModeService);
   private routeSub?: Subscription;
   private keyboardHandles: PluginListenerHandle[] = [];
   private raiseGestureHandle: PluginListenerHandle | null = null;
   private micGesture?: ReturnType<GestureController['create']>;
   private initialScrollRequestId = 0;
+  private initialScrollDoneForConversation = '';
+  private initialScrollTimers: number[] = [];
+  initialUnreadMessageId: string | null = null;
 
   draft = '';
   sending = false;
@@ -259,7 +264,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         const requestId = ++this.initialScrollRequestId;
         void this.chat.selectConversation(id).then(() => {
           if (requestId === this.initialScrollRequestId) {
-            this.scrollToInitialPosition(id);
+            this.scheduleInitialScroll(id, { force: true });
           }
         });
       }
@@ -280,7 +285,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   ionViewDidEnter(): void {
     window.requestAnimationFrame(() => {
       this.cdr.detectChanges();
-      this.scrollToInitialPosition(this.conversation()?.id);
+      this.scheduleInitialScroll(this.conversation()?.id);
     });
   }
 
@@ -293,6 +298,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.keyboardHandles.forEach((handle) => void handle.remove());
     void this.raiseGestureHandle?.remove();
     this.micGesture?.destroy();
+    this.clearInitialScrollTimers();
     this.cancelMessagePress();
     this.closeAudioPreview();
     this.closeMediaViewer();
@@ -1588,6 +1594,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     return `nivra-message-${this.safeDomId(messageId)}`;
   }
 
+  shouldShowUnreadDivider(messageId: string): boolean {
+    return Boolean(this.initialUnreadMessageId && this.initialUnreadMessageId === messageId);
+  }
+
   async translateMessage(message: ChatMessageVm): Promise<void> {
     const text = (message.payload.text || this.chat.preview(message.payload)).trim();
     if (!text) {
@@ -1603,21 +1613,49 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.closeMessageActions();
   }
 
-  private scrollToInitialPosition(conversationId: string | null | undefined): void {
+  private scheduleInitialScroll(conversationId: string | null | undefined, options: { force?: boolean } = {}): void {
+    const id = conversationId || this.conversation()?.id;
+    if (!id) {
+      return;
+    }
+    if (!options.force && this.initialScrollDoneForConversation === id) {
+      return;
+    }
+    this.initialScrollDoneForConversation = id;
+    this.clearInitialScrollTimers();
+    [0, 80, 220, 520].forEach((delay, index) => {
+      const timer = window.setTimeout(() => this.scrollToInitialPosition(id, index), delay);
+      this.initialScrollTimers.push(timer);
+    });
+  }
+
+  private scrollToInitialPosition(conversationId: string | null | undefined, attempt = 0): void {
     const id = conversationId || this.conversation()?.id;
     const unreadMessageId = this.chat.initialScrollMessageId(id);
     if (unreadMessageId) {
-      this.scrollToMessage(unreadMessageId);
+      this.initialUnreadMessageId = unreadMessageId;
+      this.scrollToMessage(unreadMessageId, attempt);
       return;
     }
+    this.initialUnreadMessageId = null;
     this.scrollBottom({ strong: true });
   }
 
   private scrollToMessage(messageId: string, attempt = 0): void {
-    const run = () => {
+    const run = async () => {
       const element = document.getElementById(this.messageElementId(messageId));
-      if (element) {
-        element.scrollIntoView({ block: 'center', behavior: attempt ? 'auto' : 'smooth' });
+      const content = this.content;
+      if (element && content) {
+        const scrollElement = await content.getScrollElement().catch(() => null);
+        if (!scrollElement) {
+          return;
+        }
+        const elementRect = element.getBoundingClientRect();
+        const scrollRect = scrollElement.getBoundingClientRect();
+        const elementTop = elementRect.top - scrollRect.top + scrollElement.scrollTop;
+        const topOffset = Math.max(72, Math.round(scrollElement.clientHeight * 0.28));
+        const targetTop = Math.max(0, elementTop - topOffset);
+        await content.scrollToPoint(0, targetTop, this.performanceMode.efficiencyMode() || attempt ? 0 : 180);
         return;
       }
       if (attempt < 8) {
@@ -1633,9 +1671,15 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const delays = options.strong ? [40, 140, 320, 700] : [40];
     delays.forEach((delay, index) => {
       window.setTimeout(() => {
-        void this.content?.scrollToBottom(index ? 0 : 220);
+        const duration = this.performanceMode.efficiencyMode() || index ? 0 : 220;
+        void this.content?.scrollToBottom(duration);
       }, delay);
     });
+  }
+
+  private clearInitialScrollTimers(): void {
+    this.initialScrollTimers.forEach((timer) => window.clearTimeout(timer));
+    this.initialScrollTimers = [];
   }
 
   private safeDomId(value: string): string {

@@ -19,9 +19,11 @@ import { SignalrService } from './core/services/signalr.service';
 import { TranslatePipe } from './core/pipes/translate.pipe';
 import { TranslateService } from './core/services/translate.service';
 import { NativeDeviceService, type NativeShareIntent } from './core/services/native-device.service';
+import { PerformanceModeService } from './core/services/performance-mode.service';
 import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
+const LAST_ROUTE_PREFIX = 'nivra.lastRoute.';
 
 interface NativeStatusBarSurface {
   color: string;
@@ -46,12 +48,14 @@ export class AppComponent {
   private readonly realtime = inject(SignalrService);
   private readonly translate = inject(TranslateService);
   private readonly nativeDevice = inject(NativeDeviceService);
+  private readonly performanceMode = inject(PerformanceModeService);
   private readonly destroyRef = inject(DestroyRef);
   readonly calls = inject(CallsService);
   private readonly now = signal(Date.now());
   private readonly currentUrl = signal(this.router.url);
   private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
   private startServicesPromise: Promise<void> | null = null;
+  private lastRouteRestored = false;
   private lastPushRouteKey = '';
   private lastNativeShareId = '';
   readonly showCallBanner = computed(() => {
@@ -73,6 +77,7 @@ export class AppComponent {
 
   constructor() {
     void this.translate;
+    void this.performanceMode;
     this.bindAppLinks();
     this.bindNativeShares();
     this.bindAppLifecycleLock();
@@ -89,6 +94,7 @@ export class AppComponent {
           const url = event.urlAfterRedirects || event.url;
           this.currentUrl.set(url);
           this.onCallsRoute.set(url.startsWith('/app/calls'));
+          this.persistLastRoute(url);
         }
       });
 
@@ -124,7 +130,9 @@ export class AppComponent {
       if (this.auth.isAuthenticated()) {
         untracked(() => void this.startAuthenticatedServices());
         untracked(() => void this.openPendingNativeShare());
+        untracked(() => this.restoreLastRouteOnce());
       } else {
+        this.lastRouteRestored = false;
         void this.realtime.disconnect();
       }
     });
@@ -344,6 +352,64 @@ export class AppComponent {
       this.startServicesPromise = null;
     });
     return this.startServicesPromise;
+  }
+
+  private restoreLastRouteOnce(): void {
+    if (this.lastRouteRestored) {
+      return;
+    }
+    this.lastRouteRestored = true;
+    window.setTimeout(() => {
+      const currentPath = this.pathFromUrl(this.router.url);
+      if (currentPath !== '/app/chats') {
+        return;
+      }
+      const route = this.readLastRoute();
+      if (!route || this.pathFromUrl(route) === currentPath || !this.isRestorableRoute(route)) {
+        return;
+      }
+      void this.router.navigateByUrl(route);
+    }, 80);
+  }
+
+  private persistLastRoute(url: string): void {
+    if (!this.auth.isAuthenticated() || !this.isRestorableRoute(url)) {
+      return;
+    }
+    const key = this.lastRouteKey();
+    if (!key) {
+      return;
+    }
+    try {
+      localStorage.setItem(key, url);
+    } catch {
+      // Route restore is a convenience only.
+    }
+  }
+
+  private readLastRoute(): string | null {
+    const key = this.lastRouteKey();
+    if (!key) {
+      return null;
+    }
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  }
+
+  private lastRouteKey(): string | null {
+    const userId = this.auth.session()?.user.id;
+    return userId ? `${LAST_ROUTE_PREFIX}${userId}` : null;
+  }
+
+  private isRestorableRoute(url: string): boolean {
+    const path = this.pathFromUrl(url);
+    return /^\/app\/chats\/[^/]+$/.test(path)
+      || path === '/app/world'
+      || path === '/app/vault'
+      || path === '/app/account';
   }
 
   private formatDuration(durationMs: number): string {

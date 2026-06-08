@@ -221,9 +221,6 @@ export class ChatService implements OnDestroy {
     if (!this.auth.isAuthenticated()) {
       return;
     }
-    if (!await this.auth.ensureFreshSession()) {
-      return;
-    }
 
     this.loading.set(true);
     try {
@@ -231,6 +228,9 @@ export class ChatService implements OnDestroy {
       await this.loadCachedChatIndex();
       await this.loadCachedSelectedMessages();
       await this.purgeExpiredLocalMessages();
+      if (!await this.auth.ensureFreshSession()) {
+        return;
+      }
       const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>('/sync/bootstrap'));
       const contacts = bootstrap.contacts ?? [];
       const conversations = this.applyLocalConversationState(bootstrap.conversations ?? []);

@@ -55,6 +55,11 @@
     </div>
     <div class="messages">
       @for (message of messages(); track message.id) {
+        @if (shouldShowUnreadDivider(message.id)) {
+          <div class="system-message unread-divider" role="separator">
+            <span>{{ 'CHAT.UNREAD_MESSAGES' | translate:'No leidos' }}</span>
+          </div>
+        }
         @if (chat.isCallLog(message.payload)) {
           <div
             class="call-log-message"

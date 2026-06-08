@@ -213,6 +213,34 @@ ion-toast.nivra-safe-toast {
   margin-top: max(10px, env(safe-area-inset-top));
 }
 
+html.nivra-efficiency-mode *,
+html.nivra-efficiency-mode *::before,
+html.nivra-efficiency-mode *::after {
+  animation-duration: .001ms !important;
+  animation-iteration-count: 1 !important;
+  scroll-behavior: auto !important;
+  transition-duration: .001ms !important;
+}
+
+html.nivra-efficiency-mode ion-modal::part(backdrop),
+html.nivra-efficiency-mode ion-popover::part(backdrop) {
+  backdrop-filter: none !important;
+}
+
+html.nivra-efficiency-mode .real-chat-bg,
+html.nivra-efficiency-mode .surface,
+html.nivra-efficiency-mode .page,
+html.nivra-thermal-hot .real-chat-bg {
+  background-attachment: scroll !important;
+}
+
+html.nivra-efficiency-mode .message,
+html.nivra-efficiency-mode .panel,
+html.nivra-efficiency-mode .contact-card,
+html.nivra-efficiency-mode .story-row {
+  box-shadow: none !important;
+}
+
 @media (max-width: 768px) {
   ion-toast.nivra-safe-toast {
     margin-bottom: calc(var(--nivra-bottom-nav-height) + env(safe-area-inset-bottom) + 12px);
