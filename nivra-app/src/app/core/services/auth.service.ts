@@ -12,6 +12,7 @@ import {
   useDeviceLanguage,
 } from 'firebase/auth';
 import { FirebaseApp, deleteApp, getApps, initializeApp } from 'firebase/app';
+import { ReCaptchaV3Provider, initializeAppCheck, type AppCheck } from 'firebase/app-check';
 import {
   AuthSession,
   DeviceKeys,
@@ -57,6 +58,7 @@ const SESSION_KEY = 'nivra.auth';
 const PENDING_VAULT_INVITE_KEY = 'nivra.pendingVaultInvite';
 const PENDING_CONTACT_ALIAS_KEY = 'nivra.pendingContactAlias';
 const HARDWARE_ID_KEY = 'nivra_hardware_id';
+const SKIP_ROUTE_RESTORE_ONCE_KEY = 'nivra.skipRouteRestoreOnce';
 const TOKEN_REFRESH_SKEW_MS = 2 * 60 * 1000;
 
 @Injectable({ providedIn: 'root' })
@@ -65,6 +67,7 @@ export class AuthService implements OnDestroy {
   private readonly crypto = inject(CryptoService);
   private readonly router = inject(Router);
   private firebaseApp: FirebaseApp | null = null;
+  private firebaseAppCheck: AppCheck | null = null;
   private firebaseAuth: Auth | null = null;
   private recaptchaVerifier: RecaptchaVerifier | null = null;
   private confirmationResult: ConfirmationResult | null = null;
@@ -463,12 +466,27 @@ export class AuthService implements OnDestroy {
       throw new Error('La respuesta de autenticacion no contiene una sesion valida.');
     }
     await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id });
+    this.markFreshAuthNavigation();
     this.persistSession(auth);
     await this.router.navigateByUrl(this.consumePostAuthUrl());
   }
 
   deviceName(): string {
     return this.describeDeviceName();
+  }
+
+  firebaseClientDiagnostics(): string[] {
+    const config = environment.firebase;
+    const appCheckSiteKey = String(environment.firebaseAppCheckSiteKey || '').trim();
+    return [
+      `Firebase projectId: ${config.projectId}`,
+      `Firebase authDomain: ${config.authDomain}`,
+      `Firebase appId: ${config.appId}`,
+      `Capacitor Android origin: https://${config.authDomain}`,
+      'Auth client: Firebase Web Auth + reCAPTCHA invisible dentro de Capacitor WebView',
+      `App Check web: ${appCheckSiteKey ? 'configurado con reCAPTCHA v3' : 'sin site key en environment; no se inicializa App Check web'}`,
+      'Play Integrity: aplica al SDK nativo Android; este flujo de SMS usa Firebase Web Auth, por eso primero registra SHA-1/SHA-256 en Firebase.',
+    ];
   }
 
   private async deviceProfile(): Promise<{ hardwareId: string; name: string }> {
@@ -568,8 +586,17 @@ export class AuthService implements OnDestroy {
   ): Promise<void> {
     const keys = this.crypto.materialToDeviceKeys(keyMaterial);
     await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id });
+    this.markFreshAuthNavigation();
     this.persistSession(auth);
     await this.router.navigateByUrl(this.consumePostAuthUrl());
+  }
+
+  private markFreshAuthNavigation(): void {
+    try {
+      sessionStorage.setItem(SKIP_ROUTE_RESTORE_ONCE_KEY, '1');
+    } catch {
+      // Route restore is a convenience only.
+    }
   }
 
   private persistSession(auth: AuthSession): void {
@@ -671,11 +698,28 @@ export class AuthService implements OnDestroy {
     const existing = getApps().find((app) => app.name === FIREBASE_APP_NAME);
     if (existing) {
       await deleteApp(existing).catch(() => undefined);
+      this.firebaseAppCheck = null;
     }
     this.firebaseApp = initializeApp(environment.firebase, FIREBASE_APP_NAME);
+    this.ensureFirebaseAppCheck(this.firebaseApp);
     this.firebaseAuth = getAuth(this.firebaseApp);
     useDeviceLanguage(this.firebaseAuth);
     return this.firebaseAuth;
+  }
+
+  private ensureFirebaseAppCheck(app: FirebaseApp): void {
+    const siteKey = String(environment.firebaseAppCheckSiteKey || '').trim();
+    if (!siteKey || this.firebaseAppCheck) {
+      return;
+    }
+    try {
+      this.firebaseAppCheck = initializeAppCheck(app, {
+        provider: new ReCaptchaV3Provider(siteKey),
+        isTokenAutoRefreshEnabled: true,
+      });
+    } catch {
+      this.firebaseAppCheck = null;
+    }
   }
 
   private async ensureRecaptcha(auth: Auth): Promise<RecaptchaVerifier> {

@@ -14,6 +14,7 @@ export const environment = {
     appId: '1:1052459577646:web:104a77188d9e03b0b10abf',
     vapidKey: 'BI-QXrOQJ14bj9GWZ5_ZniwQ63HxBW1E2n0qOLCe-fHME72yyuXQz2nRdEjSqstpw7IQNOE9U8fx8l9tGrbYHBY'
   },
+  firebaseAppCheckSiteKey: '',
   firebaseVapidKey: 'BI-QXrOQJ14bj9GWZ5_ZniwQ63HxBW1E2n0qOLCe-fHME72yyuXQz2nRdEjSqstpw7IQNOE9U8fx8l9tGrbYHBY',
   livekit: {
     url: '',

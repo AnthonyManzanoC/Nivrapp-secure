@@ -117,6 +117,30 @@
 
       @if (notice) { <ion-note color="primary">{{ notice }}</ion-note> }
       @if (error) { <ion-text color="danger"><p>{{ error }}</p></ion-text> }
+      @if (firebaseDiagnosticsText) {
+        <section class="firebase-diagnostics">
+          <header>
+            <span>
+              <ion-icon name="information-circle-outline"></ion-icon>
+            </span>
+            <div>
+              <strong>Firebase Android SHA</strong>
+              <small>Registra estos codigos en Firebase Console para desbloquear SMS en APK.</small>
+            </div>
+          </header>
+          <textarea readonly [value]="firebaseDiagnosticsText" (focus)="$any($event.target).select()"></textarea>
+          <div class="diagnostic-actions">
+            <ion-button type="button" mode="ios" fill="outline" (click)="showFirebaseDiagnosticsAlert()">
+              <ion-icon name="information-circle-outline"></ion-icon>
+              Ver
+            </ion-button>
+            <ion-button type="button" mode="ios" (click)="copyFirebaseDiagnostics()">
+              <ion-icon name="copy-outline"></ion-icon>
+              {{ firebaseDiagnosticsCopied ? 'Copiado' : 'Copiar SHA' }}
+            </ion-button>
+          </div>
+        </section>
+      }
       <div id="phoneRecaptcha" class="recaptcha-slot"></div>
     </section>
 

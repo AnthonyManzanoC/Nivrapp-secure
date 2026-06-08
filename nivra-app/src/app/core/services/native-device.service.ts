@@ -35,9 +35,18 @@ export type NativeDeviceContact = {
   displayName?: string;
   tel: string[];
 };
+export type FirebaseSigningDiagnostics = {
+  platform: string;
+  packageName: string;
+  appVersion: string;
+  appBuild: string;
+  signingSha1: string;
+  signingSha256: string;
+};
 
 interface NativeDiagnostics {
   platform?: string;
+  packageName?: string;
   osVersion?: string;
   sdkInt?: number;
   manufacturer?: string;
@@ -276,6 +285,24 @@ export class NativeDeviceService {
       } : null,
       nativeDiagnostics,
       createdAt: new Date().toISOString(),
+    };
+  }
+
+  async firebaseSigningDiagnostics(): Promise<FirebaseSigningDiagnostics | null> {
+    if (!this.native) {
+      return null;
+    }
+    const diagnostics = await NivraNative.diagnostics().catch(() => null);
+    if (!diagnostics) {
+      return null;
+    }
+    return {
+      platform: String(diagnostics.platform || Capacitor.getPlatform()),
+      packageName: String(diagnostics.packageName || 'com.nivra.app'),
+      appVersion: String(diagnostics.appVersion || ''),
+      appBuild: String(diagnostics.appBuild || ''),
+      signingSha1: String(diagnostics.signingSha1 || ''),
+      signingSha256: String(diagnostics.signingSha256 || ''),
     };
   }
 

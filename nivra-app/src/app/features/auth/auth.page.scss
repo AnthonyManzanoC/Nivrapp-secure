@@ -188,6 +188,63 @@ ion-button {
   font-weight: 850;
 }
 
+.firebase-diagnostics {
+  border: 1px solid rgba(255, 193, 7, .28);
+  border-radius: 12px;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  color: var(--nivra-text);
+  background:
+    linear-gradient(180deg, rgba(255, 193, 7, .13), rgba(255, 255, 255, .035)),
+    rgba(9, 15, 17, .74);
+}
+
+.firebase-diagnostics header {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+}
+
+.firebase-diagnostics header > span {
+  width: 36px;
+  height: 36px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #1f1300;
+  background: linear-gradient(135deg, #facc15, #fb923c);
+}
+
+.firebase-diagnostics strong,
+.firebase-diagnostics small {
+  display: block;
+}
+
+.firebase-diagnostics small {
+  color: var(--nivra-soft);
+  line-height: 1.35;
+}
+
+.firebase-diagnostics textarea {
+  width: 100%;
+  min-height: 152px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 8px;
+  padding: 10px;
+  color: var(--nivra-text);
+  background: rgba(0, 0, 0, .2);
+  font: 700 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  resize: vertical;
+}
+
+.diagnostic-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
 .inline-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 92px;
@@ -392,6 +449,7 @@ ion-button {
   ion-segment,
   .auth-form,
   .qr-card,
+  .firebase-diagnostics,
   ion-note,
   ion-text {
     width: 100%;
@@ -421,6 +479,7 @@ ion-button {
   ion-segment,
   .auth-form,
   .qr-card,
+  .firebase-diagnostics,
   ion-note,
   ion-text {
     max-width: calc(100vw - 72px);

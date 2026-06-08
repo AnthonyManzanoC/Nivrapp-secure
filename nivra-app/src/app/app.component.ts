@@ -24,6 +24,7 @@ import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const LAST_ROUTE_PREFIX = 'nivra.lastRoute.';
+const SKIP_ROUTE_RESTORE_ONCE_KEY = 'nivra.skipRouteRestoreOnce';
 
 interface NativeStatusBarSurface {
   color: string;
@@ -360,6 +361,9 @@ export class AppComponent {
     }
     this.lastRouteRestored = true;
     window.setTimeout(() => {
+      if (this.consumeSkipRouteRestoreOnce()) {
+        return;
+      }
       const currentPath = this.pathFromUrl(this.router.url);
       if (currentPath !== '/app/chats') {
         return;
@@ -370,6 +374,18 @@ export class AppComponent {
       }
       void this.router.navigateByUrl(route);
     }, 80);
+  }
+
+  private consumeSkipRouteRestoreOnce(): boolean {
+    try {
+      if (sessionStorage.getItem(SKIP_ROUTE_RESTORE_ONCE_KEY) !== '1') {
+        return false;
+      }
+      sessionStorage.removeItem(SKIP_ROUTE_RESTORE_ONCE_KEY);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private persistLastRoute(url: string): void {

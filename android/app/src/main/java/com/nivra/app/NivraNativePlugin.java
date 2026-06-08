@@ -200,6 +200,7 @@ public class NivraNativePlugin extends Plugin {
     public void diagnostics(PluginCall call) {
         JSObject result = new JSObject();
         result.put("platform", "android");
+        result.put("packageName", getContext().getPackageName());
         result.put("osVersion", Build.VERSION.RELEASE);
         result.put("sdkInt", Build.VERSION.SDK_INT);
         result.put("manufacturer", Build.MANUFACTURER);
