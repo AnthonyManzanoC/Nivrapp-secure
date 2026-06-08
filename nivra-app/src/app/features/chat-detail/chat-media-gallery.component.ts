@@ -10,6 +10,7 @@ import { addIcons } from 'ionicons';
 import {
   closeOutline,
   documentAttachOutline,
+  downloadOutline,
   imageOutline,
   micOutline,
   playCircleOutline,
@@ -47,12 +48,14 @@ export class ChatMediaGalleryComponent implements OnDestroy {
   audioName = '';
   viewerPreview: MediaPreview | null = null;
   viewerFile: FileChatPayload | null = null;
+  viewerMessage: ChatMessageVm | null = null;
   private readonly ownedPreviewIds = new Set<string>();
 
   constructor() {
     addIcons({
       closeOutline,
       documentAttachOutline,
+      downloadOutline,
       imageOutline,
       micOutline,
       playCircleOutline,
@@ -112,6 +115,7 @@ export class ChatMediaGalleryComponent implements OnDestroy {
 
       this.viewerPreview = preview;
       this.viewerFile = file;
+      this.viewerMessage = message;
     } catch (error) {
       this.error = error instanceof Error ? error.message : this.tr('CHAT_MEDIA.OPEN_ERROR', 'No se pudo abrir el archivo.');
     } finally {
@@ -127,6 +131,24 @@ export class ChatMediaGalleryComponent implements OnDestroy {
   closeViewer(): void {
     this.viewerPreview = null;
     this.viewerFile = null;
+    this.viewerMessage = null;
+  }
+
+  async downloadViewer(): Promise<void> {
+    if (!this.viewerMessage || this.loadingId) {
+      return;
+    }
+
+    this.loadingId = this.viewerMessage.id;
+    this.error = '';
+    try {
+      await this.chat.downloadAttachment(this.viewerMessage.payload);
+      await this.chat.markMessageOpened(this.viewerMessage);
+    } catch (error) {
+      this.error = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_ATTACHMENT', 'No se pudo abrir el adjunto.');
+    } finally {
+      this.loadingId = null;
+    }
   }
 
   private isSupportedMediaFile(file: FileChatPayload | null): file is FileChatPayload {

@@ -71,9 +71,20 @@
       <section class="media-viewer">
         <header>
           <strong>{{ chat.fileName(viewerFile) }}</strong>
-          <ion-button mode="ios" fill="clear" (click)="closeViewer()" [attr.aria-label]="'CHAT.CLOSE_FILE' | translate:'Cerrar archivo'">
-            <ion-icon name="close-outline"></ion-icon>
-          </ion-button>
+          <div class="viewer-actions">
+            @if (viewerMessage) {
+              <ion-button mode="ios" fill="clear" (click)="downloadViewer()" [disabled]="loadingId === viewerMessage.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
+                @if (loadingId === viewerMessage.id) {
+                  <ion-spinner name="crescent"></ion-spinner>
+                } @else {
+                  <ion-icon name="download-outline"></ion-icon>
+                }
+              </ion-button>
+            }
+            <ion-button mode="ios" fill="clear" (click)="closeViewer()" [attr.aria-label]="'CHAT.CLOSE_FILE' | translate:'Cerrar archivo'">
+              <ion-icon name="close-outline"></ion-icon>
+            </ion-button>
+          </div>
         </header>
         <div class="media-viewer-body">
           @if (chat.isImage(viewerFile)) {

@@ -154,6 +154,46 @@
                     <p class="file-caption">{{ file.text }}</p>
                   }
                 </div>
+              } @else if (chat.isImage(file) || chat.isVideo(file)) {
+                <article class="media-message-card" [class.video]="chat.isVideo(file)">
+                  <button type="button" class="media-message-preview" (click)="openMediaItem(message)" [attr.aria-label]="('COMMON.OPEN' | translate:'Abrir') + ' ' + chat.fileName(file)">
+                    @if (chat.mediaPreview(file.fileId || file.downloadFile || file.previewFile); as media) {
+                      @if (chat.isImage(file)) {
+                        <img [src]="media.url" [alt]="chat.fileName(file)">
+                      } @else {
+                        <video [src]="media.url" muted playsinline preload="metadata"></video>
+                        <span class="media-play">
+                          <ion-icon name="play-circle-outline"></ion-icon>
+                        </span>
+                      }
+                    } @else {
+                      <span class="media-placeholder">
+                        <ion-icon [name]="chat.isVideo(file) ? 'videocam-outline' : 'image-outline'"></ion-icon>
+                      </span>
+                    }
+                    @if (downloadingId === message.id) {
+                      <span class="media-loading">
+                        <ion-spinner name="crescent"></ion-spinner>
+                      </span>
+                    }
+                  </button>
+                  <div class="media-message-meta">
+                    <span>
+                      <strong>{{ chat.fileName(file) }}</strong>
+                      <small>{{ chat.fileSize(file) }}</small>
+                    </span>
+                    <button type="button" class="media-download" (click)="download(message); $event.stopPropagation()" [disabled]="downloadingId === message.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
+                      @if (downloadingId === message.id) {
+                        <ion-spinner name="crescent"></ion-spinner>
+                      } @else {
+                        <ion-icon name="download-outline"></ion-icon>
+                      }
+                    </button>
+                  </div>
+                  @if (file.text) {
+                    <p class="file-caption media-caption">{{ file.text }}</p>
+                  }
+                </article>
               } @else {
                 <div class="file-card">
                   <button type="button" class="file-thumb" (click)="openMediaItem(message)" [attr.aria-label]="('COMMON.OPEN' | translate:'Abrir') + ' ' + chat.fileName(file)">
@@ -392,21 +432,21 @@
     (didDismiss)="closeAttachmentMenu()">
     <ng-template>
       <div class="attachment-menu">
-        <button type="button" (click)="chooseAttachment(galleryInput)">
+        <button type="button" class="attachment-option gallery" (click)="chooseAttachment(galleryInput)">
           <ion-icon name="image-outline"></ion-icon>
           <span>
             <strong>{{ 'COMMON.GALLERY' | translate:'Galeria' }}</strong>
             <small>{{ 'CHAT.IMAGES_AND_VIDEOS' | translate:'Imagenes y videos' }}</small>
           </span>
         </button>
-        <button type="button" (click)="chooseAttachment(documentInput)">
+        <button type="button" class="attachment-option document" (click)="chooseAttachment(documentInput)">
           <ion-icon name="document-attach-outline"></ion-icon>
           <span>
             <strong>{{ 'COMMON.DOCUMENT' | translate:'Documento' }}</strong>
             <small>{{ 'CHAT.ORIGINAL_QUALITY' | translate:'Calidad original' }}</small>
           </span>
         </button>
-        <button type="button" (click)="chooseAttachment(audioInput)">
+        <button type="button" class="attachment-option audio" (click)="chooseAttachment(audioInput)">
           <ion-icon name="mic-outline"></ion-icon>
           <span>
             <strong>{{ 'COMMON.AUDIO' | translate:'Audio' }}</strong>
@@ -957,9 +997,20 @@
         <section class="chat-media-viewer">
           <header>
             <strong>{{ chat.fileName(activeMediaFile) }}</strong>
-            <ion-button mode="ios" fill="clear" (click)="closeMediaViewer()" [attr.aria-label]="'CHAT.CLOSE_FILE' | translate:'Cerrar archivo'">
-              <ion-icon name="close-outline"></ion-icon>
-            </ion-button>
+            <div class="viewer-actions">
+              @if (activeMediaMessage) {
+                <ion-button mode="ios" fill="clear" (click)="downloadActiveMedia()" [disabled]="downloadingId === activeMediaMessage.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
+                  @if (downloadingId === activeMediaMessage.id) {
+                    <ion-spinner name="crescent"></ion-spinner>
+                  } @else {
+                    <ion-icon name="download-outline"></ion-icon>
+                  }
+                </ion-button>
+              }
+              <ion-button mode="ios" fill="clear" (click)="closeMediaViewer()" [attr.aria-label]="'CHAT.CLOSE_FILE' | translate:'Cerrar archivo'">
+                <ion-icon name="close-outline"></ion-icon>
+              </ion-button>
+            </div>
           </header>
           <div class="chat-media-viewer-body">
             @if (chat.isImage(activeMediaFile)) {

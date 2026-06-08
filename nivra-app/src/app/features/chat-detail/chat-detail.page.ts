@@ -172,6 +172,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   activeAudioName = '';
   activeMediaPreview: MediaPreview | null = null;
   activeMediaFile: FileChatPayload | null = null;
+  activeMediaMessage: ChatMessageVm | null = null;
   groupNameDraft = '';
   groupAvatarDraft: string | null = null;
   groupSettingsDraft: GroupSettings = {
@@ -503,6 +504,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       if (preview) {
         this.activeMediaPreview = preview;
         this.activeMediaFile = file;
+        this.activeMediaMessage = message;
       }
     } catch (error) {
       this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_ATTACHMENT', 'No se pudo abrir el adjunto.');
@@ -541,6 +543,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   closeMediaViewer(): void {
     this.activeMediaPreview = null;
     this.activeMediaFile = null;
+    this.activeMediaMessage = null;
+  }
+
+  async downloadActiveMedia(): Promise<void> {
+    if (this.activeMediaMessage) {
+      await this.download(this.activeMediaMessage);
+    }
   }
 
   async markMessageOpened(message: ChatMessageVm): Promise<void> {
