@@ -43,6 +43,12 @@
     },
     "FirebaseMessaging": {
       "presentationOptions": []
+    },
+    "FirebaseAuthentication": {
+      "skipNativeAuth": false,
+      "providers": [
+        "phone"
+      ]
     }
   }
 }

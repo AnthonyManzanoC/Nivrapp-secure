@@ -1,4 +1,5 @@
 /// <reference types="@capacitor-firebase/messaging" />
+/// <reference types="@capacitor-firebase/authentication" />
 
 import type { CapacitorConfig } from '@capacitor/cli';
 
@@ -47,6 +48,11 @@ const config: CapacitorConfig = {
     },
     FirebaseMessaging: {
       presentationOptions: [],
+    },
+    FirebaseAuthentication: {
+      authDomain: undefined,
+      skipNativeAuth: false,
+      providers: ['phone'],
     },
   },
 };

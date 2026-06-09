@@ -2,7 +2,8 @@ import { Injectable, OnDestroy, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
+import { FirebaseAuthentication } from '@capacitor-firebase/authentication';
 import {
   Auth,
   ConfirmationResult,
@@ -71,6 +72,8 @@ export class AuthService implements OnDestroy {
   private firebaseAuth: Auth | null = null;
   private recaptchaVerifier: RecaptchaVerifier | null = null;
   private confirmationResult: ConfirmationResult | null = null;
+  private nativePhoneVerificationId = '';
+  private nativePhoneListenerHandles: PluginListenerHandle[] = [];
   private qrConnection: HubConnection | null = null;
   private qrPollTimer: number | null = null;
   private authRefreshPromise: Promise<boolean> | null = null;
@@ -92,6 +95,7 @@ export class AuthService implements OnDestroy {
   ngOnDestroy(): void {
     void this.stopQrLogin();
     void this.resetRecaptcha({ clear: true });
+    void this.clearNativePhoneListeners();
   }
 
   updateUser(user: NivraUser): void {
@@ -139,6 +143,11 @@ export class AuthService implements OnDestroy {
 
     this.busy.set(true);
     try {
+      if (this.usesNativeFirebasePhoneAuth()) {
+        await this.sendNativeFirebaseOtp(normalizedPhone);
+        return;
+      }
+
       const auth = await this.ensureFirebaseAuth();
       const verifier = await this.ensureRecaptcha(auth);
       this.confirmationResult = await signInWithPhoneNumber(auth, normalizedPhone, verifier);
@@ -154,6 +163,12 @@ export class AuthService implements OnDestroy {
     if (!phone.trim() || !code.trim()) {
       throw new Error('Telefono y codigo son obligatorios.');
     }
+
+    if (this.usesNativeFirebasePhoneAuth()) {
+      await this.verifyNativeFirebaseOtp(phone, code);
+      return;
+    }
+
     if (!this.confirmationResult) {
       throw new Error('Primero pide el codigo SMS de Firebase.');
     }
@@ -162,30 +177,8 @@ export class AuthService implements OnDestroy {
     try {
       const credential = await this.confirmationResult.confirm(code.trim());
       const firebaseToken = await credential.user.getIdToken();
-      const keys = await this.crypto.prepareDeviceKeys(null, true);
-      const device = await this.deviceProfile();
-      const response = await firstValueFrom(
-        this.api.post<FirebasePhoneVerifyResponse>('/api/auth/phone/verify-firebase', {
-          firebaseToken,
-          deviceName: device.name,
-          hardwareId: device.hardwareId,
-          keyBundle: keys.keyBundle,
-        }, { skipAuth: true }),
-      );
-
-      if (response.requiresAlias) {
-        this.pendingPhoneAlias.set({
-          token: response.phoneSetupToken ?? '',
-          expiresAt: response.phoneSetupExpiresAt,
-          phone: response.phone ?? phone.trim(),
-          keys,
-        });
-        this.confirmationResult = null;
-        return;
-      }
-
-      const auth = response.auth ?? (response as unknown as AuthSession);
-      await this.completeAuth(auth, keys);
+      await this.completeFirebasePhoneSignIn(phone, firebaseToken);
+      this.confirmationResult = null;
     } catch (error) {
       throw new Error(this.firebasePhoneAuthErrorMessage(error, 'No se pudo entrar por telefono.'));
     } finally {
@@ -454,6 +447,8 @@ export class AuthService implements OnDestroy {
     }
     await this.stopQrLogin();
     await this.resetRecaptcha({ clear: true });
+    await this.clearNativePhoneListeners();
+    await this.nativeFirebaseSignOut();
     this.session.set(null);
     this.pendingPhoneAlias.set(null);
     // Logout only removes credentials; NivraDB chat history and conversations must stay local.
@@ -478,15 +473,144 @@ export class AuthService implements OnDestroy {
   firebaseClientDiagnostics(): string[] {
     const config = environment.firebase;
     const appCheckSiteKey = String(environment.firebaseAppCheckSiteKey || '').trim();
+    const nativeAuth = this.usesNativeFirebasePhoneAuth();
     return [
       `Firebase projectId: ${config.projectId}`,
       `Firebase authDomain: ${config.authDomain}`,
       `Firebase appId: ${config.appId}`,
       `Capacitor Android origin: https://${config.authDomain}`,
-      'Auth client: Firebase Web Auth + reCAPTCHA invisible dentro de Capacitor WebView',
+      `Auth client: ${nativeAuth ? 'Firebase Android nativo con Play Integrity/SHA' : 'Firebase Web Auth + reCAPTCHA invisible'}`,
       `App Check web: ${appCheckSiteKey ? 'configurado con reCAPTCHA v3' : 'sin site key en environment; no se inicializa App Check web'}`,
-      'Play Integrity: aplica al SDK nativo Android; este flujo de SMS usa Firebase Web Auth, por eso primero registra SHA-1/SHA-256 en Firebase.',
+      nativeAuth
+        ? 'Play Integrity: el flujo SMS del APK usa el SDK nativo Android y lee google-services.json + SHA registrados.'
+        : 'Play Integrity: aplica al SDK nativo Android; web/PC usa reCAPTCHA.',
     ];
+  }
+
+  private usesNativeFirebasePhoneAuth(): boolean {
+    return Capacitor.isNativePlatform?.() === true;
+  }
+
+  private async sendNativeFirebaseOtp(normalizedPhone: string): Promise<void> {
+    this.nativePhoneVerificationId = '';
+    await this.clearNativePhoneListeners();
+
+    let requestResolved = false;
+    let resolveRequest: () => void = () => undefined;
+    let rejectRequest: (error: unknown) => void = () => undefined;
+    const resolveOnce = () => {
+      if (!requestResolved) {
+        requestResolved = true;
+        resolveRequest();
+      }
+    };
+    const rejectOnce = (error: unknown) => {
+      if (!requestResolved) {
+        requestResolved = true;
+        rejectRequest(error);
+      }
+    };
+    const waitForCode = new Promise<void>((resolve, reject) => {
+      resolveRequest = resolve;
+      rejectRequest = reject;
+    });
+
+    try {
+      const codeSentHandle = await FirebaseAuthentication.addListener('phoneCodeSent', (event) => {
+        this.nativePhoneVerificationId = event.verificationId;
+        resolveOnce();
+      });
+      const completedHandle = await FirebaseAuthentication.addListener('phoneVerificationCompleted', () => {
+        void this.completeNativeAutoVerifiedPhone(normalizedPhone)
+          .then(resolveOnce)
+          .catch(rejectOnce);
+      });
+      const failedHandle = await FirebaseAuthentication.addListener('phoneVerificationFailed', (event) => {
+        rejectOnce(new Error(event.message || 'Firebase no pudo verificar este telefono en Android.'));
+      });
+      this.nativePhoneListenerHandles.push(codeSentHandle, completedHandle, failedHandle);
+
+      await FirebaseAuthentication.signInWithPhoneNumber({
+        phoneNumber: normalizedPhone,
+        timeout: 60,
+      });
+      await waitForCode;
+    } catch (error) {
+      this.nativePhoneVerificationId = '';
+      await this.clearNativePhoneListeners();
+      throw error;
+    }
+  }
+
+  private async verifyNativeFirebaseOtp(phone: string, code: string): Promise<void> {
+    if (!this.nativePhoneVerificationId) {
+      throw new Error('Primero pide el codigo SMS de Firebase.');
+    }
+
+    this.busy.set(true);
+    try {
+      await FirebaseAuthentication.confirmVerificationCode({
+        verificationId: this.nativePhoneVerificationId,
+        verificationCode: code.trim(),
+      });
+      const result = await FirebaseAuthentication.getIdToken({ forceRefresh: true });
+      await this.completeFirebasePhoneSignIn(phone, result.token);
+      this.nativePhoneVerificationId = '';
+      await this.clearNativePhoneListeners();
+    } catch (error) {
+      throw new Error(this.firebasePhoneAuthErrorMessage(error, 'No se pudo entrar por telefono.'));
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  private async completeNativeAutoVerifiedPhone(phone: string): Promise<void> {
+    const result = await FirebaseAuthentication.getIdToken({ forceRefresh: true });
+    await this.completeFirebasePhoneSignIn(phone, result.token);
+    this.nativePhoneVerificationId = '';
+    await this.clearNativePhoneListeners();
+  }
+
+  private async completeFirebasePhoneSignIn(phone: string, firebaseToken: string): Promise<void> {
+    if (!firebaseToken) {
+      throw new Error('Firebase no entrego un token valido para este telefono.');
+    }
+
+    const keys = await this.crypto.prepareDeviceKeys(null, true);
+    const device = await this.deviceProfile();
+    const response = await firstValueFrom(
+      this.api.post<FirebasePhoneVerifyResponse>('/api/auth/phone/verify-firebase', {
+        firebaseToken,
+        deviceName: device.name,
+        hardwareId: device.hardwareId,
+        keyBundle: keys.keyBundle,
+      }, { skipAuth: true }),
+    );
+
+    if (response.requiresAlias) {
+      this.pendingPhoneAlias.set({
+        token: response.phoneSetupToken ?? '',
+        expiresAt: response.phoneSetupExpiresAt,
+        phone: response.phone ?? phone.trim(),
+        keys,
+      });
+      return;
+    }
+
+    const auth = response.auth ?? (response as unknown as AuthSession);
+    await this.completeAuth(auth, keys);
+  }
+
+  private async clearNativePhoneListeners(): Promise<void> {
+    const handles = this.nativePhoneListenerHandles.splice(0);
+    await Promise.all(handles.map((handle) => handle.remove().catch(() => undefined)));
+  }
+
+  private async nativeFirebaseSignOut(): Promise<void> {
+    if (!this.usesNativeFirebasePhoneAuth()) {
+      return;
+    }
+    await FirebaseAuthentication.signOut().catch(() => undefined);
   }
 
   private async deviceProfile(): Promise<{ hardwareId: string; name: string }> {
