@@ -1127,9 +1127,10 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            var result = (await store.ConversationsForUserAsync(current.UserId, cancellationToken))
-                .Select(ToConversationResponse)
-                .ToList();
+            var result = await ToConversationResponsesAsync(
+                await store.ConversationsForUserAsync(current.UserId, cancellationToken),
+                store,
+                cancellationToken);
             return Results.Ok(result);
         });
 
@@ -1182,7 +1183,8 @@ public static partial class EndpointExtensions
             }
 
             await store.AddConversationAsync(conversation, cancellationToken);
-            await NotifyUsers(hub, participantIds, "conversation.created", ToConversationResponse(conversation));
+            var response = await ToConversationResponseAsync(conversation, store, cancellationToken);
+            await NotifyUsers(hub, participantIds, "conversation.created", response);
             foreach (var userId in participantIds.Where(userId => userId != current.UserId).Distinct(StringComparer.Ordinal))
             {
                 await pushNotifications.SendEventAsync(userId, "Nivra", "Nuevo chat disponible", "conversation", $"nivra-conversation-{conversation.Id}", new Dictionary<string, string>
@@ -1191,7 +1193,7 @@ public static partial class EndpointExtensions
                     ["senderUserId"] = current.UserId
                 }, cancellationToken);
             }
-            return Results.Created($"/conversations/{conversation.Id}", ToConversationResponse(conversation));
+            return Results.Created($"/conversations/{conversation.Id}", response);
         });
 
         conversations.MapGet("/{conversationId}", async Task<IResult> (string conversationId, HttpContext http, INivraStore store, CancellationToken cancellationToken) =>
@@ -1208,7 +1210,7 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
-            return Results.Ok(ToConversationResponse(conversation));
+            return Results.Ok(await ToConversationResponseAsync(conversation, store, cancellationToken));
         });
 
         conversations.MapGet("/{conversationId}/messages", async Task<IResult> (string conversationId, int? take, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
@@ -1277,8 +1279,9 @@ public static partial class EndpointExtensions
             conversation.PrivacySettings = request.PrivacySettings ?? conversation.PrivacySettings;
             conversation.UpdatedAt = timeProvider.GetUtcNow();
             await store.SaveChangesAsync(cancellationToken);
-            await hub.Clients.Group(GroupsFor.Conversation(conversation.Id)).SendAsync("conversation.updated", ToConversationResponse(conversation), cancellationToken);
-            return Results.Ok(ToConversationResponse(conversation));
+            var response = await ToConversationResponseAsync(conversation, store, cancellationToken);
+            await hub.Clients.Group(GroupsFor.Conversation(conversation.Id)).SendAsync("conversation.updated", response, cancellationToken);
+            return Results.Ok(response);
         });
 
         conversations.MapPost("/{conversationId}/leave", async Task<IResult> (string conversationId, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
@@ -1330,7 +1333,7 @@ public static partial class EndpointExtensions
 
             conversation.UpdatedAt = now;
             await store.SaveChangesAsync(cancellationToken);
-            var response = ToConversationResponse(conversation);
+            var response = await ToConversationResponseAsync(conversation, store, cancellationToken);
             await NotifyUsers(hub, conversation.Participants.Select(item => item.UserId), "conversation.updated", response);
             return Results.Ok(response);
         });
@@ -3273,7 +3276,7 @@ public static partial class EndpointExtensions
             return user is null ? Results.Unauthorized() : Results.Ok(user.PrivacySettings);
         });
 
-        app.MapPatch("/privacy", async Task<IResult> (PatchPrivacyRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        app.MapPatch("/privacy", async Task<IResult> (PatchPrivacyRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3290,6 +3293,14 @@ public static partial class EndpointExtensions
             ApplyPrivacyPatch(user.PrivacySettings, request);
             user.UpdatedAt = timeProvider.GetUtcNow();
             await store.SaveChangesAsync(cancellationToken);
+            var conversations = await ToConversationResponsesAsync(
+                await store.ConversationsForUserAsync(current.UserId, cancellationToken),
+                store,
+                cancellationToken);
+            foreach (var conversation in conversations)
+            {
+                await NotifyUsers(hub, conversation.Participants.Select(participant => participant.UserId), "conversation.updated", conversation);
+            }
             return Results.Ok(user.PrivacySettings);
         });
     }
@@ -3515,9 +3526,10 @@ public static partial class EndpointExtensions
                 contacts.Add(await ToContactResponseAsync(contact, store, cancellationToken));
             }
 
-            var conversations = (await store.ConversationsForUserAsync(current.UserId, cancellationToken))
-                .Select(ToConversationResponse)
-                .ToList();
+            var conversations = await ToConversationResponsesAsync(
+                await store.ConversationsForUserAsync(current.UserId, cancellationToken),
+                store,
+                cancellationToken);
             var now = DateTimeOffset.UtcNow;
             var conversationIds = conversations.Select(conversation => conversation.Id).ToList();
             List<MessageEnvelope> recentMessages = conversationIds.Count == 0
@@ -3941,7 +3953,26 @@ public static partial class EndpointExtensions
             contact.CreatedAt);
     }
 
-    private static ConversationResponse ToConversationResponse(ConversationRecord conversation)
+    private static async Task<List<ConversationResponse>> ToConversationResponsesAsync(IEnumerable<ConversationRecord> conversations, INivraStore store, CancellationToken cancellationToken)
+    {
+        var items = conversations.ToList();
+        var userIds = items
+            .SelectMany(conversation => conversation.Participants.Select(participant => participant.UserId))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var users = (await store.GetUsersAsync(userIds, cancellationToken))
+            .ToDictionary(user => user.Id, StringComparer.Ordinal);
+        return items.Select(conversation => ToConversationResponse(conversation, users)).ToList();
+    }
+
+    private static async Task<ConversationResponse> ToConversationResponseAsync(ConversationRecord conversation, INivraStore store, CancellationToken cancellationToken)
+    {
+        var users = (await store.GetUsersAsync(conversation.Participants.Select(participant => participant.UserId), cancellationToken))
+            .ToDictionary(user => user.Id, StringComparer.Ordinal);
+        return ToConversationResponse(conversation, users);
+    }
+
+    private static ConversationResponse ToConversationResponse(ConversationRecord conversation, IReadOnlyDictionary<string, UserAccount>? users = null)
     {
         return new ConversationResponse(
             conversation.Id,
@@ -3954,10 +3985,20 @@ public static partial class EndpointExtensions
                 participant.CanInvite,
                 participant.CanChangePrivacy,
                 participant.JoinedAt,
-                participant.RemovedAt)).ToList(),
+                participant.RemovedAt,
+                users is not null && users.TryGetValue(participant.UserId, out var user)
+                    ? ToParticipantPrivacyPolicyResponse(user.PrivacySettings)
+                    : null)).ToList(),
             conversation.CreatedAt,
             conversation.UpdatedAt,
             conversation.LastMessageAt);
+    }
+
+    private static ParticipantPrivacyPolicyResponse ToParticipantPrivacyPolicyResponse(PrivacySettings privacy)
+    {
+        return new ParticipantPrivacyPolicyResponse(
+            privacy.AllowForwarding,
+            privacy.AllowScreenshots);
     }
 
     private static MessageResponse ToMessageResponse(MessageEnvelope message)

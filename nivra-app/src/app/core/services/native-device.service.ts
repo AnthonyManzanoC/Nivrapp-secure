@@ -5,6 +5,14 @@ import { AuthService } from './auth.service';
 
 type AudioFocusMode = 'record' | 'playback';
 type MediaKind = 'image' | 'video' | 'audio' | 'document';
+
+declare global {
+  interface Window {
+    nivraContentProtection?: {
+      setSecureScreen(options: { enabled: boolean }): Promise<{ enabled: boolean }>;
+    };
+  }
+}
 export type RaiseGestureEvent = { kind: 'listen' | 'talk'; near: boolean; at: number };
 export type NativeShareFile = {
   uri: string;
@@ -129,6 +137,7 @@ export class NativeDeviceService {
       document.body?.classList.toggle('nivra-secure-screen', !allowed);
     }
     if (!this.native) {
+      await window.nivraContentProtection?.setSecureScreen({ enabled: !allowed }).catch(() => undefined);
       return;
     }
     await NivraNative.setSecureScreen({ enabled: !allowed }).catch(() => undefined);

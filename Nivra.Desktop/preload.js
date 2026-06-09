@@ -27,3 +27,11 @@ contextBridge.exposeInMainWorld("nivraSecureVault", {
     return ipcRenderer.invoke("nivra-secure-vault:clear", normalized);
   }
 });
+
+contextBridge.exposeInMainWorld("nivraContentProtection", {
+  async setSecureScreen(options) {
+    return ipcRenderer.invoke("nivra-content-protection:set-secure-screen", {
+      enabled: Boolean(options && options.enabled)
+    });
+  }
+});

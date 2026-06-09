@@ -595,7 +595,7 @@ export class ChatService implements OnDestroy {
     const payload: ChatPayload = {
       type: 'text',
       text: body,
-      forwardingAllowed: conversation.privacySettings?.allowForwarding ?? true,
+      forwardingAllowed: this.currentUserAllowsForwarding(),
     };
     if (policy.replyTo) {
       payload.replyTo = policy.replyTo;
@@ -866,7 +866,7 @@ export class ChatService implements OnDestroy {
     if (message.deleteAfterRead) {
       return { ok: false, reason: 'Los mensajes de una sola vez no se pueden reenviar.' };
     }
-    if (!message.mine && message.payload?.forwardingAllowed === false) {
+    if (!message.mine && (message.payload?.forwardingAllowed === false || this.senderAllowsForwarding(message) === false)) {
       return { ok: false, reason: 'El remitente bloqueo el reenvio.' };
     }
     return { ok: true };
@@ -1238,6 +1238,15 @@ export class ChatService implements OnDestroy {
   participantAlias(userId: string | null | undefined, fallback?: ProfileSource | null): string {
     const alias = this.participantProfile(userId)?.alias || this.normalizeProfile(fallback)?.alias || '';
     return alias ? `@${alias}` : '';
+  }
+
+  participantPrivacyPolicy(userId: string | null | undefined, conversation?: Conversation | null) {
+    if (!userId) {
+      return null;
+    }
+    const source = conversation ?? this.selectedConversation() ?? this.conversations().find((item) =>
+      item.participants.some((participant) => participant.userId === userId && !participant.removedAt));
+    return source?.participants.find((participant) => participant.userId === userId)?.privacyPolicy ?? null;
   }
 
   canEditGroup(conversation: Conversation | null | undefined): boolean {
@@ -2087,9 +2096,19 @@ export class ChatService implements OnDestroy {
     const outgoing = { ...(payload || {}) };
     const controlTypes = new Set(['reaction', 'edit', 'delete', 'system', 'call_log', 'system-call']);
     if (outgoing.type && !controlTypes.has(outgoing.type) && outgoing.forwardingAllowed === undefined) {
-      outgoing.forwardingAllowed = conversation.privacySettings?.allowForwarding ?? true;
+      outgoing.forwardingAllowed = this.currentUserAllowsForwarding();
     }
     return outgoing;
+  }
+
+  private currentUserAllowsForwarding(): boolean {
+    return this.auth.session()?.user.privacySettings?.allowForwarding !== false;
+  }
+
+  private senderAllowsForwarding(message: ChatMessageVm): boolean | null {
+    const conversation = this.conversations().find((item) => item.id === message.conversationId) ?? this.selectedConversation();
+    const policy = this.participantPrivacyPolicy(message.senderUserId, conversation);
+    return policy?.allowForwarding === undefined ? null : policy.allowForwarding !== false;
   }
 
   private policyToSendOptions(policy: MessagePolicyOptions): SendPayloadOptions {
@@ -3022,7 +3041,7 @@ export class ChatService implements OnDestroy {
       return true;
     }
 
-    const { reactions: _reactions, replyTo: _replyTo, ...payload } = message.payload;
+    const { reactions: _reactions, replyTo: _replyTo, forwardingAllowed: _forwardingAllowed, ...payload } = message.payload;
     await this.sendPayload(
       conversation,
       { ...payload, forwardedFrom, replyTo: null },

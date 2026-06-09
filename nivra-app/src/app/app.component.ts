@@ -20,6 +20,7 @@ import { TranslatePipe } from './core/pipes/translate.pipe';
 import { TranslateService } from './core/services/translate.service';
 import { NativeDeviceService, type NativeShareIntent } from './core/services/native-device.service';
 import { PerformanceModeService } from './core/services/performance-mode.service';
+import { PrivacyEnforcementService } from './core/services/privacy-enforcement.service';
 import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
@@ -50,6 +51,7 @@ export class AppComponent {
   private readonly translate = inject(TranslateService);
   private readonly nativeDevice = inject(NativeDeviceService);
   private readonly performanceMode = inject(PerformanceModeService);
+  private readonly privacyEnforcement = inject(PrivacyEnforcementService);
   private readonly destroyRef = inject(DestroyRef);
   readonly calls = inject(CallsService);
   private readonly now = signal(Date.now());
@@ -79,6 +81,7 @@ export class AppComponent {
   constructor() {
     void this.translate;
     void this.performanceMode;
+    void this.privacyEnforcement;
     this.bindAppLinks();
     this.bindNativeShares();
     this.bindAppLifecycleLock();
@@ -108,11 +111,6 @@ export class AppComponent {
         }
         void this.push.notifyRealtimeEvent(event);
       });
-
-    effect(() => {
-      const privacy = this.auth.session()?.user.privacySettings;
-      untracked(() => void this.nativeDevice.setScreenshotsAllowed(privacy?.allowScreenshots !== false));
-    });
 
     effect(() => {
       const settings = this.appSettings.settings();

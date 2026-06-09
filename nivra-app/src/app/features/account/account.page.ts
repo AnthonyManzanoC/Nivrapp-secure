@@ -322,9 +322,6 @@ export class AccountPage implements OnInit, OnDestroy {
         },
       });
     }
-    if (key === 'allowScreenshots') {
-      void this.nativeDevice.setScreenshotsAllowed(value !== false);
-    }
   }
 
   patchPrivacyTtl(value: string): void {
@@ -578,7 +575,6 @@ export class AccountPage implements OnInit, OnDestroy {
           ...patch,
         },
       });
-      void this.nativeDevice.setScreenshotsAllowed(patch.allowScreenshots !== false);
     }
     this.notice = this.t('ACCOUNT.PRESET_READY', 'Preset listo. Guarda privacidad para sincronizarlo.');
   }

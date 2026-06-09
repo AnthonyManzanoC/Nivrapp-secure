@@ -1,5 +1,5 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, inject } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
@@ -75,6 +75,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { NativeDeviceService, type RaiseGestureEvent } from '../../core/services/native-device.service';
 import { PerformanceModeService } from '../../core/services/performance-mode.service';
+import { PrivacyEnforcementService } from '../../core/services/privacy-enforcement.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
@@ -131,6 +132,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private readonly actionSheetController = inject(ActionSheetController);
   private readonly nativeDevice = inject(NativeDeviceService);
   private readonly performanceMode = inject(PerformanceModeService);
+  private readonly privacyEnforcement = inject(PrivacyEnforcementService);
   private routeSub?: Subscription;
   private keyboardHandles: PluginListenerHandle[] = [];
   private raiseGestureHandle: PluginListenerHandle | null = null;
@@ -258,6 +260,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       videocamOutline,
       volumeHighOutline,
     });
+
+    effect(() => {
+      const conversation = this.conversation();
+      untracked(() => this.privacyEnforcement.setActiveConversation(conversation));
+    });
   }
 
   ngOnInit(): void {
@@ -305,6 +312,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.cancelMessagePress();
     this.closeAudioPreview();
     this.closeMediaViewer();
+    this.privacyEnforcement.clearActiveConversation(conversationId);
     this.clearPendingAttachments(false);
     this.stopVoiceTimer();
     void this.cancelVoiceNote();
@@ -680,16 +688,16 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         icon: 'create-outline',
         handler: () => this.beginEdit(message),
       }] : []),
-      {
+      ...(this.canForward(message) ? [{
         text: this.tr('CHAT_ACTIONS.FORWARD', 'Reenviar'),
         icon: 'arrow-redo-outline',
         handler: () => this.openForward(message),
-      },
-      {
+      }] : []),
+      ...(this.canShowMessageInfo(message) ? [{
         text: this.tr('CHAT_ACTIONS.MESSAGE_INFO', 'Info. del mensaje'),
         icon: 'information-circle-outline',
         handler: () => this.openMessageInfo(message),
-      },
+      }] : []),
       {
         text: this.tr('CHAT.DELETE_FOR_ME', 'Eliminar para mi'),
         icon: 'trash-outline',
@@ -747,6 +755,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   openMessageInfo(message: ChatMessageVm): void {
+    if (!this.canShowMessageInfo(message)) {
+      return;
+    }
     this.messageInfoMessage = message;
     this.closeMessageActions();
   }
@@ -954,6 +965,14 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   canEdit(message: ChatMessageVm): boolean {
     return message.mine && !this.chat.asFile(message.payload) && message.payload.type !== 'system';
+  }
+
+  canForward(message: ChatMessageVm | null | undefined): boolean {
+    return this.chat.forwardAvailability(message).ok;
+  }
+
+  canShowMessageInfo(message: ChatMessageVm | null | undefined): boolean {
+    return Boolean(message?.mine);
   }
 
   beginEdit(message: ChatMessageVm): void {
@@ -1328,7 +1347,26 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   messageInfoRows(message: ChatMessageVm | null = this.messageInfoMessage): DeliveryReceipt[] {
-    return message?.receipts ?? [];
+    if (!message?.mine) {
+      return [];
+    }
+    const currentUserId = this.auth.session()?.user.id;
+    const grouped = new Map<string, DeliveryReceipt>();
+    for (const receipt of message.receipts ?? []) {
+      if (!receipt.userId || receipt.userId === currentUserId) {
+        continue;
+      }
+      const previous = grouped.get(receipt.userId);
+      grouped.set(receipt.userId, {
+        userId: receipt.userId,
+        deviceId: 'recipient',
+        deliveredAt: this.latestIso(previous?.deliveredAt, receipt.deliveredAt),
+        readAt: this.latestIso(previous?.readAt, receipt.readAt),
+        deletedAt: this.latestIso(previous?.deletedAt, receipt.deletedAt),
+      });
+    }
+    return [...grouped.values()].sort((left, right) =>
+      this.receiptDisplayName(left).localeCompare(this.receiptDisplayName(right)));
   }
 
   receiptDisplayName(receipt: DeliveryReceipt): string {
@@ -1357,13 +1395,23 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   messageInfoSummary(message: ChatMessageVm | null = this.messageInfoMessage): string {
-    if (!message) {
+    if (!message?.mine) {
       return '';
     }
     const rows = this.messageInfoRows(message);
     const read = rows.filter((receipt) => receipt.readAt).length;
     const delivered = rows.filter((receipt) => receipt.deliveredAt).length;
     return `${delivered} ${delivered === 1 ? this.tr('CHAT.DELIVERED_ONE', 'entregado') : this.tr('CHAT.DELIVERED_MANY', 'entregados')} - ${read} ${read === 1 ? this.tr('CHAT.READ_ONE', 'leido') : this.tr('CHAT.READ_MANY', 'leidos')}`;
+  }
+
+  private latestIso(left?: string | null, right?: string | null): string | null {
+    if (!left) {
+      return right ?? null;
+    }
+    if (!right) {
+      return left;
+    }
+    return Date.parse(right) > Date.parse(left) ? right : left;
   }
 
   forwardedLabel(message: ChatMessageVm): string {

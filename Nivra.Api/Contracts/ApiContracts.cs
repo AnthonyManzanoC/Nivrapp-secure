@@ -196,7 +196,12 @@ public sealed record ParticipantResponse(
     bool CanInvite,
     bool CanChangePrivacy,
     DateTimeOffset JoinedAt,
-    DateTimeOffset? RemovedAt);
+    DateTimeOffset? RemovedAt,
+    ParticipantPrivacyPolicyResponse? PrivacyPolicy);
+
+public sealed record ParticipantPrivacyPolicyResponse(
+    bool AllowForwarding,
+    bool AllowScreenshots);
 
 public sealed record SendMessageRequest(
     string ClientMessageId,

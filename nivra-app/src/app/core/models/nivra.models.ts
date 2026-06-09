@@ -74,10 +74,16 @@ export interface Participant {
   canChangePrivacy: boolean;
   joinedAt: string;
   removedAt?: string | null;
+  privacyPolicy?: ParticipantPrivacyPolicy | null;
   alias?: string | null;
   displayName?: string | null;
   phone?: string | null;
   profilePhotoDataUrl?: string | null;
+}
+
+export interface ParticipantPrivacyPolicy {
+  allowForwarding?: boolean;
+  allowScreenshots?: boolean;
 }
 
 export interface PrivacySettings {

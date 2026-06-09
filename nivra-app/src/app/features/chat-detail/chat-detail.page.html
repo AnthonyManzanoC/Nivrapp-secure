@@ -585,14 +585,18 @@
                 {{ 'CHAT_ACTIONS.EDIT' | translate:'Editar' }}
               </button>
             }
-            <button type="button" (click)="openForward(actionMessage)">
-              <ion-icon name="arrow-redo-outline"></ion-icon>
-              {{ 'CHAT_ACTIONS.FORWARD' | translate:'Reenviar' }}
-            </button>
-            <button type="button" (click)="openMessageInfo(actionMessage)">
-              <ion-icon name="information-circle-outline"></ion-icon>
-              {{ 'CHAT_ACTIONS.MESSAGE_INFO' | translate:'Info. del mensaje' }}
-            </button>
+            @if (canForward(actionMessage)) {
+              <button type="button" (click)="openForward(actionMessage)">
+                <ion-icon name="arrow-redo-outline"></ion-icon>
+                {{ 'CHAT_ACTIONS.FORWARD' | translate:'Reenviar' }}
+              </button>
+            }
+            @if (canShowMessageInfo(actionMessage)) {
+              <button type="button" (click)="openMessageInfo(actionMessage)">
+                <ion-icon name="information-circle-outline"></ion-icon>
+                {{ 'CHAT_ACTIONS.MESSAGE_INFO' | translate:'Info. del mensaje' }}
+              </button>
+            }
             <button type="button" (click)="deleteForMe(actionMessage)">
               <ion-icon name="trash-outline"></ion-icon>
               {{ 'CHAT_ACTIONS.FOR_ME' | translate:'Para mi' }}

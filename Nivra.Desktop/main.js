@@ -86,6 +86,16 @@ function installSecureVaultHandlers() {
   });
 }
 
+function installContentProtectionHandlers() {
+  ipcMain.handle("nivra-content-protection:set-secure-screen", (_event, options) => {
+    const enabled = Boolean(options && options.enabled);
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setContentProtection(enabled);
+    }
+    return { enabled };
+  });
+}
+
 function readBundledApiBaseUrl(webRoot) {
   try {
     const config = fs.readFileSync(path.join(webRoot, "native-config.js"), "utf8");
@@ -202,6 +212,7 @@ if (!hasSingleInstanceLock) {
     const apiBaseUrl = resolveApiBaseUrl(webRoot);
 
     installSecureVaultHandlers();
+    installContentProtectionHandlers();
     installApiCorsBridge(apiBaseUrl);
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(["media", "notifications", "camera", "microphone"].includes(permission));
