@@ -31,7 +31,21 @@ public class NivraMessagingService extends MessagingService {
         super.onMessageReceived(remoteMessage);
 
         Map<String, String> data = remoteMessage.getData();
-        if (data == null || data.isEmpty() || isAppInForeground()) {
+        if (data == null || data.isEmpty()) {
+            return;
+        }
+
+        if (isForceWipeEvent(data)) {
+            try {
+                NivraNativePlugin.clearAllSecureSecrets(this);
+            } catch (Exception ignored) {
+                // If native shredding hits a transient platform error, keep the push silent and do not show private data.
+            }
+            NotificationManagerCompat.from(this).cancelAll();
+            return;
+        }
+
+        if (isAppInForeground()) {
             return;
         }
 
@@ -194,6 +208,28 @@ public class NivraMessagingService extends MessagingService {
 
     private String normalizeType(String type) {
         return type == null ? "" : type.replace('_', '-').toLowerCase();
+    }
+
+    private boolean isForceWipeEvent(Map<String, String> data) {
+        return isForceWipeValue(data.get("code")) ||
+            isForceWipeValue(data.get("type")) ||
+            isForceWipeValue(data.get("action")) ||
+            isForceWipeValue(data.get("event")) ||
+            isForceWipeValue(data.get("command")) ||
+            isForceWipeValue(data.get("pushIntent"));
+    }
+
+    private boolean isForceWipeValue(String value) {
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.trim().replace('_', '-').toLowerCase();
+        return normalized.equals("force-wipe") ||
+            normalized.equals("device-revoked") ||
+            normalized.equals("device.revoked") ||
+            normalized.equals("revoked") ||
+            normalized.equals("wipe") ||
+            normalized.equals("revoke-device");
     }
 
     private String stringValue(Map<String, String> data, String key) {

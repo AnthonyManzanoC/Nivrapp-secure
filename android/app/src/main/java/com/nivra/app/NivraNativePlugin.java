@@ -13,6 +13,7 @@ import android.content.ContentResolver;
 import android.content.ContentValues;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.content.pm.Signature;
@@ -64,7 +65,17 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.security.KeyStore;
 import java.security.MessageDigest;
+import java.security.SecureRandom;
+
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
 
 import org.json.JSONArray;
 
@@ -83,6 +94,9 @@ public class NivraNativePlugin extends Plugin {
     static final String ACTION_CALL_OPEN = "com.nivra.app.CALL_OPEN";
     static final String ACTION_CALL_ANSWER = "com.nivra.app.CALL_ANSWER";
     static final String ACTION_CALL_REJECT = "com.nivra.app.CALL_REJECT";
+    private static final String KEYSTORE_PROVIDER = "AndroidKeyStore";
+    private static final String SECURE_VAULT_PREFS = "nivra_secure_vault";
+    private static final int GCM_TAG_LENGTH_BITS = 128;
     private static final int MAX_DEVICE_CONTACTS = 5000;
     private static WeakReference<NivraNativePlugin> activePlugin = new WeakReference<>(null);
     private static final List<JSObject> pendingCallActions = new ArrayList<>();
@@ -236,6 +250,49 @@ public class NivraNativePlugin extends Plugin {
             }
         }
         call.resolve(result);
+    }
+
+    @PluginMethod
+    public void getOrCreateSecureSecret(PluginCall call) {
+        String name = secureSecretName(call.getString("name", ""));
+        if (!isAllowedSecureSecretName(name)) {
+            call.reject("Nombre de secreto no permitido.");
+            return;
+        }
+
+        try {
+            String secret = readSecureSecret(name);
+            boolean created = false;
+            if (secret == null || secret.isEmpty()) {
+                secret = createSecureSecret(name);
+                created = true;
+            }
+            JSObject result = new JSObject();
+            result.put("name", name);
+            result.put("secret", secret);
+            result.put("created", created);
+            call.resolve(result);
+        } catch (Exception error) {
+            call.reject("No se pudo abrir el secreto local seguro.", error);
+        }
+    }
+
+    @PluginMethod
+    public void clearSecureSecret(PluginCall call) {
+        String name = secureSecretName(call.getString("name", ""));
+        try {
+            if (name.isEmpty() || "all".equals(name)) {
+                clearAllSecureSecrets(getContext());
+            } else if (isAllowedSecureSecretName(name)) {
+                clearSecureSecretName(name);
+            } else {
+                call.reject("Nombre de secreto no permitido.");
+                return;
+            }
+            call.resolve();
+        } catch (Exception error) {
+            call.reject("No se pudo destruir el secreto local seguro.", error);
+        }
     }
 
     @PluginMethod
@@ -791,6 +848,106 @@ public class NivraNativePlugin extends Plugin {
         synchronized (knownSharedUris) {
             return knownSharedUris.contains(uriValue);
         }
+    }
+
+    private String createSecureSecret(String name) throws Exception {
+        byte[] secretBytes = new byte[32];
+        new SecureRandom().nextBytes(secretBytes);
+        String secret = Base64.encodeToString(secretBytes, Base64.NO_WRAP);
+        SecretKey key = getOrCreateKeystoreKey(name);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key);
+        byte[] ciphertext = cipher.doFinal(secret.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        securePrefs().edit()
+            .putString(secretPrefKey(name, "iv"), Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
+            .putString(secretPrefKey(name, "ciphertext"), Base64.encodeToString(ciphertext, Base64.NO_WRAP))
+            .apply();
+        return secret;
+    }
+
+    private String readSecureSecret(String name) throws Exception {
+        SharedPreferences prefs = securePrefs();
+        String iv = prefs.getString(secretPrefKey(name, "iv"), "");
+        String ciphertext = prefs.getString(secretPrefKey(name, "ciphertext"), "");
+        if (iv == null || iv.isEmpty() || ciphertext == null || ciphertext.isEmpty()) {
+            return "";
+        }
+        SecretKey key = getOrCreateKeystoreKey(name);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, Base64.decode(iv, Base64.NO_WRAP)));
+        byte[] plain = cipher.doFinal(Base64.decode(ciphertext, Base64.NO_WRAP));
+        return new String(plain, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private void clearSecureSecretName(String name) throws Exception {
+        clearSecureSecretName(getContext(), name);
+    }
+
+    static void clearAllSecureSecrets(Context context) throws Exception {
+        clearSecureSecretName(context, "local-db");
+        clearSecureSecretName(context, "device-keys");
+        clearSecureSecretName(context, "auth-session");
+    }
+
+    static void clearSecureSecretName(Context context, String name) throws Exception {
+        context.getSharedPreferences(SECURE_VAULT_PREFS, Context.MODE_PRIVATE)
+            .edit()
+            .remove(staticSecretPrefKey(name, "iv"))
+            .remove(staticSecretPrefKey(name, "ciphertext"))
+            .commit();
+        KeyStore keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER);
+        keyStore.load(null);
+        String alias = staticSecureKeystoreAlias(name);
+        if (keyStore.containsAlias(alias)) {
+            keyStore.deleteEntry(alias);
+        }
+    }
+
+    private SecretKey getOrCreateKeystoreKey(String name) throws Exception {
+        KeyStore keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER);
+        keyStore.load(null);
+        String alias = secureKeystoreAlias(name);
+        if (keyStore.containsAlias(alias)) {
+            return (SecretKey) keyStore.getKey(alias, null);
+        }
+        KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE_PROVIDER);
+        generator.init(new KeyGenParameterSpec.Builder(
+            alias,
+            KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT
+        )
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .setRandomizedEncryptionRequired(true)
+            .build());
+        return generator.generateKey();
+    }
+
+    private SharedPreferences securePrefs() {
+        return getContext().getSharedPreferences(SECURE_VAULT_PREFS, Context.MODE_PRIVATE);
+    }
+
+    private String secureSecretName(String value) {
+        return value == null ? "" : value.trim().toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private boolean isAllowedSecureSecretName(String name) {
+        return "local-db".equals(name) || "device-keys".equals(name) || "auth-session".equals(name);
+    }
+
+    private String secureKeystoreAlias(String name) {
+        return "nivra.secure." + name + ".v1";
+    }
+
+    private String secretPrefKey(String name, String field) {
+        return "secret." + name + "." + field;
+    }
+
+    private static String staticSecureKeystoreAlias(String name) {
+        return "nivra.secure." + name + ".v1";
+    }
+
+    private static String staticSecretPrefKey(String name, String field) {
+        return "secret." + name + "." + field;
     }
 
     private static void skipFully(InputStream input, int offset) throws Exception {

@@ -1,8 +1,9 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import type { SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { IDBPDatabase, openDB } from 'idb';
 import { CallSession, ChatMessageVm, ChatPayload, Contact, Conversation, LocalProfile, Story } from '../models/nivra.models';
+import { NativeSecureVaultService } from './native-secure-vault.service';
 
 const LOCAL_DB_NAME = 'NivraDB';
 const LOCAL_DB_VERSION = 12;
@@ -25,8 +26,16 @@ const textDecoder = new TextDecoder();
 
 interface LocalVaultKeyRecord {
   accountKey: string;
-  key: CryptoKey;
+  key?: CryptoKey;
+  keyEnvelope?: EncryptedLocalVaultKeyEnvelope | null;
   createdAt: string;
+}
+
+interface EncryptedLocalVaultKeyEnvelope {
+  v: 1;
+  alg: 'NIVRA-SECURE-VAULT-A256GCM';
+  iv: string;
+  ciphertext: string;
 }
 
 interface NativeVaultKeyRecord {
@@ -83,6 +92,7 @@ interface StoredStory extends Story {
 
 @Injectable({ providedIn: 'root' })
 export class LocalHistoryService {
+  private readonly secureVault = inject(NativeSecureVaultService);
   private dbPromise?: Promise<IDBPDatabase | null>;
   private sqlitePromise?: Promise<SQLiteDBConnection | null>;
 
@@ -671,6 +681,7 @@ export class LocalHistoryService {
       this.deleteIndexedDatabases(),
       this.deleteNativeSqliteDatabase(),
     ]);
+    await this.secureVault.clearSecret('local-db').catch(() => undefined);
   }
 
   private async open(): Promise<IDBPDatabase | null> {
@@ -828,6 +839,7 @@ export class LocalHistoryService {
     try {
       const { CapacitorSQLite, SQLiteConnection } = await import('@capacitor-community/sqlite');
       const connection = new SQLiteConnection(CapacitorSQLite);
+      await connection.clearEncryptionSecret().catch(() => undefined);
       const api = connection as unknown as {
         deleteDatabase?: (database: string, readOnly: boolean) => Promise<void>;
       };
@@ -853,11 +865,22 @@ export class LocalHistoryService {
     try {
       const { CapacitorSQLite, SQLiteConnection } = await import('@capacitor-community/sqlite');
       const sqlite = new SQLiteConnection(CapacitorSQLite);
+      const sqliteApi = sqlite as unknown as {
+        closeConnection?: (database: string, readonly: boolean) => Promise<void>;
+        deleteDatabase?: (database: string, readonly: boolean) => Promise<void>;
+      };
       const existing = await sqlite.isConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => ({ result: false }));
-      const db = existing.result
+      let db = existing.result
         ? await sqlite.retrieveConnection(NATIVE_SQLITE_DB_NAME, false)
-        : await sqlite.createConnection(NATIVE_SQLITE_DB_NAME, false, 'no-encryption', 1, false);
-      await db.open();
+        : await this.createEncryptedNativeConnection(sqlite);
+      try {
+        await this.withNativeSqliteSecret(sqlite, () => db.open());
+      } catch {
+        await sqliteApi.closeConnection?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
+        await sqliteApi.deleteDatabase?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
+        db = await this.createEncryptedNativeConnection(sqlite);
+        await this.withNativeSqliteSecret(sqlite, () => db.open());
+      }
       await db.execute(`
         CREATE TABLE IF NOT EXISTS local_messages (
           key TEXT PRIMARY KEY NOT NULL,
@@ -913,10 +936,70 @@ export class LocalHistoryService {
           created_at TEXT NOT NULL
         );
       `);
+      await sqlite.clearEncryptionSecret().catch(() => undefined);
       return db;
     } catch {
       return null;
     }
+  }
+
+  private async createEncryptedNativeConnection(sqlite: {
+    createConnection: (
+      database: string,
+      encrypted: boolean,
+      mode: string,
+      version: number,
+      readonly: boolean,
+    ) => Promise<SQLiteDBConnection>;
+    closeConnection?: (database: string, readonly: boolean) => Promise<void>;
+    deleteDatabase?: (database: string, readonly: boolean) => Promise<void>;
+    clearEncryptionSecret?: () => Promise<void>;
+    setEncryptionSecret?: (passphrase: string) => Promise<void>;
+  }): Promise<SQLiteDBConnection> {
+    try {
+      await this.prepareNativeSqliteSecret(sqlite);
+      return await sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
+    } catch (secretError) {
+      await sqlite.closeConnection?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
+      try {
+        await this.prepareNativeSqliteSecret(sqlite);
+        return await sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'encryption', 1, false);
+      } catch {
+        await sqlite.closeConnection?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
+        await sqlite.deleteDatabase?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
+        await this.prepareNativeSqliteSecret(sqlite);
+        return sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
+      } finally {
+        void secretError;
+      }
+    }
+  }
+
+  private async withNativeSqliteSecret<T>(
+    sqlite: {
+      clearEncryptionSecret?: () => Promise<void>;
+      setEncryptionSecret?: (passphrase: string) => Promise<void>;
+    },
+    action: () => Promise<T>,
+  ): Promise<T> {
+    await this.prepareNativeSqliteSecret(sqlite);
+    try {
+      return await action();
+    } finally {
+      await sqlite.clearEncryptionSecret?.().catch(() => undefined);
+    }
+  }
+
+  private async prepareNativeSqliteSecret(sqlite: {
+    clearEncryptionSecret?: () => Promise<void>;
+    setEncryptionSecret?: (passphrase: string) => Promise<void>;
+  }): Promise<void> {
+    const secret = await this.secureVault.getOrCreateSecret('local-db');
+    if (!secret) {
+      throw new Error('No se pudo abrir el secreto local de SQLite.');
+    }
+    await sqlite.clearEncryptionSecret?.().catch(() => undefined);
+    await sqlite.setEncryptionSecret?.(secret);
   }
 
   private async sqliteConversationMessagesPage(
@@ -1134,12 +1217,23 @@ export class LocalHistoryService {
     }
     const store = db.transaction(LOCAL_VAULT_KEY_STORE, 'readwrite').objectStore(LOCAL_VAULT_KEY_STORE);
     const existing = await store.get(accountKey) as LocalVaultKeyRecord | undefined;
+    const protectedKey = await this.unprotectLocalVaultKey(existing);
+    if (protectedKey) {
+      return protectedKey;
+    }
     if (existing?.key) {
       return existing.key;
     }
-    const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
-    await store.put({ accountKey, key, createdAt: new Date().toISOString() } satisfies LocalVaultKeyRecord);
-    return key;
+    const raw = crypto.getRandomValues(new Uint8Array(32));
+    const keyEnvelope = await this.protectLocalVaultRawKey(raw);
+    const key = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    await store.put({
+      accountKey,
+      key: keyEnvelope ? undefined : key,
+      keyEnvelope,
+      createdAt: new Date().toISOString(),
+    } satisfies LocalVaultKeyRecord);
+    return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
   }
 
   private async nativeLocalVaultKey(accountKey: string): Promise<CryptoKey | null> {
@@ -1162,6 +1256,46 @@ export class LocalHistoryService {
       [accountKey, this.b64(raw), new Date().toISOString()],
     );
     return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+
+  private async protectLocalVaultRawKey(raw: Uint8Array): Promise<EncryptedLocalVaultKeyEnvelope | null> {
+    const secret = await this.secureVault.getOrCreateSecret('local-db').catch(() => null);
+    if (!secret) {
+      if (this.secureVault.requiresProtection()) {
+        throw new Error('No se pudo abrir el protector seguro del historial local.');
+      }
+      return null;
+    }
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await crypto.subtle.importKey('raw', this.ub64Buffer(secret), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, this.bytesBuffer(raw));
+    return {
+      v: 1,
+      alg: 'NIVRA-SECURE-VAULT-A256GCM',
+      iv: this.b64(iv),
+      ciphertext: this.b64(new Uint8Array(ciphertext)),
+    };
+  }
+
+  private async unprotectLocalVaultKey(record?: LocalVaultKeyRecord | null): Promise<CryptoKey | null> {
+    if (!record?.keyEnvelope) {
+      return null;
+    }
+    const secret = await this.secureVault.getOrCreateSecret('local-db').catch(() => null);
+    if (!secret) {
+      return null;
+    }
+    try {
+      const key = await crypto.subtle.importKey('raw', this.ub64Buffer(secret), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+      const raw = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: this.ub64Buffer(record.keyEnvelope.iv) },
+        key,
+        this.ub64Buffer(record.keyEnvelope.ciphertext),
+      );
+      return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    } catch {
+      return null;
+    }
   }
 
   private compareConversations(left: Conversation, right: Conversation): number {
@@ -1201,6 +1335,10 @@ export class LocalHistoryService {
 
   private ub64Buffer(value: string): ArrayBuffer {
     const bytes = this.ub64(value);
+    return this.bytesBuffer(bytes);
+  }
+
+  private bytesBuffer(bytes: Uint8Array): ArrayBuffer {
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
 }

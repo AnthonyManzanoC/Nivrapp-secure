@@ -614,7 +614,7 @@ public static partial class EndpointExtensions
             return Results.Created($"/devices/{device.Id}", ToDeviceResponse(device));
         });
 
-        async Task<IResult> RevokeDevice(string deviceKey, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken)
+        async Task<IResult> RevokeDevice(string deviceKey, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken)
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -645,6 +645,7 @@ public static partial class EndpointExtensions
             };
             await hub.Clients.Group(GroupsFor.Device(device.Id)).SendAsync(ForceWipeCode, payload, cancellationToken);
             await hub.Clients.Group(GroupsFor.Device(device.Id)).SendAsync("device.revoked", payload, cancellationToken);
+            await pushNotifications.SendForceWipeAsync(current.UserId, device.Id, device.HardwareId, revokedAt, cancellationToken);
             await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("device.listChanged", new
             {
                 deviceId = device.Id,

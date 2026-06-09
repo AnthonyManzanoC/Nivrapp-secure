@@ -27,6 +27,7 @@ import {
 import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { environment } from '../../../environments/environment';
+import { NativeSecureVaultService } from './native-secure-vault.service';
 
 interface FirebasePhoneVerifyResponse {
   requiresAlias?: boolean;
@@ -54,18 +55,30 @@ interface ParsedQrLoginChallenge {
   expiresAt?: string | null;
 }
 
+interface ProtectedAuthSessionEnvelope {
+  v: 1;
+  alg: 'NIVRA-AUTH-SESSION-A256GCM';
+  iv: string;
+  ciphertext: string;
+  updatedAt: string;
+}
+
 const FIREBASE_APP_NAME = 'nivra-web-phone-auth';
 const SESSION_KEY = 'nivra.auth';
+const PROTECTED_SESSION_KEY = 'nivra.auth.protected';
 const PENDING_VAULT_INVITE_KEY = 'nivra.pendingVaultInvite';
 const PENDING_CONTACT_ALIAS_KEY = 'nivra.pendingContactAlias';
 const HARDWARE_ID_KEY = 'nivra_hardware_id';
 const SKIP_ROUTE_RESTORE_ONCE_KEY = 'nivra.skipRouteRestoreOnce';
 const TOKEN_REFRESH_SKEW_MS = 2 * 60 * 1000;
+const authTextEncoder = new TextEncoder();
+const authTextDecoder = new TextDecoder();
 
 @Injectable({ providedIn: 'root' })
 export class AuthService implements OnDestroy {
   private readonly api = inject(NivraApiService);
   private readonly crypto = inject(CryptoService);
+  private readonly secureVault = inject(NativeSecureVaultService);
   private readonly router = inject(Router);
   private firebaseApp: FirebaseApp | null = null;
   private firebaseAppCheck: AppCheck | null = null;
@@ -77,6 +90,7 @@ export class AuthService implements OnDestroy {
   private qrConnection: HubConnection | null = null;
   private qrPollTimer: number | null = null;
   private authRefreshPromise: Promise<boolean> | null = null;
+  private protectedSessionRestorePromise: Promise<void> | null = null;
   private refreshBackoffUntil = 0;
   private refreshHardFailure = false;
 
@@ -89,6 +103,7 @@ export class AuthService implements OnDestroy {
   readonly hasFreshAccessToken = computed(() => this.hasUsableAccessToken(this.session()));
 
   constructor() {
+    void this.restoreProtectedSession();
     void this.hardwareId();
   }
 
@@ -103,7 +118,7 @@ export class AuthService implements OnDestroy {
     if (!current) {
       return;
     }
-    this.persistSession({ ...current, user });
+    void this.persistSession({ ...current, user }).catch(() => undefined);
   }
 
   async loginWithAlias(alias: string, password: string, mode: 'login' | 'register', displayName = ''): Promise<void> {
@@ -368,6 +383,7 @@ export class AuthService implements OnDestroy {
   }
 
   async refreshToken(): Promise<boolean> {
+    await this.restoreProtectedSession();
     const refreshToken = this.session()?.tokens.refreshToken;
     if (!refreshToken) {
       this.refreshHardFailure = true;
@@ -411,7 +427,7 @@ export class AuthService implements OnDestroy {
         this.refreshHardFailure = false;
         this.refreshBackoffUntil = 0;
         const next = { ...current, tokens };
-        this.persistSession(next);
+        await this.persistSession(next);
         return true;
       })
       .catch(() => {
@@ -431,6 +447,7 @@ export class AuthService implements OnDestroy {
   }
 
   async ensureFreshSession(options: { force?: boolean; skewMs?: number } = {}): Promise<boolean> {
+    await this.restoreProtectedSession();
     const current = this.session();
     if (!current?.tokens?.accessToken || !current.tokens.refreshToken) {
       return false;
@@ -453,6 +470,8 @@ export class AuthService implements OnDestroy {
     this.pendingPhoneAlias.set(null);
     // Logout only removes credentials; NivraDB chat history and conversations must stay local.
     localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(PROTECTED_SESSION_KEY);
+    await this.secureVault.clearSecret('auth-session').catch(() => undefined);
     await this.router.navigateByUrl('/auth');
   }
 
@@ -462,7 +481,7 @@ export class AuthService implements OnDestroy {
     }
     await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id });
     this.markFreshAuthNavigation();
-    this.persistSession(auth);
+    await this.persistSession(auth);
     await this.router.navigateByUrl(this.consumePostAuthUrl());
   }
 
@@ -711,7 +730,7 @@ export class AuthService implements OnDestroy {
     const keys = this.crypto.materialToDeviceKeys(keyMaterial);
     await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id });
     this.markFreshAuthNavigation();
-    this.persistSession(auth);
+    await this.persistSession(auth);
     await this.router.navigateByUrl(this.consumePostAuthUrl());
   }
 
@@ -723,9 +742,111 @@ export class AuthService implements OnDestroy {
     }
   }
 
-  private persistSession(auth: AuthSession): void {
+  async ensureSessionRestored(): Promise<boolean> {
+    await this.restoreProtectedSession();
+    return this.isAuthenticated();
+  }
+
+  private async persistSession(auth: AuthSession): Promise<void> {
     this.session.set(auth);
+    if (this.secureVault.requiresProtection()) {
+      await this.persistProtectedSession(auth);
+      return;
+    }
     localStorage.setItem(SESSION_KEY, JSON.stringify(auth));
+    localStorage.removeItem(PROTECTED_SESSION_KEY);
+  }
+
+  private async restoreProtectedSession(): Promise<void> {
+    if (!this.secureVault.requiresProtection()) {
+      return;
+    }
+    this.protectedSessionRestorePromise ??= (async () => {
+      const encrypted = this.readProtectedSessionEnvelope();
+      if (encrypted) {
+        try {
+          const restored = await this.decryptProtectedSession(encrypted);
+          if (this.isValidAuthSession(restored)) {
+            this.session.set(restored);
+            localStorage.removeItem(SESSION_KEY);
+            return;
+          }
+        } catch {
+          // A wiped or rotated native secret makes the protected session intentionally unusable.
+        }
+        this.session.set(null);
+        localStorage.removeItem(PROTECTED_SESSION_KEY);
+        localStorage.removeItem(SESSION_KEY);
+        return;
+      }
+
+      const legacy = this.readPlainSession();
+      if (legacy) {
+        this.session.set(legacy);
+        try {
+          await this.persistProtectedSession(legacy);
+        } catch {
+          this.session.set(null);
+          localStorage.removeItem(PROTECTED_SESSION_KEY);
+          localStorage.removeItem(SESSION_KEY);
+        }
+        return;
+      }
+
+      localStorage.removeItem(SESSION_KEY);
+    })().finally(() => {
+      this.protectedSessionRestorePromise = null;
+    });
+    await this.protectedSessionRestorePromise;
+  }
+
+  private async persistProtectedSession(auth: AuthSession): Promise<void> {
+    const key = await this.authSessionProtectorKey();
+    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
+    const ciphertext = await globalThis.crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      authTextEncoder.encode(JSON.stringify(auth)),
+    );
+    const envelope: ProtectedAuthSessionEnvelope = {
+      v: 1,
+      alg: 'NIVRA-AUTH-SESSION-A256GCM',
+      iv: this.crypto.b64(iv),
+      ciphertext: this.crypto.b64(new Uint8Array(ciphertext)),
+      updatedAt: new Date().toISOString(),
+    };
+    localStorage.setItem(PROTECTED_SESSION_KEY, JSON.stringify(envelope));
+    localStorage.removeItem(SESSION_KEY);
+  }
+
+  private async decryptProtectedSession(envelope: ProtectedAuthSessionEnvelope): Promise<unknown> {
+    if (envelope.v !== 1 || envelope.alg !== 'NIVRA-AUTH-SESSION-A256GCM') {
+      throw new Error('Envelope de sesion protegida no soportado.');
+    }
+    const key = await this.authSessionProtectorKey();
+    const plain = await globalThis.crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: this.toArrayBuffer(this.crypto.ub64(envelope.iv)) },
+      key,
+      this.toArrayBuffer(this.crypto.ub64(envelope.ciphertext)),
+    );
+    return JSON.parse(authTextDecoder.decode(plain));
+  }
+
+  private async authSessionProtectorKey(): Promise<CryptoKey> {
+    const secret = await this.secureVault.getOrCreateSecret('auth-session').catch(() => null);
+    if (!secret) {
+      throw new Error('No se pudo abrir el protector seguro de la sesion.');
+    }
+    return globalThis.crypto.subtle.importKey('raw', this.toArrayBuffer(this.crypto.ub64(secret)), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+
+  private readProtectedSessionEnvelope(): ProtectedAuthSessionEnvelope | null {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(PROTECTED_SESSION_KEY) || 'null') as ProtectedAuthSessionEnvelope | null;
+      return parsed?.v === 1 && parsed.alg === 'NIVRA-AUTH-SESSION-A256GCM' ? parsed : null;
+    } catch {
+      return null;
+    }
   }
 
   private consumePostAuthUrl(): string {
@@ -768,11 +889,25 @@ export class AuthService implements OnDestroy {
   }
 
   private loadSession(): AuthSession | null {
+    return this.readPlainSession();
+  }
+
+  private readPlainSession(): AuthSession | null {
     try {
-      return JSON.parse(localStorage.getItem(SESSION_KEY) || 'null') as AuthSession | null;
+      const parsed = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null') as unknown;
+      return this.isValidAuthSession(parsed) ? parsed : null;
     } catch {
       return null;
     }
+  }
+
+  private isValidAuthSession(value: unknown): value is AuthSession {
+    const candidate = value as AuthSession | null | undefined;
+    return Boolean(candidate?.tokens?.accessToken && candidate.tokens.refreshToken && candidate.user?.id && candidate.device?.id);
+  }
+
+  private toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+    return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
   }
 
   private hasUsableAccessToken(session: AuthSession | null, skewMs = TOKEN_REFRESH_SKEW_MS): boolean {
@@ -791,7 +926,7 @@ export class AuthService implements OnDestroy {
     }
     const token = tokens?.accessToken || '';
     try {
-      const [payload] = token.split('.', 1);
+      const [, payload] = token.split('.');
       if (!payload) {
         return null;
       }

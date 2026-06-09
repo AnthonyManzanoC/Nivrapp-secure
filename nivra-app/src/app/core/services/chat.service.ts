@@ -84,6 +84,7 @@ type ConversationFlagKind = 'archived' | 'blocked' | 'pinned' | 'muted';
 
 const TTL_SWEEP_INTERVAL_MS = 30_000;
 const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
+const KEY_DIRECTORY_TTL_MS = 45_000;
 
 @Injectable({ providedIn: 'root' })
 export class ChatService implements OnDestroy {
@@ -97,6 +98,7 @@ export class ChatService implements OnDestroy {
   private readonly nativeDevice = inject(NativeDeviceService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly directories = new Map<string, PublicKeyDirectory>();
+  private readonly directoryCachedAt = new Map<string, number>();
   private readonly readReceiptSentIds = new Set<string>();
   private readonly missingReceiptMessageIds = new Set<string>();
   private readonly pendingReactionSends = new Set<string>();
@@ -178,8 +180,13 @@ export class ChatService implements OnDestroy {
         this.applyPresence(event.payload as PresenceResponse);
       }
       if (event.type === 'connected' || event.type === 'reconnected') {
+        this.invalidateKeyDirectories();
         void this.rejoinSelectedConversation();
         void this.bootstrap();
+        void this.syncMissedMessages();
+      }
+      if (event.type === 'device.listChanged') {
+        this.invalidateKeyDirectories();
         void this.syncMissedMessages();
       }
     });
@@ -1382,6 +1389,15 @@ export class ChatService implements OnDestroy {
         if (cached?.payload && !cached.decryptError) {
           payload = cached.payload;
         } else {
+          if (await this.shouldSkipUnavailableEnvelope(
+            message,
+            current.user.id,
+            current.user.alias,
+            current.device.id,
+            recipients,
+          )) {
+            return true;
+          }
           decryptError = true;
           payload = { type: 'system', title: 'Mensaje protegido', text: 'No se pudo descifrar en este dispositivo.' };
         }
@@ -1510,6 +1526,26 @@ export class ChatService implements OnDestroy {
       }
     }
     return null;
+  }
+
+  private async shouldSkipUnavailableEnvelope(
+    message: MessageResponse,
+    userId: string,
+    alias: string,
+    deviceId: string,
+    recipients: RecipientCipherRequest[],
+  ): Promise<boolean> {
+    const hasCurrentDeviceEnvelope = recipients.some((item) => item.userId === userId && item.deviceId === deviceId);
+    if (!hasCurrentDeviceEnvelope) {
+      return true;
+    }
+
+    const currentKey = await this.crypto.getDeviceKeys(alias, deviceId).catch(() => null);
+    const keyCreatedAt = Date.parse(currentKey?.createdAt || '');
+    const messageAt = Date.parse(message.serverReceivedAt || '');
+    return Number.isFinite(keyCreatedAt) &&
+      Number.isFinite(messageAt) &&
+      keyCreatedAt > messageAt;
   }
 
   private async ingestLocalSent(response: MessageResponse, payload: ChatPayload): Promise<void> {
@@ -2819,10 +2855,12 @@ export class ChatService implements OnDestroy {
     this.typingTimers.clear();
     this.expiryTimers.forEach((timer) => window.clearTimeout(timer));
     this.expiryTimers.clear();
+    this.directoryCachedAt.clear();
   }
 
   private pauseForLoggedOutSession(): void {
     this.directories.clear();
+    this.directoryCachedAt.clear();
     this.readReceiptSentIds.clear();
     this.pendingReactionsByMessageId.clear();
     this.pendingReactionSends.clear();
@@ -3016,13 +3054,15 @@ export class ChatService implements OnDestroy {
 
   private async directoriesForUsers(userIds: string[]): Promise<Map<string, PublicKeyDirectory>> {
     const uniqueIds = [...new Set(userIds.filter(Boolean))];
-    const missing = uniqueIds.filter((id) => !this.directories.has(id));
-    if (missing.length) {
+    const now = Date.now();
+    const stale = uniqueIds.filter((id) => !this.directories.has(id) || now - (this.directoryCachedAt.get(id) ?? 0) > KEY_DIRECTORY_TTL_MS);
+    if (stale.length) {
       const directories = await firstValueFrom(
-        this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds: missing, aliases: [] }),
+        this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds: stale, aliases: [] }),
       ).catch(() => []);
       for (const directory of directories ?? []) {
         this.directories.set(directory.userId, directory);
+        this.directoryCachedAt.set(directory.userId, Date.now());
       }
     }
     return new Map(uniqueIds.map((id) => [id, this.directories.get(id)]).filter((entry): entry is [string, PublicKeyDirectory] => Boolean(entry[1])));
@@ -3036,8 +3076,22 @@ export class ChatService implements OnDestroy {
     const directory = await firstValueFrom(this.api.get<PublicKeyDirectory>(`/keys/${encodeURIComponent(alias)}`)).catch(() => null);
     if (directory) {
       this.directories.set(directory.userId, directory);
+      this.directoryCachedAt.set(directory.userId, Date.now());
     }
     return directory;
+  }
+
+  private invalidateKeyDirectories(userIds?: string[]): void {
+    const ids = userIds?.filter(Boolean);
+    if (!ids?.length) {
+      this.directories.clear();
+      this.directoryCachedAt.clear();
+      return;
+    }
+    ids.forEach((id) => {
+      this.directories.delete(id);
+      this.directoryCachedAt.delete(id);
+    });
   }
 
   private decodeSystemPayload(value?: string): ChatPayload {

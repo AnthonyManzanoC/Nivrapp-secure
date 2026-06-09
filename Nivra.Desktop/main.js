@@ -1,9 +1,90 @@
-const { app, BrowserWindow, Menu, shell, session } = require("electron");
+const { app, BrowserWindow, Menu, shell, session, ipcMain, safeStorage } = require("electron");
+const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 
 let mainWindow = null;
 let isQuitting = false;
+
+const SECURE_SECRET_NAMES = new Set(["device-keys", "local-db", "auth-session"]);
+
+function secureVaultDir() {
+  return path.join(app.getPath("userData"), "secure-vault");
+}
+
+function secureSecretPath(name) {
+  return path.join(secureVaultDir(), `${name}.bin`);
+}
+
+function normalizeSecretName(name) {
+  return String(name || "").trim().toLowerCase();
+}
+
+function assertAllowedSecretName(name) {
+  if (!SECURE_SECRET_NAMES.has(name)) {
+    throw new Error("Secure secret name is not allowed.");
+  }
+}
+
+function readDesktopSecureSecret(name) {
+  const filePath = secureSecretPath(name);
+  if (!fs.existsSync(filePath) || !safeStorage.isEncryptionAvailable()) {
+    return "";
+  }
+  const encrypted = fs.readFileSync(filePath);
+  return safeStorage.decryptString(encrypted);
+}
+
+function writeDesktopSecureSecret(name, secret) {
+  if (!safeStorage.isEncryptionAvailable()) {
+    return "";
+  }
+  fs.mkdirSync(secureVaultDir(), { recursive: true });
+  const filePath = secureSecretPath(name);
+  fs.writeFileSync(filePath, safeStorage.encryptString(secret), { mode: 0o600 });
+  try {
+    fs.chmodSync(filePath, 0o600);
+  } catch {
+    // Windows ACLs are handled by the user profile; chmod is best effort across platforms.
+  }
+  return secret;
+}
+
+function createDesktopSecureSecret(name) {
+  const secret = crypto.randomBytes(32).toString("base64");
+  return writeDesktopSecureSecret(name, secret);
+}
+
+function clearDesktopSecureSecret(name) {
+  const filePath = secureSecretPath(name);
+  try {
+    fs.rmSync(filePath, { force: true });
+  } catch {
+    // Best effort crypto-shredding: removing the wrapped secret makes local envelopes unusable.
+  }
+}
+
+function installSecureVaultHandlers() {
+  ipcMain.handle("nivra-secure-vault:get-or-create", (_event, rawName) => {
+    const name = normalizeSecretName(rawName);
+    assertAllowedSecretName(name);
+    const existing = readDesktopSecureSecret(name);
+    const created = !existing;
+    const secret = existing || createDesktopSecureSecret(name);
+    return { name, secret, created, available: Boolean(secret) };
+  });
+
+  ipcMain.handle("nivra-secure-vault:clear", (_event, rawName) => {
+    const name = normalizeSecretName(rawName);
+    if (!name || name === "all") {
+      SECURE_SECRET_NAMES.forEach(clearDesktopSecureSecret);
+      return { cleared: true };
+    }
+    assertAllowedSecretName(name);
+    clearDesktopSecureSecret(name);
+    return { cleared: true };
+  });
+}
 
 function readBundledApiBaseUrl(webRoot) {
   try {
@@ -54,6 +135,7 @@ function createWindow(webRoot, apiBaseUrl) {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      preload: path.join(__dirname, "preload.js"),
       backgroundThrottling: false
     }
   });
@@ -119,6 +201,7 @@ if (!hasSingleInstanceLock) {
     const webRoot = resolveWebRoot();
     const apiBaseUrl = resolveApiBaseUrl(webRoot);
 
+    installSecureVaultHandlers();
     installApiCorsBridge(apiBaseUrl);
     session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
       callback(["media", "notifications", "camera", "microphone"].includes(permission));

@@ -3,8 +3,16 @@ import { inject } from '@angular/core';
 import { Router } from '@angular/router';
 import { AuthService } from './core/services/auth.service';
 
-const authenticated = () => inject(AuthService).isAuthenticated() ? true : inject(Router).parseUrl('/auth');
-const guest = () => inject(AuthService).isAuthenticated() ? inject(Router).parseUrl('/app/chats') : true;
+const authenticated = async () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  return await auth.ensureSessionRestored() ? true : router.parseUrl('/auth');
+};
+const guest = async () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  return await auth.ensureSessionRestored() ? router.parseUrl('/app/chats') : true;
+};
 
 export const routes: Routes = [
   {

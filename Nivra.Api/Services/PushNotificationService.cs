@@ -259,6 +259,39 @@ public sealed class PushNotificationService(
             silentDataOnly: true);
     }
 
+    public async Task SendForceWipeAsync(
+        string userId,
+        string deviceId,
+        string? hardwareId,
+        DateTimeOffset revokedAt,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(userId) || string.IsNullOrWhiteSpace(deviceId))
+        {
+            return;
+        }
+
+        await SendToUserAsync(
+            userId,
+            "Nivra",
+            "Sesion revocada",
+            new Dictionary<string, string>
+            {
+                ["type"] = "force_wipe",
+                ["code"] = "FORCE_WIPE",
+                ["action"] = "FORCE_WIPE",
+                ["deviceId"] = deviceId,
+                ["hardwareId"] = hardwareId ?? "",
+                ["revokedAt"] = revokedAt.ToString("O"),
+                ["pushIntent"] = "force_wipe",
+                ["tag"] = $"nivra-force-wipe-{deviceId}"
+            },
+            cancellationToken,
+            includeNotificationPayloadOverride: false,
+            silentDataOnly: true,
+            targetDeviceId: deviceId);
+    }
+
     private async Task SendToUserAsync(
         string userId,
         string title,
@@ -266,7 +299,8 @@ public sealed class PushNotificationService(
         Dictionary<string, string> data,
         CancellationToken cancellationToken,
         bool? includeNotificationPayloadOverride = null,
-        bool silentDataOnly = false)
+        bool silentDataOnly = false,
+        string? targetDeviceId = null)
     {
         var pushOptions = options.CurrentValue;
         FcmRuntimeConfig? fcmConfig = null;
@@ -289,6 +323,7 @@ public sealed class PushNotificationService(
         var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
         var tokens = await db.PushTokens
             .Where(token => token.UserId == userId &&
+                (targetDeviceId == null || token.DeviceId == targetDeviceId) &&
                 token.RevokedAt == null &&
                 (token.Provider == "fcm" ||
                  token.Provider == "Fcm" ||

@@ -3,12 +3,14 @@ import { Router } from '@angular/router';
 import { AuthService } from './auth.service';
 import { CryptoService } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
+import { NativeSecureVaultService } from './native-secure-vault.service';
 
 @Injectable({ providedIn: 'root' })
 export class DeviceWipeService {
   private readonly auth = inject(AuthService);
   private readonly crypto = inject(CryptoService);
   private readonly history = inject(LocalHistoryService);
+  private readonly secureVault = inject(NativeSecureVaultService);
   private readonly router = inject(Router);
   private wiping = false;
 
@@ -19,6 +21,8 @@ export class DeviceWipeService {
     this.wiping = true;
 
     await this.auth.logout(true).catch(() => undefined);
+    await this.crypto.destroyLocalDeviceKeyProtector().catch(() => undefined);
+    await this.secureVault.clearSecret('all').catch(() => undefined);
     await this.crypto.closeLocalStore().catch(() => undefined);
     await this.history.wipeAllLocalData().catch(() => undefined);
     this.clearBrowserStorage();

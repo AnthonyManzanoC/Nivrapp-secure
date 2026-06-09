@@ -1,4 +1,4 @@
-import { Injectable } from '@angular/core';
+import { Injectable, inject } from '@angular/core';
 import { IDBPDatabase, openDB } from 'idb';
 import {
   DeviceKeys,
@@ -6,6 +6,7 @@ import {
   RecipientCipherRequest,
   StoredDeviceKeys,
 } from '../models/nivra.models';
+import { NativeSecureVaultService } from './native-secure-vault.service';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -28,6 +29,18 @@ interface QrEphemeralKeys {
   privateKey: CryptoKey;
   publicJwk: JsonWebKey;
   publicSpki: string;
+}
+
+interface EncryptedPrivateJwkEnvelope {
+  v: 1;
+  alg: 'NIVRA-NATIVE-A256GCM';
+  iv: string;
+  ciphertext: string;
+}
+
+interface StoredDeviceKeysRecord extends Omit<StoredDeviceKeys, 'privateJwk'> {
+  privateJwk?: JsonWebKey;
+  privateJwkEnvelope?: EncryptedPrivateJwkEnvelope | null;
 }
 
 export interface PublicKeyRecipient {
@@ -58,7 +71,9 @@ interface ChunkedAttachmentMeta {
 
 @Injectable({ providedIn: 'root' })
 export class CryptoService {
+  private readonly secureVault = inject(NativeSecureVaultService);
   private dbPromise?: Promise<IDBPDatabase>;
+  private deviceKeyHardeningPromise?: Promise<void>;
 
   async prepareDeviceKeys(alias?: string | null, registration = false): Promise<DeviceKeys> {
     if (!registration) {
@@ -115,15 +130,16 @@ export class CryptoService {
       updatedAt: now,
     };
     const db = await this.open();
-    await db.put(LOCAL_KEY_STORE, record);
-    localStorage.removeItem(`nivra.keys.${alias}.${deviceId}`);
+    await db.put(LOCAL_KEY_STORE, await this.protectDeviceKeysRecord(record));
+    this.purgeLegacyPlaintextKeyCopies(alias, deviceId);
   }
 
   async getDeviceKeys(alias: string, deviceId: string): Promise<StoredDeviceKeys | null> {
+    await this.hardenPlaintextDeviceKeyRecords();
     const db = await this.open();
-    const indexed = await db.get(LOCAL_KEY_STORE, this.deviceKeyStorageId(alias, deviceId)) as StoredDeviceKeys | undefined;
+    const indexed = await db.get(LOCAL_KEY_STORE, this.deviceKeyStorageId(alias, deviceId)) as StoredDeviceKeysRecord | undefined;
     if (indexed) {
-      return indexed;
+      return this.unprotectDeviceKeysRecord(indexed);
     }
 
     const legacy = this.loadJson<Pick<DeviceKeys, 'publicJwk' | 'privateJwk'>>(`nivra.keys.${alias}.${deviceId}`);
@@ -132,7 +148,7 @@ export class CryptoService {
     }
 
     await this.saveDeviceKeys(alias, deviceId, this.materialToDeviceKeys(legacy));
-    localStorage.removeItem(`nivra.keys.${alias}.${deviceId}`);
+    this.purgeLegacyPlaintextKeyCopies(alias, deviceId);
     return this.getDeviceKeys(alias, deviceId);
   }
 
@@ -143,8 +159,9 @@ export class CryptoService {
       return [];
     }
 
+    await this.hardenPlaintextDeviceKeyRecords();
     const db = await this.open();
-    const records = await db.getAll(LOCAL_KEY_STORE) as StoredDeviceKeys[];
+    const records = await this.unprotectDeviceKeysRecords(await db.getAll(LOCAL_KEY_STORE) as StoredDeviceKeysRecord[]);
     const seen = new Set<string>();
     return records
       .filter((record) => record.privateJwk && record.publicJwk)
@@ -160,6 +177,10 @@ export class CryptoService {
         seen.add(fingerprint);
         return true;
       });
+  }
+
+  async destroyLocalDeviceKeyProtector(): Promise<void> {
+    await this.secureVault.clearSecret('device-keys');
   }
 
   async closeLocalStore(): Promise<void> {
@@ -561,16 +582,105 @@ export class CryptoService {
     return bytes;
   }
 
+  private async protectDeviceKeysRecord(record: StoredDeviceKeys): Promise<StoredDeviceKeysRecord> {
+    const secret = await this.secureVault.getOrCreateSecret('device-keys').catch(() => null);
+    if (!secret) {
+      if (this.secureVault.requiresProtection()) {
+        throw new Error('No se pudo abrir el protector seguro de llaves del dispositivo.');
+      }
+      return record;
+    }
+
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const key = await this.nativeProtectorKey(secret);
+    const ciphertext = await crypto.subtle.encrypt(
+      { name: 'AES-GCM', iv },
+      key,
+      textEncoder.encode(JSON.stringify(record.privateJwk)),
+    );
+    const { privateJwk: _privateJwk, ...rest } = record;
+    return {
+      ...rest,
+      privateJwkEnvelope: {
+        v: 1,
+        alg: 'NIVRA-NATIVE-A256GCM',
+        iv: this.b64(iv),
+        ciphertext: this.b64(new Uint8Array(ciphertext)),
+      },
+    };
+  }
+
+  private async unprotectDeviceKeysRecords(records: StoredDeviceKeysRecord[]): Promise<StoredDeviceKeys[]> {
+    const unprotected = await Promise.all(records.map((record) => this.unprotectDeviceKeysRecord(record)));
+    return unprotected.filter((record): record is StoredDeviceKeys => Boolean(record));
+  }
+
+  private async unprotectDeviceKeysRecord(record: StoredDeviceKeysRecord): Promise<StoredDeviceKeys | null> {
+    if (record.privateJwk) {
+      return record as StoredDeviceKeys;
+    }
+    if (!record.privateJwkEnvelope) {
+      return null;
+    }
+    const secret = await this.secureVault.getOrCreateSecret('device-keys').catch(() => null);
+    if (!secret) {
+      return null;
+    }
+    try {
+      const key = await this.nativeProtectorKey(secret);
+      const plain = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: this.ub64Buffer(record.privateJwkEnvelope.iv) },
+        key,
+        this.ub64Buffer(record.privateJwkEnvelope.ciphertext),
+      );
+      const { privateJwkEnvelope: _privateJwkEnvelope, ...rest } = record;
+      return {
+        ...rest,
+        privateJwk: JSON.parse(textDecoder.decode(plain)) as JsonWebKey,
+      } as StoredDeviceKeys;
+    } catch {
+      return null;
+    }
+  }
+
+  private async nativeProtectorKey(secret: string): Promise<CryptoKey> {
+    return crypto.subtle.importKey('raw', this.ub64Buffer(secret), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+  }
+
   private async latestDeviceKeysForAlias(alias: string): Promise<StoredDeviceKeys | null> {
+    await this.hardenPlaintextDeviceKeyRecords();
     const db = await this.open();
-    const keys = await db.getAllFromIndex(LOCAL_KEY_STORE, 'byAlias', this.normalizeAlias(alias)) as StoredDeviceKeys[];
+    const keys = await this.unprotectDeviceKeysRecords(
+      await db.getAllFromIndex(LOCAL_KEY_STORE, 'byAlias', this.normalizeAlias(alias)) as StoredDeviceKeysRecord[],
+    );
     return this.latestKeyRecord(keys);
   }
 
   private async latestDeviceKeys(): Promise<StoredDeviceKeys | null> {
+    await this.hardenPlaintextDeviceKeyRecords();
     const db = await this.open();
-    const keys = await db.getAll(LOCAL_KEY_STORE) as StoredDeviceKeys[];
+    const keys = await this.unprotectDeviceKeysRecords(await db.getAll(LOCAL_KEY_STORE) as StoredDeviceKeysRecord[]);
     return this.latestKeyRecord(keys);
+  }
+
+  private async hardenPlaintextDeviceKeyRecords(): Promise<void> {
+    if (!this.secureVault.requiresProtection()) {
+      return;
+    }
+    this.deviceKeyHardeningPromise ??= (async () => {
+      const db = await this.open();
+      const records = await db.getAll(LOCAL_KEY_STORE) as StoredDeviceKeysRecord[];
+      const plaintextRecords = records.filter((record) => record.privateJwk && !record.privateJwkEnvelope);
+      if (!plaintextRecords.length) {
+        return;
+      }
+      for (const record of plaintextRecords) {
+        await db.put(LOCAL_KEY_STORE, await this.protectDeviceKeysRecord(record as StoredDeviceKeys));
+      }
+    })().finally(() => {
+      this.deviceKeyHardeningPromise = undefined;
+    });
+    return this.deviceKeyHardeningPromise;
   }
 
   private latestKeyRecord(records: StoredDeviceKeys[]): StoredDeviceKeys | null {
@@ -746,6 +856,22 @@ export class CryptoService {
       return JSON.parse(localStorage.getItem(key) || 'null') as T | null;
     } catch {
       return null;
+    }
+  }
+
+  private purgeLegacyPlaintextKeyCopies(alias?: string, deviceId?: string): void {
+    try {
+      if (alias && deviceId) {
+        localStorage.removeItem(`nivra.keys.${alias}.${deviceId}`);
+      }
+      for (let index = localStorage.length - 1; index >= 0; index -= 1) {
+        const key = localStorage.key(index);
+        if (key?.startsWith('nivra.keys.')) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch {
+      // Local storage cleanup is best effort; the protected IndexedDB record is authoritative.
     }
   }
 
