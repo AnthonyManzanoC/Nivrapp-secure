@@ -20,6 +20,7 @@ import {
   PresenceResponse,
   PublicKeyDirectory,
   RecipientCipherRequest,
+  StoredDeviceKeys,
   SyncBootstrapResponse,
   UserSummary,
 } from '../models/nivra.models';
@@ -1361,19 +1362,29 @@ export class ChatService implements OnDestroy {
     if (!current) {
       return false;
     }
-    const recipient = message.recipients.find((item) => item.userId === current.user.id && item.deviceId === current.device.id)
-      ?? message.recipients.find((item) => item.userId === current.user.id);
+    const recipients = this.ownRecipientCandidates(message.recipients, current.user.id, current.device.id);
+    const recipient = recipients[0];
     let payload: ChatPayload;
     let decryptError = false;
     if (message.encryptedPolicy?.startsWith('system:') || recipient?.header?.startsWith('system:')) {
       payload = this.decodeSystemPayload(recipient?.ciphertext);
-    } else if (recipient?.ciphertext) {
-      try {
-        const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
-        payload = await this.crypto.decryptEnvelope<ChatPayload>(own, recipient.header, recipient.ciphertext);
-      } catch {
-        decryptError = true;
-        payload = { type: 'system', title: 'Mensaje protegido', text: 'No se pudo descifrar en este dispositivo.' };
+    } else if (recipients.some((item) => item.ciphertext)) {
+      const decrypted = await this.decryptOwnRecipientPayload(
+        current.user.id,
+        current.user.alias,
+        current.device.id,
+        recipients,
+      );
+      if (decrypted) {
+        payload = decrypted;
+      } else {
+        const cached = await this.cachedReadableMessage(message);
+        if (cached?.payload && !cached.decryptError) {
+          payload = cached.payload;
+        } else {
+          decryptError = true;
+          payload = { type: 'system', title: 'Mensaje protegido', text: 'No se pudo descifrar en este dispositivo.' };
+        }
       }
     } else if (message.senderUserId === current.user.id) {
       payload = { type: 'system', text: 'Mensaje enviado desde otro dispositivo.' };
@@ -1430,6 +1441,75 @@ export class ChatService implements OnDestroy {
       void this.sendReceipt(message.id, 'Delivered');
     }
     return !decryptError;
+  }
+
+  private ownRecipientCandidates(
+    recipients: RecipientCipherRequest[],
+    userId: string,
+    preferredDeviceId: string,
+  ): RecipientCipherRequest[] {
+    const own = (recipients ?? []).filter((recipient) => recipient.userId === userId);
+    return [
+      ...own.filter((recipient) => recipient.deviceId === preferredDeviceId),
+      ...own.filter((recipient) => recipient.deviceId !== preferredDeviceId),
+    ];
+  }
+
+  private async decryptOwnRecipientPayload(
+    userId: string,
+    alias: string,
+    deviceId: string,
+    recipients: RecipientCipherRequest[],
+  ): Promise<ChatPayload | null> {
+    const keys = await this.localDecryptKeyCandidates(userId, alias, deviceId);
+    for (const recipient of recipients) {
+      if (!recipient?.ciphertext) {
+        continue;
+      }
+      for (const key of keys) {
+        try {
+          return await this.crypto.decryptEnvelope<ChatPayload>(key, recipient.header, recipient.ciphertext);
+        } catch {
+          // Try the next local key/device envelope.
+        }
+      }
+    }
+    return null;
+  }
+
+  private async localDecryptKeyCandidates(userId: string, alias: string, deviceId: string): Promise<StoredDeviceKeys[]> {
+    const candidates: StoredDeviceKeys[] = [];
+    const current = await this.crypto.currentKeyMaterial(alias, deviceId).catch(() => null);
+    if (current) {
+      candidates.push(current);
+    }
+    candidates.push(...await this.crypto.deviceKeyMaterialsForUser(userId, alias).catch(() => []));
+
+    const seen = new Set<string>();
+    return candidates.filter((key) => {
+      const fingerprint = `${JSON.stringify(key.publicJwk)}:${JSON.stringify(key.privateJwk)}`;
+      if (seen.has(fingerprint)) {
+        return false;
+      }
+      seen.add(fingerprint);
+      return true;
+    });
+  }
+
+  private async cachedReadableMessage(message: MessageResponse): Promise<ChatMessageVm | null> {
+    const inMemory = this.messagesByConversation()[message.conversationId]?.find((item) => item.id === message.id);
+    if (inMemory?.payload && !inMemory.decryptError) {
+      return inMemory;
+    }
+
+    const accountKeys = await this.localAccountKeys();
+    for (const accountKey of accountKeys) {
+      const cached = await this.history.messageById(accountKey, message.conversationId, message.id).catch(() => null);
+      if (cached?.payload && !cached.decryptError) {
+        return cached;
+      }
+    }
+    return null;
   }
 
   private async ingestLocalSent(response: MessageResponse, payload: ChatPayload): Promise<void> {

@@ -136,6 +136,32 @@ export class CryptoService {
     return this.getDeviceKeys(alias, deviceId);
   }
 
+  async deviceKeyMaterialsForUser(userId?: string | null, alias?: string | null): Promise<StoredDeviceKeys[]> {
+    const normalizedUserId = String(userId || '').trim();
+    const normalizedAlias = alias ? this.normalizeAlias(alias) : '';
+    if (!normalizedUserId && !normalizedAlias) {
+      return [];
+    }
+
+    const db = await this.open();
+    const records = await db.getAll(LOCAL_KEY_STORE) as StoredDeviceKeys[];
+    const seen = new Set<string>();
+    return records
+      .filter((record) => record.privateJwk && record.publicJwk)
+      .filter((record) =>
+        (normalizedUserId && record.userId === normalizedUserId) ||
+        (normalizedAlias && record.aliasLower === normalizedAlias))
+      .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')))
+      .filter((record) => {
+        const fingerprint = `${JSON.stringify(record.publicJwk)}:${JSON.stringify(record.privateJwk)}`;
+        if (seen.has(fingerprint)) {
+          return false;
+        }
+        seen.add(fingerprint);
+        return true;
+      });
+  }
+
   async closeLocalStore(): Promise<void> {
     const db = await this.dbPromise?.catch(() => null);
     db?.close();

@@ -1232,7 +1232,7 @@ public static partial class EndpointExtensions
             var messages = await db.Messages
                 .Where(message => message.ConversationId == conversationId)
                 .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
-                .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId && recipient.DeviceId == current.DeviceId))
+                .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId))
                 .Where(message => !message.Receipts.Any(receipt =>
                     receipt.UserId == current.UserId &&
                     receipt.DeletedAt != null))
@@ -1244,7 +1244,7 @@ public static partial class EndpointExtensions
                 .ToListAsync(cancellationToken);
 
             messages.Reverse();
-            return Results.Ok(messages.Select(message => ToMessageResponseForDevice(message, current.UserId, current.DeviceId)).ToList());
+            return Results.Ok(messages.Select(message => ToMessageResponseForUser(message, current.UserId, current.DeviceId)).ToList());
         });
 
         conversations.MapPatch("/{conversationId}", async Task<IResult> (string conversationId, PatchConversationRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
@@ -1697,7 +1697,7 @@ public static partial class EndpointExtensions
             return Results.Ok(pending);
         });
 
-        messages.MapGet("/sync", async Task<IResult> (int? take, DateTimeOffset? since, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        messages.MapGet("/sync", async Task<IResult> (int? take, DateTimeOffset? since, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1707,12 +1707,34 @@ public static partial class EndpointExtensions
 
             var now = timeProvider.GetUtcNow();
             var limit = Math.Clamp(take ?? 200, 1, 500);
-            var messages = since is { } watermark
-                ? await store.MessagesForDeviceSinceAsync(current.UserId, current.DeviceId, watermark, now, limit, cancellationToken)
-                : (await store.PendingMessagesForDeviceAsync(current.UserId, current.DeviceId, now, cancellationToken)).Take(limit);
-            var page = messages.ToList();
+            var query = db.Messages
+                .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId))
+                .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
+                .Where(message => !message.Receipts.Any(receipt => receipt.UserId == current.UserId && receipt.DeletedAt != null))
+                .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
+                    receipt.UserId == current.UserId &&
+                    (receipt.ReadAt != null || receipt.DeletedAt != null)));
+
+            List<MessageEnvelope> page;
+            if (since is { } watermark)
+            {
+                page = await query
+                    .Where(message => message.ServerReceivedAt > watermark)
+                    .OrderBy(message => message.ServerReceivedAt)
+                    .Take(limit)
+                    .ToListAsync(cancellationToken);
+            }
+            else
+            {
+                page = await query
+                    .OrderByDescending(message => message.ServerReceivedAt)
+                    .Take(limit)
+                    .ToListAsync(cancellationToken);
+                page.Reverse();
+            }
+
             var pending = page
-                .Select(message => ToMessageResponseForDevice(message, current.UserId, current.DeviceId))
+                .Select(message => ToMessageResponseForUser(message, current.UserId, current.DeviceId))
                 .ToList();
             var syncedAt = page.Count > 0 ? page[^1].ServerReceivedAt : now;
             return Results.Ok(new MessageSyncResponse(pending, syncedAt));
@@ -3502,7 +3524,7 @@ public static partial class EndpointExtensions
                 : await db.Messages
                     .Where(message => conversationIds.Contains(message.ConversationId))
                     .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
-                    .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId && recipient.DeviceId == current.DeviceId))
+                    .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId))
                     .Where(message => !message.Receipts.Any(receipt =>
                         receipt.UserId == current.UserId &&
                         receipt.DeletedAt != null))
@@ -3580,7 +3602,7 @@ public static partial class EndpointExtensions
                 (await store.ActiveDevicesForUserAsync(current.UserId, cancellationToken)).Select(ToDeviceResponse).ToList(),
                 contacts,
                 conversations,
-                recentMessages.Select(message => ToMessageResponseForDevice(message, current.UserId, current.DeviceId)).ToList(),
+                recentMessages.Select(message => ToMessageResponseForUser(message, current.UserId, current.DeviceId)).ToList(),
                 deletedMessages,
                 vault,
                 friendRequests,
@@ -3966,6 +3988,28 @@ public static partial class EndpointExtensions
             message.Recipients
                 .Where(recipient => recipient.UserId == userId && recipient.DeviceId == deviceId)
                 .ToList(),
+            message.EncryptedPolicy,
+            message.ServerReceivedAt,
+            message.ExpiresAt,
+            message.DeleteAfterRead,
+            message.Receipts);
+    }
+
+    private static MessageResponse ToMessageResponseForUser(MessageEnvelope message, string userId, string preferredDeviceId)
+    {
+        var recipients = message.Recipients
+            .Where(recipient => recipient.UserId == userId)
+            .OrderByDescending(recipient => recipient.DeviceId == preferredDeviceId)
+            .ToList();
+
+        return new MessageResponse(
+            message.Id,
+            message.ConversationId,
+            message.ClientMessageId,
+            message.SenderUserId,
+            message.SenderDeviceId,
+            message.Kind,
+            recipients,
             message.EncryptedPolicy,
             message.ServerReceivedAt,
             message.ExpiresAt,

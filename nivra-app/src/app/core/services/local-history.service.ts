@@ -107,6 +107,33 @@ export class LocalHistoryService {
       .slice(-safeLimit);
   }
 
+  async messageById(accountKey: string, conversationId: string, messageId: string): Promise<ChatMessageVm | null> {
+    if (!accountKey || !conversationId || !messageId) {
+      return null;
+    }
+    const key = this.messageStorageKey(accountKey, conversationId, messageId);
+    const sqlite = await this.openNativeSqlite();
+    if (sqlite) {
+      const rows = await sqlite.query('SELECT record_json FROM local_messages WHERE key = ? LIMIT 1', [key]);
+      const record = this.parseSqliteRecord<StoredChatMessage>(rows.values?.[0]);
+      if (!record || this.isExpired(record, Date.now())) {
+        return null;
+      }
+      return this.toChatMessage(accountKey, record);
+    }
+    const db = await this.open();
+    if (!db) {
+      return null;
+    }
+    const record = await db.transaction(LOCAL_MESSAGE_STORE, 'readonly')
+      .objectStore(LOCAL_MESSAGE_STORE)
+      .get(key) as StoredChatMessage | undefined;
+    if (!record || this.isExpired(record, Date.now())) {
+      return null;
+    }
+    return this.toChatMessage(accountKey, record);
+  }
+
   async accountKeysForUser(userId: string): Promise<string[]> {
     if (!userId) {
       return [];

@@ -576,7 +576,7 @@ export class AuthService implements OnDestroy {
       throw new Error('Firebase no entrego un token valido para este telefono.');
     }
 
-    const keys = await this.crypto.prepareDeviceKeys(null, true);
+    const keys = await this.crypto.prepareDeviceKeys(null, false);
     const device = await this.deviceProfile();
     const response = await firstValueFrom(
       this.api.post<FirebasePhoneVerifyResponse>('/api/auth/phone/verify-firebase', {
