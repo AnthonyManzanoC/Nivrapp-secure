@@ -3,11 +3,6 @@
   "appName": "Nivra",
   "webDir": "nivra-app/dist/nivra-app/browser",
   "backgroundColor": "#070b0d",
-  "server": {
-    "hostname": "nivra-af67e.firebaseapp.com",
-    "androidScheme": "https",
-    "cleartext": false
-  },
   "android": {
     "backgroundColor": "#070b0d"
   },
