@@ -21,6 +21,7 @@ import android.database.Cursor;
 import android.media.AudioAttributes;
 import android.media.AudioFocusRequest;
 import android.media.AudioManager;
+import android.media.RingtoneManager;
 import android.media.MediaScannerConnection;
 import android.net.Uri;
 import android.os.Build;
@@ -90,10 +91,11 @@ import androidx.core.app.NotificationManagerCompat;
 )
 public class NivraNativePlugin extends Plugin {
     static final String CONTACTS = "contacts";
-    static final String CHANNEL_CALLS = "nivra_calls";
+    static final String CHANNEL_CALLS = "nivra_calls_urgent";
     static final String ACTION_CALL_OPEN = "com.nivra.app.CALL_OPEN";
     static final String ACTION_CALL_ANSWER = "com.nivra.app.CALL_ANSWER";
     static final String ACTION_CALL_REJECT = "com.nivra.app.CALL_REJECT";
+    static final String ACTION_CALL_DISMISS = "com.nivra.app.CALL_DISMISS";
     private static final String KEYSTORE_PROVIDER = "AndroidKeyStore";
     private static final String SECURE_VAULT_PREFS = "nivra_secure_vault";
     private static final int GCM_TAG_LENGTH_BITS = 128;
@@ -513,6 +515,7 @@ public class NivraNativePlugin extends Plugin {
             .setOngoing(true)
             .setAutoCancel(false)
             .setOnlyAlertOnce(false)
+            .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
             .setVibrate(new long[] { 320, 140, 320, 140, 480 })
             .setTimeoutAfter(75_000)
             .addAction(android.R.drawable.ic_menu_call, "Contestar", answerIntent)
@@ -529,6 +532,10 @@ public class NivraNativePlugin extends Plugin {
             return;
         }
         NotificationManagerCompat.from(context).cancel(notificationId(callId));
+        Intent dismiss = new Intent(ACTION_CALL_DISMISS);
+        dismiss.setPackage(context.getPackageName());
+        dismiss.putExtra("callId", callId);
+        context.sendBroadcast(dismiss);
     }
 
     public static boolean handleCallIntent(Intent intent) {
@@ -977,6 +984,13 @@ public class NivraNativePlugin extends Plugin {
         calls.setDescription("Llamadas y videollamadas entrantes");
         calls.enableVibration(true);
         calls.setVibrationPattern(new long[] { 320, 140, 320, 140, 480 });
+        calls.setSound(
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+            new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+        );
         calls.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
         NotificationManager manager = context.getSystemService(NotificationManager.class);
         if (manager != null) {
@@ -999,7 +1013,7 @@ public class NivraNativePlugin extends Plugin {
     }
 
     private static PendingIntent activityIntent(Context context, String action, Map<String, String> data, int notificationId) {
-        Intent intent = new Intent(context, MainActivity.class);
+        Intent intent = new Intent(context, NivraIncomingCallActivity.class);
         intent.setAction(action);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
         putCallExtras(intent, data, notificationId);

@@ -9,6 +9,8 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.AudioAttributes;
+import android.media.RingtoneManager;
 import android.os.Build;
 import android.os.Process;
 
@@ -24,7 +26,7 @@ import io.capawesome.capacitorjs.plugins.firebase.messaging.MessagingService;
 
 public class NivraMessagingService extends MessagingService {
     private static final String CHANNEL_MESSAGES = "nivra_messages";
-    private static final String CHANNEL_CALLS = "nivra_calls";
+    private static final String CHANNEL_CALLS = NivraNativePlugin.CHANNEL_CALLS;
 
     @Override
     public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
@@ -178,7 +180,14 @@ public class NivraMessagingService extends MessagingService {
         calls.setDescription("Llamadas entrantes de Nivra");
         calls.enableVibration(true);
         calls.setVibrationPattern(new long[] { 320, 140, 320, 140, 480 });
-        calls.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
+        calls.setSound(
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE),
+            new AudioAttributes.Builder()
+                .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                .build()
+        );
+        calls.setLockscreenVisibility(Notification.VISIBILITY_PUBLIC);
 
         NotificationManager manager = getSystemService(NotificationManager.class);
         if (manager != null) {

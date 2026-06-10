@@ -340,12 +340,24 @@ public sealed class PushNotificationService(
         }
 
         var changed = false;
+        var sentCount = 0;
+        var invalidCount = 0;
+        var unreadableCount = 0;
+        var skippedCount = 0;
+        var pushType = data.TryGetValue("type", out var pushedType) ? pushedType : "unknown";
         var includeNotificationPayload = includeNotificationPayloadOverride ?? pushOptions.IncludeNotificationPayload;
         foreach (var token in tokens)
         {
             var rawToken = TryUnprotectToken(token.TokenCiphertext);
             if (string.IsNullOrWhiteSpace(rawToken))
             {
+                token.RevokedAt = DateTimeOffset.UtcNow;
+                unreadableCount += 1;
+                changed = true;
+                logger.LogWarning(
+                    "Revoked unreadable push token {PushTokenId} for user {UserId}. DataProtection keys may not be persisted.",
+                    token.Id,
+                    userId);
                 continue;
             }
 
@@ -354,6 +366,7 @@ public sealed class PushNotificationService(
             {
                 if (webPushConfig is null)
                 {
+                    skippedCount += 1;
                     continue;
                 }
                 result = await SendStandardWebPushAsync(webPushConfig, rawToken, title, body, data, includeNotificationPayload, silentDataOnly, cancellationToken);
@@ -362,13 +375,19 @@ public sealed class PushNotificationService(
             {
                 if (fcmConfig is null)
                 {
+                    skippedCount += 1;
                     continue;
                 }
                 result = await SendFcmAsync(fcmConfig, rawToken, title, body, data, includeNotificationPayload, silentDataOnly, cancellationToken);
             }
+            if (result.Sent)
+            {
+                sentCount += 1;
+            }
             if (result.InvalidToken)
             {
                 token.RevokedAt = DateTimeOffset.UtcNow;
+                invalidCount += 1;
                 changed = true;
             }
         }
@@ -376,6 +395,19 @@ public sealed class PushNotificationService(
         if (changed)
         {
             await db.SaveChangesAsync(cancellationToken);
+        }
+
+        if (pushType.Contains("call", StringComparison.OrdinalIgnoreCase) || sentCount == 0)
+        {
+            logger.LogInformation(
+                "Push delivery summary for {PushType} to user {UserId}: tokens={TokenCount}, sent={SentCount}, invalid={InvalidCount}, unreadable={UnreadableCount}, skipped={SkippedCount}.",
+                pushType,
+                userId,
+                tokens.Count,
+                sentCount,
+                invalidCount,
+                unreadableCount,
+                skippedCount);
         }
     }
 
@@ -844,11 +876,26 @@ public sealed class PushNotificationService(
         return new FcmPushOptions
         {
             ProjectId = FirstNonBlank(fcmOptions.ProjectId, configuration["Push:Fcm:ProjectId"], configuration["Push__Fcm__ProjectId"]),
-            ServiceAccountPath = FirstNonBlank(fcmOptions.ServiceAccountPath, configuration["Push:Fcm:ServiceAccountPath"], configuration["Push__Fcm__ServiceAccountPath"]),
+            ServiceAccountPath = FirstNonBlank(
+                fcmOptions.ServiceAccountPath,
+                configuration["Push:Fcm:ServiceAccountPath"],
+                configuration["Push__Fcm__ServiceAccountPath"],
+                LocalFirebaseAdminPath()),
             ServiceAccountJson = FirstNonBlank(fcmOptions.ServiceAccountJson, configuration["Push:Fcm:ServiceAccountJson"], configuration["Push__Fcm__ServiceAccountJson"]),
             ServiceAccountJsonBase64 = FirstNonBlank(fcmOptions.ServiceAccountJsonBase64, configuration["Push:Fcm:ServiceAccountJsonBase64"], configuration["Push__Fcm__ServiceAccountJsonBase64"]),
             TokenUri = FirstNonBlank(fcmOptions.TokenUri, configuration["Push:Fcm:TokenUri"], configuration["Push__Fcm__TokenUri"], "https://oauth2.googleapis.com/token")
         };
+    }
+
+    private static string LocalFirebaseAdminPath()
+    {
+        var candidates = new[]
+        {
+            Path.Combine(Directory.GetCurrentDirectory(), "firebase-admin.json"),
+            Path.Combine(Directory.GetCurrentDirectory(), "Nivra.Api", "firebase-admin.json"),
+            Path.Combine(AppContext.BaseDirectory, "firebase-admin.json")
+        };
+        return candidates.FirstOrDefault(File.Exists) ?? "";
     }
 
     private async Task<string> GetAccessTokenAsync(FcmRuntimeConfig fcmConfig, CancellationToken cancellationToken)
@@ -1081,11 +1128,11 @@ public sealed class PushNotificationService(
         string P256dh,
         string Auth);
 
-    private sealed record FcmSendResult(bool InvalidToken)
+    private sealed record FcmSendResult(bool InvalidToken, bool Sent)
     {
-        public static readonly FcmSendResult Success = new(false);
-        public static readonly FcmSendResult TransientFailure = new(false);
-        public static readonly FcmSendResult Invalid = new(true);
+        public static readonly FcmSendResult Success = new(false, true);
+        public static readonly FcmSendResult TransientFailure = new(false, false);
+        public static readonly FcmSendResult Invalid = new(true, false);
 
         public static FcmSendResult FromError(string responseBody)
         {
@@ -1093,7 +1140,7 @@ public sealed class PushNotificationService(
                 responseBody.Contains("registration-token-not-registered", StringComparison.OrdinalIgnoreCase) ||
                 responseBody.Contains("NOT_FOUND", StringComparison.OrdinalIgnoreCase) ||
                 responseBody.Contains("Requested entity was not found", StringComparison.OrdinalIgnoreCase);
-            return new FcmSendResult(invalid);
+            return new FcmSendResult(invalid, false);
         }
     }
 

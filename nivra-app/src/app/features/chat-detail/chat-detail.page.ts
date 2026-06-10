@@ -87,6 +87,27 @@ interface PendingAttachmentPreview {
 
 type VoiceComposerMode = 'idle' | 'holding' | 'locked' | 'cancelling';
 
+type QuotedReplyKind = 'text' | 'image' | 'video' | 'audio' | 'file' | 'story' | 'unavailable';
+
+interface ReplyReferenceVm {
+  messageId?: string;
+  senderUserId?: string;
+  preview?: string;
+  kind?: string;
+  mediaMime?: string;
+}
+
+interface QuotedReplyVm {
+  messageId: string;
+  found: boolean;
+  senderName: string;
+  isMine: boolean;
+  kind: QuotedReplyKind;
+  snippet: string;
+  thumbnailUrl: string | null;
+  fallbackText: string;
+}
+
 @Component({
   selector: 'app-chat-detail',
   standalone: true,
@@ -166,6 +187,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   actionMessage: ChatMessageVm | null = null;
   reactionViewerMessage: ChatMessageVm | null = null;
   messageInfoMessage: ChatMessageVm | null = null;
+  quotedReplies: Record<string, QuotedReplyVm> = {};
   contactInfoOpen = false;
   profilePhotoViewerUrl = '';
   profilePhotoViewerTitle = '';
@@ -215,6 +237,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private voiceTimer: number | null = null;
   private voiceStartPromise: Promise<void> | null = null;
   private messagePressTimer: number | null = null;
+  private readonly quotedReplyCache = new Map<string, QuotedReplyVm>();
+  private readonly quotedReplyLoads = new Set<string>();
   readonly emojiChoices = [
     '\u{1F600}', '\u{1F602}', '\u{1F60D}', '\u{1F914}', '\u{1F62E}', '\u{1F622}',
     '\u{1F44D}', '\u2764\uFE0F', '\u{1F525}', '\u{1F389}', '\u{1F64F}', '\u{1F4AA}',
@@ -264,6 +288,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     effect(() => {
       const conversation = this.conversation();
       untracked(() => this.privacyEnforcement.setActiveConversation(conversation));
+    });
+
+    effect(() => {
+      const conversationId = this.conversation()?.id ?? '';
+      const messages = this.messages();
+      untracked(() => this.refreshQuotedReplies(conversationId, messages));
     });
   }
 
@@ -1426,17 +1456,43 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     return message ? this.chat.preview(message.payload) : '';
   }
 
-  replyChipLabel(message: ChatMessageVm): string {
-    const reply = message.payload.replyTo as { kind?: unknown; preview?: unknown; mediaMime?: unknown } | null | undefined;
-    if (reply?.kind === 'story') {
-      const preview = typeof reply.preview === 'string' && reply.preview.trim()
-        ? reply.preview.trim()
-        : typeof reply.mediaMime === 'string' && reply.mediaMime
-          ? reply.mediaMime
-          : this.tr('STORY.SNAPSHOT', 'Instantanea');
-      return `${this.tr('STORY.TITLE', 'Historia')}: ${preview}`;
+  quotedReply(message: ChatMessageVm): QuotedReplyVm | null {
+    if (!message.payload.replyTo) {
+      return null;
     }
-    return this.tr('CHAT.ENCRYPTED_REPLY', 'Respuesta cifrada');
+    return this.quotedReplies[message.id] ?? this.replyQuoteFromReference(this.replyReferenceVm(message));
+  }
+
+  quotedReplyIcon(quote: QuotedReplyVm): string {
+    if (quote.kind === 'image' || quote.kind === 'story') {
+      return 'image-outline';
+    }
+    if (quote.kind === 'video') {
+      return 'videocam-outline';
+    }
+    if (quote.kind === 'audio') {
+      return 'mic-outline';
+    }
+    if (quote.kind === 'file') {
+      return 'document-attach-outline';
+    }
+    return 'return-down-back-outline';
+  }
+
+  async jumpToReply(quote: QuotedReplyVm, event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+    if (!quote.messageId) {
+      return;
+    }
+    const element = document.getElementById(this.messageElementId(quote.messageId));
+    if (element) {
+      this.scrollToMessage(quote.messageId);
+      element.classList.add('reply-target-highlight');
+      window.setTimeout(() => element.classList.remove('reply-target-highlight'), 1400);
+      return;
+    }
+    await this.showPremiumToast(this.tr('CHAT.ORIGINAL_MESSAGE_NOT_VISIBLE', 'Mensaje original no visible en este momento.'));
   }
 
   replyReference(message: ChatMessageVm | null): unknown {
@@ -1449,6 +1505,210 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       at: message.at,
       preview: this.chat.preview(message.payload).slice(0, 120),
     };
+  }
+
+  private refreshQuotedReplies(conversationId: string, messages: ChatMessageVm[]): void {
+    if (!conversationId) {
+      this.quotedReplyCache.clear();
+      this.syncQuotedReplySnapshot();
+      return;
+    }
+
+    const currentMessageIds = new Set(messages.map((message) => message.id));
+    const localMessages = new Map(messages.map((message) => [message.id, message]));
+    let changed = false;
+    for (const key of [...this.quotedReplyCache.keys()]) {
+      if (!currentMessageIds.has(key)) {
+        this.quotedReplyCache.delete(key);
+        changed = true;
+      }
+    }
+
+    for (const message of messages) {
+      const reference = this.replyReferenceVm(message);
+      if (!reference) {
+        if (this.quotedReplyCache.delete(message.id)) {
+          changed = true;
+        }
+        continue;
+      }
+
+      const local = reference.messageId ? localMessages.get(reference.messageId) : null;
+      if (local) {
+        const quote = this.replyQuoteFromMessage(local, reference);
+        const previous = this.quotedReplyCache.get(message.id);
+        this.quotedReplyCache.set(message.id, quote);
+        changed = changed || JSON.stringify(previous) !== JSON.stringify(quote);
+        continue;
+      }
+
+      if (!this.quotedReplyCache.has(message.id)) {
+        const fallback = this.replyQuoteFromReference(reference);
+        if (fallback) {
+          this.quotedReplyCache.set(message.id, fallback);
+          changed = true;
+        }
+      }
+
+      if (reference.messageId && !this.quotedReplyLoads.has(message.id)) {
+        this.quotedReplyLoads.add(message.id);
+        void this.loadQuotedReplyFromHistory(conversationId, message.id, reference);
+      }
+    }
+
+    if (changed) {
+      this.syncQuotedReplySnapshot();
+    }
+  }
+
+  private async loadQuotedReplyFromHistory(conversationId: string, ownerMessageId: string, reference: ReplyReferenceVm): Promise<void> {
+    try {
+      const original = await this.chat.localMessageById(conversationId, reference.messageId);
+      if (!original) {
+        return;
+      }
+      this.quotedReplyCache.set(ownerMessageId, this.replyQuoteFromMessage(original, reference));
+      this.syncQuotedReplySnapshot();
+      this.cdr.detectChanges();
+    } finally {
+      this.quotedReplyLoads.delete(ownerMessageId);
+    }
+  }
+
+  private syncQuotedReplySnapshot(): void {
+    this.quotedReplies = Object.fromEntries(this.quotedReplyCache.entries());
+  }
+
+  private replyReferenceVm(message: ChatMessageVm): ReplyReferenceVm | null {
+    const value = message.payload.replyTo;
+    if (!value || typeof value !== 'object') {
+      return null;
+    }
+    const reference = value as {
+      messageId?: unknown;
+      senderUserId?: unknown;
+      preview?: unknown;
+      kind?: unknown;
+      mediaMime?: unknown;
+    };
+    return {
+      messageId: this.stringValue(reference.messageId),
+      senderUserId: this.stringValue(reference.senderUserId),
+      preview: this.stringValue(reference.preview),
+      kind: this.stringValue(reference.kind),
+      mediaMime: this.stringValue(reference.mediaMime),
+    };
+  }
+
+  private replyQuoteFromMessage(message: ChatMessageVm, reference: ReplyReferenceVm | null): QuotedReplyVm {
+    const file = this.chat.asFile(message.payload);
+    const kind = this.replyKindForMessage(message);
+    const fileId = file ? (file.fileId || file.downloadFile || file.previewFile || '') : '';
+    const media = kind === 'image' || kind === 'video' ? this.chat.mediaPreview(fileId) : null;
+    return {
+      messageId: message.id,
+      found: true,
+      senderName: this.senderName(message.senderUserId, message.mine),
+      isMine: message.mine,
+      kind,
+      snippet: this.replySnippetForMessage(message, reference),
+      thumbnailUrl: media?.url ?? null,
+      fallbackText: this.tr('CHAT.ORIGINAL_MESSAGE_UNAVAILABLE', 'Mensaje original no disponible'),
+    };
+  }
+
+  private replyQuoteFromReference(reference: ReplyReferenceVm | null): QuotedReplyVm | null {
+    if (!reference) {
+      return null;
+    }
+    if (reference.kind === 'story') {
+      const preview = reference.preview || reference.mediaMime || this.tr('STORY.SNAPSHOT', 'Instantanea');
+      return {
+        messageId: reference.messageId || '',
+        found: true,
+        senderName: this.tr('STORY.TITLE', 'Historia'),
+        isMine: false,
+        kind: 'story',
+        snippet: preview,
+        thumbnailUrl: null,
+        fallbackText: this.tr('CHAT.ORIGINAL_MESSAGE_UNAVAILABLE', 'Mensaje original no disponible'),
+      };
+    }
+
+    const kind = this.replyKindForMime(reference.mediaMime);
+    return {
+      messageId: reference.messageId || '',
+      found: false,
+      senderName: this.senderName(reference.senderUserId, false),
+      isMine: reference.senderUserId === this.auth.session()?.user.id,
+      kind: reference.preview ? kind : 'unavailable',
+      snippet: reference.preview || this.tr('CHAT.ORIGINAL_MESSAGE_UNAVAILABLE', 'Mensaje original no disponible'),
+      thumbnailUrl: null,
+      fallbackText: this.tr('CHAT.ORIGINAL_MESSAGE_UNAVAILABLE', 'Mensaje original no disponible'),
+    };
+  }
+
+  private replyKindForMessage(message: ChatMessageVm): QuotedReplyKind {
+    const file = this.chat.asFile(message.payload);
+    if (!file) {
+      return 'text';
+    }
+    if (this.chat.isImage(file)) {
+      return 'image';
+    }
+    if (this.chat.isVideo(file)) {
+      return 'video';
+    }
+    if (this.chat.isAudio(file) || file.voiceNote) {
+      return 'audio';
+    }
+    return 'file';
+  }
+
+  private replyKindForMime(mime: string | undefined): QuotedReplyKind {
+    if (!mime) {
+      return 'text';
+    }
+    if (mime.startsWith('image/')) {
+      return 'image';
+    }
+    if (mime.startsWith('video/')) {
+      return 'video';
+    }
+    if (mime.startsWith('audio/')) {
+      return 'audio';
+    }
+    return 'file';
+  }
+
+  private replySnippetForMessage(message: ChatMessageVm, reference: ReplyReferenceVm | null): string {
+    const file = this.chat.asFile(message.payload);
+    if (!file) {
+      return this.chat.preview(message.payload);
+    }
+    const caption = typeof file.text === 'string' && file.text.trim() ? file.text.trim() : '';
+    if (this.chat.isImage(file)) {
+      return caption || this.tr('CHAT.PHOTO', 'Foto');
+    }
+    if (this.chat.isVideo(file)) {
+      return caption || this.tr('CHAT.VIDEO', 'Video');
+    }
+    if (this.chat.isAudio(file) || file.voiceNote) {
+      return caption || (file.voiceNote ? this.tr('CHAT.VOICE_NOTE', 'Nota de voz') : this.chat.fileName(file));
+    }
+    return caption || reference?.preview || this.chat.fileName(file);
+  }
+
+  private senderName(userId: string | undefined, isMine: boolean): string {
+    const currentUserId = this.auth.session()?.user.id;
+    if (isMine || (userId && userId === currentUserId)) {
+      return this.tr('COMMON.YOU', 'Tu');
+    }
+    return this.chat.participantDisplayName(userId || '') || this.tr('COMMON.CONTACT', 'Contacto');
+  }
+
+  private stringValue(value: unknown): string | undefined {
+    return typeof value === 'string' && value.trim() ? value.trim() : undefined;
   }
 
   isBlocked(): boolean {

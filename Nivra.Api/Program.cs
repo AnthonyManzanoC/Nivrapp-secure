@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
@@ -30,7 +31,17 @@ builder.Services.Configure<NivraSecurityOptions>(builder.Configuration.GetSectio
 builder.Services.Configure<NivraStorageOptions>(builder.Configuration.GetSection("Storage"));
 builder.Services.Configure<NivraPushOptions>(builder.Configuration.GetSection("Push"));
 builder.Services.Configure<LiveKitOptions>(builder.Configuration.GetSection("LiveKit"));
-builder.Services.AddDataProtection();
+var dataProtectionBuilder = builder.Services
+    .AddDataProtection()
+    .SetApplicationName("Nivra.Api");
+var dataProtectionKeyRingPath = FirstNonBlank(
+    builder.Configuration["DataProtection:KeyRingPath"],
+    builder.Configuration["DataProtection__KeyRingPath"]);
+if (!string.IsNullOrWhiteSpace(dataProtectionKeyRingPath))
+{
+    Directory.CreateDirectory(dataProtectionKeyRingPath);
+    dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyRingPath));
+}
 builder.Services.AddHttpClient();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddDbContext<NivraDbContext>(options =>
@@ -174,6 +185,18 @@ app.MapNivraApi();
 app.MapHub<NivraHub>("/hubs/realtime");
 
 app.Run();
+
+static string FirstNonBlank(params string?[] values)
+{
+    foreach (var value in values)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+        {
+            return value;
+        }
+    }
+    return "";
+}
 
 static async Task BackfillPhoneHashesAsync(NivraDbContext dbContext)
 {

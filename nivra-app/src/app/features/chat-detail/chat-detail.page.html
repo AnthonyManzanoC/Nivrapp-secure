@@ -102,8 +102,30 @@
                 {{ forwardedLabel(message) }}
               </div>
             }
-            @if (message.payload.replyTo) {
-              <div class="reply-chip">{{ replyChipLabel(message) }}</div>
+            @if (quotedReply(message); as quote) {
+              <button
+                type="button"
+                class="reply-quote"
+                [class.missing]="!quote.found"
+                (click)="jumpToReply(quote, $event)"
+                [attr.aria-label]="'CHAT.REPLY_CONTEXT' | translate:'Mensaje respondido'">
+                <span class="reply-quote-copy">
+                  <strong>{{ quote.senderName }}</strong>
+                  <span>
+                    @if (quote.kind !== 'text' && quote.kind !== 'unavailable') {
+                      <ion-icon [name]="quotedReplyIcon(quote)"></ion-icon>
+                    }
+                    {{ quote.snippet || quote.fallbackText }}
+                  </span>
+                </span>
+                @if (quote.thumbnailUrl) {
+                  <img class="reply-quote-thumb" [src]="quote.thumbnailUrl" [alt]="quote.snippet || quote.fallbackText">
+                } @else if (quote.kind === 'image' || quote.kind === 'video') {
+                  <span class="reply-quote-thumb placeholder">
+                    <ion-icon [name]="quotedReplyIcon(quote)"></ion-icon>
+                  </span>
+                }
+              </button>
             }
             @if (chat.asFile(message.payload); as file) {
               @if (chat.isAudio(file) || file.voiceNote) {

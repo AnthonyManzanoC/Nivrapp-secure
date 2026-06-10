@@ -696,14 +696,101 @@ ion-popover.attachment-popover::part(content) {
   font-size: 11px;
 }
 
-.reply-chip {
-  margin-bottom: 6px;
+.reply-quote {
+  width: 100%;
+  min-width: 0;
+  margin: 0 0 7px;
+  border: 0;
   border-left: 3px solid var(--nivra-brand);
-  padding: 5px 7px;
-  color: var(--nivra-muted);
-  background: rgba(255, 255, 255, .04);
-  border-radius: 6px;
+  border-radius: 7px;
+  padding: 7px 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  color: inherit;
+  background: rgba(255, 255, 255, .065);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .055);
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.message.mine .reply-quote {
+  background: rgba(0, 0, 0, .14);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .09);
+}
+
+.reply-quote-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.reply-quote-copy strong {
+  overflow: hidden;
+  color: var(--nivra-brand);
   font-size: 12px;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message.mine .reply-quote-copy strong {
+  color: #ffffff;
+}
+
+.reply-quote-copy span {
+  display: -webkit-box;
+  overflow: hidden;
+  color: rgba(244, 251, 247, .78);
+  font-size: 12px;
+  line-height: 1.25;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.reply-quote-copy ion-icon {
+  margin-right: 4px;
+  font-size: 13px;
+  vertical-align: -2px;
+}
+
+.reply-quote-thumb {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  object-fit: cover;
+  background: rgba(0, 0, 0, .18);
+}
+
+.reply-quote-thumb.placeholder {
+  display: inline-grid;
+  place-items: center;
+  color: rgba(244, 251, 247, .82);
+  background: rgba(0, 0, 0, .22);
+}
+
+.reply-quote-thumb.placeholder ion-icon {
+  font-size: 20px;
+}
+
+.reply-target-highlight {
+  animation: replyTargetPulse 1.35s ease both;
+}
+
+@keyframes replyTargetPulse {
+  0%,
+  100% {
+    outline: 0 solid rgba(114, 240, 202, 0);
+  }
+
+  20%,
+  70% {
+    outline: 3px solid rgba(114, 240, 202, .45);
+    outline-offset: 5px;
+  }
 }
 
 .edit-bar {
@@ -1984,7 +2071,7 @@ ion-modal.forward-modal {
   background: #00e676;
 }
 
-:host-context(.nivra-light-theme) .reply-chip,
+:host-context(.nivra-light-theme) .reply-quote,
 :host-context(.nivra-light-theme) .quick-reaction-row,
 :host-context(.nivra-light-theme) .reactions,
 :host-context(.nivra-light-theme) .voice-load,
@@ -1993,6 +2080,25 @@ ion-modal.forward-modal {
   border-color: rgba(60, 60, 67, .1);
   background: #f8fafc;
   box-shadow: 0 1px 2px rgba(0, 0, 0, .08);
+}
+
+:host-context(.nivra-light-theme) .reply-quote {
+  border-left-color: #10b981;
+  box-shadow: inset 0 0 0 1px rgba(15, 23, 42, .07);
+}
+
+:host-context(.nivra-light-theme) .reply-quote-copy strong {
+  color: #047857;
+}
+
+:host-context(.nivra-light-theme) .reply-quote-copy span {
+  color: #475569;
+}
+
+:host-context(.nivra-light-theme) .reply-quote-thumb,
+:host-context(.nivra-light-theme) .reply-quote-thumb.placeholder {
+  color: #334155;
+  background: #e2e8f0;
 }
 
 :host-context(.nivra-light-theme) .reactions strong {

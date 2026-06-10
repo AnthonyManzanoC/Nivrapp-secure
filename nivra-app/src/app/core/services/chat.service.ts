@@ -908,6 +908,26 @@ export class ChatService implements OnDestroy {
     return fileId ? this.mediaPreviews()[fileId] ?? null : null;
   }
 
+  async localMessageById(conversationId: string | null | undefined, messageId: string | null | undefined): Promise<ChatMessageVm | null> {
+    if (!conversationId || !messageId) {
+      return null;
+    }
+
+    const inMemory = this.messagesByConversation()[conversationId]?.find((message) => message.id === messageId);
+    if (inMemory?.payload && !inMemory.decryptError) {
+      return inMemory;
+    }
+
+    const accountKeys = await this.localAccountKeys();
+    for (const accountKey of accountKeys) {
+      const cached = await this.history.messageById(accountKey, conversationId, messageId).catch(() => null);
+      if (cached?.payload && !cached.decryptError) {
+        return cached;
+      }
+    }
+    return null;
+  }
+
   releaseMediaPreview(fileId?: string | null): void {
     if (!fileId) {
       return;

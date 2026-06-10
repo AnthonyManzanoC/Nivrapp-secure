@@ -4,6 +4,7 @@ obj/
 .vscode/
 Nivra.Api/Data/
 Nivra.Api/appsettings.Development.json
+Nivra.Api/firebase-admin.json
 *.user
 *.suo
 node_modules/
