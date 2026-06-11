@@ -1,5 +1,5 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { Component, OnDestroy, OnInit, inject } from '@angular/core';
+import { Component, NgZone, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Subject, Subscription, from, of } from 'rxjs';
@@ -53,6 +53,7 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly nativeDevice = inject(NativeDeviceService);
   private readonly router = inject(Router);
   private readonly loadingController = inject(LoadingController);
+  private readonly ngZone = inject(NgZone);
   alias = '';
   private originalAlias = '';
   displayName = '';
@@ -157,6 +158,7 @@ export class AccountPage implements OnInit, OnDestroy {
   ];
   private qrScanner: import('html5-qrcode').Html5Qrcode | null = null;
   private contactScanner: import('html5-qrcode').Html5Qrcode | null = null;
+  private qrScanInFlight = false;
   private readonly aliasChecks = new Subject<string>();
   private aliasCheckSub?: Subscription;
   aliasStatus: AliasStatus = 'idle';
@@ -704,7 +706,7 @@ export class AccountPage implements OnInit, OnDestroy {
             return { width: size, height: size };
           },
         },
-        (text) => void this.handleContactQr(text),
+        (text) => this.ngZone.run(() => void this.handleContactQr(text)),
         () => undefined,
       );
       this.contactScannerStatus = this.t('ACCOUNT.POINT_CONTACT_QR', 'Apunta la camara al QR de contacto.');
@@ -749,7 +751,7 @@ export class AccountPage implements OnInit, OnDestroy {
       const { Html5Qrcode } = await import('html5-qrcode');
       tempScanner = new Html5Qrcode('contactQrScannerRegion');
       const text = await tempScanner.scanFile(file, true);
-      await this.handleContactQr(text, { allowWhileBusy: true });
+      await this.ngZone.run(() => this.handleContactQr(text, { allowWhileBusy: true }));
     } catch (error) {
       this.contactScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.QR_READ_ERROR', 'No se pudo leer ese QR.');
     } finally {
@@ -774,6 +776,9 @@ export class AccountPage implements OnInit, OnDestroy {
   async enablePush(): Promise<void> {
     await this.run(async () => {
       const ok = await this.push.requestPermissionAndRegister();
+      if (ok) {
+        await this.nativeDevice.ensureBatteryOptimizationExemption({ force: true });
+      }
       this.notice = ok ? this.t('ACCOUNT.NOTIFICATIONS_ENABLED', 'Notificaciones activadas.') : this.t('ACCOUNT.NOTIFICATIONS_ENABLE_ERROR', 'No se pudo activar notificaciones en este navegador.');
     });
   }
@@ -837,7 +842,7 @@ export class AccountPage implements OnInit, OnDestroy {
             return { width: size, height: size };
           },
         },
-        (text) => void this.handleScannedQr(text),
+        (text) => this.ngZone.run(() => void this.handleScannedQr(text)),
         () => undefined,
       );
       this.qrScannerStatus = this.t('ACCOUNT.POINT_NIVRA_QR', 'Apunta la camara al QR de Nivra.');
@@ -882,7 +887,7 @@ export class AccountPage implements OnInit, OnDestroy {
       const { Html5Qrcode } = await import('html5-qrcode');
       tempScanner = new Html5Qrcode('qrScannerRegion');
       const text = await tempScanner.scanFile(file, true);
-      await this.handleScannedQr(text, { allowWhileBusy: true });
+      await this.ngZone.run(() => this.handleScannedQr(text, { allowWhileBusy: true }));
     } catch (error) {
       this.qrScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.QR_READ_ERROR', 'No se pudo leer ese QR.');
     } finally {
@@ -898,9 +903,10 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   private async handleScannedQr(text: string, options: { allowWhileBusy?: boolean } = {}): Promise<void> {
-    if (!text || (this.qrScannerBusy && !options.allowWhileBusy)) {
+    if (!text || this.qrScanInFlight || (this.qrScannerBusy && !options.allowWhileBusy)) {
       return;
     }
+    this.qrScanInFlight = true;
     this.qrScannerBusy = true;
     this.qrText = text;
     this.qrScannerStatus = this.t('ACCOUNT.QR_DETECTED_AUTHORIZING', 'QR detectado. Autorizando dispositivo...');
@@ -908,6 +914,7 @@ export class AccountPage implements OnInit, OnDestroy {
       await this.authorizeQr();
     } finally {
       this.qrScannerBusy = false;
+      this.qrScanInFlight = false;
     }
   }
 

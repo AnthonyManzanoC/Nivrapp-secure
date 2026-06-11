@@ -18,11 +18,14 @@ import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
+import androidx.core.app.NotificationManagerCompat;
+
 public class NivraIncomingCallActivity extends Activity {
     private String callId = "";
     private TextView callerView;
     private TextView subtitleView;
     private BroadcastReceiver dismissReceiver;
+    private boolean routed;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -126,22 +129,34 @@ public class NivraIncomingCallActivity extends Activity {
         if (subtitleView != null) {
             subtitleView.setText("Video".equalsIgnoreCase(callType) ? "Videollamada entrante" : "Llamada entrante");
         }
+        String action = intent.getAction();
+        if (NivraNativePlugin.ACTION_CALL_ANSWER.equals(action) || NivraNativePlugin.ACTION_CALL_REJECT.equals(action)) {
+            routeCallAction(action);
+        }
     }
 
     private void openCall() {
-        Intent launch = new Intent(this, MainActivity.class);
-        launch.setAction(NivraNativePlugin.ACTION_CALL_OPEN);
-        copyExtras(getIntent(), launch);
-        launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(launch);
-        finish();
+        routeCallAction(NivraNativePlugin.ACTION_CALL_OPEN);
     }
 
     private void sendCallAction(String action) {
-        Intent broadcast = new Intent(this, NivraCallActionReceiver.class);
-        broadcast.setAction(action);
-        copyExtras(getIntent(), broadcast);
-        sendBroadcast(broadcast);
+        routeCallAction(action);
+    }
+
+    private void routeCallAction(String action) {
+        if (routed) {
+            return;
+        }
+        routed = true;
+        int notificationId = getIntent() == null ? 0 : getIntent().getIntExtra("notificationId", 0);
+        if (notificationId != 0) {
+            NotificationManagerCompat.from(this).cancel(notificationId);
+        }
+        Intent launch = new Intent(this, MainActivity.class);
+        launch.setAction(action);
+        copyExtras(getIntent(), launch);
+        launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(launch);
         finish();
     }
 

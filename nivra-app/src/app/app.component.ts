@@ -346,6 +346,7 @@ export class AppComponent {
       }
       await this.realtime.connect();
       await this.push.initialize();
+      void this.nativeDevice.ensureBatteryOptimizationExemption();
       void this.contactSync.syncCachedContactsInBackground();
     })().finally(() => {
       this.startServicesPromise = null;

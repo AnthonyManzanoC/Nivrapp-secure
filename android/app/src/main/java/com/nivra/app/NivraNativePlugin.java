@@ -32,6 +32,7 @@ import android.os.SystemClock;
 import android.provider.MediaStore;
 import android.provider.OpenableColumns;
 import android.provider.ContactsContract;
+import android.provider.Settings;
 import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
@@ -210,6 +211,45 @@ public class NivraNativePlugin extends Plugin {
         result.put("hasProximitySensor", proximitySensor != null);
         result.put("hasAccelerometer", accelerometerSensor != null);
         call.resolve(result);
+    }
+
+    @PluginMethod
+    public void isIgnoringBatteryOptimizations(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("ignoring", isIgnoringBatteryOptimizations(getContext()));
+        result.put("supported", Build.VERSION.SDK_INT >= Build.VERSION_CODES.M);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void requestIgnoreBatteryOptimizations(PluginCall call) {
+        JSObject result = new JSObject();
+        boolean supported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.M;
+        boolean ignoring = isIgnoringBatteryOptimizations(getContext());
+        result.put("supported", supported);
+        result.put("ignoring", ignoring);
+        result.put("requested", false);
+        if (!supported || ignoring) {
+            call.resolve(result);
+            return;
+        }
+
+        try {
+            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS);
+            intent.setData(Uri.parse("package:" + getContext().getPackageName()));
+            startBatterySettingsIntent(intent);
+            result.put("requested", true);
+            call.resolve(result);
+        } catch (Exception firstError) {
+            try {
+                Intent fallback = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
+                startBatterySettingsIntent(fallback);
+                result.put("requested", true);
+                call.resolve(result);
+            } catch (Exception secondError) {
+                call.resolve(result);
+            }
+        }
     }
 
     @PluginMethod
@@ -497,8 +537,8 @@ public class NivraNativePlugin extends Plugin {
         wakeForIncomingCall(context);
 
         PendingIntent openIntent = activityIntent(context, ACTION_CALL_OPEN, data, notificationId);
-        PendingIntent answerIntent = receiverIntent(context, ACTION_CALL_ANSWER, data, notificationId);
-        PendingIntent rejectIntent = receiverIntent(context, ACTION_CALL_REJECT, data, notificationId);
+        PendingIntent answerIntent = activityIntent(context, ACTION_CALL_ANSWER, data, notificationId);
+        PendingIntent rejectIntent = activityIntent(context, ACTION_CALL_REJECT, data, notificationId);
         String callerName = firstNonBlank(data.get("callerName"), data.get("title"), "Nivra");
         String callType = firstNonBlank(data.get("callType"), "Voice", "Voice");
         boolean video = "Video".equalsIgnoreCase(callType);
@@ -1010,6 +1050,24 @@ public class NivraNativePlugin extends Plugin {
         PowerManager.WakeLock wakeLock = manager.newWakeLock(flags, "Nivra:IncomingCall");
         wakeLock.setReferenceCounted(false);
         wakeLock.acquire(8000);
+    }
+
+    private static boolean isIgnoringBatteryOptimizations(Context context) {
+        if (context == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            return true;
+        }
+        PowerManager manager = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
+        return manager != null && manager.isIgnoringBatteryOptimizations(context.getPackageName());
+    }
+
+    private void startBatterySettingsIntent(Intent intent) {
+        Activity activity = getActivity();
+        if (activity != null) {
+            activity.startActivity(intent);
+            return;
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(intent);
     }
 
     private static PendingIntent activityIntent(Context context, String action, Map<String, String> data, int notificationId) {

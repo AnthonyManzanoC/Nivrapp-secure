@@ -95,10 +95,18 @@ interface DeviceContactsResponse {
   permission?: string;
 }
 
+interface BatteryOptimizationResponse {
+  supported?: boolean;
+  ignoring?: boolean;
+  requested?: boolean;
+}
+
 interface NivraNativePlugin {
   setSecureScreen(options: { enabled: boolean }): Promise<{ enabled: boolean }>;
   setAudioFocus(options: { active: boolean; mode: AudioFocusMode }): Promise<{ active: boolean }>;
   configureRaiseGestures(options: { listen: boolean; talk: boolean }): Promise<{ enabled: boolean }>;
+  isIgnoringBatteryOptimizations(): Promise<BatteryOptimizationResponse>;
+  requestIgnoreBatteryOptimizations(): Promise<BatteryOptimizationResponse>;
   diagnostics(): Promise<NativeDiagnostics>;
   writeClipboard(options: { value: string; label?: string }): Promise<void>;
   saveFileChunkedStart(options: { fileName: string; mimeType: string; public: boolean; mediaKind: MediaKind }): Promise<SaveSessionResponse>;
@@ -123,6 +131,7 @@ interface NivraNativePlugin {
 }
 
 const NivraNative = registerPlugin<NivraNativePlugin>('NivraNative');
+const BATTERY_OPTIMIZATION_PROMPT_KEY = 'nivra.androidBatteryOptimizationPrompted';
 
 @Injectable({ providedIn: 'root' })
 export class NativeDeviceService {
@@ -158,6 +167,22 @@ export class NativeDeviceService {
       listen: Boolean(settings.raiseToListen),
       talk: Boolean(settings.raiseToTalk),
     }).catch(() => undefined);
+  }
+
+  async ensureBatteryOptimizationExemption(options: { force?: boolean } = {}): Promise<boolean> {
+    if (!this.native || Capacitor.getPlatform() !== 'android') {
+      return false;
+    }
+    const status = await NivraNative.isIgnoringBatteryOptimizations().catch(() => null);
+    if (status?.ignoring || status?.supported === false) {
+      return Boolean(status?.ignoring);
+    }
+    if (!options.force && this.readLocalFlag(BATTERY_OPTIMIZATION_PROMPT_KEY)) {
+      return false;
+    }
+    this.writeLocalFlag(BATTERY_OPTIMIZATION_PROMPT_KEY);
+    const requested = await NivraNative.requestIgnoreBatteryOptimizations().catch(() => null);
+    return Boolean(requested?.ignoring);
   }
 
   async onRaiseGesture(listener: (event: RaiseGestureEvent) => void): Promise<PluginListenerHandle | null> {
@@ -377,5 +402,21 @@ export class NativeDeviceService {
         : mimeType.startsWith('audio/') ? mimeType.slice(6)
           : 'bin';
     return `nivra-share.${extension || 'bin'}`;
+  }
+
+  private readLocalFlag(key: string): boolean {
+    try {
+      return localStorage.getItem(key) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  private writeLocalFlag(key: string): void {
+    try {
+      localStorage.setItem(key, '1');
+    } catch {
+      // Some embedded webviews can deny localStorage during early startup.
+    }
   }
 }

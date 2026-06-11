@@ -1,4 +1,4 @@
-import { Injectable, OnDestroy, computed, inject, signal } from '@angular/core';
+import { Injectable, NgZone, OnDestroy, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
@@ -80,6 +80,7 @@ export class AuthService implements OnDestroy {
   private readonly crypto = inject(CryptoService);
   private readonly secureVault = inject(NativeSecureVaultService);
   private readonly router = inject(Router);
+  private readonly ngZone = inject(NgZone);
   private firebaseApp: FirebaseApp | null = null;
   private firebaseAppCheck: AppCheck | null = null;
   private firebaseAuth: Auth | null = null;
@@ -272,20 +273,24 @@ export class AuthService implements OnDestroy {
       await this.completeImportedAuth(auth, payload.keyMaterial);
     };
 
-    connection.on('QrAuthorized', (authorization: QrLoginAuthorizedResponse) => void finish(authorization));
-    connection.on('auth.qrAuthorized', (authorization: QrLoginAuthorizedResponse) => void finish(authorization));
+    connection.on('QrAuthorized', (authorization: QrLoginAuthorizedResponse) => {
+      void this.ngZone.run(() => finish(authorization));
+    });
+    connection.on('auth.qrAuthorized', (authorization: QrLoginAuthorizedResponse) => {
+      void this.ngZone.run(() => finish(authorization));
+    });
     connection.on('qr-login-success', (encryptedPayload: string) => {
-      void this.crypto.decryptQrPayload<{
-        auth?: AuthSession;
-        keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>;
-      }>(encryptedPayload, ephemeral.privateKey)
-        .then(async (payload) => {
+      void this.ngZone.run(async () => {
+        const payload = await this.crypto.decryptQrPayload<{
+          auth?: AuthSession;
+          keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>;
+        }>(encryptedPayload, ephemeral.privateKey);
           if (!payload.auth?.tokens?.accessToken || !payload.keyMaterial?.privateJwk || !payload.keyMaterial.publicJwk) {
             throw new Error('El paquete QR no contiene una sesion valida.');
           }
           await this.stopQrLogin();
           await this.completeImportedAuth(payload.auth, payload.keyMaterial);
-        });
+      });
     });
 
     await connection.start();
@@ -302,7 +307,7 @@ export class AuthService implements OnDestroy {
       ))
         .then((status) => {
           if (status.status === 'authorized') {
-            return finish(status);
+            return this.ngZone.run(() => finish(status));
           }
           return undefined;
         })
@@ -1041,7 +1046,7 @@ export class AuthService implements OnDestroy {
   }
 
   private parseQrLoginChallenge(rawText: string): ParsedQrLoginChallenge {
-    const text = rawText.trim();
+    const text = this.extractQrLoginText(rawText);
     if (!text) {
       throw new Error('Pega o escanea un QR de Nivra.');
     }
@@ -1049,17 +1054,28 @@ export class AuthService implements OnDestroy {
     try {
       const url = new URL(text);
       const params = url.searchParams;
+      const protocol = url.protocol.toLowerCase();
+      const route = `${url.hostname}${url.pathname}`.replace(/^\/+|\/+$/g, '').toLowerCase();
+      const explicitType = params.get('type') || params.get('t');
+      const isNivraScheme = protocol === 'nivra:';
+      const isQrRoute = route === 'login/qr' || route.endsWith('/login/qr');
+      if (!isNivraScheme && explicitType !== 'nivra-qr-login' && !isQrRoute) {
+        throw new Error('Ese QR no pertenece a Nivra.');
+      }
+      if (isNivraScheme && !isQrRoute && explicitType !== 'nivra-qr-login') {
+        throw new Error('Ese QR no pertenece a Nivra.');
+      }
       payload = {
-        type: params.get('type') || 'nivra-qr-login',
-        qrId: params.get('qrId'),
-        code: params.get('code'),
-        syncToken: params.get('syncToken'),
-        publicKey: params.get('publicKey'),
-        publicSpki: params.get('publicSpki'),
-        pk: params.get('pk'),
+        type: explicitType || 'nivra-qr-login',
+        qrId: this.qrParam(params, 'qrId', 'qrid', 'qr_id'),
+        code: this.qrParam(params, 'code', 'c'),
+        syncToken: this.qrParam(params, 'syncToken', 'sync_token', 'token'),
+        publicKey: this.qrParam(params, 'publicKey', 'public_key'),
+        publicSpki: this.qrParam(params, 'publicSpki', 'public_spki', 'spki'),
+        pk: this.qrParam(params, 'pk', 'key'),
         k: params.get('k'),
-        connectionId: params.get('connectionId'),
-        expiresAt: params.get('exp') || params.get('expiresAt'),
+        connectionId: this.qrParam(params, 'connectionId', 'connection_id', 'cid'),
+        expiresAt: this.qrParam(params, 'exp', 'expiresAt', 'expires_at'),
       };
     } catch {
       try {
@@ -1099,5 +1115,31 @@ export class AuthService implements OnDestroy {
       publicSpki,
       expiresAt,
     };
+  }
+
+  private extractQrLoginText(rawText: string): string {
+    const text = String(rawText || '').trim();
+    if (!text) {
+      return '';
+    }
+    const embedded = text.match(/nivra:\/\/[^\s"'<>]+/i);
+    if (embedded?.[0]) {
+      return embedded[0];
+    }
+    const compact = text.replace(/\s+/g, '');
+    if (compact.toLowerCase().startsWith('nivra://')) {
+      return compact;
+    }
+    return text.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  }
+
+  private qrParam(params: URLSearchParams, ...names: string[]): string | null {
+    for (const name of names) {
+      const value = params.get(name);
+      if (value !== null && value !== '') {
+        return value;
+      }
+    }
+    return null;
   }
 }
