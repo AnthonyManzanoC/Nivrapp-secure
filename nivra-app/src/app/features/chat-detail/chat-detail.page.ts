@@ -1,5 +1,5 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, OnDestroy, OnInit, ViewChild, computed, effect, inject, untracked } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, computed, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
@@ -425,13 +425,35 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
 
     this.attachmentError = '';
-    this.pendingAttachmentMode = mode;
-    this.pendingAttachmentDraftSeed = this.draft.trim();
-    this.pendingAttachmentCaption = this.pendingAttachmentDraftSeed;
-    this.pendingAttachmentFiles = files.map((file) => ({
-      file,
-      url: this.canPreviewPendingFile(file) ? URL.createObjectURL(file) : null,
-    }));
+    this.preparePendingAttachments(files, mode);
+  }
+
+  @HostListener('paste', ['$event'])
+  handlePaste(event: ClipboardEvent): void {
+    const files = this.clipboardImageFiles(event);
+    if (!files.length) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+
+    const conversation = this.conversation();
+    if (!conversation || this.sending || this.chat.uploading() || this.voiceComposerActive()) {
+      return;
+    }
+    if (!this.canSendMessages()) {
+      this.attachmentError = this.tr('CHAT.ADMINS_ONLY_FILES', 'Solo los admins pueden enviar archivos en este grupo.');
+      return;
+    }
+
+    this.attachmentError = '';
+    this.notice = '';
+    this.closeAttachmentMenu();
+    this.closeChatMenu();
+    this.closeMessageActions();
+    this.emojiPanelOpen = false;
+    this.preparePendingAttachments(files, 'media');
+    this.cdr.detectChanges();
   }
 
   async sendPendingAttachments(): Promise<void> {
@@ -2182,6 +2204,77 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.pendingAttachmentMode = 'document';
     this.pendingAttachmentCaption = '';
     this.pendingAttachmentDraftSeed = '';
+  }
+
+  private preparePendingAttachments(files: File[], mode: AttachmentMode): void {
+    this.clearPendingAttachments(false);
+    this.pendingAttachmentMode = mode;
+    this.pendingAttachmentDraftSeed = this.draft.trim();
+    this.pendingAttachmentCaption = this.pendingAttachmentDraftSeed;
+    this.pendingAttachmentFiles = files.map((file) => ({
+      file,
+      url: this.canPreviewPendingFile(file) ? URL.createObjectURL(file) : null,
+    }));
+  }
+
+  private clipboardImageFiles(event: ClipboardEvent): File[] {
+    const clipboard = event.clipboardData;
+    if (!clipboard) {
+      return [];
+    }
+    const files: File[] = [];
+    const items = Array.from(clipboard.items ?? []);
+    for (const item of items) {
+      if (item.kind !== 'file' || !item.type.toLowerCase().includes('image')) {
+        continue;
+      }
+      const file = item.getAsFile();
+      if (file) {
+        files.push(this.normalizeClipboardImageFile(file, files.length));
+      }
+    }
+    if (files.length) {
+      return files;
+    }
+    for (const file of Array.from(clipboard.files ?? [])) {
+      if (file.type.toLowerCase().startsWith('image/')) {
+        files.push(this.normalizeClipboardImageFile(file, files.length));
+      }
+    }
+    return files;
+  }
+
+  private normalizeClipboardImageFile(file: File, index: number): File {
+    if (file.name?.trim()) {
+      return file;
+    }
+    const mime = file.type || 'image/png';
+    const extension = this.clipboardImageExtension(mime);
+    const suffix = index > 0 ? `-${index + 1}` : '';
+    return new File([file], `nivra-clipboard-${Date.now()}${suffix}.${extension}`, {
+      type: mime,
+      lastModified: file.lastModified || Date.now(),
+    });
+  }
+
+  private clipboardImageExtension(mime: string): string {
+    const normalized = mime.toLowerCase();
+    if (normalized.includes('jpeg') || normalized.includes('jpg')) {
+      return 'jpg';
+    }
+    if (normalized.includes('webp')) {
+      return 'webp';
+    }
+    if (normalized.includes('gif')) {
+      return 'gif';
+    }
+    if (normalized.includes('heic')) {
+      return 'heic';
+    }
+    if (normalized.includes('bmp')) {
+      return 'bmp';
+    }
+    return 'png';
   }
 
   private canPreviewPendingFile(file: File): boolean {
