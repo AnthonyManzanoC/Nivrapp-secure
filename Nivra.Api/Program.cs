@@ -183,7 +183,7 @@ app.UseRateLimiter();
 
 app.MapNivraApi();
 app.MapHub<NivraHub>("/hubs/realtime");
-
+app.MapGet("/ping", () => Results.Ok("Nivra Server Despierto"));
 app.Run();
 
 static string FirstNonBlank(params string?[] values)
