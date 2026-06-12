@@ -90,27 +90,56 @@ interface StoredStory extends Story {
   accountKey: string;
 }
 
+interface ConversationMessagesPageOptions {
+  before?: string | null;
+  beforeId?: string | null;
+  limit?: number;
+}
+
 @Injectable({ providedIn: 'root' })
 export class LocalHistoryService {
   private readonly secureVault = inject(NativeSecureVaultService);
   private dbPromise?: Promise<IDBPDatabase | null>;
   private sqlitePromise?: Promise<SQLiteDBConnection | null>;
 
-  async conversationMessagesPage(accountKey: string, conversationId: string, limit = 80): Promise<ChatMessageVm[]> {
+  async conversationMessagesPage(
+    accountKey: string,
+    conversationId: string,
+    options: number | ConversationMessagesPageOptions = 80,
+  ): Promise<ChatMessageVm[]> {
     if (!accountKey || !conversationId) {
       return [];
     }
+    const page = this.normalizeConversationMessagesPageOptions(options);
     const sqlite = await this.openNativeSqlite();
     if (sqlite) {
-      return this.sqliteConversationMessagesPage(sqlite, accountKey, conversationId, limit);
+      return this.sqliteConversationMessagesPage(sqlite, accountKey, conversationId, page.limit, page.before, page.beforeId);
     }
     const db = await this.open();
     if (!db) {
       return [];
     }
-    const safeLimit = Math.max(1, Math.min(Number(limit) || 80, 160));
+    const safeLimit = page.limit;
     const store = db.transaction(LOCAL_MESSAGE_STORE, 'readonly').objectStore(LOCAL_MESSAGE_STORE);
-    const records = await store.index('byConversation').getAll(IDBKeyRange.only([accountKey, conversationId])) as StoredChatMessage[];
+    const lower = [accountKey, conversationId, ''];
+    const upper = [accountKey, conversationId, page.before || '\uffff'];
+    const range = page.before
+      ? IDBKeyRange.bound(lower, upper, false, !page.beforeId)
+      : IDBKeyRange.bound(lower, upper);
+    const records: StoredChatMessage[] = [];
+    const now = Date.now();
+    let cursor = await store.index('byConversationAt').openCursor(range, 'prev');
+    while (cursor && records.length < safeLimit) {
+      const record = cursor.value as StoredChatMessage;
+      if (page.before && page.beforeId && record.at === page.before && record.id >= page.beforeId) {
+        cursor = await cursor.continue();
+        continue;
+      }
+      if (!this.isExpired(record, now)) {
+        records.push(record);
+      }
+      cursor = await cursor.continue();
+    }
     const active = await this.activeMessages(accountKey, records);
     return active
       .sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime())
@@ -1007,14 +1036,27 @@ export class LocalHistoryService {
     accountKey: string,
     conversationId: string,
     limit: number,
+    before: string | null = null,
+    beforeId: string | null = null,
   ): Promise<ChatMessageVm[]> {
     const safeLimit = Math.max(1, Math.min(Number(limit) || 80, 160));
+    const params: Array<string | number> = [accountKey, conversationId];
+    const beforeClause = before
+      ? beforeId ? 'AND (at < ? OR (at = ? AND id < ?))' : 'AND at < ?'
+      : '';
+    if (before && beforeId) {
+      params.push(before, before, beforeId);
+    } else if (before) {
+      params.push(before);
+    }
+    params.push(safeLimit);
     const rows = await sqlite.query(
       `SELECT record_json FROM local_messages
        WHERE account_key = ? AND conversation_id = ?
+       ${beforeClause}
        ORDER BY at DESC
        LIMIT ?`,
-      [accountKey, conversationId, safeLimit],
+      params,
     );
     const records = (rows.values ?? [])
       .map((row) => this.parseSqliteRecord<StoredChatMessage>(row))
@@ -1023,6 +1065,19 @@ export class LocalHistoryService {
     return active
       .sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime())
       .slice(-safeLimit);
+  }
+
+  private normalizeConversationMessagesPageOptions(
+    options: number | ConversationMessagesPageOptions,
+  ): { before: string | null; beforeId: string | null; limit: number } {
+    const rawLimit = typeof options === 'number' ? options : options.limit;
+    const before = typeof options === 'number' ? null : options.before;
+    const beforeId = typeof options === 'number' ? null : options.beforeId;
+    return {
+      before: typeof before === 'string' && before ? before : null,
+      beforeId: typeof beforeId === 'string' && beforeId ? beforeId : null,
+      limit: Math.max(1, Math.min(Number(rawLimit) || 80, 160)),
+    };
   }
 
   private async sqlitePutMessage(sqlite: SQLiteDBConnection, accountKey: string, message: ChatMessageVm): Promise<void> {

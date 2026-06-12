@@ -82,9 +82,20 @@ export type ChatFolderFilter = 'all' | 'pinned' | 'unread' | 'archived';
 
 type ConversationFlagKind = 'archived' | 'blocked' | 'pinned' | 'muted';
 
+interface ConversationPageState {
+  oldestLoadedAt: string | null;
+  oldestLoadedId: string | null;
+  hasMore: boolean;
+  loadingOlder: boolean;
+}
+
 const TTL_SWEEP_INTERVAL_MS = 30_000;
 const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
 const KEY_DIRECTORY_TTL_MS = 45_000;
+const CHAT_PAGE_SIZE = 30;
+const MESSAGE_PADDING_BUCKET_BYTES = 2048;
+const MESSAGE_PADDING_MAX_BYTES = 16384;
+const CHAT_PAYLOAD_TEXT_ENCODER = new TextEncoder();
 
 @Injectable({ providedIn: 'root' })
 export class ChatService implements OnDestroy {
@@ -118,6 +129,7 @@ export class ChatService implements OnDestroy {
   readonly contacts = signal<Contact[]>([]);
   readonly profilesByUserId = signal<Record<string, LocalProfile>>({});
   readonly messagesByConversation = signal<Record<string, ChatMessageVm[]>>({});
+  readonly conversationPaging = signal<Record<string, ConversationPageState>>({});
   readonly visibleConversations = computed(() => this.chatFolderConversations('all'));
   readonly mediaPreviews = signal<Record<string, MediaPreview>>({});
   readonly directoryResults = signal<UserSummary[]>([]);
@@ -243,7 +255,7 @@ export class ChatService implements OnDestroy {
       if (!await this.auth.ensureFreshSession()) {
         return;
       }
-      const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>('/sync/bootstrap'));
+      const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>(`/sync/bootstrap?messageTake=${CHAT_PAGE_SIZE}`));
       const contacts = bootstrap.contacts ?? [];
       const conversations = this.applyLocalConversationState(bootstrap.conversations ?? []);
       this.contacts.set(contacts);
@@ -253,9 +265,7 @@ export class ChatService implements OnDestroy {
       this.ensureSelectedConversation();
       await this.persistChatIndex(conversations, contacts);
       void this.hydrateConversationProfiles(conversations);
-      for (const message of bootstrap.messages ?? []) {
-        await this.ingestMessage(message, false);
-      }
+      await this.ingestMessageBatch(bootstrap.messages ?? [], false);
       await this.ackDelivered(bootstrap.messages ?? []);
       await this.refreshPresenceForConversations();
     } finally {
@@ -263,7 +273,7 @@ export class ChatService implements OnDestroy {
     }
   }
 
-  async syncMissedMessages(take = 200): Promise<void> {
+  async syncMissedMessages(take = CHAT_PAGE_SIZE): Promise<void> {
     if (!this.auth.isAuthenticated() || this.syncInFlight) {
       return;
     }
@@ -274,16 +284,13 @@ export class ChatService implements OnDestroy {
     try {
       const accountKey = this.localAccountKey();
       const watermark = accountKey ? await this.history.getSyncWatermark(accountKey).catch(() => null) : null;
-      const params = new URLSearchParams({ take: String(Math.max(1, Math.min(take, 500))) });
+      const params = new URLSearchParams({ take: String(Math.max(1, Math.min(take, 100))) });
       const retryDecryptErrors = Object.values(this.messagesByConversation()).some((messages) => messages.some((message) => message.decryptError));
       if (watermark && !retryDecryptErrors) {
         params.set('since', watermark);
       }
       const sync = await firstValueFrom(this.api.get<MessageSyncResponse>(`/messages/sync?${params.toString()}`));
-      let hadDecryptError = false;
-      for (const message of sync.messages ?? []) {
-        hadDecryptError = !(await this.ingestMessage(message, false)) || hadDecryptError;
-      }
+      const hadDecryptError = !(await this.ingestMessageBatch(sync.messages ?? [], false));
       await this.ackDelivered(sync.messages ?? []);
       if (accountKey && sync.syncedAt && !hadDecryptError) {
         await this.history.setSyncWatermark(accountKey, sync.syncedAt).catch(() => undefined);
@@ -338,12 +345,67 @@ export class ChatService implements OnDestroy {
   }
 
   async loadMessages(conversationId: string): Promise<void> {
-    const messages = await firstValueFrom(
-      this.api.get<MessageResponse[]>(`/conversations/${encodeURIComponent(conversationId)}/messages?take=80`),
-    );
-    for (const message of messages ?? []) {
-      await this.ingestMessage(message, false);
+    await this.loadRemoteMessagesPage(conversationId);
+  }
+
+  async loadOlderMessages(conversationId: string): Promise<boolean> {
+    if (!conversationId) {
+      return false;
     }
+    const paging = this.conversationPaging()[conversationId];
+    if (paging?.loadingOlder || paging?.hasMore === false) {
+      return false;
+    }
+    const oldest = this.oldestLoadedMessage(conversationId);
+    if (!oldest) {
+      await this.loadMessages(conversationId);
+      return true;
+    }
+    this.patchConversationPageState(conversationId, { loadingOlder: true });
+    try {
+      const cached = await this.loadCachedMessages(conversationId, {
+        before: oldest.at,
+        beforeId: oldest.id,
+        limit: CHAT_PAGE_SIZE,
+      });
+      const remote = await this.loadRemoteMessagesPage(conversationId, {
+        before: oldest.at,
+        beforeId: oldest.id,
+      }).catch(() => []);
+      const loaded = cached.length + remote.length;
+      this.refreshConversationPageState(conversationId, remote.length >= CHAT_PAGE_SIZE || cached.length >= CHAT_PAGE_SIZE);
+      return loaded > 0;
+    } finally {
+      this.patchConversationPageState(conversationId, { loadingOlder: false });
+    }
+  }
+
+  hasOlderMessages(conversationId: string | null | undefined): boolean {
+    if (!conversationId) {
+      return false;
+    }
+    const state = this.conversationPaging()[conversationId];
+    return Boolean(state?.hasMore && !state.loadingOlder);
+  }
+
+  private async loadRemoteMessagesPage(
+    conversationId: string,
+    options: { before?: string | null; beforeId?: string | null } = {},
+  ): Promise<MessageResponse[]> {
+    const params = new URLSearchParams({ take: String(CHAT_PAGE_SIZE) });
+    if (options.before) {
+      params.set('before', options.before);
+    }
+    if (options.beforeId) {
+      params.set('beforeId', options.beforeId);
+    }
+    const messages = await firstValueFrom(
+      this.api.get<MessageResponse[]>(`/conversations/${encodeURIComponent(conversationId)}/messages?${params.toString()}`),
+    );
+    await this.ingestMessageBatch(messages ?? [], false);
+    const existingHasMore = this.conversationPaging()[conversationId]?.hasMore === true;
+    this.refreshConversationPageState(conversationId, (messages ?? []).length >= CHAT_PAGE_SIZE || (!options.before && existingHasMore));
+    return messages ?? [];
   }
 
   async sendTyping(conversationId: string, kind: 'typing' | 'stopped' = 'typing', options: { force?: boolean } = {}): Promise<void> {
@@ -680,7 +742,8 @@ export class ChatService implements OnDestroy {
       throw new Error('Solo los admins pueden enviar mensajes en este grupo.');
     }
     const outgoingPayload = this.normalizeOutgoingPayload(conversation, payload);
-    const recipients = await this.encryptedRecipients(conversation, outgoingPayload, fileObjectId);
+    const wirePayload = this.withUniformMessagePadding(outgoingPayload);
+    const recipients = await this.encryptedRecipients(conversation, wirePayload, fileObjectId);
     if (!recipients.length) {
       throw new Error('No hay llaves publicas disponibles para enviar.');
     }
@@ -831,6 +894,12 @@ export class ChatService implements OnDestroy {
   async clearConversation(conversation: Conversation, scope: 'me' | 'everyone'): Promise<void> {
     await firstValueFrom(this.api.post(`/api/chats/${encodeURIComponent(conversation.id)}/clear`, { scope }));
     this.messagesByConversation.update((state) => ({ ...state, [conversation.id]: [] }));
+    this.patchConversationPageState(conversation.id, {
+      oldestLoadedAt: null,
+      oldestLoadedId: null,
+      hasMore: false,
+      loadingOlder: false,
+    });
     const accountKey = this.localAccountKey();
     if (accountKey) {
       await this.history.removeConversationMessages(accountKey, conversation.id).catch(() => undefined);
@@ -1436,6 +1505,7 @@ export class ChatService implements OnDestroy {
     } else {
       payload = { type: 'system', text: 'Paquete cifrado no disponible para este dispositivo.' };
     }
+    payload = this.stripMessagePadding(payload);
 
     let vm: ChatMessageVm = {
       id: message.id,
@@ -1486,6 +1556,18 @@ export class ChatService implements OnDestroy {
       void this.sendReceipt(message.id, 'Delivered');
     }
     return !decryptError;
+  }
+
+  private async ingestMessageBatch(messages: MessageResponse[], markDelivered: boolean): Promise<boolean> {
+    let hadDecryptError = false;
+    let index = 0;
+    for (const message of messages ?? []) {
+      hadDecryptError = !(await this.ingestMessage(message, markDelivered)) || hadDecryptError;
+      if (++index % 8 === 0) {
+        await this.yieldToMainThread();
+      }
+    }
+    return !hadDecryptError;
   }
 
   private ownRecipientCandidates(
@@ -1812,25 +1894,72 @@ export class ChatService implements OnDestroy {
     ]);
   }
 
-  private async loadCachedMessages(conversationId: string): Promise<void> {
+  private async loadCachedMessages(
+    conversationId: string,
+    options: { before?: string | null; beforeId?: string | null; limit?: number } = {},
+  ): Promise<ChatMessageVm[]> {
     const accountKeys = await this.localAccountKeys();
     if (!accountKeys.length || !conversationId) {
-      return;
+      return [];
     }
+    const limit = Math.max(1, Math.min(options.limit ?? CHAT_PAGE_SIZE, 100));
     const groups = await Promise.all(accountKeys.map((accountKey) =>
-      this.history.conversationMessagesPage(accountKey, conversationId, 80).catch(() => [])));
+      this.history.conversationMessagesPage(accountKey, conversationId, {
+        before: options.before ?? null,
+        beforeId: options.beforeId ?? null,
+        limit,
+      }).catch(() => [])));
     const now = Date.now();
     const messages = this.uniqueMessages(groups.flat())
       .filter((message) => !this.isExpiredMessage(message, now))
-      .slice(-80);
+      .slice(-limit);
     for (const message of messages) {
       this.upsertMessage(message, { persist: false });
     }
+    this.refreshConversationPageState(conversationId, messages.length >= limit);
     const primary = this.localAccountKey();
     if (primary && messages.length) {
       void this.history.putMessages(primary, messages).catch(() => undefined);
     }
     void this.purgeExpiredLocalMessages();
+    return messages;
+  }
+
+  private oldestLoadedMessage(conversationId: string): ChatMessageVm | null {
+    const messages = this.messagesByConversation()[conversationId] ?? [];
+    return messages.length ? messages[0] : null;
+  }
+
+  private refreshConversationPageState(conversationId: string, hasMore?: boolean): void {
+    const oldest = this.oldestLoadedMessage(conversationId);
+    const current = this.conversationPaging()[conversationId];
+    this.patchConversationPageState(conversationId, {
+      oldestLoadedAt: oldest?.at ?? null,
+      oldestLoadedId: oldest?.id ?? null,
+      hasMore: hasMore ?? current?.hasMore ?? Boolean(oldest && (this.messagesByConversation()[conversationId] ?? []).length >= CHAT_PAGE_SIZE),
+      loadingOlder: current?.loadingOlder ?? false,
+    });
+  }
+
+  private patchConversationPageState(conversationId: string, patch: Partial<ConversationPageState>): void {
+    if (!conversationId) {
+      return;
+    }
+    this.conversationPaging.update((state) => {
+      const current = state[conversationId] ?? {
+        oldestLoadedAt: null,
+        oldestLoadedId: null,
+        hasMore: true,
+        loadingOlder: false,
+      };
+      return {
+        ...state,
+        [conversationId]: {
+          ...current,
+          ...patch,
+        },
+      };
+    });
   }
 
   private async purgeExpiredLocalMessages(): Promise<void> {
@@ -2119,6 +2248,40 @@ export class ChatService implements OnDestroy {
       outgoing.forwardingAllowed = this.currentUserAllowsForwarding();
     }
     return outgoing;
+  }
+
+  private withUniformMessagePadding(payload: ChatPayload): ChatPayload {
+    const clean = this.stripMessagePadding(payload);
+    const baseSize = CHAT_PAYLOAD_TEXT_ENCODER.encode(JSON.stringify(clean)).length;
+    if (baseSize >= MESSAGE_PADDING_MAX_BYTES) {
+      return clean;
+    }
+    const targetSize = Math.min(
+      MESSAGE_PADDING_MAX_BYTES,
+      Math.ceil(Math.max(baseSize + 16, MESSAGE_PADDING_BUCKET_BYTES) / MESSAGE_PADDING_BUCKET_BYTES) * MESSAGE_PADDING_BUCKET_BYTES,
+    );
+    let padded: ChatPayload = { ...clean, _padding: '' };
+    let missing = targetSize - CHAT_PAYLOAD_TEXT_ENCODER.encode(JSON.stringify(padded)).length;
+    while (missing > 0) {
+      const bytes = crypto.getRandomValues(new Uint8Array(Math.max(8, Math.ceil(missing * 0.75) + 8)));
+      const nextPadding = `${typeof padded['_padding'] === 'string' ? padded['_padding'] : ''}${this.base64Url(bytes)}`;
+      padded = { ...clean, _padding: nextPadding };
+      missing = targetSize - CHAT_PAYLOAD_TEXT_ENCODER.encode(JSON.stringify(padded)).length;
+    }
+    return padded;
+  }
+
+  private base64Url(bytes: Uint8Array): string {
+    return this.crypto.b64(bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+  }
+
+  private stripMessagePadding(payload: ChatPayload): ChatPayload {
+    if (!payload || typeof payload !== 'object' || !('_padding' in payload)) {
+      return payload;
+    }
+    const clean = { ...payload };
+    delete clean['_padding'];
+    return clean as ChatPayload;
   }
 
   private currentUserAllowsForwarding(): boolean {
@@ -2459,6 +2622,11 @@ export class ChatService implements OnDestroy {
       }
     }
     this.messagesByConversation.update((state) => ({ ...state, [conversationId]: [] }));
+    this.conversationPaging.update((state) => {
+      const next = { ...state };
+      delete next[conversationId];
+      return next;
+    });
     const accountKey = this.localAccountKey();
     if (accountKey) {
       void this.history.removeConversationMessages(accountKey, conversationId).catch(() => undefined);
@@ -2803,6 +2971,11 @@ export class ChatService implements OnDestroy {
       return;
     }
     this.conversations.update((items) => items.filter((item) => item.id !== conversationId));
+    this.conversationPaging.update((state) => {
+      const next = { ...state };
+      delete next[conversationId];
+      return next;
+    });
     const accountKey = this.localAccountKey();
     if (accountKey) {
       await this.history.removeConversation(accountKey, conversationId).catch(() => undefined);
@@ -2878,6 +3051,7 @@ export class ChatService implements OnDestroy {
     this.conversations.set([]);
     this.contacts.set([]);
     this.messagesByConversation.set({});
+    this.conversationPaging.set({});
     this.mediaPreviews.set({});
     this.directoryResults.set([]);
     this.profilesByUserId.set({});
@@ -2903,6 +3077,7 @@ export class ChatService implements OnDestroy {
     this.readReceiptSentIds.clear();
     this.pendingReactionsByMessageId.clear();
     this.pendingReactionSends.clear();
+    this.conversationPaging.set({});
     this.lastTypingSentAt = 0;
     this.syncInFlight = false;
     this.selectedConversationLoadId += 1;

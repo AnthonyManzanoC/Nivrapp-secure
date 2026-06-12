@@ -53,6 +53,13 @@
       [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
       [style.background]="appSettings.chatPreviewBackgroundCss()">
     </div>
+    <ion-infinite-scroll
+      position="top"
+      threshold="120px"
+      [disabled]="!chat.hasOlderMessages(conversation()?.id)"
+      (ionInfinite)="loadOlderMessages($event)">
+      <ion-infinite-scroll-content loadingSpinner="crescent"></ion-infinite-scroll-content>
+    </ion-infinite-scroll>
     <div class="messages">
       @for (message of messages(); track message.id) {
         @if (shouldShowUnreadDivider(message.id)) {

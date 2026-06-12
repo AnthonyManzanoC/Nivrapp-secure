@@ -13,6 +13,8 @@ import {
   IonFooter,
   IonHeader,
   IonIcon,
+  IonInfiniteScroll,
+  IonInfiniteScrollContent,
   IonModal,
   IonPopover,
   IonSelect,
@@ -121,6 +123,8 @@ interface QuotedReplyVm {
     IonFooter,
     IonHeader,
     IonIcon,
+    IonInfiniteScroll,
+    IonInfiniteScrollContent,
     IonModal,
     IonPopover,
     IonSelect,
@@ -327,6 +331,29 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.cdr.detectChanges();
       this.scheduleInitialScroll(this.conversation()?.id);
     });
+  }
+
+  async loadOlderMessages(event: Event): Promise<void> {
+    const infinite = event.target as HTMLIonInfiniteScrollElement | null;
+    const conversationId = this.conversation()?.id;
+    if (!conversationId) {
+      await infinite?.complete();
+      return;
+    }
+    const scrollElement = await this.content?.getScrollElement().catch(() => null);
+    const previousHeight = scrollElement?.scrollHeight ?? 0;
+    const previousTop = scrollElement?.scrollTop ?? 0;
+    try {
+      await this.chat.loadOlderMessages(conversationId);
+      this.cdr.detectChanges();
+      await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+      if (scrollElement && previousHeight > 0) {
+        const delta = scrollElement.scrollHeight - previousHeight;
+        await this.content?.scrollToPoint(0, previousTop + Math.max(0, delta), 0);
+      }
+    } finally {
+      await infinite?.complete();
+    }
   }
 
   ngOnDestroy(): void {

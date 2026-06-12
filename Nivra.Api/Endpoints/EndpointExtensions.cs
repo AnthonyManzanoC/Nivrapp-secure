@@ -1213,7 +1213,7 @@ public static partial class EndpointExtensions
             return Results.Ok(await ToConversationResponseAsync(conversation, store, cancellationToken));
         });
 
-        conversations.MapGet("/{conversationId}/messages", async Task<IResult> (string conversationId, int? take, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        conversations.MapGet("/{conversationId}/messages", async Task<IResult> (string conversationId, int? take, DateTimeOffset? before, string? beforeId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1231,8 +1231,8 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var limit = Math.Clamp(take ?? 120, 1, 240);
-            var messages = await db.Messages
+            var limit = Math.Clamp(take ?? 30, 1, 100);
+            var query = db.Messages
                 .Where(message => message.ConversationId == conversationId)
                 .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
                 .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId))
@@ -1241,10 +1241,45 @@ public static partial class EndpointExtensions
                     receipt.DeletedAt != null))
                 .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
                     receipt.UserId == current.UserId &&
-                    (receipt.ReadAt != null || receipt.DeletedAt != null)))
-                .OrderByDescending(message => message.ServerReceivedAt)
-                .Take(limit)
-                .ToListAsync(cancellationToken);
+                    (receipt.ReadAt != null || receipt.DeletedAt != null)));
+
+            List<MessageEnvelope> messages;
+            if (before is { } cursor)
+            {
+                var sameTimeMessages = string.IsNullOrWhiteSpace(beforeId)
+                    ? new List<MessageEnvelope>()
+                    : await query
+                        .Where(message => message.ServerReceivedAt == cursor)
+                        .OrderByDescending(message => message.Id)
+                        .ToListAsync(cancellationToken);
+                var sameTimePage = sameTimeMessages
+                    .Where(message => string.CompareOrdinal(message.Id, beforeId) < 0)
+                    .Take(limit)
+                    .ToList();
+                var remaining = Math.Max(0, limit - sameTimePage.Count);
+                var olderMessages = remaining == 0
+                    ? new List<MessageEnvelope>()
+                    : await query
+                        .Where(message => message.ServerReceivedAt < cursor)
+                        .OrderByDescending(message => message.ServerReceivedAt)
+                        .ThenByDescending(message => message.Id)
+                        .Take(remaining)
+                        .ToListAsync(cancellationToken);
+                messages = sameTimePage
+                    .Concat(olderMessages)
+                    .OrderByDescending(message => message.ServerReceivedAt)
+                    .ThenByDescending(message => message.Id)
+                    .Take(limit)
+                    .ToList();
+            }
+            else
+            {
+                messages = await query
+                    .OrderByDescending(message => message.ServerReceivedAt)
+                    .ThenByDescending(message => message.Id)
+                    .Take(limit)
+                    .ToListAsync(cancellationToken);
+            }
 
             messages.Reverse();
             return Results.Ok(messages.Select(message => ToMessageResponseForUser(message, current.UserId, current.DeviceId)).ToList());
@@ -1710,7 +1745,7 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var limit = Math.Clamp(take ?? 200, 1, 500);
+            var limit = Math.Clamp(take ?? 30, 1, 100);
             var query = db.Messages
                 .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId))
                 .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
@@ -3506,7 +3541,7 @@ public static partial class EndpointExtensions
 
     private static void MapDeletionAndSyncEndpoints(this WebApplication app)
     {
-        app.MapGet("/sync/bootstrap", async Task<IResult> (HttpContext http, INivraStore store, NivraDbContext db, CancellationToken cancellationToken) =>
+        app.MapGet("/sync/bootstrap", async Task<IResult> (int? messageTake, HttpContext http, INivraStore store, NivraDbContext db, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3532,6 +3567,7 @@ public static partial class EndpointExtensions
                 cancellationToken);
             var now = DateTimeOffset.UtcNow;
             var conversationIds = conversations.Select(conversation => conversation.Id).ToList();
+            var messageLimit = Math.Clamp(messageTake ?? 30, 1, 100);
             List<MessageEnvelope> recentMessages = conversationIds.Count == 0
                 ? []
                 : await db.Messages
@@ -3545,7 +3581,8 @@ public static partial class EndpointExtensions
                         receipt.UserId == current.UserId &&
                         (receipt.ReadAt != null || receipt.DeletedAt != null)))
                     .OrderByDescending(message => message.ServerReceivedAt)
-                    .Take(500)
+                    .ThenByDescending(message => message.Id)
+                    .Take(messageLimit)
                     .ToListAsync(cancellationToken);
             recentMessages.Reverse();
             List<MessageEnvelope> deletedMessageRows = conversationIds.Count == 0

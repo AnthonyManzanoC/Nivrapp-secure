@@ -68,6 +68,7 @@ export class CallsService implements OnDestroy {
   private ringAudioContext: AudioContext | null = null;
   private ringTonePhase: 'calling' | 'ringing' | null = null;
   private readonly callSignalSessionId = crypto.randomUUID();
+  private connectedUiReconcileTimers: number[] = [];
   private screenShareStream: MediaStream | null = null;
   private cameraTrackBeforeScreenShare: MediaStreamTrack | null = null;
 
@@ -200,7 +201,7 @@ export class CallsService implements OnDestroy {
     this.error.set('');
     void this.nativeDevice.clearIncomingCall(call.id);
     if (this.isGroupCall(call)) {
-      this.phase.set('connecting');
+      this.setConnectingPhase();
       this.clearRingTimeout();
       this.stopRingingTone();
       await this.realtime.callAnsweredElsewhere(call.id).catch(() => undefined);
@@ -208,7 +209,7 @@ export class CallsService implements OnDestroy {
       return;
     }
     await this.prepareMedia(call.type === 'Video');
-    this.phase.set('connecting');
+    this.setConnectingPhase();
     this.clearRingTimeout();
     this.stopRingingTone();
     await Promise.all(this.otherParticipantIds(call).map((userId) =>
@@ -216,6 +217,7 @@ export class CallsService implements OnDestroy {
     await this.realtime.callAnsweredElsewhere(call.id).catch(() => undefined);
     await this.establishCallPeers();
     await this.flushPendingCallSignals();
+    this.scheduleConnectedUiReconcile(call.id);
   }
 
   async decline(): Promise<void> {
@@ -271,7 +273,7 @@ export class CallsService implements OnDestroy {
     if (this.isGroupCall(normalized)) {
       this.rememberGroupRoom(normalized);
       this.activeCall.set(normalized);
-      this.phase.set('connecting');
+      this.setConnectingPhase();
       this.clearRingTimeout();
       this.addHistory(normalized);
       await this.connectLiveKitRoom(normalized);
@@ -280,13 +282,14 @@ export class CallsService implements OnDestroy {
     await this.prepareMedia(normalized.type === 'Video');
     this.rememberGroupRoom(normalized);
     this.activeCall.set(normalized);
-    this.phase.set('connecting');
+    this.setConnectingPhase();
     this.clearRingTimeout();
     this.addHistory(normalized);
     await Promise.all(this.otherParticipantIds(normalized).map((userId) =>
       this.sendCallSignal(normalized, userId, 'accepted', { accepted: true, rejoined: true }).catch(() => undefined)));
     await this.establishCallPeers();
     await this.flushPendingCallSignals();
+    this.scheduleConnectedUiReconcile(normalized.id);
   }
 
   toggleMute(): void {
@@ -359,7 +362,7 @@ export class CallsService implements OnDestroy {
     const call = this.withGroupRoomMetadata(room.call, room.conversationId, true);
     this.rememberGroupRoom(call);
     this.activeCall.set(call);
-    this.phase.set('connecting');
+    this.setConnectingPhase();
     this.clearRingTimeout();
     this.stopRingingTone();
     this.addHistory(call);
@@ -826,13 +829,14 @@ export class CallsService implements OnDestroy {
         this.pendingSignals.push(signal);
         return;
       }
-      this.phase.set('connecting');
+      this.setConnectingPhase();
       this.clearRingTimeout();
       this.stopRingingTone();
       if (!this.localStream()) {
         await this.prepareMedia(call.type === 'Video');
       }
       await this.establishAcceptedCallPeer(signal.fromUserId);
+      this.scheduleConnectedUiReconcile(call.id);
       return;
     }
 
@@ -928,9 +932,7 @@ export class CallsService implements OnDestroy {
     };
     connection.onconnectionstatechange = () => {
       if (connection.connectionState === 'connected') {
-        this.phase.set('connected');
-        this.clearRingTimeout();
-        this.stopRingingTone();
+        this.setConnectedPhase();
         this.publishRemoteStreamIfConnected(userId, connection);
       }
       if (['failed', 'closed', 'disconnected'].includes(connection.connectionState)) {
@@ -980,20 +982,23 @@ export class CallsService implements OnDestroy {
       const answer = await connection.createAnswer();
       await connection.setLocalDescription(answer);
       await this.sendCallSignal(call, signal.fromUserId, 'answer', { description: connection.localDescription });
-      this.phase.set('connecting');
+      this.setConnectingPhase();
       this.clearRingTimeout();
+      this.scheduleConnectedUiReconcile(call.id);
       return;
     }
 
     if (signalType === 'answer' && payload.description && connection.signalingState !== 'stable') {
       await this.setRemoteDescriptionAndFlush(signal.fromUserId, connection, payload.description);
-      this.phase.set('connecting');
+      this.setConnectingPhase();
       this.clearRingTimeout();
+      this.scheduleConnectedUiReconcile(call.id);
       return;
     }
 
     if (signalType === 'ice' && payload.candidate) {
       await this.addOrQueueRemoteIceCandidate(signal.fromUserId, payload.candidate);
+      this.scheduleConnectedUiReconcile(call.id);
     }
   }
 
@@ -1168,10 +1173,72 @@ export class CallsService implements OnDestroy {
 
   private publishRemoteStreamIfConnected(userId: string, connection: RTCPeerConnection): void {
     const stream = this.pendingRemoteStreams.get(userId);
-    if (!stream || connection.connectionState !== 'connected') {
+    if (!stream || !this.peerConnectionLooksConnected(connection)) {
       return;
     }
     this.remoteStreams.update((items) => ({ ...items, [userId]: stream }));
+    this.setConnectedPhase();
+  }
+
+  private setConnectingPhase(): void {
+    if (this.phase() !== 'connected') {
+      this.phase.set('connecting');
+    }
+  }
+
+  private setConnectedPhase(): void {
+    if (!this.activeCall()) {
+      return;
+    }
+    if (this.phase() !== 'connected') {
+      this.phase.set('connected');
+    }
+    this.clearConnectedUiReconcileTimers();
+    this.clearRingTimeout();
+    this.stopRingingTone();
+  }
+
+  private scheduleConnectedUiReconcile(callId: string | null | undefined): void {
+    if (!callId) {
+      return;
+    }
+    this.clearConnectedUiReconcileTimers();
+    [0, 80, 220, 600, 1200, 2400].forEach((delay) => {
+      const timer = window.setTimeout(() => this.reconcileConnectedUi(callId), delay);
+      this.connectedUiReconcileTimers.push(timer);
+    });
+  }
+
+  private reconcileConnectedUi(callId: string): void {
+    const call = this.activeCall();
+    if (!call || call.id !== callId) {
+      return;
+    }
+    let connected = Object.values(this.remoteStreams()).some((stream) => this.streamHasLiveTracks(stream));
+    for (const [userId, peer] of this.peers.entries()) {
+      if (this.peerConnectionLooksConnected(peer.connection)) {
+        this.publishRemoteStreamIfConnected(userId, peer.connection);
+        connected = true;
+      }
+    }
+    if (connected) {
+      this.setConnectedPhase();
+    }
+  }
+
+  private peerConnectionLooksConnected(connection: RTCPeerConnection): boolean {
+    return connection.connectionState === 'connected'
+      || connection.iceConnectionState === 'connected'
+      || connection.iceConnectionState === 'completed';
+  }
+
+  private streamHasLiveTracks(stream: MediaStream | null | undefined): boolean {
+    return Boolean(stream?.getTracks().some((track) => track.readyState === 'live'));
+  }
+
+  private clearConnectedUiReconcileTimers(): void {
+    this.connectedUiReconcileTimers.forEach((timer) => window.clearTimeout(timer));
+    this.connectedUiReconcileTimers = [];
   }
 
   private cleanup(options: { remember?: boolean; historyStatus?: string } = {}): void {
@@ -1181,6 +1248,7 @@ export class CallsService implements OnDestroy {
     }
     this.clearRingTimeout();
     this.stopRingingTone();
+    this.clearConnectedUiReconcileTimers();
     void this.stopScreenShare({ restoreCamera: false, broadcast: false });
     this.disconnectLiveKitRoom();
     if (call && options.remember !== false) {
