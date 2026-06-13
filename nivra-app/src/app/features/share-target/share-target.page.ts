@@ -79,7 +79,7 @@ export class ShareTargetPage implements OnInit, OnDestroy {
     this.routeSub = this.route.queryParamMap.subscribe(() => {
       void this.loadPendingShare();
     });
-    void this.chat.bootstrap();
+    void this.chat.resumeSoftSync();
   }
 
   ngOnDestroy(): void {

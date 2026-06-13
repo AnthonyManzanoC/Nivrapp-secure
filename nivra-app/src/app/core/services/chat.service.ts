@@ -121,6 +121,8 @@ export class ChatService implements OnDestroy {
   private readonly openScrollAnchors = new Map<string, string>();
   private ttlSweepTimer: number | null = null;
   private lastTypingSentAt = 0;
+  private bootstrapInFlight: Promise<void> | null = null;
+  private hasBootstrappedSession = false;
   private syncInFlight = false;
   private selectedConversationLoadId = 0;
 
@@ -192,10 +194,7 @@ export class ChatService implements OnDestroy {
         this.applyPresence(event.payload as PresenceResponse);
       }
       if (event.type === 'connected' || event.type === 'reconnected') {
-        this.invalidateKeyDirectories();
-        void this.rejoinSelectedConversation();
-        void this.bootstrap();
-        void this.syncMissedMessages();
+        void this.handleRealtimeConnected().catch(() => undefined);
       }
       if (event.type === 'device.listChanged') {
         this.invalidateKeyDirectories();
@@ -207,17 +206,14 @@ export class ChatService implements OnDestroy {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
         if (document.visibilityState === 'visible') {
-          void this.purgeExpiredLocalMessages();
-          void this.syncMissedMessages();
-          void this.refreshPresenceForConversations();
+          void this.resumeSoftSync().catch(() => undefined);
         }
       });
 
     fromEvent(window, 'online')
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
-        void this.signalr.connect();
-        void this.syncMissedMessages();
+        void this.signalr.connect().finally(() => void this.resumeSoftSync().catch(() => undefined));
       });
 
     effect(() => {
@@ -245,6 +241,38 @@ export class ChatService implements OnDestroy {
     if (!this.auth.isAuthenticated()) {
       return;
     }
+    if (this.bootstrapInFlight) {
+      return this.bootstrapInFlight;
+    }
+
+    this.bootstrapInFlight = this.bootstrapCore().finally(() => {
+      this.bootstrapInFlight = null;
+    });
+    return this.bootstrapInFlight;
+  }
+
+  async resumeSoftSync(take = CHAT_PAGE_SIZE): Promise<void> {
+    if (!this.auth.isAuthenticated()) {
+      return;
+    }
+    if (this.bootstrapInFlight) {
+      await this.bootstrapInFlight.catch(() => undefined);
+      return;
+    }
+    await this.purgeExpiredLocalMessages();
+    if (!this.hasLoadedChatState()) {
+      await this.bootstrap();
+      return;
+    }
+    await this.rejoinSelectedConversation();
+    await this.syncMissedMessages(take);
+    await this.refreshPresenceForConversations();
+  }
+
+  private async bootstrapCore(): Promise<void> {
+    if (!this.auth.isAuthenticated()) {
+      return;
+    }
 
     this.loading.set(true);
     try {
@@ -265,9 +293,14 @@ export class ChatService implements OnDestroy {
       this.ensureSelectedConversation();
       await this.persistChatIndex(conversations, contacts);
       void this.hydrateConversationProfiles(conversations);
-      await this.ingestMessageBatch(bootstrap.messages ?? [], false);
-      await this.ackDelivered(bootstrap.messages ?? []);
+      const messages = bootstrap.messages ?? [];
+      const decodedCleanly = await this.ingestMessageBatch(messages, false);
+      await this.ackDelivered(messages);
+      if (decodedCleanly) {
+        await this.rememberSyncWatermark(messages);
+      }
       await this.refreshPresenceForConversations();
+      this.hasBootstrappedSession = true;
     } finally {
       this.loading.set(false);
     }
@@ -283,7 +316,8 @@ export class ChatService implements OnDestroy {
     this.syncInFlight = true;
     try {
       const accountKey = this.localAccountKey();
-      const watermark = accountKey ? await this.history.getSyncWatermark(accountKey).catch(() => null) : null;
+      const storedWatermark = accountKey ? await this.history.getSyncWatermark(accountKey).catch(() => null) : null;
+      const watermark = this.newestIso(storedWatermark, this.latestLoadedMessageAt());
       const params = new URLSearchParams({ take: String(Math.max(1, Math.min(take, 100))) });
       const retryDecryptErrors = Object.values(this.messagesByConversation()).some((messages) => messages.some((message) => message.decryptError));
       if (watermark && !retryDecryptErrors) {
@@ -302,6 +336,11 @@ export class ChatService implements OnDestroy {
       void this.purgeExpiredLocalMessages();
       this.syncInFlight = false;
     }
+  }
+
+  private async handleRealtimeConnected(): Promise<void> {
+    this.invalidateKeyDirectories();
+    await this.resumeSoftSync();
   }
 
   async hydrateConversationProfile(conversation: Conversation | null | undefined): Promise<void> {
@@ -1894,6 +1933,46 @@ export class ChatService implements OnDestroy {
     ]);
   }
 
+  private async rememberSyncWatermark(messages: MessageResponse[]): Promise<void> {
+    const accountKey = this.localAccountKey();
+    const watermark = this.latestMessageResponseAt(messages);
+    if (!accountKey || !watermark) {
+      return;
+    }
+    await this.history.setSyncWatermark(accountKey, watermark).catch(() => undefined);
+  }
+
+  private latestMessageResponseAt(messages: MessageResponse[]): string | null {
+    return this.newestIso(...(messages ?? []).map((message) => message.serverReceivedAt));
+  }
+
+  private latestLoadedMessageAt(): string | null {
+    const timestamps = Object.values(this.messagesByConversation())
+      .flat()
+      .map((message) => message.at);
+    return this.newestIso(...timestamps);
+  }
+
+  private newestIso(...values: Array<string | null | undefined>): string | null {
+    let newestValue: string | null = null;
+    let newestTime = Number.NEGATIVE_INFINITY;
+    for (const value of values) {
+      const time = Date.parse(value || '');
+      if (Number.isFinite(time) && time > newestTime) {
+        newestTime = time;
+        newestValue = value ?? null;
+      }
+    }
+    return newestValue;
+  }
+
+  private hasLoadedChatState(): boolean {
+    return this.hasBootstrappedSession
+      || this.conversations().length > 0
+      || this.contacts().length > 0
+      || Object.values(this.messagesByConversation()).some((messages) => messages.length > 0);
+  }
+
   private async loadCachedMessages(
     conversationId: string,
     options: { before?: string | null; beforeId?: string | null; limit?: number } = {},
@@ -3048,6 +3127,7 @@ export class ChatService implements OnDestroy {
 
   private resetInMemoryState(): void {
     this.revokeMediaPreviews();
+    this.hasBootstrappedSession = false;
     this.conversations.set([]);
     this.contacts.set([]);
     this.messagesByConversation.set({});
@@ -3072,6 +3152,7 @@ export class ChatService implements OnDestroy {
   }
 
   private pauseForLoggedOutSession(): void {
+    this.hasBootstrappedSession = false;
     this.directories.clear();
     this.directoryCachedAt.clear();
     this.readReceiptSentIds.clear();

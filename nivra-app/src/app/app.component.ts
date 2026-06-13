@@ -12,6 +12,7 @@ import { AuthService } from './core/services/auth.service';
 import { AppLockService } from './core/services/app-lock.service';
 import { AppSettingsService } from './core/services/app-settings.service';
 import { CallsService } from './core/services/calls.service';
+import { ChatService } from './core/services/chat.service';
 import { ContactSyncService } from './core/services/contact-sync.service';
 import { DeviceWipeService } from './core/services/device-wipe.service';
 import { PushService } from './core/services/push.service';
@@ -24,9 +25,6 @@ import { PrivacyEnforcementService } from './core/services/privacy-enforcement.s
 import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
-const LAST_ROUTE_PREFIX = 'nivra.lastRoute.';
-const SKIP_ROUTE_RESTORE_ONCE_KEY = 'nivra.skipRouteRestoreOnce';
-
 interface NativeStatusBarSurface {
   color: string;
   style: Style;
@@ -43,6 +41,7 @@ export class AppComponent {
   private readonly auth = inject(AuthService);
   private readonly appLock = inject(AppLockService);
   private readonly appSettings = inject(AppSettingsService);
+  private readonly chat = inject(ChatService);
   private readonly contactSync = inject(ContactSyncService);
   private readonly deviceWipe = inject(DeviceWipeService);
   private readonly push = inject(PushService);
@@ -58,7 +57,6 @@ export class AppComponent {
   private readonly currentUrl = signal(this.router.url);
   private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
   private startServicesPromise: Promise<void> | null = null;
-  private lastRouteRestored = false;
   private lastPushRouteKey = '';
   private lastNativeShareId = '';
   readonly showCallBanner = computed(() => {
@@ -98,7 +96,6 @@ export class AppComponent {
           const url = event.urlAfterRedirects || event.url;
           this.currentUrl.set(url);
           this.onCallsRoute.set(url.startsWith('/app/calls'));
-          this.persistLastRoute(url);
         }
       });
 
@@ -129,9 +126,7 @@ export class AppComponent {
       if (this.auth.isAuthenticated()) {
         untracked(() => void this.startAuthenticatedServices());
         untracked(() => void this.openPendingNativeShare());
-        untracked(() => this.restoreLastRouteOnce());
       } else {
-        this.lastRouteRestored = false;
         void this.realtime.disconnect();
       }
     });
@@ -269,10 +264,19 @@ export class AppComponent {
         this.appLock.lock();
         return;
       }
-      void this.appLock.refreshBiometryAvailability();
+      void this.handleAppResume();
     })
       .then((handle) => this.destroyRef.onDestroy(() => void handle.remove()))
       .catch(() => undefined);
+  }
+
+  private async handleAppResume(): Promise<void> {
+    await this.appLock.refreshBiometryAvailability();
+    if (!this.auth.isAuthenticated()) {
+      return;
+    }
+    await this.realtime.connect().catch(() => undefined);
+    await this.chat.resumeSoftSync().catch(() => undefined);
   }
 
   private handleAppUrlOpen(rawUrl: string): void {
@@ -352,79 +356,6 @@ export class AppComponent {
       this.startServicesPromise = null;
     });
     return this.startServicesPromise;
-  }
-
-  private restoreLastRouteOnce(): void {
-    if (this.lastRouteRestored) {
-      return;
-    }
-    this.lastRouteRestored = true;
-    window.setTimeout(() => {
-      if (this.consumeSkipRouteRestoreOnce()) {
-        return;
-      }
-      const currentPath = this.pathFromUrl(this.router.url);
-      if (currentPath !== '/app/chats') {
-        return;
-      }
-      const route = this.readLastRoute();
-      if (!route || this.pathFromUrl(route) === currentPath || !this.isRestorableRoute(route)) {
-        return;
-      }
-      void this.router.navigateByUrl(route);
-    }, 80);
-  }
-
-  private consumeSkipRouteRestoreOnce(): boolean {
-    try {
-      if (sessionStorage.getItem(SKIP_ROUTE_RESTORE_ONCE_KEY) !== '1') {
-        return false;
-      }
-      sessionStorage.removeItem(SKIP_ROUTE_RESTORE_ONCE_KEY);
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
-  private persistLastRoute(url: string): void {
-    if (!this.auth.isAuthenticated() || !this.isRestorableRoute(url)) {
-      return;
-    }
-    const key = this.lastRouteKey();
-    if (!key) {
-      return;
-    }
-    try {
-      localStorage.setItem(key, url);
-    } catch {
-      // Route restore is a convenience only.
-    }
-  }
-
-  private readLastRoute(): string | null {
-    const key = this.lastRouteKey();
-    if (!key) {
-      return null;
-    }
-    try {
-      return localStorage.getItem(key);
-    } catch {
-      return null;
-    }
-  }
-
-  private lastRouteKey(): string | null {
-    const userId = this.auth.session()?.user.id;
-    return userId ? `${LAST_ROUTE_PREFIX}${userId}` : null;
-  }
-
-  private isRestorableRoute(url: string): boolean {
-    const path = this.pathFromUrl(url);
-    return /^\/app\/chats\/[^/]+$/.test(path)
-      || path === '/app/world'
-      || path === '/app/vault'
-      || path === '/app/account';
   }
 
   private formatDuration(durationMs: number): string {
