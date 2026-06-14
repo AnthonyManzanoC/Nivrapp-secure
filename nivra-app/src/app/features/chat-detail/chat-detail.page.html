@@ -134,7 +134,12 @@
                 }
               </button>
             }
-            @if (chat.asFile(message.payload); as file) {
+            @if (chat.isViewOnceOpened(message)) {
+              <div class="view-once-tombstone">
+                <ion-icon name="checkmark-done-outline"></ion-icon>
+                <span>{{ 'CHAT.VIEW_ONCE_OPENED' | translate:'Mensaje de una vez abierto' }}</span>
+              </div>
+            } @else if (chat.asFile(message.payload); as file) {
               @if (chat.isAudio(file) || file.voiceNote) {
                 <div class="voice-card">
                   <div class="voice-meta">
@@ -1045,7 +1050,12 @@
               </ion-button>
             </div>
           </header>
-          <div class="chat-media-viewer-body">
+          <div
+            class="chat-media-viewer-body"
+            [class.zoomed]="activeMediaZoom > 1"
+            [style.--media-zoom]="activeMediaZoom"
+            (wheel)="onMediaViewerWheel($event)"
+            (dblclick)="toggleMediaZoom()">
             @if (chat.isImage(activeMediaFile)) {
               <img [src]="activeMediaPreview.url" [alt]="chat.fileName(activeMediaFile)">
             } @else if (chat.isVideo(activeMediaFile)) {

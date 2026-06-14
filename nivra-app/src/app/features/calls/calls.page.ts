@@ -41,6 +41,12 @@ type CallIdentityProfile = {
 
 type RemoteEntry = [string, MediaStream];
 
+interface VideoTile {
+  id: string;
+  stream: MediaStream;
+  local: boolean;
+}
+
 @Component({
   selector: 'app-calls',
   standalone: true,
@@ -57,6 +63,7 @@ export class CallsPage {
   callQuery = '';
   callBusyId = '';
   videoSwapped = false;
+  pinnedParticipantId: string | null = null;
   controlsVisible = true;
   private controlsHideTimer: number | null = null;
 
@@ -104,6 +111,7 @@ export class CallsPage {
       return;
     }
     this.videoSwapped = false;
+    this.pinnedParticipantId = null;
     this.revealCallChrome();
     const currentUserId = this.auth.session()?.user.id;
     const participantUserIds = conversation.participants
@@ -117,6 +125,7 @@ export class CallsPage {
       return;
     }
     this.videoSwapped = false;
+    this.pinnedParticipantId = null;
     this.revealCallChrome();
     this.callBusyId = `${type}:${contact.userId}`;
     try {
@@ -129,6 +138,7 @@ export class CallsPage {
 
   async accept(): Promise<void> {
     this.videoSwapped = false;
+    this.pinnedParticipantId = null;
     this.revealCallChrome();
     await this.calls.accept();
     this.revealCallChrome();
@@ -136,12 +146,14 @@ export class CallsPage {
 
   async decline(): Promise<void> {
     this.videoSwapped = false;
+    this.pinnedParticipantId = null;
     this.revealCallChrome();
     await this.calls.decline();
   }
 
   async endActive(): Promise<void> {
     this.videoSwapped = false;
+    this.pinnedParticipantId = null;
     this.revealCallChrome();
     await this.calls.end();
   }
@@ -153,6 +165,7 @@ export class CallsPage {
 
   async rejoin(callId: string): Promise<void> {
     this.videoSwapped = false;
+    this.pinnedParticipantId = null;
     this.revealCallChrome();
     await this.calls.rejoin(callId);
   }
@@ -169,9 +182,17 @@ export class CallsPage {
     this.inviteModalOpen = false;
   }
 
-  inviteToCall(contact: Contact): void {
-    this.calls.inviteToCall(contact.userId);
-    this.inviteModalOpen = false;
+  async inviteToCall(contact: Contact): Promise<void> {
+    if (this.callBusyId) {
+      return;
+    }
+    this.callBusyId = `invite:${contact.userId}`;
+    try {
+      await this.calls.inviteToCall(contact.userId);
+      this.inviteModalOpen = false;
+    } finally {
+      this.callBusyId = '';
+    }
   }
 
   contactLabel(contact: Contact): string {
@@ -322,6 +343,64 @@ export class CallsPage {
     return this.initials(this.activeCallTitle(call));
   }
 
+  videoTiles(): VideoTile[] {
+    const tiles: VideoTile[] = [];
+    const local = this.calls.localStream();
+    if (local) {
+      tiles.push({ id: this.localParticipantId(), stream: local, local: true });
+    }
+    this.calls.remoteEntries().forEach(([id, stream]) => {
+      tiles.push({ id, stream, local: false });
+    });
+    return tiles;
+  }
+
+  pinnedVideoTile(): VideoTile | null {
+    if (!this.pinnedParticipantId) {
+      return null;
+    }
+    return this.videoTiles().find((tile) => tile.id === this.pinnedParticipantId) ?? null;
+  }
+
+  galleryVideoTiles(): VideoTile[] {
+    const pinned = this.pinnedVideoTile();
+    const tiles = this.videoTiles();
+    return pinned ? tiles.filter((tile) => tile.id !== pinned.id) : tiles;
+  }
+
+  selectVideoTile(tile: VideoTile): void {
+    if (this.calls.activeCall()?.type !== 'Video') {
+      return;
+    }
+    this.pinnedParticipantId = this.pinnedParticipantId === tile.id ? null : tile.id;
+    this.videoSwapped = false;
+    this.revealCallChrome();
+  }
+
+  clearPinnedVideo(): void {
+    this.pinnedParticipantId = null;
+    this.videoSwapped = false;
+    this.revealCallChrome();
+  }
+
+  videoGallerySizeClass(): 'one' | 'two' | 'four' | 'many' {
+    const count = this.videoTiles().length;
+    if (count <= 1) {
+      return 'one';
+    }
+    if (count === 2) {
+      return 'two';
+    }
+    if (count <= 4) {
+      return 'four';
+    }
+    return 'many';
+  }
+
+  videoTileLabel(tile: VideoTile): string {
+    return this.videoParticipantLabel(tile.id);
+  }
+
   primaryRemoteEntry(): RemoteEntry | null {
     return this.calls.remoteEntries()[0] ?? null;
   }
@@ -392,6 +471,7 @@ export class CallsPage {
     this.callBusyId = '';
     this.inviteModalOpen = false;
     this.videoSwapped = false;
+    this.pinnedParticipantId = null;
     this.controlsVisible = true;
     this.clearControlsAutoHide();
     if (clearSearch) {

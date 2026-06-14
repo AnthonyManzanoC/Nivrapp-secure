@@ -1079,6 +1079,40 @@ namespace Nivra.Api.Infrastructure.Migrations
                                 .HasForeignKey("ConversationRecordId");
                         });
 
+                    b.OwnsOne("Nivra.Api.Domain.GroupSettings", "Settings", b1 =>
+                        {
+                            b1.Property<string>("ConversationRecordId")
+                                .HasColumnType("character varying(64)");
+
+                            b1.Property<string>("AddMembers")
+                                .IsRequired()
+                                .HasMaxLength(16)
+                                .HasColumnType("character varying(16)")
+                                .HasColumnName("group_add_members")
+                                .HasDefaultValue("admins");
+
+                            b1.Property<string>("EditInfo")
+                                .IsRequired()
+                                .HasMaxLength(16)
+                                .HasColumnType("character varying(16)")
+                                .HasColumnName("group_edit_info")
+                                .HasDefaultValue("admins");
+
+                            b1.Property<string>("SendMessages")
+                                .IsRequired()
+                                .HasMaxLength(16)
+                                .HasColumnType("character varying(16)")
+                                .HasColumnName("group_send_messages")
+                                .HasDefaultValue("all");
+
+                            b1.HasKey("ConversationRecordId");
+
+                            b1.ToTable("conversations", "public");
+
+                            b1.WithOwner()
+                                .HasForeignKey("ConversationRecordId");
+                        });
+
                     b.OwnsMany("Nivra.Api.Domain.ConversationParticipant", "Participants", b1 =>
                         {
                             b1.Property<string>("conversation_id")
@@ -1125,6 +1159,9 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Navigation("Participants");
 
                     b.Navigation("PrivacySettings")
+                        .IsRequired();
+
+                    b.Navigation("Settings")
                         .IsRequired();
                 });
 

@@ -178,13 +178,18 @@ public sealed record CreateConversationRequest(
     string? TitleCiphertext,
     PrivacySettings? PrivacySettings);
 
-public sealed record PatchConversationRequest(string? TitleCiphertext, PrivacySettings? PrivacySettings);
+public sealed record PatchConversationRequest(string? TitleCiphertext, PrivacySettings? PrivacySettings, GroupSettings? Settings);
+
+public sealed record AddConversationParticipantsRequest(List<string>? ParticipantUserIds);
+
+public sealed record UpdateConversationRolesRequest(List<string>? AdminUserIds);
 
 public sealed record ConversationResponse(
     string Id,
     ConversationType Type,
     string? TitleCiphertext,
     PrivacySettings PrivacySettings,
+    GroupSettings Settings,
     List<ParticipantResponse> Participants,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
@@ -232,7 +237,7 @@ public sealed record MessageResponse(
     bool DeleteAfterRead,
     List<DeliveryReceipt> Receipts);
 
-public sealed record ReceiptRequest(ReceiptKind Kind);
+public sealed record ReceiptRequest(ReceiptKind Kind, bool? Opened);
 
 public sealed record MessageSyncResponse(List<MessageResponse> Messages, DateTimeOffset SyncedAt);
 
@@ -400,6 +405,8 @@ public sealed record AcceptVaultInviteRequest(string? Pin);
 public sealed record StartCallRequest(CallType Type, string? ConversationId, List<string>? ParticipantUserIds);
 
 public sealed record CallSignalRequest(string TargetUserId, string SignalType, string PayloadCiphertext);
+
+public sealed record InviteCallParticipantRequest(string UserId);
 
 public sealed record LiveKitRoomTokenResponse(string ServerUrl, string Token);
 

@@ -201,6 +201,13 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
                 MapPrivacySettings(owned, "privacy_");
             });
 
+            entity.OwnsOne(conversation => conversation.Settings, owned =>
+            {
+                owned.Property(settings => settings.EditInfo).HasColumnName("group_edit_info").HasMaxLength(16).HasDefaultValue("admins");
+                owned.Property(settings => settings.SendMessages).HasColumnName("group_send_messages").HasMaxLength(16).HasDefaultValue("all");
+                owned.Property(settings => settings.AddMembers).HasColumnName("group_add_members").HasMaxLength(16).HasDefaultValue("admins");
+            });
+
             entity.OwnsMany(conversation => conversation.Participants, owned =>
             {
                 owned.ToTable("conversation_participants");

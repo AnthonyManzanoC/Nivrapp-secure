@@ -321,7 +321,11 @@
 .remote-tile {
   position: relative;
   overflow: hidden;
+  border: 0;
+  padding: 0;
+  color: inherit;
   background: #030607;
+  cursor: default;
 }
 
 .remote-tile.main-video {
@@ -329,6 +333,61 @@
   align-items: center;
   justify-content: center;
   contain: layout size paint;
+}
+
+.remote-tile.pinned-main,
+.remote-tile.gallery-tile {
+  cursor: pointer;
+}
+
+.video-gallery {
+  position: absolute;
+  inset:
+    calc(70px + env(safe-area-inset-top))
+    18px
+    calc(96px + env(safe-area-inset-bottom));
+  display: grid;
+  gap: 8px;
+  grid-auto-rows: minmax(0, 1fr);
+  align-items: stretch;
+  justify-items: stretch;
+}
+
+.video-gallery.one {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.video-gallery.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.video-gallery.four,
+.video-gallery.many {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.video-gallery.many {
+  grid-auto-rows: minmax(160px, 1fr);
+  overflow: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+}
+
+.gallery-tile {
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 8px;
+  min-width: 0;
+  min-height: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+  transition: border-color .16s ease, transform .16s ease, box-shadow .16s ease;
+}
+
+.gallery-tile:hover,
+.gallery-tile:focus-visible,
+.video-thumb-strip button:hover,
+.video-thumb-strip button:focus-visible {
+  border-color: rgba(114, 240, 202, .44);
+  box-shadow: 0 0 0 3px rgba(114, 240, 202, .13), inset 0 1px 0 rgba(255, 255, 255, .08);
 }
 
 .main-video::after {
@@ -469,7 +528,8 @@
   display: none;
 }
 
-.participant-strip div {
+.participant-strip div,
+.participant-strip button {
   flex: 0 0 auto;
   min-width: 92px;
   border: 1px solid rgba(255, 255, 255, .12);
@@ -482,6 +542,38 @@
   color: var(--nivra-soft);
   background: rgba(4, 8, 10, .5);
   backdrop-filter: blur(14px) saturate(130%);
+}
+
+.participant-strip button {
+  cursor: pointer;
+  text-align: left;
+}
+
+.video-thumb-strip button {
+  position: relative;
+  width: 128px;
+  height: 78px;
+  min-width: 128px;
+  grid-template-columns: 1fr;
+  padding: 0;
+  overflow: hidden;
+  background: #030607;
+}
+
+.video-thumb-strip video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #030607;
+}
+
+.video-thumb-strip img,
+.video-thumb-strip span {
+  position: absolute;
+  inset: 50% auto auto 50%;
+  transform: translate(-50%, -50%);
 }
 
 .participant-strip img,
@@ -505,6 +597,17 @@
   font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.video-thumb-strip small {
+  position: absolute;
+  left: 6px;
+  right: 6px;
+  bottom: 6px;
+  border-radius: 999px;
+  padding: 4px 7px;
+  background: rgba(0, 0, 0, .48);
+  backdrop-filter: blur(10px);
 }
 
 .local-preview-main {
@@ -561,6 +664,7 @@
 .surface.call-mode .call-controls,
 .surface.call-mode .waiting-tile,
 .surface.call-mode .participant-strip,
+.surface.call-mode .video-gallery,
 .surface.call-mode .local-preview {
   transition: opacity .24s ease, transform .24s ease;
 }
@@ -743,6 +847,16 @@ ion-modal.invite-modal {
 .invite-list button:hover {
   border-color: rgba(24, 214, 162, .25);
   background: rgba(24, 214, 162, .08);
+}
+
+.invite-list button:disabled {
+  opacity: .58;
+  cursor: wait;
+}
+
+.invite-list button.busy {
+  border-color: rgba(24, 214, 162, .36);
+  background: rgba(24, 214, 162, .1);
 }
 
 .invite-list img,
@@ -1071,7 +1185,18 @@ ion-modal.invite-modal {
     width: clamp(108px, 32vw, 150px);
   }
 
-  .surface.call-mode .remote-tile span {
+  .surface.call-mode .video-gallery {
+    inset:
+      calc(62px + env(safe-area-inset-top))
+      14px
+      calc(188px + env(safe-area-inset-bottom));
+  }
+
+  .surface.call-mode .video-gallery.many {
+    grid-auto-rows: minmax(118px, 1fr);
+  }
+
+  .surface.call-mode .remote-tile.main-video > span {
     left: 16px;
     bottom: calc(166px + env(safe-area-inset-bottom));
     max-width: calc(100vw - 52px);
@@ -1110,7 +1235,8 @@ ion-modal.invite-modal {
 
   .surface.call-mode.call-chrome-hidden .panel-head,
   .surface.call-mode.call-chrome-hidden .waiting-tile,
-  .surface.call-mode.call-chrome-hidden .participant-strip {
+  .surface.call-mode.call-chrome-hidden .participant-strip,
+  .surface.call-mode.call-chrome-hidden .video-gallery {
     opacity: 0;
     pointer-events: none;
     transform: translateY(-12px);

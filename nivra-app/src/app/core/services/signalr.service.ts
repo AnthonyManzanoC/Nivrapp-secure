@@ -88,13 +88,14 @@ export class SignalrService implements OnDestroy {
     }).catch(() => undefined);
   }
 
-  async syncReadReceipts(conversationId: string, messageIds: string[]): Promise<void> {
+  async syncReadReceipts(conversationId: string, messageIds: string[], options: { openedMessageIds?: string[] } = {}): Promise<void> {
     const ids = [...new Set((messageIds ?? []).filter(Boolean))].slice(0, 500);
     if (!conversationId || !ids.length) {
       return;
     }
+    const openedIds = [...new Set((options.openedMessageIds ?? []).filter((id) => ids.includes(id)))].slice(0, 500);
     await this.ensureConnected();
-    await this.connection?.invoke('SyncReadReceipts', conversationId, ids).catch(() => undefined);
+    await this.connection?.invoke('SyncReadReceipts', conversationId, ids, openedIds).catch(() => undefined);
   }
 
   async callAnsweredElsewhere(callId: string): Promise<void> {
@@ -203,6 +204,9 @@ export class SignalrService implements OnDestroy {
       'vault.left',
       'incomingCall',
       'call.started',
+      'GroupCallStarted',
+      'group.call.started',
+      'groupCallStarted',
       'call.signal',
       'call_answered_elsewhere',
       'call.ended',
@@ -257,6 +261,9 @@ export class SignalrService implements OnDestroy {
       'vault.left',
       'incomingCall',
       'call.started',
+      'GroupCallStarted',
+      'group.call.started',
+      'groupCallStarted',
       'call.signal',
       'call_answered_elsewhere',
       'call.ended',

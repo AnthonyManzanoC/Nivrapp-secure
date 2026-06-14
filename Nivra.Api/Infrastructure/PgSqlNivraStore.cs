@@ -234,7 +234,7 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
             .Where(message => !message.Receipts.Any(receipt => receipt.UserId == userId && receipt.DeletedAt != null))
             .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
                 receipt.UserId == userId &&
-                (receipt.ReadAt != null || receipt.DeletedAt != null)))
+                receipt.DeletedAt != null))
             .Where(message => message.Receipts.Any(receipt =>
                 receipt.UserId == userId &&
                 receipt.DeviceId == deviceId &&
@@ -260,7 +260,7 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
             .Where(message => !message.Receipts.Any(receipt => receipt.UserId == userId && receipt.DeletedAt != null))
             .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
                 receipt.UserId == userId &&
-                (receipt.ReadAt != null || receipt.DeletedAt != null)))
+                receipt.DeletedAt != null))
             .Where(message => message.Receipts.Any(receipt =>
                 receipt.UserId == userId &&
                 receipt.DeviceId == deviceId &&

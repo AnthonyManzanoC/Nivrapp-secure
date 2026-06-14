@@ -605,6 +605,39 @@ ion-popover.attachment-popover::part(content) {
   font-weight: 850;
 }
 
+.view-once-tombstone {
+  min-width: min(68vw, 240px);
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, .1);
+  border-radius: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  color: var(--nivra-muted);
+  background: rgba(255, 255, 255, .055);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.message.mine .view-once-tombstone {
+  color: rgba(244, 251, 247, .78);
+  background: rgba(0, 0, 0, .14);
+}
+
+.view-once-tombstone ion-icon {
+  flex: 0 0 auto;
+  color: var(--nivra-brand-2);
+  font-size: 18px;
+}
+
+.view-once-tombstone span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .quick-reaction-row {
   position: absolute;
   inset-inline-start: 8px;
@@ -1617,7 +1650,9 @@ ion-modal.profile-photo-viewer-modal::part(content) {
   display: grid;
   place-items: center;
   padding: 14px;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-x pan-y pinch-zoom;
 }
 
 .profile-photo-stage {
@@ -1635,6 +1670,21 @@ ion-modal.profile-photo-viewer-modal::part(content) {
   max-height: calc(100dvh - 112px - var(--ion-safe-area-top, env(safe-area-inset-top, 0px)) - var(--ion-safe-area-bottom, env(safe-area-inset-bottom, 0px)));
   object-fit: contain;
   object-position: center;
+}
+
+.chat-media-viewer-body img {
+  transform: scale(var(--media-zoom, 1));
+  transform-origin: center center;
+  transition: transform .16s ease;
+  cursor: zoom-in;
+}
+
+.chat-media-viewer-body.zoomed {
+  place-items: start center;
+}
+
+.chat-media-viewer-body.zoomed img {
+  cursor: zoom-out;
 }
 
 ion-modal.story-viewer-modal {

@@ -1241,7 +1241,7 @@ public static partial class EndpointExtensions
                     receipt.DeletedAt != null))
                 .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
                     receipt.UserId == current.UserId &&
-                    (receipt.ReadAt != null || receipt.DeletedAt != null)));
+                    receipt.DeletedAt != null));
 
             List<MessageEnvelope> messages;
             if (before is { } cursor)
@@ -1309,6 +1309,23 @@ public static partial class EndpointExtensions
             {
                 return Error("forbidden", "No tienes permiso para cambiar la privacidad del chat.", StatusCodes.Status403Forbidden);
             }
+            if (conversation.Type == ConversationType.Group &&
+                request.TitleCiphertext is not null &&
+                NormalizeGroupSettings(conversation.Settings).EditInfo != "all" &&
+                !CanAdministerGroup(participant, allowInviteOnly: false))
+            {
+                return Error("forbidden", "No tienes permiso para editar la informacion del grupo.", StatusCodes.Status403Forbidden);
+            }
+            if (request.Settings is not null)
+            {
+                if (conversation.Type != ConversationType.Group || !CanAdministerGroup(participant, allowInviteOnly: false))
+                {
+                    return Error("forbidden", "Solo los admins pueden cambiar la configuracion del grupo.", StatusCodes.Status403Forbidden);
+                }
+
+                conversation.Settings = NormalizeGroupSettings(request.Settings);
+                ApplyGroupInvitePolicy(conversation);
+            }
 
             conversation.TitleCiphertext = request.TitleCiphertext ?? conversation.TitleCiphertext;
             conversation.PrivacySettings = request.PrivacySettings ?? conversation.PrivacySettings;
@@ -1316,6 +1333,163 @@ public static partial class EndpointExtensions
             await store.SaveChangesAsync(cancellationToken);
             var response = await ToConversationResponseAsync(conversation, store, cancellationToken);
             await hub.Clients.Group(GroupsFor.Conversation(conversation.Id)).SendAsync("conversation.updated", response, cancellationToken);
+            return Results.Ok(response);
+        });
+
+        conversations.MapPost("/{conversationId}/participants", async Task<IResult> (string conversationId, AddConversationParticipantsRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var conversation = await store.GetConversationAsync(conversationId, cancellationToken);
+            if (conversation is null || conversation.Type != ConversationType.Group)
+            {
+                return Results.NotFound();
+            }
+
+            var actor = conversation.Participants.FirstOrDefault(participant => participant.UserId == current.UserId && participant.RemovedAt is null);
+            if (actor is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (!CanAdministerGroup(actor, allowInviteOnly: true))
+            {
+                return Error("forbidden", "No tienes permiso para agregar participantes.", StatusCodes.Status403Forbidden);
+            }
+
+            var requestedIds = (request.ParticipantUserIds ?? [])
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim())
+                .Where(id => id != current.UserId)
+                .Distinct(StringComparer.Ordinal)
+                .Take(100)
+                .ToList();
+            if (requestedIds.Count == 0)
+            {
+                return Error("invalid_participants", "Selecciona al menos un participante.");
+            }
+
+            if (!await store.UsersExistAsync(requestedIds, cancellationToken))
+            {
+                return Error("invalid_participants", "Uno o mas participantes no existen.");
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var membersCanInvite = NormalizeGroupSettings(conversation.Settings).AddMembers == "all";
+            var addedIds = new List<string>();
+            foreach (var userId in requestedIds)
+            {
+                var existing = conversation.Participants.FirstOrDefault(participant => participant.UserId == userId);
+                if (existing is null)
+                {
+                    conversation.Participants.Add(new ConversationParticipant
+                    {
+                        UserId = userId,
+                        Role = ParticipantRole.Member,
+                        CanInvite = membersCanInvite,
+                        CanChangePrivacy = false,
+                        JoinedAt = now
+                    });
+                    addedIds.Add(userId);
+                    continue;
+                }
+
+                if (existing.RemovedAt is not null)
+                {
+                    existing.RemovedAt = null;
+                    existing.Role = ParticipantRole.Member;
+                    existing.CanInvite = membersCanInvite;
+                    existing.CanChangePrivacy = false;
+                    addedIds.Add(userId);
+                }
+            }
+
+            if (addedIds.Count == 0)
+            {
+                return Results.Ok(await ToConversationResponseAsync(conversation, store, cancellationToken));
+            }
+
+            conversation.UpdatedAt = now;
+            await store.SaveChangesAsync(cancellationToken);
+            var response = await ToConversationResponseAsync(conversation, store, cancellationToken);
+            var activeParticipantIds = conversation.Participants
+                .Where(participant => participant.RemovedAt is null)
+                .Select(participant => participant.UserId);
+            await NotifyUsers(hub, activeParticipantIds, "conversation.updated", response);
+            await NotifyUsers(hub, addedIds, "conversation.created", response);
+            foreach (var userId in addedIds)
+            {
+                await pushNotifications.SendEventAsync(userId, "Nivra", "Te agregaron a un grupo", "conversation", $"nivra-conversation-{conversation.Id}", new Dictionary<string, string>
+                {
+                    ["conversationId"] = conversation.Id,
+                    ["senderUserId"] = current.UserId
+                }, cancellationToken);
+            }
+
+            return Results.Ok(response);
+        });
+
+        conversations.MapPut("/{conversationId}/roles", async Task<IResult> (string conversationId, UpdateConversationRolesRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var conversation = await store.GetConversationAsync(conversationId, cancellationToken);
+            if (conversation is null || conversation.Type != ConversationType.Group)
+            {
+                return Results.NotFound();
+            }
+
+            var actor = conversation.Participants.FirstOrDefault(participant => participant.UserId == current.UserId && participant.RemovedAt is null);
+            if (actor is null)
+            {
+                return Results.NotFound();
+            }
+
+            if (!CanAdministerGroup(actor, allowInviteOnly: false))
+            {
+                return Error("forbidden", "Solo los admins pueden cambiar roles.", StatusCodes.Status403Forbidden);
+            }
+
+            var activeParticipants = conversation.Participants
+                .Where(participant => participant.RemovedAt is null)
+                .ToList();
+            var activeIds = activeParticipants
+                .Select(participant => participant.UserId)
+                .ToHashSet(StringComparer.Ordinal);
+            var requestedAdmins = (request.AdminUserIds ?? [])
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .Select(id => id.Trim())
+                .Where(activeIds.Contains)
+                .ToHashSet(StringComparer.Ordinal);
+            requestedAdmins.Add(current.UserId);
+
+            foreach (var participant in activeParticipants)
+            {
+                if (participant.Role == ParticipantRole.Owner)
+                {
+                    participant.CanInvite = true;
+                    participant.CanChangePrivacy = true;
+                    requestedAdmins.Add(participant.UserId);
+                    continue;
+                }
+
+                var isAdmin = requestedAdmins.Contains(participant.UserId);
+                participant.Role = isAdmin ? ParticipantRole.Admin : ParticipantRole.Member;
+            }
+            ApplyGroupInvitePolicy(conversation);
+
+            conversation.UpdatedAt = timeProvider.GetUtcNow();
+            await store.SaveChangesAsync(cancellationToken);
+            var response = await ToConversationResponseAsync(conversation, store, cancellationToken);
+            await NotifyUsers(hub, activeIds, "conversation.updated", response);
             return Results.Ok(response);
         });
 
@@ -1356,7 +1530,6 @@ public static partial class EndpointExtensions
                 .ToList();
             var hasActiveAdmin = remainingActive.Any(candidate =>
                 candidate.Role is ParticipantRole.Owner or ParticipantRole.Admin ||
-                candidate.CanInvite ||
                 candidate.CanChangePrivacy);
             if (!hasActiveAdmin && remainingActive.Count > 0)
             {
@@ -1382,9 +1555,16 @@ public static partial class EndpointExtensions
             }
 
             var conversation = await store.GetConversationAsync(conversationId, cancellationToken);
-            if (conversation is null || !conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null))
+            var senderParticipant = conversation?.Participants.FirstOrDefault(participant => participant.UserId == current.UserId && participant.RemovedAt is null);
+            if (conversation is null || senderParticipant is null)
             {
                 return Results.NotFound();
+            }
+            if (conversation.Type == ConversationType.Group &&
+                NormalizeGroupSettings(conversation.Settings).SendMessages == "admins" &&
+                !CanAdministerGroup(senderParticipant, allowInviteOnly: false))
+            {
+                return Error("forbidden", "Solo los admins pueden enviar mensajes en este grupo.", StatusCodes.Status403Forbidden);
             }
 
             if (string.IsNullOrWhiteSpace(request.ClientMessageId) || request.Recipients.Count == 0)
@@ -1752,7 +1932,7 @@ public static partial class EndpointExtensions
                 .Where(message => !message.Receipts.Any(receipt => receipt.UserId == current.UserId && receipt.DeletedAt != null))
                 .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
                     receipt.UserId == current.UserId &&
-                    (receipt.ReadAt != null || receipt.DeletedAt != null)));
+                    receipt.DeletedAt != null));
 
             List<MessageEnvelope> page;
             if (since is { } watermark)
@@ -1865,6 +2045,7 @@ public static partial class EndpointExtensions
             var now = timeProvider.GetUtcNow();
             var deletedForUser = false;
             var deleteReason = "deleted";
+            var openedViewOnce = request.Kind == ReceiptKind.Read && message.DeleteAfterRead && request.Opened == true;
             switch (request.Kind)
             {
                 case ReceiptKind.Delivered:
@@ -1876,7 +2057,7 @@ public static partial class EndpointExtensions
                         userReceipt.DeliveredAt ??= now;
                         userReceipt.ReadAt ??= now;
                     }
-                    if (message.DeleteAfterRead)
+                    if (openedViewOnce)
                     {
                         deleteReason = "view_once";
                         foreach (var userReceipt in message.Receipts.Where(candidate => candidate.UserId == current.UserId))
@@ -1904,6 +2085,7 @@ public static partial class EndpointExtensions
                 {
                     conversationId = message.ConversationId,
                     messageIds = new[] { messageId },
+                    openedMessageIds = openedViewOnce ? new[] { messageId } : Array.Empty<string>(),
                     userId = current.UserId,
                     sourceDeviceId = current.DeviceId,
                     at = now
@@ -1915,6 +2097,7 @@ public static partial class EndpointExtensions
                 userId = current.UserId,
                 deviceId = current.DeviceId,
                 kind = request.Kind,
+                opened = openedViewOnce,
                 at = now
             }, cancellationToken);
             if (deletedForUser)
@@ -3109,7 +3292,7 @@ public static partial class EndpointExtensions
     {
         var group = app.MapGroup("/calls");
 
-        static async Task<IResult> RoomToken(string groupId, HttpContext http, INivraStore store, LiveKitTokenService liveKit, CancellationToken cancellationToken)
+        static async Task<IResult> RoomToken(string groupId, HttpContext http, INivraStore store, NivraDbContext db, LiveKitTokenService liveKit, CancellationToken cancellationToken)
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3123,11 +3306,24 @@ public static partial class EndpointExtensions
             }
 
             var conversation = await store.GetConversationAsync(groupId, cancellationToken);
-            if (conversation is null ||
-                conversation.Type != ConversationType.Group ||
-                !conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null))
+            if (conversation is null || conversation.Type != ConversationType.Group)
             {
                 return Results.NotFound();
+            }
+
+            var isGroupMember = conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null);
+            if (!isGroupMember)
+            {
+                var activeCalls = await db.Calls
+                    .Where(call => call.ConversationId == groupId && call.EndedAt == null && call.Status != CallStatus.Ended)
+                    .OrderByDescending(call => call.StartedAt)
+                    .Take(10)
+                    .ToListAsync(cancellationToken);
+                var isInvitedToActiveCall = activeCalls.Any(call => call.ParticipantUserIds.Contains(current.UserId));
+                if (!isInvitedToActiveCall)
+                {
+                    return Results.NotFound();
+                }
             }
 
             if (!liveKit.IsConfigured)
@@ -3267,6 +3463,55 @@ public static partial class EndpointExtensions
             }
 
             return Results.Accepted();
+        });
+
+        group.MapPost("/{callId}/invite", async Task<IResult> (string callId, InviteCallParticipantRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var targetUserId = request.UserId?.Trim();
+            if (string.IsNullOrWhiteSpace(targetUserId) || targetUserId == current.UserId)
+            {
+                return Error("invalid_participant", "Selecciona un contacto valido.");
+            }
+
+            var call = await store.GetCallAsync(callId, cancellationToken);
+            if (call is null || !call.ParticipantUserIds.Contains(current.UserId))
+            {
+                return Results.NotFound();
+            }
+
+            if (call.Status == CallStatus.Ended || call.EndedAt is not null)
+            {
+                return Error("call_ended", "La llamada ya finalizo.", StatusCodes.Status409Conflict);
+            }
+
+            if (!await store.UserExistsAsync(targetUserId, cancellationToken))
+            {
+                return Error("invalid_participant", "Ese usuario no existe.");
+            }
+
+            if (!call.ParticipantUserIds.Contains(targetUserId, StringComparer.Ordinal))
+            {
+                call.ParticipantUserIds.Add(targetUserId);
+            }
+            if (call.Status == CallStatus.Ringing)
+            {
+                call.Status = CallStatus.Active;
+            }
+            await store.SaveChangesAsync(cancellationToken);
+
+            var response = ToCallResponse(call, current.DeviceId);
+            var callerName = await GetCallerNameAsync(store, current.UserId, cancellationToken);
+            await hub.Clients.Group(GroupsFor.User(targetUserId)).SendAsync("call.started", response, cancellationToken);
+            await hub.Clients.Group(GroupsFor.User(targetUserId)).SendAsync("incomingCall", response, cancellationToken);
+            await NotifyUsers(hub, call.ParticipantUserIds.Distinct(StringComparer.Ordinal).Where(userId => userId != targetUserId), "group.call.started", response);
+            await pushNotifications.SendIncomingCallAsync(targetUserId, call.ConversationId, call.Id, current.UserId, callerName, call.Type, cancellationToken);
+            return Results.Ok(response);
         });
 
         group.MapPost("/{callId}/end", async Task<IResult> (string callId, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
@@ -3579,7 +3824,7 @@ public static partial class EndpointExtensions
                         receipt.DeletedAt != null))
                     .Where(message => !message.DeleteAfterRead || !message.Receipts.Any(receipt =>
                         receipt.UserId == current.UserId &&
-                        (receipt.ReadAt != null || receipt.DeletedAt != null)))
+                        receipt.DeletedAt != null))
                     .OrderByDescending(message => message.ServerReceivedAt)
                     .ThenByDescending(message => message.Id)
                     .Take(messageLimit)
@@ -4016,6 +4261,7 @@ public static partial class EndpointExtensions
             conversation.Type,
             conversation.TitleCiphertext,
             conversation.PrivacySettings,
+            NormalizeGroupSettings(conversation.Settings),
             conversation.Participants.Select(participant => new ParticipantResponse(
                 participant.UserId,
                 participant.Role,
@@ -4029,6 +4275,34 @@ public static partial class EndpointExtensions
             conversation.CreatedAt,
             conversation.UpdatedAt,
             conversation.LastMessageAt);
+    }
+
+    private static bool CanAdministerGroup(ConversationParticipant participant, bool allowInviteOnly)
+    {
+        return participant.Role is ParticipantRole.Owner or ParticipantRole.Admin ||
+            participant.CanChangePrivacy ||
+            (allowInviteOnly && participant.CanInvite);
+    }
+
+    private static GroupSettings NormalizeGroupSettings(GroupSettings? settings)
+    {
+        return new GroupSettings
+        {
+            EditInfo = string.Equals(settings?.EditInfo, "all", StringComparison.OrdinalIgnoreCase) ? "all" : "admins",
+            SendMessages = string.Equals(settings?.SendMessages, "admins", StringComparison.OrdinalIgnoreCase) ? "admins" : "all",
+            AddMembers = string.Equals(settings?.AddMembers, "all", StringComparison.OrdinalIgnoreCase) ? "all" : "admins"
+        };
+    }
+
+    private static void ApplyGroupInvitePolicy(ConversationRecord conversation)
+    {
+        var membersCanInvite = NormalizeGroupSettings(conversation.Settings).AddMembers == "all";
+        foreach (var participant in conversation.Participants.Where(participant => participant.RemovedAt is null))
+        {
+            var isAdmin = participant.Role is ParticipantRole.Owner or ParticipantRole.Admin;
+            participant.CanInvite = isAdmin || membersCanInvite;
+            participant.CanChangePrivacy = isAdmin;
+        }
     }
 
     private static ParticipantPrivacyPolicyResponse ToParticipantPrivacyPolicyResponse(PrivacySettings privacy)

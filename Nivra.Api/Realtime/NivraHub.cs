@@ -227,7 +227,7 @@ public sealed class NivraHub(
             .ToList();
     }
 
-    public async Task SyncReadReceipts(string conversationId, List<string> messageIds)
+    public async Task SyncReadReceipts(string conversationId, List<string> messageIds, List<string>? openedMessageIds = null)
     {
         if (!TryGetCurrentUser(out var currentUser) ||
             string.IsNullOrWhiteSpace(conversationId) ||
@@ -245,11 +245,18 @@ public sealed class NivraHub(
         {
             return;
         }
+        var openedIds = (openedMessageIds ?? [])
+            .Where(id => !string.IsNullOrWhiteSpace(id))
+            .Distinct(StringComparer.Ordinal)
+            .Where(ids.Contains)
+            .Take(500)
+            .ToList();
 
         await Clients.Group(GroupsFor.User(currentUser.UserId)).SendAsync("sync_read_receipts", new
         {
             conversationId,
             messageIds = ids,
+            openedMessageIds = openedIds,
             userId = currentUser.UserId,
             sourceDeviceId = currentUser.DeviceId,
             at = timeProvider.GetUtcNow()

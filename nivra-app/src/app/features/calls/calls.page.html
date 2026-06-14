@@ -27,57 +27,66 @@
                 }
               }
 
-              @if (calls.phase() === 'connected' && calls.remoteEntries().length) {
+              @if (calls.phase() === 'connected' && (calls.remoteEntries().length || (call.type === 'Video' && calls.localStream()))) {
                 @if (call.type === 'Video') {
-                  @if (mainVideoStream(); as mainVideo) {
-                    <div class="video-composition" [class.local-main]="videoSwapped">
-                      <div class="remote-tile main-video">
-                        @if (hasVideoTrack(mainVideo)) {
-                          <video [appMediaStream]="mainVideo" [muted]="videoMuted(mainVideoParticipantId())" autoplay playsinline></video>
+                  @if (pinnedVideoTile(); as pinnedTile) {
+                    <div class="video-composition pinned-layout">
+                      <button type="button" class="remote-tile main-video pinned-main" (click)="clearPinnedVideo()" [attr.aria-label]="'CALLS.UNPIN_VIDEO' | translate:'Quitar video principal'">
+                        @if (hasVideoTrack(pinnedTile.stream)) {
+                          <video [appMediaStream]="pinnedTile.stream" [muted]="videoMuted(pinnedTile.id)" autoplay playsinline></video>
                         } @else {
-                          <audio [appMediaStream]="mainVideo" [muted]="videoMuted(mainVideoParticipantId())" autoplay></audio>
+                          <audio [appMediaStream]="pinnedTile.stream" [muted]="videoMuted(pinnedTile.id)" autoplay></audio>
                           <div class="video-audio-fallback">
-                            @if (videoParticipantPhoto(mainVideoParticipantId())) {
-                              <img [src]="videoParticipantPhoto(mainVideoParticipantId())" alt="">
+                            @if (videoParticipantPhoto(pinnedTile.id)) {
+                              <img [src]="videoParticipantPhoto(pinnedTile.id)" alt="">
                             } @else {
-                              <strong>{{ videoParticipantInitials(mainVideoParticipantId()) }}</strong>
+                              <strong>{{ videoParticipantInitials(pinnedTile.id) }}</strong>
                             }
                           </div>
                         }
-                        <span>{{ videoParticipantLabel(mainVideoParticipantId()) }}</span>
-                      </div>
+                        <span>{{ videoTileLabel(pinnedTile) }}</span>
+                      </button>
 
-                      @if (pipVideoStream(); as pipVideo) {
-                        <button type="button" class="local-preview pip-tile" (click)="toggleVideoSwap()" [attr.aria-label]="'CALLS.SWAP_MAIN_VIDEO' | translate:'Cambiar video principal'">
-                          @if (hasVideoTrack(pipVideo)) {
-                            <video [appMediaStream]="pipVideo" [muted]="videoMuted(pipVideoParticipantId())" autoplay playsinline></video>
-                          } @else {
-                            <audio [appMediaStream]="pipVideo" [muted]="videoMuted(pipVideoParticipantId())" autoplay></audio>
-                            <div class="pip-avatar">
-                              @if (videoParticipantPhoto(pipVideoParticipantId())) {
-                                <img [src]="videoParticipantPhoto(pipVideoParticipantId())" alt="">
+                      @if (galleryVideoTiles().length) {
+                        <div class="participant-strip video-thumb-strip" [attr.aria-label]="'CALLS.CONNECTED_PARTICIPANTS' | translate:'Participantes conectados'">
+                          @for (tile of galleryVideoTiles(); track tile.id) {
+                            <button type="button" (click)="selectVideoTile(tile)" [attr.aria-label]="('CALLS.PIN_VIDEO' | translate:'Fijar video') + ' ' + videoTileLabel(tile)">
+                              @if (hasVideoTrack(tile.stream)) {
+                                <video [appMediaStream]="tile.stream" [muted]="videoMuted(tile.id)" autoplay playsinline></video>
+                              } @else if (videoParticipantPhoto(tile.id)) {
+                                <img [src]="videoParticipantPhoto(tile.id)" [alt]="videoTileLabel(tile)">
                               } @else {
-                                <strong>{{ videoParticipantInitials(pipVideoParticipantId()) }}</strong>
+                                <span>{{ videoParticipantInitials(tile.id) }}</span>
                               }
-                            </div>
-                          }
-                          <span>{{ videoParticipantLabel(pipVideoParticipantId()) }}</span>
-                        </button>
-                      }
-
-                      @if (extraRemoteEntries().length) {
-                        <div class="participant-strip" [attr.aria-label]="'CALLS.CONNECTED_PARTICIPANTS' | translate:'Participantes conectados'">
-                          @for (entry of extraRemoteEntries(); track entry[0]) {
-                            <div>
-                              @if (videoParticipantPhoto(entry[0])) {
-                                <img [src]="videoParticipantPhoto(entry[0])" [alt]="videoParticipantLabel(entry[0])">
-                              } @else {
-                                <span>{{ videoParticipantInitials(entry[0]) }}</span>
-                              }
-                              <small>{{ videoParticipantLabel(entry[0]) }}</small>
-                            </div>
+                              <small>{{ videoTileLabel(tile) }}</small>
+                            </button>
                           }
                         </div>
+                      }
+                    </div>
+                  } @else {
+                    <div
+                      class="video-gallery"
+                      [class.one]="videoGallerySizeClass() === 'one'"
+                      [class.two]="videoGallerySizeClass() === 'two'"
+                      [class.four]="videoGallerySizeClass() === 'four'"
+                      [class.many]="videoGallerySizeClass() === 'many'">
+                      @for (tile of galleryVideoTiles(); track tile.id) {
+                        <button type="button" class="remote-tile gallery-tile" (click)="selectVideoTile(tile)" [attr.aria-label]="('CALLS.PIN_VIDEO' | translate:'Fijar video') + ' ' + videoTileLabel(tile)">
+                          @if (hasVideoTrack(tile.stream)) {
+                            <video [appMediaStream]="tile.stream" [muted]="videoMuted(tile.id)" autoplay playsinline></video>
+                          } @else {
+                            <audio [appMediaStream]="tile.stream" [muted]="videoMuted(tile.id)" autoplay></audio>
+                            <div class="video-audio-fallback">
+                              @if (videoParticipantPhoto(tile.id)) {
+                                <img [src]="videoParticipantPhoto(tile.id)" alt="">
+                              } @else {
+                                <strong>{{ videoParticipantInitials(tile.id) }}</strong>
+                              }
+                            </div>
+                          }
+                          <span>{{ videoTileLabel(tile) }}</span>
+                        </button>
                       }
                     </div>
                   }
@@ -290,7 +299,7 @@
         </header>
         <div class="invite-list">
           @for (contact of chat.contacts(); track contact.userId) {
-            <button type="button" (click)="inviteToCall(contact)">
+            <button type="button" (click)="inviteToCall(contact)" [disabled]="callBusyId !== ''" [class.busy]="callBusyId === 'invite:' + contact.userId">
               @if (contact.profilePhotoDataUrl) {
                 <img [src]="contact.profilePhotoDataUrl" alt="">
               } @else {

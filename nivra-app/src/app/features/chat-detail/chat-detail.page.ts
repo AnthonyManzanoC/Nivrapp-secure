@@ -201,6 +201,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   activeMediaPreview: MediaPreview | null = null;
   activeMediaFile: FileChatPayload | null = null;
   activeMediaMessage: ChatMessageVm | null = null;
+  activeMediaZoom = 1;
   groupNameDraft = '';
   groupAvatarDraft: string | null = null;
   groupSettingsDraft: GroupSettings = {
@@ -327,10 +328,22 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ionViewDidEnter(): void {
+    const conversationId = this.conversation()?.id;
+    if (conversationId) {
+      void this.chat.markConversationRead(conversationId);
+    }
     window.requestAnimationFrame(() => {
       this.cdr.detectChanges();
-      this.scheduleInitialScroll(this.conversation()?.id);
+      this.scheduleInitialScroll(conversationId);
     });
+  }
+
+  @HostListener('window:focus')
+  handleWindowFocus(): void {
+    const conversationId = this.conversation()?.id;
+    if (conversationId) {
+      void this.chat.markConversationRead(conversationId);
+    }
   }
 
   async loadOlderMessages(event: Event): Promise<void> {
@@ -542,7 +555,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.attachmentError = '';
     try {
       await this.chat.downloadAttachment(message.payload, this.conversation());
-      await this.chat.markMessageOpened(message);
+      if (this.shouldMarkViewOnceOpened(message)) {
+        await this.chat.markMessageOpened(message);
+      }
     } catch (error) {
       this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_ATTACHMENT', 'No se pudo abrir el adjunto.');
     } finally {
@@ -558,7 +573,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.attachmentError = '';
     try {
       await this.chat.ensureMediaPreview(message.payload);
-      await this.chat.markMessageOpened(message);
+      if (this.shouldMarkViewOnceOpened(message)) {
+        await this.chat.markMessageOpened(message);
+      }
     } catch (error) {
       this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_PREVIEW_ATTACHMENT', 'No se pudo previsualizar el adjunto.');
     } finally {
@@ -610,7 +627,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.attachmentError = '';
     try {
       const preview = await this.chat.ensureMediaPreview(message.payload);
-      await this.chat.markMessageOpened(message);
+      if (this.shouldMarkViewOnceOpened(message)) {
+        await this.chat.markMessageOpened(message);
+      }
       if (preview) {
         this.activeAudioPreview = preview;
         this.activeAudioName = file.voiceNote ? this.tr('CHAT.VOICE_NOTE', 'Nota de voz') : this.chat.fileName(file);
@@ -631,6 +650,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.activeMediaPreview = null;
     this.activeMediaFile = null;
     this.activeMediaMessage = null;
+    this.activeMediaZoom = 1;
   }
 
   async downloadActiveMedia(): Promise<void> {
@@ -652,13 +672,31 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       } else {
         this.pauseOtherAudio(audio);
       }
-      await this.chat.markMessageOpened(message);
+      if (this.shouldMarkViewOnceOpened(message)) {
+        await this.chat.markMessageOpened(message);
+      }
       await audio.play().catch(() => undefined);
       this.markAudioPlaying(message, audio);
       return;
     }
     audio.pause();
     this.markAudioPaused(message);
+  }
+
+  onMediaViewerWheel(event: WheelEvent): void {
+    if (!this.activeMediaFile || !this.chat.isImage(this.activeMediaFile)) {
+      return;
+    }
+    event.preventDefault();
+    const direction = event.deltaY > 0 ? -0.16 : 0.16;
+    this.activeMediaZoom = Math.max(1, Math.min(4, Number((this.activeMediaZoom + direction).toFixed(2))));
+  }
+
+  toggleMediaZoom(): void {
+    if (!this.activeMediaFile || !this.chat.isImage(this.activeMediaFile)) {
+      return;
+    }
+    this.activeMediaZoom = this.activeMediaZoom > 1 ? 1 : 2.2;
   }
 
   markAudioPlaying(message: ChatMessageVm, audio: HTMLAudioElement): void {
@@ -2462,6 +2500,17 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         media.pause();
       }
     });
+  }
+
+  private shouldMarkViewOnceOpened(message: ChatMessageVm): boolean {
+    if (!message.deleteAfterRead || this.chat.isViewOnceOpened(message)) {
+      return false;
+    }
+    const file = this.chat.asFile(message.payload);
+    if (message.mine && file && (this.chat.isAudio(file) || file.voiceNote)) {
+      return false;
+    }
+    return true;
   }
 
   private prepareGroupInfoDraft(conversation: Conversation): void {

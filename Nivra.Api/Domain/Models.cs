@@ -230,6 +230,15 @@ public sealed class PrivacySettings
     public static PrivacySettings Default() => new();
 }
 
+public sealed class GroupSettings
+{
+    public string EditInfo { get; set; } = "admins";
+    public string SendMessages { get; set; } = "all";
+    public string AddMembers { get; set; } = "admins";
+
+    public static GroupSettings Default() => new();
+}
+
 public sealed class ConversationRecord
 {
     public required string Id { get; init; }
@@ -237,6 +246,7 @@ public sealed class ConversationRecord
     public string? TitleCiphertext { get; set; }
     public required string CreatedByUserId { get; init; }
     public PrivacySettings PrivacySettings { get; set; } = PrivacySettings.Default();
+    public GroupSettings Settings { get; set; } = GroupSettings.Default();
     public List<ConversationParticipant> Participants { get; } = [];
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; set; }
