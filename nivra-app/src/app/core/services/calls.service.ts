@@ -422,7 +422,12 @@ export class CallsService implements OnDestroy {
         setScreenShareEnabled?: (enabled: boolean, options?: unknown) => Promise<unknown>;
       };
       if (typeof participant.setScreenShareEnabled === 'function') {
-        await participant.setScreenShareEnabled(true, { audio: true });
+        try {
+          await participant.setScreenShareEnabled(true, { audio: true });
+        } catch (error) {
+          this.error.set(error instanceof Error ? error.message : 'No se pudo iniciar la pantalla compartida.');
+          return;
+        }
         this.screenSharing.set(true);
         this.broadcastControl('screen', 'on');
         this.syncLiveKitLocalTracks();
@@ -436,7 +441,13 @@ export class CallsService implements OnDestroy {
       return;
     }
 
-    const displayStream = await getDisplayMedia({ video: true, audio: true }).catch(() => null);
+    let displayStream: MediaStream | null = null;
+    try {
+      displayStream = await getDisplayMedia({ video: true, audio: true });
+    } catch {
+      this.error.set('No se pudo iniciar la captura de pantalla.');
+      return;
+    }
     const screenTrack = displayStream?.getVideoTracks()[0];
     if (!displayStream || !screenTrack) {
       this.error.set('No se pudo iniciar la captura de pantalla.');
@@ -516,7 +527,11 @@ export class CallsService implements OnDestroy {
       const existingTrackIds = new Set(peer.connection.getSenders().map((sender) => sender.track?.id).filter(Boolean));
       audioTracks.forEach((track) => {
         if (!existingTrackIds.has(track.id)) {
-          peer.connection.addTrack(track, displayStream);
+          try {
+            peer.connection.addTrack(track, displayStream);
+          } catch {
+            this.screenShareAudioTrackIds.delete(track.id);
+          }
         }
       });
     }
@@ -643,6 +658,9 @@ export class CallsService implements OnDestroy {
       if (mediaTrack.kind === 'video' && this.isLiveKitScreenShare(track, publication)) {
         this.activeScreenShareStreamId.set(streamId);
       }
+      if (this.isLiveKitScreenShareAudio(track, publication)) {
+        this.activeScreenShareStreamId.update((current) => current ?? streamId);
+      }
     });
   }
 
@@ -696,6 +714,9 @@ export class CallsService implements OnDestroy {
         if (mediaTrack.kind === 'video' && this.isLiveKitScreenShare(track, publication)) {
           screenShareId = streamId;
         }
+        if (!screenShareId && this.isLiveKitScreenShareAudio(track, publication)) {
+          screenShareId = streamId;
+        }
       }
     }
 
@@ -720,6 +741,12 @@ export class CallsService implements OnDestroy {
   private isLiveKitScreenShare(track: unknown, publication?: unknown): boolean {
     const source = this.liveKitTrackSource(track, publication);
     return source.includes('screen') || source.includes('share');
+  }
+
+  private isLiveKitScreenShareAudio(track: unknown, publication?: unknown): boolean {
+    const mediaTrack = (track as LiveKitTrackLike | null)?.mediaStreamTrack;
+    const source = this.liveKitTrackSource(track, publication);
+    return mediaTrack?.kind === 'audio' && source.includes('screen') && (source.includes('audio') || source.includes('share'));
   }
 
   private liveKitTrackSource(track: unknown, publication?: unknown): string {

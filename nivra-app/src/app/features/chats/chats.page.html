@@ -120,11 +120,22 @@
                   [class.muted]="chat.isConversationMuted(conversation.id)"
                   [class.has-flags]="chat.isConversationPinned(conversation.id) || chat.isConversationMuted(conversation.id) || chat.hasUnreadConversation(conversation)"
                   (click)="openConversation(conversation.id)">
-                  @if (chat.conversationPhoto(conversation)) {
-                    <img slot="start" class="avatar avatar-img" [src]="chat.conversationPhoto(conversation)" alt="">
-                  } @else {
-                    <ion-avatar slot="start" class="avatar">{{ chat.avatarLabel(conversation) }}</ion-avatar>
-                  }
+                  <span
+                    slot="start"
+                    class="avatar-action"
+                    role="button"
+                    tabindex="0"
+                    [class.has-story]="conversationHasStory(conversation)"
+                    (click)="abrirHistoria(conversation, $event)"
+                    (keydown.enter)="abrirHistoria(conversation, $event)"
+                    (keydown.space)="abrirHistoria(conversation, $event)"
+                    [attr.aria-label]="'WORLD.VIEW_STORY' | translate:'Ver historia'">
+                    @if (chat.conversationPhoto(conversation)) {
+                      <img class="avatar avatar-img" [src]="chat.conversationPhoto(conversation)" alt="">
+                    } @else {
+                      <ion-avatar class="avatar">{{ chat.avatarLabel(conversation) }}</ion-avatar>
+                    }
+                  </span>
                   <ion-label class="item-copy">
                     <strong>{{ chat.conversationTitle(conversation) }}</strong>
                     <small>{{ chat.conversationSubtitle(conversation) }}</small>
@@ -236,6 +247,49 @@
           </ion-button>
         </footer>
       </section>
+    </ng-template>
+  </ion-modal>
+
+  <ion-modal class="story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="social.closeStory()">
+    <ng-template>
+      @if (social.activeStory(); as story) {
+        @if (social.storyPayload(story); as payload) {
+          <section class="story-viewer">
+            <header>
+              <div>
+                <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
+                <span>{{ story.expiresAt | date:'shortTime' }}</span>
+              </div>
+              <button type="button" (click)="social.closeStory()" [attr.aria-label]="'STORY.CLOSE' | translate:'Cerrar historia'">
+                <ion-icon name="close-outline"></ion-icon>
+              </button>
+            </header>
+            <div class="story-viewer-body">
+              @if (payload.media; as mediaPayload) {
+                @if (social.storyMedia(story); as media) {
+                  @if (social.isImage(media.mime)) {
+                    <img [src]="media.url" [alt]="media.name">
+                  } @else if (social.isVideo(media.mime)) {
+                    <video [src]="media.url" controls playsinline autoplay></video>
+                  } @else {
+                    <audio [src]="media.url" controls autoplay playsinline></audio>
+                  }
+                } @else {
+                  <div class="story-loading">
+                    <ion-spinner name="crescent"></ion-spinner>
+                    <span>{{ 'COMMON.DECRYPTING' | translate:'Descifrando' }} {{ mediaPayload.mime }}</span>
+                  </div>
+                }
+              } @else {
+                <p>{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantanea') }}</p>
+              }
+            </div>
+            @if (payload.text) {
+              <footer>{{ payload.text }}</footer>
+            }
+          </section>
+        }
+      }
     </ng-template>
   </ion-modal>
 </ion-content>

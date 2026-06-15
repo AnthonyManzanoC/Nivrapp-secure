@@ -654,7 +654,7 @@
 
 .surface.call-mode .call-controls {
   position: absolute;
-  z-index: 8;
+  z-index: 10;
   left: 50%;
   bottom: calc(22px + env(safe-area-inset-bottom));
   width: min(92vw, 560px);
@@ -1244,11 +1244,17 @@ ion-modal.invite-modal {
 
   .surface.call-mode.call-chrome-hidden .panel-head,
   .surface.call-mode.call-chrome-hidden .waiting-tile,
-  .surface.call-mode.call-chrome-hidden .participant-strip,
-  .surface.call-mode.call-chrome-hidden .video-gallery {
+  .surface.call-mode.call-chrome-hidden .participant-strip {
     opacity: 0;
     pointer-events: none;
     transform: translateY(-12px);
+  }
+
+  .surface.call-mode.call-chrome-hidden .video-gallery {
+    inset: 0;
+    opacity: 1;
+    pointer-events: auto;
+    transform: none;
   }
 
   .surface.call-mode.call-chrome-hidden .local-preview {

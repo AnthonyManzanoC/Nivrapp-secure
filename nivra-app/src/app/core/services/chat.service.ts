@@ -3041,8 +3041,17 @@ export class ChatService implements OnDestroy {
   }
 
   private async persistGroupConversation(conversation: Conversation, patch: Record<string, unknown>): Promise<void> {
+    const previous = this.conversations().find((item) => item.id === conversation.id) ?? conversation;
     const next = await this.setGroupConversationLocal(conversation);
-    await firstValueFrom(this.api.patch(`/conversations/${encodeURIComponent(next.id)}`, patch)).catch(() => undefined);
+    try {
+      const confirmed = await firstValueFrom(this.api.patch<Conversation>(`/conversations/${encodeURIComponent(next.id)}`, patch));
+      await this.setGroupConversationLocal(this.mergeGroupConversationConfirmation(next, confirmed));
+    } catch (error) {
+      if (previous && previous.id === next.id) {
+        await this.setGroupConversationLocal(previous).catch(() => undefined);
+      }
+      throw error;
+    }
   }
 
   private conversationPeople(conversation: Conversation): LocalProfile[] {

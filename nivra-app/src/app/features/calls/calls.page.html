@@ -35,10 +35,10 @@
                         @if (hasVideoTrack(pinnedTile.stream)) {
                           <video [appMediaStream]="pinnedTile.stream" muted autoplay playsinline></video>
                           @if (hasAudioTrack(pinnedTile.stream)) {
-                            <audio class="screen-audio-track" [appMediaStream]="pinnedTile.stream" [muted]="audioMuted(pinnedTile.id)" autoplay></audio>
+                            <audio class="screen-audio-track" [appMediaStream]="pinnedTile.stream" [muted]="audioMuted(pinnedTile.id)" autoplay playsinline></audio>
                           }
                         } @else {
-                          <audio [appMediaStream]="pinnedTile.stream" [muted]="audioMuted(pinnedTile.id)" autoplay></audio>
+                          <audio [appMediaStream]="pinnedTile.stream" [muted]="audioMuted(pinnedTile.id)" autoplay playsinline></audio>
                           <div class="video-audio-fallback">
                             @if (videoParticipantPhoto(pinnedTile.id)) {
                               <img [src]="videoParticipantPhoto(pinnedTile.id)" alt="">
@@ -57,7 +57,7 @@
                               @if (hasVideoTrack(tile.stream)) {
                                 <video [appMediaStream]="tile.stream" muted autoplay playsinline></video>
                                 @if (hasAudioTrack(tile.stream)) {
-                                  <audio class="screen-audio-track" [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay></audio>
+                                  <audio class="screen-audio-track" [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay playsinline></audio>
                                 }
                               } @else if (videoParticipantPhoto(tile.id)) {
                                 <img [src]="videoParticipantPhoto(tile.id)" [alt]="videoTileLabel(tile)">
@@ -82,10 +82,10 @@
                           @if (hasVideoTrack(tile.stream)) {
                             <video [appMediaStream]="tile.stream" muted autoplay playsinline></video>
                             @if (hasAudioTrack(tile.stream)) {
-                              <audio class="screen-audio-track" [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay></audio>
+                              <audio class="screen-audio-track" [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay playsinline></audio>
                             }
                           } @else {
-                            <audio [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay></audio>
+                            <audio [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay playsinline></audio>
                             <div class="video-audio-fallback">
                               @if (videoParticipantPhoto(tile.id)) {
                                 <img [src]="videoParticipantPhoto(tile.id)" alt="">
@@ -102,7 +102,7 @@
                 } @else {
                   @for (entry of calls.remoteEntries(); track entry[0]) {
                     <div class="remote-tile voice-connected">
-                      <audio [appMediaStream]="entry[1]" [muted]="!calls.speaker()" autoplay></audio>
+                      <audio [appMediaStream]="entry[1]" [muted]="!calls.speaker()" autoplay playsinline></audio>
                       <div class="call-avatar small">
                         @if (videoParticipantPhoto(entry[0])) {
                           <img [src]="videoParticipantPhoto(entry[0])" alt="">

@@ -23,10 +23,11 @@ import {
 import { addIcons } from 'ionicons';
 import { addOutline, archiveOutline, checkmarkOutline, closeOutline, notificationsOffOutline, notificationsOutline, peopleOutline, pinOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
-import { Contact, Conversation, UserSummary } from '../../core/models/nivra.models';
+import { Contact, Conversation, Story, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { ChatFolderFilter, ChatService } from '../../core/services/chat.service';
+import { SocialService } from '../../core/services/social.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 
@@ -61,6 +62,7 @@ import { TranslateService } from '../../core/services/translate.service';
 })
 export class ChatsPage implements OnDestroy {
   readonly chat = inject(ChatService);
+  readonly social = inject(SocialService);
   readonly appSettings = inject(AppSettingsService);
   private readonly translate = inject(TranslateService);
   private readonly auth = inject(AuthService);
@@ -102,6 +104,7 @@ export class ChatsPage implements OnDestroy {
         this.syncSelectedConversationFromUrl(event.urlAfterRedirects);
       }
     });
+    void this.social.load().catch(() => undefined);
     queueMicrotask(() => this.syncSelectedConversationFromUrl(this.router.url));
   }
 
@@ -166,6 +169,20 @@ export class ChatsPage implements OnDestroy {
   async openConversation(conversationId: string): Promise<void> {
     await this.router.navigate(['/app/chats', conversationId]);
     void this.chat.selectConversation(conversationId);
+  }
+
+  conversationHasStory(conversation: Conversation): boolean {
+    return Boolean(this.conversationStory(conversation));
+  }
+
+  async abrirHistoria(conversation: Conversation, event: Event): Promise<void> {
+    event.stopPropagation();
+    const story = this.conversationStory(conversation);
+    if (!story) {
+      await this.openConversation(conversation.id);
+      return;
+    }
+    await this.social.viewStory(story);
   }
 
   onDetailDeactivate(): void {
@@ -330,6 +347,19 @@ export class ChatsPage implements OnDestroy {
     if (!conversationId) {
       this.chat.clearSelectedConversation();
     }
+  }
+
+  private conversationStory(conversation: Conversation): Story | null {
+    const isGroup = String(conversation.type || '').toLowerCase() === 'group';
+    const stories = isGroup
+      ? this.social.activeStoriesForGroup(conversation.id)
+      : this.social.contactStories().filter((story) => story.owner.id === this.directPeerId(conversation));
+    return stories.find((story) => !story.viewedByMe) ?? stories[0] ?? null;
+  }
+
+  private directPeerId(conversation: Conversation): string | null {
+    const currentUserId = this.auth.session()?.user.id;
+    return conversation.participants.find((participant) => participant.userId !== currentUserId && !participant.removedAt)?.userId ?? null;
   }
 
   private tr(key: string, fallback: string): string {
