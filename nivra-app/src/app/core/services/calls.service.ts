@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
+import { DestroyRef, Injectable, NgZone, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
 import { Room, RoomEvent, type AudioCaptureOptions } from 'livekit-client';
@@ -37,6 +37,16 @@ interface LiveKitRoomTokenResponse {
   token: string;
 }
 
+interface LiveKitTrackLike {
+  mediaStreamTrack?: MediaStreamTrack;
+  source?: unknown;
+}
+
+interface LiveKitPublicationLike {
+  source?: unknown;
+  track?: LiveKitTrackLike | null;
+}
+
 const CALL_RING_TIMEOUT_MS = 45_000;
 const CALL_AUDIO_PROCESSING: AudioCaptureOptions = {
   echoCancellation: true,
@@ -54,6 +64,7 @@ export class CallsService implements OnDestroy {
   private readonly nativeDevice = inject(NativeDeviceService);
   private readonly realtime = inject(SignalrService);
   private readonly router = inject(Router);
+  private readonly zone = inject(NgZone);
   private readonly destroyRef = inject(DestroyRef);
   private readonly peers = new Map<string, PeerState>();
   private readonly pendingRemoteStreams = new Map<string, MediaStream>();
@@ -82,6 +93,7 @@ export class CallsService implements OnDestroy {
   readonly cameraOff = signal(false);
   readonly speaker = signal(true);
   readonly screenSharing = signal(false);
+  readonly activeScreenShareStreamId = signal<string | null>(null);
   readonly error = signal('');
   readonly history = signal<CallSession[]>(this.loadHistory());
   readonly activeGroupRooms = signal<Record<string, GroupCallRoom>>({});
@@ -357,6 +369,26 @@ export class CallsService implements OnDestroy {
     return this.activeGroupRooms()[conversationId] ?? null;
   }
 
+  async refreshActiveGroupRoom(conversationId: string | null | undefined): Promise<GroupCallRoom | null> {
+    const id = conversationId?.trim();
+    if (!id || !this.isGroupConversationId(id)) {
+      return null;
+    }
+
+    try {
+      const call = await firstValueFrom(this.api.get<CallSession | null>(`/calls/active/${encodeURIComponent(id)}`));
+      if (!call || call.status === 'Ended' || call.endedAt) {
+        this.forgetGroupRoom({ id: '', conversationId: id, groupId: id } as CallSession);
+        return null;
+      }
+      const normalized = this.withGroupRoomMetadata(call, id, true);
+      this.rememberGroupRoom(normalized);
+      return this.activeGroupRoomForConversation(id);
+    } catch {
+      return this.activeGroupRoomForConversation(id);
+    }
+  }
+
   async joinGroupRoom(room: GroupCallRoom): Promise<void> {
     if (!room?.call?.id) {
       return;
@@ -530,11 +562,14 @@ export class CallsService implements OnDestroy {
       audioCaptureDefaults: CALL_AUDIO_PROCESSING,
     });
     this.liveKitRoom = room;
-    room.on(RoomEvent.TrackSubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
-      this.addLiveKitRemoteTrack(participant?.identity || crypto.randomUUID(), track);
+    room.on(RoomEvent.TrackSubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
+      this.addLiveKitRemoteTrack(participant?.identity || crypto.randomUUID(), track, publication);
     });
-    room.on(RoomEvent.TrackUnsubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
-      this.removeLiveKitRemoteTrack(participant?.identity || '', track);
+    room.on(RoomEvent.TrackUnsubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
+      this.removeLiveKitRemoteTrack(participant?.identity || '', track, publication);
+    });
+    room.on(RoomEvent.ParticipantConnected, () => {
+      this.refreshLiveKitRemoteStreams();
     });
     room.on(RoomEvent.ParticipantDisconnected, (participant: { identity?: string }) => {
       if (participant?.identity) {
@@ -559,6 +594,7 @@ export class CallsService implements OnDestroy {
       }).setCameraEnabled(true);
     }
     this.syncLiveKitLocalTracks();
+    this.refreshLiveKitRemoteStreams();
     this.phase.set('connected');
     this.error.set('');
     this.clearRingTimeout();
@@ -592,32 +628,105 @@ export class CallsService implements OnDestroy {
     return typeof value === 'string' ? value.trim() : '';
   }
 
-  private addLiveKitRemoteTrack(participantId: string, track: unknown): void {
-    const mediaTrack = (track as { mediaStreamTrack?: MediaStreamTrack }).mediaStreamTrack;
+  private addLiveKitRemoteTrack(participantId: string, track: unknown, publication?: unknown): void {
+    const mediaTrack = (track as LiveKitTrackLike).mediaStreamTrack;
     if (!participantId || !mediaTrack) {
       return;
     }
-    const stream = this.remoteStreams()[participantId] ?? new MediaStream();
-    if (!stream.getTracks().some((item) => item.id === mediaTrack.id)) {
-      stream.addTrack(mediaTrack);
-    }
-    this.remoteStreams.update((items) => ({ ...items, [participantId]: stream }));
+    const streamId = this.liveKitStreamId(participantId, track, publication);
+    this.zone.run(() => {
+      const stream = this.remoteStreams()[streamId] ?? new MediaStream();
+      if (!stream.getTracks().some((item) => item.id === mediaTrack.id)) {
+        stream.addTrack(mediaTrack);
+      }
+      this.remoteStreams.update((items) => ({ ...items, [streamId]: stream }));
+      if (mediaTrack.kind === 'video' && this.isLiveKitScreenShare(track, publication)) {
+        this.activeScreenShareStreamId.set(streamId);
+      }
+    });
   }
 
-  private removeLiveKitRemoteTrack(participantId: string, track: unknown): void {
-    const mediaTrack = (track as { mediaStreamTrack?: MediaStreamTrack }).mediaStreamTrack;
+  private removeLiveKitRemoteTrack(participantId: string, track: unknown, publication?: unknown): void {
+    const mediaTrack = (track as LiveKitTrackLike).mediaStreamTrack;
     if (!participantId || !mediaTrack) {
       return;
     }
-    const stream = this.remoteStreams()[participantId];
-    stream?.removeTrack(mediaTrack);
-    if (!stream || !stream.getTracks().length) {
-      this.remoteStreams.update((items) => {
-        const next = { ...items };
-        delete next[participantId];
-        return next;
-      });
+    const streamId = this.liveKitStreamId(participantId, track, publication);
+    this.zone.run(() => {
+      const stream = this.remoteStreams()[streamId];
+      stream?.removeTrack(mediaTrack);
+      if (this.activeScreenShareStreamId() === streamId && (!stream || !stream.getVideoTracks().length)) {
+        this.activeScreenShareStreamId.set(null);
+      }
+      if (!stream || !stream.getTracks().length) {
+        this.remoteStreams.update((items) => {
+          const next = { ...items };
+          delete next[streamId];
+          return next;
+        });
+      } else {
+        this.remoteStreams.update((items) => ({ ...items, [streamId]: stream }));
+      }
+    });
+  }
+
+  private refreshLiveKitRemoteStreams(): void {
+    const participants = (this.liveKitRoom as unknown as {
+      remoteParticipants?: Map<string, { identity?: string; trackPublications?: Map<string, LiveKitPublicationLike> }>;
+    } | null)?.remoteParticipants;
+    if (!participants?.size) {
+      return;
     }
+
+    const next: Record<string, MediaStream> = {};
+    let screenShareId: string | null = null;
+    for (const participant of participants.values()) {
+      const participantId = participant.identity || crypto.randomUUID();
+      for (const publication of participant.trackPublications?.values() ?? []) {
+        const track = publication.track;
+        const mediaTrack = track?.mediaStreamTrack;
+        if (!mediaTrack) {
+          continue;
+        }
+        const streamId = this.liveKitStreamId(participantId, track, publication);
+        next[streamId] ??= new MediaStream();
+        if (!next[streamId].getTracks().some((item) => item.id === mediaTrack.id)) {
+          next[streamId].addTrack(mediaTrack);
+        }
+        if (mediaTrack.kind === 'video' && this.isLiveKitScreenShare(track, publication)) {
+          screenShareId = streamId;
+        }
+      }
+    }
+
+    this.zone.run(() => {
+      this.remoteStreams.set(next);
+      if (screenShareId || this.activeScreenShareStreamId()) {
+        this.activeScreenShareStreamId.set(screenShareId);
+      }
+    });
+  }
+
+  private liveKitStreamId(participantId: string, track: unknown, publication?: unknown): string {
+    return this.isLiveKitScreenShare(track, publication)
+      ? this.screenShareStreamId(participantId)
+      : participantId;
+  }
+
+  private screenShareStreamId(participantId: string): string {
+    return `${participantId}:screen`;
+  }
+
+  private isLiveKitScreenShare(track: unknown, publication?: unknown): boolean {
+    const source = this.liveKitTrackSource(track, publication);
+    return source.includes('screen') || source.includes('share');
+  }
+
+  private liveKitTrackSource(track: unknown, publication?: unknown): string {
+    const source = (publication as LiveKitPublicationLike | null)?.source
+      ?? (track as LiveKitTrackLike | null)?.source
+      ?? '';
+    return String(source).toLowerCase();
   }
 
   private syncLiveKitLocalTracks(): void {
@@ -1374,6 +1483,7 @@ export class CallsService implements OnDestroy {
     this.muted.set(false);
     this.cameraOff.set(false);
     this.screenSharing.set(false);
+    this.activeScreenShareStreamId.set(null);
     this.speaker.set(true);
     if (!this.auth.session()?.user.id) {
       this.activeGroupRooms.set({});
@@ -1410,11 +1520,19 @@ export class CallsService implements OnDestroy {
   private removeRemoteStream(userId: string): void {
     this.pendingRemoteStreams.get(userId)?.getTracks().forEach((track) => track.stop());
     this.pendingRemoteStreams.delete(userId);
-    this.remoteStreams()[userId]?.getTracks().forEach((track) => track.stop());
-    this.remoteStreams.update((items) => {
-      const next = { ...items };
-      delete next[userId];
-      return next;
+    const streamIds = [userId, this.screenShareStreamId(userId)];
+    streamIds.forEach((streamId) => {
+      this.remoteStreams()[streamId]?.getTracks().forEach((track) => track.stop());
+    });
+    this.zone.run(() => {
+      this.remoteStreams.update((items) => {
+        const next = { ...items };
+        streamIds.forEach((streamId) => delete next[streamId]);
+        return next;
+      });
+      if (this.activeScreenShareStreamId() && streamIds.includes(this.activeScreenShareStreamId()!)) {
+        this.activeScreenShareStreamId.set(null);
+      }
     });
   }
 
@@ -1431,6 +1549,7 @@ export class CallsService implements OnDestroy {
       stream.getTracks().forEach((track) => track.stop());
     });
     this.remoteStreams.set({});
+    this.activeScreenShareStreamId.set(null);
   }
 
   private stopPendingRemoteMedia(): void {

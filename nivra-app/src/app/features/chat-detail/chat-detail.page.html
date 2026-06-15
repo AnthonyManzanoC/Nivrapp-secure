@@ -140,7 +140,19 @@
                 <span>{{ 'CHAT.VIEW_ONCE_OPENED' | translate:'Mensaje de una vez abierto' }}</span>
               </div>
             } @else if (chat.asFile(message.payload); as file) {
-              @if (chat.isAudio(file) || file.voiceNote) {
+              @if (isPendingViewOnce(message)) {
+                <button type="button" class="view-once-gate" (click)="openViewOnce(message)" [disabled]="downloadingId === message.id" [attr.aria-label]="('CHAT.OPEN_VIEW_ONCE' | translate:'Abrir mensaje de una vez') + ' ' + viewOnceMediaLabel(file)">
+                  @if (downloadingId === message.id) {
+                    <ion-spinner name="crescent"></ion-spinner>
+                  } @else {
+                    <ion-icon [name]="viewOnceMediaIcon(file)"></ion-icon>
+                  }
+                  <span>
+                    <strong>{{ viewOnceMediaLabel(file) }}</strong>
+                    <small>{{ 'CHAT.VIEW_ONCE_HINT' | translate:'Ver una vez' }}</small>
+                  </span>
+                </button>
+              } @else if (chat.isAudio(file) || file.voiceNote) {
                 <div class="voice-card">
                   <div class="voice-meta">
                     <span class="voice-wave">
@@ -216,13 +228,15 @@
                       <strong>{{ chat.fileName(file) }}</strong>
                       <small>{{ chat.fileSize(file) }}</small>
                     </span>
-                    <button type="button" class="media-download" (click)="download(message); $event.stopPropagation()" [disabled]="downloadingId === message.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
-                      @if (downloadingId === message.id) {
-                        <ion-spinner name="crescent"></ion-spinner>
-                      } @else {
-                        <ion-icon name="download-outline"></ion-icon>
-                      }
-                    </button>
+                    @if (!message.deleteAfterRead) {
+                      <button type="button" class="media-download" (click)="download(message); $event.stopPropagation()" [disabled]="downloadingId === message.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
+                        @if (downloadingId === message.id) {
+                          <ion-spinner name="crescent"></ion-spinner>
+                        } @else {
+                          <ion-icon name="download-outline"></ion-icon>
+                        }
+                      </button>
+                    }
                   </div>
                   @if (file.text) {
                     <p class="file-caption media-caption">{{ file.text }}</p>
@@ -1023,7 +1037,13 @@
               <ion-icon name="close-outline"></ion-icon>
             </ion-button>
           </header>
-          <audio controls autoplay [src]="activeAudioPreview.url"></audio>
+          <audio
+            controls
+            [attr.autoplay]="activeAudioMessage?.deleteAfterRead ? null : ''"
+            [src]="activeAudioPreview.url"
+            (play)="markActiveAudioStarted()"
+            (ended)="activeAudioEnded()">
+          </audio>
         </section>
       }
     </ng-template>
@@ -1036,7 +1056,7 @@
           <header>
             <strong>{{ chat.fileName(activeMediaFile) }}</strong>
             <div class="viewer-actions">
-              @if (activeMediaMessage) {
+              @if (activeMediaMessage && !activeMediaMessage.deleteAfterRead) {
                 <ion-button mode="ios" fill="clear" (click)="downloadActiveMedia()" [disabled]="downloadingId === activeMediaMessage.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
                   @if (downloadingId === activeMediaMessage.id) {
                     <ion-spinner name="crescent"></ion-spinner>

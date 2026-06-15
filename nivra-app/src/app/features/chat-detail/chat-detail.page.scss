@@ -493,6 +493,69 @@ ion-popover.attachment-popover::part(content) {
   gap: 6px;
 }
 
+.view-once-gate {
+  width: min(68vw, 260px);
+  min-height: 62px;
+  border: 1px solid rgba(14, 165, 143, .22);
+  border-radius: 12px;
+  padding: 10px 12px;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  color: var(--nivra-text);
+  background: rgba(255, 255, 255, .92);
+  box-shadow: 0 10px 24px rgba(12, 20, 28, .08);
+}
+
+.message.mine .view-once-gate {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .2);
+  background: linear-gradient(135deg, rgba(12, 184, 165, .96), rgba(12, 159, 188, .94));
+}
+
+.view-once-gate ion-icon,
+.view-once-gate ion-spinner {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  padding: 10px;
+  color: #06766c;
+  background: rgba(14, 165, 143, .14);
+}
+
+.message.mine .view-once-gate ion-icon,
+.message.mine .view-once-gate ion-spinner {
+  color: #fff;
+  background: rgba(255, 255, 255, .16);
+}
+
+.view-once-gate span,
+.view-once-gate strong,
+.view-once-gate small {
+  min-width: 0;
+  display: block;
+}
+
+.view-once-gate strong {
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.view-once-gate small {
+  margin-top: 2px;
+  color: var(--nivra-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.message.mine .view-once-gate small {
+  color: rgba(255, 255, 255, .76);
+}
+
 .media-message-preview {
   width: 100%;
   aspect-ratio: 4 / 3;

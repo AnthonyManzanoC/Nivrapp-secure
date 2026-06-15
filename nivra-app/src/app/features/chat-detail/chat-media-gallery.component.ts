@@ -66,6 +66,7 @@ export class ChatMediaGalleryComponent implements OnDestroy {
 
   get items(): ChatMessageVm[] {
     return [...this.messages]
+      .filter((message) => !message.deleteAfterRead || this.chat.isViewOnceOpened(message))
       .filter((message) => this.isSupportedMediaFile(this.chat.asFile(message.payload)))
       .sort((left, right) => this.messageTime(right) - this.messageTime(left));
   }

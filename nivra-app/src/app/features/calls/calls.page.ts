@@ -1,5 +1,5 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { Component, inject } from '@angular/core';
+import { Component, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonButton, IonContent, IonIcon, IonModal, IonSearchbar } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -86,6 +86,21 @@ export class CallsPage {
       videocamOutline,
       volumeHighOutline,
       volumeMuteOutline,
+    });
+
+    effect(() => {
+      const screenShareId = this.calls.activeScreenShareStreamId();
+      untracked(() => {
+        if (screenShareId && this.calls.activeCall()?.type === 'Video') {
+          this.pinnedParticipantId = screenShareId;
+          this.revealCallChrome();
+          return;
+        }
+        if (!screenShareId && this.isScreenShareTileId(this.pinnedParticipantId)) {
+          this.pinnedParticipantId = null;
+          this.revealCallChrome();
+        }
+      });
     });
   }
 
@@ -448,11 +463,16 @@ export class CallsPage {
   }
 
   videoParticipantLabel(userId: string | null | undefined): string {
-    return this.isLocalParticipant(userId) ? this.participantLabel(this.auth.session()?.user.id) : this.participantLabel(userId);
+    const baseId = this.baseParticipantId(userId);
+    const label = this.isLocalParticipant(baseId) ? this.participantLabel(this.auth.session()?.user.id) : this.participantLabel(baseId);
+    return this.isScreenShareTileId(userId)
+      ? `${label} - ${this.tr('CALLS.SCREEN_SHARE', 'Pantalla compartida')}`
+      : label;
   }
 
   videoParticipantPhoto(userId: string | null | undefined): string {
-    return this.isLocalParticipant(userId) ? this.participantPhoto(this.auth.session()?.user.id) : this.participantPhoto(userId);
+    const baseId = this.baseParticipantId(userId);
+    return this.isLocalParticipant(baseId) ? this.participantPhoto(this.auth.session()?.user.id) : this.participantPhoto(baseId);
   }
 
   videoParticipantInitials(userId: string | null | undefined): string {
@@ -460,11 +480,11 @@ export class CallsPage {
   }
 
   videoMuted(userId: string | null | undefined): boolean {
-    return this.isLocalParticipant(userId) || !this.calls.speaker();
+    return this.isLocalParticipant(this.baseParticipantId(userId)) || !this.calls.speaker();
   }
 
   audioMuted(userId: string | null | undefined): boolean {
-    return this.isLocalParticipant(userId) || !this.calls.speaker();
+    return this.isLocalParticipant(this.baseParticipantId(userId)) || !this.calls.speaker();
   }
 
   hasVideoTrack(stream: MediaStream | null | undefined): boolean {
@@ -632,6 +652,14 @@ export class CallsPage {
 
   private localParticipantId(): string {
     return this.auth.session()?.user.id || 'local';
+  }
+
+  private baseParticipantId(userId: string | null | undefined): string | null | undefined {
+    return this.isScreenShareTileId(userId) ? userId?.replace(/:screen$/, '') : userId;
+  }
+
+  private isScreenShareTileId(userId: string | null | undefined): boolean {
+    return typeof userId === 'string' && userId.endsWith(':screen');
   }
 
   private isLocalParticipant(userId: string | null | undefined): boolean {

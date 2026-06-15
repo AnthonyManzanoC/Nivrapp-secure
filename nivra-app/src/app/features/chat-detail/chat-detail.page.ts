@@ -198,6 +198,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   mediaGalleryOpen = false;
   activeAudioPreview: MediaPreview | null = null;
   activeAudioName = '';
+  activeAudioMessage: ChatMessageVm | null = null;
+  activeAudioStarted = false;
   activeMediaPreview: MediaPreview | null = null;
   activeMediaFile: FileChatPayload | null = null;
   activeMediaMessage: ChatMessageVm | null = null;
@@ -308,6 +310,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       if (id) {
         const requestId = ++this.initialScrollRequestId;
         void this.chat.selectConversation(id).then(() => {
+          this.refreshActiveGroupCallBanner(id);
           if (requestId === this.initialScrollRequestId) {
             this.scheduleInitialScroll(id, { force: true });
           }
@@ -331,6 +334,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const conversationId = this.conversation()?.id;
     if (conversationId) {
       void this.chat.markConversationRead(conversationId);
+      this.refreshActiveGroupCallBanner(conversationId);
     }
     window.requestAnimationFrame(() => {
       this.cdr.detectChanges();
@@ -343,6 +347,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const conversationId = this.conversation()?.id;
     if (conversationId) {
       void this.chat.markConversationRead(conversationId);
+      this.refreshActiveGroupCallBanner(conversationId);
     }
   }
 
@@ -548,6 +553,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async download(message: ChatMessageVm): Promise<void> {
+    if (this.isPendingViewOnce(message)) {
+      await this.openViewOnce(message);
+      return;
+    }
     if (this.downloadingId) {
       return;
     }
@@ -566,6 +575,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async preview(message: ChatMessageVm): Promise<void> {
+    if (this.isPendingViewOnce(message)) {
+      await this.openViewOnce(message);
+      return;
+    }
     if (this.downloadingId) {
       return;
     }
@@ -604,9 +617,6 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.attachmentError = '';
     try {
       const preview = await this.chat.ensureMediaPreview(message.payload);
-      if (this.shouldMarkViewOnceOpened(message)) {
-        await this.chat.markMessageOpened(message);
-      }
       if (preview) {
         this.activeMediaPreview = preview;
         this.activeMediaFile = file;
@@ -629,12 +639,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.attachmentError = '';
     try {
       const preview = await this.chat.ensureMediaPreview(message.payload);
-      if (this.shouldMarkViewOnceOpened(message)) {
-        await this.chat.markMessageOpened(message);
-      }
       if (preview) {
         this.activeAudioPreview = preview;
         this.activeAudioName = file.voiceNote ? this.tr('CHAT.VOICE_NOTE', 'Nota de voz') : this.chat.fileName(file);
+        this.activeAudioMessage = message;
+        this.activeAudioStarted = false;
       }
     } catch (error) {
       this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_PLAY_AUDIO', 'No se pudo reproducir el audio.');
@@ -643,16 +652,28 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  closeAudioPreview(): void {
+  async closeAudioPreview(): Promise<void> {
+    const message = this.activeAudioMessage;
+    const shouldMark = Boolean(message && this.shouldMarkViewOnceOpened(message));
     this.activeAudioPreview = null;
     this.activeAudioName = '';
+    this.activeAudioMessage = null;
+    this.activeAudioStarted = false;
+    if (message && shouldMark) {
+      await this.chat.markMessageOpened(message).catch(() => undefined);
+    }
   }
 
-  closeMediaViewer(): void {
+  async closeMediaViewer(): Promise<void> {
+    const message = this.activeMediaMessage;
+    const shouldMark = Boolean(message && this.shouldMarkViewOnceOpened(message));
     this.activeMediaPreview = null;
     this.activeMediaFile = null;
     this.activeMediaMessage = null;
     this.activeMediaZoom = 1;
+    if (message && shouldMark) {
+      await this.chat.markMessageOpened(message).catch(() => undefined);
+    }
   }
 
   async downloadActiveMedia(): Promise<void> {
@@ -673,9 +694,6 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.pauseAmbientMedia(audio);
       } else {
         this.pauseOtherAudio(audio);
-      }
-      if (this.shouldMarkViewOnceOpened(message)) {
-        await this.chat.markMessageOpened(message);
       }
       await audio.play().catch(() => undefined);
       this.markAudioPlaying(message, audio);
@@ -730,6 +748,18 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         playing: false,
       },
     };
+    if (this.shouldMarkViewOnceOpened(message)) {
+      void this.chat.markMessageOpened(message).catch(() => undefined);
+    }
+  }
+
+  markActiveAudioStarted(): void {
+    this.activeAudioStarted = true;
+  }
+
+  activeAudioEnded(): void {
+    this.activeAudioStarted = true;
+    void this.closeAudioPreview();
   }
 
   seekAudio(audio: HTMLAudioElement, event: Event): void {
@@ -1278,6 +1308,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
     await this.calls.joinGroupRoom(room);
     await this.router.navigateByUrl('/app/calls');
+  }
+
+  private refreshActiveGroupCallBanner(conversationId: string | null | undefined): void {
+    if (!conversationId) {
+      return;
+    }
+    void this.calls.refreshActiveGroupRoom(conversationId).catch(() => undefined);
   }
 
   async toggleVoiceNote(): Promise<void> {
@@ -1992,6 +2029,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   sharedMediaMessages(): ChatMessageVm[] {
     return this.messages()
       .filter((message) => {
+        if (this.isPendingViewOnce(message)) {
+          return false;
+        }
         const file = this.chat.asFile(message.payload);
         return Boolean(file && (
           this.chat.isImage(file) ||
@@ -2001,6 +2041,40 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         ));
       })
       .reverse();
+  }
+
+  async openViewOnce(message: ChatMessageVm): Promise<void> {
+    await this.openMediaItem(message);
+  }
+
+  isPendingViewOnce(message: ChatMessageVm | null | undefined): boolean {
+    return Boolean(message?.deleteAfterRead && !this.chat.isViewOnceOpened(message));
+  }
+
+  viewOnceMediaIcon(file: FileChatPayload): string {
+    if (this.chat.isImage(file)) {
+      return 'image-outline';
+    }
+    if (this.chat.isVideo(file)) {
+      return 'videocam-outline';
+    }
+    if (this.chat.isAudio(file) || file.voiceNote) {
+      return file.voiceNote ? 'mic-outline' : 'volume-high-outline';
+    }
+    return 'document-attach-outline';
+  }
+
+  viewOnceMediaLabel(file: FileChatPayload): string {
+    if (this.chat.isImage(file)) {
+      return this.tr('CHAT.VIEW_ONCE_PHOTO', 'Foto');
+    }
+    if (this.chat.isVideo(file)) {
+      return this.tr('CHAT.VIEW_ONCE_VIDEO', 'Video');
+    }
+    if (this.chat.isAudio(file) || file.voiceNote) {
+      return this.tr('CHAT.VIEW_ONCE_AUDIO', 'Audio');
+    }
+    return this.tr('CHAT.VIEW_ONCE_FILE', 'Archivo');
   }
 
   onComposerEnter(event: Event): void {
