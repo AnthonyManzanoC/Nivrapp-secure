@@ -251,6 +251,62 @@ public sealed class NivraHub(
             .Where(ids.Contains)
             .Take(500)
             .ToList();
+        var now = timeProvider.GetUtcNow();
+
+        if (openedIds.Count > 0)
+        {
+            var openedMessages = await db.Messages
+                .Include(message => message.Receipts)
+                .Where(message =>
+                    message.ConversationId == conversationId &&
+                    openedIds.Contains(message.Id) &&
+                    message.DeleteAfterRead)
+                .ToListAsync(Context.ConnectionAborted);
+            var persistedOpenedIds = new List<string>();
+
+            foreach (var message in openedMessages)
+            {
+                var ownReceipts = message.Receipts
+                    .Where(receipt => receipt.UserId == currentUser.UserId)
+                    .ToList();
+                if (ownReceipts.Count == 0)
+                {
+                    continue;
+                }
+
+                foreach (var receipt in ownReceipts)
+                {
+                    receipt.DeliveredAt ??= now;
+                    receipt.ReadAt ??= now;
+                    receipt.DeletedAt ??= now;
+                }
+                persistedOpenedIds.Add(message.Id);
+            }
+
+            if (persistedOpenedIds.Count > 0)
+            {
+                await db.SaveChangesAsync(Context.ConnectionAborted);
+                openedIds = persistedOpenedIds;
+                ids = ids
+                    .Concat(openedIds)
+                    .Distinct(StringComparer.Ordinal)
+                    .Take(500)
+                    .ToList();
+
+                foreach (var message in openedMessages.Where(message => openedIds.Contains(message.Id)))
+                {
+                    await Clients.Group(GroupsFor.User(message.SenderUserId)).SendAsync("message.receipt", new
+                    {
+                        messageId = message.Id,
+                        userId = currentUser.UserId,
+                        deviceId = currentUser.DeviceId,
+                        kind = ReceiptKind.Read,
+                        opened = true,
+                        at = now
+                    }, Context.ConnectionAborted);
+                }
+            }
+        }
 
         await Clients.Group(GroupsFor.User(currentUser.UserId)).SendAsync("sync_read_receipts", new
         {
@@ -259,7 +315,7 @@ public sealed class NivraHub(
             openedMessageIds = openedIds,
             userId = currentUser.UserId,
             sourceDeviceId = currentUser.DeviceId,
-            at = timeProvider.GetUtcNow()
+            at = now
         }, Context.ConnectionAborted);
     }
 

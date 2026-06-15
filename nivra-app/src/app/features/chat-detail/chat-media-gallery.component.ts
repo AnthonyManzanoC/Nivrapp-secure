@@ -98,7 +98,9 @@ export class ChatMediaGalleryComponent implements OnDestroy {
     this.error = '';
     try {
       const preview = await this.chat.ensureMediaPreview(message.payload);
-      await this.chat.markMessageOpened(message);
+      if (this.shouldMarkViewOnceOpened(message)) {
+        await this.chat.markMessageOpened(message);
+      }
       if (!preview) {
         this.error = this.tr('CHAT_MEDIA.DECRYPT_ERROR', 'No se pudo descifrar este archivo en este dispositivo.');
         return;
@@ -143,7 +145,9 @@ export class ChatMediaGalleryComponent implements OnDestroy {
     this.error = '';
     try {
       await this.chat.downloadAttachment(this.viewerMessage.payload);
-      await this.chat.markMessageOpened(this.viewerMessage);
+      if (this.shouldMarkViewOnceOpened(this.viewerMessage)) {
+        await this.chat.markMessageOpened(this.viewerMessage);
+      }
     } catch (error) {
       this.error = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_ATTACHMENT', 'No se pudo abrir el adjunto.');
     } finally {
@@ -167,6 +171,10 @@ export class ChatMediaGalleryComponent implements OnDestroy {
   private messageTime(message: ChatMessageVm): number {
     const value = Date.parse(message.at);
     return Number.isFinite(value) ? value : 0;
+  }
+
+  private shouldMarkViewOnceOpened(message: ChatMessageVm): boolean {
+    return Boolean(message.deleteAfterRead && !message.mine && !this.chat.isViewOnceOpened(message));
   }
 
   private tr(key: string, fallback: string): string {

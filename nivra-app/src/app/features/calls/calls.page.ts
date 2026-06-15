@@ -463,8 +463,16 @@ export class CallsPage {
     return this.isLocalParticipant(userId) || !this.calls.speaker();
   }
 
+  audioMuted(userId: string | null | undefined): boolean {
+    return this.isLocalParticipant(userId) || !this.calls.speaker();
+  }
+
   hasVideoTrack(stream: MediaStream | null | undefined): boolean {
     return Boolean(stream?.getVideoTracks().length);
+  }
+
+  hasAudioTrack(stream: MediaStream | null | undefined): boolean {
+    return Boolean(stream?.getAudioTracks().length);
   }
 
   private resetIdleUi(clearSearch: boolean): void {

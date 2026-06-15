@@ -1582,6 +1582,13 @@ export class ChatService implements OnDestroy {
       vm = this.withLocalReadReceipt(vm, current.user.id, current.device.id, message.serverReceivedAt);
       this.readReceiptSentIds.add(vm.id);
     }
+    const openedByRecipient = this.viewOnceOpenedReceipt(message, current.user.id);
+    if (openedByRecipient && !this.isViewOnceOpened(vm)) {
+      vm = this.viewOnceTombstone(vm, openedByRecipient.deletedAt!, {
+        deletedByUserId: openedByRecipient.userId,
+        deviceId: openedByRecipient.deviceId,
+      });
+    }
     if (payload.type === 'reaction') {
       this.applyReactionPayload(payload, message.conversationId, message.id, message.serverReceivedAt);
       this.persistExistingMessage(this.stringPayload(payload, 'targetMessageId'));
@@ -1810,7 +1817,7 @@ export class ChatService implements OnDestroy {
   }
 
   async markMessageOpened(message: ChatMessageVm | null | undefined): Promise<void> {
-    if (!message?.deleteAfterRead) {
+    if (!message?.deleteAfterRead || message.mine) {
       return;
     }
     const current = this.auth.session();
@@ -1818,19 +1825,21 @@ export class ChatService implements OnDestroy {
       return;
     }
     const openedAt = new Date().toISOString();
-    this.applyViewOnceTombstones(message.conversationId, [message.id], openedAt, {
-      includeMine: true,
-      deletedByUserId: current.user.id,
-      deviceId: current.device.id,
-    });
-    if (message.mine) {
-      return;
-    }
     this.readReceiptSentIds.add(message.id);
-    await this.signalr.syncReadReceipts(message.conversationId, [message.id], {
-      openedMessageIds: [message.id],
-    }).catch(() => undefined);
-    await this.sendReceipt(message.id, 'Read', { opened: true }).catch(() => this.readReceiptSentIds.delete(message.id));
+    try {
+      await this.sendReceipt(message.id, 'Read', { opened: true });
+      await this.signalr.syncReadReceipts(message.conversationId, [message.id], {
+        openedMessageIds: [message.id],
+      }).catch(() => undefined);
+      this.applyViewOnceTombstones(message.conversationId, [message.id], openedAt, {
+        includeMine: true,
+        deletedByUserId: current.user.id,
+        deviceId: current.device.id,
+      });
+    } catch (error) {
+      this.readReceiptSentIds.delete(message.id);
+      throw error;
+    }
   }
 
   private shouldOpenViewOnceOnRead(message: ChatMessageVm): boolean {
@@ -1838,6 +1847,15 @@ export class ChatService implements OnDestroy {
       return false;
     }
     return message.payload.type !== 'system' && message.payload.type !== 'call-log';
+  }
+
+  private viewOnceOpenedReceipt(message: MessageResponse, currentUserId: string): DeliveryReceipt | null {
+    if (!message.deleteAfterRead || message.senderUserId !== currentUserId) {
+      return null;
+    }
+    return (message.receipts ?? [])
+      .filter((receipt) => receipt.userId !== currentUserId && Boolean(receipt.deletedAt))
+      .sort((left, right) => Date.parse(left.deletedAt || '') - Date.parse(right.deletedAt || ''))[0] ?? null;
   }
 
   fileName(payload: FileChatPayload): string {

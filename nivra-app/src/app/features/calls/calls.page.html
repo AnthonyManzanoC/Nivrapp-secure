@@ -33,9 +33,12 @@
                     <div class="video-composition pinned-layout">
                       <button type="button" class="remote-tile main-video pinned-main" (click)="clearPinnedVideo()" [attr.aria-label]="'CALLS.UNPIN_VIDEO' | translate:'Quitar video principal'">
                         @if (hasVideoTrack(pinnedTile.stream)) {
-                          <video [appMediaStream]="pinnedTile.stream" [muted]="videoMuted(pinnedTile.id)" autoplay playsinline></video>
+                          <video [appMediaStream]="pinnedTile.stream" muted autoplay playsinline></video>
+                          @if (hasAudioTrack(pinnedTile.stream)) {
+                            <audio class="screen-audio-track" [appMediaStream]="pinnedTile.stream" [muted]="audioMuted(pinnedTile.id)" autoplay></audio>
+                          }
                         } @else {
-                          <audio [appMediaStream]="pinnedTile.stream" [muted]="videoMuted(pinnedTile.id)" autoplay></audio>
+                          <audio [appMediaStream]="pinnedTile.stream" [muted]="audioMuted(pinnedTile.id)" autoplay></audio>
                           <div class="video-audio-fallback">
                             @if (videoParticipantPhoto(pinnedTile.id)) {
                               <img [src]="videoParticipantPhoto(pinnedTile.id)" alt="">
@@ -52,7 +55,10 @@
                           @for (tile of galleryVideoTiles(); track tile.id) {
                             <button type="button" (click)="selectVideoTile(tile)" [attr.aria-label]="('CALLS.PIN_VIDEO' | translate:'Fijar video') + ' ' + videoTileLabel(tile)">
                               @if (hasVideoTrack(tile.stream)) {
-                                <video [appMediaStream]="tile.stream" [muted]="videoMuted(tile.id)" autoplay playsinline></video>
+                                <video [appMediaStream]="tile.stream" muted autoplay playsinline></video>
+                                @if (hasAudioTrack(tile.stream)) {
+                                  <audio class="screen-audio-track" [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay></audio>
+                                }
                               } @else if (videoParticipantPhoto(tile.id)) {
                                 <img [src]="videoParticipantPhoto(tile.id)" [alt]="videoTileLabel(tile)">
                               } @else {
@@ -74,9 +80,12 @@
                       @for (tile of galleryVideoTiles(); track tile.id) {
                         <button type="button" class="remote-tile gallery-tile" (click)="selectVideoTile(tile)" [attr.aria-label]="('CALLS.PIN_VIDEO' | translate:'Fijar video') + ' ' + videoTileLabel(tile)">
                           @if (hasVideoTrack(tile.stream)) {
-                            <video [appMediaStream]="tile.stream" [muted]="videoMuted(tile.id)" autoplay playsinline></video>
+                            <video [appMediaStream]="tile.stream" muted autoplay playsinline></video>
+                            @if (hasAudioTrack(tile.stream)) {
+                              <audio class="screen-audio-track" [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay></audio>
+                            }
                           } @else {
-                            <audio [appMediaStream]="tile.stream" [muted]="videoMuted(tile.id)" autoplay></audio>
+                            <audio [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay></audio>
                             <div class="video-audio-fallback">
                               @if (videoParticipantPhoto(tile.id)) {
                                 <img [src]="videoParticipantPhoto(tile.id)" alt="">

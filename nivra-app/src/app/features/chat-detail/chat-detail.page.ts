@@ -604,7 +604,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.attachmentError = '';
     try {
       const preview = await this.chat.ensureMediaPreview(message.payload);
-      await this.chat.markMessageOpened(message);
+      if (this.shouldMarkViewOnceOpened(message)) {
+        await this.chat.markMessageOpened(message);
+      }
       if (preview) {
         this.activeMediaPreview = preview;
         this.activeMediaFile = file;
@@ -2506,8 +2508,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!message.deleteAfterRead || this.chat.isViewOnceOpened(message)) {
       return false;
     }
-    const file = this.chat.asFile(message.payload);
-    if (message.mine && file && (this.chat.isAudio(file) || file.voiceNote)) {
+    if (message.mine) {
       return false;
     }
     return true;

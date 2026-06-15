@@ -411,6 +411,15 @@
   background: #030607;
 }
 
+.remote-tile audio.screen-audio-track,
+.video-thumb-strip audio.screen-audio-track {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
 .remote-tile span {
   position: absolute;
   z-index: 2;

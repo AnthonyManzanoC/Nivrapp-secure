@@ -4,6 +4,18 @@ export const E2EE_UPLOAD_LIMIT_BYTES = 256 * 1024 * 1024;
 
 const IMAGE_MAX_EDGE = 1280;
 const IMAGE_QUALITY = 0.8;
+const VIDEO_TRANSCODE_TRIGGER_BYTES = 24 * 1024 * 1024;
+const VIDEO_TARGET_BYTES = 14 * 1024 * 1024;
+const VIDEO_MAX_EDGE = 960;
+const VIDEO_FRAME_RATE = 24;
+const VIDEO_MIN_BITS_PER_SECOND = 280_000;
+const VIDEO_MAX_BITS_PER_SECOND = 900_000;
+const VIDEO_AUDIO_BITS_PER_SECOND = 64_000;
+const VIDEO_MIME_CANDIDATES = [
+  'video/webm;codecs=vp9,opus',
+  'video/webm;codecs=vp8,opus',
+  'video/webm',
+];
 
 export type EncryptedUploadMode = 'media' | 'document';
 
@@ -30,8 +42,9 @@ export class MediaOptimizerService {
     }
 
     if (this.isVideo(file)) {
-      this.assertWithinLimit(file, maxBytes);
-      return this.asPrepared(file, file, false);
+      const optimized = await this.compressVideo(file).catch(() => file);
+      this.assertWithinLimit(optimized, maxBytes);
+      return this.asPrepared(optimized, file, optimized !== file);
     }
 
     if (!this.isCompressibleImage(file)) {
@@ -58,8 +71,8 @@ export class MediaOptimizerService {
   videoRecorderOptions(mimeType = ''): MediaRecorderOptions {
     return {
       ...(mimeType ? { mimeType } : {}),
-      audioBitsPerSecond: 96_000,
-      videoBitsPerSecond: 900_000,
+      audioBitsPerSecond: VIDEO_AUDIO_BITS_PER_SECOND,
+      videoBitsPerSecond: VIDEO_MAX_BITS_PER_SECOND,
     };
   }
 
@@ -82,6 +95,110 @@ export class MediaOptimizerService {
       type: blob.type || 'image/jpeg',
       lastModified: Date.now(),
     });
+  }
+
+  private async compressVideo(file: File): Promise<File> {
+    if (file.size <= VIDEO_TRANSCODE_TRIGGER_BYTES || !this.canTranscodeVideo()) {
+      return file;
+    }
+
+    const url = URL.createObjectURL(file);
+    const video = document.createElement('video');
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+    video.src = url;
+
+    let animationFrame = 0;
+    let drawing = false;
+    let sourceStream: MediaStream | null = null;
+    let canvasStream: MediaStream | null = null;
+    let outputStream: MediaStream | null = null;
+
+    try {
+      await this.waitForVideoMetadata(video);
+      const { width, height } = this.fitWithin(video.videoWidth, video.videoHeight, VIDEO_MAX_EDGE);
+      if (!width || !height) {
+        return file;
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const context = canvas.getContext('2d', { alpha: false });
+      if (!context) {
+        return file;
+      }
+
+      canvasStream = canvas.captureStream(VIDEO_FRAME_RATE);
+      sourceStream = this.captureVideoElementStream(video);
+      outputStream = new MediaStream([
+        ...canvasStream.getVideoTracks(),
+        ...(sourceStream?.getAudioTracks() ?? []),
+      ]);
+
+      const mimeType = this.bestVideoMimeType();
+      const recorder = new MediaRecorder(outputStream, {
+        ...(mimeType ? { mimeType } : {}),
+        audioBitsPerSecond: VIDEO_AUDIO_BITS_PER_SECOND,
+        videoBitsPerSecond: this.videoBitsPerSecond(video.duration),
+      });
+      const chunks: Blob[] = [];
+      const recorded = new Promise<Blob>((resolve, reject) => {
+        recorder.ondataavailable = (event) => {
+          if (event.data?.size) {
+            chunks.push(event.data);
+          }
+        };
+        recorder.onerror = (event) => {
+          reject((event as Event & { error?: Error }).error ?? new Error('No se pudo optimizar el video.'));
+        };
+        recorder.onstop = () => {
+          resolve(new Blob(chunks, { type: mimeType || chunks[0]?.type || 'video/webm' }));
+        };
+      });
+
+      const draw = () => {
+        if (!drawing) {
+          return;
+        }
+        context.drawImage(video, 0, 0, width, height);
+        animationFrame = requestAnimationFrame(draw);
+      };
+
+      video.currentTime = 0;
+      recorder.start(1000);
+      drawing = true;
+      draw();
+      await video.play();
+      await this.waitForVideoEnded(video);
+      drawing = false;
+      if (recorder.state !== 'inactive') {
+        recorder.stop();
+      }
+
+      const blob = await recorded;
+      if (!blob.size || blob.size >= file.size) {
+        return file;
+      }
+
+      return new File([blob], this.optimizedFileName(file.name, blob.type), {
+        type: blob.type || 'video/webm',
+        lastModified: Date.now(),
+      });
+    } finally {
+      drawing = false;
+      if (animationFrame) {
+        cancelAnimationFrame(animationFrame);
+      }
+      video.pause();
+      URL.revokeObjectURL(url);
+      sourceStream?.getTracks().forEach((track) => track.stop());
+      canvasStream?.getTracks().forEach((track) => track.stop());
+      outputStream?.getTracks().forEach((track) => track.stop());
+      video.removeAttribute('src');
+      video.load();
+    }
   }
 
   private loadImage(file: File): Promise<HTMLImageElement> {
@@ -123,12 +240,12 @@ export class MediaOptimizerService {
     });
   }
 
-  private fitWithin(width: number, height: number): { width: number; height: number } {
+  private fitWithin(width: number, height: number, maxEdge = IMAGE_MAX_EDGE): { width: number; height: number } {
     const maxSide = Math.max(width, height);
     if (!Number.isFinite(maxSide) || maxSide <= 0) {
       return { width: 0, height: 0 };
     }
-    const scale = Math.min(1, IMAGE_MAX_EDGE / maxSide);
+    const scale = Math.min(1, maxEdge / maxSide);
     return {
       width: Math.max(1, Math.round(width * scale)),
       height: Math.max(1, Math.round(height * scale)),
@@ -136,9 +253,60 @@ export class MediaOptimizerService {
   }
 
   private optimizedFileName(name: string, mime: string): string {
-    const base = (name || 'nivra-image').replace(/\.[^.]+$/, '') || 'nivra-image';
-    const extension = mime === 'image/webp' ? 'webp' : 'jpg';
+    const base = (name || 'nivra-media').replace(/\.[^.]+$/, '') || 'nivra-media';
+    const extension = mime.startsWith('video/')
+      ? (mime.includes('mp4') ? 'mp4' : 'webm')
+      : mime === 'image/webp' ? 'webp' : 'jpg';
     return `${base}.${extension}`;
+  }
+
+  private waitForVideoMetadata(video: HTMLVideoElement): Promise<void> {
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA && video.videoWidth && video.videoHeight) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      video.onloadedmetadata = () => resolve();
+      video.onerror = () => reject(new Error('No se pudo leer el video.'));
+      video.load();
+    });
+  }
+
+  private waitForVideoEnded(video: HTMLVideoElement): Promise<void> {
+    if (video.ended) {
+      return Promise.resolve();
+    }
+    return new Promise((resolve, reject) => {
+      video.onended = () => resolve();
+      video.onerror = () => reject(new Error('No se pudo optimizar el video.'));
+    });
+  }
+
+  private captureVideoElementStream(video: HTMLVideoElement): MediaStream | null {
+    const source = video as HTMLVideoElement & {
+      captureStream?: () => MediaStream;
+      mozCaptureStream?: () => MediaStream;
+    };
+    return source.captureStream?.() ?? source.mozCaptureStream?.() ?? null;
+  }
+
+  private bestVideoMimeType(): string {
+    return VIDEO_MIME_CANDIDATES.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? '';
+  }
+
+  private canTranscodeVideo(): boolean {
+    return typeof document !== 'undefined' &&
+      typeof MediaRecorder !== 'undefined' &&
+      typeof HTMLCanvasElement !== 'undefined' &&
+      typeof HTMLCanvasElement.prototype.captureStream === 'function';
+  }
+
+  private videoBitsPerSecond(durationSeconds: number): number {
+    if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
+      return VIDEO_MAX_BITS_PER_SECOND;
+    }
+    const targetBits = (VIDEO_TARGET_BYTES * 8) / Math.max(1, durationSeconds);
+    const budget = Math.round(targetBits - VIDEO_AUDIO_BITS_PER_SECOND);
+    return Math.max(VIDEO_MIN_BITS_PER_SECOND, Math.min(VIDEO_MAX_BITS_PER_SECOND, budget));
   }
 
   private isCompressibleImage(file: File): boolean {
