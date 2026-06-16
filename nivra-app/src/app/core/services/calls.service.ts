@@ -1,6 +1,7 @@
 import { DestroyRef, Injectable, NgZone, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
+import { Capacitor } from '@capacitor/core';
 import { Room, RoomEvent, type AudioCaptureOptions } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
@@ -338,9 +339,9 @@ export class CallsService implements OnDestroy {
     this.speaker.update((value) => !value);
   }
 
-  canShareScreen(): boolean {
+  canOfferScreenShare(): boolean {
     const call = this.activeCall();
-    if (!call || call.type !== 'Video' || !['connecting', 'connected'].includes(this.phase())) {
+    if (!call || call.type !== 'Video' || this.isNativePlatform()) {
       return false;
     }
     if (this.isGroupCall(call)) {
@@ -348,6 +349,14 @@ export class CallsService implements OnDestroy {
       return typeof participant?.setScreenShareEnabled === 'function' || Boolean(this.displayMediaApi());
     }
     return Boolean(this.displayMediaApi());
+  }
+
+  canShareScreen(): boolean {
+    const call = this.activeCall();
+    if (!call || call.type !== 'Video' || !['connecting', 'connected'].includes(this.phase())) {
+      return false;
+    }
+    return this.canOfferScreenShare();
   }
 
   async toggleScreenShare(): Promise<void> {
@@ -416,6 +425,9 @@ export class CallsService implements OnDestroy {
       return;
     }
     this.error.set('');
+    if (this.isNativePlatform()) {
+      return;
+    }
 
     if (this.isGroupCall(call) && this.liveKitRoom) {
       const participant = this.liveKitRoom.localParticipant as unknown as {
@@ -437,7 +449,6 @@ export class CallsService implements OnDestroy {
 
     const getDisplayMedia = this.displayMediaApi();
     if (!getDisplayMedia) {
-      this.error.set('Compartir pantalla esta disponible desde Web o PC.');
       return;
     }
 
@@ -458,7 +469,7 @@ export class CallsService implements OnDestroy {
     this.cameraTrackBeforeScreenShare = this.localStream()?.getVideoTracks()[0] ?? null;
     await this.replaceOutgoingVideoTrack(screenTrack);
     this.addOutgoingScreenAudioTracks(displayStream);
-    this.publishLocalScreenTrack(screenTrack, displayStream.getAudioTracks());
+    this.publishLocalScreenTrack(screenTrack);
     screenTrack.onended = () => void this.stopScreenShare();
     this.screenSharing.set(true);
     this.broadcastControl('screen', 'on');
@@ -498,6 +509,9 @@ export class CallsService implements OnDestroy {
   }
 
   private displayMediaApi(): ((constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>) | null {
+    if (typeof navigator === 'undefined' || this.isNativePlatform()) {
+      return null;
+    }
     const devices = navigator.mediaDevices as MediaDevices & {
       getDisplayMedia?: (constraints?: DisplayMediaStreamOptions) => Promise<MediaStream>;
     };
@@ -549,10 +563,10 @@ export class CallsService implements OnDestroy {
     this.screenShareAudioTrackIds.clear();
   }
 
-  private publishLocalScreenTrack(screenTrack: MediaStreamTrack, screenAudioTracks: MediaStreamTrack[] = []): void {
+  private publishLocalScreenTrack(screenTrack: MediaStreamTrack): void {
     const current = this.localStream();
-    const audioTracks = current?.getAudioTracks() ?? [];
-    const tracks = [...audioTracks, ...screenAudioTracks, screenTrack];
+    const audioTracks = (current?.getAudioTracks() ?? []).filter((track) => !this.screenShareAudioTrackIds.has(track.id));
+    const tracks = [...audioTracks, screenTrack];
     this.localStream.set(new MediaStream(tracks.filter((track, index) => tracks.findIndex((item) => item.id === track.id) === index)));
   }
 
@@ -758,9 +772,10 @@ export class CallsService implements OnDestroy {
 
   private syncLiveKitLocalTracks(): void {
     const localParticipant = this.liveKitRoom?.localParticipant as unknown as {
-      trackPublications?: Map<string, { track?: { mediaStreamTrack?: MediaStreamTrack } | null }>;
+      trackPublications?: Map<string, { source?: unknown; track?: { mediaStreamTrack?: MediaStreamTrack; source?: unknown } | null }>;
     } | undefined;
     const tracks = [...(localParticipant?.trackPublications?.values() ?? [])]
+      .filter((publication) => !this.isLiveKitScreenShareAudio(publication.track, publication))
       .map((publication) => publication.track?.mediaStreamTrack)
       .filter((track): track is MediaStreamTrack => Boolean(track));
     this.localStream.set(tracks.length ? new MediaStream(tracks) : null);
@@ -1135,9 +1150,14 @@ export class CallsService implements OnDestroy {
       }
     };
     connection.ontrack = (event) => {
-      const stream = event.streams?.[0] || this.remoteStreams()[userId] || new MediaStream();
-      if (!event.streams?.[0] && event.track) {
-        stream.addTrack(event.track);
+      const stream = this.pendingRemoteStreams.get(userId) || this.remoteStreams()[userId] || new MediaStream();
+      const incomingTracks = event.streams?.length
+        ? event.streams.flatMap((incoming) => incoming.getTracks())
+        : [event.track].filter((track): track is MediaStreamTrack => Boolean(track));
+      for (const track of incomingTracks) {
+        if (!stream.getTracks().some((item) => item.id === track.id)) {
+          stream.addTrack(track);
+        }
       }
       this.pendingRemoteStreams.set(userId, stream);
       this.publishRemoteStreamIfConnected(userId, connection);
@@ -1512,6 +1532,7 @@ export class CallsService implements OnDestroy {
     this.screenSharing.set(false);
     this.activeScreenShareStreamId.set(null);
     this.speaker.set(true);
+    this.error.set('');
     if (!this.auth.session()?.user.id) {
       this.activeGroupRooms.set({});
     }
@@ -1584,6 +1605,10 @@ export class CallsService implements OnDestroy {
       stream.getTracks().forEach((track) => track.stop());
     }
     this.pendingRemoteStreams.clear();
+  }
+
+  private isNativePlatform(): boolean {
+    return Capacitor.isNativePlatform?.() === true;
   }
 
   private otherParticipantIds(call: CallSession): string[] {

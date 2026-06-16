@@ -252,9 +252,19 @@ ion-item-option {
 }
 
 .avatar-action.has-story {
-  border-color: #10b981;
+  border-color: #8696a0;
   padding: 2px;
+  box-shadow: 0 0 0 3px rgba(134, 150, 160, .12);
+}
+
+.avatar-action.story-unviewed {
+  border-color: #10b981;
   box-shadow: 0 0 0 3px rgba(16, 185, 129, .14);
+}
+
+.avatar-action.story-viewed {
+  border-color: #8696a0;
+  box-shadow: 0 0 0 3px rgba(134, 150, 160, .14);
 }
 
 .avatar-action.has-story .avatar {
@@ -653,18 +663,59 @@ ion-modal.story-viewer-modal {
   --width: 100vw;
   --height: 100dvh;
   --border-radius: 0;
-  --background: #030607;
+  --background: rgba(2, 6, 8, .66);
+  --box-shadow: none;
+}
+
+ion-modal.story-viewer-modal::part(content) {
+  display: grid;
+  place-items: center;
+  background: rgba(2, 6, 8, .66);
+  backdrop-filter: blur(10px);
 }
 
 .story-viewer {
-  width: 100%;
-  height: 100dvh;
+  width: auto;
+  height: min(90vh, 888px);
+  max-width: 500px;
+  max-height: 90vh;
+  aspect-ratio: 9 / 16;
+  height: auto;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 8px;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  overflow: hidden;
   color: var(--nivra-soft);
   background:
-    radial-gradient(circle at 50% 12%, rgba(24, 214, 162, .16), transparent 34%),
     #030607;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, .56);
+}
+
+.story-progress {
+  position: relative;
+  z-index: 4;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(22px, 1fr));
+  gap: 5px;
+  padding: calc(10px + env(safe-area-inset-top)) 12px 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .82), rgba(0, 0, 0, .38));
+}
+
+.story-progress span {
+  height: 3px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, .24);
+}
+
+.story-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--nivra-brand), var(--nivra-amber));
+  transition: width .08s linear;
 }
 
 .story-viewer header {
@@ -710,17 +761,23 @@ ion-modal.story-viewer-modal {
 
 .story-viewer-body {
   min-height: 0;
+  position: relative;
   display: grid;
   place-items: center;
   overflow: hidden;
-  padding: 8px 14px;
+  padding: 0;
+  background: #000;
 }
 
 .story-viewer-body img,
 .story-viewer-body video {
-  max-width: 100%;
-  max-height: 100%;
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  display: block;
   object-fit: contain;
+  background: #000;
 }
 
 .story-viewer-body audio {
@@ -730,11 +787,32 @@ ion-modal.story-viewer-modal {
 .story-viewer-body p {
   max-width: min(720px, 86vw);
   margin: 0;
+  padding: 18px;
   color: #fff;
   font-size: clamp(26px, 7vw, 54px);
   line-height: 1.08;
   text-align: center;
   overflow-wrap: anywhere;
+}
+
+.tap-zone {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.tap-left {
+  left: 0;
+  width: 30%;
+}
+
+.tap-right {
+  right: 0;
+  width: 70%;
 }
 
 .story-loading {
@@ -781,6 +859,22 @@ ion-modal.story-viewer-modal {
     --width: 100vw;
     --height: 100dvh;
     --border-radius: 0;
+  }
+
+  ion-modal.story-viewer-modal::part(content) {
+    display: block;
+    background: #030607;
+    backdrop-filter: none;
+  }
+
+  .story-viewer {
+    width: 100vw;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    aspect-ratio: auto;
+    border: 0;
+    border-radius: 0;
   }
 
   .group-builder {

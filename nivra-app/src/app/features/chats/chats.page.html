@@ -126,6 +126,8 @@
                     role="button"
                     tabindex="0"
                     [class.has-story]="conversationHasStory(conversation)"
+                    [class.story-unviewed]="conversationHasUnviewedStory(conversation)"
+                    [class.story-viewed]="conversationHasStory(conversation) && !conversationHasUnviewedStory(conversation)"
                     (click)="abrirHistoria(conversation, $event)"
                     (keydown.enter)="abrirHistoria(conversation, $event)"
                     (keydown.space)="abrirHistoria(conversation, $event)"
@@ -250,27 +252,48 @@
     </ng-template>
   </ion-modal>
 
-  <ion-modal class="story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="social.closeStory()">
+  <ion-modal class="story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="closeStoryViewer()">
     <ng-template>
       @if (social.activeStory(); as story) {
         @if (social.storyPayload(story); as payload) {
           <section class="story-viewer">
+            <div class="story-progress">
+              @for (item of storyViewerQueue; track item.id; let index = $index) {
+                <span><i [style.width.%]="storyProgressFor(index)"></i></span>
+              }
+            </div>
             <header>
               <div>
                 <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
                 <span>{{ story.expiresAt | date:'shortTime' }}</span>
               </div>
-              <button type="button" (click)="social.closeStory()" [attr.aria-label]="'STORY.CLOSE' | translate:'Cerrar historia'">
+              <button type="button" (click)="closeStoryViewer()" [attr.aria-label]="'STORY.CLOSE' | translate:'Cerrar historia'">
                 <ion-icon name="close-outline"></ion-icon>
               </button>
             </header>
             <div class="story-viewer-body">
+              <button
+                type="button"
+                class="tap-zone tap-left"
+                (pointerdown)="onStoryPointerDown()"
+                (pointerup)="onStoryPointerUp('left')"
+                (pointercancel)="onStoryPointerCancel()"
+                [attr.aria-label]="'WORLD.PREV_STORY' | translate:'Historia anterior'">
+              </button>
+              <button
+                type="button"
+                class="tap-zone tap-right"
+                (pointerdown)="onStoryPointerDown()"
+                (pointerup)="onStoryPointerUp('right')"
+                (pointercancel)="onStoryPointerCancel()"
+                [attr.aria-label]="'WORLD.NEXT_STORY' | translate:'Historia siguiente'">
+              </button>
               @if (payload.media; as mediaPayload) {
                 @if (social.storyMedia(story); as media) {
                   @if (social.isImage(media.mime)) {
                     <img [src]="media.url" [alt]="media.name">
                   } @else if (social.isVideo(media.mime)) {
-                    <video [src]="media.url" controls playsinline autoplay></video>
+                    <video [src]="media.url" playsinline autoplay (loadedmetadata)="syncStoryMediaDuration($event)" (ended)="storyMediaEnded()"></video>
                   } @else {
                     <audio [src]="media.url" controls autoplay playsinline></audio>
                   }

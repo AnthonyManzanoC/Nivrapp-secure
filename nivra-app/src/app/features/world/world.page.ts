@@ -87,7 +87,8 @@ export class WorldPage implements OnInit, OnDestroy {
   storyProgress = 0;
   viewerUiHidden = false;
   readonly storyReactionOptions = ['\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}', '\u{1F525}'];
-  private readonly storyDurationMs = 6500;
+  private readonly defaultStoryDurationMs = 5000;
+  private currentStoryDurationMs = this.defaultStoryDurationMs;
   private timer: number | null = null;
   private progressTimer: number | null = null;
   private progressStartedAt = 0;
@@ -373,6 +374,18 @@ export class WorldPage implements OnInit, OnDestroy {
   closeStats(): void {
     this.statsOpen = false;
     this.resumeStoryProgress();
+  }
+
+  syncStoryMediaDuration(event: Event): void {
+    const video = event.target as HTMLVideoElement | null;
+    const duration = Number(video?.duration);
+    if (Number.isFinite(duration) && duration > 0) {
+      this.currentStoryDurationMs = Math.max(this.defaultStoryDurationMs, Math.ceil(duration * 1000));
+    }
+  }
+
+  storyMediaEnded(): void {
+    void this.nextStory();
   }
 
   async reactToStory(story: Story, emoji: string): Promise<void> {
@@ -666,6 +679,7 @@ export class WorldPage implements OnInit, OnDestroy {
     this.storyProgress = 0;
     this.progressElapsed = 0;
     this.storyPaused = false;
+    this.currentStoryDurationMs = this.defaultStoryDurationMs;
     this.progressStartedAt = Date.now();
     this.progressTimer = window.setInterval(() => this.tickStoryProgress(), 80);
   }
@@ -701,7 +715,7 @@ export class WorldPage implements OnInit, OnDestroy {
       return;
     }
     const elapsed = this.progressElapsed + Date.now() - this.progressStartedAt;
-    this.storyProgress = Math.min(100, (elapsed / this.storyDurationMs) * 100);
+    this.storyProgress = Math.min(100, (elapsed / this.currentStoryDurationMs) * 100);
     if (this.storyProgress >= 100) {
       void this.nextStory();
     }

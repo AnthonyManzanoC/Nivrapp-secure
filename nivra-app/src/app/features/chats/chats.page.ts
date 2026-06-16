@@ -80,9 +80,19 @@ export class ChatsPage implements OnDestroy {
   groupError = '';
   selectedGroupUserIds = new Set<string>();
   selectedFolder: ChatFolderFilter = 'all';
+  storyViewerQueue: Story[] = [];
+  storyViewerIndex = 0;
+  storyViewerProgress = 0;
   private timer: number | null = null;
   private searchSeq = 0;
   private routeSub?: Subscription;
+  private readonly defaultStoryDurationMs = 5000;
+  private storyProgressDurationMs = this.defaultStoryDurationMs;
+  private storyProgressTimer: number | null = null;
+  private storyProgressStartedAt = 0;
+  private storyProgressElapsed = 0;
+  private storyPaused = false;
+  private pointerStartedAt = 0;
 
   constructor() {
     addIcons({
@@ -112,6 +122,7 @@ export class ChatsPage implements OnDestroy {
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
     }
+    this.stopStoryProgress();
     this.routeSub?.unsubscribe();
   }
 
@@ -172,17 +183,90 @@ export class ChatsPage implements OnDestroy {
   }
 
   conversationHasStory(conversation: Conversation): boolean {
-    return Boolean(this.conversationStory(conversation));
+    return this.conversationStories(conversation).length > 0;
+  }
+
+  conversationHasUnviewedStory(conversation: Conversation): boolean {
+    return this.conversationStories(conversation).some((story) => !story.viewedByMe && !this.isMine(story));
   }
 
   async abrirHistoria(conversation: Conversation, event: Event): Promise<void> {
     event.stopPropagation();
-    const story = this.conversationStory(conversation);
-    if (!story) {
+    event.preventDefault();
+    const stories = this.conversationStories(conversation);
+    if (!stories.length) {
       await this.openConversation(conversation.id);
       return;
     }
-    await this.social.viewStory(story);
+    this.storyViewerQueue = stories;
+    const firstUnviewed = stories.findIndex((story) => !story.viewedByMe && !this.isMine(story));
+    this.storyViewerIndex = firstUnviewed >= 0 ? firstUnviewed : 0;
+    await this.openQueuedStory();
+  }
+
+  async previousStory(): Promise<void> {
+    if (this.storyViewerIndex > 0) {
+      this.storyViewerIndex -= 1;
+      await this.openQueuedStory();
+      return;
+    }
+    this.restartStoryProgress();
+  }
+
+  async nextStory(): Promise<void> {
+    if (this.storyViewerIndex < this.storyViewerQueue.length - 1) {
+      this.storyViewerIndex += 1;
+      await this.openQueuedStory();
+      return;
+    }
+    this.closeStoryViewer();
+  }
+
+  closeStoryViewer(): void {
+    this.stopStoryProgress();
+    this.social.closeStory();
+    this.storyViewerQueue = [];
+    this.storyViewerIndex = 0;
+  }
+
+  storyProgressFor(index: number): number {
+    if (index < this.storyViewerIndex) {
+      return 100;
+    }
+    if (index > this.storyViewerIndex) {
+      return 0;
+    }
+    return this.storyViewerProgress;
+  }
+
+  onStoryPointerDown(): void {
+    this.pointerStartedAt = Date.now();
+    this.pauseStoryProgress();
+  }
+
+  onStoryPointerUp(side: 'left' | 'right'): void {
+    const held = Date.now() - this.pointerStartedAt > 420;
+    this.resumeStoryProgress();
+    if (held) {
+      return;
+    }
+    void (side === 'left' ? this.previousStory() : this.nextStory());
+  }
+
+  onStoryPointerCancel(): void {
+    this.resumeStoryProgress();
+  }
+
+  syncStoryMediaDuration(event: Event): void {
+    const video = event.target as HTMLVideoElement | null;
+    const duration = Number(video?.duration);
+    if (Number.isFinite(duration) && duration > 0) {
+      this.storyProgressDurationMs = Math.max(this.defaultStoryDurationMs, Math.ceil(duration * 1000));
+    }
+  }
+
+  storyMediaEnded(): void {
+    void this.nextStory();
   }
 
   onDetailDeactivate(): void {
@@ -349,12 +433,83 @@ export class ChatsPage implements OnDestroy {
     }
   }
 
-  private conversationStory(conversation: Conversation): Story | null {
+  private async openQueuedStory(): Promise<void> {
+    const story = this.storyViewerQueue[this.storyViewerIndex];
+    if (!story) {
+      this.closeStoryViewer();
+      return;
+    }
+    try {
+      await this.social.viewStory(story);
+      const active = this.social.activeStory();
+      if (active) {
+        this.storyViewerQueue = this.storyViewerQueue.map((item) => item.id === active.id ? active : item);
+      }
+      this.restartStoryProgress();
+    } catch {
+      this.closeStoryViewer();
+    }
+  }
+
+  private conversationStories(conversation: Conversation): Story[] {
     const isGroup = String(conversation.type || '').toLowerCase() === 'group';
     const stories = isGroup
       ? this.social.activeStoriesForGroup(conversation.id)
       : this.social.contactStories().filter((story) => story.owner.id === this.directPeerId(conversation));
-    return stories.find((story) => !story.viewedByMe) ?? stories[0] ?? null;
+    return stories
+      .slice()
+      .sort((left, right) => Date.parse(left.createdAt || '') - Date.parse(right.createdAt || ''));
+  }
+
+  private restartStoryProgress(): void {
+    this.stopStoryProgress();
+    this.storyViewerProgress = 0;
+    this.storyProgressElapsed = 0;
+    this.storyPaused = false;
+    this.storyProgressDurationMs = this.defaultStoryDurationMs;
+    this.storyProgressStartedAt = Date.now();
+    this.storyProgressTimer = window.setInterval(() => this.tickStoryProgress(), 80);
+  }
+
+  private pauseStoryProgress(): void {
+    if (this.storyPaused || this.storyProgressTimer === null) {
+      return;
+    }
+    this.storyProgressElapsed += Date.now() - this.storyProgressStartedAt;
+    this.storyPaused = true;
+  }
+
+  private resumeStoryProgress(): void {
+    if (!this.storyPaused || this.storyProgressTimer === null) {
+      return;
+    }
+    this.storyPaused = false;
+    this.storyProgressStartedAt = Date.now();
+  }
+
+  private stopStoryProgress(): void {
+    if (this.storyProgressTimer !== null) {
+      window.clearInterval(this.storyProgressTimer);
+      this.storyProgressTimer = null;
+    }
+    this.storyViewerProgress = 0;
+    this.storyProgressElapsed = 0;
+    this.storyPaused = false;
+  }
+
+  private tickStoryProgress(): void {
+    if (this.storyPaused) {
+      return;
+    }
+    const elapsed = this.storyProgressElapsed + Date.now() - this.storyProgressStartedAt;
+    this.storyViewerProgress = Math.min(100, (elapsed / this.storyProgressDurationMs) * 100);
+    if (this.storyViewerProgress >= 100) {
+      void this.nextStory();
+    }
+  }
+
+  private isMine(story: Story): boolean {
+    return story.owner.id === this.auth.session()?.user.id;
   }
 
   private directPeerId(conversation: Conversation): string | null {

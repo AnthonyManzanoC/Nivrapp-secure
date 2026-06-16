@@ -297,7 +297,7 @@
           @for (bucket of recentStoryBuckets(); track bucket.id) {
             <div class="story-row story-bucket-row unviewed" [class.group-story-row]="bucket.isGroup">
               <button type="button" class="story-open" (click)="openStoryBucket(bucket)">
-                <span class="story-avatar story-ringed">{{ (bucket.title || 'N')[0] }}</span>
+                <span class="story-avatar story-ringed story-ring-unviewed">{{ (bucket.title || 'N')[0] }}</span>
                 <span>
                   <strong>{{ bucket.title }}</strong>
                   <small>{{ bucket.subtitle }} - {{ bucket.unviewedCount }} nueva{{ bucket.unviewedCount === 1 ? '' : 's' }}</small>
@@ -325,7 +325,7 @@
           @for (bucket of viewedStoryBuckets(); track bucket.id) {
             <div class="story-row story-bucket-row viewed" [class.group-story-row]="bucket.isGroup">
               <button type="button" class="story-open" (click)="openStoryBucket(bucket)">
-                <span class="story-avatar">{{ (bucket.title || 'N')[0] }}</span>
+                <span class="story-avatar story-ringed story-ring-viewed">{{ (bucket.title || 'N')[0] }}</span>
                 <span>
                   <strong>{{ bucket.title }}</strong>
                   <small>{{ bucket.subtitle }} - {{ bucket.stories.length }} vista{{ bucket.stories.length === 1 ? '' : 's' }}</small>
@@ -384,7 +384,7 @@
                 @if (social.isImage(media.mime)) {
                   <img [src]="media.url" [alt]="media.name">
                 } @else if (social.isVideo(media.mime)) {
-                  <video [src]="media.url" playsinline autoplay></video>
+                  <video [src]="media.url" playsinline autoplay (loadedmetadata)="syncStoryMediaDuration($event)" (ended)="storyMediaEnded()"></video>
                 } @else {
                   <audio [src]="media.url" controls autoplay></audio>
                 }
@@ -410,8 +410,8 @@
           <footer class="story-action-bar">
             @if (isMine(story)) {
               <button type="button" class="story-stats-trigger" (click)="openStats()">
-                <ion-icon name="bar-chart-outline"></ion-icon>
-                <span>{{ statsViews(story) }} vistas</span>
+                <ion-icon name="eye-outline"></ion-icon>
+                <span>{{ statsViews(story) }} vista{{ statsViews(story) === 1 ? '' : 's' }}</span>
               </button>
             } @else {
               <form class="story-reply" (submit)="$event.preventDefault(); sendStoryReply(story)">

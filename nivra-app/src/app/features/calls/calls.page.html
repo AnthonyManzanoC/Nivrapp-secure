@@ -161,16 +161,18 @@
                   <ion-button mode="ios" fill="clear" [disabled]="!calls.localStream()" (click)="calls.toggleCamera()">
                     <ion-icon [name]="calls.cameraOff() ? 'videocam-off-outline' : 'videocam-outline'"></ion-icon>
                   </ion-button>
-                  <ion-button
-                    mode="ios"
-                    fill="clear"
-                    class="screen-share-button"
-                    [class.active]="calls.screenSharing()"
-                    [disabled]="!calls.canShareScreen()"
-                    (click)="toggleScreenShare()"
-                    [attr.aria-label]="'CALLS.SHARE_SCREEN' | translate:'Compartir pantalla'">
-                    <ion-icon name="desktop-outline"></ion-icon>
-                  </ion-button>
+                  @if (calls.canOfferScreenShare()) {
+                    <ion-button
+                      mode="ios"
+                      fill="clear"
+                      class="screen-share-button"
+                      [class.active]="calls.screenSharing()"
+                      [disabled]="!calls.canShareScreen()"
+                      (click)="toggleScreenShare()"
+                      [attr.aria-label]="'CALLS.SHARE_SCREEN' | translate:'Compartir pantalla'">
+                      <ion-icon name="desktop-outline"></ion-icon>
+                    </ion-button>
+                  }
                 }
                 <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()">
                   <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
