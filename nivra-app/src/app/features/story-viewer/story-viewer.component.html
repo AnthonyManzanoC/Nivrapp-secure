@@ -1,0 +1,112 @@
+<section class="story-viewer" [class.mine]="isMine" [class.ui-hidden]="uiHidden">
+  <div class="story-progress">
+    @for (item of queue; track item.id; let index = $index) {
+      <span><i [style.width.%]="progressFor(index)"></i></span>
+    }
+  </div>
+
+  <header class="story-viewer-top">
+    <div>
+      <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
+      <span>{{ subtitle }}</span>
+    </div>
+    <button type="button" (click)="closeViewer.emit()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+      <ion-icon name="close-outline"></ion-icon>
+    </button>
+  </header>
+
+  <ion-content class="story-media-shell" [scrollY]="false" scroll-y="false">
+    <div class="story-viewer-body">
+      <button
+        type="button"
+        class="tap-zone tap-left"
+        (pointerdown)="pointerDown.emit($event)"
+        (pointerup)="pointerUp.emit({ event: $event, side: 'left' })"
+        (pointercancel)="pointerCancel.emit()"
+        [attr.aria-label]="'WORLD.PREV_STORY' | translate:'Historia anterior'">
+      </button>
+      <button
+        type="button"
+        class="tap-zone tap-right"
+        (pointerdown)="pointerDown.emit($event)"
+        (pointerup)="pointerUp.emit({ event: $event, side: 'right' })"
+        (pointercancel)="pointerCancel.emit()"
+        [attr.aria-label]="'WORLD.NEXT_STORY' | translate:'Historia siguiente'">
+      </button>
+
+      @if (payload.media; as mediaPayload) {
+        @if (social.storyMedia(story); as media) {
+          @if (social.isImage(media.mime)) {
+            <img [src]="media.url" [alt]="media.name">
+          } @else if (social.isVideo(media.mime)) {
+            <video [src]="media.url" playsinline autoplay (loadedmetadata)="syncDuration.emit($event)" (ended)="mediaEnded.emit()"></video>
+          } @else {
+            <audio [src]="media.url" controls autoplay playsinline></audio>
+          }
+        } @else {
+          <div class="story-loading">
+            <ion-spinner name="crescent"></ion-spinner>
+            <span>{{ 'COMMON.DECRYPTING' | translate:'Descifrando' }} {{ mediaPayload.mime }}</span>
+          </div>
+        }
+      } @else {
+        <p>{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantanea') }}</p>
+      }
+    </div>
+  </ion-content>
+
+  @if (story.originalAuthor?.alias) {
+    <div class="story-repost-badge">
+      <ion-icon name="repeat-outline"></ion-icon>
+      {{ 'WORLD.REPOSTED_FROM' | translate:'Reposteado de' }} @{{ story.originalAuthor?.alias }}
+    </div>
+  }
+  @if (payload.text && payload.media) {
+    <div class="story-caption">{{ payload.text }}</div>
+  }
+
+  <ion-footer class="story-action-bar ion-no-border">
+    <div class="story-action-shell" [class.author]="isMine">
+      @if (isMine) {
+        <button type="button" class="story-stats-trigger" (click)="openStats.emit()">
+          <ion-icon name="eye-outline"></ion-icon>
+          <span>{{ viewsCount }} vista{{ viewsCount === 1 ? '' : 's' }}</span>
+        </button>
+      } @else {
+        <form class="story-reply" (submit)="$event.preventDefault(); sendReply.emit()">
+          <ion-input
+            mode="ios"
+            [ngModel]="reply"
+            (ngModelChange)="onReplyChange($event)"
+            name="storyReply"
+            [placeholder]="'WORLD.REPLY_STORY_PLACEHOLDER' | translate:'Responder historia...'"
+            [disabled]="busyId === 'reply:' + story.id">
+          </ion-input>
+          <button type="submit" [disabled]="!reply.trim() || busyId === 'reply:' + story.id" [attr.aria-label]="'WORLD.SEND_REPLY' | translate:'Enviar respuesta'">
+            <ion-icon name="send-outline"></ion-icon>
+          </button>
+        </form>
+        <div class="story-quick-actions">
+          <button type="button" class="heart-action" [class.active]="story.myReaction === heartEmoji" (click)="react.emit(heartEmoji)" [attr.aria-label]="'WORLD.LOVE' | translate:'Me encanta'">
+            <ion-icon [name]="story.myReaction === heartEmoji ? 'heart' : 'heart-outline'"></ion-icon>
+          </button>
+          <button type="button" (click)="toggleReactions.emit()" [attr.aria-label]="'CHAT.REACTIONS' | translate:'Reacciones'">
+            <ion-icon name="happy-outline"></ion-icon>
+          </button>
+          @if (canRepost) {
+            <button type="button" (click)="repost.emit()" [disabled]="busyId === 'repost:' + story.id" [attr.aria-label]="'WORLD.REPOST' | translate:'Repostear'">
+              <ion-icon name="repeat-outline"></ion-icon>
+            </button>
+          }
+        </div>
+        @if (reactionsOpen) {
+          <div class="story-reaction-menu">
+            @for (emoji of reactionOptions; track emoji) {
+              <button type="button" (click)="react.emit(emoji)" [attr.aria-label]="('CHAT.REACT' | translate:'Reaccionar') + ' ' + emoji">{{ emoji }}</button>
+            }
+          </div>
+        }
+      }
+    </div>
+  </ion-footer>
+</section>

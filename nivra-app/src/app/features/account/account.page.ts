@@ -63,6 +63,7 @@ export class AccountPage implements OnInit, OnDestroy {
   profilePhotoDataUrl = '';
   profilePhotoDirty = false;
   isDiscoverable = true;
+  allowStoryReposts = true;
   saving = false;
   private noticeValue = '';
   private noticeTimer: number | null = null;
@@ -218,6 +219,7 @@ export class AccountPage implements OnInit, OnDestroy {
       this.profilePhotoDataUrl = user.profilePhotoDataUrl ?? '';
       this.profilePhotoDirty = false;
       this.isDiscoverable = user.isDiscoverable;
+      this.allowStoryReposts = user.allowStoryReposts !== false;
     }
     await this.refreshStorageEstimate();
   }
@@ -242,6 +244,7 @@ export class AccountPage implements OnInit, OnDestroy {
         bio: this.bio || null,
         ...(this.profilePhotoDirty ? { profilePhotoDataUrl: this.profilePhotoDataUrl } : {}),
         isDiscoverable: this.isDiscoverable,
+        allowStoryReposts: this.allowStoryReposts,
       });
       this.alias = this.auth.session()?.user?.alias ?? alias;
       this.originalAlias = this.normalizeAlias(this.alias);

@@ -38,6 +38,7 @@ export interface NivraUser {
   bio?: string | null;
   profilePhotoDataUrl?: string | null;
   isDiscoverable: boolean;
+  allowStoryReposts: boolean;
   planCode: string;
   privacySettings: PrivacySettings;
   createdAt: string;
@@ -145,6 +146,7 @@ export interface UserSummary {
   bio?: string | null;
   profilePhotoDataUrl?: string | null;
   isDiscoverable: boolean;
+  allowStoryReposts: boolean;
   isContact: boolean;
   isMutualContact: boolean;
   isFavorite: boolean;
@@ -161,6 +163,7 @@ export interface LocalProfile {
   bio?: string | null;
   profilePhotoDataUrl?: string | null;
   isDiscoverable?: boolean;
+  allowStoryReposts?: boolean;
   isContact?: boolean;
   isMutualContact?: boolean;
   isFavorite?: boolean;
@@ -315,6 +318,7 @@ export interface PatchProfileRequest {
   bio?: string | null;
   profilePhotoDataUrl?: string | null;
   isDiscoverable?: boolean | null;
+  allowStoryReposts?: boolean | null;
 }
 
 export interface FriendRequest {

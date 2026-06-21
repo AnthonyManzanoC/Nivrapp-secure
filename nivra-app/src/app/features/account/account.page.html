@@ -74,6 +74,13 @@
             <span>{{ 'ACCOUNT.VISIBLE_DIRECTORY' | translate:'Visible en directorio' }}</span>
             <ion-toggle mode="ios" [checked]="isDiscoverable" (ionChange)="isDiscoverable = $event.detail.checked"></ion-toggle>
           </label>
+          <label class="toggle-row wide story-repost-toggle">
+            <span>
+              <strong>{{ 'ACCOUNT.ALLOW_STORY_REPOSTS' | translate:'Permitir repost de mis historias' }}</strong>
+              <small>{{ 'ACCOUNT.ALLOW_STORY_REPOSTS_COPY' | translate:'Si lo desactivas, otros no veran el boton de repostear tus historias.' }}</small>
+            </span>
+            <ion-toggle mode="ios" [checked]="allowStoryReposts" (ionChange)="allowStoryReposts = $event.detail.checked"></ion-toggle>
+          </label>
         </div>
         <ion-button mode="ios" (click)="saveProfile()" [disabled]="saving || !canSaveProfile()">
           <ion-icon name="shield-checkmark-outline"></ion-icon>

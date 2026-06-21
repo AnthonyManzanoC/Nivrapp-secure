@@ -38,6 +38,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { SocialService } from '../../core/services/social.service';
 import { Router } from '@angular/router';
+import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 
 interface StoryBucket {
   id: string;
@@ -54,7 +55,7 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, StoryViewerComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })
@@ -353,6 +354,10 @@ export class WorldPage implements OnInit, OnDestroy {
     return this.storyProgress;
   }
 
+  storyProgressValues(): number[] {
+    return this.viewerQueue.map((_story, index) => this.progressFor(index));
+  }
+
   closeStoryViewer(): void {
     this.stopStoryProgress();
     this.social.closeStory();
@@ -392,15 +397,20 @@ export class WorldPage implements OnInit, OnDestroy {
     if (this.isMine(story)) {
       return;
     }
+    const removingReaction = story.myReaction === emoji;
     await this.run(`react:${story.id}`, async () => {
       await this.social.reactStory(story, emoji);
       this.reactionsOpen = false;
-      this.notice = emoji === '\u2764\uFE0F' ? this.tr('WORLD.NOTICE_LOVE_SENT', 'Me encanta enviado.') : this.tr('WORLD.NOTICE_REACTION_SENT', 'Reaccion enviada.');
+      this.notice = removingReaction
+        ? this.tr('WORLD.NOTICE_REACTION_REMOVED', 'Reaccion quitada.')
+        : emoji === '\u2764\uFE0F'
+          ? this.tr('WORLD.NOTICE_LOVE_SENT', 'Me encanta enviado.')
+          : this.tr('WORLD.NOTICE_REACTION_SENT', 'Reaccion enviada.');
     });
   }
 
   async repostStory(story: Story): Promise<void> {
-    if (this.isMine(story)) {
+    if (this.isMine(story) || !this.canRepostStory(story)) {
       return;
     }
     await this.run(`repost:${story.id}`, async () => {
@@ -434,6 +444,10 @@ export class WorldPage implements OnInit, OnDestroy {
 
   isMine(story: Story): boolean {
     return story.owner.id === this.auth.session()?.user.id;
+  }
+
+  canRepostStory(story: Story): boolean {
+    return !this.isMine(story) && story.owner.allowStoryReposts !== false;
   }
 
   viewerSubtitle(story: Story): string {
@@ -558,6 +572,7 @@ export class WorldPage implements OnInit, OnDestroy {
       profilePhotoDataUrl: contact.profilePhotoDataUrl,
       bio: null,
       isDiscoverable: true,
+      allowStoryReposts: true,
       isContact: true,
       isMutualContact: true,
       isFavorite: contact.isFavorite,

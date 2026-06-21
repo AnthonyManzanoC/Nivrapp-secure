@@ -570,6 +570,7 @@ export class CallsPage {
       bio: contact.bio,
       profilePhotoDataUrl: contact.profilePhotoDataUrl,
       isDiscoverable: true,
+      allowStoryReposts: true,
       isContact: true,
       isMutualContact: true,
       isFavorite: contact.isFavorite,

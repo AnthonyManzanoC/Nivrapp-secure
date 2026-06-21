@@ -256,62 +256,100 @@
     <ng-template>
       @if (social.activeStory(); as story) {
         @if (social.storyPayload(story); as payload) {
-          <section class="story-viewer">
-            <div class="story-progress">
-              @for (item of storyViewerQueue; track item.id; let index = $index) {
-                <span><i [style.width.%]="storyProgressFor(index)"></i></span>
-              }
-            </div>
-            <header>
-              <div>
-                <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
-                <span>{{ story.expiresAt | date:'shortTime' }}</span>
-              </div>
-              <button type="button" (click)="closeStoryViewer()" [attr.aria-label]="'STORY.CLOSE' | translate:'Cerrar historia'">
-                <ion-icon name="close-outline"></ion-icon>
-              </button>
-            </header>
-            <div class="story-viewer-body">
-              <button
-                type="button"
-                class="tap-zone tap-left"
-                (pointerdown)="onStoryPointerDown()"
-                (pointerup)="onStoryPointerUp('left')"
-                (pointercancel)="onStoryPointerCancel()"
-                [attr.aria-label]="'WORLD.PREV_STORY' | translate:'Historia anterior'">
-              </button>
-              <button
-                type="button"
-                class="tap-zone tap-right"
-                (pointerdown)="onStoryPointerDown()"
-                (pointerup)="onStoryPointerUp('right')"
-                (pointercancel)="onStoryPointerCancel()"
-                [attr.aria-label]="'WORLD.NEXT_STORY' | translate:'Historia siguiente'">
-              </button>
-              @if (payload.media; as mediaPayload) {
-                @if (social.storyMedia(story); as media) {
-                  @if (social.isImage(media.mime)) {
-                    <img [src]="media.url" [alt]="media.name">
-                  } @else if (social.isVideo(media.mime)) {
-                    <video [src]="media.url" playsinline autoplay (loadedmetadata)="syncStoryMediaDuration($event)" (ended)="storyMediaEnded()"></video>
-                  } @else {
-                    <audio [src]="media.url" controls autoplay playsinline></audio>
-                  }
-                } @else {
-                  <div class="story-loading">
-                    <ion-spinner name="crescent"></ion-spinner>
-                    <span>{{ 'COMMON.DECRYPTING' | translate:'Descifrando' }} {{ mediaPayload.mime }}</span>
-                  </div>
-                }
-              } @else {
-                <p>{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantanea') }}</p>
-              }
-            </div>
-            @if (payload.text) {
-              <footer>{{ payload.text }}</footer>
-            }
-          </section>
+          <app-story-viewer
+            [story]="story"
+            [payload]="payload"
+            [queue]="storyViewerQueue"
+            [progress]="storyProgressValues()"
+            [reply]="storyReply"
+            [busyId]="storyBusyId"
+            [reactionsOpen]="reactionsOpen"
+            [isMine]="isMine(story)"
+            [uiHidden]="viewerUiHidden"
+            [subtitle]="viewerSubtitle(story)"
+            [viewsCount]="statsViews(story)"
+            [canRepost]="canRepostStory(story)"
+            [reactionOptions]="storyReactionOptions"
+            (replyChange)="storyReply = $event"
+            (closeViewer)="closeStoryViewer()"
+            (pointerDown)="onStoryPointerDown($event)"
+            (pointerUp)="onStoryPointerUp($event.event, $event.side)"
+            (pointerCancel)="onStoryPointerCancel()"
+            (syncDuration)="syncStoryMediaDuration($event)"
+            (mediaEnded)="storyMediaEnded()"
+            (openStats)="openStats()"
+            (sendReply)="sendStoryReply(story)"
+            (react)="reactToStory(story, $event)"
+            (toggleReactions)="reactionsOpen = !reactionsOpen"
+            (repost)="repostStory(story)">
+          </app-story-viewer>
+          @if (storyError) {
+            <p class="story-error">{{ storyError }}</p>
+          }
         }
+      }
+    </ng-template>
+  </ion-modal>
+
+  <ion-modal class="story-stats-modal" [isOpen]="statsOpen" [breakpoints]="[0, .55, .9]" [initialBreakpoint]=".55" (didDismiss)="closeStats()">
+    <ng-template>
+      @if (social.activeStory(); as story) {
+        <section class="story-stats-sheet">
+          <header>
+            <div>
+              <h2>{{ 'WORLD.ACTIVITY' | translate:'Actividad' }}</h2>
+              <span>{{ statsViews(story) }} vistas - {{ statsReactions(story) }} reacciones - {{ statsComments(story) }} comentarios</span>
+            </div>
+            <button type="button" (click)="closeStats()" [attr.aria-label]="'WORLD.CLOSE_STATS' | translate:'Cerrar estadisticas'">
+              <ion-icon name="close-outline"></ion-icon>
+            </button>
+          </header>
+          <div class="stats-columns">
+            <article>
+              <h3>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</h3>
+              @for (view of story.views || []; track view.user.id) {
+                <div class="stats-row">
+                  <span class="stats-avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span>
+                  <span>
+                    <strong>{{ view.user.displayName || view.user.alias }}</strong>
+                    <small>@{{ view.user.alias }} - {{ view.viewedAt | date:'shortTime' }}</small>
+                  </span>
+                </div>
+              } @empty {
+                <p class="stats-empty">{{ 'WORLD.NO_VIEWS' | translate:'Sin vistas todavia.' }}</p>
+              }
+            </article>
+            <article>
+              <h3>{{ 'CHAT.REACTIONS' | translate:'Reacciones' }}</h3>
+              @for (reaction of story.reactions || []; track reaction.id) {
+                <div class="stats-row">
+                  <span class="stats-avatar">{{ reaction.emoji }}</span>
+                  <span>
+                    <strong>{{ reaction.user.displayName || reaction.user.alias }}</strong>
+                    <small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | date:'shortTime' }}</small>
+                  </span>
+                </div>
+              } @empty {
+                <p class="stats-empty">{{ 'WORLD.NO_REACTIONS_YET' | translate:'Sin reacciones aun.' }}</p>
+              }
+            </article>
+            <article>
+              <h3>{{ 'WORLD.COMMENTS' | translate:'Comentarios' }}</h3>
+              @for (comment of story.comments || []; track comment.id) {
+                <div class="stats-row comment-row">
+                  <span class="stats-avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span>
+                  <span>
+                    <strong>{{ comment.user.displayName || comment.user.alias }}</strong>
+                    <small>@{{ comment.user.alias }} - {{ comment.commentedAt | date:'shortTime' }}</small>
+                    <em>{{ storyCommentText(story, comment) }}</em>
+                  </span>
+                </div>
+              } @empty {
+                <p class="stats-empty">{{ 'WORLD.NO_COMMENTS_YET' | translate:'Sin comentarios aun.' }}</p>
+              }
+            </article>
+          </div>
+        </section>
       }
     </ng-template>
   </ion-modal>

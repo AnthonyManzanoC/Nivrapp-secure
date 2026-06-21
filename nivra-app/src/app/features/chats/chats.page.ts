@@ -23,13 +23,14 @@ import {
 import { addIcons } from 'ionicons';
 import { addOutline, archiveOutline, checkmarkOutline, closeOutline, notificationsOffOutline, notificationsOutline, peopleOutline, pinOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
-import { Contact, Conversation, Story, UserSummary } from '../../core/models/nivra.models';
+import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { ChatFolderFilter, ChatService } from '../../core/services/chat.service';
 import { SocialService } from '../../core/services/social.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
+import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 
 @Component({
   selector: 'app-chats',
@@ -40,6 +41,7 @@ import { TranslateService } from '../../core/services/translate.service';
     FormsModule,
     RouterOutlet,
     TranslatePipe,
+    StoryViewerComponent,
     IonAvatar,
     IonButton,
     IonContent,
@@ -83,6 +85,13 @@ export class ChatsPage implements OnDestroy {
   storyViewerQueue: Story[] = [];
   storyViewerIndex = 0;
   storyViewerProgress = 0;
+  storyReply = '';
+  reactionsOpen = false;
+  statsOpen = false;
+  viewerUiHidden = false;
+  storyBusyId = '';
+  storyError = '';
+  readonly storyReactionOptions = ['\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}', '\u{1F525}'];
   private timer: number | null = null;
   private searchSeq = 0;
   private routeSub?: Subscription;
@@ -93,6 +102,7 @@ export class ChatsPage implements OnDestroy {
   private storyProgressElapsed = 0;
   private storyPaused = false;
   private pointerStartedAt = 0;
+  private pointerStartY = 0;
 
   constructor() {
     addIcons({
@@ -227,6 +237,11 @@ export class ChatsPage implements OnDestroy {
     this.social.closeStory();
     this.storyViewerQueue = [];
     this.storyViewerIndex = 0;
+    this.storyReply = '';
+    this.reactionsOpen = false;
+    this.statsOpen = false;
+    this.viewerUiHidden = false;
+    this.storyError = '';
   }
 
   storyProgressFor(index: number): number {
@@ -239,14 +254,29 @@ export class ChatsPage implements OnDestroy {
     return this.storyViewerProgress;
   }
 
-  onStoryPointerDown(): void {
+  storyProgressValues(): number[] {
+    return this.storyViewerQueue.map((_story, index) => this.storyProgressFor(index));
+  }
+
+  onStoryPointerDown(event: PointerEvent): void {
     this.pointerStartedAt = Date.now();
+    this.pointerStartY = event.clientY;
+    this.viewerUiHidden = true;
     this.pauseStoryProgress();
   }
 
-  onStoryPointerUp(side: 'left' | 'right'): void {
+  onStoryPointerUp(event: PointerEvent, side: 'left' | 'right'): void {
     const held = Date.now() - this.pointerStartedAt > 420;
+    const swipedUp = this.pointerStartY - event.clientY > 58;
+    this.viewerUiHidden = false;
     this.resumeStoryProgress();
+    if (swipedUp) {
+      const story = this.social.activeStory();
+      if (story && this.isMine(story)) {
+        this.openStats();
+      }
+      return;
+    }
     if (held) {
       return;
     }
@@ -254,6 +284,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   onStoryPointerCancel(): void {
+    this.viewerUiHidden = false;
     this.resumeStoryProgress();
   }
 
@@ -267,6 +298,77 @@ export class ChatsPage implements OnDestroy {
 
   storyMediaEnded(): void {
     void this.nextStory();
+  }
+
+  openStats(): void {
+    this.pauseStoryProgress();
+    this.statsOpen = true;
+  }
+
+  closeStats(): void {
+    this.statsOpen = false;
+    this.resumeStoryProgress();
+  }
+
+  async reactToStory(story: Story, emoji: string): Promise<void> {
+    if (this.isMine(story)) {
+      return;
+    }
+    await this.runStory(`react:${story.id}`, async () => {
+      await this.social.reactStory(story, emoji);
+      this.reactionsOpen = false;
+    });
+  }
+
+  async repostStory(story: Story): Promise<void> {
+    if (this.isMine(story) || !this.canRepostStory(story)) {
+      return;
+    }
+    await this.runStory(`repost:${story.id}`, () => this.social.repostStory(story).then(() => undefined));
+  }
+
+  async sendStoryReply(story: Story): Promise<void> {
+    const text = this.storyReply.trim();
+    if (!text || this.isMine(story)) {
+      return;
+    }
+    await this.runStory(`reply:${story.id}`, async () => {
+      const conversation = await this.chat.createDirectConversation(story.owner);
+      const message = await this.chat.sendText(conversation, text, {
+        replyTo: this.storyReplyReference(story),
+      });
+      await this.social.commentStory(story, message?.id ?? null);
+      this.storyReply = '';
+    });
+  }
+
+  viewerSubtitle(story: Story): string {
+    if (story.originalAuthor?.alias) {
+      return `${this.tr('WORLD.REPOSTED_FROM', 'Reposteado de')} @${story.originalAuthor.alias}`;
+    }
+    return story.expiresAt ? `Hasta ${new Date(story.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` : '';
+  }
+
+  statsViews(story: Story): number {
+    return story.views?.length || story.viewCount || 0;
+  }
+
+  statsReactions(story: Story): number {
+    return story.reactions?.length || 0;
+  }
+
+  statsComments(story: Story): number {
+    return story.comments?.length || 0;
+  }
+
+  storyCommentText(story: Story, comment: StoryComment): string {
+    const message = this.findStoryCommentMessage(story, comment);
+    const text = typeof message?.payload.text === 'string' ? message.payload.text.trim() : '';
+    return text || this.tr('WORLD.ENCRYPTED_COMMENT_IN_CHAT', 'Comentario cifrado en el chat');
+  }
+
+  canRepostStory(story: Story): boolean {
+    return !this.isMine(story) && story.owner.allowStoryReposts !== false;
   }
 
   onDetailDeactivate(): void {
@@ -440,6 +542,10 @@ export class ChatsPage implements OnDestroy {
       return;
     }
     try {
+      this.reactionsOpen = false;
+      this.statsOpen = false;
+      this.storyReply = '';
+      this.storyError = '';
       await this.social.viewStory(story);
       const active = this.social.activeStory();
       if (active) {
@@ -480,7 +586,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   private resumeStoryProgress(): void {
-    if (!this.storyPaused || this.storyProgressTimer === null) {
+    if (!this.storyPaused || this.statsOpen || this.storyProgressTimer === null) {
       return;
     }
     this.storyPaused = false;
@@ -508,8 +614,45 @@ export class ChatsPage implements OnDestroy {
     }
   }
 
-  private isMine(story: Story): boolean {
+  isMine(story: Story): boolean {
     return story.owner.id === this.auth.session()?.user.id;
+  }
+
+  private async runStory(id: string, action: () => Promise<void>): Promise<void> {
+    this.storyBusyId = id;
+    this.storyError = '';
+    try {
+      await action();
+    } catch (error) {
+      this.storyError = error instanceof Error ? error.message : this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
+    } finally {
+      this.storyBusyId = '';
+    }
+  }
+
+  private storyReplyReference(story: Story): unknown {
+    const payload = this.social.storyPayload(story);
+    return {
+      kind: 'story',
+      storyId: story.id,
+      ownerUserId: story.owner.id,
+      ownerAlias: story.owner.alias,
+      preview: this.social.storyText(story).slice(0, 120),
+      mediaMime: payload.media?.mime ?? null,
+      mediaFileObjectId: story.mediaFileObjectId ?? null,
+      originalAuthorAlias: story.originalAuthor?.alias ?? null,
+      at: story.createdAt,
+    };
+  }
+
+  private findStoryCommentMessage(story: Story, comment: StoryComment): ChatMessageVm | null {
+    const messages = Object.values(this.chat.messagesByConversation()).flat();
+    return messages.find((message) => message.id === comment.messageId)
+      ?? messages.find((message) => {
+        const reply = message.payload.replyTo as { kind?: unknown; storyId?: unknown } | null | undefined;
+        return message.senderUserId === comment.user.id && reply?.kind === 'story' && reply.storyId === story.id;
+      })
+      ?? null;
   }
 
   private directPeerId(conversation: Conversation): string | null {

@@ -279,8 +279,9 @@ export class SocialService {
   }
 
   async reactStory(story: Story, emoji: string): Promise<Story> {
+    const isRemovingCurrentReaction = story.myReaction === emoji;
     const updated = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/react`, {
-      emoji,
+      emoji: isRemovingCurrentReaction ? story.myReaction : emoji,
     }));
     return this.applyStoryUpdate(updated);
   }

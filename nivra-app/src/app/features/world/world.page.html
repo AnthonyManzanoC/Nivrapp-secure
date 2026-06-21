@@ -347,100 +347,33 @@
 
     @if (social.activeStory(); as story) {
       @if (social.storyPayload(story); as payload) {
-        <section class="story-viewer" [class.mine]="isMine(story)" [class.ui-hidden]="viewerUiHidden">
-          <div class="story-progress">
-            @for (item of viewerQueue; track item.id; let index = $index) {
-              <span><i [style.width.%]="progressFor(index)"></i></span>
-            }
-          </div>
-          <div class="story-viewer-top">
-            <div>
-              <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
-              <span>{{ viewerSubtitle(story) }}</span>
-            </div>
-            <button type="button" (click)="closeStoryViewer()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
-              <ion-icon name="close-outline"></ion-icon>
-            </button>
-          </div>
-          <div class="story-viewer-body">
-            <button
-              type="button"
-              class="tap-zone tap-left"
-              (pointerdown)="onStoryPointerDown($event)"
-              (pointerup)="onStoryPointerUp($event, 'left')"
-              (pointercancel)="onStoryPointerCancel()"
-              [attr.aria-label]="'WORLD.PREV_STORY' | translate:'Historia anterior'">
-            </button>
-            <button
-              type="button"
-              class="tap-zone tap-right"
-              (pointerdown)="onStoryPointerDown($event)"
-              (pointerup)="onStoryPointerUp($event, 'right')"
-              (pointercancel)="onStoryPointerCancel()"
-              [attr.aria-label]="'WORLD.NEXT_STORY' | translate:'Historia siguiente'">
-            </button>
-            @if (payload.media; as mediaPayload) {
-              @if (social.storyMedia(story); as media) {
-                @if (social.isImage(media.mime)) {
-                  <img [src]="media.url" [alt]="media.name">
-                } @else if (social.isVideo(media.mime)) {
-                  <video [src]="media.url" playsinline autoplay (loadedmetadata)="syncStoryMediaDuration($event)" (ended)="storyMediaEnded()"></video>
-                } @else {
-                  <audio [src]="media.url" controls autoplay></audio>
-                }
-              } @else {
-                <div class="story-loading">
-                  <ion-spinner name="crescent"></ion-spinner>
-                  <span>Descifrando {{ mediaPayload.mime }}</span>
-                </div>
-              }
-            } @else {
-              <p>{{ payload.text || story.caption || 'Instantanea' }}</p>
-            }
-          </div>
-          @if (story.originalAuthor?.alias) {
-            <div class="story-repost-badge">
-              <ion-icon name="repeat-outline"></ion-icon>
-              Reposteado de @{{ story.originalAuthor?.alias }}
-            </div>
-          }
-          @if (payload.text && payload.media) {
-            <div class="story-caption">{{ payload.text }}</div>
-          }
-          <footer class="story-action-bar">
-            @if (isMine(story)) {
-              <button type="button" class="story-stats-trigger" (click)="openStats()">
-                <ion-icon name="eye-outline"></ion-icon>
-                <span>{{ statsViews(story) }} vista{{ statsViews(story) === 1 ? '' : 's' }}</span>
-              </button>
-            } @else {
-              <form class="story-reply" (submit)="$event.preventDefault(); sendStoryReply(story)">
-                <ion-input mode="ios" [(ngModel)]="storyReply" name="storyReply" [placeholder]="'WORLD.REPLY_STORY_PLACEHOLDER' | translate:'Responder historia...'" [disabled]="busyId === 'reply:' + story.id"></ion-input>
-                <button type="submit" [disabled]="!storyReply.trim() || busyId === 'reply:' + story.id" [attr.aria-label]="'WORLD.SEND_REPLY' | translate:'Enviar respuesta'">
-                  <ion-icon name="send-outline"></ion-icon>
-                </button>
-              </form>
-              <div class="story-quick-actions">
-                <button type="button" class="heart-action" [class.active]="story.myReaction === '\u2764\uFE0F'" (click)="reactToStory(story, '\u2764\uFE0F')" [attr.aria-label]="'WORLD.LOVE' | translate:'Me encanta'">
-                  <ion-icon [name]="story.myReaction === '\u2764\uFE0F' ? 'heart' : 'heart-outline'"></ion-icon>
-                </button>
-                <button type="button" (click)="reactionsOpen = !reactionsOpen" [attr.aria-label]="'CHAT.REACTIONS' | translate:'Reacciones'">
-                  <ion-icon name="happy-outline"></ion-icon>
-                </button>
-                <button type="button" (click)="repostStory(story)" [disabled]="busyId === 'repost:' + story.id" [attr.aria-label]="'WORLD.REPOST' | translate:'Repostear'">
-                  <ion-icon name="repeat-outline"></ion-icon>
-                </button>
-              </div>
-              @if (reactionsOpen) {
-                <div class="story-reaction-menu">
-                  @for (emoji of storyReactionOptions; track emoji) {
-                    <button type="button" (click)="reactToStory(story, emoji)" [attr.aria-label]="('CHAT.REACT' | translate:'Reaccionar') + ' ' + emoji">{{ emoji }}</button>
-                  }
-                </div>
-              }
-            }
-          </footer>
-        </section>
+        <app-story-viewer
+          [story]="story"
+          [payload]="payload"
+          [queue]="viewerQueue"
+          [progress]="storyProgressValues()"
+          [reply]="storyReply"
+          [busyId]="busyId"
+          [reactionsOpen]="reactionsOpen"
+          [isMine]="isMine(story)"
+          [uiHidden]="viewerUiHidden"
+          [subtitle]="viewerSubtitle(story)"
+          [viewsCount]="statsViews(story)"
+          [canRepost]="canRepostStory(story)"
+          [reactionOptions]="storyReactionOptions"
+          (replyChange)="storyReply = $event"
+          (closeViewer)="closeStoryViewer()"
+          (pointerDown)="onStoryPointerDown($event)"
+          (pointerUp)="onStoryPointerUp($event.event, $event.side)"
+          (pointerCancel)="onStoryPointerCancel()"
+          (syncDuration)="syncStoryMediaDuration($event)"
+          (mediaEnded)="storyMediaEnded()"
+          (openStats)="openStats()"
+          (sendReply)="sendStoryReply(story)"
+          (react)="reactToStory(story, $event)"
+          (toggleReactions)="reactionsOpen = !reactionsOpen"
+          (repost)="repostStory(story)">
+        </app-story-viewer>
       }
     }
 

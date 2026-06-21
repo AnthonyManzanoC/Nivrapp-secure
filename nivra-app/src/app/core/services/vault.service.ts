@@ -1034,6 +1034,7 @@ export class VaultService {
       bio: null,
       profilePhotoDataUrl: member.profilePhotoDataUrl,
       isDiscoverable: true,
+      allowStoryReposts: true,
       isContact: true,
       isMutualContact: true,
       isFavorite: false,
