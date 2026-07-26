@@ -1188,7 +1188,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!text) {
       return [];
     }
-    const pattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+|[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)/gi;
+    const pattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+|[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+|\+?\d(?:[\s().-]*\d){6,14})/gi;
     const parts: MessageTextPart[] = [];
     let cursor = 0;
     for (const match of text.matchAll(pattern)) {
@@ -1200,10 +1200,23 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       const clean = raw.replace(/[),.!?;:]+$/g, '');
       const trailing = raw.slice(clean.length);
       const email = clean.includes('@') && !clean.includes('://') && !clean.toLowerCase().startsWith('www.');
+      const phoneDigits = clean.replace(/\D/g, '');
+      const phone = !email &&
+        !/^https?:\/\//i.test(clean) &&
+        !clean.toLowerCase().startsWith('www.') &&
+        phoneDigits.length >= 7 &&
+        phoneDigits.length <= 15 &&
+        !/^\d{4}[-/.]\d{1,2}[-/.]\d{1,2}$/.test(clean);
       parts.push({
         text: clean,
-        href: email ? `mailto:${clean}` : /^https?:\/\//i.test(clean) ? clean : `https://${clean}`,
-        external: !email,
+        href: email
+          ? `mailto:${clean}`
+          : phone
+            ? `tel:${clean.startsWith('+') ? '+' : ''}${phoneDigits}`
+            : /^https?:\/\//i.test(clean)
+              ? clean
+              : clean.toLowerCase().startsWith('www.') ? `https://${clean}` : null,
+        external: !email && !phone,
       });
       if (trailing) {
         parts.push({ text: trailing, href: null, external: false });

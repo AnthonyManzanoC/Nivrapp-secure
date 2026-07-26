@@ -31,7 +31,14 @@ export class AccountService {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
         if (event.type === 'device.listChanged' && this.auth.isAuthenticated()) {
-          void this.load();
+          void this.load().catch(() => undefined);
+        }
+        if (
+          event.type === 'profile.updated' &&
+          this.auth.isAuthenticated() &&
+          String((event.payload as { userId?: unknown })?.userId || '') === this.auth.session()?.user.id
+        ) {
+          void this.load().catch(() => undefined);
         }
       });
   }

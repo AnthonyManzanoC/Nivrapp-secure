@@ -117,6 +117,7 @@ export class ChatService implements OnDestroy {
   private readonly profileFetchInFlight = new Set<string>();
   private readonly directConversationInFlight = new Map<string, Promise<Conversation>>();
   private readonly typingTimers = new Map<string, number>();
+  private readonly typingEventAt = new Map<string, number>();
   private readonly expiryTimers = new Map<string, number>();
   private readonly openScrollAnchors = new Map<string, string>();
   private ttlSweepTimer: number | null = null;
@@ -188,7 +189,13 @@ export class ChatService implements OnDestroy {
         }
       }
       if (event.type === 'conversation.typing') {
-        this.applyTyping(event.payload);
+        void this.applyTyping(event.payload);
+      }
+      if (event.type === 'profile.updated') {
+        const userId = String((event.payload as { userId?: unknown })?.userId || '');
+        if (userId && userId !== this.auth.session()?.user.id) {
+          void this.refreshProfile(userId);
+        }
       }
       if (event.type === 'presence.changed') {
         this.applyPresence(event.payload as PresenceResponse);
@@ -449,7 +456,8 @@ export class ChatService implements OnDestroy {
   }
 
   async sendTyping(conversationId: string, kind: 'typing' | 'stopped' = 'typing', options: { force?: boolean } = {}): Promise<void> {
-    if (!conversationId || !this.auth.isAuthenticated()) {
+    const conversation = this.conversations().find((item) => item.id === conversationId);
+    if (!conversationId || !conversation || !this.auth.isAuthenticated()) {
       return;
     }
     const now = Date.now();
@@ -457,7 +465,25 @@ export class ChatService implements OnDestroy {
       return;
     }
     this.lastTypingSentAt = now;
-    await this.signalr.typing(conversationId, JSON.stringify({ kind, at: new Date().toISOString() }));
+    const at = new Date().toISOString();
+    const recipients = await this.encryptedRecipients(conversation, {
+      type: 'typing-state',
+      kind,
+      at,
+      nonce: this.base64Url(crypto.getRandomValues(new Uint8Array(12))),
+    }).catch(() => []);
+    if (!recipients.length) {
+      return;
+    }
+    await this.signalr.typing(conversationId, JSON.stringify({
+      v: 1,
+      recipients: recipients.map((recipient) => ({
+        userId: recipient.userId,
+        deviceId: recipient.deviceId,
+        ciphertext: recipient.ciphertext,
+        header: recipient.header,
+      })),
+    }));
     if (kind === 'typing') {
       const existing = this.typingTimers.get(conversationId);
       if (existing) {
@@ -771,7 +797,7 @@ export class ChatService implements OnDestroy {
   async sendPayload(
     conversation: Conversation,
     payload: ChatPayload,
-    kind: string = 'Text',
+    _kind: string = 'Text',
     fileObjectId: string | null = null,
     options: SendPayloadOptions = {},
   ): Promise<MessageResponse | null> {
@@ -787,17 +813,27 @@ export class ChatService implements OnDestroy {
     if (!recipients.length) {
       throw new Error('No hay llaves publicas disponibles para enviar.');
     }
-    const response = await firstValueFrom(this.api.post<MessageResponse>(
-      `/conversations/${conversation.id}/messages`,
-      {
-        clientMessageId: `web-${crypto.randomUUID()}`,
-        kind,
-        recipients,
-        encryptedPolicy: options.encryptedPolicy ?? (outgoingPayload.replyTo ? 'reply' : outgoingPayload.forwardedFrom ? 'forward' : null),
-        expiresAt: options.expiresAt ?? null,
-        deleteAfterRead: options.deleteAfterRead ?? false,
-      },
-    ));
+    const request = {
+      clientMessageId: `web-${crypto.randomUUID()}`,
+      // El tipo funcional vive dentro del payload E2EE; el transporte usa una
+      // categoria uniforme para no revelar si es texto, audio, archivo o control.
+      kind: 'Text',
+      recipients,
+      encryptedPolicy: options.encryptedPolicy ?? null,
+      expiresAt: options.expiresAt ?? null,
+      deleteAfterRead: options.deleteAfterRead ?? false,
+    };
+    const endpoint = `/conversations/${conversation.id}/messages`;
+    let response: MessageResponse;
+    try {
+      response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
+    } catch (error) {
+      if (!this.isTransientMessageSendError(error)) {
+        throw error;
+      }
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
+      response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
+    }
     if (!options.suppressLocalMessage) {
       await this.ingestLocalSent(response, outgoingPayload);
     }
@@ -815,7 +851,7 @@ export class ChatService implements OnDestroy {
       deviceId: current.device.id,
       alias: current.user.alias,
       displayName: current.user.displayName || current.user.alias,
-      profilePhotoDataUrl: current.user.profilePhotoDataUrl || '',
+      profilePhotoDataUrl: '',
       at: new Date().toISOString(),
       reactionId: `local-${crypto.randomUUID()}`,
     };
@@ -845,7 +881,6 @@ export class ChatService implements OnDestroy {
           deviceId: reaction.deviceId,
           alias: reaction.alias,
           displayName: reaction.displayName,
-          profilePhotoDataUrl: reaction.profilePhotoDataUrl,
           reactionAt: reaction.at,
         },
         'System',
@@ -900,7 +935,7 @@ export class ChatService implements OnDestroy {
       groupCall: group,
     };
     await this.sendPayload(conversation, payload, 'System', null, {
-      encryptedPolicy: 'client:call-log',
+      encryptedPolicy: null,
       deleteAfterRead: false,
       suppressLocalMessage: false,
     }).catch(() => undefined);
@@ -911,7 +946,11 @@ export class ChatService implements OnDestroy {
     if (!message.mine || !text || this.asFile(message.payload) || message.payload.type === 'system') {
       throw new Error('Ese mensaje no se puede editar.');
     }
-    this.applyEditPayload({ type: 'edit', targetMessageId: message.id, newText: text }, conversation.id);
+    this.applyEditPayload(
+      { type: 'edit', targetMessageId: message.id, newText: text },
+      conversation.id,
+      message.senderUserId,
+    );
     this.persistExistingMessage(message.id);
     await this.sendPayload(
       conversation,
@@ -1590,7 +1629,14 @@ export class ChatService implements OnDestroy {
       });
     }
     if (payload.type === 'reaction') {
-      this.applyReactionPayload(payload, message.conversationId, message.id, message.serverReceivedAt);
+      this.applyReactionPayload(
+        payload,
+        message.conversationId,
+        message.id,
+        message.serverReceivedAt,
+        message.senderUserId,
+        message.senderDeviceId,
+      );
       this.persistExistingMessage(this.stringPayload(payload, 'targetMessageId'));
       if (markDelivered && !vm.mine) {
         void this.sendReceipt(message.id, 'Delivered');
@@ -1598,7 +1644,7 @@ export class ChatService implements OnDestroy {
       return !decryptError;
     }
     if (payload.type === 'edit') {
-      this.applyEditPayload(payload, message.conversationId);
+      this.applyEditPayload(payload, message.conversationId, message.senderUserId);
       this.persistExistingMessage(this.stringPayload(payload, 'targetMessageId'));
       if (markDelivered && !vm.mine) {
         void this.sendReceipt(message.id, 'Delivered');
@@ -1606,11 +1652,14 @@ export class ChatService implements OnDestroy {
       return !decryptError;
     }
     if (payload.type === 'delete') {
-      this.applyMessageDeleted({
-        messageId: payload['targetMessageId'],
-        conversationId: message.conversationId,
-      });
-      this.removeLocalMessage(message.conversationId, this.stringPayload(payload, 'targetMessageId'));
+      const targetMessageId = this.stringPayload(payload, 'targetMessageId');
+      if (this.canControlMessage(targetMessageId, message.conversationId, message.senderUserId)) {
+        this.applyMessageDeleted({
+          messageId: targetMessageId,
+          conversationId: message.conversationId,
+        });
+        this.removeLocalMessage(message.conversationId, targetMessageId);
+      }
       if (markDelivered && !vm.mine) {
         void this.sendReceipt(message.id, 'Delivered');
       }
@@ -2423,9 +2472,7 @@ export class ChatService implements OnDestroy {
     return {
       deleteAfterRead: Boolean(policy.deleteAfterRead),
       expiresAt: ttlSeconds > 0 ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null,
-      encryptedPolicy: policy.deleteAfterRead
-        ? 'view-once'
-        : ttlSeconds > 0 ? `ttl:${ttlSeconds}` : null,
+      encryptedPolicy: null,
     };
   }
 
@@ -2730,21 +2777,28 @@ export class ChatService implements OnDestroy {
     return next;
   }
 
-  private applyReactionPayload(payload: ChatPayload, conversationId: string, reactionMessageId: string, fallbackAt: string): void {
+  private applyReactionPayload(
+    payload: ChatPayload,
+    conversationId: string,
+    reactionMessageId: string,
+    fallbackAt: string,
+    senderUserId: string,
+    senderDeviceId: string,
+  ): void {
     const targetMessageId = this.stringPayload(payload, 'targetMessageId');
-    const emoji = typeof payload.emoji === 'string' ? payload.emoji : '';
+    const emoji = typeof payload.emoji === 'string' ? payload.emoji.trim().slice(0, 16) : '';
     const reactionAction = this.stringPayload(payload, 'reactionAction') === 'remove' ? 'remove' : 'set';
-    if (!targetMessageId || (!emoji && reactionAction !== 'remove')) {
+    if (!senderUserId || !targetMessageId || (!emoji && reactionAction !== 'remove')) {
       return;
     }
     const reaction: MessageReaction = {
       emoji,
-      userId: this.stringPayload(payload, 'userId'),
-      deviceId: this.stringPayload(payload, 'deviceId'),
-      alias: this.stringPayload(payload, 'alias'),
-      displayName: this.stringPayload(payload, 'displayName'),
-      profilePhotoDataUrl: this.stringPayload(payload, 'profilePhotoDataUrl'),
-      at: this.stringPayload(payload, 'reactionAt') || fallbackAt,
+      userId: senderUserId,
+      deviceId: senderDeviceId,
+      alias: this.participantAlias(senderUserId).replace(/^@/, ''),
+      displayName: this.participantDisplayName(senderUserId),
+      profilePhotoDataUrl: this.participantPhoto(senderUserId),
+      at: fallbackAt,
       reactionId: reactionMessageId,
     };
     const applied = this.applyReaction(targetMessageId, reaction, conversationId, reactionAction);
@@ -2799,9 +2853,9 @@ export class ChatService implements OnDestroy {
     return found;
   }
 
-  private applyEditPayload(payload: ChatPayload, conversationId: string): void {
+  private applyEditPayload(payload: ChatPayload, conversationId: string, senderUserId: string): void {
     const targetMessageId = this.stringPayload(payload, 'targetMessageId');
-    const newText = this.stringPayload(payload, 'newText');
+    const newText = this.stringPayload(payload, 'newText').trim();
     if (!targetMessageId || !newText) {
       return;
     }
@@ -2809,7 +2863,12 @@ export class ChatService implements OnDestroy {
       const messages = state[conversationId] ?? [];
       let changed = false;
       const next = messages.map((message) => {
-        if (message.id !== targetMessageId) {
+        if (
+          message.id !== targetMessageId ||
+          message.senderUserId !== senderUserId ||
+          this.asFile(message.payload) ||
+          message.payload.type === 'system'
+        ) {
           return message;
         }
         changed = true;
@@ -2824,6 +2883,11 @@ export class ChatService implements OnDestroy {
       });
       return changed ? { ...state, [conversationId]: next } : state;
     });
+  }
+
+  private canControlMessage(messageId: string, conversationId: string, senderUserId: string): boolean {
+    const target = (this.messagesByConversation()[conversationId] ?? []).find((message) => message.id === messageId);
+    return Boolean(target && target.senderUserId === senderUserId);
   }
 
   private applyMessageDeleted(payload: unknown): void {
@@ -2895,7 +2959,7 @@ export class ChatService implements OnDestroy {
     }
   }
 
-  private applyTyping(payload: unknown): void {
+  private async applyTyping(payload: unknown): Promise<void> {
     const current = this.auth.session();
     const value = payload as {
       conversationId?: string;
@@ -2903,15 +2967,45 @@ export class ChatService implements OnDestroy {
       senderDeviceId?: string;
       encryptedState?: string;
     };
-    if (!value?.conversationId || !value.senderUserId || value.senderUserId === current?.user.id) {
+    if (!current || !value?.conversationId || !value.senderUserId || value.senderUserId === current.user.id) {
       return;
     }
-    let kind = 'typing';
+
+    let state: { kind?: unknown; at?: unknown } | null = null;
     try {
-      kind = String((JSON.parse(value.encryptedState || '{}') as { kind?: string }).kind || 'typing');
+      const envelope = JSON.parse(value.encryptedState || '{}') as {
+        v?: number;
+        kind?: unknown;
+        at?: unknown;
+        recipients?: RecipientCipherRequest[];
+      };
+      if (envelope.v === 1 && Array.isArray(envelope.recipients)) {
+        const recipients = this.ownRecipientCandidates(envelope.recipients, current.user.id, current.device.id);
+        state = await this.decryptOwnRecipientPayload(
+          current.user.id,
+          current.user.alias,
+          current.device.id,
+          recipients,
+        );
+      } else if (envelope.kind === 'typing' || envelope.kind === 'stopped') {
+        // Compatibilidad temporal con clientes anteriores; los nuevos siempre envian sobres E2EE.
+        state = envelope;
+      }
     } catch {
-      kind = String(value.encryptedState || 'typing');
+      return;
     }
+    const kind = state?.kind === 'stopped' ? 'stopped' : state?.kind === 'typing' ? 'typing' : null;
+    if (!kind) {
+      return;
+    }
+
+    const timerKey = `typing:${value.conversationId}:${value.senderUserId}:${value.senderDeviceId || ''}`;
+    const eventAt = Date.parse(typeof state?.at === 'string' ? state.at : '') || Date.now();
+    if (eventAt < (this.typingEventAt.get(timerKey) ?? 0)) {
+      return;
+    }
+    this.typingEventAt.set(timerKey, eventAt);
+
     const label = this.contactLabel(value.senderUserId);
     this.typingByConversation.update((state) => {
       const names = new Set(state[value.conversationId!] ?? []);
@@ -2923,14 +3017,15 @@ export class ChatService implements OnDestroy {
       return { ...state, [value.conversationId!]: [...names] };
     });
 
-    const timerKey = `typing:${value.conversationId}:${value.senderUserId}:${value.senderDeviceId || ''}`;
     const existing = this.typingTimers.get(timerKey);
     if (existing) {
       window.clearTimeout(existing);
+      this.typingTimers.delete(timerKey);
     }
     if (kind !== 'stopped') {
       this.typingTimers.set(timerKey, window.setTimeout(() => {
         this.typingTimers.delete(timerKey);
+        this.typingEventAt.delete(timerKey);
         this.typingByConversation.update((state) => {
           const names = new Set(state[value.conversationId!] ?? []);
           names.delete(label);
@@ -3093,12 +3188,14 @@ export class ChatService implements OnDestroy {
         const merged = {
           ...previous,
           ...profile,
-          alias: profile.alias || previous.alias || null,
-          displayName: profile.displayName || previous.displayName || null,
-          phone: profile.phone || previous.phone || null,
-          bio: profile.bio || previous.bio || null,
-          profilePhotoDataUrl: profile.profilePhotoDataUrl || previous.profilePhotoDataUrl || null,
-          cachedAt: new Date().toISOString(),
+          alias: profile.alias !== undefined ? profile.alias || previous.alias || null : previous.alias || null,
+          displayName: profile.displayName !== undefined ? profile.displayName || null : previous.displayName || null,
+          phone: profile.phone !== undefined ? profile.phone || null : previous.phone || null,
+          bio: profile.bio !== undefined ? profile.bio || null : previous.bio || null,
+          profilePhotoDataUrl: profile.profilePhotoDataUrl !== undefined
+            ? profile.profilePhotoDataUrl || null
+            : previous.profilePhotoDataUrl || null,
+          cachedAt: profile.cachedAt || previous.cachedAt,
         } satisfies LocalProfile;
         next[profile.userId] = merged;
         changed = true;
@@ -3116,23 +3213,25 @@ export class ChatService implements OnDestroy {
     if (!userId) {
       return null;
     }
-    const alias = this.firstText(profile?.alias);
+    const has = (key: keyof ProfileSource) => Boolean(profile && Object.prototype.hasOwnProperty.call(profile, key));
+    const alias = has('alias') ? this.firstText(profile?.alias) : undefined;
+    const authoritative = has('displayName') || has('phone') || has('bio') || has('profilePhotoDataUrl');
     return {
       userId,
       id: userId,
       alias,
-      aliasLower: alias.toLowerCase(),
-      displayName: this.firstText(profile?.displayName),
-      phone: this.firstText(profile?.phone),
-      bio: this.firstText(profile?.bio),
-      profilePhotoDataUrl: this.firstText(profile?.profilePhotoDataUrl),
+      aliasLower: alias?.toLowerCase() ?? '',
+      displayName: has('displayName') ? this.firstText(profile?.displayName) : undefined,
+      phone: has('phone') ? this.firstText(profile?.phone) : undefined,
+      bio: has('bio') ? this.firstText(profile?.bio) : undefined,
+      profilePhotoDataUrl: has('profilePhotoDataUrl') ? this.firstText(profile?.profilePhotoDataUrl) : undefined,
       isDiscoverable: profile?.isDiscoverable,
       isContact: profile?.isContact,
       isMutualContact: profile?.isMutualContact,
       isFavorite: profile?.isFavorite,
       friendshipState: profile?.friendshipState ?? null,
-      updatedAt: profile?.updatedAt || new Date().toISOString(),
-      cachedAt: profile?.cachedAt || new Date().toISOString(),
+      updatedAt: profile?.updatedAt || (authoritative ? new Date().toISOString() : undefined),
+      cachedAt: profile?.cachedAt || (authoritative ? new Date().toISOString() : undefined),
     };
   }
 
@@ -3157,14 +3256,31 @@ export class ChatService implements OnDestroy {
       .filter(Boolean))];
     for (const userId of userIds) {
       const profile = this.profileForUser(userId);
-      if ((profile?.displayName || profile?.phone || profile?.profilePhotoDataUrl) || this.profileFetchInFlight.has(userId)) {
+      const cachedAt = Date.parse(profile?.cachedAt || '') || 0;
+      if (Date.now() - cachedAt < 120_000 || this.profileFetchInFlight.has(userId)) {
         continue;
       }
-      this.profileFetchInFlight.add(userId);
-      firstValueFrom(this.api.get<UserSummary>(`/directory/users/${encodeURIComponent(userId)}`))
-        .then((person) => this.rememberProfiles([person], true))
-        .catch(() => undefined)
-        .finally(() => this.profileFetchInFlight.delete(userId));
+      void this.refreshProfile(userId);
+    }
+  }
+
+  private async refreshProfile(userId: string): Promise<void> {
+    if (!userId || this.profileFetchInFlight.has(userId)) {
+      return;
+    }
+    this.profileFetchInFlight.add(userId);
+    try {
+      const person = await firstValueFrom(this.api.get<UserSummary>(`/directory/users/${encodeURIComponent(userId)}`));
+      this.rememberProfiles([person], true);
+    } catch {
+      this.profilesByUserId.update((state) => {
+        const previous = state[userId];
+        return previous
+          ? { ...state, [userId]: { ...previous, profilePhotoDataUrl: null, cachedAt: new Date().toISOString() } }
+          : state;
+      });
+    } finally {
+      this.profileFetchInFlight.delete(userId);
     }
   }
 
@@ -3361,6 +3477,8 @@ export class ChatService implements OnDestroy {
     this.selectedConversationLoadId += 1;
     this.typingTimers.forEach((timer) => window.clearTimeout(timer));
     this.typingTimers.clear();
+    this.typingEventAt.clear();
+    this.profileFetchInFlight.clear();
     this.expiryTimers.forEach((timer) => window.clearTimeout(timer));
     this.expiryTimers.clear();
     this.directoryCachedAt.clear();
@@ -3379,6 +3497,8 @@ export class ChatService implements OnDestroy {
     this.selectedConversationLoadId += 1;
     this.typingTimers.forEach((timer) => window.clearTimeout(timer));
     this.typingTimers.clear();
+    this.typingEventAt.clear();
+    this.profileFetchInFlight.clear();
     this.expiryTimers.forEach((timer) => window.clearTimeout(timer));
     this.expiryTimers.clear();
   }
@@ -3437,6 +3557,11 @@ export class ChatService implements OnDestroy {
   private stringPayload(payload: ChatPayload, key: string): string {
     const value = payload[key];
     return typeof value === 'string' ? value : '';
+  }
+
+  private isTransientMessageSendError(error: unknown): boolean {
+    const status = Number((error as { status?: unknown } | null)?.status);
+    return status === 0 || [408, 425, 429, 500, 502, 503, 504].includes(status);
   }
 
   private async encryptedRecipients(

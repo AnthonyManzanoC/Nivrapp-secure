@@ -158,7 +158,12 @@
                   <ion-icon [name]="calls.muted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
                 </ion-button>
                 @if (call.type === 'Video') {
-                  <ion-button mode="ios" fill="clear" [disabled]="!calls.localStream()" (click)="calls.toggleCamera()">
+                  <ion-button
+                    mode="ios"
+                    fill="clear"
+                    [disabled]="!calls.localStream() || calls.mediaUpgradeInFlight()"
+                    (click)="calls.toggleCamera()"
+                    [attr.aria-label]="calls.cameraOff() ? ('CALLS.ENABLE_CAMERA' | translate:'Activar camara') : ('CALLS.DISABLE_CAMERA' | translate:'Desactivar camara')">
                     <ion-icon [name]="calls.cameraOff() ? 'videocam-off-outline' : 'videocam-outline'"></ion-icon>
                   </ion-button>
                   @if (calls.canOfferScreenShare()) {
@@ -173,6 +178,17 @@
                       <ion-icon name="desktop-outline"></ion-icon>
                     </ion-button>
                   }
+                } @else {
+                  <ion-button
+                    mode="ios"
+                    fill="clear"
+                    class="upgrade-video-button"
+                    [class.active]="calls.mediaUpgradeInFlight()"
+                    [disabled]="calls.phase() !== 'connected' || calls.mediaUpgradeInFlight()"
+                    (click)="enableVideo()"
+                    [attr.aria-label]="'CALLS.SWITCH_TO_VIDEO' | translate:'Activar videollamada'">
+                    <ion-icon name="videocam-outline"></ion-icon>
+                  </ion-button>
                 }
                 <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()">
                   <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
@@ -183,7 +199,12 @@
                     {{ 'COMMON.RETRY' | translate:'Reintentar' }}
                   </ion-button>
                 }
-                <ion-button mode="ios" fill="clear" (click)="openInviteModal()" [attr.aria-label]="'CALLS.ADD_PARTICIPANT' | translate:'Anadir participante'">
+                <ion-button
+                  mode="ios"
+                  fill="clear"
+                  [disabled]="calls.phase() !== 'connected' || callBusyId !== ''"
+                  (click)="openInviteModal()"
+                  [attr.aria-label]="'CALLS.ADD_PARTICIPANT' | translate:'Anadir participante'">
                   <ion-icon name="person-add-outline"></ion-icon>
                 </ion-button>
                 <ion-button mode="ios" color="danger" (click)="endActive()">
@@ -308,14 +329,14 @@
         <header>
           <div>
             <h2>{{ 'CALLS.ADD_PARTICIPANT' | translate:'Anadir participante' }}</h2>
-            <p>{{ 'CALLS.ADD_PARTICIPANT_COPY' | translate:'Preparado para migrar esta llamada a sala grupal SFU.' }}</p>
+            <p>{{ 'CALLS.ADD_PARTICIPANT_COPY' | translate:'La llamada continuara en una sala grupal segura sin iniciar otra sesion.' }}</p>
           </div>
           <ion-button mode="ios" fill="clear" (click)="closeInviteModal()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
             <ion-icon name="close-outline"></ion-icon>
           </ion-button>
         </header>
         <div class="invite-list">
-          @for (contact of chat.contacts(); track contact.userId) {
+          @for (contact of callInviteContacts(); track contact.userId) {
             <button type="button" (click)="inviteToCall(contact)" [disabled]="callBusyId !== ''" [class.busy]="callBusyId === 'invite:' + contact.userId">
               @if (contact.profilePhotoDataUrl) {
                 <img [src]="contact.profilePhotoDataUrl" alt="">

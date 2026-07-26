@@ -525,5 +525,10 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
         owned.Property(settings => settings.ReadReceipts).HasColumnName($"{prefix}read_receipts");
         owned.Property(settings => settings.DefaultMessageTtlSeconds).HasColumnName($"{prefix}default_message_ttl_seconds");
         owned.Property(settings => settings.PrivacyPreset).HasColumnName($"{prefix}preset").HasMaxLength(32).IsRequired();
+        owned.Property(settings => settings.ProfilePhotoVisibility)
+            .HasColumnName($"{prefix}profile_photo_visibility")
+            .HasMaxLength(16)
+            .HasDefaultValue("contacts")
+            .IsRequired();
     }
 }

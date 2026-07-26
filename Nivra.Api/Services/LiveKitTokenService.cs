@@ -69,6 +69,8 @@ public sealed class LiveKitTokenService
 
     public static string RoomName(string groupId) => $"nivra-group-{groupId}";
 
+    public static string CallRoomName(string callId) => $"nivra-call-{callId}";
+
     public static string VaultVoiceRoomName(string roomId) => $"nivra-vault-audio-{roomId}";
 
     private static string Sign(LiveKitJwtPayload payload, string secret)

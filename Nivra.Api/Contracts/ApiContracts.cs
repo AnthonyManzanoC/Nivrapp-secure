@@ -438,6 +438,8 @@ public sealed record CallSignalResponse(
 
 public sealed record InviteCallParticipantRequest(string UserId);
 
+public sealed record UpdateCallTypeRequest(CallType Type);
+
 public sealed record LiveKitRoomTokenResponse(string ServerUrl, string Token);
 
 public sealed record CallResponse(
@@ -457,7 +459,8 @@ public sealed record PatchPrivacyRequest(
     bool? AllowScreenshots,
     bool? ReadReceipts,
     int? DefaultMessageTtlSeconds,
-    string? PrivacyPreset);
+    string? PrivacyPreset,
+    string? ProfilePhotoVisibility);
 
 public sealed record RegisterPushTokenRequest(string Provider, string Token);
 

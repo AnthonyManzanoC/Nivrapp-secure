@@ -912,15 +912,16 @@ ion-modal.story-stats-modal {
   --height: 88%;
   --border-radius: 18px 18px 0 0;
   --background: rgba(8, 14, 17, .98);
+  --box-shadow: 0 -24px 70px rgba(0, 0, 0, .42);
 }
 
 .story-stats-sheet {
   min-height: 100%;
-  padding: 16px;
-  color: var(--nivra-text);
+  padding: 18px 16px calc(24px + env(safe-area-inset-bottom));
+  color: #f4fbf7;
   background:
-    linear-gradient(180deg, rgba(24, 214, 162, .08), transparent 34%),
-    rgba(8, 14, 17, .98);
+    radial-gradient(circle at 18% 0, rgba(24, 214, 162, .14), transparent 32%),
+    linear-gradient(180deg, #0b1518, #070d10 46%);
 }
 
 .story-stats-sheet header {
@@ -935,16 +936,67 @@ ion-modal.story-stats-modal {
 .story-stats-sheet h3,
 .story-stats-sheet p {
   margin: 0;
+  color: #f4fbf7;
+}
+
+.story-stats-sheet h2 {
+  font-size: clamp(22px, 5vw, 28px);
+  line-height: 1.1;
+}
+
+.story-stats-sheet h3 {
+  font-size: 16px;
 }
 
 .story-stats-sheet header span {
-  color: var(--nivra-muted);
-  font-size: 12px;
+  display: block;
+  max-width: 38ch;
+  margin-top: 4px;
+  color: rgba(216, 232, 226, .72);
+  font-size: 13px;
+  line-height: 1.35;
 }
 
 .story-stats-sheet header button {
   width: 38px;
   height: 38px;
+  color: #f4fbf7;
+  background: rgba(255, 255, 255, .12);
+}
+
+.stats-summary {
+  margin-bottom: 14px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stats-summary > span {
+  min-width: 0;
+  border: 1px solid rgba(114, 240, 202, .18);
+  border-radius: 12px;
+  padding: 10px 8px;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  color: #f4fbf7;
+  background: rgba(24, 214, 162, .075);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05);
+}
+
+.stats-summary strong {
+  color: #72f0ca;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.stats-summary small {
+  min-width: 0;
+  overflow: hidden;
+  color: rgba(216, 232, 226, .76);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .stats-columns {
@@ -961,7 +1013,9 @@ ion-modal.story-stats-modal {
   display: grid;
   align-content: start;
   gap: 9px;
-  background: rgba(255, 255, 255, .045);
+  color: #f4fbf7;
+  background: rgba(255, 255, 255, .052);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
 }
 
 .stats-row {
@@ -999,16 +1053,16 @@ ion-modal.story-stats-modal {
 }
 
 .stats-row small {
-  color: var(--nivra-muted);
+  color: rgba(216, 232, 226, .68);
 }
 
 .stats-row em {
-  color: var(--nivra-soft);
+  color: #d8e8e2;
   font-style: normal;
 }
 
 .stats-empty {
-  color: var(--nivra-muted);
+  color: rgba(216, 232, 226, .68);
   font-size: 13px;
 }
 

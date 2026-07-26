@@ -227,6 +227,7 @@ public sealed class PrivacySettings
     public bool ReadReceipts { get; set; } = true;
     public int? DefaultMessageTtlSeconds { get; set; }
     public string PrivacyPreset { get; set; } = "private";
+    public string ProfilePhotoVisibility { get; set; } = "contacts";
 
     public static PrivacySettings Default() => new();
 }

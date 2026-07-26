@@ -26,15 +26,34 @@
             </small>
           </button>
           <div class="profile-photo-actions">
-            <ion-button mode="ios" fill="outline" (click)="profilePhotoInput.click()" [disabled]="saving">
-              <ion-icon name="camera-outline"></ion-icon>
-              {{ profilePhotoDataUrl ? ('ACCOUNT.CHANGE_PHOTO' | translate:'Cambiar foto') : ('ACCOUNT.UPLOAD_PHOTO' | translate:'Subir foto') }}
-            </ion-button>
-            @if (profilePhotoDataUrl) {
-              <ion-button mode="ios" fill="clear" color="danger" (click)="removeProfilePhoto()" [disabled]="saving">
-                <ion-icon name="trash-outline"></ion-icon>
-                {{ 'ACCOUNT.REMOVE' | translate:'Quitar' }}
+            <div class="profile-photo-buttons">
+              <ion-button mode="ios" fill="outline" (click)="profilePhotoInput.click()" [disabled]="saving">
+                <ion-icon name="camera-outline"></ion-icon>
+                {{ profilePhotoDataUrl ? ('ACCOUNT.CHANGE_PHOTO' | translate:'Cambiar foto') : ('ACCOUNT.UPLOAD_PHOTO' | translate:'Subir foto') }}
               </ion-button>
+              @if (profilePhotoDataUrl) {
+                <ion-button mode="ios" fill="clear" color="danger" (click)="removeProfilePhoto()" [disabled]="saving">
+                  <ion-icon name="trash-outline"></ion-icon>
+                  {{ 'ACCOUNT.REMOVE' | translate:'Quitar' }}
+                </ion-button>
+              }
+            </div>
+            @if (account.privacy(); as privacy) {
+              <label class="profile-photo-visibility">
+                <span>
+                  <strong>{{ 'ACCOUNT.WHO_SEES_PHOTO' | translate:'Quien puede ver tu foto' }}</strong>
+                  <small>{{ 'ACCOUNT.PHOTO_VISIBILITY_SERVER' | translate:'Regla sincronizada y aplicada por el servidor.' }}</small>
+                </span>
+                <select
+                  class="native-select compact"
+                  [value]="privacy.profilePhotoVisibility || 'contacts'"
+                  (change)="setProfilePhotoVisibility($any($event.target).value)"
+                  [disabled]="saving">
+                  @for (option of visibilityOptions; track option.value) {
+                    <option [value]="option.value">{{ option.labelKey | translate:option.label }}</option>
+                  }
+                </select>
+              </label>
             }
           </div>
         </div>
@@ -353,9 +372,10 @@
         }
         <div class="local-privacy-block">
           <div class="subsection-head">
-            <strong>{{ 'ACCOUNT.ADVANCED_VISIBILITY' | translate:'Visibilidad avanzada local' }}</strong>
+            <strong>{{ 'ACCOUNT.DEVICE_VISIBILITY_PREFERENCES' | translate:'Preferencias de visibilidad del dispositivo' }}</strong>
             <small>{{ 'ACCOUNT.LOCAL' | translate:'Local' }}</small>
           </div>
+          <p class="local-privacy-copy">{{ 'ACCOUNT.SERVER_PRIVACY_EXPLANATION' | translate:'La foto del perfil se controla arriba y se aplica realmente en el servidor. Estas preferencias restantes personalizan este dispositivo.' }}</p>
           <div class="visibility-list">
             @for (row of visibilityRows; track row.key) {
               <label>

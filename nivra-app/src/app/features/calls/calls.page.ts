@@ -180,6 +180,11 @@ export class CallsPage {
     await this.calls.toggleScreenShare();
   }
 
+  async enableVideo(): Promise<void> {
+    this.revealCallChrome();
+    await this.calls.enableVideo();
+  }
+
   async rejoin(callId: string): Promise<void> {
     this.videoSwapped = false;
     this.pinnedParticipantId = null;
@@ -207,9 +212,21 @@ export class CallsPage {
     try {
       await this.calls.inviteToCall(contact.userId);
       this.inviteModalOpen = false;
+    } catch {
+      this.inviteModalOpen = true;
     } finally {
       this.callBusyId = '';
     }
+  }
+
+  callInviteContacts(): Contact[] {
+    const call = this.calls.activeCall();
+    const excludedIds = new Set([
+      this.auth.session()?.user.id,
+      call?.initiatorUserId,
+      ...(call?.participantUserIds ?? []),
+    ].filter((userId): userId is string => Boolean(userId)));
+    return this.agendaContacts().filter((contact) => !excludedIds.has(contact.userId));
   }
 
   contactLabel(contact: Contact): string {

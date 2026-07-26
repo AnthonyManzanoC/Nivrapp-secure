@@ -47,6 +47,9 @@ La API expone:
 - `POST /vault/rooms/{roomId}/invite-links`
 - `POST /vault/invites/{code}/accept`
 - `POST /calls/start`
+- `GET /calls/{callId}/room-token`
+- `PATCH /calls/{callId}/type`
+- `POST /calls/{callId}/invite`
 - `POST /calls/{callId}/signal`
 - `POST /calls/{callId}/end`
 - `GET/PATCH /privacy`
@@ -87,6 +90,17 @@ WebRtc__RelayOnly=false
 
 Debe existir una ruta TURN sobre UDP y otra sobre TLS/TCP para cubrir redes móviles, Wi‑Fi corporativo y NAT simétrico. `RelayOnly=true` fuerza máxima privacidad de IP, con el costo de enviar todo el tráfico por el relay.
 
+Las llamadas grupales y la conversión de una llamada directa al invitar a una tercera persona requieren LiveKit:
+
+```text
+LiveKit__Url=wss://livekit.example.com
+LiveKit__ApiKey=<api-key>
+LiveKit__ApiSecret=<api-secret>
+LiveKit__TokenMinutes=45
+```
+
+El backend no inicia una llamada grupal ni agrega el tercer participante si LiveKit no está configurado. Los tokens son efímeros, se emiten solo a participantes de una llamada activa y quedan limitados a la sala de esa llamada.
+
 El estado y los bloqueos criptográficos verificables se documentan en `nivra-app/docs/security-production-readiness.md`.
 
 Hardening incluido:
@@ -113,6 +127,9 @@ Frontend Angular/Ionic:
 - historial local-first con IndexedDB en Web/Desktop y SQLite nativo en Android/iOS;
 - sync incremental por watermark en `/messages/sync?since=...`;
 - llamadas WebRTC con estados, limpieza de streams/tracks y mensajes de sistema creados por cliente E2EE;
+- mensajes directos y grupales con sobres E2EE por dispositivo, padding y categoría de transporte uniformes, reintento transitorio con deduplicación idempotente por `clientMessageId` y validación de cobertura de participantes;
+- indicadores de escritura cifrados por dispositivo y eventos de edición/reacción ligados al remitente autenticado;
+- privacidad de foto de perfil aplicada por servidor (`everyone`, `contacts`, `nobody`) y actualización en tiempo real sin exponer la imagen en el evento;
 - push FCM web/nativo con data-push silencioso para llamadas entrantes;
 - pantallas iniciales conectadas para Mundo, Boveda, Llamadas y Cuenta;
 - radar cifrado de contactos por hashes SHA-256 calculados en cliente;

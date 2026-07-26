@@ -392,12 +392,26 @@
             <header>
               <div>
                 <h2>{{ 'WORLD.ACTIVITY' | translate:'Actividad' }}</h2>
-                <span>{{ statsViews(story) }} vistas - {{ statsReactions(story) }} reacciones - {{ statsComments(story) }} comentarios</span>
+                <span>{{ 'WORLD.STORY_ACTIVITY_COPY' | translate:'Personas que vieron e interactuaron con tu historia' }}</span>
               </div>
               <button type="button" (click)="closeStats()" [attr.aria-label]="'WORLD.CLOSE_STATS' | translate:'Cerrar estadisticas'">
                 <ion-icon name="close-outline"></ion-icon>
               </button>
             </header>
+            <div class="stats-summary" [attr.aria-label]="'WORLD.ACTIVITY' | translate:'Actividad'">
+              <span>
+                <strong>{{ statsViews(story) }}</strong>
+                <small>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</small>
+              </span>
+              <span>
+                <strong>{{ statsReactions(story) }}</strong>
+                <small>{{ 'CHAT.REACTIONS' | translate:'Reacciones' }}</small>
+              </span>
+              <span>
+                <strong>{{ statsComments(story) }}</strong>
+                <small>{{ 'WORLD.COMMENTS' | translate:'Comentarios' }}</small>
+              </span>
+            </div>
             <div class="stats-columns">
               <article>
                 <h3>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</h3>

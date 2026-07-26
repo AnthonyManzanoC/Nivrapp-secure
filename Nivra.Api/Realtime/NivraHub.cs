@@ -398,6 +398,10 @@ public sealed class NivraHub(
         {
             return;
         }
+        if (string.IsNullOrWhiteSpace(encryptedState) || encryptedState.Length > 262_144)
+        {
+            return;
+        }
 
         await Clients.Group(GroupsFor.Conversation(conversationId)).SendAsync("conversation.typing", new
         {

@@ -140,7 +140,6 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly visibilityRows: Array<{ label: string; labelKey: string; key: keyof NivraAppSettings }> = [
     { label: 'Numero de telefono', labelKey: 'ACCOUNT.PHONE_NUMBER', key: 'phoneVisibility' },
     { label: 'Ultima vez y en linea', labelKey: 'ACCOUNT.LAST_SEEN', key: 'lastSeenVisibility' },
-    { label: 'Fotos del perfil', labelKey: 'ACCOUNT.PROFILE_PHOTOS', key: 'profilePhotoVisibility' },
     { label: 'Mensajes reenviados', labelKey: 'ACCOUNT.FORWARDED_MESSAGES', key: 'forwardedMessagesVisibility' },
     { label: 'Llamadas', labelKey: 'TABS.CALLS', key: 'callsVisibility' },
     { label: 'Mensajes de voz', labelKey: 'ACCOUNT.VOICE_MESSAGES', key: 'voiceMessagesVisibility' },
@@ -220,6 +219,10 @@ export class AccountPage implements OnInit, OnDestroy {
       this.profilePhotoDirty = false;
       this.isDiscoverable = user.isDiscoverable;
       this.allowStoryReposts = user.allowStoryReposts !== false;
+      this.appSettings.set(
+        'profilePhotoVisibility',
+        this.normalizeVisibility(user.privacySettings?.profilePhotoVisibility),
+      );
     }
     await this.refreshStorageEstimate();
   }
@@ -312,6 +315,22 @@ export class AccountPage implements OnInit, OnDestroy {
     await this.run(async () => {
       await this.account.updatePrivacy(privacy);
       this.notice = this.t('ACCOUNT.PRIVACY_UPDATED', 'Privacidad actualizada.');
+    });
+  }
+
+  async setProfilePhotoVisibility(value: string): Promise<void> {
+    const visibility = this.normalizeVisibility(value);
+    const privacy = this.account.privacy();
+    if (!privacy || privacy.profilePhotoVisibility === visibility) {
+      return;
+    }
+    await this.run(async () => {
+      await this.account.updatePrivacy({
+        ...privacy,
+        profilePhotoVisibility: visibility,
+      });
+      this.appSettings.set('profilePhotoVisibility', visibility);
+      this.notice = this.t('ACCOUNT.PHOTO_PRIVACY_UPDATED', 'Privacidad de la foto actualizada en todos tus dispositivos.');
     });
   }
 
@@ -551,6 +570,7 @@ export class AccountPage implements OnInit, OnDestroy {
         readReceipts: true,
         defaultMessageTtlSeconds: 86400,
         privacyPreset: 'private',
+        profilePhotoVisibility: 'contacts',
       },
       balanced: {
         hideNotificationContent: true,
@@ -559,6 +579,7 @@ export class AccountPage implements OnInit, OnDestroy {
         readReceipts: true,
         defaultMessageTtlSeconds: null,
         privacyPreset: 'balanced',
+        profilePhotoVisibility: 'contacts',
       },
       open: {
         hideNotificationContent: false,
@@ -567,6 +588,7 @@ export class AccountPage implements OnInit, OnDestroy {
         readReceipts: true,
         defaultMessageTtlSeconds: null,
         privacyPreset: 'open',
+        profilePhotoVisibility: 'everyone',
       },
     };
     const patch = patches[value] ?? patches['balanced'];
@@ -1028,6 +1050,10 @@ export class AccountPage implements OnInit, OnDestroy {
 
   private normalizeAlias(value: string): string {
     return value.trim().replace(/^@+/, '').toLowerCase();
+  }
+
+  private normalizeVisibility(value: unknown): NivraVisibility {
+    return value === 'everyone' || value === 'nobody' ? value : 'contacts';
   }
 
   private async resizeProfilePhoto(file: File): Promise<string> {

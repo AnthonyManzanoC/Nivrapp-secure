@@ -499,7 +499,7 @@ public static partial class EndpointExtensions
             return user is null ? Results.Unauthorized() : Results.Ok(ToUserResponse(user));
         });
 
-        app.MapPatch("/me", async Task<IResult> (PatchProfileRequest request, HttpContext http, INivraStore store, NivraDbContext db, PushNotificationService pushNotifications, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        app.MapPatch("/me", async Task<IResult> (PatchProfileRequest request, HttpContext http, INivraStore store, NivraDbContext db, PushNotificationService pushNotifications, IHubContext<NivraHub> hub, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -579,6 +579,7 @@ public static partial class EndpointExtensions
             {
                 await NotifyContactJoinedWatchersAsync(db, pushNotifications, user.Id, user.PhoneHash, cancellationToken);
             }
+            await NotifyProfileUpdatedAsync(db, hub, user.Id, cancellationToken);
             return Results.Ok(ToUserResponse(user));
         });
     }
@@ -1600,11 +1601,42 @@ public static partial class EndpointExtensions
             {
                 return Error("invalid_message", "ClientMessageId y recipients son obligatorios.");
             }
+            if (request.ClientMessageId.Length > 128 || request.Recipients.Count > 512)
+            {
+                return Error("invalid_message", "El identificador o la cantidad de destinatarios excede el limite permitido.");
+            }
+
+            var existingMessage = await db.Messages
+                .AsNoTracking()
+                .FirstOrDefaultAsync(message =>
+                    message.SenderUserId == current.UserId &&
+                    message.ClientMessageId == request.ClientMessageId,
+                    cancellationToken);
+            if (existingMessage is not null)
+            {
+                return existingMessage.ConversationId == conversation.Id
+                    ? Results.Ok(ToMessageResponse(existingMessage))
+                    : Error("client_message_conflict", "Ese identificador ya fue usado en otro chat.", StatusCodes.Status409Conflict);
+            }
 
             var activeParticipantIds = conversation.Participants
                 .Where(participant => participant.RemovedAt is null)
                 .Select(participant => participant.UserId)
                 .ToHashSet(StringComparer.Ordinal);
+            var recipientPairs = request.Recipients
+                .Select(recipient => $"{recipient.UserId}\u001f{recipient.DeviceId}")
+                .ToList();
+            if (recipientPairs.Distinct(StringComparer.Ordinal).Count() != recipientPairs.Count)
+            {
+                return Error("invalid_recipients", "No se permiten destinatarios duplicados.");
+            }
+            var recipientUserIds = request.Recipients
+                .Select(recipient => recipient.UserId)
+                .ToHashSet(StringComparer.Ordinal);
+            if (!recipientUserIds.SetEquals(activeParticipantIds))
+            {
+                return Error("incomplete_recipients", "El sobre cifrado debe incluir a cada participante activo.");
+            }
 
             var recipientDeviceIds = request.Recipients
                 .Select(recipient => recipient.DeviceId)
@@ -1623,7 +1655,10 @@ public static partial class EndpointExtensions
                     device is null ||
                     device.UserId != recipient.UserId ||
                     device.RevokedAt is not null ||
-                    string.IsNullOrWhiteSpace(recipient.Ciphertext))
+                    !device.IsTrusted ||
+                    string.IsNullOrWhiteSpace(recipient.Ciphertext) ||
+                    recipient.Ciphertext.Length > 4_000_000 ||
+                    (recipient.Header?.Length ?? 0) > 4_000_000)
                 {
                     return Error("invalid_recipients", "Cada destinatario debe ser participante activo y tener dispositivo vigente.");
                 }
@@ -1653,7 +1688,25 @@ public static partial class EndpointExtensions
 
             conversation.LastMessageAt = now;
             conversation.UpdatedAt = now;
-            await store.AddMessageAsync(message, cancellationToken);
+            try
+            {
+                await store.AddMessageAsync(message, cancellationToken);
+            }
+            catch (DbUpdateException)
+            {
+                db.ChangeTracker.Clear();
+                var duplicate = await db.Messages
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(candidate =>
+                        candidate.SenderUserId == current.UserId &&
+                        candidate.ClientMessageId == request.ClientMessageId,
+                        cancellationToken);
+                if (duplicate is not null && duplicate.ConversationId == conversation.Id)
+                {
+                    return Results.Ok(ToMessageResponse(duplicate));
+                }
+                throw;
+            }
 
             foreach (var recipient in message.Recipients)
             {
@@ -3430,7 +3483,39 @@ public static partial class EndpointExtensions
         group.MapGet("/room-token/{groupId}", RoomToken);
         app.MapGet("/api/calls/room-token/{groupId}", RoomToken);
 
-        group.MapPost("/start", async Task<IResult> (StartCallRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        group.MapGet("/{callId}/room-token", async Task<IResult> (string callId, HttpContext http, INivraStore store, LiveKitTokenService liveKit, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var call = await store.GetCallAsync(callId, cancellationToken);
+            if (call is null ||
+                !call.ParticipantUserIds.Contains(current.UserId) ||
+                call.Status == CallStatus.Ended ||
+                call.EndedAt is not null)
+            {
+                return Results.NotFound();
+            }
+
+            if (!liveKit.IsConfigured)
+            {
+                return Error("livekit_not_configured", "LiveKit no esta configurado en el servidor.", StatusCodes.Status503ServiceUnavailable);
+            }
+
+            var user = await store.GetUserAsync(current.UserId, cancellationToken);
+            if (user is null || user.DisabledAt is not null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var token = liveKit.CreateRoomToken(LiveKitTokenService.CallRoomName(call.Id), user);
+            return Results.Ok(new LiveKitRoomTokenResponse(token.ServerUrl, token.Token));
+        });
+
+        group.MapPost("/start", async Task<IResult> (StartCallRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3443,6 +3528,7 @@ public static partial class EndpointExtensions
                 .Distinct(StringComparer.Ordinal)
                 .ToHashSet(StringComparer.Ordinal);
 
+            var isGroupConversation = false;
             if (request.ConversationId is not null)
             {
                 var conversation = await store.GetConversationAsync(request.ConversationId, cancellationToken);
@@ -3455,11 +3541,16 @@ public static partial class EndpointExtensions
                     .Where(participant => participant.RemovedAt is null)
                     .Select(participant => participant.UserId)
                     .ToHashSet(StringComparer.Ordinal);
+                isGroupConversation = conversation.Type == ConversationType.Group;
             }
 
             if (participants.Count < 2 || !await store.UsersExistAsync(participants, cancellationToken))
             {
                 return Error("invalid_call", "La llamada necesita al menos dos usuarios validos.");
+            }
+            if ((isGroupConversation || participants.Count > 2) && !liveKit.IsConfigured)
+            {
+                return Error("livekit_not_configured", "Las llamadas grupales requieren LiveKit configurado en el servidor.", StatusCodes.Status503ServiceUnavailable);
             }
 
             var call = new CallSession
@@ -3609,7 +3700,8 @@ public static partial class EndpointExtensions
                 "renegotiate-request",
                 "muted",
                 "camera",
-                "screen"
+                "screen",
+                "media-mode"
             };
             if (string.IsNullOrWhiteSpace(signalType) ||
                 !allowedSignalTypes.Contains(signalType) ||
@@ -3663,7 +3755,42 @@ public static partial class EndpointExtensions
             return Results.Accepted(value: new { signalId = signal.Id, createdAt = signal.CreatedAt });
         });
 
-        group.MapPost("/{callId}/invite", async Task<IResult> (string callId, InviteCallParticipantRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        group.MapPatch("/{callId}/type", async Task<IResult> (string callId, UpdateCallTypeRequest request, HttpContext http, INivraStore store, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var call = await store.GetCallAsync(callId, cancellationToken);
+            if (call is null || !call.ParticipantUserIds.Contains(current.UserId))
+            {
+                return Results.NotFound();
+            }
+
+            if (call.Status == CallStatus.Ended || call.EndedAt is not null)
+            {
+                return Error("call_ended", "La llamada ya finalizo.", StatusCodes.Status409Conflict);
+            }
+
+            if (request.Type != CallType.Video)
+            {
+                return Error("invalid_call_type", "Una llamada activa solo puede ampliarse a video.");
+            }
+
+            if (call.Type != request.Type)
+            {
+                call.Type = request.Type;
+                await store.SaveChangesAsync(cancellationToken);
+            }
+
+            var response = ToCallResponse(call);
+            await NotifyUsers(hub, call.ParticipantUserIds, "call.updated", response);
+            return Results.Ok(response);
+        });
+
+        group.MapPost("/{callId}/invite", async Task<IResult> (string callId, InviteCallParticipantRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3693,7 +3820,13 @@ public static partial class EndpointExtensions
                 return Error("invalid_participant", "Ese usuario no existe.");
             }
 
-            if (!call.ParticipantUserIds.Contains(targetUserId, StringComparer.Ordinal))
+            var isNewParticipant = !call.ParticipantUserIds.Contains(targetUserId, StringComparer.Ordinal);
+            if (isNewParticipant && call.ParticipantUserIds.Count >= 2 && !liveKit.IsConfigured)
+            {
+                return Error("livekit_not_configured", "Configura LiveKit antes de convertir la llamada en grupal.", StatusCodes.Status503ServiceUnavailable);
+            }
+
+            if (isNewParticipant)
             {
                 call.ParticipantUserIds.Add(targetUserId);
             }
@@ -3754,7 +3887,7 @@ public static partial class EndpointExtensions
             return user is null ? Results.Unauthorized() : Results.Ok(user.PrivacySettings);
         });
 
-        app.MapPatch("/privacy", async Task<IResult> (PatchPrivacyRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        app.MapPatch("/privacy", async Task<IResult> (PatchPrivacyRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3779,6 +3912,7 @@ public static partial class EndpointExtensions
             {
                 await NotifyUsers(hub, conversation.Participants.Select(participant => participant.UserId), "conversation.updated", conversation);
             }
+            await NotifyProfileUpdatedAsync(db, hub, current.UserId, cancellationToken);
             return Results.Ok(user.PrivacySettings);
         });
     }
@@ -4424,15 +4558,16 @@ public static partial class EndpointExtensions
     {
         var user = await store.GetUserAsync(contact.ContactUserId, cancellationToken);
         var reverseContacts = await store.ContactsForUserAsync(contact.ContactUserId, cancellationToken);
+        var ownerIsInContacts = reverseContacts.Any(reverse => reverse.ContactUserId == contact.OwnerUserId);
         return new ContactResponse(
             contact.ContactUserId,
             user?.Alias ?? "unknown",
             user?.DisplayName,
             user?.Phone,
-            user?.ProfilePhotoDataUrl,
+            VisibleProfilePhoto(user, contact.OwnerUserId, ownerIsInContacts),
             contact.NicknameCiphertext,
             contact.IsFavorite,
-            reverseContacts.Any(reverse => reverse.ContactUserId == contact.OwnerUserId),
+            ownerIsInContacts,
             contact.CreatedAt);
     }
 
@@ -4677,7 +4812,7 @@ public static partial class EndpointExtensions
             user.DisplayName,
             outgoing is not null || user.Id == currentUserId ? user.Phone : null,
             user.Bio,
-            user.ProfilePhotoDataUrl,
+            VisibleProfilePhoto(user, currentUserId, incoming),
             user.IsDiscoverable,
             user.AllowStoryReposts,
             outgoing is not null,
@@ -4836,9 +4971,18 @@ public static partial class EndpointExtensions
             .OrderBy(member => member.Role)
             .ThenBy(member => member.CreatedAt)
             .ToListAsync(cancellationToken);
+        var memberIds = members.Select(member => member.UserId).Distinct(StringComparer.Ordinal).ToList();
         var users = await db.Users
-            .Where(user => members.Select(member => member.UserId).Contains(user.Id))
+            .Where(user => memberIds.Contains(user.Id))
             .ToDictionaryAsync(user => user.Id, cancellationToken);
+        var ownersWhoSavedViewer = (await db.Contacts
+            .AsNoTracking()
+            .Where(contact =>
+                contact.ContactUserId == currentUserId &&
+                memberIds.Contains(contact.OwnerUserId))
+            .Select(contact => contact.OwnerUserId)
+            .ToListAsync(cancellationToken))
+            .ToHashSet(StringComparer.Ordinal);
 
         return new VaultRoomResponse(
             room.Id,
@@ -4859,7 +5003,7 @@ public static partial class EndpointExtensions
                     member.UserId,
                     user?.Alias ?? "unknown",
                     user?.DisplayName,
-                    user?.ProfilePhotoDataUrl,
+                    VisibleProfilePhoto(user, currentUserId, ownersWhoSavedViewer.Contains(member.UserId)),
                     member.Role,
                     member.Status,
                     member.CreatedAt,
@@ -5120,6 +5264,68 @@ public static partial class EndpointExtensions
                 : request.DefaultMessageTtlSeconds.Value;
         }
         target.PrivacyPreset = NormalizeOptional(request.PrivacyPreset) ?? target.PrivacyPreset;
+        if (request.ProfilePhotoVisibility is not null)
+        {
+            target.ProfilePhotoVisibility = NormalizeVisibility(request.ProfilePhotoVisibility, target.ProfilePhotoVisibility);
+        }
+    }
+
+    private static string NormalizeVisibility(string? value, string fallback = "contacts")
+    {
+        var normalized = NormalizeOptional(value)?.ToLowerInvariant();
+        return normalized is "everyone" or "contacts" or "nobody"
+            ? normalized
+            : fallback is "everyone" or "contacts" or "nobody" ? fallback : "contacts";
+    }
+
+    private static string? VisibleProfilePhoto(UserAccount? user, string viewerUserId, bool ownerHasViewerAsContact)
+    {
+        if (user is null || string.IsNullOrWhiteSpace(user.ProfilePhotoDataUrl))
+        {
+            return null;
+        }
+        if (user.Id == viewerUserId)
+        {
+            return user.ProfilePhotoDataUrl;
+        }
+
+        return NormalizeVisibility(user.PrivacySettings.ProfilePhotoVisibility) switch
+        {
+            "everyone" => user.ProfilePhotoDataUrl,
+            "contacts" when ownerHasViewerAsContact => user.ProfilePhotoDataUrl,
+            _ => null
+        };
+    }
+
+    private static async Task NotifyProfileUpdatedAsync(
+        NivraDbContext db,
+        IHubContext<NivraHub> hub,
+        string userId,
+        CancellationToken cancellationToken)
+    {
+        var relatedUserIds = await db.Contacts
+            .AsNoTracking()
+            .Where(contact => contact.OwnerUserId == userId || contact.ContactUserId == userId)
+            .Select(contact => contact.OwnerUserId == userId ? contact.ContactUserId : contact.OwnerUserId)
+            .Distinct()
+            .ToListAsync(cancellationToken);
+        var relatedConversations = await db.Conversations
+            .AsNoTracking()
+            .Where(conversation => conversation.Participants.Any(participant =>
+                participant.UserId == userId &&
+                participant.RemovedAt == null))
+            .ToListAsync(cancellationToken);
+        var conversationUserIds = relatedConversations
+            .SelectMany(conversation => conversation.Participants)
+            .Where(participant => participant.RemovedAt is null)
+            .Select(participant => participant.UserId)
+            .Distinct(StringComparer.Ordinal);
+
+        await NotifyUsers(
+            hub,
+            relatedUserIds.Concat(conversationUserIds).Append(userId),
+            "profile.updated",
+            new { userId });
     }
 
     private static async Task NotifyUsers(IHubContext<NivraHub> hub, IEnumerable<string> userIds, string method, object payload)

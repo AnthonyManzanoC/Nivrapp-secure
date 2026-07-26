@@ -726,6 +726,17 @@
   box-shadow: 0 0 0 3px rgba(var(--ion-color-primary-rgb), .16);
 }
 
+.surface.call-mode .call-controls ion-button.upgrade-video-button {
+  --background: rgba(24, 214, 162, .14);
+  --color: #72f0ca;
+  box-shadow: inset 0 0 0 1px rgba(114, 240, 202, .18);
+}
+
+.surface.call-mode .call-controls ion-button.upgrade-video-button.active {
+  --background: linear-gradient(135deg, rgba(24, 214, 162, .3), rgba(107, 168, 255, .22));
+  animation: callControlPulse 1s ease-in-out infinite;
+}
+
 .call-controls .accept {
   --background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
   --color: #03100d;
@@ -1317,5 +1328,16 @@ ion-modal.invite-modal {
   50% {
     box-shadow: 0 24px 80px rgba(0, 0, 0, .36), 0 0 0 22px rgba(24, 214, 162, .015);
     transform: scale(1.018);
+  }
+}
+
+@keyframes callControlPulse {
+  0%, 100% {
+    filter: brightness(1);
+    transform: scale(1);
+  }
+  50% {
+    filter: brightness(1.18);
+    transform: scale(.94);
   }
 }

@@ -94,6 +94,7 @@ export interface PrivacySettings {
   readReceipts?: boolean;
   defaultMessageTtlSeconds?: number | null;
   privacyPreset?: string | null;
+  profilePhotoVisibility?: 'everyone' | 'contacts' | 'nobody';
 }
 
 export interface GroupSettings {

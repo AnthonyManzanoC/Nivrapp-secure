@@ -293,18 +293,44 @@ ion-footer.story-action-bar {
   grid-template-columns: minmax(0, 1fr) 42px;
   gap: 8px;
   align-items: center;
-  border: 1px solid rgba(255, 255, 255, .22);
+  min-height: 46px;
+  border: 1px solid rgba(255, 255, 255, .28);
   border-radius: 999px;
-  padding: 2px 4px 2px 12px;
-  background: rgba(255, 255, 255, .13);
-  backdrop-filter: blur(12px);
+  padding: 2px 4px 2px 14px;
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .09)),
+    rgba(5, 10, 12, .58);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, .1),
+    0 12px 34px rgba(0, 0, 0, .24);
+  backdrop-filter: blur(18px) saturate(145%);
 }
 
 .story-reply ion-input {
+  width: 100%;
   --color: #fff;
-  --placeholder-color: rgba(255, 255, 255, .72);
+  --background: transparent;
+  --placeholder-color: rgba(235, 247, 243, .68);
+  --placeholder-opacity: 1;
+  --padding-start: 0;
+  --padding-end: 0;
+  --padding-top: 0;
+  --padding-bottom: 0;
   min-height: 40px;
+  color: #fff;
+  background: transparent;
   text-shadow: 0 1px 8px rgba(0, 0, 0, .7);
+}
+
+.story-reply ion-input::part(native) {
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  padding-inline: 0;
+  color: #fff;
+  background: transparent;
+  box-shadow: none;
 }
 
 .story-reply button,
@@ -324,11 +350,16 @@ ion-footer.story-action-bar {
   height: 38px;
   color: #06120f;
   background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+  transition: transform .16s ease, opacity .16s ease, filter .16s ease;
 }
 
 .story-reply button:disabled,
 .story-quick-actions button:disabled {
   opacity: .45;
+}
+
+.story-reply button:not(:disabled):active {
+  transform: scale(.94);
 }
 
 .story-quick-actions {
@@ -419,20 +450,27 @@ ion-footer.story-action-bar {
 
 @media (max-width: 430px) {
   ion-footer.story-action-bar {
-    padding-inline: 10px;
+    padding-inline: 9px;
   }
 
   .story-action-shell {
-    gap: 8px;
+    gap: 7px;
   }
 
   .story-reply {
-    grid-template-columns: minmax(0, 1fr) 38px;
+    grid-template-columns: minmax(0, 1fr) 36px;
+    min-height: 44px;
+    padding-left: 12px;
+  }
+
+  .story-reply button {
+    width: 36px;
+    height: 36px;
   }
 
   .story-quick-actions button {
-    width: 38px;
-    height: 38px;
+    width: 40px;
+    height: 40px;
   }
 }
 
