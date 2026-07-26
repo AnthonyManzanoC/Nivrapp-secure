@@ -202,6 +202,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   messageInfoMessage: ChatMessageVm | null = null;
   quotedReplies: Record<string, QuotedReplyVm> = {};
   contactInfoOpen = false;
+  private contactInfoDismissPromise: Promise<void> | null = null;
+  private contactInfoDismissResolver: (() => void) | null = null;
+  private contactInfoDismissTimer: number | null = null;
   profilePhotoViewerUrl = '';
   profilePhotoViewerTitle = '';
   mediaGalleryOpen = false;
@@ -407,6 +410,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.finishContactInfoDismiss();
     const conversationId = this.conversation()?.id;
     if (conversationId) {
       void this.chat.sendTyping(conversationId, 'stopped', { force: true });
@@ -1110,6 +1114,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   closeContactInfo(): void {
     this.contactInfoOpen = false;
+  }
+
+  onContactInfoDidDismiss(): void {
+    this.contactInfoOpen = false;
+    this.finishContactInfoDismiss();
   }
 
   openProfilePhotoViewer(event?: Event, photoUrl = this.conversationPhoto()): void {
@@ -2134,7 +2143,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
     const stories = this.chat.isGroup(conversation)
       ? this.social.activeStoriesForGroup(conversation.id)
-      : this.social.contactStories().filter((story) => story.owner.id === this.directConversationPeerId(conversation));
+      : this.social.activeStoriesForOwner(this.directConversationPeerId(conversation));
     return stories
       .slice()
       .sort((left, right) => Date.parse(left.createdAt || '') - Date.parse(right.createdAt || ''));
@@ -2151,11 +2160,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   async openConversationStories(explicitStory: Story | null = null, event?: Event): Promise<void> {
     event?.preventDefault();
     event?.stopPropagation();
-    let stories = this.conversationStories();
-    if (!stories.length) {
-      await this.refreshConversationStories();
-      stories = this.conversationStories();
-    }
+    const infoDismissed = this.dismissContactInfoForStory();
+    await this.refreshConversationStories();
+    const stories = this.conversationStories();
+    await infoDismissed;
     if (!stories.length) {
       if (this.conversationPhoto()) {
         this.openProfilePhotoViewer(event);
@@ -2168,8 +2176,6 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       : -1;
     const firstUnviewed = stories.findIndex((story) => !story.viewedByMe && !this.isOwnStory(story));
     this.storyViewerIndex = explicitIndex >= 0 ? explicitIndex : firstUnviewed >= 0 ? firstUnviewed : 0;
-    this.closeContactInfo();
-    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     await this.openQueuedStory();
   }
 
@@ -3094,6 +3100,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.storyViewerQueue = this.storyViewerQueue.map((item) => item.id === active.id ? active : item);
       }
       this.restartStoryProgress();
+      this.preloadAdjacentStories();
     } catch (error) {
       this.storyError = error instanceof Error
         ? error.message
@@ -3106,6 +3113,42 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.storyViewerIndex = Math.min(this.storyViewerIndex, this.storyViewerQueue.length - 1);
       await this.openQueuedStory();
     }
+  }
+
+  private preloadAdjacentStories(): void {
+    const adjacent = [
+      this.storyViewerQueue[this.storyViewerIndex - 1],
+      this.storyViewerQueue[this.storyViewerIndex + 1],
+    ];
+    for (const story of adjacent) {
+      void this.social.preloadStory(story).catch(() => undefined);
+    }
+  }
+
+  private dismissContactInfoForStory(): Promise<void> {
+    if (this.contactInfoDismissPromise) {
+      return this.contactInfoDismissPromise;
+    }
+    if (!this.contactInfoOpen) {
+      return Promise.resolve();
+    }
+    this.contactInfoDismissPromise = new Promise<void>((resolve) => {
+      this.contactInfoDismissResolver = resolve;
+    });
+    this.contactInfoOpen = false;
+    this.contactInfoDismissTimer = window.setTimeout(() => this.finishContactInfoDismiss(), 700);
+    return this.contactInfoDismissPromise;
+  }
+
+  private finishContactInfoDismiss(): void {
+    if (this.contactInfoDismissTimer !== null) {
+      window.clearTimeout(this.contactInfoDismissTimer);
+      this.contactInfoDismissTimer = null;
+    }
+    const resolve = this.contactInfoDismissResolver;
+    this.contactInfoDismissResolver = null;
+    this.contactInfoDismissPromise = null;
+    resolve?.();
   }
 
   private restartStoryProgress(): void {

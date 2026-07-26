@@ -396,14 +396,24 @@ export class SocialService {
   }
 
   async viewStory(story: Story): Promise<void> {
-    const fresh = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/view`, {}));
+    const local = this.normalizeStory(story);
+    this.activeStory.set(local);
+    const prepareLocal = this.prepareStory(local);
+    const freshRequest = firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/view`, {}));
+    const [fresh] = await Promise.all([freshRequest, prepareLocal]);
     const normalized = this.normalizeStory(fresh);
     await this.decodeStoryPayload(normalized);
-    this.activeStory.set(normalized);
     this.applyStoryUpdate(normalized);
     if (this.storyPayload(fresh).media) {
       await this.ensureStoryMedia(fresh).catch(() => null);
     }
+  }
+
+  async preloadStory(story: Story | null | undefined): Promise<void> {
+    if (!story || story.viewOnce) {
+      return;
+    }
+    await this.prepareStory(this.normalizeStory(story));
   }
 
   async reactStory(story: Story, emoji: string): Promise<Story> {
@@ -526,6 +536,19 @@ export class SocialService {
       return [];
     }
     return this.activeStories(this.stories().filter((story) => this.isGroupStory(story) && this.sameId(story.targetId, groupId)));
+  }
+
+  activeStoriesForOwner(ownerId: string | null | undefined): Story[] {
+    if (!ownerId) {
+      return [];
+    }
+    const storiesById = new Map<string, Story>();
+    for (const story of [...this.stories(), ...this.worldStories()]) {
+      if (!this.isGroupStory(story) && this.sameId(story.owner.id, ownerId)) {
+        storiesById.set(story.id, story);
+      }
+    }
+    return this.activeStories([...storiesById.values()]);
   }
 
   isGroupStory(story: Story | null | undefined): boolean {
@@ -672,6 +695,13 @@ export class SocialService {
     const payload = await this.crypto.decryptEnvelope<StoryPayload>(own, recipient.header, recipient.ciphertext);
     this.decodedPayloads.update((items) => ({ ...items, [story.id]: payload }));
     return payload;
+  }
+
+  private async prepareStory(story: Story): Promise<void> {
+    const payload = await this.decodeStoryPayload(story);
+    if (payload.media) {
+      await this.ensureStoryMedia(story).catch(() => null);
+    }
   }
 
   private isEncryptedStoryEnvelope(value: unknown): value is EncryptedStoryEnvelope {

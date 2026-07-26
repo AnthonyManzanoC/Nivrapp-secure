@@ -650,6 +650,17 @@ export class WorldPage implements OnInit, OnDestroy {
       };
     }
     this.restartStoryProgress();
+    this.preloadAdjacentStories();
+  }
+
+  private preloadAdjacentStories(): void {
+    const adjacent = [
+      this.viewerQueue[this.viewerIndex - 1],
+      this.viewerQueue[this.viewerIndex + 1],
+    ];
+    for (const story of adjacent) {
+      void this.social.preloadStory(story).catch(() => undefined);
+    }
   }
 
   private storyBuckets(): StoryBucket[] {

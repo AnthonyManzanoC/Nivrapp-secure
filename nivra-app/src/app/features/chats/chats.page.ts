@@ -210,15 +210,12 @@ export class ChatsPage implements OnDestroy {
   async abrirHistoria(conversation: Conversation, event: Event): Promise<void> {
     event.stopPropagation();
     event.preventDefault();
-    let stories = this.conversationStories(conversation);
-    if (!stories.length) {
-      if (this.chat.isGroup(conversation)) {
-        await this.social.loadGroupStories(conversation.id).catch(() => []);
-      } else {
-        await this.social.load().catch(() => undefined);
-      }
-      stories = this.conversationStories(conversation);
+    if (this.chat.isGroup(conversation)) {
+      await this.social.loadGroupStories(conversation.id).catch(() => []);
+    } else {
+      await this.social.load().catch(() => undefined);
     }
+    const stories = this.conversationStories(conversation);
     if (!stories.length) {
       await this.openConversation(conversation.id);
       return;
@@ -609,6 +606,7 @@ export class ChatsPage implements OnDestroy {
         this.storyViewerQueue = this.storyViewerQueue.map((item) => item.id === active.id ? active : item);
       }
       this.restartStoryProgress();
+      this.preloadAdjacentStories();
     } catch {
       this.closeStoryViewer();
     }
@@ -618,10 +616,20 @@ export class ChatsPage implements OnDestroy {
     const isGroup = String(conversation.type || '').toLowerCase() === 'group';
     const stories = isGroup
       ? this.social.activeStoriesForGroup(conversation.id)
-      : this.social.contactStories().filter((story) => story.owner.id === this.directPeerId(conversation));
+      : this.social.activeStoriesForOwner(this.directPeerId(conversation));
     return stories
       .slice()
       .sort((left, right) => Date.parse(left.createdAt || '') - Date.parse(right.createdAt || ''));
+  }
+
+  private preloadAdjacentStories(): void {
+    const adjacent = [
+      this.storyViewerQueue[this.storyViewerIndex - 1],
+      this.storyViewerQueue[this.storyViewerIndex + 1],
+    ];
+    for (const story of adjacent) {
+      void this.social.preloadStory(story).catch(() => undefined);
+    }
   }
 
   private restartStoryProgress(): void {

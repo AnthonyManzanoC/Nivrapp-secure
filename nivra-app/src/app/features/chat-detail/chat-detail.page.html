@@ -775,7 +775,7 @@
     </ng-template>
   </ion-modal>
 
-  <ion-modal class="contact-info-modal" [isOpen]="contactInfoOpen" (didDismiss)="closeContactInfo()">
+  <ion-modal class="contact-info-modal" [isOpen]="contactInfoOpen" (didDismiss)="onContactInfoDidDismiss()">
     <ng-template>
       <section class="contact-info">
         <header>
