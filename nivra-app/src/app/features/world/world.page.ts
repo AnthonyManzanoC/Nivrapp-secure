@@ -262,7 +262,8 @@ export class WorldPage implements OnInit, OnDestroy {
       this.viewOnce = false;
       this.storyAllowReposts = this.auth.session()?.user.allowStoryReposts !== false;
       this.storyAudience = 'contacts';
-      this.notice = this.tr('WORLD.NOTICE_STORY_PUBLISHED', 'Historia publicada.');
+      this.notice = this.social.storyDeliveryWarning() ||
+        this.tr('WORLD.NOTICE_STORY_PUBLISHED', 'Historia publicada.');
     });
   }
 
@@ -429,7 +430,8 @@ export class WorldPage implements OnInit, OnDestroy {
     }
     await this.run(`repost:${story.id}`, async () => {
       await this.social.repostStory(story);
-      this.notice = `${this.tr('WORLD.REPOSTED_FROM', 'Reposteado de')} @${story.owner.alias}.`;
+      this.notice = this.social.storyDeliveryWarning() ||
+        `${this.tr('WORLD.REPOSTED_FROM', 'Reposteado de')} @${story.owner.alias}.`;
     });
   }
 

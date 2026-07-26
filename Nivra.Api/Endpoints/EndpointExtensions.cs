@@ -2334,7 +2334,16 @@ public static partial class EndpointExtensions
                     return Error("invalid_story_group", "Solo miembros activos del grupo pueden publicar historias ahi.", StatusCodes.Status403Forbidden);
                 }
 
-                allowed = groupMemberIds;
+                if (allowed.Count == 0)
+                {
+                    allowed = groupMemberIds;
+                }
+                else if (!allowed.IsSubsetOf(groupMemberIds))
+                {
+                    return Error("invalid_story_acl", "La audiencia cifrada debe pertenecer al grupo.");
+                }
+
+                allowed.Add(current.UserId);
             }
 
             if (visibility == StoryVisibility.CloseFriends && allowed.Count == 0)
@@ -2346,8 +2355,9 @@ public static partial class EndpointExtensions
                     .ToHashSet(StringComparer.Ordinal);
             }
 
-            if ((visibility is StoryVisibility.SelectedUsers or StoryVisibility.CloseFriends) &&
-                (allowed.Count == 0 || await db.Users.CountAsync(user => allowed.Contains(user.Id) && user.DisabledAt == null, cancellationToken) != allowed.Count))
+            if (((visibility is StoryVisibility.SelectedUsers or StoryVisibility.CloseFriends) && allowed.Count == 0) ||
+                (allowed.Count > 0 &&
+                 await db.Users.CountAsync(user => allowed.Contains(user.Id) && user.DisabledAt == null, cancellationToken) != allowed.Count))
             {
                 return Error("invalid_story_acl", "Los usuarios permitidos deben existir.");
             }
@@ -2595,6 +2605,20 @@ public static partial class EndpointExtensions
             var visibility = request.Visibility is StoryVisibility.PublicWorld or StoryVisibility.Contacts or StoryVisibility.MutualContacts
                 ? request.Visibility.Value
                 : StoryVisibility.Contacts;
+            var allowed = visibility == StoryVisibility.PublicWorld || request.AllowedUserIds is not { Count: > 0 }
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : request.AllowedUserIds
+                    .Where(id => !string.IsNullOrWhiteSpace(id))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToHashSet(StringComparer.Ordinal);
+            if (allowed.Count > 0)
+            {
+                allowed.Add(current.UserId);
+                if (await db.Users.CountAsync(user => allowed.Contains(user.Id) && user.DisabledAt == null, cancellationToken) != allowed.Count)
+                {
+                    return Error("invalid_story_acl", "Los usuarios permitidos deben existir.");
+                }
+            }
             var repost = new StoryRecord
             {
                 Id = NivraIds.NewId("sty"),
@@ -2605,7 +2629,7 @@ public static partial class EndpointExtensions
                 EncryptedPayload = NormalizeOptional(request.EncryptedPayload) ?? original.EncryptedPayload,
                 Caption = null,
                 MediaFileObjectId = original.MediaFileObjectId,
-                AllowedUserIds = [],
+                AllowedUserIds = allowed,
                 ViewedByUserIds = [],
                 ViewEvents = [],
                 Reactions = [],
@@ -5176,14 +5200,19 @@ public static partial class EndpointExtensions
         if (NormalizeStoryTargetType(story.TargetType, story.TargetId) == StoryTargetGroup)
         {
             return story.TargetId is not null &&
-                await IsActiveConversationParticipantAsync(db, story.TargetId, viewerUserId, cancellationToken);
+                await IsActiveConversationParticipantAsync(db, story.TargetId, viewerUserId, cancellationToken) &&
+                (story.AllowedUserIds.Count == 0 || story.AllowedUserIds.Contains(viewerUserId));
         }
 
         return story.Visibility switch
         {
             StoryVisibility.PublicWorld => true,
-            StoryVisibility.Contacts => await AreContactsAsync(db, story.OwnerUserId, viewerUserId, cancellationToken),
-            StoryVisibility.MutualContacts => await AreMutualContactsAsync(db, story.OwnerUserId, viewerUserId, cancellationToken),
+            StoryVisibility.Contacts =>
+                (story.AllowedUserIds.Count == 0 || story.AllowedUserIds.Contains(viewerUserId)) &&
+                await AreContactsAsync(db, story.OwnerUserId, viewerUserId, cancellationToken),
+            StoryVisibility.MutualContacts =>
+                (story.AllowedUserIds.Count == 0 || story.AllowedUserIds.Contains(viewerUserId)) &&
+                await AreMutualContactsAsync(db, story.OwnerUserId, viewerUserId, cancellationToken),
             StoryVisibility.CloseFriends or StoryVisibility.SelectedUsers => story.AllowedUserIds.Contains(viewerUserId),
             _ => false
         };
@@ -5193,12 +5222,13 @@ public static partial class EndpointExtensions
     {
         if (NormalizeStoryTargetType(story.TargetType, story.TargetId) == StoryTargetGroup && story.TargetId is not null)
         {
-            return (await ActiveConversationParticipantIdsAsync(db, story.TargetId, cancellationToken)).ToList();
+            var groupAudience = (await ActiveConversationParticipantIdsAsync(db, story.TargetId, cancellationToken)).ToList();
+            return FilterStoryAudience(groupAudience, story.AllowedUserIds);
         }
 
         if (story.Visibility == StoryVisibility.MutualContacts)
         {
-            return await db.Contacts
+            var mutualAudience = await db.Contacts
                 .Where(contact =>
                     contact.OwnerUserId == story.OwnerUserId &&
                     db.Contacts.Any(reverse =>
@@ -5206,17 +5236,27 @@ public static partial class EndpointExtensions
                         reverse.ContactUserId == story.OwnerUserId))
                 .Select(contact => contact.ContactUserId)
                 .ToListAsync(cancellationToken);
+            return FilterStoryAudience(mutualAudience, story.AllowedUserIds);
         }
 
         return story.Visibility switch
         {
             StoryVisibility.SelectedUsers or StoryVisibility.CloseFriends => story.AllowedUserIds.ToList(),
-            StoryVisibility.Contacts => await db.Contacts
-                .Where(contact => contact.OwnerUserId == story.OwnerUserId)
-                .Select(contact => contact.ContactUserId)
-                .ToListAsync(cancellationToken),
+            StoryVisibility.Contacts => FilterStoryAudience(
+                await db.Contacts
+                    .Where(contact => contact.OwnerUserId == story.OwnerUserId)
+                    .Select(contact => contact.ContactUserId)
+                    .ToListAsync(cancellationToken),
+                story.AllowedUserIds),
             _ => []
         };
+    }
+
+    private static List<string> FilterStoryAudience(List<string> audience, HashSet<string> allowedUserIds)
+    {
+        return allowedUserIds.Count == 0
+            ? audience
+            : audience.Where(allowedUserIds.Contains).ToList();
     }
 
     private static async Task<bool> UserCanAccessFileAsync(

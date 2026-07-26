@@ -325,7 +325,8 @@ public sealed record StoryRepostRequest(
     StoryVisibility? Visibility,
     int? DurationSeconds,
     string? EncryptedPayload,
-    bool? AllowReposts);
+    bool? AllowReposts,
+    List<string>? AllowedUserIds);
 
 public sealed record StoryViewResponse(
     UserSummaryResponse User,

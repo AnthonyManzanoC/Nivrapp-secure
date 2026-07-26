@@ -29,6 +29,12 @@ interface EncryptedStoryEnvelope {
   recipients: RecipientCipherRequest[];
 }
 
+interface StoryRecipientPlan {
+  recipients: PublicKeyRecipient[];
+  recipientUserIds: string[];
+  skippedUserIds: string[];
+}
+
 @Injectable({ providedIn: 'root' })
 export class SocialService {
   private readonly api = inject(NivraApiService);
@@ -52,6 +58,7 @@ export class SocialService {
   readonly radarLoading = signal(false);
   readonly publishing = signal(false);
   readonly publishingStatus = signal('');
+  readonly storyDeliveryWarning = signal('');
   readonly decodedPayloads = signal<Record<string, StoryPayload>>({});
   private loadInFlight: Promise<void> | null = null;
   private storyRealtimeVersion = 0;
@@ -295,6 +302,7 @@ export class SocialService {
 
     this.publishing.set(true);
     this.publishingStatus.set(file ? 'Optimizando y sellando (E2EE)...' : '');
+    this.storyDeliveryWarning.set('');
     try {
       const durationSeconds = options.durationSeconds ?? 24 * 60 * 60;
       const allowedUserIds = [...new Set((options.allowedUserIds ?? []).filter(Boolean))];
@@ -309,6 +317,10 @@ export class SocialService {
             ? allowedUserIds
             : contacts.map((contact) => contact.userId)),
       ].filter((userId): userId is string => Boolean(userId)))];
+      const recipientPlan = await this.resolveStoryRecipients(audienceUserIds, options.visibility);
+      const securedAudienceUserIds = options.visibility === 'PublicWorld'
+        ? []
+        : recipientPlan.recipientUserIds;
       let mediaFileObjectId: string | null = null;
       let media: StoryPayload['media'] = null;
 
@@ -325,7 +337,7 @@ export class SocialService {
           encryptedSize: encrypted.bytes.byteLength,
           mimeTypeCiphertext: this.crypto.b64(new TextEncoder().encode(mime)),
           clientSha256: null,
-          allowedUserIds: audienceUserIds,
+          allowedUserIds: securedAudienceUserIds,
           expiresAt,
         }));
         await firstValueFrom(this.api.putRaw<FileResponse>(`/files/${encodeURIComponent(fileRecord.id)}/blob`, encrypted.bytes));
@@ -342,7 +354,7 @@ export class SocialService {
       }
 
       const decodedPayload: StoryPayload = { v: 2, type: media ? 'media' : 'text', text, media };
-      const payload = await this.encodeStoryPayload(decodedPayload, audienceUserIds, options.visibility);
+      const payload = await this.encodeStoryPayload(decodedPayload, recipientPlan, options.visibility);
       const story = await firstValueFrom(this.api.post<Story>('/stories', {
         visibility: options.visibility,
         targetType: options.targetType ?? 'contacts',
@@ -350,7 +362,7 @@ export class SocialService {
         encryptedPayload: payload,
         caption: null,
         mediaFileObjectId,
-        allowedUserIds,
+        allowedUserIds: securedAudienceUserIds,
         viewOnce: Boolean(options.viewOnce),
         allowReposts: options.allowReposts !== false,
         durationSeconds,
@@ -358,6 +370,7 @@ export class SocialService {
       this.decodedPayloads.update((items) => ({ ...items, [story.id]: decodedPayload }));
       this.stories.update((items) => [this.normalizeStory(story), ...items.filter((item) => item.id !== story.id)]);
       this.persistStories([story]);
+      this.storyDeliveryWarning.set(this.deliveryWarningFor(recipientPlan));
       await this.load();
     } finally {
       this.publishing.set(false);
@@ -396,20 +409,27 @@ export class SocialService {
   }
 
   async repostStory(story: Story, visibility = 'Contacts'): Promise<Story> {
+    this.storyDeliveryWarning.set('');
     const decodedPayload = await this.decodeStoryPayload(story);
+    const contacts = visibility === 'MutualContacts'
+      ? this.contacts().filter((contact) => contact.isMutualContact)
+      : this.contacts();
     const audienceUserIds = [...new Set([
       this.auth.session()?.user.id,
-      ...this.contacts().map((contact) => contact.userId),
+      ...(visibility === 'PublicWorld' ? [] : contacts.map((contact) => contact.userId)),
     ].filter((userId): userId is string => Boolean(userId)))];
-    const encryptedPayload = await this.encodeStoryPayload(decodedPayload, audienceUserIds, visibility);
+    const recipientPlan = await this.resolveStoryRecipients(audienceUserIds, visibility);
+    const encryptedPayload = await this.encodeStoryPayload(decodedPayload, recipientPlan, visibility);
     const repost = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/repost`, {
       visibility,
       durationSeconds: 24 * 60 * 60,
       encryptedPayload,
+      allowedUserIds: visibility === 'PublicWorld' ? [] : recipientPlan.recipientUserIds,
       allowReposts: this.auth.session()?.user.allowStoryReposts !== false,
     }));
     this.decodedPayloads.update((items) => ({ ...items, [repost.id]: decodedPayload }));
     this.applyStoryUpdate(repost);
+    this.storyDeliveryWarning.set(this.deliveryWarningFor(recipientPlan));
     await this.load().catch(() => undefined);
     return repost;
   }
@@ -497,7 +517,86 @@ export class SocialService {
     return mime.startsWith('audio/');
   }
 
-  private async encodeStoryPayload(payload: StoryPayload, userIds: string[], visibility: string): Promise<string> {
+  private async resolveStoryRecipients(userIds: string[], visibility: string): Promise<StoryRecipientPlan> {
+    if (visibility === 'PublicWorld') {
+      return { recipients: [], recipientUserIds: [], skippedUserIds: [] };
+    }
+
+    const current = this.auth.session();
+    if (!current) {
+      throw new Error('La sesion no esta disponible para cifrar la historia.');
+    }
+    const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+    const requestedUserIds = [...new Set([...userIds, current.user.id].filter(Boolean))];
+    const directories: PublicKeyDirectory[] = [];
+    const batchSize = 96;
+    for (let index = 0; index < requestedUserIds.length; index += batchSize) {
+      directories.push(...await this.fetchStoryKeyBatch(requestedUserIds.slice(index, index + batchSize)));
+    }
+
+    const recipientsByDevice = new Map<string, PublicKeyRecipient>();
+    for (const directory of directories) {
+      for (const device of directory.devices ?? []) {
+        const publicJwk = this.crypto.parsePublicJwk(device.keyBundle?.identityKey);
+        if (directory.userId && device.deviceId && publicJwk) {
+          recipientsByDevice.set(`${directory.userId}:${device.deviceId}`, {
+            userId: directory.userId,
+            deviceId: device.deviceId,
+            publicJwk,
+          });
+        }
+      }
+    }
+    recipientsByDevice.set(`${current.user.id}:${current.device.id}`, {
+      userId: current.user.id,
+      deviceId: current.device.id,
+      publicJwk: own.publicJwk,
+    });
+
+    const recipients = [...recipientsByDevice.values()];
+    const recipientUserIdSet = new Set(recipients.map((recipient) => recipient.userId));
+    const recipientUserIds = requestedUserIds.filter((userId) => recipientUserIdSet.has(userId));
+    const skippedUserIds = requestedUserIds.filter((userId) => !recipientUserIdSet.has(userId));
+    const requestedRemoteUsers = requestedUserIds.filter((userId) => userId !== current.user.id);
+    const encryptedRemoteUsers = recipientUserIds.filter((userId) => userId !== current.user.id);
+    if (requestedRemoteUsers.length > 0 && encryptedRemoteUsers.length === 0) {
+      throw new Error('Ningun destinatario tiene un dispositivo cifrado activo. Pideles abrir Nivra e intenta de nuevo.');
+    }
+
+    return { recipients, recipientUserIds, skippedUserIds };
+  }
+
+  private async fetchStoryKeyBatch(userIds: string[]): Promise<PublicKeyDirectory[]> {
+    try {
+      return await firstValueFrom(
+        this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds, aliases: [] }),
+      );
+    } catch {
+      try {
+        return await firstValueFrom(
+          this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds, aliases: [] }),
+        );
+      } catch {
+        throw new Error('No se pudo sincronizar el cifrado de la audiencia. Revisa la conexion e intenta de nuevo.');
+      }
+    }
+  }
+
+  private deliveryWarningFor(plan: StoryRecipientPlan): string {
+    const currentUserId = this.auth.session()?.user.id;
+    const delivered = plan.recipientUserIds.filter((userId) => userId !== currentUserId).length;
+    const skipped = plan.skippedUserIds.filter((userId) => userId !== currentUserId).length;
+    if (!skipped) {
+      return '';
+    }
+    const deliveredLabel = delivered === 1 ? '1 destinatario' : `${delivered} destinatarios`;
+    const skippedLabel = skipped === 1
+      ? '1 miembro no fue incluido porque aun no tiene un dispositivo cifrado activo.'
+      : `${skipped} miembros no fueron incluidos porque aun no tienen un dispositivo cifrado activo.`;
+    return `Entrega cifrada completada para ${deliveredLabel}. ${skippedLabel}`;
+  }
+
+  private async encodeStoryPayload(payload: StoryPayload, plan: StoryRecipientPlan, visibility: string): Promise<string> {
     const normalized = { v: 2, ...payload, type: payload.type || 'text' };
     if (visibility === 'PublicWorld') {
       return this.crypto.b64(new TextEncoder().encode(JSON.stringify(normalized)));
@@ -508,32 +607,7 @@ export class SocialService {
       throw new Error('La sesion no esta disponible para cifrar la historia.');
     }
     const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
-    const uniqueUserIds = [...new Set([...userIds, current.user.id].filter(Boolean))];
-    const directories = await firstValueFrom(
-      this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds: uniqueUserIds, aliases: [] }),
-    ).catch(() => []);
-    const recipients: PublicKeyRecipient[] = [];
-    for (const directory of directories ?? []) {
-      for (const device of directory.devices ?? []) {
-        const publicJwk = this.crypto.parsePublicJwk(device.keyBundle?.identityKey);
-        if (device.deviceId && publicJwk) {
-          recipients.push({ userId: directory.userId, deviceId: device.deviceId, publicJwk });
-        }
-      }
-    }
-    if (!recipients.some((recipient) => recipient.userId === current.user.id && recipient.deviceId === current.device.id)) {
-      recipients.push({
-        userId: current.user.id,
-        deviceId: current.device.id,
-        publicJwk: own.publicJwk,
-      });
-    }
-    const recipientUserIds = new Set(recipients.map((recipient) => recipient.userId));
-    const missingUserIds = uniqueUserIds.filter((userId) => !recipientUserIds.has(userId));
-    if (missingUserIds.length) {
-      throw new Error('Faltan llaves publicas de uno o mas destinatarios. Sincroniza contactos e intenta de nuevo.');
-    }
-    const sealed = await this.crypto.encryptGroupPayloadForRecipients(own, recipients, normalized);
+    const sealed = await this.crypto.encryptGroupPayloadForRecipients(own, plan.recipients, normalized);
     if (!sealed.length) {
       throw new Error('No hay llaves publicas para cifrar la audiencia de la historia.');
     }
