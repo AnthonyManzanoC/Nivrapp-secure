@@ -6,9 +6,16 @@
   </div>
 
   <header class="story-viewer-top">
-    <div>
-      <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
-      <span>{{ subtitle }}</span>
+    <div class="story-owner">
+      @if (story.owner.profilePhotoDataUrl) {
+        <img class="story-owner-avatar" [src]="story.owner.profilePhotoDataUrl" alt="">
+      } @else {
+        <span class="story-owner-avatar fallback">{{ (story.owner.displayName || story.owner.alias || 'N')[0] }}</span>
+      }
+      <div class="story-owner-copy">
+        <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
+        <span>{{ subtitle }}</span>
+      </div>
     </div>
     <button type="button" (click)="closeViewer.emit()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
       <ion-icon name="close-outline"></ion-icon>
@@ -41,13 +48,21 @@
           } @else if (social.isVideo(media.mime)) {
             <video [src]="media.url" playsinline autoplay (loadedmetadata)="syncDuration.emit($event)" (ended)="mediaEnded.emit()"></video>
           } @else {
-            <audio [src]="media.url" controls autoplay playsinline></audio>
+            <audio [src]="media.url" controls autoplay playsinline (loadedmetadata)="syncDuration.emit($event)" (ended)="mediaEnded.emit()"></audio>
           }
         } @else {
-          <div class="story-loading">
-            <ion-spinner name="crescent"></ion-spinner>
-            <span>{{ 'COMMON.DECRYPTING' | translate:'Descifrando' }} {{ mediaPayload.mime }}</span>
-          </div>
+          @if (social.storyMediaError(story); as mediaError) {
+            <div class="story-loading story-media-error">
+              <strong>{{ 'COMMON.ACTION_ERROR' | translate:'No se pudo cargar' }}</strong>
+              <span>{{ mediaError }}</span>
+              <button type="button" (click)="retryMedia()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button>
+            </div>
+          } @else {
+            <div class="story-loading">
+              <ion-spinner name="crescent"></ion-spinner>
+              <span>{{ 'COMMON.DECRYPTING' | translate:'Descifrando' }} {{ mediaPayload.mime }}</span>
+            </div>
+          }
         }
       } @else {
         <p>{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantanea') }}</p>

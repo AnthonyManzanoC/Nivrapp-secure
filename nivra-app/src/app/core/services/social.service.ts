@@ -54,6 +54,7 @@ export class SocialService {
   readonly radarNewCount = signal(0);
   readonly activeStory = signal<Story | null>(null);
   readonly mediaPreviews = signal<Record<string, StoryMediaPreview>>({});
+  readonly storyMediaErrors = signal<Record<string, string>>({});
   readonly loading = signal(false);
   readonly radarLoading = signal(false);
   readonly publishing = signal(false);
@@ -61,7 +62,9 @@ export class SocialService {
   readonly storyDeliveryWarning = signal('');
   readonly decodedPayloads = signal<Record<string, StoryPayload>>({});
   private loadInFlight: Promise<void> | null = null;
+  private loadQueued = false;
   private storyRealtimeVersion = 0;
+  private readonly deletedStoryIds = new Set<string>();
 
   constructor() {
     this.realtime.events$
@@ -97,7 +100,12 @@ export class SocialService {
           event.type === 'friend.updated' ||
           event.type === 'conversation.created' ||
           event.type === 'conversation.updated') {
-        void this.load();
+        void this.load().catch(() => undefined);
+      }
+      if (event.type === 'profile.updated' ||
+          event.type === 'connected' ||
+          event.type === 'reconnected') {
+        void this.load().catch(() => undefined);
       }
     });
   }
@@ -107,6 +115,7 @@ export class SocialService {
       return;
     }
     if (this.loadInFlight) {
+      this.loadQueued = true;
       return this.loadInFlight;
     }
     const task = this.loadOnce();
@@ -116,6 +125,10 @@ export class SocialService {
     } finally {
       if (this.loadInFlight === task) {
         this.loadInFlight = null;
+      }
+      if (this.loadQueued) {
+        this.loadQueued = false;
+        queueMicrotask(() => void this.load().catch(() => undefined));
       }
     }
   }
@@ -149,7 +162,7 @@ export class SocialService {
         const normalizedFeed = this.activeStories(feedResult.value.map((story) => this.normalizeStory(story)));
         const nextFeed = realtimeVersionAtRequest === this.storyRealtimeVersion
           ? normalizedFeed
-          : this.mergeStories(normalizedFeed, this.stories());
+          : this.mergeStories(this.stories(), normalizedFeed);
         this.stories.set(nextFeed);
         persisted = [...persisted, ...nextFeed];
       }
@@ -157,7 +170,7 @@ export class SocialService {
         const normalizedWorld = this.activeStories(worldResult.value.map((story) => this.normalizeStory(story)));
         const nextWorld = realtimeVersionAtRequest === this.storyRealtimeVersion
           ? normalizedWorld
-          : this.mergeStories(normalizedWorld, this.worldStories());
+          : this.mergeStories(this.worldStories(), normalizedWorld);
         this.worldStories.set(nextWorld);
         persisted = [...persisted, ...nextWorld];
       }
@@ -183,7 +196,7 @@ export class SocialService {
     const currentGroup = current.filter((story) => this.sameId(story.targetId, normalizedGroupId));
     const nextGroup = realtimeVersionAtRequest === this.storyRealtimeVersion
       ? normalized
-      : this.mergeStories(normalized, currentGroup);
+      : this.mergeStories(currentGroup, normalized);
     const nextStories = this.activeStories([
       ...current.filter((story) => !this.sameId(story.targetId, normalizedGroupId)),
       ...nextGroup,
@@ -447,11 +460,25 @@ export class SocialService {
     }
     const cached = this.mediaPreviews()[story.id];
     if (cached) {
+      this.setStoryMediaError(story.id, '');
       return cached;
     }
-    const encrypted = await firstValueFrom(this.api.getArrayBuffer(`/stories/${encodeURIComponent(story.id)}/media`));
-    const plain = await this.crypto.decryptAttachment(encrypted, payload.media.fileKey, payload.media.fileIv);
-    return this.rememberMediaPreview(story.id, new Blob([plain], { type: payload.media.mime }), payload.media.mime, payload.media.fileName);
+    this.setStoryMediaError(story.id, '');
+    try {
+      const encrypted = await firstValueFrom(this.api.getArrayBuffer(`/stories/${encodeURIComponent(story.id)}/media`));
+      const plain = await this.crypto.decryptAttachment(encrypted, payload.media.fileKey, payload.media.fileIv);
+      return this.rememberMediaPreview(story.id, new Blob([plain], { type: payload.media.mime }), payload.media.mime, payload.media.fileName);
+    } catch (error) {
+      const message = typeof navigator !== 'undefined' && !navigator.onLine
+        ? 'Sin conexion. El contenido cifrado seguira disponible para reintentar.'
+        : 'No se pudo descargar o descifrar el contenido. Toca Reintentar.';
+      this.setStoryMediaError(story.id, message);
+      throw error;
+    }
+  }
+
+  storyMediaError(story: Story | null | undefined): string {
+    return story?.id ? this.storyMediaErrors()[story.id] ?? '' : '';
   }
 
   closeStory(): void {
@@ -739,6 +766,7 @@ export class SocialService {
   private normalizeStory(story: Story): Story {
     return {
       ...story,
+      owner: this.enrichStoryUser(story.owner),
       targetType: story.targetType ?? (story.targetId ? 'group' : 'contacts'),
       targetId: story.targetId ?? null,
       allowedUserIds: story.allowedUserIds ?? [],
@@ -748,12 +776,15 @@ export class SocialService {
       allowReposts: story.allowReposts !== false,
       myReaction: story.myReaction ?? null,
       originalStoryId: story.originalStoryId ?? null,
-      originalAuthor: story.originalAuthor ?? null,
+      originalAuthor: story.originalAuthor ? this.enrichStoryUser(story.originalAuthor) : null,
     };
   }
 
   private applyStoryUpdate(story: Story): Story {
     const normalized = this.normalizeStory(story);
+    if (this.deletedStoryIds.has(normalized.id)) {
+      return normalized;
+    }
     const isOwnPublicStory = normalized.visibility === 'PublicWorld' &&
       normalized.owner.id === this.auth.session()?.user.id;
     this.stories.update((items) => normalized.visibility !== 'PublicWorld' || isOwnPublicStory
@@ -772,6 +803,13 @@ export class SocialService {
   }
 
   private removeStoryLocally(storyId: string): void {
+    this.deletedStoryIds.add(storyId);
+    if (this.deletedStoryIds.size > 512) {
+      const oldest = this.deletedStoryIds.values().next().value as string | undefined;
+      if (oldest) {
+        this.deletedStoryIds.delete(oldest);
+      }
+    }
     this.stories.update((items) => items.filter((item) => item.id !== storyId));
     this.worldStories.update((items) => items.filter((item) => item.id !== storyId));
     this.decodedPayloads.update((items) => {
@@ -784,6 +822,11 @@ export class SocialService {
       URL.revokeObjectURL(preview.url);
     }
     this.mediaPreviews.update((items) => {
+      const next = { ...items };
+      delete next[storyId];
+      return next;
+    });
+    this.storyMediaErrors.update((items) => {
       const next = { ...items };
       delete next[storyId];
       return next;
@@ -815,6 +858,7 @@ export class SocialService {
     const now = Date.now();
     return stories
       .map((story) => this.normalizeStory(story))
+      .filter((story) => !this.deletedStoryIds.has(story.id))
       .filter((story) => !story.expiresAt || Date.parse(story.expiresAt) > now)
       .sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || ''));
   }
@@ -829,6 +873,43 @@ export class SocialService {
 
   private localAccountKey(): string | null {
     return this.auth.session()?.user.id ?? null;
+  }
+
+  private enrichStoryUser(user: UserSummary): UserSummary {
+    const current = this.auth.session()?.user;
+    if (user.id === current?.id) {
+      return {
+        ...user,
+        alias: current.alias || user.alias,
+        displayName: current.displayName || user.displayName,
+        profilePhotoDataUrl: current.profilePhotoDataUrl || user.profilePhotoDataUrl || null,
+      };
+    }
+    const contact = this.contacts().find((item) => item.userId === user.id);
+    if (!contact) {
+      return user;
+    }
+    return {
+      ...user,
+      alias: contact.alias || user.alias,
+      displayName: contact.displayName || user.displayName,
+      profilePhotoDataUrl: contact.profilePhotoDataUrl ?? null,
+    };
+  }
+
+  private setStoryMediaError(storyId: string, message: string): void {
+    this.storyMediaErrors.update((items) => {
+      if (!message && !(storyId in items)) {
+        return items;
+      }
+      const next = { ...items };
+      if (message) {
+        next[storyId] = message;
+      } else {
+        delete next[storyId];
+      }
+      return next;
+    });
   }
 
   private rememberMediaPreview(cacheKey: string, fileOrBlob: Blob, mime: string, name: string): StoryMediaPreview {

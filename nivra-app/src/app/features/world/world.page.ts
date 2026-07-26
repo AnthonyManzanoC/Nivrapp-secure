@@ -43,6 +43,7 @@ import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 interface StoryBucket {
   id: string;
   owner: UserSummary;
+  photoUrl: string;
   title: string;
   subtitle: string;
   stories: Story[];
@@ -653,13 +654,19 @@ export class WorldPage implements OnInit, OnDestroy {
 
   private storyBuckets(): StoryBucket[] {
     const groups = new Map<string, StoryBucket>();
-    for (const story of [...this.contactStories(), ...this.groupStories()]) {
+    const storiesById = new Map<string, Story>();
+    for (const story of [...this.contactStories(), ...this.groupStories(), ...this.social.worldStories()]) {
+      storiesById.set(story.id, story);
+    }
+    for (const story of storiesById.values()) {
       const isGroup = this.social.isGroupStory(story);
       const id = isGroup ? `group:${story.targetId || 'unknown'}:${story.owner.id}` : `contact:${story.owner.id}`;
       const groupTitle = isGroup ? this.storyGroupTitle(story) : '';
+      const photoUrl = story.owner.profilePhotoDataUrl || '';
       const bucket = groups.get(id) ?? {
         id,
         owner: story.owner,
+        photoUrl,
         title: story.owner.displayName || story.owner.alias,
         subtitle: isGroup ? groupTitle : `@${story.owner.alias}`,
         stories: [],
@@ -668,6 +675,8 @@ export class WorldPage implements OnInit, OnDestroy {
         isGroup,
         targetId: story.targetId ?? null,
       };
+      bucket.owner = story.owner;
+      bucket.photoUrl = photoUrl || bucket.photoUrl;
       bucket.stories.push(story);
       bucket.latestAt = this.latestDate(bucket.latestAt, story.createdAt);
       groups.set(id, bucket);

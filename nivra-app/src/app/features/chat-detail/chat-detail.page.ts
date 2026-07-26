@@ -340,9 +340,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         void this.chat.selectConversation(id).then(() => {
           this.refreshActiveGroupCallBanner(id);
           const conversation = this.conversation();
-          if (this.chat.isGroup(conversation)) {
-            void this.social.loadGroupStories(id).catch(() => undefined);
-          }
+          void this.refreshConversationStories(conversation);
           if (requestId === this.initialScrollRequestId) {
             this.scheduleInitialScroll(id, { force: true });
           }
@@ -367,6 +365,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (conversationId) {
       void this.chat.markConversationRead(conversationId);
       this.refreshActiveGroupCallBanner(conversationId);
+      void this.refreshConversationStories();
     }
     window.requestAnimationFrame(() => {
       this.cdr.detectChanges();
@@ -380,6 +379,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (conversationId) {
       void this.chat.markConversationRead(conversationId);
       this.refreshActiveGroupCallBanner(conversationId);
+      void this.refreshConversationStories();
     }
   }
 
@@ -1105,10 +1105,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.closeChatMenu();
     this.closeMessageActions();
     void this.chat.hydrateConversationProfile(conversation);
-    void this.social.load().catch(() => undefined);
-    if (this.chat.isGroup(conversation)) {
-      void this.social.loadGroupStories(conversation.id).catch(() => undefined);
-    }
+    void this.refreshConversationStories(conversation);
   }
 
   closeContactInfo(): void {
@@ -2154,7 +2151,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   async openConversationStories(explicitStory: Story | null = null, event?: Event): Promise<void> {
     event?.preventDefault();
     event?.stopPropagation();
-    const stories = this.conversationStories();
+    let stories = this.conversationStories();
+    if (!stories.length) {
+      await this.refreshConversationStories();
+      stories = this.conversationStories();
+    }
     if (!stories.length) {
       if (this.conversationPhoto()) {
         this.openProfilePhotoViewer(event);
@@ -2170,6 +2171,17 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.closeContactInfo();
     await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
     await this.openQueuedStory();
+  }
+
+  private async refreshConversationStories(conversation = this.conversation()): Promise<void> {
+    if (!conversation) {
+      return;
+    }
+    if (this.chat.isGroup(conversation)) {
+      await this.social.loadGroupStories(conversation.id).catch(() => []);
+      return;
+    }
+    await this.social.load().catch(() => undefined);
   }
 
   async previousStory(): Promise<void> {

@@ -2397,14 +2397,15 @@ public static partial class EndpointExtensions
             await db.SaveChangesAsync(cancellationToken);
 
             var response = await ToStoryResponseAsync(story, current.UserId, db, cancellationToken);
+            var realtimeResponse = await ToStoryResponseAsync(story, string.Empty, db, cancellationToken);
             if (story.Visibility == StoryVisibility.PublicWorld)
             {
-                await hub.Clients.All.SendAsync("story.worldCreated", response, cancellationToken);
+                await hub.Clients.All.SendAsync("story.worldCreated", realtimeResponse, cancellationToken);
             }
             else
             {
                 var audience = await StoryAudienceAsync(db, story, cancellationToken);
-                await NotifyUsers(hub, audience, "story.created", response);
+                await NotifyUsers(hub, audience, "story.created", realtimeResponse);
                 foreach (var userId in audience.Where(userId => userId != current.UserId).Distinct(StringComparer.Ordinal))
                 {
                     await pushNotifications.SendEventAsync(userId, "Nivra", "Nueva historia disponible", "story", $"nivra-story-{story.Id}", new Dictionary<string, string>
@@ -2646,14 +2647,15 @@ public static partial class EndpointExtensions
             await db.SaveChangesAsync(cancellationToken);
 
             var response = await ToStoryResponseAsync(repost, current.UserId, db, cancellationToken);
+            var realtimeResponse = await ToStoryResponseAsync(repost, string.Empty, db, cancellationToken);
             if (repost.Visibility == StoryVisibility.PublicWorld)
             {
-                await hub.Clients.All.SendAsync("story.worldCreated", response, cancellationToken);
+                await hub.Clients.All.SendAsync("story.worldCreated", realtimeResponse, cancellationToken);
             }
             else
             {
                 var audience = await StoryAudienceAsync(db, repost, cancellationToken);
-                await NotifyUsers(hub, audience, "story.created", response);
+                await NotifyUsers(hub, audience, "story.created", realtimeResponse);
                 foreach (var userId in audience.Where(userId => userId != current.UserId).Distinct(StringComparer.Ordinal))
                 {
                     await pushNotifications.SendEventAsync(userId, "Nivra", "Historia reposteada", "story", $"nivra-story-{repost.Id}", new Dictionary<string, string>

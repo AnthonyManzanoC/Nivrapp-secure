@@ -332,6 +332,15 @@
   background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
 }
 
+.contact-avatar.photo,
+.story-avatar.photo,
+.stats-avatar.photo {
+  display: block;
+  object-fit: cover;
+  color: transparent;
+  background: rgba(255, 255, 255, .08);
+}
+
 .contact-main span:last-child {
   min-width: 0;
   display: grid;

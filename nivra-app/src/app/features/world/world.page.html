@@ -38,7 +38,11 @@
           @for (contact of social.contacts(); track contact.userId) {
             <div class="contact-card" [class.favorite]="contact.isFavorite">
               <button type="button" class="contact-main" (click)="openContact(contact)">
-                <span class="contact-avatar">{{ (contact.displayName || contact.alias || 'N')[0] }}</span>
+                @if (contact.profilePhotoDataUrl) {
+                  <img class="contact-avatar photo" [src]="contact.profilePhotoDataUrl" alt="" loading="lazy" decoding="async">
+                } @else {
+                  <span class="contact-avatar">{{ (contact.displayName || contact.alias || 'N')[0] }}</span>
+                }
                 <span>
                   <strong>{{ contact.displayName || contact.alias }}</strong>
                   <small>@{{ contact.alias }}</small>
@@ -270,7 +274,11 @@
           @for (bucket of myStoryBuckets(); track bucket.id) {
             <div class="story-row story-bucket-row mine-bucket" [class.group-story-row]="bucket.isGroup">
               <button type="button" class="story-open" (click)="openStoryBucket(bucket)">
-                <span class="story-avatar">{{ (bucket.title || 'N')[0] }}</span>
+                @if (bucket.photoUrl) {
+                  <img class="story-avatar photo" [src]="bucket.photoUrl" alt="" loading="lazy" decoding="async">
+                } @else {
+                  <span class="story-avatar">{{ (bucket.title || 'N')[0] }}</span>
+                }
                 <span>
                   <strong>{{ bucket.title }}</strong>
                   <small>{{ bucket.subtitle }} - {{ bucket.stories.length }} historia{{ bucket.stories.length === 1 ? '' : 's' }}</small>
@@ -301,7 +309,11 @@
           @for (bucket of recentStoryBuckets(); track bucket.id) {
             <div class="story-row story-bucket-row unviewed" [class.group-story-row]="bucket.isGroup">
               <button type="button" class="story-open" (click)="openStoryBucket(bucket)">
-                <span class="story-avatar story-ringed story-ring-unviewed">{{ (bucket.title || 'N')[0] }}</span>
+                @if (bucket.photoUrl) {
+                  <img class="story-avatar photo story-ringed story-ring-unviewed" [src]="bucket.photoUrl" alt="" loading="lazy" decoding="async">
+                } @else {
+                  <span class="story-avatar story-ringed story-ring-unviewed">{{ (bucket.title || 'N')[0] }}</span>
+                }
                 <span>
                   <strong>{{ bucket.title }}</strong>
                   <small>{{ bucket.subtitle }} - {{ bucket.unviewedCount }} nueva{{ bucket.unviewedCount === 1 ? '' : 's' }}</small>
@@ -329,7 +341,11 @@
           @for (bucket of viewedStoryBuckets(); track bucket.id) {
             <div class="story-row story-bucket-row viewed" [class.group-story-row]="bucket.isGroup">
               <button type="button" class="story-open" (click)="openStoryBucket(bucket)">
-                <span class="story-avatar story-ringed story-ring-viewed">{{ (bucket.title || 'N')[0] }}</span>
+                @if (bucket.photoUrl) {
+                  <img class="story-avatar photo story-ringed story-ring-viewed" [src]="bucket.photoUrl" alt="" loading="lazy" decoding="async">
+                } @else {
+                  <span class="story-avatar story-ringed story-ring-viewed">{{ (bucket.title || 'N')[0] }}</span>
+                }
                 <span>
                   <strong>{{ bucket.title }}</strong>
                   <small>{{ bucket.subtitle }} - {{ bucket.stories.length }} vista{{ bucket.stories.length === 1 ? '' : 's' }}</small>
@@ -417,7 +433,11 @@
                 <h3>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</h3>
                 @for (view of story.views || []; track view.user.id) {
                   <div class="stats-row">
-                    <span class="stats-avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span>
+                    @if (view.user.profilePhotoDataUrl) {
+                      <img class="stats-avatar photo" [src]="view.user.profilePhotoDataUrl" alt="" loading="lazy" decoding="async">
+                    } @else {
+                      <span class="stats-avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span>
+                    }
                     <span>
                       <strong>{{ view.user.displayName || view.user.alias }}</strong>
                       <small>@{{ view.user.alias }} - {{ view.viewedAt | date:'shortTime' }}</small>
@@ -445,7 +465,11 @@
                 <h3>{{ 'WORLD.COMMENTS' | translate:'Comentarios' }}</h3>
                 @for (comment of story.comments || []; track comment.id) {
                   <div class="stats-row comment-row">
-                    <span class="stats-avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span>
+                    @if (comment.user.profilePhotoDataUrl) {
+                      <img class="stats-avatar photo" [src]="comment.user.profilePhotoDataUrl" alt="" loading="lazy" decoding="async">
+                    } @else {
+                      <span class="stats-avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span>
+                    }
                     <span>
                       <strong>{{ comment.user.displayName || comment.user.alias }}</strong>
                       <small>@{{ comment.user.alias }} - {{ comment.commentedAt | date:'shortTime' }}</small>

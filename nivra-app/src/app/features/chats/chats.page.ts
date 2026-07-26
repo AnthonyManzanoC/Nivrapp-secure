@@ -140,6 +140,11 @@ export class ChatsPage implements OnDestroy {
 
   refresh(): void {
     void this.chat.bootstrap();
+    void this.social.load().catch(() => undefined);
+  }
+
+  ionViewDidEnter(): void {
+    void this.social.load().catch(() => undefined);
   }
 
   async openShareAccount(): Promise<void> {
@@ -205,7 +210,15 @@ export class ChatsPage implements OnDestroy {
   async abrirHistoria(conversation: Conversation, event: Event): Promise<void> {
     event.stopPropagation();
     event.preventDefault();
-    const stories = this.conversationStories(conversation);
+    let stories = this.conversationStories(conversation);
+    if (!stories.length) {
+      if (this.chat.isGroup(conversation)) {
+        await this.social.loadGroupStories(conversation.id).catch(() => []);
+      } else {
+        await this.social.load().catch(() => undefined);
+      }
+      stories = this.conversationStories(conversation);
+    }
     if (!stories.length) {
       await this.openConversation(conversation.id);
       return;

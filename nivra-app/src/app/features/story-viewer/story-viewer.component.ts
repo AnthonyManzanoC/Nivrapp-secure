@@ -65,4 +65,8 @@ export class StoryViewerComponent {
   onReplyChange(value: string | number | null | undefined): void {
     this.replyChange.emit(String(value ?? ''));
   }
+
+  retryMedia(): void {
+    void this.social.ensureStoryMedia(this.story).catch(() => undefined);
+  }
 }
