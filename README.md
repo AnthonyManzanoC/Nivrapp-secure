@@ -71,6 +71,23 @@ Antes de producción:
 5. Agregar rate limiting por IP, alias y dispositivo.
 6. Agregar verificación de abuso sin leer contenido: límites, reputación de cuenta, reportes de perfil y bloqueo.
 7. Auditar criptografía del cliente. El servidor nunca debe inventar cifrado propio para mensajes.
+8. Configurar TURN en `WebRtc__IceServers` para redes NAT estrictas. Para evitar exponer la IP entre participantes, usar credenciales TURN efímeras y `WebRtc__RelayOnly=true`.
+9. Antes de anunciar E2EE en llamadas grupales, habilitar LiveKit E2EE con una llave creada y distribuida exclusivamente por clientes.
+
+Configuración mínima recomendada para llamadas directas en producción:
+
+```text
+WebRtc__IceServers__0__Urls__0=stun:turn.example.com:3478
+WebRtc__IceServers__1__Urls__0=turn:turn.example.com:3478?transport=udp
+WebRtc__IceServers__1__Urls__1=turns:turn.example.com:5349?transport=tcp
+WebRtc__IceServers__1__Username=<credencial-efimera>
+WebRtc__IceServers__1__Credential=<secreto-efimero>
+WebRtc__RelayOnly=false
+```
+
+Debe existir una ruta TURN sobre UDP y otra sobre TLS/TCP para cubrir redes móviles, Wi‑Fi corporativo y NAT simétrico. `RelayOnly=true` fuerza máxima privacidad de IP, con el costo de enviar todo el tráfico por el relay.
+
+El estado y los bloqueos criptográficos verificables se documentan en `nivra-app/docs/security-production-readiness.md`.
 
 Hardening incluido:
 

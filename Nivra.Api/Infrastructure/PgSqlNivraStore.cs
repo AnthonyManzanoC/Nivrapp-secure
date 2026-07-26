@@ -493,6 +493,11 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
             invite.RevokedAt = now;
         }
 
+        var expiredCallSignals = await db.CallSignals
+            .Where(signal => signal.ExpiresAt <= now)
+            .ToListAsync(cancellationToken);
+        db.CallSignals.RemoveRange(expiredCallSignals);
+
         await db.SaveChangesAsync(cancellationToken);
     }
 

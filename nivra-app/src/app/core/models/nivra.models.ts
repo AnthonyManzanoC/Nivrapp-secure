@@ -135,6 +135,7 @@ export interface Contact {
   profilePhotoDataUrl?: string | null;
   nicknameCiphertext?: string | null;
   isFavorite: boolean;
+  isMutualContact: boolean;
   createdAt: string;
 }
 
@@ -343,6 +344,7 @@ export interface Story {
   mediaFileObjectId?: string | null;
   allowedUserIds: string[];
   viewOnce: boolean;
+  allowReposts: boolean;
   viewedByMe: boolean;
   viewCount: number;
   myReaction?: string | null;
@@ -532,11 +534,14 @@ export type CallPhase =
   | 'failed';
 
 export interface CallSignalEvent {
+  id?: string;
+  signalId?: string;
   callId: string;
   fromUserId: string;
   fromDeviceId?: string | null;
   signalType: string;
   payloadCiphertext?: string | null;
+  createdAt?: string;
 }
 
 export interface Entitlements {

@@ -215,6 +215,10 @@
             <input type="checkbox" [(ngModel)]="viewOnce">
             <span>{{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }}</span>
           </label>
+          <label class="native-check">
+            <input type="checkbox" [(ngModel)]="storyAllowReposts">
+            <span>{{ 'WORLD.ALLOW_REPOSTS' | translate:'Permitir que otros republiquen esta historia' }}</span>
+          </label>
           <ion-button mode="ios" (click)="publishStory()" [disabled]="busyId === 'story' || social.publishing() || (!storyText.trim() && !storyFile)">
             @if (social.publishing()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
             Publicar
@@ -345,37 +349,41 @@
       </article>
     </section>
 
-    @if (social.activeStory(); as story) {
-      @if (social.storyPayload(story); as payload) {
-        <app-story-viewer
-          [story]="story"
-          [payload]="payload"
-          [queue]="viewerQueue"
-          [progress]="storyProgressValues()"
-          [reply]="storyReply"
-          [busyId]="busyId"
-          [reactionsOpen]="reactionsOpen"
-          [isMine]="isMine(story)"
-          [uiHidden]="viewerUiHidden"
-          [subtitle]="viewerSubtitle(story)"
-          [viewsCount]="statsViews(story)"
-          [canRepost]="canRepostStory(story)"
-          [reactionOptions]="storyReactionOptions"
-          (replyChange)="storyReply = $event"
-          (closeViewer)="closeStoryViewer()"
-          (pointerDown)="onStoryPointerDown($event)"
-          (pointerUp)="onStoryPointerUp($event.event, $event.side)"
-          (pointerCancel)="onStoryPointerCancel()"
-          (syncDuration)="syncStoryMediaDuration($event)"
-          (mediaEnded)="storyMediaEnded()"
-          (openStats)="openStats()"
-          (sendReply)="sendStoryReply(story)"
-          (react)="reactToStory(story, $event)"
-          (toggleReactions)="reactionsOpen = !reactionsOpen"
-          (repost)="repostStory(story)">
-        </app-story-viewer>
-      }
-    }
+    <ion-modal class="nivra-story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="closeStoryViewer()">
+      <ng-template>
+        @if (social.activeStory(); as story) {
+          @if (social.storyPayload(story); as payload) {
+            <app-story-viewer
+              [story]="story"
+              [payload]="payload"
+              [queue]="viewerQueue"
+              [progress]="storyProgressValues()"
+              [reply]="storyReply"
+              [busyId]="busyId"
+              [reactionsOpen]="reactionsOpen"
+              [isMine]="isMine(story)"
+              [uiHidden]="viewerUiHidden"
+              [subtitle]="viewerSubtitle(story)"
+              [viewsCount]="statsViews(story)"
+              [canRepost]="canRepostStory(story)"
+              [reactionOptions]="storyReactionOptions"
+              (replyChange)="storyReply = $event"
+              (closeViewer)="closeStoryViewer()"
+              (pointerDown)="onStoryPointerDown($event)"
+              (pointerUp)="onStoryPointerUp($event.event, $event.side)"
+              (pointerCancel)="onStoryPointerCancel()"
+              (syncDuration)="syncStoryMediaDuration($event)"
+              (mediaEnded)="storyMediaEnded()"
+              (openStats)="openStats()"
+              (sendReply)="sendStoryReply(story)"
+              (react)="reactToStory(story, $event)"
+              (toggleReactions)="toggleStoryReactions()"
+              (repost)="repostStory(story)">
+            </app-story-viewer>
+          }
+        }
+      </ng-template>
+    </ion-modal>
 
     <ion-modal class="story-stats-modal" [isOpen]="statsOpen" [breakpoints]="[0, .55, .9]" [initialBreakpoint]=".55" (didDismiss)="closeStats()">
       <ng-template>

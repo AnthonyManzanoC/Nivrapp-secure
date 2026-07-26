@@ -197,7 +197,15 @@
                     </button>
                   }
                   @if (file.text) {
-                    <p class="file-caption">{{ file.text }}</p>
+                    <p class="file-caption message-text">
+                      @for (part of richTextParts(file.text); track $index) {
+                        @if (part.href) {
+                          <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="$event.stopPropagation()">{{ part.text }}</a>
+                        } @else {
+                          <span>{{ part.text }}</span>
+                        }
+                      }
+                    </p>
                   }
                 </div>
               } @else if (chat.isImage(file) || chat.isVideo(file)) {
@@ -228,7 +236,7 @@
                       <strong>{{ chat.fileName(file) }}</strong>
                       <small>{{ chat.fileSize(file) }}</small>
                     </span>
-                    @if (!message.deleteAfterRead) {
+                    @if (!message.deleteAfterRead && canExportMessage(message)) {
                       <button type="button" class="media-download" (click)="download(message); $event.stopPropagation()" [disabled]="downloadingId === message.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
                         @if (downloadingId === message.id) {
                           <ion-spinner name="crescent"></ion-spinner>
@@ -239,7 +247,15 @@
                     }
                   </div>
                   @if (file.text) {
-                    <p class="file-caption media-caption">{{ file.text }}</p>
+                    <p class="file-caption media-caption message-text">
+                      @for (part of richTextParts(file.text); track $index) {
+                        @if (part.href) {
+                          <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="$event.stopPropagation()">{{ part.text }}</a>
+                        } @else {
+                          <span>{{ part.text }}</span>
+                        }
+                      }
+                    </p>
                   }
                 </article>
               } @else {
@@ -263,20 +279,38 @@
                     <strong>{{ chat.fileName(file) }}</strong>
                     <span>{{ chat.fileSize(file) }}</span>
                   </div>
-                  <ion-button mode="ios" fill="clear" type="button" (click)="download(message)" [disabled]="downloadingId === message.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
-                    @if (downloadingId === message.id) {
-                      <ion-spinner name="crescent"></ion-spinner>
-                    } @else {
-                      <ion-icon name="download-outline"></ion-icon>
-                    }
-                  </ion-button>
+                  @if (canExportMessage(message)) {
+                    <ion-button mode="ios" fill="clear" type="button" (click)="download(message)" [disabled]="downloadingId === message.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
+                      @if (downloadingId === message.id) {
+                        <ion-spinner name="crescent"></ion-spinner>
+                      } @else {
+                        <ion-icon name="download-outline"></ion-icon>
+                      }
+                    </ion-button>
+                  }
                 </div>
                 @if (file.text) {
-                  <p class="file-caption">{{ file.text }}</p>
+                  <p class="file-caption message-text">
+                    @for (part of richTextParts(file.text); track $index) {
+                      @if (part.href) {
+                        <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="$event.stopPropagation()">{{ part.text }}</a>
+                      } @else {
+                        <span>{{ part.text }}</span>
+                      }
+                    }
+                  </p>
                 }
               }
             } @else {
-              <p>{{ message.payload.text || chat.preview(message.payload) }}</p>
+              <p class="message-text">
+                @for (part of richTextParts(message.payload.text || chat.preview(message.payload)); track $index) {
+                  @if (part.href) {
+                    <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="$event.stopPropagation()">{{ part.text }}</a>
+                  } @else {
+                    <span>{{ part.text }}</span>
+                  }
+                }
+              </p>
             }
             <div class="quick-reaction-row">
               @for (emoji of chat.quickReactions; track emoji) {
@@ -625,6 +659,12 @@
               <button type="button" (click)="translateMessage(actionMessage)">
                 <ion-icon name="language-outline"></ion-icon>
                 {{ 'CHAT_ACTIONS.TRANSLATE' | translate:'Traducir' }}
+              </button>
+            }
+            @if (canCopyMessage(actionMessage)) {
+              <button type="button" (click)="copyMessage(actionMessage)">
+                <ion-icon name="copy-outline"></ion-icon>
+                {{ 'CHAT_ACTIONS.COPY' | translate:'Copiar' }}
               </button>
             }
             @if (canEdit(actionMessage)) {

@@ -1754,3 +1754,32 @@ body.nivra-light-theme .receipt-list article,
 body.nivra-light-theme .message-info-card {
   background: #f8fafc;
 }
+ion-modal.nivra-story-viewer-modal {
+  --width: 100vw;
+  --height: 100dvh;
+  --max-width: none;
+  --max-height: none;
+  --border-radius: 0;
+  --background: transparent;
+  --box-shadow: none;
+  z-index: 40000;
+}
+
+ion-modal.nivra-story-viewer-modal::part(content) {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  overflow: hidden;
+  background: rgba(2, 6, 8, .66);
+  backdrop-filter: blur(10px);
+}
+
+@media (max-width: 720px) {
+  ion-modal.nivra-story-viewer-modal::part(content) {
+    background: #000;
+    backdrop-filter: none;
+  }
+}

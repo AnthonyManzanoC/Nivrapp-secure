@@ -31,6 +31,7 @@ builder.Services.Configure<NivraSecurityOptions>(builder.Configuration.GetSectio
 builder.Services.Configure<NivraStorageOptions>(builder.Configuration.GetSection("Storage"));
 builder.Services.Configure<NivraPushOptions>(builder.Configuration.GetSection("Push"));
 builder.Services.Configure<LiveKitOptions>(builder.Configuration.GetSection("LiveKit"));
+builder.Services.Configure<WebRtcOptions>(builder.Configuration.GetSection("WebRtc"));
 var dataProtectionBuilder = builder.Services
     .AddDataProtection()
     .SetApplicationName("Nivra.Api");
@@ -140,6 +141,11 @@ builder.Services.AddRateLimiter(options =>
 
 var app = builder.Build();
 
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
 await using (var scope = app.Services.CreateAsyncScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
@@ -171,7 +177,7 @@ app.Use(async (context, next) =>
     context.Response.Headers.TryAdd("X-Content-Type-Options", "nosniff");
     context.Response.Headers.TryAdd("X-Frame-Options", "DENY");
     context.Response.Headers.TryAdd("Referrer-Policy", "no-referrer");
-    context.Response.Headers.TryAdd("Permissions-Policy", "camera=(self), microphone=(self), geolocation=()");
+    context.Response.Headers.TryAdd("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), clipboard-write=(self), geolocation=()");
     context.Response.Headers.TryAdd("Cross-Origin-Opener-Policy", "same-origin");
     context.Response.Headers.TryAdd("Cross-Origin-Resource-Policy", "same-origin");
     await next();

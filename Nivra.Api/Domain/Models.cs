@@ -116,6 +116,7 @@ public sealed class UserAccount
     public string? Bio { get; set; }
     public string? ProfilePhotoDataUrl { get; set; }
     public bool IsDiscoverable { get; set; } = true;
+    public bool AllowStoryReposts { get; set; } = true;
     public string PlanCode { get; set; } = "free";
     public required PasswordHash PasswordHash { get; init; }
     public PrivacySettings PrivacySettings { get; set; } = PrivacySettings.Default();
@@ -244,6 +245,8 @@ public sealed class ConversationRecord
     public required string Id { get; init; }
     public ConversationType Type { get; set; }
     public string? TitleCiphertext { get; set; }
+    public string? GroupName { get; set; }
+    public string? GroupAvatar { get; set; }
     public required string CreatedByUserId { get; init; }
     public PrivacySettings PrivacySettings { get; set; } = PrivacySettings.Default();
     public GroupSettings Settings { get; set; } = GroupSettings.Default();
@@ -344,6 +347,7 @@ public sealed class StoryRecord
     public string? OriginalStoryId { get; set; }
     public string? OriginalAuthorId { get; set; }
     public bool ViewOnce { get; set; }
+    public bool AllowReposts { get; set; } = true;
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset ExpiresAt { get; set; }
     public DateTimeOffset? DeletedAt { get; set; }
@@ -423,6 +427,19 @@ public sealed class CallSession
     public HashSet<string> ParticipantUserIds { get; set; } = new(StringComparer.Ordinal);
     public DateTimeOffset StartedAt { get; init; }
     public DateTimeOffset? EndedAt { get; set; }
+}
+
+public sealed class CallSignalRecord
+{
+    public required string Id { get; init; }
+    public required string CallId { get; init; }
+    public required string FromUserId { get; init; }
+    public string? FromDeviceId { get; init; }
+    public required string TargetUserId { get; init; }
+    public required string SignalType { get; init; }
+    public required string PayloadCiphertext { get; init; }
+    public DateTimeOffset CreatedAt { get; init; }
+    public DateTimeOffset ExpiresAt { get; init; }
 }
 
 public sealed class PushTokenRecord

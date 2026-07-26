@@ -25,6 +25,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     public DbSet<VaultRoomMember> VaultRoomMembers => Set<VaultRoomMember>();
     public DbSet<VaultRoomInvite> VaultRoomInvites => Set<VaultRoomInvite>();
     public DbSet<CallSession> Calls => Set<CallSession>();
+    public DbSet<CallSignalRecord> CallSignals => Set<CallSignalRecord>();
     public DbSet<PushTokenRecord> PushTokens => Set<PushTokenRecord>();
     public DbSet<AdCampaign> AdCampaigns => Set<AdCampaign>();
     public DbSet<AdImpressionAggregate> AdImpressions => Set<AdImpressionAggregate>();
@@ -77,6 +78,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(user => user.Bio).HasMaxLength(500);
             entity.Property(user => user.ProfilePhotoDataUrl);
             entity.Property(user => user.IsDiscoverable).HasDefaultValue(true);
+            entity.Property(user => user.AllowStoryReposts).HasDefaultValue(true);
             entity.Property(user => user.PlanCode).HasMaxLength(32).HasDefaultValue("free");
             entity.Property(user => user.CreatedAt).IsRequired();
             entity.Property(user => user.UpdatedAt).IsRequired();
@@ -193,6 +195,8 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(conversation => conversation.Id).HasMaxLength(64);
             entity.Property(conversation => conversation.Type).HasConversion<string>().HasMaxLength(32).IsRequired();
             entity.Property(conversation => conversation.CreatedByUserId).HasMaxLength(64).IsRequired();
+            entity.Property(conversation => conversation.GroupName).HasColumnName("group_name").HasMaxLength(80);
+            entity.Property(conversation => conversation.GroupAvatar).HasColumnName("group_avatar");
             entity.HasIndex(conversation => conversation.LastMessageAt);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(conversation => conversation.CreatedByUserId).OnDelete(DeleteBehavior.Restrict);
 
@@ -322,6 +326,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(story => story.MediaFileObjectId).HasMaxLength(64);
             entity.Property(story => story.OriginalStoryId).HasMaxLength(64);
             entity.Property(story => story.OriginalAuthorId).HasMaxLength(64);
+            entity.Property(story => story.AllowReposts).HasColumnName("allow_reposts").HasDefaultValue(true);
             entity.Property(story => story.AllowedUserIds)
                 .HasColumnName("allowed_user_ids")
                 .HasColumnType("jsonb")
@@ -426,6 +431,22 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasIndex(call => call.ConversationId);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(call => call.InitiatorUserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ConversationRecord>().WithMany().HasForeignKey(call => call.ConversationId).OnDelete(DeleteBehavior.SetNull);
+        });
+
+        modelBuilder.Entity<CallSignalRecord>(entity =>
+        {
+            entity.ToTable("call_signals");
+            entity.HasKey(signal => signal.Id);
+            entity.Property(signal => signal.Id).HasMaxLength(64);
+            entity.Property(signal => signal.CallId).HasMaxLength(64).IsRequired();
+            entity.Property(signal => signal.FromUserId).HasMaxLength(64).IsRequired();
+            entity.Property(signal => signal.FromDeviceId).HasMaxLength(64);
+            entity.Property(signal => signal.TargetUserId).HasMaxLength(64).IsRequired();
+            entity.Property(signal => signal.SignalType).HasMaxLength(64).IsRequired();
+            entity.Property(signal => signal.PayloadCiphertext).IsRequired();
+            entity.HasIndex(signal => new { signal.CallId, signal.TargetUserId, signal.CreatedAt });
+            entity.HasIndex(signal => signal.ExpiresAt);
+            entity.HasOne<CallSession>().WithMany().HasForeignKey(signal => signal.CallId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<PushTokenRecord>(entity =>

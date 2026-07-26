@@ -38,6 +38,7 @@ public sealed record UserResponse(
     string? Bio,
     string? ProfilePhotoDataUrl,
     bool IsDiscoverable,
+    bool AllowStoryReposts,
     string PlanCode,
     PrivacySettings PrivacySettings,
     DateTimeOffset CreatedAt);
@@ -49,7 +50,8 @@ public sealed record PatchProfileRequest(
     string? Phone,
     string? Bio,
     string? ProfilePhotoDataUrl,
-    bool? IsDiscoverable);
+    bool? IsDiscoverable,
+    bool? AllowStoryReposts);
 
 public sealed record PhoneOtpStartRequest(string Phone);
 
@@ -133,6 +135,7 @@ public sealed record ContactResponse(
     string? ProfilePhotoDataUrl,
     string? NicknameCiphertext,
     bool IsFavorite,
+    bool IsMutualContact,
     DateTimeOffset CreatedAt);
 
 public sealed record PatchContactRequest(bool? IsFavorite, string? NicknameCiphertext);
@@ -153,6 +156,7 @@ public sealed record UserSummaryResponse(
     string? Bio,
     string? ProfilePhotoDataUrl,
     bool IsDiscoverable,
+    bool AllowStoryReposts,
     bool IsContact,
     bool IsMutualContact,
     bool IsFavorite,
@@ -176,9 +180,18 @@ public sealed record CreateConversationRequest(
     ConversationType Type,
     List<string> ParticipantUserIds,
     string? TitleCiphertext,
-    PrivacySettings? PrivacySettings);
+    PrivacySettings? PrivacySettings,
+    string? GroupName,
+    string? GroupAvatar,
+    GroupSettings? Settings,
+    List<string>? Admins);
 
-public sealed record PatchConversationRequest(string? TitleCiphertext, PrivacySettings? PrivacySettings, GroupSettings? Settings);
+public sealed record PatchConversationRequest(
+    string? TitleCiphertext,
+    PrivacySettings? PrivacySettings,
+    GroupSettings? Settings,
+    string? GroupName,
+    string? GroupAvatar);
 
 public sealed record AddConversationParticipantsRequest(List<string>? ParticipantUserIds);
 
@@ -188,6 +201,8 @@ public sealed record ConversationResponse(
     string Id,
     ConversationType Type,
     string? TitleCiphertext,
+    string? GroupName,
+    string? GroupAvatar,
     PrivacySettings PrivacySettings,
     GroupSettings Settings,
     List<ParticipantResponse> Participants,
@@ -299,13 +314,18 @@ public sealed record CreateStoryRequest(
     string? MediaFileObjectId,
     List<string>? AllowedUserIds,
     bool ViewOnce,
+    bool? AllowReposts,
     int? DurationSeconds);
 
 public sealed record StoryReactRequest(string Emoji);
 
 public sealed record StoryCommentRequest(string? MessageId);
 
-public sealed record StoryRepostRequest(StoryVisibility? Visibility, int? DurationSeconds);
+public sealed record StoryRepostRequest(
+    StoryVisibility? Visibility,
+    int? DurationSeconds,
+    string? EncryptedPayload,
+    bool? AllowReposts);
 
 public sealed record StoryViewResponse(
     UserSummaryResponse User,
@@ -334,6 +354,7 @@ public sealed record StoryResponse(
     string? MediaFileObjectId,
     List<string> AllowedUserIds,
     bool ViewOnce,
+    bool AllowReposts,
     bool ViewedByMe,
     int ViewCount,
     string? MyReaction,
@@ -405,6 +426,15 @@ public sealed record AcceptVaultInviteRequest(string? Pin);
 public sealed record StartCallRequest(CallType Type, string? ConversationId, List<string>? ParticipantUserIds);
 
 public sealed record CallSignalRequest(string TargetUserId, string SignalType, string PayloadCiphertext);
+
+public sealed record CallSignalResponse(
+    string Id,
+    string CallId,
+    string FromUserId,
+    string? FromDeviceId,
+    string SignalType,
+    string PayloadCiphertext,
+    DateTimeOffset CreatedAt);
 
 public sealed record InviteCallParticipantRequest(string UserId);
 

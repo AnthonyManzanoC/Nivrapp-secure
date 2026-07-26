@@ -562,6 +562,7 @@ public static partial class EndpointExtensions
             user.Bio = request.Bio is null ? user.Bio : NormalizeOptional(request.Bio);
             user.ProfilePhotoDataUrl = request.ProfilePhotoDataUrl is null ? user.ProfilePhotoDataUrl : NormalizeProfilePhoto(request.ProfilePhotoDataUrl);
             user.IsDiscoverable = request.IsDiscoverable ?? user.IsDiscoverable;
+            user.AllowStoryReposts = request.AllowStoryReposts ?? user.AllowStoryReposts;
             user.UpdatedAt = timeProvider.GetUtcNow();
             try
             {
@@ -1158,26 +1159,44 @@ public static partial class EndpointExtensions
                 return Error("invalid_participants", "Uno o mas participantes no existen.");
             }
 
+            var groupName = request.Type == ConversationType.Group
+                ? NormalizeOptional(request.GroupName) ?? await DefaultGroupNameAsync(store, participantIds.Where(id => id != current.UserId), cancellationToken)
+                : null;
+            var groupAvatar = request.Type == ConversationType.Group
+                ? NormalizeOptional(request.GroupAvatar)
+                : null;
+            HashSet<string> groupAdmins = request.Type == ConversationType.Group
+                ? (request.Admins ?? [])
+                    .Append(current.UserId)
+                    .Where(id => participantIds.Contains(id, StringComparer.Ordinal))
+                    .Distinct(StringComparer.Ordinal)
+                    .ToHashSet(StringComparer.Ordinal)
+                : [];
             var now = timeProvider.GetUtcNow();
             var conversation = new ConversationRecord
             {
                 Id = NivraIds.NewId("con"),
                 Type = request.Type,
                 TitleCiphertext = request.TitleCiphertext,
+                GroupName = groupName,
+                GroupAvatar = groupAvatar,
                 CreatedByUserId = current.UserId,
                 PrivacySettings = request.PrivacySettings ?? PrivacySettings.Default(),
+                Settings = request.Type == ConversationType.Group ? NormalizeGroupSettings(request.Settings) : GroupSettings.Default(),
                 CreatedAt = now,
                 UpdatedAt = now
             };
 
             foreach (var participantId in participantIds)
             {
+                var isOwner = participantId == current.UserId;
+                var isAdmin = isOwner || groupAdmins.Contains(participantId);
                 conversation.Participants.Add(new ConversationParticipant
                 {
                     UserId = participantId,
-                    Role = participantId == current.UserId ? ParticipantRole.Owner : ParticipantRole.Member,
-                    CanInvite = participantId == current.UserId,
-                    CanChangePrivacy = participantId == current.UserId,
+                    Role = isOwner ? ParticipantRole.Owner : isAdmin ? ParticipantRole.Admin : ParticipantRole.Member,
+                    CanInvite = isAdmin,
+                    CanChangePrivacy = isAdmin,
                     JoinedAt = now
                 });
             }
@@ -1309,8 +1328,11 @@ public static partial class EndpointExtensions
             {
                 return Error("forbidden", "No tienes permiso para cambiar la privacidad del chat.", StatusCodes.Status403Forbidden);
             }
+            var updatesGroupInfo = request.TitleCiphertext is not null ||
+                request.GroupName is not null ||
+                request.GroupAvatar is not null;
             if (conversation.Type == ConversationType.Group &&
-                request.TitleCiphertext is not null &&
+                updatesGroupInfo &&
                 NormalizeGroupSettings(conversation.Settings).EditInfo != "all" &&
                 !CanAdministerGroup(participant, allowInviteOnly: false))
             {
@@ -1328,6 +1350,13 @@ public static partial class EndpointExtensions
             }
 
             conversation.TitleCiphertext = request.TitleCiphertext ?? conversation.TitleCiphertext;
+            if (conversation.Type == ConversationType.Group)
+            {
+                conversation.GroupName = NormalizeOptional(request.GroupName) ?? conversation.GroupName;
+                conversation.GroupAvatar = request.GroupAvatar is not null
+                    ? NormalizeOptional(request.GroupAvatar)
+                    : conversation.GroupAvatar;
+            }
             conversation.PrivacySettings = request.PrivacySettings ?? conversation.PrivacySettings;
             conversation.UpdatedAt = timeProvider.GetUtcNow();
             await store.SaveChangesAsync(cancellationToken);
@@ -2258,6 +2287,7 @@ public static partial class EndpointExtensions
                 Reactions = [],
                 Comments = [],
                 ViewOnce = request.ViewOnce,
+                AllowReposts = request.AllowReposts ?? true,
                 CreatedAt = now,
                 ExpiresAt = now.AddSeconds(durationSeconds)
             };
@@ -2370,14 +2400,19 @@ public static partial class EndpointExtensions
                 });
             }
 
+            var existingReaction = story.Reactions.FirstOrDefault(reaction => reaction.UserId == current.UserId);
+            var removeCurrentReaction = existingReaction is not null && string.Equals(existingReaction.Emoji, emoji, StringComparison.Ordinal);
             story.Reactions.RemoveAll(reaction => reaction.UserId == current.UserId);
-            story.Reactions.Add(new StoryReactionRecord
+            if (!removeCurrentReaction)
             {
-                Id = NivraIds.NewId("sre"),
-                UserId = current.UserId,
-                Emoji = emoji,
-                ReactedAt = now
-            });
+                story.Reactions.Add(new StoryReactionRecord
+                {
+                    Id = NivraIds.NewId("sre"),
+                    UserId = current.UserId,
+                    Emoji = emoji,
+                    ReactedAt = now
+                });
+            }
 
             await db.SaveChangesAsync(cancellationToken);
             var ownerResponse = await ToStoryResponseAsync(story, story.OwnerUserId, db, cancellationToken);
@@ -2453,6 +2488,17 @@ public static partial class EndpointExtensions
                 return Error("invalid_story_repost", "No necesitas repostear tu propia historia.");
             }
 
+            var originalOwner = await db.Users.AsNoTracking().FirstOrDefaultAsync(user => user.Id == original.OwnerUserId, cancellationToken);
+            if (originalOwner is null || originalOwner.DisabledAt is not null)
+            {
+                return Results.NotFound();
+            }
+
+            if (!original.AllowReposts || !originalOwner.AllowStoryReposts)
+            {
+                return Error("story_reposts_disabled", "El autor no permite repostear esta historia.", StatusCodes.Status403Forbidden);
+            }
+
             var now = timeProvider.GetUtcNow();
             var durationSeconds = Math.Clamp(request.DurationSeconds ?? 24 * 60 * 60, 30, 7 * 24 * 60 * 60);
             var visibility = request.Visibility is StoryVisibility.PublicWorld or StoryVisibility.Contacts or StoryVisibility.MutualContacts
@@ -2465,8 +2511,8 @@ public static partial class EndpointExtensions
                 Visibility = visibility,
                 TargetType = StoryTargetContacts,
                 TargetId = null,
-                EncryptedPayload = original.EncryptedPayload,
-                Caption = original.Caption,
+                EncryptedPayload = NormalizeOptional(request.EncryptedPayload) ?? original.EncryptedPayload,
+                Caption = null,
                 MediaFileObjectId = original.MediaFileObjectId,
                 AllowedUserIds = [],
                 ViewedByUserIds = [],
@@ -2476,6 +2522,7 @@ public static partial class EndpointExtensions
                 OriginalStoryId = original.OriginalStoryId ?? original.Id,
                 OriginalAuthorId = original.OriginalAuthorId ?? original.OwnerUserId,
                 ViewOnce = false,
+                AllowReposts = request.AllowReposts ?? original.AllowReposts,
                 CreatedAt = now,
                 ExpiresAt = now.AddSeconds(durationSeconds)
             };
@@ -2662,7 +2709,7 @@ public static partial class EndpointExtensions
             return Results.Ok(ToFileResponse(file));
         });
 
-        group.MapGet("/{fileId}", async Task<IResult> (string fileId, HttpContext http, INivraStore store, CancellationToken cancellationToken) =>
+        group.MapGet("/{fileId}", async Task<IResult> (string fileId, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2671,12 +2718,12 @@ public static partial class EndpointExtensions
             }
 
             var file = await store.GetFileAsync(fileId, cancellationToken);
-            return file is null || !store.UserCanAccessFile(current.UserId, file)
+            return file is null || !await UserCanAccessFileAsync(current.UserId, file, store, db, timeProvider.GetUtcNow(), cancellationToken)
                 ? Results.NotFound()
                 : Results.Ok(ToFileResponse(file));
         });
 
-        group.MapGet("/{fileId}/blob", async Task<IResult> (string fileId, HttpContext http, INivraStore store, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
+        group.MapGet("/{fileId}/blob", async Task<IResult> (string fileId, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2686,7 +2733,7 @@ public static partial class EndpointExtensions
 
             var file = await store.GetFileAsync(fileId, cancellationToken);
             if (file is null ||
-                !store.UserCanAccessFile(current.UserId, file) ||
+                !await UserCanAccessFileAsync(current.UserId, file, store, db, timeProvider.GetUtcNow(), cancellationToken) ||
                 file.State != FileState.Uploaded ||
                 !await storage.ExistsAsync(file, cancellationToken))
             {
@@ -3292,6 +3339,45 @@ public static partial class EndpointExtensions
     {
         var group = app.MapGroup("/calls");
 
+        group.MapGet("/ice-config", (HttpContext http, Microsoft.Extensions.Options.IOptions<WebRtcOptions> options) =>
+        {
+            if (http.GetCurrentUser() is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var servers = (options.Value.IceServers ?? [])
+                .Select(server => new WebRtcIceServerResponse(
+                    (server.Urls ?? [])
+                        .Select(url => url?.Trim() ?? "")
+                        .Where(url =>
+                            url.StartsWith("stun:", StringComparison.OrdinalIgnoreCase) ||
+                            url.StartsWith("stuns:", StringComparison.OrdinalIgnoreCase) ||
+                            url.StartsWith("turn:", StringComparison.OrdinalIgnoreCase) ||
+                            url.StartsWith("turns:", StringComparison.OrdinalIgnoreCase))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Take(8)
+                        .ToList(),
+                    NormalizeOptional(server.Username),
+                    NormalizeOptional(server.Credential)))
+                .Where(server => server.Urls.Count > 0)
+                .Take(8)
+                .ToList();
+
+            if (servers.Count == 0)
+            {
+                servers.Add(new WebRtcIceServerResponse(
+                    ["stun:stun.l.google.com:19302", "stun:global.stun.twilio.com:3478"],
+                    null,
+                    null));
+            }
+
+            var hasRelay = servers.Any(server => server.Urls.Any(url =>
+                url.StartsWith("turn:", StringComparison.OrdinalIgnoreCase) ||
+                url.StartsWith("turns:", StringComparison.OrdinalIgnoreCase)));
+            return Results.Ok(new WebRtcIceConfigResponse(servers, options.Value.RelayOnly && hasRelay));
+        });
+
         static async Task<IResult> RoomToken(string groupId, HttpContext http, INivraStore store, NivraDbContext db, LiveKitTokenService liveKit, CancellationToken cancellationToken)
         {
             var current = http.GetCurrentUser();
@@ -3399,6 +3485,38 @@ public static partial class EndpointExtensions
             return Results.Created($"/calls/{call.Id}", response);
         });
 
+        group.MapGet("/active/{conversationId}", async Task<IResult> (string conversationId, HttpContext http, INivraStore store, NivraDbContext db, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            if (string.IsNullOrWhiteSpace(conversationId))
+            {
+                return Error("invalid_conversation", "La conversacion es obligatoria.");
+            }
+
+            var conversation = await store.GetConversationAsync(conversationId, cancellationToken);
+            if (conversation is null ||
+                conversation.Type != ConversationType.Group ||
+                !conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null))
+            {
+                return Results.NotFound();
+            }
+
+            var call = await db.Calls
+                .AsNoTracking()
+                .Where(item => item.ConversationId == conversationId && item.EndedAt == null && item.Status != CallStatus.Ended)
+                .OrderByDescending(item => item.StartedAt)
+                .FirstOrDefaultAsync(cancellationToken);
+
+            return call is null
+                ? Results.NoContent()
+                : Results.Ok(ToCallResponse(call));
+        });
+
         group.MapGet("/{callId}", async Task<IResult> (string callId, HttpContext http, INivraStore store, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
@@ -3416,7 +3534,47 @@ public static partial class EndpointExtensions
             return Results.Ok(ToCallResponse(call));
         });
 
-        group.MapPost("/{callId}/signal", async Task<IResult> (string callId, CallSignalRequest request, HttpContext http, INivraStore store, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapGet("/{callId}/signals", async Task<IResult> (string callId, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            var call = await store.GetCallAsync(callId, cancellationToken);
+            if (call is null || !call.ParticipantUserIds.Contains(current.UserId))
+            {
+                return Results.NotFound();
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var signalRecords = await db.CallSignals
+                .AsNoTracking()
+                .Where(signal =>
+                    signal.CallId == callId &&
+                    signal.TargetUserId == current.UserId &&
+                    signal.ExpiresAt > now)
+                .OrderByDescending(signal => signal.CreatedAt)
+                .ThenByDescending(signal => signal.Id)
+                .Take(200)
+                .ToListAsync(cancellationToken);
+            var signals = signalRecords
+                .OrderBy(signal => signal.CreatedAt)
+                .ThenBy(signal => signal.Id)
+                .Select(signal => new CallSignalResponse(
+                    signal.Id,
+                    signal.CallId,
+                    signal.FromUserId,
+                    signal.FromDeviceId,
+                    signal.SignalType,
+                    signal.PayloadCiphertext,
+                    signal.CreatedAt))
+                .ToList();
+            return Results.Ok(signals);
+        });
+
+        group.MapPost("/{callId}/signal", async Task<IResult> (string callId, CallSignalRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3438,18 +3596,58 @@ public static partial class EndpointExtensions
             }
 
             var signalType = request.SignalType?.Trim().ToLowerInvariant();
+            var allowedSignalTypes = new HashSet<string>(StringComparer.Ordinal)
+            {
+                "accepted",
+                "declined",
+                "busy",
+                "left",
+                "offer",
+                "answer",
+                "ice",
+                "ice-restart-request",
+                "renegotiate-request",
+                "muted",
+                "camera",
+                "screen"
+            };
+            if (string.IsNullOrWhiteSpace(signalType) ||
+                !allowedSignalTypes.Contains(signalType) ||
+                string.IsNullOrWhiteSpace(request.PayloadCiphertext) ||
+                request.PayloadCiphertext.Length > 256_000)
+            {
+                return Error("invalid_call_signal", "La señal de llamada no es válida.");
+            }
+
             if (signalType is "accepted" or "offer" or "answer" or "ice")
             {
                 call.Status = CallStatus.Active;
             }
+
+            var now = timeProvider.GetUtcNow();
+            var signal = new CallSignalRecord
+            {
+                Id = NivraIds.NewId("csg"),
+                CallId = callId,
+                FromUserId = current.UserId,
+                FromDeviceId = current.DeviceId,
+                TargetUserId = request.TargetUserId,
+                SignalType = signalType,
+                PayloadCiphertext = request.PayloadCiphertext,
+                CreatedAt = now,
+                ExpiresAt = now.AddMinutes(10)
+            };
+            db.CallSignals.Add(signal);
             await store.SaveChangesAsync(cancellationToken);
             await hub.Clients.Group(GroupsFor.User(request.TargetUserId)).SendAsync("call.signal", new
             {
+                signalId = signal.Id,
                 callId,
                 fromUserId = current.UserId,
                 fromDeviceId = current.DeviceId,
-                request.SignalType,
-                request.PayloadCiphertext
+                signalType = signal.SignalType,
+                payloadCiphertext = signal.PayloadCiphertext,
+                createdAt = signal.CreatedAt
             }, cancellationToken);
             if (signalType == "accepted")
             {
@@ -3462,7 +3660,7 @@ public static partial class EndpointExtensions
                 }, cancellationToken);
             }
 
-            return Results.Accepted();
+            return Results.Accepted(value: new { signalId = signal.Id, createdAt = signal.CreatedAt });
         });
 
         group.MapPost("/{callId}/invite", async Task<IResult> (string callId, InviteCallParticipantRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
@@ -4211,6 +4409,7 @@ public static partial class EndpointExtensions
             user.Bio,
             user.ProfilePhotoDataUrl,
             user.IsDiscoverable,
+            user.AllowStoryReposts,
             user.PlanCode,
             user.PrivacySettings,
             user.CreatedAt);
@@ -4224,6 +4423,7 @@ public static partial class EndpointExtensions
     private static async Task<ContactResponse> ToContactResponseAsync(ContactRecord contact, INivraStore store, CancellationToken cancellationToken)
     {
         var user = await store.GetUserAsync(contact.ContactUserId, cancellationToken);
+        var reverseContacts = await store.ContactsForUserAsync(contact.ContactUserId, cancellationToken);
         return new ContactResponse(
             contact.ContactUserId,
             user?.Alias ?? "unknown",
@@ -4232,6 +4432,7 @@ public static partial class EndpointExtensions
             user?.ProfilePhotoDataUrl,
             contact.NicknameCiphertext,
             contact.IsFavorite,
+            reverseContacts.Any(reverse => reverse.ContactUserId == contact.OwnerUserId),
             contact.CreatedAt);
     }
 
@@ -4260,6 +4461,8 @@ public static partial class EndpointExtensions
             conversation.Id,
             conversation.Type,
             conversation.TitleCiphertext,
+            conversation.GroupName,
+            conversation.GroupAvatar,
             conversation.PrivacySettings,
             NormalizeGroupSettings(conversation.Settings),
             conversation.Participants.Select(participant => new ParticipantResponse(
@@ -4275,6 +4478,17 @@ public static partial class EndpointExtensions
             conversation.CreatedAt,
             conversation.UpdatedAt,
             conversation.LastMessageAt);
+    }
+
+    private static async Task<string> DefaultGroupNameAsync(INivraStore store, IEnumerable<string> participantUserIds, CancellationToken cancellationToken)
+    {
+        var users = await store.GetUsersAsync(participantUserIds, cancellationToken);
+        var names = users
+            .Select(user => NormalizeOptional(user.DisplayName) ?? NormalizeOptional(user.Phone) ?? NormalizeOptional(user.Alias))
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Take(3)
+            .ToList();
+        return names.Count > 0 ? string.Join(", ", names) : "Grupo Nivra";
     }
 
     private static bool CanAdministerGroup(ConversationParticipant participant, bool allowInviteOnly)
@@ -4465,6 +4679,7 @@ public static partial class EndpointExtensions
             user.Bio,
             user.ProfilePhotoDataUrl,
             user.IsDiscoverable,
+            user.AllowStoryReposts,
             outgoing is not null,
             outgoing is not null && incoming,
             outgoing?.IsFavorite ?? false,
@@ -4511,6 +4726,7 @@ public static partial class EndpointExtensions
             story.MediaFileObjectId,
             story.AllowedUserIds.ToList(),
             story.ViewOnce,
+            story.AllowReposts,
             story.ViewedByUserIds.Contains(currentUserId),
             viewCount,
             story.Reactions
@@ -4780,15 +4996,57 @@ public static partial class EndpointExtensions
             return (await ActiveConversationParticipantIdsAsync(db, story.TargetId, cancellationToken)).ToList();
         }
 
+        if (story.Visibility == StoryVisibility.MutualContacts)
+        {
+            return await db.Contacts
+                .Where(contact =>
+                    contact.OwnerUserId == story.OwnerUserId &&
+                    db.Contacts.Any(reverse =>
+                        reverse.OwnerUserId == contact.ContactUserId &&
+                        reverse.ContactUserId == story.OwnerUserId))
+                .Select(contact => contact.ContactUserId)
+                .ToListAsync(cancellationToken);
+        }
+
         return story.Visibility switch
         {
             StoryVisibility.SelectedUsers or StoryVisibility.CloseFriends => story.AllowedUserIds.ToList(),
-            StoryVisibility.Contacts or StoryVisibility.MutualContacts => await db.Contacts
+            StoryVisibility.Contacts => await db.Contacts
                 .Where(contact => contact.OwnerUserId == story.OwnerUserId)
                 .Select(contact => contact.ContactUserId)
                 .ToListAsync(cancellationToken),
             _ => []
         };
+    }
+
+    private static async Task<bool> UserCanAccessFileAsync(
+        string userId,
+        FileObject file,
+        INivraStore store,
+        NivraDbContext db,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        if (store.UserCanAccessFile(userId, file))
+        {
+            return true;
+        }
+
+        var linkedStories = await db.Stories
+            .Where(story =>
+                story.MediaFileObjectId == file.Id &&
+                story.DeletedAt == null &&
+                story.ExpiresAt > now)
+            .ToListAsync(cancellationToken);
+        foreach (var story in linkedStories)
+        {
+            if (await CanViewStoryAsync(db, story, userId, cancellationToken))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string NormalizeStoryTargetType(string? targetType, string? targetId)

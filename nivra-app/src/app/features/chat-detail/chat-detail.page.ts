@@ -48,6 +48,7 @@ import {
   checkmarkOutline,
   chevronForwardOutline,
   closeOutline,
+  copyOutline,
   createOutline,
   informationCircleOutline,
   languageOutline,
@@ -108,6 +109,12 @@ interface QuotedReplyVm {
   snippet: string;
   thumbnailUrl: string | null;
   fallbackText: string;
+}
+
+interface MessageTextPart {
+  text: string;
+  href: string | null;
+  external: boolean;
 }
 
 @Component({
@@ -274,6 +281,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       checkmarkOutline,
       chevronForwardOutline,
       closeOutline,
+      copyOutline,
       createOutline,
       informationCircleOutline,
       languageOutline,
@@ -557,6 +565,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       await this.openViewOnce(message);
       return;
     }
+    if (!this.canExportMessage(message)) {
+      this.attachmentError = this.tr('CHAT.DOWNLOAD_BLOCKED', 'La privacidad del remitente no permite guardar este archivo.');
+      return;
+    }
     if (this.downloadingId) {
       return;
     }
@@ -830,6 +842,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         icon: 'language-outline',
         handler: () => {
           void this.translateMessage(message);
+        },
+      }] : []),
+      ...(this.canCopyMessage(message) ? [{
+        text: this.tr('CHAT_ACTIONS.COPY', 'Copiar'),
+        icon: 'copy-outline',
+        handler: () => {
+          void this.copyMessage(message);
         },
       }] : []),
       ...(this.canEdit(message) ? [{
@@ -1118,6 +1137,83 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   canForward(message: ChatMessageVm | null | undefined): boolean {
     return this.chat.forwardAvailability(message).ok;
+  }
+
+  canExportMessage(message: ChatMessageVm | null | undefined): boolean {
+    return Boolean(message && !message.deleteAfterRead && this.chat.forwardAvailability(message).ok);
+  }
+
+  canCopyMessage(message: ChatMessageVm | null | undefined): boolean {
+    if (!message || !this.canExportMessage(message) || message.decryptError) {
+      return false;
+    }
+    const text = String(message.payload.text || '').trim();
+    const file = this.chat.asFile(message.payload);
+    const fileId = file?.fileId || file?.downloadFile || file?.previewFile;
+    return Boolean(text || (file && this.chat.isImage(file) && this.chat.mediaPreview(fileId)));
+  }
+
+  async copyMessage(message: ChatMessageVm): Promise<void> {
+    if (!this.canCopyMessage(message)) {
+      this.attachmentError = this.tr('CHAT.COPY_BLOCKED', 'La privacidad de este mensaje no permite copiarlo.');
+      this.closeMessageActions();
+      return;
+    }
+
+    const text = String(message.payload.text || '').trim();
+    const file = this.chat.asFile(message.payload);
+    const fileId = file?.fileId || file?.downloadFile || file?.previewFile;
+    const media = file && this.chat.isImage(file) ? this.chat.mediaPreview(fileId) : null;
+    try {
+      if (media && typeof ClipboardItem !== 'undefined' && typeof navigator.clipboard?.write === 'function') {
+        const image = await this.clipboardImageBlob(media.url);
+        await navigator.clipboard.write([new ClipboardItem({ [image.type]: image })]);
+      } else if (text && typeof navigator.clipboard?.writeText === 'function') {
+        await navigator.clipboard.writeText(text);
+      } else {
+        throw new Error('clipboard_unavailable');
+      }
+      this.notice = media
+        ? this.tr('CHAT.IMAGE_COPIED', 'Imagen copiada.')
+        : this.tr('CHAT.TEXT_COPIED', 'Texto copiado.');
+    } catch {
+      this.attachmentError = this.tr('CHAT.COPY_NOT_AVAILABLE', 'No se pudo copiar en este dispositivo.');
+    } finally {
+      this.closeMessageActions();
+    }
+  }
+
+  richTextParts(value: string | null | undefined): MessageTextPart[] {
+    const text = String(value || '');
+    if (!text) {
+      return [];
+    }
+    const pattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+|[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+)/gi;
+    const parts: MessageTextPart[] = [];
+    let cursor = 0;
+    for (const match of text.matchAll(pattern)) {
+      const index = match.index ?? cursor;
+      if (index > cursor) {
+        parts.push({ text: text.slice(cursor, index), href: null, external: false });
+      }
+      const raw = match[0];
+      const clean = raw.replace(/[),.!?;:]+$/g, '');
+      const trailing = raw.slice(clean.length);
+      const email = clean.includes('@') && !clean.includes('://') && !clean.toLowerCase().startsWith('www.');
+      parts.push({
+        text: clean,
+        href: email ? `mailto:${clean}` : /^https?:\/\//i.test(clean) ? clean : `https://${clean}`,
+        external: !email,
+      });
+      if (trailing) {
+        parts.push({ text: trailing, href: null, external: false });
+      }
+      cursor = index + raw.length;
+    }
+    if (cursor < text.length) {
+      parts.push({ text: text.slice(cursor), href: null, external: false });
+    }
+    return parts.length ? parts : [{ text, href: null, external: false }];
   }
 
   canShowMessageInfo(message: ChatMessageVm | null | undefined): boolean {
@@ -2393,6 +2489,35 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   private canPreviewPendingFile(file: File): boolean {
     return file.type.startsWith('image/') || file.type.startsWith('video/') || file.type.startsWith('audio/');
+  }
+
+  private async clipboardImageBlob(url: string): Promise<Blob> {
+    const source = await fetch(url).then((response) => response.blob());
+    if (source.type === 'image/png') {
+      return source;
+    }
+    const objectUrl = URL.createObjectURL(source);
+    try {
+      const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+        const element = new Image();
+        element.onload = () => resolve(element);
+        element.onerror = () => reject(new Error('image_decode_failed'));
+        element.src = objectUrl;
+      });
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d');
+      if (!context) {
+        throw new Error('canvas_unavailable');
+      }
+      context.drawImage(image, 0, 0);
+      return await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('image_encode_failed')), 'image/png');
+      });
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   }
 
   private formatBytes(bytes: number): string {

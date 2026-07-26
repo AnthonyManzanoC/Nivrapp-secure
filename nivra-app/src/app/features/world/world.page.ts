@@ -73,6 +73,7 @@ export class WorldPage implements OnInit, OnDestroy {
   storyAudience = 'contacts';
   durationSeconds = 24 * 60 * 60;
   viewOnce = false;
+  storyAllowReposts = true;
   storyFile: File | null = null;
   radarPhones = '';
   busyId = '';
@@ -129,6 +130,7 @@ export class WorldPage implements OnInit, OnDestroy {
   }
 
   async ngOnInit(): Promise<void> {
+    this.storyAllowReposts = this.auth.session()?.user.allowStoryReposts !== false;
     await this.social.load();
     void this.contactSync.syncCachedContactsInBackground();
   }
@@ -250,6 +252,7 @@ export class WorldPage implements OnInit, OnDestroy {
         file: this.storyFile,
         durationSeconds: Number(this.durationSeconds),
         viewOnce: this.viewOnce,
+        allowReposts: this.storyAllowReposts,
         targetType,
         targetId: group?.id ?? null,
         allowedUserIds,
@@ -257,6 +260,7 @@ export class WorldPage implements OnInit, OnDestroy {
       this.storyText = '';
       this.storyFile = null;
       this.viewOnce = false;
+      this.storyAllowReposts = this.auth.session()?.user.allowStoryReposts !== false;
       this.storyAudience = 'contacts';
       this.notice = this.tr('WORLD.NOTICE_STORY_PUBLISHED', 'Historia publicada.');
     });
@@ -381,6 +385,15 @@ export class WorldPage implements OnInit, OnDestroy {
     this.resumeStoryProgress();
   }
 
+  toggleStoryReactions(): void {
+    this.reactionsOpen = !this.reactionsOpen;
+    if (this.reactionsOpen) {
+      this.pauseStoryProgress();
+    } else {
+      this.resumeStoryProgress();
+    }
+  }
+
   syncStoryMediaDuration(event: Event): void {
     const video = event.target as HTMLVideoElement | null;
     const duration = Number(video?.duration);
@@ -401,6 +414,7 @@ export class WorldPage implements OnInit, OnDestroy {
     await this.run(`react:${story.id}`, async () => {
       await this.social.reactStory(story, emoji);
       this.reactionsOpen = false;
+      this.resumeStoryProgress();
       this.notice = removingReaction
         ? this.tr('WORLD.NOTICE_REACTION_REMOVED', 'Reaccion quitada.')
         : emoji === '\u2764\uFE0F'
@@ -447,7 +461,7 @@ export class WorldPage implements OnInit, OnDestroy {
   }
 
   canRepostStory(story: Story): boolean {
-    return !this.isMine(story) && story.owner.allowStoryReposts !== false;
+    return !this.isMine(story) && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
   }
 
   viewerSubtitle(story: Story): string {

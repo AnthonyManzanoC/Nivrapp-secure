@@ -177,6 +177,12 @@
                 <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()">
                   <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
                 </ion-button>
+                @if (calls.phase() === 'failed') {
+                  <ion-button mode="ios" fill="clear" class="retry-call-button" (click)="calls.retryConnection()">
+                    <ion-icon name="refresh-outline"></ion-icon>
+                    {{ 'COMMON.RETRY' | translate:'Reintentar' }}
+                  </ion-button>
+                }
                 <ion-button mode="ios" fill="clear" (click)="openInviteModal()" [attr.aria-label]="'CALLS.ADD_PARTICIPANT' | translate:'Anadir participante'">
                   <ion-icon name="person-add-outline"></ion-icon>
                 </ion-button>

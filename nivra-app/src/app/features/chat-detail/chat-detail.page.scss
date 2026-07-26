@@ -2444,3 +2444,20 @@ ion-modal.forward-modal {
   }
 
 }
+.message-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message-link {
+  color: #7ce8ff;
+  font-weight: 760;
+  text-decoration: underline;
+  text-decoration-color: rgba(124, 232, 255, .48);
+  text-underline-offset: 2px;
+}
+
+.message.mine .message-link {
+  color: #032e32;
+  text-decoration-color: rgba(3, 46, 50, .42);
+}

@@ -17,6 +17,11 @@ import { SignalrService } from './signalr.service';
 interface PeerState {
   connection: RTCPeerConnection;
   pendingIce: RTCIceCandidate[];
+  iceRestartAttempts: number;
+  disconnectTimer: number | null;
+  makingOffer: boolean;
+  ignoreOffer: boolean;
+  isSettingRemoteAnswerPending: boolean;
 }
 
 interface DecodedCallSignalPayload {
@@ -38,6 +43,15 @@ interface LiveKitRoomTokenResponse {
   token: string;
 }
 
+interface WebRtcIceConfigResponse {
+  iceServers?: Array<{
+    urls: string | string[];
+    username?: string | null;
+    credential?: string | null;
+  }>;
+  relayOnly?: boolean;
+}
+
 interface LiveKitTrackLike {
   mediaStreamTrack?: MediaStreamTrack;
   source?: unknown;
@@ -49,10 +63,32 @@ interface LiveKitPublicationLike {
 }
 
 const CALL_RING_TIMEOUT_MS = 45_000;
+const MAX_ICE_RESTART_ATTEMPTS = 3;
+const CALL_SIGNAL_POLL_MS = 1_500;
+const ICE_CONFIG_MAX_AGE_MS = 4 * 60_000;
+const CONNECTION_RECOVERY_DELAY_MS = 10_000;
+const CONNECTION_FAILURE_DELAY_MS = 30_000;
+const DEFAULT_ICE_SERVERS: RTCIceServer[] = [
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:global.stun.twilio.com:3478' },
+];
 const CALL_AUDIO_PROCESSING: AudioCaptureOptions = {
   echoCancellation: true,
   noiseSuppression: true,
   autoGainControl: true,
+};
+const CALL_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  channelCount: { ideal: 1 },
+  sampleRate: { ideal: 48_000 },
+};
+const CALL_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
+  facingMode: 'user',
+  width: { ideal: 1280, max: 1920 },
+  height: { ideal: 720, max: 1080 },
+  frameRate: { ideal: 30, max: 30 },
 };
 
 @Injectable({ providedIn: 'root' })
@@ -84,6 +120,36 @@ export class CallsService implements OnDestroy {
   private screenShareStream: MediaStream | null = null;
   private cameraTrackBeforeScreenShare: MediaStreamTrack | null = null;
   private readonly screenShareAudioTrackIds = new Set<string>();
+  private iceServers: RTCIceServer[] = DEFAULT_ICE_SERVERS;
+  private iceTransportPolicy: RTCIceTransportPolicy = 'all';
+  private iceConfigPromise: Promise<void> | null = null;
+  private iceConfigLoadedAt = 0;
+  private signalPollTimer: number | null = null;
+  private signalPollInFlight = false;
+  private readonly processedSignalIds = new Set<string>();
+  private connectionRecoveryTimer: number | null = null;
+  private connectionFailureTimer: number | null = null;
+  private networkRecoveryInFlight = false;
+  private readonly onlineHandler = () => {
+    void this.recoverAfterNetworkChange();
+  };
+  private readonly connectionChangeHandler = () => {
+    void this.recoverAfterNetworkChange();
+  };
+  private readonly visibilityChangeHandler = () => {
+    if (document.visibilityState === 'visible') {
+      const call = this.activeCall();
+      if (call?.id) {
+        void this.pollPersistedSignals(call.id);
+      }
+      const directPeersHealthy = !this.isGroupCall(call) &&
+        this.peers.size > 0 &&
+        [...this.peers.values()].every((peer) => this.peerConnectionLooksConnected(peer.connection));
+      if (this.phase() !== 'connected' || (!this.isGroupCall(call) && !directPeersHealthy)) {
+        void this.recoverAfterNetworkChange();
+      }
+    }
+  };
 
   readonly activeCall = signal<CallSession | null>(null);
   readonly phase = signal<CallPhase>('idle');
@@ -162,9 +228,31 @@ export class CallsService implements OnDestroy {
         }
       });
     });
+
+    effect(() => {
+      const callId = this.activeCall()?.id ?? null;
+      untracked(() => {
+        if (callId) {
+          this.startSignalPolling(callId);
+        } else {
+          this.stopSignalPolling();
+        }
+      });
+    });
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('online', this.onlineHandler);
+      document.addEventListener('visibilitychange', this.visibilityChangeHandler);
+      this.networkInformation()?.addEventListener?.('change', this.connectionChangeHandler);
+    }
   }
 
   ngOnDestroy(): void {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('online', this.onlineHandler);
+      document.removeEventListener('visibilitychange', this.visibilityChangeHandler);
+      this.networkInformation()?.removeEventListener?.('change', this.connectionChangeHandler);
+    }
     this.cleanup({ remember: false });
   }
 
@@ -177,6 +265,9 @@ export class CallsService implements OnDestroy {
     }
     try {
       const groupCall = this.isGroupConversationId(conversationId);
+      if (!groupCall) {
+        await this.loadIceConfiguration();
+      }
       if (type === 'Video' && !groupCall) {
         await this.prepareMedia(true);
       }
@@ -222,6 +313,7 @@ export class CallsService implements OnDestroy {
       await this.connectLiveKitRoom(call);
       return;
     }
+    await this.loadIceConfiguration();
     await this.prepareMedia(call.type === 'Video');
     this.setConnectingPhase();
     this.clearRingTimeout();
@@ -301,6 +393,7 @@ export class CallsService implements OnDestroy {
       await this.connectLiveKitRoom(normalized);
       return;
     }
+    await this.loadIceConfiguration();
     await this.prepareMedia(normalized.type === 'Video');
     this.rememberGroupRoom(normalized);
     this.activeCall.set(normalized);
@@ -314,25 +407,54 @@ export class CallsService implements OnDestroy {
     this.scheduleConnectedUiReconcile(normalized.id);
   }
 
-  toggleMute(): void {
+  async toggleMute(): Promise<void> {
     const next = !this.muted();
-    this.muted.set(next);
-    this.localStream()?.getAudioTracks().forEach((track) => {
-      track.enabled = !next;
-    });
-    this.broadcastControl('muted', next);
+    const call = this.activeCall();
+    try {
+      if (this.isGroupCall(call) && this.liveKitRoom) {
+        await (this.liveKitRoom.localParticipant as unknown as {
+          setMicrophoneEnabled: (enabled: boolean, options?: AudioCaptureOptions) => Promise<unknown>;
+        }).setMicrophoneEnabled(!next, CALL_AUDIO_PROCESSING);
+        this.syncLiveKitLocalTracks();
+      } else if (!next && !this.localStream()?.getAudioTracks().some((track) => track.readyState === 'live')) {
+        await this.restoreDirectMediaTrack('audio');
+      }
+      this.muted.set(next);
+      this.localStream()?.getAudioTracks().forEach((track) => {
+        track.enabled = !next;
+      });
+      this.error.set('');
+      this.broadcastControl('muted', next);
+    } catch {
+      this.error.set('No se pudo reactivar el microfono. Revisa el permiso del dispositivo.');
+    }
   }
 
-  toggleCamera(): void {
+  async toggleCamera(): Promise<void> {
     const next = !this.cameraOff();
     if (next && this.screenSharing()) {
-      void this.stopScreenShare();
+      await this.stopScreenShare();
     }
-    this.cameraOff.set(next);
-    this.localStream()?.getVideoTracks().forEach((track) => {
-      track.enabled = !next;
-    });
-    this.broadcastControl('camera', next ? 'off' : 'on');
+    const call = this.activeCall();
+    try {
+      if (this.isGroupCall(call) && this.liveKitRoom) {
+        await (this.liveKitRoom.localParticipant as unknown as {
+          setCameraEnabled: (enabled: boolean) => Promise<unknown>;
+        }).setCameraEnabled(!next);
+        this.syncLiveKitLocalTracks();
+      } else if (!next && !this.localStream()?.getVideoTracks().some((track) => track.readyState === 'live')) {
+        await this.restoreDirectMediaTrack('video');
+      }
+      this.cameraOff.set(next);
+      this.localStream()?.getVideoTracks().forEach((track) => {
+        track.enabled = !next;
+      });
+      this.error.set('');
+      this.broadcastControl('camera', next ? 'off' : 'on');
+    } catch {
+      this.cameraOff.set(true);
+      this.error.set('No se pudo reactivar la camara. Revisa el permiso del dispositivo.');
+    }
   }
 
   toggleSpeaker(): void {
@@ -364,6 +486,50 @@ export class CallsService implements OnDestroy {
       await this.stopScreenShare();
     } else {
       await this.startScreenShare();
+    }
+  }
+
+  async retryConnection(): Promise<void> {
+    const call = this.activeCall();
+    if (!call || this.phase() === 'ringing' || this.networkRecoveryInFlight) {
+      return;
+    }
+    if (this.isGroupCall(call)) {
+      this.setConnectingPhase();
+      this.error.set('');
+      await this.connectLiveKitRoom(call).catch((error) => {
+        this.phase.set('failed');
+        this.error.set(error instanceof Error ? error.message : 'No se pudo reconectar la sala.');
+      });
+      return;
+    }
+
+    this.networkRecoveryInFlight = true;
+    this.error.set('');
+    this.setConnectingPhase();
+    try {
+      await this.loadIceConfiguration(true);
+      if (!this.localStream()) {
+        await this.prepareMedia(call.type === 'Video');
+      }
+      await Promise.all(this.otherParticipantIds(call).map((userId) =>
+        this.sendCallSignal(call, userId, 'accepted', { accepted: true, recovery: true }).catch(() => undefined)));
+      await this.establishCallPeers();
+      for (const [userId, peer] of this.peers.entries()) {
+        peer.iceRestartAttempts = 0;
+        peer.connection.setConfiguration({
+          iceServers: this.iceServers,
+          iceTransportPolicy: this.iceTransportPolicy,
+        });
+        await this.restartIceForPeer(userId, this.shouldCreateOfferTo(userId));
+      }
+      await this.pollPersistedSignals(call.id);
+      this.scheduleConnectedUiReconcile(call.id);
+    } catch (error) {
+      this.phase.set('failed');
+      this.error.set(error instanceof Error ? error.message : 'No se pudo reintentar la conexion.');
+    } finally {
+      this.networkRecoveryInFlight = false;
     }
   }
 
@@ -465,10 +631,11 @@ export class CallsService implements OnDestroy {
       return;
     }
 
+    screenTrack.contentHint = 'detail';
     this.screenShareStream = displayStream;
     this.cameraTrackBeforeScreenShare = this.localStream()?.getVideoTracks()[0] ?? null;
     await this.replaceOutgoingVideoTrack(screenTrack);
-    this.addOutgoingScreenAudioTracks(displayStream);
+    await this.addOutgoingScreenAudioTracks(displayStream);
     this.publishLocalScreenTrack(screenTrack);
     screenTrack.onended = () => void this.stopScreenShare();
     this.screenSharing.set(true);
@@ -496,7 +663,7 @@ export class CallsService implements OnDestroy {
       this.publishLocalCameraTrack(previousCamera);
     }
 
-    this.removeOutgoingScreenAudioTracks();
+    await this.removeOutgoingScreenAudioTracks();
     this.screenShareStream?.getTracks().forEach((track) => track.stop());
     this.screenShareStream = null;
     this.cameraTrackBeforeScreenShare = null;
@@ -522,45 +689,67 @@ export class CallsService implements OnDestroy {
 
   private async replaceOutgoingVideoTrack(track: MediaStreamTrack): Promise<void> {
     const replacements: Promise<void>[] = [];
+    let requiresNegotiation = false;
     for (const peer of this.peers.values()) {
-      const sender = peer.connection.getSenders().find((item) => item.track?.kind === 'video');
+      const sender = this.senderForKind(peer.connection, 'video');
       if (sender) {
-        replacements.push(sender.replaceTrack(track));
+        replacements.push(sender.replaceTrack(track).then(() => this.tuneOutgoingSender(sender)));
+      } else {
+        const stream = this.screenShareStream ?? this.localStream() ?? new MediaStream([track]);
+        const created = peer.connection.addTrack(track, stream);
+        replacements.push(this.tuneOutgoingSender(created));
+        requiresNegotiation = true;
       }
     }
     await Promise.all(replacements);
+    if (requiresNegotiation) {
+      await this.renegotiateDirectPeers();
+    }
   }
 
-  private addOutgoingScreenAudioTracks(displayStream: MediaStream): void {
+  private async addOutgoingScreenAudioTracks(displayStream: MediaStream): Promise<void> {
     const audioTracks = displayStream.getAudioTracks();
     if (!audioTracks.length) {
       return;
     }
+    let changed = false;
     audioTracks.forEach((track) => this.screenShareAudioTrackIds.add(track.id));
     for (const peer of this.peers.values()) {
       const existingTrackIds = new Set(peer.connection.getSenders().map((sender) => sender.track?.id).filter(Boolean));
       audioTracks.forEach((track) => {
         if (!existingTrackIds.has(track.id)) {
           try {
-            peer.connection.addTrack(track, displayStream);
+            const sender = peer.connection.addTrack(track, displayStream);
+            void this.tuneOutgoingSender(sender);
+            changed = true;
           } catch {
             this.screenShareAudioTrackIds.delete(track.id);
           }
         }
       });
     }
+    if (changed) {
+      await this.renegotiateDirectPeers();
+    }
   }
 
-  private removeOutgoingScreenAudioTracks(): void {
+  private async removeOutgoingScreenAudioTracks(): Promise<void> {
     if (!this.screenShareAudioTrackIds.size) {
       return;
     }
+    let changed = false;
     for (const peer of this.peers.values()) {
       peer.connection.getSenders()
         .filter((sender) => sender.track?.id && this.screenShareAudioTrackIds.has(sender.track.id))
-        .forEach((sender) => peer.connection.removeTrack(sender));
+        .forEach((sender) => {
+          peer.connection.removeTrack(sender);
+          changed = true;
+        });
     }
     this.screenShareAudioTrackIds.clear();
+    if (changed) {
+      await this.renegotiateDirectPeers();
+    }
   }
 
   private publishLocalScreenTrack(screenTrack: MediaStreamTrack): void {
@@ -582,13 +771,15 @@ export class CallsService implements OnDestroy {
       return null;
     });
     if (!credentials?.serverUrl || !credentials.token) {
-      this.phase.set('calling');
+      this.phase.set('failed');
       this.rememberGroupRoom(call);
       return;
     }
     this.disconnectLiveKitRoom();
     const room = new Room({
       audioCaptureDefaults: CALL_AUDIO_PROCESSING,
+      adaptiveStream: true,
+      dynacast: true,
     });
     this.liveKitRoom = room;
     room.on(RoomEvent.TrackSubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
@@ -607,12 +798,36 @@ export class CallsService implements OnDestroy {
     });
     room.on(RoomEvent.LocalTrackPublished, () => this.syncLiveKitLocalTracks());
     room.on(RoomEvent.LocalTrackUnpublished, () => this.syncLiveKitLocalTracks());
-    room.on(RoomEvent.Disconnected, () => {
+    room.on(RoomEvent.SignalReconnecting, () => {
       if (this.activeCall()?.id === call.id) {
-        this.phase.set('ended');
+        this.setConnectingPhase();
       }
     });
-    await room.connect(credentials.serverUrl, credentials.token);
+    room.on(RoomEvent.Reconnecting, () => {
+      if (this.activeCall()?.id === call.id) {
+        this.setConnectingPhase();
+      }
+    });
+    room.on(RoomEvent.Reconnected, () => {
+      if (this.activeCall()?.id === call.id) {
+        this.refreshLiveKitRemoteStreams();
+        this.syncLiveKitLocalTracks();
+        this.setConnectedPhase();
+        this.error.set('');
+      }
+    });
+    room.on(RoomEvent.Disconnected, () => {
+      if (this.activeCall()?.id === call.id) {
+        this.clearConnectionWatchdog();
+        this.phase.set('failed');
+        this.error.set('La sala perdio la conexion. Puedes intentar unirte de nuevo.');
+      }
+    });
+    await this.withTimeout(
+      room.connect(credentials.serverUrl, credentials.token),
+      20_000,
+      'La sala esta tardando demasiado en conectar.',
+    );
     await (room.localParticipant as unknown as {
       setMicrophoneEnabled: (enabled: boolean, options?: AudioCaptureOptions) => Promise<unknown>;
       setCameraEnabled: (enabled: boolean) => Promise<unknown>;
@@ -620,14 +835,17 @@ export class CallsService implements OnDestroy {
     if (call.type === 'Video') {
       await (room.localParticipant as unknown as {
         setCameraEnabled: (enabled: boolean) => Promise<unknown>;
-      }).setCameraEnabled(true);
+      }).setCameraEnabled(true).catch(() => {
+        this.cameraOff.set(true);
+        this.error.set('La camara no esta disponible. La llamada continuara con audio.');
+      });
     }
     this.syncLiveKitLocalTracks();
     this.refreshLiveKitRemoteStreams();
-    this.phase.set('connected');
-    this.error.set('');
-    this.clearRingTimeout();
-    this.stopRingingTone();
+    this.setConnectedPhase();
+    if (!this.cameraOff()) {
+      this.error.set('');
+    }
   }
 
   private async liveKitCredentialsForCall(call: CallSession): Promise<LiveKitRoomTokenResponse | null> {
@@ -820,7 +1038,7 @@ export class CallsService implements OnDestroy {
 
   clearInactiveCallUi(): void {
     const phase = this.phase();
-    const terminal = ['idle', 'ended', 'missed', 'rejected', 'failed'].includes(phase);
+    const terminal = ['idle', 'ended', 'missed', 'rejected'].includes(phase);
     if (!this.activeCall()) {
       if (phase !== 'idle') {
         this.phase.set('idle');
@@ -1033,12 +1251,62 @@ export class CallsService implements OnDestroy {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('Este navegador no expone microfono/camara.');
     }
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: CALL_AUDIO_PROCESSING, video: withVideo })
-      .catch(() => {
-        throw new Error(withVideo ? 'Permite camara y microfono para la videollamada.' : 'Permite el microfono para la llamada.');
+    let stream: MediaStream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: CALL_AUDIO_CONSTRAINTS,
+        video: withVideo ? CALL_VIDEO_CONSTRAINTS : false,
       });
+    } catch {
+      if (!withVideo) {
+        throw new Error('Permite el microfono para la llamada.');
+      }
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ audio: CALL_AUDIO_CONSTRAINTS, video: false });
+        this.cameraOff.set(true);
+        this.error.set('La camara no esta disponible. La llamada continuara con audio.');
+      } catch {
+        throw new Error('Permite camara y microfono para la videollamada.');
+      }
+    }
+    this.prepareLocalTracks(stream);
     this.localStream.set(stream);
     return stream;
+  }
+
+  private loadIceConfiguration(force = false): Promise<void> {
+    if (force || (this.iceConfigLoadedAt && Date.now() - this.iceConfigLoadedAt >= ICE_CONFIG_MAX_AGE_MS)) {
+      this.iceConfigPromise = null;
+    }
+    this.iceConfigPromise ??= firstValueFrom(this.api.get<WebRtcIceConfigResponse>('/calls/ice-config'))
+      .then((response) => {
+        const servers = (response?.iceServers ?? [])
+          .map((server): RTCIceServer | null => {
+            const urls = (Array.isArray(server.urls) ? server.urls : [server.urls])
+              .map((url) => String(url || '').trim())
+              .filter((url) => /^(stuns?|turns?):/i.test(url));
+            if (!urls.length) {
+              return null;
+            }
+            return {
+              urls,
+              ...(server.username ? { username: server.username } : {}),
+              ...(server.credential ? { credential: server.credential } : {}),
+            };
+          })
+          .filter((server): server is RTCIceServer => Boolean(server));
+        this.iceServers = servers.length ? servers : DEFAULT_ICE_SERVERS;
+        const hasRelay = this.iceServers.some((server) =>
+          (Array.isArray(server.urls) ? server.urls : [server.urls]).some((url) => /^turns?:/i.test(url)));
+        this.iceTransportPolicy = response?.relayOnly && hasRelay ? 'relay' : 'all';
+        this.iceConfigLoadedAt = Date.now();
+      })
+      .catch(() => {
+        this.iceServers = DEFAULT_ICE_SERVERS;
+        this.iceTransportPolicy = 'all';
+        this.iceConfigLoadedAt = Date.now();
+      });
+    return this.iceConfigPromise;
   }
 
   private async handleCallSignal(signal: CallSignalEvent): Promise<void> {
@@ -1046,9 +1314,19 @@ export class CallsService implements OnDestroy {
     const signalType = (signal.signalType || '').toLowerCase();
     if (!signal.callId || !call || signal.callId !== call.id) {
       if (signal.callId) {
-        this.pendingSignals.push(signal);
+        const signalId = this.callSignalId(signal);
+        if (!signalId || !this.pendingSignals.some((pending) => this.callSignalId(pending) === signalId)) {
+          this.pendingSignals.push(signal);
+        }
       }
       return;
+    }
+    const signalId = this.callSignalId(signal);
+    if (signalId && this.processedSignalIds.has(signalId)) {
+      return;
+    }
+    if (signalId) {
+      this.rememberProcessedSignal(signalId);
     }
 
     if (signalType === 'accepted') {
@@ -1059,6 +1337,7 @@ export class CallsService implements OnDestroy {
       this.setConnectingPhase();
       this.clearRingTimeout();
       this.stopRingingTone();
+      await this.loadIceConfiguration(true);
       if (!this.localStream()) {
         await this.prepareMedia(call.type === 'Video');
       }
@@ -1081,6 +1360,21 @@ export class CallsService implements OnDestroy {
     if (signalType === 'left') {
       this.updateRemoteCallState(signal.fromUserId, 'left', true);
       this.closePeerConnectionForUser(signal.fromUserId);
+      return;
+    }
+
+    if (signalType === 'ice-restart-request') {
+      if (this.phase() !== 'ringing' && this.shouldCreateOfferTo(signal.fromUserId)) {
+        await this.loadIceConfiguration();
+        await this.restartIceForPeer(signal.fromUserId, true);
+      }
+      return;
+    }
+
+    if (signalType === 'renegotiate-request') {
+      if (this.phase() !== 'ringing' && this.shouldCreateOfferTo(signal.fromUserId)) {
+        await this.createAndSendOffer(signal.fromUserId).catch(() => undefined);
+      }
       return;
     }
 
@@ -1133,12 +1427,19 @@ export class CallsService implements OnDestroy {
     }
 
     const connection = new RTCPeerConnection({
-      iceServers: [
-        { urls: 'stun:stun.l.google.com:19302' },
-        { urls: 'stun:global.stun.twilio.com:3478' },
-      ],
+      iceServers: this.iceServers,
+      iceTransportPolicy: this.iceTransportPolicy,
+      iceCandidatePoolSize: 4,
     });
-    this.peers.set(userId, { connection, pendingIce: [] });
+    this.peers.set(userId, {
+      connection,
+      pendingIce: [],
+      iceRestartAttempts: 0,
+      disconnectTimer: null,
+      makingOffer: false,
+      ignoreOffer: false,
+      isSettingRemoteAnswerPending: false,
+    });
     this.attachLocalTracks(connection);
 
     connection.onicecandidate = (event) => {
@@ -1148,6 +1449,14 @@ export class CallsService implements OnDestroy {
           void this.sendCallSignal(call, userId, 'ice', { candidate: event.candidate.toJSON() }).catch(() => undefined);
         }
       }
+    };
+    connection.onicecandidateerror = (event) => {
+      const error = event as RTCPeerConnectionIceErrorEvent;
+      this.updateRemoteCallState(userId, 'iceError', {
+        code: error.errorCode,
+        text: error.errorText,
+        url: error.url,
+      });
     };
     connection.ontrack = (event) => {
       const stream = this.pendingRemoteStreams.get(userId) || this.remoteStreams()[userId] || new MediaStream();
@@ -1160,16 +1469,31 @@ export class CallsService implements OnDestroy {
         }
       }
       this.pendingRemoteStreams.set(userId, stream);
+      event.track.onunmute = () => this.publishRemoteStreamIfConnected(userId, connection);
+      event.track.onended = () => {
+        stream.removeTrack(event.track);
+        if (!this.streamHasLiveTracks(stream)) {
+          this.removeRemoteStream(userId);
+        }
+      };
       this.publishRemoteStreamIfConnected(userId, connection);
     };
     connection.onconnectionstatechange = () => {
       if (connection.connectionState === 'connected') {
+        this.resetPeerRecovery(userId);
+        void this.tuneOutgoingSenders(connection);
         this.setConnectedPhase();
         this.publishRemoteStreamIfConnected(userId, connection);
       }
-      if (['failed', 'closed', 'disconnected'].includes(connection.connectionState)) {
+      if (connection.connectionState === 'failed') {
+        void this.restartIceForPeer(userId);
+      }
+      if (connection.connectionState === 'closed') {
         this.removeRemoteStream(userId);
       }
+    };
+    connection.oniceconnectionstatechange = () => {
+      this.handlePeerIceState(userId, connection);
     };
 
     return connection;
@@ -1180,15 +1504,116 @@ export class CallsService implements OnDestroy {
     return Boolean(currentUserId && String(currentUserId) < String(userId));
   }
 
-  private async createAndSendOffer(userId: string): Promise<void> {
+  private async createAndSendOffer(userId: string, iceRestart = false): Promise<void> {
     const call = this.activeCall();
     const connection = this.ensurePeerConnection(userId);
-    if (!call || !connection || connection.signalingState !== 'stable') {
+    const peer = this.peers.get(userId);
+    if (!call || !connection || !peer || connection.signalingState !== 'stable' || peer.makingOffer) {
       return;
     }
-    const offer = await connection.createOffer({ offerToReceiveAudio: true, offerToReceiveVideo: call.type === 'Video' });
-    await connection.setLocalDescription(offer);
-    await this.sendCallSignal(call, userId, 'offer', { description: connection.localDescription });
+    peer.makingOffer = true;
+    try {
+      const offer = await connection.createOffer({
+        offerToReceiveAudio: true,
+        offerToReceiveVideo: call.type === 'Video',
+        iceRestart,
+      });
+      if (connection.signalingState !== 'stable') {
+        return;
+      }
+      await connection.setLocalDescription(offer);
+      await this.sendCallSignal(call, userId, 'offer', { description: connection.localDescription });
+    } finally {
+      peer.makingOffer = false;
+    }
+  }
+
+  private async renegotiateDirectPeers(): Promise<void> {
+    const call = this.activeCall();
+    if (!call || this.isGroupCall(call)) {
+      return;
+    }
+    for (const userId of this.otherParticipantIds(call)) {
+      const peer = this.peers.get(userId);
+      if (!peer || peer.connection.connectionState === 'closed') {
+        continue;
+      }
+      if (this.shouldCreateOfferTo(userId) && peer.connection.signalingState === 'stable') {
+        await this.createAndSendOffer(userId).catch(() => undefined);
+      } else {
+        await this.sendCallSignal(call, userId, 'renegotiate-request', {}).catch(() => undefined);
+      }
+    }
+  }
+
+  private handlePeerIceState(userId: string, connection: RTCPeerConnection): void {
+    const state = connection.iceConnectionState;
+    if (state === 'connected' || state === 'completed') {
+      this.resetPeerRecovery(userId);
+      this.publishRemoteStreamIfConnected(userId, connection);
+      return;
+    }
+    if (state === 'disconnected') {
+      const peer = this.peers.get(userId);
+      if (!peer || peer.disconnectTimer !== null) {
+        return;
+      }
+      peer.disconnectTimer = window.setTimeout(() => {
+        peer.disconnectTimer = null;
+        if (connection.iceConnectionState === 'disconnected') {
+          void this.restartIceForPeer(userId);
+        }
+      }, 4_000);
+      return;
+    }
+    if (state === 'failed') {
+      void this.restartIceForPeer(userId);
+    }
+    if (state === 'closed') {
+      this.removeRemoteStream(userId);
+    }
+  }
+
+  private async restartIceForPeer(userId: string, forceOffer = false): Promise<void> {
+    const call = this.activeCall();
+    const peer = this.peers.get(userId);
+    if (!call || !peer || peer.connection.connectionState === 'closed') {
+      return;
+    }
+    this.clearPeerDisconnectTimer(peer);
+    if (peer.iceRestartAttempts >= MAX_ICE_RESTART_ATTEMPTS) {
+      this.removeRemoteStream(userId);
+      this.error.set('La red no pudo recuperar el video. Revisa tu conexion o configura un servidor TURN.');
+      return;
+    }
+    peer.iceRestartAttempts += 1;
+    if (this.phase() === 'connected' && this.remoteEntries().length <= 1) {
+      this.phase.set('connecting');
+    }
+
+    if ((forceOffer || this.shouldCreateOfferTo(userId)) && peer.connection.signalingState === 'stable') {
+      await this.createAndSendOffer(userId, true).catch(() => undefined);
+      return;
+    }
+    await this.sendCallSignal(call, userId, 'ice-restart-request', {
+      attempt: peer.iceRestartAttempts,
+    }).catch(() => undefined);
+  }
+
+  private resetPeerRecovery(userId: string): void {
+    const peer = this.peers.get(userId);
+    if (!peer) {
+      return;
+    }
+    this.clearPeerDisconnectTimer(peer);
+    peer.iceRestartAttempts = 0;
+  }
+
+  private clearPeerDisconnectTimer(peer: PeerState): void {
+    if (peer.disconnectTimer !== null) {
+      window.clearTimeout(peer.disconnectTimer);
+      peer.disconnectTimer = null;
+    }
   }
 
   private async handleWebRtcSignal(signal: CallSignalEvent): Promise<void> {
@@ -1198,16 +1623,25 @@ export class CallsService implements OnDestroy {
       return;
     }
     const call = this.activeCall();
+    await this.loadIceConfiguration();
     if (!this.localStream() && call) {
       await this.prepareMedia(call.type === 'Video');
     }
     const connection = this.ensurePeerConnection(signal.fromUserId);
-    if (!connection || !call) {
+    const peer = this.peers.get(signal.fromUserId);
+    if (!connection || !peer || !call) {
       return;
     }
 
     if (signalType === 'offer' && payload.description) {
-      if (connection.signalingState !== 'stable') {
+      const readyForOffer = !peer.makingOffer &&
+        (connection.signalingState === 'stable' || peer.isSettingRemoteAnswerPending);
+      const offerCollision = !readyForOffer;
+      peer.ignoreOffer = !this.isPolitePeer(signal.fromUserId) && offerCollision;
+      if (peer.ignoreOffer) {
+        return;
+      }
+      if (offerCollision) {
         await connection.setLocalDescription({ type: 'rollback' } as RTCSessionDescriptionInit).catch(() => undefined);
       }
       await this.setRemoteDescriptionAndFlush(signal.fromUserId, connection, payload.description);
@@ -1220,18 +1654,34 @@ export class CallsService implements OnDestroy {
       return;
     }
 
-    if (signalType === 'answer' && payload.description && connection.signalingState !== 'stable') {
-      await this.setRemoteDescriptionAndFlush(signal.fromUserId, connection, payload.description);
-      this.setConnectingPhase();
-      this.clearRingTimeout();
-      this.scheduleConnectedUiReconcile(call.id);
+    if (signalType === 'answer' && payload.description) {
+      peer.ignoreOffer = false;
+      peer.isSettingRemoteAnswerPending = true;
+      try {
+        if (connection.signalingState !== 'stable') {
+          await this.setRemoteDescriptionAndFlush(signal.fromUserId, connection, payload.description);
+          this.setConnectingPhase();
+          this.clearRingTimeout();
+          this.scheduleConnectedUiReconcile(call.id);
+        }
+      } finally {
+        peer.isSettingRemoteAnswerPending = false;
+      }
       return;
     }
 
     if (signalType === 'ice' && payload.candidate) {
+      if (peer.ignoreOffer) {
+        return;
+      }
       await this.addOrQueueRemoteIceCandidate(signal.fromUserId, payload.candidate);
       this.scheduleConnectedUiReconcile(call.id);
     }
+  }
+
+  private isPolitePeer(userId: string): boolean {
+    const currentUserId = this.currentUserId();
+    return Boolean(currentUserId && String(currentUserId) > String(userId));
   }
 
   private async setRemoteDescriptionAndFlush(
@@ -1275,6 +1725,62 @@ export class CallsService implements OnDestroy {
     const pending = this.pendingSignals.splice(0);
     for (const signal of pending) {
       await this.handleCallSignal(signal);
+    }
+  }
+
+  private startSignalPolling(callId: string): void {
+    this.stopSignalPolling();
+    void this.pollPersistedSignals(callId);
+    this.signalPollTimer = window.setInterval(() => {
+      void this.pollPersistedSignals(callId);
+    }, CALL_SIGNAL_POLL_MS);
+  }
+
+  private stopSignalPolling(): void {
+    if (this.signalPollTimer !== null) {
+      window.clearInterval(this.signalPollTimer);
+      this.signalPollTimer = null;
+    }
+    this.signalPollInFlight = false;
+  }
+
+  private async pollPersistedSignals(callId: string): Promise<void> {
+    if (this.signalPollInFlight || this.activeCall()?.id !== callId) {
+      return;
+    }
+    this.signalPollInFlight = true;
+    try {
+      const signals = await firstValueFrom(
+        this.api.get<CallSignalEvent[]>(`/calls/${encodeURIComponent(callId)}/signals`),
+      );
+      for (const signal of signals ?? []) {
+        if (this.activeCall()?.id !== callId) {
+          break;
+        }
+        await this.handleCallSignal({
+          ...signal,
+          signalId: signal.signalId || signal.id,
+        });
+      }
+    } catch {
+      // SignalR remains the fast path. Polling retries while the call is active.
+    } finally {
+      this.signalPollInFlight = false;
+    }
+  }
+
+  private callSignalId(signal: CallSignalEvent | null | undefined): string {
+    return String(signal?.signalId || signal?.id || '').trim();
+  }
+
+  private rememberProcessedSignal(signalId: string): void {
+    this.processedSignalIds.add(signalId);
+    if (this.processedSignalIds.size <= 1_000) {
+      return;
+    }
+    const oldest = this.processedSignalIds.values().next().value as string | undefined;
+    if (oldest) {
+      this.processedSignalIds.delete(oldest);
     }
   }
 
@@ -1390,6 +1896,77 @@ export class CallsService implements OnDestroy {
     }));
   }
 
+  private prepareLocalTracks(stream: MediaStream): void {
+    stream.getTracks().forEach((track) => {
+      if (track.kind === 'video') {
+        track.contentHint = 'motion';
+      } else if (track.kind === 'audio') {
+        track.contentHint = 'speech';
+      }
+      track.onended = () => {
+        if (!this.activeCall()) {
+          return;
+        }
+        if (track.kind === 'video') {
+          this.cameraOff.set(true);
+          this.error.set('La camara se detuvo. Puedes activarla otra vez desde la llamada.');
+        } else {
+          this.muted.set(true);
+          this.error.set('El microfono se detuvo. Puedes activarlo otra vez desde la llamada.');
+        }
+      };
+    });
+  }
+
+  private async restoreDirectMediaTrack(kind: 'audio' | 'video'): Promise<void> {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      throw new Error('Este dispositivo no permite recuperar audio o video.');
+    }
+    const captured = await navigator.mediaDevices.getUserMedia({
+      audio: kind === 'audio' ? CALL_AUDIO_CONSTRAINTS : false,
+      video: kind === 'video' ? CALL_VIDEO_CONSTRAINTS : false,
+    });
+    const track = kind === 'audio' ? captured.getAudioTracks()[0] : captured.getVideoTracks()[0];
+    if (!track) {
+      captured.getTracks().forEach((item) => item.stop());
+      throw new Error(kind === 'audio' ? 'No se encontro el microfono.' : 'No se encontro la camara.');
+    }
+    this.prepareLocalTracks(captured);
+    const stream = this.localStream() ?? new MediaStream();
+    stream.getTracks()
+      .filter((item) => item.kind === kind && item.id !== track.id)
+      .forEach((item) => {
+        stream.removeTrack(item);
+        item.onended = null;
+        item.stop();
+      });
+    stream.addTrack(track);
+    this.localStream.set(stream);
+
+    let requiresNegotiation = false;
+    for (const peer of this.peers.values()) {
+      const sender = this.senderForKind(peer.connection, kind);
+      if (sender) {
+        await sender.replaceTrack(track);
+        await this.tuneOutgoingSender(sender);
+      } else {
+        const created = peer.connection.addTrack(track, stream);
+        await this.tuneOutgoingSender(created);
+        requiresNegotiation = true;
+      }
+    }
+    if (requiresNegotiation) {
+      await this.renegotiateDirectPeers();
+    }
+  }
+
+  private senderForKind(connection: RTCPeerConnection, kind: 'audio' | 'video'): RTCRtpSender | null {
+    return connection.getSenders().find((sender) => sender.track?.kind === kind)
+      ?? connection.getTransceivers().find((transceiver) =>
+        transceiver.receiver.track.kind === kind)?.sender
+      ?? null;
+  }
+
   private attachLocalTracks(connection: RTCPeerConnection): void {
     const stream = this.localStream();
     if (!stream) {
@@ -1398,9 +1975,72 @@ export class CallsService implements OnDestroy {
     const existingTrackIds = new Set(connection.getSenders().map((sender) => sender.track?.id).filter(Boolean));
     stream.getTracks().forEach((track) => {
       if (!existingTrackIds.has(track.id)) {
-        connection.addTrack(track, stream);
+        const sender = connection.addTrack(track, stream);
+        void this.tuneOutgoingSender(sender);
       }
     });
+  }
+
+  private async tuneOutgoingSenders(connection: RTCPeerConnection): Promise<void> {
+    await Promise.all(connection.getSenders().map((sender) => this.tuneOutgoingSender(sender)));
+  }
+
+  private async tuneOutgoingSender(sender: RTCRtpSender): Promise<void> {
+    const track = sender.track;
+    if (!track || typeof sender.getParameters !== 'function' || typeof sender.setParameters !== 'function') {
+      return;
+    }
+    const parameters = sender.getParameters();
+    if (!parameters.encodings?.length) {
+      return;
+    }
+    parameters.encodings.forEach((encoding) => {
+      if (track.kind === 'video') {
+        const isScreenTrack = this.screenShareStream?.getVideoTracks().some((item) => item.id === track.id) === true;
+        encoding.maxBitrate = isScreenTrack ? 3_000_000 : 2_500_000;
+        encoding.maxFramerate = 30;
+      } else {
+        encoding.maxBitrate = 128_000;
+      }
+    });
+    if (track.kind === 'video') {
+      (parameters as RTCRtpSendParameters & { degradationPreference?: RTCDegradationPreference }).degradationPreference = 'balanced';
+    }
+    await sender.setParameters(parameters).catch(() => undefined);
+  }
+
+  private hasTurnServer(): boolean {
+    return this.iceServers.some((server) =>
+      (Array.isArray(server.urls) ? server.urls : [server.urls])
+        .some((url) => /^turns?:/i.test(String(url || ''))));
+  }
+
+  private networkInformation(): (EventTarget & { effectiveType?: string; type?: string }) | null {
+    if (typeof navigator === 'undefined') {
+      return null;
+    }
+    return ((navigator as Navigator & {
+      connection?: EventTarget & { effectiveType?: string; type?: string };
+      mozConnection?: EventTarget & { effectiveType?: string; type?: string };
+      webkitConnection?: EventTarget & { effectiveType?: string; type?: string };
+    }).connection
+      ?? (navigator as Navigator & { mozConnection?: EventTarget }).mozConnection
+      ?? (navigator as Navigator & { webkitConnection?: EventTarget }).webkitConnection
+      ?? null) as (EventTarget & { effectiveType?: string; type?: string }) | null;
+  }
+
+  private async recoverAfterNetworkChange(): Promise<void> {
+    const call = this.activeCall();
+    if (!call || ['ringing', 'calling', 'idle', 'ended', 'rejected'].includes(this.phase()) || navigator.onLine === false) {
+      return;
+    }
+    if (this.isGroupCall(call)) {
+      if (this.phase() === 'failed') {
+        await this.retryConnection();
+      }
+      return;
+    }
+    await this.retryConnection();
   }
 
   private publishRemoteStreamIfConnected(userId: string, connection: RTCPeerConnection): void {
@@ -1416,6 +2056,7 @@ export class CallsService implements OnDestroy {
     if (this.phase() !== 'connected') {
       this.phase.set('connecting');
     }
+    this.scheduleConnectionWatchdog(this.activeCall()?.id);
   }
 
   private setConnectedPhase(): void {
@@ -1426,8 +2067,41 @@ export class CallsService implements OnDestroy {
       this.phase.set('connected');
     }
     this.clearConnectedUiReconcileTimers();
+    this.clearConnectionWatchdog();
     this.clearRingTimeout();
     this.stopRingingTone();
+  }
+
+  private scheduleConnectionWatchdog(callId: string | null | undefined): void {
+    if (!callId || this.connectionRecoveryTimer !== null || this.connectionFailureTimer !== null) {
+      return;
+    }
+    this.connectionRecoveryTimer = window.setTimeout(() => {
+      this.connectionRecoveryTimer = null;
+      if (this.activeCall()?.id === callId && this.phase() === 'connecting') {
+        void this.retryConnection();
+      }
+    }, CONNECTION_RECOVERY_DELAY_MS);
+    this.connectionFailureTimer = window.setTimeout(() => {
+      this.connectionFailureTimer = null;
+      if (this.activeCall()?.id === callId && this.phase() === 'connecting') {
+        this.phase.set('failed');
+        this.error.set(this.hasTurnServer()
+          ? 'No se pudo completar la conexion. Toca Reintentar para negociar una ruta nueva.'
+          : 'Esta red parece requerir TURN. Configura el relay de produccion y toca Reintentar.');
+      }
+    }, CONNECTION_FAILURE_DELAY_MS);
+  }
+
+  private clearConnectionWatchdog(): void {
+    if (this.connectionRecoveryTimer !== null) {
+      window.clearTimeout(this.connectionRecoveryTimer);
+      this.connectionRecoveryTimer = null;
+    }
+    if (this.connectionFailureTimer !== null) {
+      window.clearTimeout(this.connectionFailureTimer);
+      this.connectionFailureTimer = null;
+    }
   }
 
   private scheduleConnectedUiReconcile(callId: string | null | undefined): void {
@@ -1510,6 +2184,8 @@ export class CallsService implements OnDestroy {
     this.clearRingTimeout();
     this.stopRingingTone();
     this.clearConnectedUiReconcileTimers();
+    this.clearConnectionWatchdog();
+    this.stopSignalPolling();
     void this.stopScreenShare({ restoreCamera: false, broadcast: false });
     this.disconnectLiveKitRoom();
     if (call && options.remember !== false) {
@@ -1524,6 +2200,7 @@ export class CallsService implements OnDestroy {
     this.stopPendingRemoteMedia();
     this.stopRemoteMedia();
     this.pendingSignals.splice(0);
+    this.processedSignalIds.clear();
     this.activeCall.set(null);
     this.phase.set('idle');
     this.remoteStates.set({});
@@ -1541,6 +2218,7 @@ export class CallsService implements OnDestroy {
   private stopLocalMedia(): void {
     const stream = this.localStream();
     stream?.getTracks().forEach((track) => {
+      track.onended = null;
       track.enabled = false;
       track.stop();
     });
@@ -1549,6 +2227,7 @@ export class CallsService implements OnDestroy {
 
   private closePeerConnections(): void {
     for (const peer of this.peers.values()) {
+      this.clearPeerDisconnectTimer(peer);
       this.closePeerConnection(peer.connection);
       peer.pendingIce.splice(0);
     }
@@ -1558,6 +2237,7 @@ export class CallsService implements OnDestroy {
   private closePeerConnectionForUser(userId: string): void {
     const peer = this.peers.get(userId);
     if (peer) {
+      this.clearPeerDisconnectTimer(peer);
       this.closePeerConnection(peer.connection);
       peer.pendingIce.splice(0);
     }
@@ -1586,8 +2266,10 @@ export class CallsService implements OnDestroy {
 
   private closePeerConnection(connection: RTCPeerConnection): void {
     connection.onicecandidate = null;
+    connection.onicecandidateerror = null;
     connection.ontrack = null;
     connection.onconnectionstatechange = null;
+    connection.oniceconnectionstatechange = null;
     connection.getReceivers?.().forEach((receiver) => receiver.track?.stop());
     connection.close();
   }
@@ -1609,6 +2291,22 @@ export class CallsService implements OnDestroy {
 
   private isNativePlatform(): boolean {
     return Capacitor.isNativePlatform?.() === true;
+  }
+
+  private async withTimeout<T>(operation: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    let timer: number | null = null;
+    try {
+      return await Promise.race([
+        operation,
+        new Promise<T>((_resolve, reject) => {
+          timer = window.setTimeout(() => reject(new Error(message)), timeoutMs);
+        }),
+      ]);
+    } finally {
+      if (timer !== null) {
+        window.clearTimeout(timer);
+      }
+    }
   }
 
   private otherParticipantIds(call: CallSession): string[] {

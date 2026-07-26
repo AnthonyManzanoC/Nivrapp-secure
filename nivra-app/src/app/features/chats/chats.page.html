@@ -252,7 +252,7 @@
     </ng-template>
   </ion-modal>
 
-  <ion-modal class="story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="closeStoryViewer()">
+  <ion-modal class="nivra-story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="closeStoryViewer()">
     <ng-template>
       @if (social.activeStory(); as story) {
         @if (social.storyPayload(story); as payload) {
@@ -280,7 +280,7 @@
             (openStats)="openStats()"
             (sendReply)="sendStoryReply(story)"
             (react)="reactToStory(story, $event)"
-            (toggleReactions)="reactionsOpen = !reactionsOpen"
+            (toggleReactions)="toggleStoryReactions()"
             (repost)="repostStory(story)">
           </app-story-viewer>
           @if (storyError) {

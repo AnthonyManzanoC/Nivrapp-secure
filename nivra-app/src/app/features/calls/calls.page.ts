@@ -16,6 +16,7 @@ import {
   peopleOutline,
   personAddOutline,
   phonePortraitOutline,
+  refreshOutline,
   searchOutline,
   videocamOffOutline,
   videocamOutline,
@@ -81,6 +82,7 @@ export class CallsPage {
       peopleOutline,
       personAddOutline,
       phonePortraitOutline,
+      refreshOutline,
       searchOutline,
       videocamOffOutline,
       videocamOutline,
@@ -248,7 +250,7 @@ export class CallsPage {
 
   isCallMode(): boolean {
     const phase = this.calls.phase();
-    return Boolean(this.calls.activeCall() && ['calling', 'ringing', 'connecting', 'connected'].includes(phase));
+    return Boolean(this.calls.activeCall() && ['calling', 'ringing', 'connecting', 'connected', 'failed'].includes(phase));
   }
 
   selectedTitle(): string {
@@ -588,6 +590,7 @@ export class CallsPage {
       profilePhotoDataUrl: participant.profilePhotoDataUrl,
       nicknameCiphertext: null,
       isFavorite: false,
+      isMutualContact: false,
       createdAt: participant.joinedAt || new Date().toISOString(),
     };
   }

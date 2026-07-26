@@ -310,6 +310,15 @@ export class ChatsPage implements OnDestroy {
     this.resumeStoryProgress();
   }
 
+  toggleStoryReactions(): void {
+    this.reactionsOpen = !this.reactionsOpen;
+    if (this.reactionsOpen) {
+      this.pauseStoryProgress();
+    } else {
+      this.resumeStoryProgress();
+    }
+  }
+
   async reactToStory(story: Story, emoji: string): Promise<void> {
     if (this.isMine(story)) {
       return;
@@ -317,6 +326,7 @@ export class ChatsPage implements OnDestroy {
     await this.runStory(`react:${story.id}`, async () => {
       await this.social.reactStory(story, emoji);
       this.reactionsOpen = false;
+      this.resumeStoryProgress();
     });
   }
 
@@ -368,7 +378,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   canRepostStory(story: Story): boolean {
-    return !this.isMine(story) && story.owner.allowStoryReposts !== false;
+    return !this.isMine(story) && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
   }
 
   onDetailDeactivate(): void {
