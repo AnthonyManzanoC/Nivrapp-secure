@@ -21,7 +21,7 @@ import {
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { addOutline, archiveOutline, checkmarkOutline, closeOutline, notificationsOffOutline, notificationsOutline, peopleOutline, pinOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { addOutline, archiveOutline, checkmarkOutline, closeOutline, imageOutline, notificationsOffOutline, notificationsOutline, peopleOutline, pinOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
@@ -78,6 +78,7 @@ export class ChatsPage implements OnDestroy {
   detailActive = false;
   groupModalOpen = false;
   groupName = '';
+  groupAvatar: string | null = null;
   groupBusy = false;
   groupError = '';
   selectedGroupUserIds = new Set<string>();
@@ -110,6 +111,7 @@ export class ChatsPage implements OnDestroy {
       archiveOutline,
       checkmarkOutline,
       closeOutline,
+      imageOutline,
       notificationsOffOutline,
       notificationsOutline,
       peopleOutline,
@@ -452,6 +454,7 @@ export class ChatsPage implements OnDestroy {
     this.recentCollapsed = true;
     this.groupError = '';
     this.groupName = '';
+    this.groupAvatar = null;
     this.selectedGroupUserIds = new Set<string>();
     this.groupModalOpen = true;
   }
@@ -487,6 +490,36 @@ export class ChatsPage implements OnDestroy {
     return contact.phone || (contact.alias ? `@${contact.alias}` : this.tr('CALLS.ENCRYPTED_CONTACT', 'Contacto cifrado'));
   }
 
+  async onGroupAvatarSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0] ?? null;
+    input.value = '';
+    if (!file) {
+      return;
+    }
+    if (!file.type.startsWith('image/') || file.size > 4 * 1024 * 1024) {
+      this.groupError = this.tr('CHATS.GROUP_PHOTO_REQUIREMENTS', 'Elige una imagen de hasta 4 MB.');
+      return;
+    }
+    try {
+      this.groupAvatar = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      this.groupError = '';
+    } catch {
+      this.groupError = this.tr('CHAT.ERROR_GROUP_PHOTO', 'No se pudo cargar la foto del grupo.');
+    }
+  }
+
+  clearGroupAvatar(event?: Event): void {
+    event?.preventDefault();
+    event?.stopPropagation();
+    this.groupAvatar = null;
+  }
+
   async createGroup(): Promise<void> {
     if (this.groupBusy) {
       return;
@@ -502,6 +535,7 @@ export class ChatsPage implements OnDestroy {
       const conversation = await this.chat.createGroupConversation({
         name: this.groupName,
         participantUserIds,
+        groupAvatar: this.groupAvatar,
       });
       this.groupModalOpen = false;
       await this.router.navigate(['/app/chats', conversation.id]);

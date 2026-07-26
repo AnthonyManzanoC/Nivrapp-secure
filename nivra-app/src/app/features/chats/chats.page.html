@@ -206,10 +206,25 @@
           </ion-button>
         </header>
 
-        <label class="group-name">
-          <span>{{ 'CHAT.GROUP_NAME' | translate:'Nombre del grupo' }}</span>
-          <input [(ngModel)]="groupName" type="text" maxlength="48" [placeholder]="'CHATS.GROUP_NAME_PLACEHOLDER' | translate:'Familia, equipo, amigos'">
-        </label>
+        <div class="group-identity">
+          <input #newGroupAvatarInput type="file" accept="image/*" hidden (change)="onGroupAvatarSelected($event)">
+          <button type="button" class="group-avatar-picker" (click)="newGroupAvatarInput.click()" [attr.aria-label]="'CHAT.CHANGE_GROUP_PHOTO' | translate:'Elegir foto del grupo'">
+            @if (groupAvatar) {
+              <img [src]="groupAvatar" alt="">
+            } @else {
+              <ion-icon name="image-outline"></ion-icon>
+            }
+          </button>
+          @if (groupAvatar) {
+            <button type="button" class="group-avatar-remove" (click)="clearGroupAvatar($event)" [attr.aria-label]="'COMMON.REMOVE' | translate:'Quitar foto'">
+              <ion-icon name="trash-outline"></ion-icon>
+            </button>
+          }
+          <label class="group-name">
+            <span>{{ 'CHAT.GROUP_NAME' | translate:'Nombre del grupo' }}</span>
+            <input [(ngModel)]="groupName" type="text" maxlength="48" [placeholder]="'CHATS.GROUP_NAME_PLACEHOLDER' | translate:'Familia, equipo, amigos'">
+          </label>
+        </div>
 
         <div class="group-contact-list">
           @for (contact of chat.contacts(); track contact.userId) {

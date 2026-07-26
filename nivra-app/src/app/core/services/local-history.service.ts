@@ -543,6 +543,19 @@ export class LocalHistoryService {
       } satisfies StoredStory)));
   }
 
+  async removeStory(accountKey: string, storyId: string): Promise<void> {
+    if (!accountKey || !storyId) {
+      return;
+    }
+    const db = await this.open();
+    if (!db || !db.objectStoreNames.contains(LOCAL_STORY_STORE)) {
+      return;
+    }
+    await db.transaction(LOCAL_STORY_STORE, 'readwrite')
+      .objectStore(LOCAL_STORY_STORE)
+      .delete(this.storyStorageKey(accountKey, storyId));
+  }
+
   async removeMessage(accountKey: string, conversationId: string, messageId: string): Promise<void> {
     if (!accountKey || !conversationId || !messageId) {
       return;

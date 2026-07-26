@@ -787,7 +787,15 @@
         @if (isGroupConversation()) {
           <input #groupAvatarInput type="file" accept="image/*" hidden (change)="onGroupAvatarSelected($event)">
           <div class="contact-hero group-hero">
-            <button type="button" class="story-ring" [disabled]="!groupAvatarDraft && !canEditGroup()" (click)="groupAvatarDraft ? openProfilePhotoViewer($event, groupAvatarDraft) : (canEditGroup() && groupAvatarInput.click())" [attr.aria-label]="groupAvatarDraft ? ('CHAT.VIEW_PHOTO' | translate:'Ver foto') : ('CHAT.CHANGE_GROUP_PHOTO' | translate:'Cambiar foto del grupo')">
+            <button
+              type="button"
+              class="story-ring"
+              [class.has-active-story]="hasConversationStories()"
+              [class.story-unviewed]="hasUnviewedConversationStories()"
+              [class.story-viewed]="hasConversationStories() && !hasUnviewedConversationStories()"
+              [disabled]="!hasConversationStories() && !groupAvatarDraft && !canEditGroup()"
+              (click)="hasConversationStories() ? openConversationStories(null, $event) : (groupAvatarDraft ? openProfilePhotoViewer($event, groupAvatarDraft) : (canEditGroup() && groupAvatarInput.click()))"
+              [attr.aria-label]="hasConversationStories() ? ('CHAT.OPEN_GROUP_STORIES' | translate:'Abrir historias del grupo') : groupAvatarDraft ? ('CHAT.VIEW_PHOTO' | translate:'Ver foto') : ('CHAT.CHANGE_GROUP_PHOTO' | translate:'Cambiar foto del grupo')">
               @if (groupAvatarDraft) {
                 <img class="contact-photo" [src]="groupAvatarDraft" alt="">
               } @else if (conversation()) {
@@ -811,11 +819,11 @@
           <section class="contact-section group-stories-section">
             <div class="section-head">
               <h3>{{ 'CHAT.GROUP_STORIES' | translate:'Historias del grupo' }}</h3>
-              <span>{{ activeGroupStories().length }}</span>
+              <span>{{ activeGroupStories().length }} {{ activeGroupStories().length === 1 ? ('CHAT.ACTIVE_STORY' | translate:'activa') : ('CHAT.ACTIVE_STORIES' | translate:'activas') }}</span>
             </div>
             <div class="group-story-strip">
               @for (story of activeGroupStories(); track story.id) {
-                <button type="button" class="group-story-ring" (click)="openGroupStory(story)">
+                <button type="button" class="group-story-ring" [class.viewed]="story.viewedByMe || isOwnStory(story)" (click)="openGroupStory(story)">
                   @if (story.owner.profilePhotoDataUrl) {
                     <img [src]="story.owner.profilePhotoDataUrl" alt="">
                   } @else {
@@ -932,13 +940,15 @@
                     <strong>{{ participantLabel(participant) }}</strong>
                     <small>{{ participantSubtitle(participant) }}</small>
                   </span>
-                  @if (isCurrentUserGroupAdmin()) {
+                  @if (canToggleParticipantAdmin(participant)) {
                     <button type="button" class="admin-toggle" [class.active]="isGroupAdmin(participant.userId)" (click)="toggleParticipantAdmin(participant)" [disabled]="groupInfoBusy">
                       <ion-icon name="shield-checkmark-outline"></ion-icon>
                       {{ isGroupAdmin(participant.userId) ? ('CHAT.REMOVE_ADMIN' | translate:'Quitar admin') : ('CHAT.MAKE_ADMIN' | translate:'Hacer admin') }}
                     </button>
+                  } @else if (isGroupOwner(participant)) {
+                    <em>{{ 'CHAT.OWNER' | translate:'Creador' }}</em>
                   } @else if (isGroupAdmin(participant.userId)) {
-                    <em>{{ 'CHAT.ADMIN' | translate:'Admin' }}</em>
+                    <em>{{ isCurrentParticipant(participant) ? ('CHAT.YOU_ARE_ADMIN' | translate:'Tu eres admin') : ('CHAT.ADMIN' | translate:'Admin') }}</em>
                   }
                 </div>
               }
@@ -946,7 +956,15 @@
           </section>
         } @else {
         <div class="contact-hero">
-          <button type="button" class="story-ring" [disabled]="!conversationPhoto()" (click)="openProfilePhotoViewer($event)" [attr.aria-label]="'CHAT.VIEW_PHOTO' | translate:'Ver foto'">
+          <button
+            type="button"
+            class="story-ring"
+            [class.has-active-story]="hasConversationStories()"
+            [class.story-unviewed]="hasUnviewedConversationStories()"
+            [class.story-viewed]="hasConversationStories() && !hasUnviewedConversationStories()"
+            [disabled]="!hasConversationStories() && !conversationPhoto()"
+            (click)="hasConversationStories() ? openConversationStories(null, $event) : openProfilePhotoViewer($event)"
+            [attr.aria-label]="hasConversationStories() ? ('CHAT.OPEN_STORIES' | translate:'Abrir historias') : ('CHAT.VIEW_PHOTO' | translate:'Ver foto')">
             @if (conversationPhoto()) {
               <img class="contact-photo" [src]="conversationPhoto()" alt="">
             } @else if (conversation()) {
@@ -980,10 +998,15 @@
         <section class="contact-section">
           <div class="section-head">
             <h3>{{ 'CHAT.STORIES' | translate:'Historias' }}</h3>
-            <span>{{ 'CHAT.RING_READY' | translate:'Anillo listo' }}</span>
+            <span>{{ conversationStories().length }} {{ conversationStories().length === 1 ? ('CHAT.ACTIVE_STORY' | translate:'activa') : ('CHAT.ACTIVE_STORIES' | translate:'activas') }}</span>
           </div>
-          <div class="story-placeholder">
-            <span class="story-ring small">
+          <button
+            type="button"
+            class="story-placeholder"
+            [class.active]="hasConversationStories()"
+            [disabled]="!hasConversationStories()"
+            (click)="openConversationStories()">
+            <span class="story-ring small" [class.has-active-story]="hasConversationStories()" [class.story-unviewed]="hasUnviewedConversationStories()" [class.story-viewed]="hasConversationStories() && !hasUnviewedConversationStories()">
               @if (conversationPhoto()) {
                 <img [src]="conversationPhoto()" alt="">
               } @else if (conversation()) {
@@ -991,10 +1014,15 @@
               }
             </span>
             <div>
-              <strong>{{ 'CHAT.NO_ACTIVE_STORIES' | translate:'Sin historias activas' }}</strong>
-              <small>{{ 'CHAT.STORIES_RING_COPY' | translate:'Cuando existan, se abriran desde este anillo.' }}</small>
+              @if (hasConversationStories()) {
+                <strong>{{ hasUnviewedConversationStories() ? ('CHAT.NEW_STORIES' | translate:'Historias nuevas') : ('CHAT.VIEWED_STORIES' | translate:'Historias vistas') }}</strong>
+                <small>{{ 'CHAT.TAP_TO_OPEN_STORIES' | translate:'Toca para verlas en orden.' }}</small>
+              } @else {
+                <strong>{{ 'CHAT.NO_ACTIVE_STORIES' | translate:'Sin historias activas' }}</strong>
+                <small>{{ 'CHAT.STORIES_RING_COPY' | translate:'Cuando existan, se abriran desde este anillo.' }}</small>
+              }
             </div>
-          </div>
+          </button>
         </section>
         }
         <section class="contact-section media-section">
@@ -1127,45 +1155,99 @@
     </ng-template>
   </ion-modal>
 
-  <ion-modal class="story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="social.closeStory()">
+  <ion-modal class="story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="closeStoryViewer()">
     <ng-template>
       @if (social.activeStory(); as story) {
         @if (social.storyPayload(story); as payload) {
-          <section class="story-viewer">
-            <header>
-              <div>
-                <strong>{{ story.owner.displayName || story.owner.alias }}</strong>
-                <span>{{ story.expiresAt | date:'shortTime' }}</span>
-              </div>
-              <button type="button" (click)="social.closeStory()" [attr.aria-label]="'STORY.CLOSE' | translate:'Cerrar historia'">
-                <ion-icon name="close-outline"></ion-icon>
-              </button>
-            </header>
-            <div class="story-viewer-body">
-              @if (payload.media; as mediaPayload) {
-                @if (social.storyMedia(story); as media) {
-                  @if (social.isImage(media.mime)) {
-                    <img [src]="media.url" [alt]="media.name">
-                  } @else if (social.isVideo(media.mime)) {
-                    <video [src]="media.url" controls playsinline autoplay></video>
-                  } @else {
-                    <audio [src]="media.url" controls autoplay></audio>
-                  }
-                } @else {
-                  <div class="story-loading">
-                    <ion-spinner name="crescent"></ion-spinner>
-                    <span>{{ 'COMMON.DECRYPTING' | translate:'Descifrando' }} {{ mediaPayload.mime }}</span>
-                  </div>
-                }
-              } @else {
-                <p>{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantanea') }}</p>
-              }
-            </div>
-            @if (payload.text) {
-              <footer>{{ payload.text }}</footer>
-            }
-          </section>
+          <app-story-viewer
+            [story]="story"
+            [payload]="payload"
+            [queue]="storyViewerQueue"
+            [progress]="storyProgressValues()"
+            [reply]="storyReply"
+            [busyId]="storyBusyId"
+            [reactionsOpen]="storyReactionsOpen"
+            [isMine]="isOwnStory(story)"
+            [uiHidden]="storyViewerUiHidden"
+            [subtitle]="storyViewerSubtitle(story)"
+            [viewsCount]="storyViews(story)"
+            [canRepost]="canRepostStory(story)"
+            [reactionOptions]="storyReactionOptions"
+            (replyChange)="storyReply = $event"
+            (closeViewer)="closeStoryViewer()"
+            (pointerDown)="onStoryPointerDown($event)"
+            (pointerUp)="onStoryPointerUp($event.event, $event.side)"
+            (pointerCancel)="onStoryPointerCancel()"
+            (syncDuration)="syncStoryMediaDuration($event)"
+            (mediaEnded)="storyMediaEnded()"
+            (openStats)="openStoryStats()"
+            (sendReply)="sendStoryReply(story)"
+            (react)="reactToStory(story, $event)"
+            (toggleReactions)="toggleStoryReactions()"
+            (repost)="repostStory(story)">
+          </app-story-viewer>
+          @if (storyError) {
+            <p class="story-error">{{ storyError }}</p>
+          }
         }
+      }
+    </ng-template>
+  </ion-modal>
+
+  <ion-modal class="story-stats-modal" [isOpen]="storyStatsOpen" [breakpoints]="[0, .55, .9]" [initialBreakpoint]=".55" (didDismiss)="closeStoryStats()">
+    <ng-template>
+      @if (social.activeStory(); as story) {
+        <section class="story-stats-sheet">
+          <header>
+            <div>
+              <h2>{{ 'WORLD.ACTIVITY' | translate:'Actividad' }}</h2>
+              <span>{{ 'WORLD.STORY_ACTIVITY_COPY' | translate:'Personas que vieron e interactuaron con tu historia' }}</span>
+            </div>
+            <button type="button" (click)="closeStoryStats()" [attr.aria-label]="'WORLD.CLOSE_STATS' | translate:'Cerrar estadisticas'">
+              <ion-icon name="close-outline"></ion-icon>
+            </button>
+          </header>
+          <div class="stats-summary">
+            <span><strong>{{ storyViews(story) }}</strong><small>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</small></span>
+            <span><strong>{{ storyReactions(story) }}</strong><small>{{ 'CHAT.REACTIONS' | translate:'Reacciones' }}</small></span>
+            <span><strong>{{ storyComments(story) }}</strong><small>{{ 'WORLD.COMMENTS' | translate:'Comentarios' }}</small></span>
+          </div>
+          <div class="stats-columns">
+            <article>
+              <h3>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</h3>
+              @for (view of story.views || []; track view.user.id) {
+                <div class="stats-row">
+                  <span class="stats-avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span>
+                  <span><strong>{{ view.user.displayName || view.user.alias }}</strong><small>@{{ view.user.alias }} - {{ view.viewedAt | date:'shortTime' }}</small></span>
+                </div>
+              } @empty {
+                <p class="stats-empty">{{ 'WORLD.NO_VIEWS' | translate:'Sin vistas todavia.' }}</p>
+              }
+            </article>
+            <article>
+              <h3>{{ 'CHAT.REACTIONS' | translate:'Reacciones' }}</h3>
+              @for (reaction of story.reactions || []; track reaction.id) {
+                <div class="stats-row">
+                  <span class="stats-avatar">{{ reaction.emoji }}</span>
+                  <span><strong>{{ reaction.user.displayName || reaction.user.alias }}</strong><small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | date:'shortTime' }}</small></span>
+                </div>
+              } @empty {
+                <p class="stats-empty">{{ 'WORLD.NO_REACTIONS_YET' | translate:'Sin reacciones aun.' }}</p>
+              }
+            </article>
+            <article>
+              <h3>{{ 'WORLD.COMMENTS' | translate:'Comentarios' }}</h3>
+              @for (comment of story.comments || []; track comment.id) {
+                <div class="stats-row">
+                  <span class="stats-avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span>
+                  <span><strong>{{ comment.user.displayName || comment.user.alias }}</strong><small>@{{ comment.user.alias }} - {{ comment.commentedAt | date:'shortTime' }}</small></span>
+                </div>
+              } @empty {
+                <p class="stats-empty">{{ 'WORLD.NO_COMMENTS_YET' | translate:'Sin comentarios aun.' }}</p>
+              }
+            </article>
+          </div>
+        </section>
       }
     </ng-template>
   </ion-modal>

@@ -2244,9 +2244,12 @@ public static partial class EndpointExtensions
 
             var now = timeProvider.GetUtcNow();
             var stories = await db.Stories
-                .Where(story => story.DeletedAt == null && story.ExpiresAt > now)
+                .Where(story =>
+                    story.DeletedAt == null &&
+                    story.ExpiresAt > now &&
+                    (story.Visibility != StoryVisibility.PublicWorld || story.OwnerUserId == current.UserId))
                 .OrderByDescending(story => story.CreatedAt)
-                .Take(160)
+                .Take(320)
                 .ToListAsync(cancellationToken);
 
             var result = new List<StoryResponse>();
@@ -2258,7 +2261,42 @@ public static partial class EndpointExtensions
                 }
             }
 
-            return Results.Ok(result.Take(80).ToList());
+            return Results.Ok(result.Take(160).ToList());
+        });
+
+        group.MapGet("/group/{conversationId}", async Task<IResult> (string conversationId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null)
+            {
+                return Results.Unauthorized();
+            }
+
+            if (!await IsActiveConversationParticipantAsync(db, conversationId, current.UserId, cancellationToken))
+            {
+                return Results.NotFound();
+            }
+
+            var now = timeProvider.GetUtcNow();
+            var stories = await db.Stories
+                .Where(story =>
+                    story.TargetId == conversationId &&
+                    story.DeletedAt == null &&
+                    story.ExpiresAt > now)
+                .OrderByDescending(story => story.CreatedAt)
+                .Take(120)
+                .ToListAsync(cancellationToken);
+
+            var result = new List<StoryResponse>();
+            foreach (var story in stories)
+            {
+                if (await CanViewStoryAsync(db, story, current.UserId, cancellationToken))
+                {
+                    result.Add(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
+                }
+            }
+
+            return Results.Ok(result);
         });
 
         group.MapPost("/", async Task<IResult> (CreateStoryRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
@@ -2634,7 +2672,7 @@ public static partial class EndpointExtensions
             return Results.File(await storage.OpenReadAsync(file, cancellationToken), "application/octet-stream", $"{file.Id}.bin");
         });
 
-        group.MapDelete("/{storyId}", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        group.MapDelete("/{storyId}", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2648,8 +2686,26 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
+            var audience = story.Visibility == StoryVisibility.PublicWorld
+                ? []
+                : await StoryAudienceAsync(db, story, cancellationToken);
             story.DeletedAt = timeProvider.GetUtcNow();
             await db.SaveChangesAsync(cancellationToken);
+            var deleted = new
+            {
+                storyId = story.Id,
+                ownerUserId = story.OwnerUserId,
+                targetType = NormalizeStoryTargetType(story.TargetType, story.TargetId),
+                story.TargetId
+            };
+            if (story.Visibility == StoryVisibility.PublicWorld)
+            {
+                await hub.Clients.All.SendAsync("story.deleted", deleted, cancellationToken);
+            }
+            else
+            {
+                await NotifyUsers(hub, audience.Append(story.OwnerUserId), "story.deleted", deleted);
+            }
             return Results.NoContent();
         });
     }

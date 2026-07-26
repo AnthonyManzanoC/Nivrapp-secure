@@ -79,6 +79,7 @@ import { TranslateService } from '../../core/services/translate.service';
 import { NativeDeviceService, type RaiseGestureEvent } from '../../core/services/native-device.service';
 import { PerformanceModeService } from '../../core/services/performance-mode.service';
 import { PrivacyEnforcementService } from '../../core/services/privacy-enforcement.service';
+import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
@@ -141,6 +142,7 @@ interface MessageTextPart {
     IonToggle,
     IonToolbar,
     TranslatePipe,
+    StoryViewerComponent,
     ChatMediaGalleryComponent,
   ],
   templateUrl: './chat-detail.page.html',
@@ -222,6 +224,16 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   groupInfoError = '';
   groupAddOpen = false;
   selectedGroupAddIds = new Set<string>();
+  storyViewerQueue: Story[] = [];
+  storyViewerIndex = 0;
+  storyViewerProgress = 0;
+  storyReply = '';
+  storyReactionsOpen = false;
+  storyStatsOpen = false;
+  storyViewerUiHidden = false;
+  storyBusyId = '';
+  storyError = '';
+  readonly storyReactionOptions = ['\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}', '\u{1F525}'];
   emojiPanelOpen = false;
   busyAction = '';
   notice = '';
@@ -251,6 +263,14 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private voiceTimer: number | null = null;
   private voiceStartPromise: Promise<void> | null = null;
   private messagePressTimer: number | null = null;
+  private readonly defaultStoryDurationMs = 5000;
+  private storyProgressDurationMs = this.defaultStoryDurationMs;
+  private storyProgressTimer: number | null = null;
+  private storyProgressStartedAt = 0;
+  private storyProgressElapsed = 0;
+  private storyPaused = false;
+  private storyPointerStartedAt = 0;
+  private storyPointerStartY = 0;
   private readonly quotedReplyCache = new Map<string, QuotedReplyVm>();
   private readonly quotedReplyLoads = new Set<string>();
   readonly emojiChoices = [
@@ -319,6 +339,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         const requestId = ++this.initialScrollRequestId;
         void this.chat.selectConversation(id).then(() => {
           this.refreshActiveGroupCallBanner(id);
+          const conversation = this.conversation();
+          if (this.chat.isGroup(conversation)) {
+            void this.social.loadGroupStories(id).catch(() => undefined);
+          }
           if (requestId === this.initialScrollRequestId) {
             this.scheduleInitialScroll(id, { force: true });
           }
@@ -398,6 +422,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.privacyEnforcement.clearActiveConversation(conversationId);
     this.clearPendingAttachments(false);
     this.stopVoiceTimer();
+    this.stopStoryProgress();
     void this.cancelVoiceNote();
     document.documentElement.style.setProperty('--keyboard-bottom', '0px');
   }
@@ -1080,7 +1105,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.closeChatMenu();
     this.closeMessageActions();
     void this.chat.hydrateConversationProfile(conversation);
-    void this.social.load();
+    void this.social.load().catch(() => undefined);
+    if (this.chat.isGroup(conversation)) {
+      void this.social.loadGroupStories(conversation.id).catch(() => undefined);
+    }
   }
 
   closeContactInfo(): void {
@@ -1994,6 +2022,20 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     return this.chat.isGroupAdmin(this.conversation(), userId || undefined);
   }
 
+  isGroupOwner(participant: Participant): boolean {
+    return String(participant.role || '').toLowerCase() === 'owner';
+  }
+
+  isCurrentParticipant(participant: Participant): boolean {
+    return participant.userId === this.auth.session()?.user.id;
+  }
+
+  canToggleParticipantAdmin(participant: Participant): boolean {
+    return this.isCurrentUserGroupAdmin() &&
+      !this.isGroupOwner(participant) &&
+      !this.isCurrentParticipant(participant);
+  }
+
   groupParticipants(): Participant[] {
     return (this.conversation()?.participants ?? []).filter((participant) => !participant.removedAt);
   }
@@ -2070,7 +2112,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   async toggleParticipantAdmin(participant: Participant): Promise<void> {
     const conversation = this.conversation();
-    if (!conversation || !this.isCurrentUserGroupAdmin()) {
+    if (!conversation || !this.canToggleParticipantAdmin(participant)) {
       return;
     }
     const nextAdmin = !this.isGroupAdmin(participant.userId);
@@ -2081,11 +2123,219 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   activeGroupStories(): Story[] {
-    return this.social.activeStoriesForGroup(this.conversation()?.id);
+    return this.conversationStories();
   }
 
   async openGroupStory(story: Story): Promise<void> {
-    await this.social.viewStory(story);
+    await this.openConversationStories(story);
+  }
+
+  conversationStories(): Story[] {
+    const conversation = this.conversation();
+    if (!conversation) {
+      return [];
+    }
+    const stories = this.chat.isGroup(conversation)
+      ? this.social.activeStoriesForGroup(conversation.id)
+      : this.social.contactStories().filter((story) => story.owner.id === this.directConversationPeerId(conversation));
+    return stories
+      .slice()
+      .sort((left, right) => Date.parse(left.createdAt || '') - Date.parse(right.createdAt || ''));
+  }
+
+  hasConversationStories(): boolean {
+    return this.conversationStories().length > 0;
+  }
+
+  hasUnviewedConversationStories(): boolean {
+    return this.conversationStories().some((story) => !story.viewedByMe && !this.isOwnStory(story));
+  }
+
+  async openConversationStories(explicitStory: Story | null = null, event?: Event): Promise<void> {
+    event?.preventDefault();
+    event?.stopPropagation();
+    const stories = this.conversationStories();
+    if (!stories.length) {
+      if (this.conversationPhoto()) {
+        this.openProfilePhotoViewer(event);
+      }
+      return;
+    }
+    this.storyViewerQueue = stories;
+    const explicitIndex = explicitStory
+      ? stories.findIndex((story) => story.id === explicitStory.id)
+      : -1;
+    const firstUnviewed = stories.findIndex((story) => !story.viewedByMe && !this.isOwnStory(story));
+    this.storyViewerIndex = explicitIndex >= 0 ? explicitIndex : firstUnviewed >= 0 ? firstUnviewed : 0;
+    this.closeContactInfo();
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
+    await this.openQueuedStory();
+  }
+
+  async previousStory(): Promise<void> {
+    if (this.storyViewerIndex > 0) {
+      this.storyViewerIndex -= 1;
+      await this.openQueuedStory();
+      return;
+    }
+    this.restartStoryProgress();
+  }
+
+  async nextStory(): Promise<void> {
+    if (this.storyViewerIndex < this.storyViewerQueue.length - 1) {
+      this.storyViewerIndex += 1;
+      await this.openQueuedStory();
+      return;
+    }
+    this.closeStoryViewer();
+  }
+
+  closeStoryViewer(): void {
+    this.stopStoryProgress();
+    this.social.closeStory();
+    this.storyViewerQueue = [];
+    this.storyViewerIndex = 0;
+    this.storyReply = '';
+    this.storyReactionsOpen = false;
+    this.storyStatsOpen = false;
+    this.storyViewerUiHidden = false;
+    this.storyError = '';
+  }
+
+  storyProgressValues(): number[] {
+    return this.storyViewerQueue.map((_story, index) => {
+      if (index < this.storyViewerIndex) {
+        return 100;
+      }
+      if (index > this.storyViewerIndex) {
+        return 0;
+      }
+      return this.storyViewerProgress;
+    });
+  }
+
+  onStoryPointerDown(event: PointerEvent): void {
+    this.storyPointerStartedAt = Date.now();
+    this.storyPointerStartY = event.clientY;
+    this.storyViewerUiHidden = true;
+    this.pauseStoryProgress();
+  }
+
+  onStoryPointerUp(event: PointerEvent, side: 'left' | 'right'): void {
+    const held = Date.now() - this.storyPointerStartedAt > 420;
+    const swipedUp = this.storyPointerStartY - event.clientY > 58;
+    this.storyViewerUiHidden = false;
+    this.resumeStoryProgress();
+    if (swipedUp) {
+      const story = this.social.activeStory();
+      if (story && this.isOwnStory(story)) {
+        this.openStoryStats();
+      }
+      return;
+    }
+    if (!held) {
+      void (side === 'left' ? this.previousStory() : this.nextStory());
+    }
+  }
+
+  onStoryPointerCancel(): void {
+    this.storyViewerUiHidden = false;
+    this.resumeStoryProgress();
+  }
+
+  syncStoryMediaDuration(event: Event): void {
+    const video = event.target as HTMLVideoElement | null;
+    const duration = Number(video?.duration);
+    if (Number.isFinite(duration) && duration > 0) {
+      this.storyProgressDurationMs = Math.max(this.defaultStoryDurationMs, Math.ceil(duration * 1000));
+    }
+  }
+
+  storyMediaEnded(): void {
+    void this.nextStory();
+  }
+
+  openStoryStats(): void {
+    this.pauseStoryProgress();
+    this.storyStatsOpen = true;
+  }
+
+  closeStoryStats(): void {
+    this.storyStatsOpen = false;
+    this.resumeStoryProgress();
+  }
+
+  toggleStoryReactions(): void {
+    this.storyReactionsOpen = !this.storyReactionsOpen;
+    if (this.storyReactionsOpen) {
+      this.pauseStoryProgress();
+    } else {
+      this.resumeStoryProgress();
+    }
+  }
+
+  async reactToStory(story: Story, emoji: string): Promise<void> {
+    if (this.isOwnStory(story)) {
+      return;
+    }
+    await this.runStoryAction(`react:${story.id}`, async () => {
+      await this.social.reactStory(story, emoji);
+      this.storyReactionsOpen = false;
+      this.resumeStoryProgress();
+    });
+  }
+
+  async repostStory(story: Story): Promise<void> {
+    if (this.isOwnStory(story) || !this.canRepostStory(story)) {
+      return;
+    }
+    await this.runStoryAction(`repost:${story.id}`, async () => {
+      await this.social.repostStory(story);
+    });
+  }
+
+  async sendStoryReply(story: Story): Promise<void> {
+    const text = this.storyReply.trim();
+    if (!text || this.isOwnStory(story)) {
+      return;
+    }
+    await this.runStoryAction(`reply:${story.id}`, async () => {
+      const conversation = await this.chat.createDirectConversation(story.owner);
+      const message = await this.chat.sendText(conversation, text, {
+        replyTo: this.storyReplyReference(story),
+      });
+      await this.social.commentStory(story, message?.id ?? null);
+      this.storyReply = '';
+    });
+  }
+
+  isOwnStory(story: Story): boolean {
+    return story.owner.id === this.auth.session()?.user.id;
+  }
+
+  canRepostStory(story: Story): boolean {
+    return !this.isOwnStory(story) && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
+  }
+
+  storyViewerSubtitle(story: Story): string {
+    if (story.originalAuthor?.alias) {
+      return `${this.tr('WORLD.REPOSTED_FROM', 'Reposteado de')} @${story.originalAuthor.alias}`;
+    }
+    return story.expiresAt
+      ? `${this.tr('STORY.AVAILABLE_UNTIL', 'Hasta')} ${new Date(story.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      : '';
+  }
+
+  storyViews(story: Story): number {
+    return story.views?.length || story.viewCount || 0;
+  }
+
+  storyReactions(story: Story): number {
+    return story.reactions?.length || 0;
+  }
+
+  storyComments(story: Story): number {
+    return story.comments?.length || 0;
   }
 
   availableGroupContacts(): Contact[] {
@@ -2813,6 +3063,117 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private supportedVoiceMimeType(): string {
     const candidates = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'];
     return candidates.find((candidate) => MediaRecorder.isTypeSupported(candidate)) ?? '';
+  }
+
+  private async openQueuedStory(): Promise<void> {
+    const story = this.storyViewerQueue[this.storyViewerIndex];
+    if (!story) {
+      this.closeStoryViewer();
+      return;
+    }
+    this.storyReactionsOpen = false;
+    this.storyStatsOpen = false;
+    this.storyReply = '';
+    this.storyError = '';
+    try {
+      await this.social.viewStory(story);
+      const active = this.social.activeStory();
+      if (active) {
+        this.storyViewerQueue = this.storyViewerQueue.map((item) => item.id === active.id ? active : item);
+      }
+      this.restartStoryProgress();
+    } catch (error) {
+      this.storyError = error instanceof Error
+        ? error.message
+        : this.tr('STORY.NOT_AVAILABLE', 'Esta historia ya no esta disponible.');
+      this.storyViewerQueue = this.storyViewerQueue.filter((item) => item.id !== story.id);
+      if (!this.storyViewerQueue.length) {
+        this.closeStoryViewer();
+        return;
+      }
+      this.storyViewerIndex = Math.min(this.storyViewerIndex, this.storyViewerQueue.length - 1);
+      await this.openQueuedStory();
+    }
+  }
+
+  private restartStoryProgress(): void {
+    this.stopStoryProgress();
+    this.storyViewerProgress = 0;
+    this.storyProgressElapsed = 0;
+    this.storyPaused = false;
+    this.storyProgressDurationMs = this.defaultStoryDurationMs;
+    this.storyProgressStartedAt = Date.now();
+    this.storyProgressTimer = window.setInterval(() => this.tickStoryProgress(), 80);
+  }
+
+  private pauseStoryProgress(): void {
+    if (this.storyPaused || this.storyProgressTimer === null) {
+      return;
+    }
+    this.storyProgressElapsed += Date.now() - this.storyProgressStartedAt;
+    this.storyPaused = true;
+  }
+
+  private resumeStoryProgress(): void {
+    if (!this.storyPaused || this.storyStatsOpen || this.storyProgressTimer === null) {
+      return;
+    }
+    this.storyPaused = false;
+    this.storyProgressStartedAt = Date.now();
+  }
+
+  private stopStoryProgress(): void {
+    if (this.storyProgressTimer !== null) {
+      window.clearInterval(this.storyProgressTimer);
+      this.storyProgressTimer = null;
+    }
+    this.storyViewerProgress = 0;
+    this.storyProgressElapsed = 0;
+    this.storyPaused = false;
+  }
+
+  private tickStoryProgress(): void {
+    if (this.storyPaused) {
+      return;
+    }
+    const elapsed = this.storyProgressElapsed + Date.now() - this.storyProgressStartedAt;
+    this.storyViewerProgress = Math.min(100, (elapsed / this.storyProgressDurationMs) * 100);
+    if (this.storyViewerProgress >= 100) {
+      void this.nextStory();
+    }
+  }
+
+  private async runStoryAction(id: string, action: () => Promise<void>): Promise<void> {
+    this.storyBusyId = id;
+    this.storyError = '';
+    try {
+      await action();
+    } catch (error) {
+      this.storyError = error instanceof Error ? error.message : this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
+    } finally {
+      this.storyBusyId = '';
+    }
+  }
+
+  private storyReplyReference(story: Story): unknown {
+    const payload = this.social.storyPayload(story);
+    return {
+      kind: 'story',
+      storyId: story.id,
+      ownerUserId: story.owner.id,
+      ownerAlias: story.owner.alias,
+      preview: this.social.storyText(story).slice(0, 120),
+      mediaMime: payload.media?.mime ?? null,
+      mediaFileObjectId: story.mediaFileObjectId ?? null,
+      originalAuthorAlias: story.originalAuthor?.alias ?? null,
+      at: story.createdAt,
+    };
+  }
+
+  private directConversationPeerId(conversation: Conversation): string | null {
+    const currentUserId = this.auth.session()?.user.id;
+    return conversation.participants.find((participant) =>
+      participant.userId !== currentUserId && !participant.removedAt)?.userId ?? null;
   }
 
   private tr(key: string, fallback: string): string {

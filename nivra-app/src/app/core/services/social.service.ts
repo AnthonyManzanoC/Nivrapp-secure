@@ -53,6 +53,8 @@ export class SocialService {
   readonly publishing = signal(false);
   readonly publishingStatus = signal('');
   readonly decodedPayloads = signal<Record<string, StoryPayload>>({});
+  private loadInFlight: Promise<void> | null = null;
+  private storyRealtimeVersion = 0;
 
   constructor() {
     this.realtime.events$
@@ -61,19 +63,33 @@ export class SocialService {
       if (event.type === 'story.created' || event.type === 'story.worldCreated') {
         const story = event.payload as Story;
         if (story?.id) {
+          this.storyRealtimeVersion += 1;
           this.applyStoryUpdate(story);
+        }
+      }
+      if (event.type === 'story.deleted') {
+        const payload = event.payload as { id?: string; storyId?: string };
+        const storyId = payload?.storyId || payload?.id;
+        if (storyId) {
+          this.storyRealtimeVersion += 1;
+          this.removeStoryLocally(storyId);
         }
       }
       if (event.type === 'story.viewed' || event.type === 'story.reacted' || event.type === 'story.commented') {
         const payload = event.payload as Story & { storyId?: string };
         if (payload?.id) {
+          this.storyRealtimeVersion += 1;
           this.applyStoryUpdate(payload);
         } else if (payload?.storyId) {
+          this.storyRealtimeVersion += 1;
           this.stories.update((items) => items.map((story) =>
             story.id === payload.storyId ? { ...story, viewCount: story.viewCount + 1 } : story));
         }
       }
-      if (event.type === 'friend.requested' || event.type === 'friend.updated') {
+      if (event.type === 'friend.requested' ||
+          event.type === 'friend.updated' ||
+          event.type === 'conversation.created' ||
+          event.type === 'conversation.updated') {
         void this.load();
       }
     });
@@ -83,31 +99,92 @@ export class SocialService {
     if (!this.auth.isAuthenticated()) {
       return;
     }
+    if (this.loadInFlight) {
+      return this.loadInFlight;
+    }
+    const task = this.loadOnce();
+    this.loadInFlight = task;
+    try {
+      await task;
+    } finally {
+      if (this.loadInFlight === task) {
+        this.loadInFlight = null;
+      }
+    }
+  }
+
+  private async loadOnce(): Promise<void> {
     this.loading.set(true);
     try {
       const accountKey = this.localAccountKey();
       if (accountKey) {
         const cached = await this.history.stories(accountKey).catch(() => []);
-        if (cached.length) {
+        if (cached.length && !this.stories().length) {
           this.stories.set(this.activeStories(cached));
         }
       }
-      const [contacts, requests, feed, world] = await Promise.all([
-        firstValueFrom(this.api.get<Contact[]>('/contacts')).catch(() => []),
-        firstValueFrom(this.api.get<FriendRequest[]>('/friends/requests')).catch(() => []),
-        firstValueFrom(this.api.get<Story[]>('/stories/feed')).catch(() => []),
-        firstValueFrom(this.api.get<Story[]>('/stories/world')).catch(() => []),
+      const realtimeVersionAtRequest = this.storyRealtimeVersion;
+      const [contactsResult, requestsResult, feedResult, worldResult] = await Promise.allSettled([
+        firstValueFrom(this.api.get<Contact[]>('/contacts')),
+        firstValueFrom(this.api.get<FriendRequest[]>('/friends/requests')),
+        firstValueFrom(this.api.get<Story[]>('/stories/feed')),
+        firstValueFrom(this.api.get<Story[]>('/stories/world')),
       ]);
-      this.contacts.set(contacts);
-      this.friendRequests.set(requests);
-      const normalizedFeed = this.activeStories(feed.map((story) => this.normalizeStory(story)));
-      const normalizedWorld = this.activeStories(world.map((story) => this.normalizeStory(story)));
-      this.stories.set(normalizedFeed);
-      this.worldStories.set(normalizedWorld);
-      this.persistStories([...normalizedFeed, ...normalizedWorld]);
+      if (contactsResult.status === 'fulfilled') {
+        this.contacts.set(contactsResult.value);
+      }
+      if (requestsResult.status === 'fulfilled') {
+        this.friendRequests.set(requestsResult.value);
+      }
+
+      let persisted: Story[] = [];
+      if (feedResult.status === 'fulfilled') {
+        const normalizedFeed = this.activeStories(feedResult.value.map((story) => this.normalizeStory(story)));
+        const nextFeed = realtimeVersionAtRequest === this.storyRealtimeVersion
+          ? normalizedFeed
+          : this.mergeStories(normalizedFeed, this.stories());
+        this.stories.set(nextFeed);
+        persisted = [...persisted, ...nextFeed];
+      }
+      if (worldResult.status === 'fulfilled') {
+        const normalizedWorld = this.activeStories(worldResult.value.map((story) => this.normalizeStory(story)));
+        const nextWorld = realtimeVersionAtRequest === this.storyRealtimeVersion
+          ? normalizedWorld
+          : this.mergeStories(normalizedWorld, this.worldStories());
+        this.worldStories.set(nextWorld);
+        persisted = [...persisted, ...nextWorld];
+      }
+      if (persisted.length) {
+        this.persistStories(persisted);
+      }
     } finally {
       this.loading.set(false);
     }
+  }
+
+  async loadGroupStories(groupId: string | null | undefined): Promise<Story[]> {
+    const normalizedGroupId = String(groupId || '').trim();
+    if (!normalizedGroupId || !this.auth.isAuthenticated()) {
+      return [];
+    }
+    const realtimeVersionAtRequest = this.storyRealtimeVersion;
+    const remote = await firstValueFrom(
+      this.api.get<Story[]>(`/stories/group/${encodeURIComponent(normalizedGroupId)}`),
+    );
+    const normalized = this.activeStories(remote.map((story) => this.normalizeStory(story)));
+    const current = this.stories();
+    const currentGroup = current.filter((story) => this.sameId(story.targetId, normalizedGroupId));
+    const nextGroup = realtimeVersionAtRequest === this.storyRealtimeVersion
+      ? normalized
+      : this.mergeStories(normalized, currentGroup);
+    const nextStories = this.activeStories([
+      ...current.filter((story) => !this.sameId(story.targetId, normalizedGroupId)),
+      ...nextGroup,
+    ]);
+    this.storyRealtimeVersion += 1;
+    this.stories.set(nextStories);
+    this.persistStories(nextGroup);
+    return nextGroup;
   }
 
   async search(query: string): Promise<UserSummary[]> {
@@ -339,11 +416,8 @@ export class SocialService {
 
   async deleteStory(story: Story): Promise<void> {
     await firstValueFrom(this.api.delete(`/stories/${encodeURIComponent(story.id)}`));
-    this.stories.update((items) => items.filter((item) => item.id !== story.id));
-    this.worldStories.update((items) => items.filter((item) => item.id !== story.id));
-    if (this.activeStory()?.id === story.id) {
-      this.activeStory.set(null);
-    }
+    this.storyRealtimeVersion += 1;
+    this.removeStoryLocally(story.id);
   }
 
   async ensureStoryMedia(story: Story): Promise<StoryMediaPreview | null> {
@@ -404,7 +478,7 @@ export class SocialService {
     if (!groupId) {
       return [];
     }
-    return this.activeStories(this.stories().filter((story) => this.isGroupStory(story) && story.targetId === groupId));
+    return this.activeStories(this.stories().filter((story) => this.isGroupStory(story) && this.sameId(story.targetId, groupId)));
   }
 
   isGroupStory(story: Story | null | undefined): boolean {
@@ -606,8 +680,12 @@ export class SocialService {
 
   private applyStoryUpdate(story: Story): Story {
     const normalized = this.normalizeStory(story);
-    this.stories.update((items) => [normalized, ...items.filter((item) => item.id !== normalized.id)]
-      .sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || '')));
+    const isOwnPublicStory = normalized.visibility === 'PublicWorld' &&
+      normalized.owner.id === this.auth.session()?.user.id;
+    this.stories.update((items) => normalized.visibility !== 'PublicWorld' || isOwnPublicStory
+      ? [normalized, ...items.filter((item) => item.id !== normalized.id)]
+        .sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || ''))
+      : items.filter((item) => item.id !== normalized.id));
     this.worldStories.update((items) => normalized.visibility === 'PublicWorld'
       ? [normalized, ...items.filter((item) => item.id !== normalized.id)]
         .sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || ''))
@@ -617,6 +695,46 @@ export class SocialService {
     }
     this.persistStories([normalized]);
     return normalized;
+  }
+
+  private removeStoryLocally(storyId: string): void {
+    this.stories.update((items) => items.filter((item) => item.id !== storyId));
+    this.worldStories.update((items) => items.filter((item) => item.id !== storyId));
+    this.decodedPayloads.update((items) => {
+      const next = { ...items };
+      delete next[storyId];
+      return next;
+    });
+    const preview = this.mediaPreviews()[storyId];
+    if (preview?.url) {
+      URL.revokeObjectURL(preview.url);
+    }
+    this.mediaPreviews.update((items) => {
+      const next = { ...items };
+      delete next[storyId];
+      return next;
+    });
+    if (this.activeStory()?.id === storyId) {
+      this.activeStory.set(null);
+    }
+    const accountKey = this.localAccountKey();
+    if (accountKey) {
+      void this.history.removeStory(accountKey, storyId).catch(() => undefined);
+    }
+  }
+
+  private mergeStories(primary: Story[], secondary: Story[]): Story[] {
+    const storiesById = new Map<string, Story>();
+    for (const story of [...secondary, ...primary]) {
+      if (story?.id) {
+        storiesById.set(story.id, this.normalizeStory(story));
+      }
+    }
+    return this.activeStories([...storiesById.values()]);
+  }
+
+  private sameId(left: string | null | undefined, right: string | null | undefined): boolean {
+    return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase());
   }
 
   private activeStories(stories: Story[]): Story[] {

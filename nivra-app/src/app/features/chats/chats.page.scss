@@ -569,6 +569,61 @@ ion-modal.group-modal {
   color: var(--nivra-muted);
 }
 
+.group-identity {
+  position: relative;
+  display: grid;
+  grid-template-columns: 62px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+}
+
+.group-identity .group-name {
+  min-width: 0;
+  margin: 0;
+}
+
+.group-avatar-picker {
+  width: 62px;
+  height: 62px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  padding: 3px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  color: var(--nivra-brand-2);
+  background:
+    linear-gradient(var(--nivra-panel-solid), var(--nivra-panel-solid)) padding-box,
+    linear-gradient(135deg, var(--nivra-brand), #ff77aa, var(--nivra-brand-2)) border-box;
+}
+
+.group-avatar-picker img {
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
+}
+
+.group-avatar-picker ion-icon {
+  width: 25px;
+  height: 25px;
+}
+
+.group-avatar-remove {
+  position: absolute;
+  left: 55px;
+  bottom: 9px;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #ffb4b4;
+  background: rgba(35, 8, 14, .96);
+}
+
 .group-name {
   margin: 12px;
   display: grid;
