@@ -256,6 +256,16 @@ ion-popover.attachment-popover::part(content) {
   overflow: hidden;
 }
 
+.header-avatar-target {
+  flex: 0 0 auto;
+  display: grid;
+  border-radius: 10px;
+}
+
+.header-avatar-target:active {
+  transform: scale(.97);
+}
+
 .title-wrap:disabled {
   opacity: 1;
 }
@@ -1213,7 +1223,7 @@ ion-modal.contact-info-modal {
   --height: min(760px, calc(100dvh - 28px));
   --border-radius: 8px;
   --background: var(--nivra-panel-solid);
-  --box-shadow: var(--nivra-shadow-soft);
+  --box-shadow: 0 32px 96px rgba(0, 0, 0, .5), 0 10px 28px rgba(0, 0, 0, .24);
   color: var(--nivra-text);
 }
 

@@ -254,7 +254,160 @@ ion-popover {
   color: var(--nivra-text);
 }
 
-ion-modal:not(.story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.media-viewer-modal)::part(content),
+ion-popover.avatar-actions-popover {
+  --width: min(330px, calc(100vw - 22px));
+  --background: rgba(8, 13, 15, .98);
+  --box-shadow: 0 22px 56px rgba(0, 0, 0, .42);
+  --backdrop-opacity: 0;
+  color: var(--nivra-text);
+}
+
+ion-popover.avatar-actions-popover::part(content) {
+  border: 1px solid rgba(255, 255, 255, .12);
+  border-radius: 12px;
+  overflow: hidden;
+  backdrop-filter: var(--nivra-glass);
+}
+
+.avatar-action-menu {
+  padding: 7px;
+  display: grid;
+  gap: 4px;
+}
+
+.avatar-action-heading {
+  padding: 8px 9px 7px;
+  display: grid;
+  gap: 2px;
+}
+
+.avatar-action-heading strong,
+.avatar-action-heading small,
+.avatar-action-menu button > span:nth-child(2) strong,
+.avatar-action-menu button > span:nth-child(2) small {
+  display: block;
+}
+
+.avatar-action-heading strong {
+  color: var(--nivra-text);
+  font-size: 14px;
+}
+
+.avatar-action-heading small,
+.avatar-action-menu button > span:nth-child(2) small {
+  color: var(--nivra-muted);
+  font-size: 11px;
+}
+
+.avatar-action-menu button {
+  width: 100%;
+  min-height: 60px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  padding: 8px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  color: var(--nivra-text);
+  background: transparent;
+  text-align: left;
+  transition: background .16s ease, border-color .16s ease, transform .16s ease;
+}
+
+.avatar-action-menu button:hover,
+.avatar-action-menu button:focus-visible {
+  border-color: rgba(114, 240, 202, .14);
+  background: rgba(255, 255, 255, .07);
+  transform: translateY(-1px);
+  outline: none;
+}
+
+.avatar-action-menu button > ion-icon {
+  color: var(--nivra-muted);
+  font-size: 17px;
+}
+
+.avatar-action-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: grid;
+  place-items: center;
+  color: #03100d;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .24);
+}
+
+.avatar-action-icon ion-icon {
+  width: 21px;
+  height: 21px;
+}
+
+.avatar-action-icon.story {
+  background: linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
+}
+
+.avatar-action-icon.photo {
+  color: #06101c;
+  background: linear-gradient(135deg, #79b8ff, #a9d5ff);
+}
+
+ion-modal.contact-info-modal::part(backdrop),
+ion-modal.profile-photo-viewer-modal::part(backdrop),
+ion-modal.account-photo-viewer-modal::part(backdrop),
+ion-modal.list-photo-viewer-modal::part(backdrop),
+ion-modal.group-modal::part(backdrop),
+ion-popover.avatar-actions-popover::part(backdrop) {
+  animation: nivraOverlayFadeIn .18s ease-out both;
+}
+
+ion-modal.contact-info-modal::part(content),
+ion-modal.profile-photo-viewer-modal::part(content),
+ion-modal.account-photo-viewer-modal::part(content),
+ion-modal.list-photo-viewer-modal::part(content),
+ion-modal.group-modal::part(content),
+ion-popover.avatar-actions-popover::part(content) {
+  animation: nivraOverlayFadeIn .18s ease-out both;
+}
+
+ion-action-sheet.nivra-avatar-action-sheet {
+  --background: rgba(8, 13, 15, .99);
+  --backdrop-opacity: .58;
+  --button-background: transparent;
+  --button-background-hover: rgba(255, 255, 255, .075);
+  --button-color: var(--nivra-text);
+  --color: var(--nivra-text);
+}
+
+ion-action-sheet.nivra-avatar-action-sheet::part(content) {
+  border-radius: 22px 22px 0 0;
+  overflow: hidden;
+  box-shadow: 0 -28px 80px rgba(0, 0, 0, .46);
+}
+
+@keyframes nivraOverlayFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  ion-modal.contact-info-modal::part(backdrop),
+  ion-modal.profile-photo-viewer-modal::part(backdrop),
+  ion-modal.account-photo-viewer-modal::part(backdrop),
+  ion-modal.list-photo-viewer-modal::part(backdrop),
+  ion-modal.group-modal::part(backdrop),
+  ion-modal.contact-info-modal::part(content),
+  ion-modal.profile-photo-viewer-modal::part(content),
+  ion-modal.account-photo-viewer-modal::part(content),
+  ion-modal.list-photo-viewer-modal::part(content),
+  ion-modal.group-modal::part(content),
+  ion-popover.avatar-actions-popover::part(backdrop),
+  ion-popover.avatar-actions-popover::part(content) {
+    animation-duration: .01ms;
+  }
+}
+
+ion-modal:not(.story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
 ion-popover::part(content) {
   color: var(--nivra-text);
   background: var(--nivra-panel-solid);
@@ -699,7 +852,7 @@ body.nivra-light-theme ion-popover {
   color: var(--nivra-text);
 }
 
-body.nivra-light-theme ion-modal:not(.story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.media-viewer-modal)::part(content),
+body.nivra-light-theme ion-modal:not(.story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
 body.nivra-light-theme ion-popover::part(content) {
   border: 1px solid var(--nivra-line);
   color: var(--nivra-text);

@@ -15,9 +15,19 @@
         <h2>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</h2>
         <div class="profile-photo-row">
           <input #profilePhotoInput type="file" accept="image/*" hidden (change)="pickProfilePhoto($event)">
-          <button type="button" class="profile-photo" [class.has-photo]="!!profilePhotoDataUrl" (click)="profilePhotoInput.click()" [disabled]="saving" [attr.aria-label]="'ACCOUNT.UPDATE_PROFILE_PHOTO' | translate:'Actualizar foto de perfil'">
+          <button
+            type="button"
+            class="profile-photo"
+            [class.has-photo]="!!profilePhotoDataUrl"
+            (click)="profilePhotoDataUrl ? openOwnProfilePhoto() : profilePhotoInput.click()"
+            [disabled]="saving"
+            [attr.aria-label]="profilePhotoDataUrl ? ('CHAT.VIEW_PHOTO' | translate:'Ver foto de perfil') : ('ACCOUNT.UPDATE_PROFILE_PHOTO' | translate:'Actualizar foto de perfil')">
             @if (profilePhotoDataUrl) {
               <img [src]="profilePhotoDataUrl" alt="">
+              <span class="photo-hover-state" aria-hidden="true">
+                <ion-icon name="camera-outline"></ion-icon>
+                <small>{{ 'CHAT.VIEW_PHOTO' | translate:'Ver foto' }}</small>
+              </span>
             } @else {
               <span>{{ (displayName || auth.session()?.user?.alias || 'N').slice(0, 2).toUpperCase() }}</span>
             }
@@ -773,6 +783,33 @@
         </section>
       </ng-template>
     </ion-modal>
+
+    <ion-modal class="account-photo-viewer-modal" [isOpen]="profilePhotoViewerOpen" (didDismiss)="closeOwnProfilePhoto()">
+      <ng-template>
+        <section class="account-photo-viewer">
+          <header>
+            <ion-button mode="ios" fill="clear" (click)="closeOwnProfilePhoto()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+              <ion-icon name="close-outline"></ion-icon>
+            </ion-button>
+            <span>{{ displayName || auth.session()?.user?.alias || ('ACCOUNT.PROFILE' | translate:'Perfil') }}</span>
+          </header>
+          <button type="button" class="account-photo-stage" (click)="closeOwnProfilePhoto()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+            @if (profilePhotoDataUrl) {
+              <img [src]="profilePhotoDataUrl" [alt]="displayName || auth.session()?.user?.alias || 'Perfil'">
+            }
+          </button>
+        </section>
+      </ng-template>
+    </ion-modal>
+
+    <app-image-cropper
+      [isOpen]="!!profileCropFile"
+      [file]="profileCropFile"
+      [title]="'ACCOUNT.ADJUST_PROFILE_PHOTO' | translate:'Ajustar foto de perfil'"
+      [subject]="'ACCOUNT.PROFILE_LOWER' | translate:'perfil'"
+      (cancelled)="cancelProfilePhotoCrop()"
+      (cropped)="applyProfilePhotoCrop($event)">
+    </app-image-cropper>
 
     @if (notice) { <p class="notice">{{ notice }}</p> }
     @if (error) { <p class="error">{{ error }}</p> }

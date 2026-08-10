@@ -28,6 +28,7 @@ import { TranslateService } from '../../core/services/translate.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
 import { NativeDeviceService } from '../../core/services/native-device.service';
+import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const PIN_LENGTH = 4;
@@ -37,7 +38,7 @@ type AliasStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss'],
 })
@@ -62,6 +63,8 @@ export class AccountPage implements OnInit, OnDestroy {
   bio = '';
   profilePhotoDataUrl = '';
   profilePhotoDirty = false;
+  profileCropFile: File | null = null;
+  profilePhotoViewerOpen = false;
   isDiscoverable = true;
   allowStoryReposts = true;
   saving = false;
@@ -294,14 +297,33 @@ export class AccountPage implements OnInit, OnDestroy {
       this.error = this.t('ACCOUNT.SELECT_VALID_IMAGE', 'Selecciona una imagen valida.');
       return;
     }
-    await this.run(async () => {
-      this.profilePhotoDataUrl = await this.resizeProfilePhoto(file);
-      this.profilePhotoDirty = true;
-      this.notice = this.t('ACCOUNT.PHOTO_READY', 'Foto lista. Guarda el perfil para publicarla.');
-    });
+    this.error = '';
+    this.profileCropFile = file;
+  }
+
+  applyProfilePhotoCrop(dataUrl: string): void {
+    this.profilePhotoDataUrl = dataUrl;
+    this.profilePhotoDirty = true;
+    this.profileCropFile = null;
+    this.notice = this.t('ACCOUNT.PHOTO_READY', 'Foto lista. Guarda el perfil para publicarla.');
+  }
+
+  cancelProfilePhotoCrop(): void {
+    this.profileCropFile = null;
+  }
+
+  openOwnProfilePhoto(): void {
+    if (this.profilePhotoDataUrl) {
+      this.profilePhotoViewerOpen = true;
+    }
+  }
+
+  closeOwnProfilePhoto(): void {
+    this.profilePhotoViewerOpen = false;
   }
 
   removeProfilePhoto(): void {
+    this.profilePhotoViewerOpen = false;
     this.profilePhotoDataUrl = '';
     this.profilePhotoDirty = true;
     this.notice = this.t('ACCOUNT.PHOTO_REMOVED', 'Foto quitada. Guarda el perfil para confirmar.');
@@ -1054,51 +1076,6 @@ export class AccountPage implements OnInit, OnDestroy {
 
   private normalizeVisibility(value: unknown): NivraVisibility {
     return value === 'everyone' || value === 'nobody' ? value : 'contacts';
-  }
-
-  private async resizeProfilePhoto(file: File): Promise<string> {
-    const image = await this.loadImage(file);
-    const maxSide = 512;
-    const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || 1, image.naturalHeight || 1));
-    let width = Math.max(1, Math.round((image.naturalWidth || maxSide) * scale));
-    let height = Math.max(1, Math.round((image.naturalHeight || maxSide) * scale));
-    const canvas = document.createElement('canvas');
-    const context = canvas.getContext('2d');
-    if (!context) {
-      throw new Error('No se pudo preparar la imagen.');
-    }
-
-    let quality = 0.86;
-    let dataUrl = '';
-    for (let attempt = 0; attempt < 6; attempt += 1) {
-      canvas.width = width;
-      canvas.height = height;
-      context.clearRect(0, 0, width, height);
-      context.drawImage(image, 0, 0, width, height);
-      dataUrl = canvas.toDataURL('image/jpeg', quality);
-      if (dataUrl.length <= 340000) {
-        return dataUrl;
-      }
-      quality = Math.max(0.56, quality - 0.08);
-      width = Math.max(160, Math.round(width * 0.82));
-      height = Math.max(160, Math.round(height * 0.82));
-    }
-    if (dataUrl.length > 350000) {
-      throw new Error('La imagen sigue siendo muy grande. Prueba otra foto.');
-    }
-    return dataUrl;
-  }
-
-  private loadImage(file: File): Promise<HTMLImageElement> {
-    const objectUrl = URL.createObjectURL(file);
-    return new Promise<HTMLImageElement>((resolve, reject) => {
-      const image = new Image();
-      image.onload = () => resolve(image);
-      image.onerror = () => reject(new Error(this.t('ACCOUNT.IMAGE_READ_ERROR', 'No se pudo leer la imagen.')));
-      image.src = objectUrl;
-    }).finally(() => {
-      setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-    });
   }
 
   async refreshStorageEstimate(): Promise<void> {

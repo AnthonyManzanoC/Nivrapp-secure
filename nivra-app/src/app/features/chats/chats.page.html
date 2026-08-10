@@ -129,6 +129,10 @@
                     [class.story-unviewed]="conversationHasUnviewedStory(conversation)"
                     [class.story-viewed]="conversationHasStory(conversation) && !conversationHasUnviewedStory(conversation)"
                     (click)="abrirHistoria(conversation, $event)"
+                    (touchstart)="startAvatarPress(conversation, $event)"
+                    (touchend)="cancelAvatarPress()"
+                    (touchcancel)="cancelAvatarPress()"
+                    (touchmove)="cancelAvatarPress()"
                     (keydown.enter)="abrirHistoria(conversation, $event)"
                     (keydown.space)="abrirHistoria(conversation, $event)"
                     [attr.aria-label]="'WORLD.VIEW_STORY' | translate:'Ver historia'">
@@ -266,6 +270,67 @@
       </section>
     </ng-template>
   </ion-modal>
+
+  <ion-popover
+    class="avatar-actions-popover"
+    [isOpen]="avatarActionsOpen"
+    [event]="avatarActionsEvent"
+    [showBackdrop]="false"
+    side="bottom"
+    alignment="center"
+    (didDismiss)="closeListAvatarActions()">
+    <ng-template>
+      <div class="avatar-action-menu">
+        <div class="avatar-action-heading">
+          <strong>{{ 'CHAT.CHOOSE_AVATAR_ACTION' | translate:'¿Qué quieres ver?' }}</strong>
+          <small>{{ 'CHAT.PHOTO_OR_STORY_HINT' | translate:'La foto y las historias están disponibles.' }}</small>
+        </div>
+        <button type="button" (click)="chooseListAvatarStory()">
+          <span class="avatar-action-icon story"><ion-icon name="play-circle-outline"></ion-icon></span>
+          <span>
+            <strong>{{ 'CHAT.OPEN_STORIES' | translate:'Ver historia' }}</strong>
+            <small>{{ 'CHAT.OPEN_ACTIVE_STORIES' | translate:'Abrir historias activas' }}</small>
+          </span>
+          <ion-icon name="chevron-forward-outline"></ion-icon>
+        </button>
+        <button type="button" (click)="chooseListAvatarPhoto()">
+          <span class="avatar-action-icon photo"><ion-icon name="image-outline"></ion-icon></span>
+          <span>
+            <strong>{{ avatarActionsConversation && chat.isGroup(avatarActionsConversation) ? ('CHAT.VIEW_GROUP_PHOTO' | translate:'Ver foto del grupo') : ('CHAT.VIEW_PROFILE_PHOTO' | translate:'Ver foto de perfil') }}</strong>
+            <small>{{ 'CHAT.OPEN_FULL_SIZE' | translate:'Abrir en tamaño completo' }}</small>
+          </span>
+          <ion-icon name="chevron-forward-outline"></ion-icon>
+        </button>
+      </div>
+    </ng-template>
+  </ion-popover>
+
+  <ion-modal class="list-photo-viewer-modal" [isOpen]="!!profilePhotoViewerUrl" (didDismiss)="closeListPhoto()">
+    <ng-template>
+      <section class="list-photo-viewer">
+        <header>
+          <ion-button mode="ios" fill="clear" (click)="closeListPhoto()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+            <ion-icon name="close-outline"></ion-icon>
+          </ion-button>
+          <span>{{ profilePhotoViewerTitle }}</span>
+        </header>
+        <button type="button" class="list-photo-stage" (click)="closeListPhoto()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+          @if (profilePhotoViewerUrl) {
+            <img [src]="profilePhotoViewerUrl" [alt]="profilePhotoViewerTitle">
+          }
+        </button>
+      </section>
+    </ng-template>
+  </ion-modal>
+
+  <app-image-cropper
+    [isOpen]="!!groupAvatarCropFile"
+    [file]="groupAvatarCropFile"
+    [title]="'CHAT.ADJUST_GROUP_PHOTO' | translate:'Ajustar foto del grupo'"
+    [subject]="'CHAT.GROUP_LOWER' | translate:'grupo'"
+    (cancelled)="cancelNewGroupAvatarCrop()"
+    (cropped)="applyNewGroupAvatarCrop($event)">
+  </app-image-cropper>
 
   <ion-modal class="nivra-story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="closeStoryViewer()">
     <ng-template>

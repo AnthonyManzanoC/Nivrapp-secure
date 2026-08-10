@@ -146,8 +146,8 @@ Pendiente de portar desde `wwwroot_legacy` en las siguientes iteraciones:
 
 Artefactos locales generados:
 
-- APK debug: `android/app/build/outputs/apk/debug/app-debug.apk`
-- EXE Windows: `Nivra.Desktop/dist/Nivra-win32-x64/Nivra.exe`
+- APK debug 1.0.4: `android/app/build/outputs/apk/debug/app-debug.apk`
+- EXE Windows 1.0.4: `Nivra.Desktop/dist/Nivra-win32-x64/Nivra.exe`
 - JDK 21 portable usado para Android: `tools/jdk/jdk-21.0.11+10`
 
 ## Base de datos

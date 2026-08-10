@@ -81,6 +81,7 @@ import { PerformanceModeService } from '../../core/services/performance-mode.ser
 import { PrivacyEnforcementService } from '../../core/services/privacy-enforcement.service';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
+import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
 
@@ -144,6 +145,7 @@ interface MessageTextPart {
     TranslatePipe,
     StoryViewerComponent,
     ChatMediaGalleryComponent,
+    ImageCropperComponent,
   ],
   templateUrl: './chat-detail.page.html',
   styleUrls: ['./chat-detail.page.scss'],
@@ -207,6 +209,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private contactInfoDismissTimer: number | null = null;
   profilePhotoViewerUrl = '';
   profilePhotoViewerTitle = '';
+  avatarActionsOpen = false;
+  avatarActionsEvent: Event | null = null;
+  avatarActionsPhotoUrl = '';
   mediaGalleryOpen = false;
   activeAudioPreview: MediaPreview | null = null;
   activeAudioName = '';
@@ -218,6 +223,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   activeMediaZoom = 1;
   groupNameDraft = '';
   groupAvatarDraft: string | null = null;
+  groupAvatarCropFile: File | null = null;
   groupSettingsDraft: GroupSettings = {
     editInfo: 'admins',
     sendMessages: 'all',
@@ -266,6 +272,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private voiceTimer: number | null = null;
   private voiceStartPromise: Promise<void> | null = null;
   private messagePressTimer: number | null = null;
+  private avatarPressTimer: number | null = null;
+  private suppressAvatarClickUntil = 0;
   private readonly defaultStoryDurationMs = 5000;
   private storyProgressDurationMs = this.defaultStoryDurationMs;
   private storyProgressTimer: number | null = null;
@@ -421,6 +429,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.micGesture?.destroy();
     this.clearInitialScrollTimers();
     this.cancelMessagePress();
+    this.cancelAvatarPress();
     this.closeAudioPreview();
     this.closeMediaViewer();
     this.privacyEnforcement.clearActiveConversation(conversationId);
@@ -1113,10 +1122,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   closeContactInfo(): void {
+    this.closeAvatarActions();
     this.contactInfoOpen = false;
   }
 
   onContactInfoDidDismiss(): void {
+    this.closeAvatarActions();
     this.contactInfoOpen = false;
     this.finishContactInfoDismiss();
   }
@@ -1134,6 +1145,72 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   closeProfilePhotoViewer(): void {
     this.profilePhotoViewerUrl = '';
     this.profilePhotoViewerTitle = '';
+  }
+
+  async activateConversationAvatar(event: Event, photoUrl = this.conversationPhoto(), emptyPhotoInput?: HTMLInputElement): Promise<void> {
+    event.preventDefault();
+    event.stopPropagation();
+    if (Date.now() < this.suppressAvatarClickUntil) {
+      return;
+    }
+    const hasStories = this.hasConversationStories();
+    const hasPhoto = Boolean(photoUrl);
+    if (hasStories && hasPhoto && !this.usesTouchAvatarPattern()) {
+      this.avatarActionsPhotoUrl = photoUrl;
+      this.avatarActionsEvent = event;
+      this.avatarActionsOpen = true;
+      return;
+    }
+    if (hasStories) {
+      await this.openConversationStories(null, event);
+      return;
+    }
+    if (hasPhoto) {
+      this.openProfilePhotoViewer(event, photoUrl);
+      return;
+    }
+    if (emptyPhotoInput && this.canEditGroup()) {
+      emptyPhotoInput.click();
+      return;
+    }
+    this.openContactInfo();
+  }
+
+  startAvatarPress(event: TouchEvent, photoUrl = this.conversationPhoto()): void {
+    if (!this.usesTouchAvatarPattern() || !photoUrl || !this.hasConversationStories()) {
+      return;
+    }
+    event.stopPropagation();
+    this.cancelAvatarPress();
+    this.avatarPressTimer = window.setTimeout(() => {
+      this.avatarPressTimer = null;
+      this.suppressAvatarClickUntil = Date.now() + 750;
+      void this.presentAvatarActionSheet(photoUrl);
+    }, 460);
+  }
+
+  cancelAvatarPress(): void {
+    if (this.avatarPressTimer !== null) {
+      window.clearTimeout(this.avatarPressTimer);
+      this.avatarPressTimer = null;
+    }
+  }
+
+  async chooseAvatarStory(): Promise<void> {
+    this.closeAvatarActions();
+    await this.openConversationStories();
+  }
+
+  chooseAvatarPhoto(): void {
+    const photoUrl = this.avatarActionsPhotoUrl;
+    this.closeAvatarActions();
+    this.openProfilePhotoViewer(undefined, photoUrl);
+  }
+
+  closeAvatarActions(): void {
+    this.avatarActionsOpen = false;
+    this.avatarActionsEvent = null;
+    this.avatarActionsPhotoUrl = '';
   }
 
   openMediaGallery(): void {
@@ -2077,12 +2154,22 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!file) {
       return;
     }
-    this.groupInfoError = '';
-    try {
-      this.groupAvatarDraft = await this.fileToDataUrl(file);
-    } catch {
-      this.groupInfoError = this.tr('CHAT.ERROR_GROUP_PHOTO', 'No se pudo cargar la foto del grupo.');
+    if (!file.type.startsWith('image/')) {
+      this.groupInfoError = this.tr('CHAT.ERROR_GROUP_PHOTO', 'Selecciona una imagen valida para el grupo.');
+      return;
     }
+    this.groupInfoError = '';
+    this.groupAvatarCropFile = file;
+  }
+
+  applyGroupAvatarCrop(dataUrl: string): void {
+    this.groupAvatarDraft = dataUrl;
+    this.groupAvatarCropFile = null;
+    this.notice = this.tr('CHAT.GROUP_PHOTO_READY', 'Foto centrada. Pulsa Guardar para publicarla.');
+  }
+
+  cancelGroupAvatarCrop(): void {
+    this.groupAvatarCropFile = null;
   }
 
   async saveGroupInfo(): Promise<void> {
@@ -3027,13 +3114,39 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  private fileToDataUrl(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result || ''));
-      reader.onerror = () => reject(reader.error);
-      reader.readAsDataURL(file);
+  private usesTouchAvatarPattern(): boolean {
+    return this.nativeDevice.native || (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches);
+  }
+
+  private async presentAvatarActionSheet(photoUrl: string): Promise<void> {
+    const sheet = await this.actionSheetController.create({
+      header: this.chat.isGroup(this.conversation())
+        ? this.tr('CHAT.GROUP_PHOTO_AND_STORIES', 'Foto e historias del grupo')
+        : this.tr('CHAT.PROFILE_PHOTO_AND_STORIES', 'Foto e historias'),
+      cssClass: 'nivra-avatar-action-sheet',
+      buttons: [
+        {
+          text: this.tr('CHAT.OPEN_STORIES', 'Ver historia'),
+          icon: 'play-circle-outline',
+          handler: () => {
+            void this.openConversationStories();
+          },
+        },
+        {
+          text: this.chat.isGroup(this.conversation())
+            ? this.tr('CHAT.VIEW_GROUP_PHOTO', 'Ver foto del grupo')
+            : this.tr('CHAT.VIEW_PROFILE_PHOTO', 'Ver foto de perfil'),
+          icon: 'image-outline',
+          handler: () => this.openProfilePhotoViewer(undefined, photoUrl),
+        },
+        {
+          text: this.tr('COMMON.CANCEL', 'Cancelar'),
+          icon: 'close-outline',
+          role: 'cancel',
+        },
+      ],
     });
+    await sheet.present();
   }
 
   private stopVoiceCapture(send: boolean): Promise<File | null> {

@@ -883,6 +883,41 @@
   object-fit: cover;
 }
 
+.photo-hover-state {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  gap: 3px;
+  color: #fff;
+  background: rgba(2, 9, 11, .56);
+  opacity: 0;
+  transform: scale(1.04);
+  transition: opacity .18s ease, transform .18s ease;
+  text-shadow: 0 2px 9px rgba(0, 0, 0, .8);
+}
+
+.photo-hover-state ion-icon {
+  justify-self: center;
+  width: 24px;
+  height: 24px;
+}
+
+.photo-hover-state small {
+  color: #fff;
+  font-size: 10px;
+  font-weight: 850;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .profile-photo.has-photo:hover .photo-hover-state,
+  .profile-photo.has-photo:focus-visible .photo-hover-state {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .photo-edit-badge {
   position: absolute;
   right: -6px;
@@ -901,6 +936,96 @@
 .photo-edit-badge ion-icon {
   width: 15px;
   height: 15px;
+}
+
+ion-modal.account-photo-viewer-modal {
+  --width: 100vw;
+  --height: 100dvh;
+  --border-radius: 0;
+  --background: #030607;
+  color: #fff;
+}
+
+ion-modal.account-photo-viewer-modal::part(content) {
+  width: 100vw;
+  height: 100dvh;
+  overflow: hidden;
+  background: #030607;
+}
+
+.account-photo-viewer {
+  position: relative;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  color: #fff;
+  background: #030607;
+}
+
+.account-photo-viewer::before {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset: 0 0 auto;
+  height: calc(94px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)));
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .72), rgba(0, 0, 0, 0));
+}
+
+.account-photo-viewer header {
+  position: relative;
+  z-index: 3;
+  min-height: 64px;
+  padding:
+    calc(12px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
+    max(14px, env(safe-area-inset-right))
+    12px
+    max(14px, env(safe-area-inset-left));
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .88), rgba(0, 0, 0, .18));
+  text-shadow: 0 2px 12px rgba(0, 0, 0, .72);
+}
+
+.account-photo-viewer header span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 780;
+}
+
+.account-photo-viewer ion-button {
+  --border-radius: 999px;
+  --background: rgba(255, 255, 255, .14);
+  --background-hover: rgba(255, 255, 255, .22);
+  --color: #fff;
+  width: 42px;
+  min-height: 42px;
+}
+
+.account-photo-stage {
+  position: relative;
+  z-index: 2;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  padding: 14px;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+  background: transparent;
+}
+
+.account-photo-stage img {
+  width: auto;
+  height: auto;
+  max-width: calc(100vw - 28px);
+  max-height: calc(100dvh - 112px - var(--ion-safe-area-top, env(safe-area-inset-top, 0px)) - var(--ion-safe-area-bottom, env(safe-area-inset-bottom, 0px)));
+  display: block;
+  object-fit: contain;
+  object-position: center;
 }
 
 .profile-photo-actions {

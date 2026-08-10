@@ -7,11 +7,19 @@
         </ion-button>
       </ion-buttons>
       <button type="button" class="title-wrap" (click)="openContactInfo()" [disabled]="!conversation()" [attr.aria-label]="'CHAT.CONTACT_INFO' | translate:'Info del contacto'">
-        @if (conversationPhoto()) {
-          <img class="avatar avatar-img" [src]="conversationPhoto()" alt="">
-        } @else {
-          <span class="avatar">{{ conversation() ? chat.avatarLabel(conversation()!) : 'N' }}</span>
-        }
+        <span
+          class="header-avatar-target"
+          (click)="activateConversationAvatar($event)"
+          (touchstart)="startAvatarPress($event)"
+          (touchend)="cancelAvatarPress()"
+          (touchcancel)="cancelAvatarPress()"
+          (touchmove)="cancelAvatarPress()">
+          @if (conversationPhoto()) {
+            <img class="avatar avatar-img" [src]="conversationPhoto()" alt="">
+          } @else {
+            <span class="avatar">{{ conversation() ? chat.avatarLabel(conversation()!) : 'N' }}</span>
+          }
+        </span>
         <div>
           <h1>{{ conversation() ? chat.conversationTitle(conversation()!) : ('CHAT.TITLE' | translate:'Chat') }}</h1>
           <p>{{ chat.presenceLabel(conversation()) }}</p>
@@ -701,6 +709,40 @@
     </ng-template>
   </ion-popover>
 
+  <ion-popover
+    class="avatar-actions-popover"
+    [isOpen]="avatarActionsOpen"
+    [event]="avatarActionsEvent"
+    [showBackdrop]="false"
+    side="bottom"
+    alignment="center"
+    (didDismiss)="closeAvatarActions()">
+    <ng-template>
+      <div class="avatar-action-menu">
+        <div class="avatar-action-heading">
+          <strong>{{ 'CHAT.CHOOSE_AVATAR_ACTION' | translate:'¿Qué quieres ver?' }}</strong>
+          <small>{{ 'CHAT.PHOTO_OR_STORY_HINT' | translate:'La foto y las historias están disponibles.' }}</small>
+        </div>
+        <button type="button" (click)="chooseAvatarStory()">
+          <span class="avatar-action-icon story"><ion-icon name="play-circle-outline"></ion-icon></span>
+          <span>
+            <strong>{{ 'CHAT.OPEN_STORIES' | translate:'Ver historia' }}</strong>
+            <small>{{ 'CHAT.OPEN_ACTIVE_STORIES' | translate:'Abrir historias activas' }}</small>
+          </span>
+          <ion-icon name="chevron-forward-outline"></ion-icon>
+        </button>
+        <button type="button" (click)="chooseAvatarPhoto()">
+          <span class="avatar-action-icon photo"><ion-icon name="image-outline"></ion-icon></span>
+          <span>
+            <strong>{{ isGroupConversation() ? ('CHAT.VIEW_GROUP_PHOTO' | translate:'Ver foto del grupo') : ('CHAT.VIEW_PROFILE_PHOTO' | translate:'Ver foto de perfil') }}</strong>
+            <small>{{ 'CHAT.OPEN_FULL_SIZE' | translate:'Abrir en tamaño completo' }}</small>
+          </span>
+          <ion-icon name="chevron-forward-outline"></ion-icon>
+        </button>
+      </div>
+    </ng-template>
+  </ion-popover>
+
   <ion-modal class="reaction-viewer-modal" [isOpen]="!!reactionViewerMessage" (didDismiss)="closeReactionViewer()">
     <ng-template>
       <section class="reaction-viewer">
@@ -794,7 +836,11 @@
               [class.story-unviewed]="hasUnviewedConversationStories()"
               [class.story-viewed]="hasConversationStories() && !hasUnviewedConversationStories()"
               [disabled]="!hasConversationStories() && !groupAvatarDraft && !canEditGroup()"
-              (click)="hasConversationStories() ? openConversationStories(null, $event) : (groupAvatarDraft ? openProfilePhotoViewer($event, groupAvatarDraft) : (canEditGroup() && groupAvatarInput.click()))"
+              (click)="activateConversationAvatar($event, groupAvatarDraft || '', groupAvatarInput)"
+              (touchstart)="startAvatarPress($event, groupAvatarDraft || '')"
+              (touchend)="cancelAvatarPress()"
+              (touchcancel)="cancelAvatarPress()"
+              (touchmove)="cancelAvatarPress()"
               [attr.aria-label]="hasConversationStories() ? ('CHAT.OPEN_GROUP_STORIES' | translate:'Abrir historias del grupo') : groupAvatarDraft ? ('CHAT.VIEW_PHOTO' | translate:'Ver foto') : ('CHAT.CHANGE_GROUP_PHOTO' | translate:'Cambiar foto del grupo')">
               @if (groupAvatarDraft) {
                 <img class="contact-photo" [src]="groupAvatarDraft" alt="">
@@ -802,7 +848,7 @@
                 <span class="contact-photo fallback">{{ chat.avatarLabel(conversation()!) }}</span>
               }
               @if (canEditGroup()) {
-                <span class="photo-edit" (click)="$event.stopPropagation(); groupAvatarInput.click()">
+                <span class="photo-edit" (click)="$event.stopPropagation(); groupAvatarInput.click()" (touchstart)="$event.stopPropagation()">
                   <ion-icon name="image-outline"></ion-icon>
                 </span>
               }
@@ -963,7 +1009,11 @@
             [class.story-unviewed]="hasUnviewedConversationStories()"
             [class.story-viewed]="hasConversationStories() && !hasUnviewedConversationStories()"
             [disabled]="!hasConversationStories() && !conversationPhoto()"
-            (click)="hasConversationStories() ? openConversationStories(null, $event) : openProfilePhotoViewer($event)"
+            (click)="activateConversationAvatar($event)"
+            (touchstart)="startAvatarPress($event)"
+            (touchend)="cancelAvatarPress()"
+            (touchcancel)="cancelAvatarPress()"
+            (touchmove)="cancelAvatarPress()"
             [attr.aria-label]="hasConversationStories() ? ('CHAT.OPEN_STORIES' | translate:'Abrir historias') : ('CHAT.VIEW_PHOTO' | translate:'Ver foto')">
             @if (conversationPhoto()) {
               <img class="contact-photo" [src]="conversationPhoto()" alt="">
@@ -1300,4 +1350,13 @@
       }
     </ng-template>
   </ion-modal>
+
+  <app-image-cropper
+    [isOpen]="!!groupAvatarCropFile"
+    [file]="groupAvatarCropFile"
+    [title]="'CHAT.ADJUST_GROUP_PHOTO' | translate:'Ajustar foto del grupo'"
+    [subject]="'CHAT.GROUP_LOWER' | translate:'grupo'"
+    (cancelled)="cancelGroupAvatarCrop()"
+    (cropped)="applyGroupAvatarCrop($event)">
+  </app-image-cropper>
 </section>

@@ -1,0 +1,76 @@
+<div
+  class="cropper-backdrop"
+  [class.is-open]="isOpen"
+  [attr.aria-hidden]="!isOpen"
+  (click)="backdropClick($event)">
+  <section class="cropper-dialog" role="dialog" aria-modal="true" [attr.aria-label]="title" (click)="$event.stopPropagation()">
+    <header>
+      <div>
+        <span class="eyebrow">Vista previa del avatar</span>
+        <h2>{{ title }}</h2>
+      </div>
+      <button type="button" class="icon-button" (click)="cancel()" [disabled]="saving" aria-label="Cerrar recorte">&#10005;</button>
+    </header>
+
+    <div class="cropper-copy">
+      <p>Arrastra para centrar tu foto. Usa la rueda, el control o pellizca para acercar.</p>
+      <span>La zona circular muestra exactamente cómo se verá en tu {{ subject }}.</span>
+    </div>
+
+    <div
+      #viewport
+      class="crop-viewport"
+      [class.is-loading]="loading"
+      (pointerdown)="onPointerDown($event)"
+      (pointermove)="onPointerMove($event)"
+      (pointerup)="onPointerUp($event)"
+      (pointercancel)="onPointerUp($event)"
+      (wheel)="onWheel($event)">
+      @if (imageUrl) {
+        <img
+          #sourceImage
+          class="crop-source"
+          [src]="imageUrl"
+          [style.transform]="imageTransform()"
+          (load)="onImageLoaded($event)"
+          (error)="onImageError()"
+          alt="Vista previa para recortar"
+          draggable="false">
+      }
+      <div class="crop-mask" aria-hidden="true"></div>
+      <span class="crop-guide horizontal" aria-hidden="true"></span>
+      <span class="crop-guide vertical" aria-hidden="true"></span>
+      @if (loading) {
+        <div class="crop-status"><span class="spinner"></span>Preparando imagen...</div>
+      }
+    </div>
+
+    <div class="zoom-control">
+      <span aria-hidden="true">&#8722;</span>
+      <input
+        type="range"
+        min="1"
+        max="4"
+        step="0.01"
+        [value]="zoom"
+        (input)="onZoomInput($event)"
+        [disabled]="loading || !!error"
+        aria-label="Nivel de zoom">
+      <span aria-hidden="true">&#43;</span>
+      <strong>{{ zoomLabel() }}</strong>
+    </div>
+
+    @if (error) {
+      <p class="crop-error" role="alert">{{ error }}</p>
+    }
+
+    <footer>
+      <button type="button" class="secondary" (click)="reset()" [disabled]="loading || saving || !!error">Restablecer</button>
+      <span class="footer-spacer"></span>
+      <button type="button" class="ghost" (click)="cancel()" [disabled]="saving">Cancelar</button>
+      <button type="button" class="primary" (click)="confirm()" [disabled]="loading || saving || !!error">
+        {{ saving ? 'Preparando...' : 'Usar foto' }}
+      </button>
+    </footer>
+  </section>
+</div>

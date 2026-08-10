@@ -3,6 +3,7 @@ import { Component, OnDestroy, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import {
+  ActionSheetController,
   IonAvatar,
   IonButton,
   IonContent,
@@ -16,12 +17,13 @@ import {
   IonList,
   IonModal,
   IonNote,
+  IonPopover,
   IonSegment,
   IonSegmentButton,
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { addOutline, archiveOutline, checkmarkOutline, closeOutline, imageOutline, notificationsOffOutline, notificationsOutline, peopleOutline, pinOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { addOutline, archiveOutline, checkmarkOutline, chevronForwardOutline, closeOutline, imageOutline, notificationsOffOutline, notificationsOutline, peopleOutline, pinOutline, playCircleOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
@@ -31,6 +33,8 @@ import { SocialService } from '../../core/services/social.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
+import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
+import { NativeDeviceService } from '../../core/services/native-device.service';
 
 @Component({
   selector: 'app-chats',
@@ -42,6 +46,7 @@ import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
     RouterOutlet,
     TranslatePipe,
     StoryViewerComponent,
+    ImageCropperComponent,
     IonAvatar,
     IonButton,
     IonContent,
@@ -55,6 +60,7 @@ import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
     IonList,
     IonModal,
     IonNote,
+    IonPopover,
     IonSegment,
     IonSegmentButton,
     IonSpinner,
@@ -69,6 +75,8 @@ export class ChatsPage implements OnDestroy {
   private readonly translate = inject(TranslateService);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
+  private readonly actionSheetController = inject(ActionSheetController);
+  private readonly nativeDevice = inject(NativeDeviceService);
   query = '';
   searchResults: UserSummary[] = [];
   searching = false;
@@ -79,6 +87,7 @@ export class ChatsPage implements OnDestroy {
   groupModalOpen = false;
   groupName = '';
   groupAvatar: string | null = null;
+  groupAvatarCropFile: File | null = null;
   groupBusy = false;
   groupError = '';
   selectedGroupUserIds = new Set<string>();
@@ -92,6 +101,11 @@ export class ChatsPage implements OnDestroy {
   viewerUiHidden = false;
   storyBusyId = '';
   storyError = '';
+  avatarActionsOpen = false;
+  avatarActionsEvent: Event | null = null;
+  avatarActionsConversation: Conversation | null = null;
+  profilePhotoViewerUrl = '';
+  profilePhotoViewerTitle = '';
   readonly storyReactionOptions = ['\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}', '\u{1F525}'];
   private timer: number | null = null;
   private searchSeq = 0;
@@ -104,18 +118,22 @@ export class ChatsPage implements OnDestroy {
   private storyPaused = false;
   private pointerStartedAt = 0;
   private pointerStartY = 0;
+  private avatarPressTimer: number | null = null;
+  private suppressAvatarClickUntil = 0;
 
   constructor() {
     addIcons({
       addOutline,
       archiveOutline,
       checkmarkOutline,
+      chevronForwardOutline,
       closeOutline,
       imageOutline,
       notificationsOffOutline,
       notificationsOutline,
       peopleOutline,
       pinOutline,
+      playCircleOutline,
       searchOutline,
       shareSocialOutline,
       syncOutline,
@@ -135,6 +153,7 @@ export class ChatsPage implements OnDestroy {
       window.clearTimeout(this.timer);
     }
     this.stopStoryProgress();
+    this.cancelAvatarPress();
     this.routeSub?.unsubscribe();
   }
 
@@ -210,14 +229,92 @@ export class ChatsPage implements OnDestroy {
   async abrirHistoria(conversation: Conversation, event: Event): Promise<void> {
     event.stopPropagation();
     event.preventDefault();
+    if (Date.now() < this.suppressAvatarClickUntil) {
+      return;
+    }
     if (this.chat.isGroup(conversation)) {
       await this.social.loadGroupStories(conversation.id).catch(() => []);
     } else {
       await this.social.load().catch(() => undefined);
     }
     const stories = this.conversationStories(conversation);
+    const photoUrl = this.chat.conversationPhoto(conversation);
+    if (stories.length && photoUrl && !this.usesTouchAvatarPattern()) {
+      this.avatarActionsConversation = conversation;
+      this.avatarActionsEvent = event;
+      this.avatarActionsOpen = true;
+      return;
+    }
     if (!stories.length) {
-      await this.openConversation(conversation.id);
+      if (photoUrl) {
+        this.openListPhoto(conversation);
+      } else {
+        await this.openConversation(conversation.id);
+      }
+      return;
+    }
+    await this.openListStories(conversation);
+  }
+
+  startAvatarPress(conversation: Conversation, event: TouchEvent): void {
+    if (!this.usesTouchAvatarPattern() || !this.chat.conversationPhoto(conversation) || !this.conversationHasStory(conversation)) {
+      return;
+    }
+    event.stopPropagation();
+    this.cancelAvatarPress();
+    this.avatarPressTimer = window.setTimeout(() => {
+      this.avatarPressTimer = null;
+      this.suppressAvatarClickUntil = Date.now() + 750;
+      void this.presentAvatarActionSheet(conversation);
+    }, 460);
+  }
+
+  cancelAvatarPress(): void {
+    if (this.avatarPressTimer !== null) {
+      window.clearTimeout(this.avatarPressTimer);
+      this.avatarPressTimer = null;
+    }
+  }
+
+  async chooseListAvatarStory(): Promise<void> {
+    const conversation = this.avatarActionsConversation;
+    this.closeListAvatarActions();
+    if (conversation) {
+      await this.openListStories(conversation);
+    }
+  }
+
+  chooseListAvatarPhoto(): void {
+    const conversation = this.avatarActionsConversation;
+    this.closeListAvatarActions();
+    if (conversation) {
+      this.openListPhoto(conversation);
+    }
+  }
+
+  closeListAvatarActions(): void {
+    this.avatarActionsOpen = false;
+    this.avatarActionsEvent = null;
+    this.avatarActionsConversation = null;
+  }
+
+  openListPhoto(conversation: Conversation): void {
+    const photoUrl = this.chat.conversationPhoto(conversation);
+    if (!photoUrl) {
+      return;
+    }
+    this.profilePhotoViewerUrl = photoUrl;
+    this.profilePhotoViewerTitle = this.chat.conversationTitle(conversation);
+  }
+
+  closeListPhoto(): void {
+    this.profilePhotoViewerUrl = '';
+    this.profilePhotoViewerTitle = '';
+  }
+
+  private async openListStories(conversation: Conversation): Promise<void> {
+    const stories = this.conversationStories(conversation);
+    if (!stories.length) {
       return;
     }
     this.storyViewerQueue = stories;
@@ -465,6 +562,7 @@ export class ChatsPage implements OnDestroy {
     this.groupError = '';
     this.groupName = '';
     this.groupAvatar = null;
+    this.groupAvatarCropFile = null;
     this.selectedGroupUserIds = new Set<string>();
     this.groupModalOpen = true;
   }
@@ -474,6 +572,7 @@ export class ChatsPage implements OnDestroy {
       return;
     }
     this.groupModalOpen = false;
+    this.groupAvatarCropFile = null;
     this.groupError = '';
   }
 
@@ -511,23 +610,63 @@ export class ChatsPage implements OnDestroy {
       this.groupError = this.tr('CHATS.GROUP_PHOTO_REQUIREMENTS', 'Elige una imagen de hasta 4 MB.');
       return;
     }
-    try {
-      this.groupAvatar = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result || ''));
-        reader.onerror = () => reject(reader.error);
-        reader.readAsDataURL(file);
-      });
-      this.groupError = '';
-    } catch {
-      this.groupError = this.tr('CHAT.ERROR_GROUP_PHOTO', 'No se pudo cargar la foto del grupo.');
-    }
+    this.groupError = '';
+    this.groupAvatarCropFile = file;
+  }
+
+  applyNewGroupAvatarCrop(dataUrl: string): void {
+    this.groupAvatar = dataUrl;
+    this.groupAvatarCropFile = null;
+  }
+
+  cancelNewGroupAvatarCrop(): void {
+    this.groupAvatarCropFile = null;
   }
 
   clearGroupAvatar(event?: Event): void {
     event?.preventDefault();
     event?.stopPropagation();
     this.groupAvatar = null;
+  }
+
+  private usesTouchAvatarPattern(): boolean {
+    return this.nativeDevice.native || (typeof window !== 'undefined' && window.matchMedia('(pointer: coarse)').matches);
+  }
+
+  private async presentAvatarActionSheet(conversation: Conversation): Promise<void> {
+    const photoUrl = this.chat.conversationPhoto(conversation);
+    const sheet = await this.actionSheetController.create({
+      header: this.chat.isGroup(conversation)
+        ? this.tr('CHAT.GROUP_PHOTO_AND_STORIES', 'Foto e historias del grupo')
+        : this.tr('CHAT.PROFILE_PHOTO_AND_STORIES', 'Foto e historias'),
+      cssClass: 'nivra-avatar-action-sheet',
+      buttons: [
+        {
+          text: this.tr('CHAT.OPEN_STORIES', 'Ver historia'),
+          icon: 'play-circle-outline',
+          handler: () => {
+            void this.openListStories(conversation);
+          },
+        },
+        {
+          text: this.chat.isGroup(conversation)
+            ? this.tr('CHAT.VIEW_GROUP_PHOTO', 'Ver foto del grupo')
+            : this.tr('CHAT.VIEW_PROFILE_PHOTO', 'Ver foto de perfil'),
+          icon: 'image-outline',
+          handler: () => {
+            if (photoUrl) {
+              this.openListPhoto(conversation);
+            }
+          },
+        },
+        {
+          text: this.tr('COMMON.CANCEL', 'Cancelar'),
+          icon: 'close-outline',
+          role: 'cancel',
+        },
+      ],
+    });
+    await sheet.present();
   }
 
   async createGroup(): Promise<void> {
