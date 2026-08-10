@@ -1919,6 +1919,10 @@ ion-modal.nivra-story-viewer-modal {
   z-index: 40000;
 }
 
+body.nivra-cropper-open {
+  overflow: hidden !important;
+}
+
 ion-modal.nivra-story-viewer-modal::part(content) {
   position: fixed;
   inset: 0;

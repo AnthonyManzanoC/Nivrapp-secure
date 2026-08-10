@@ -26,6 +26,7 @@ interface CropPointer {
   styleUrls: ['./image-cropper.component.scss'],
 })
 export class ImageCropperComponent implements AfterViewInit, OnChanges, OnDestroy {
+  @ViewChild('overlayRoot') private overlayRoot?: ElementRef<HTMLElement>;
   @ViewChild('viewport') private viewport?: ElementRef<HTMLElement>;
   @ViewChild('sourceImage') private sourceImage?: ElementRef<HTMLImageElement>;
 
@@ -54,11 +55,16 @@ export class ImageCropperComponent implements AfterViewInit, OnChanges, OnDestro
   private pinchStartZoom = 1;
   private objectUrl = '';
   private viewReady = false;
+  private originalParent: Node | null = null;
+  private originalNextSibling: Node | null = null;
 
   ngAfterViewInit(): void {
     this.viewReady = true;
-    if (this.isOpen && this.file) {
-      this.prepareFile(this.file);
+    if (this.isOpen) {
+      this.portalToBody();
+      if (this.file) {
+        this.prepareFile(this.file);
+      }
     }
   }
 
@@ -66,17 +72,69 @@ export class ImageCropperComponent implements AfterViewInit, OnChanges, OnDestro
     if (!this.viewReady) {
       return;
     }
+    if (changes['isOpen'] && this.isOpen) {
+      this.portalToBody();
+    }
     if ((changes['file'] || changes['isOpen']) && this.isOpen && this.file) {
       this.prepareFile(this.file);
     }
     if (changes['isOpen'] && !this.isOpen) {
       this.resetInteraction();
       this.releaseObjectUrl();
+      this.restoreOverlay();
     }
   }
 
   ngOnDestroy(): void {
     this.releaseObjectUrl();
+    this.restoreOverlay();
+  }
+
+  /**
+   * Escapa de cualquier contexto de apilamiento creado por modales padres.
+   * Mover el nodo conserva la instancia Angular y, por tanto, el archivo y sus eventos.
+   */
+  private portalToBody(): void {
+    const root = this.overlayRoot?.nativeElement;
+    if (!root || typeof document === 'undefined') {
+      return;
+    }
+
+    this.syncTheme(root);
+    if (root.parentNode !== document.body) {
+      this.originalParent = root.parentNode;
+      this.originalNextSibling = root.nextSibling;
+      document.body.appendChild(root);
+    }
+    document.body.classList.add('nivra-cropper-open');
+  }
+
+  private restoreOverlay(): void {
+    const root = this.overlayRoot?.nativeElement;
+    if (!root || typeof document === 'undefined') {
+      return;
+    }
+
+    if (this.originalParent && root.parentNode === document.body) {
+      const anchor = this.originalNextSibling?.parentNode === this.originalParent
+        ? this.originalNextSibling
+        : null;
+      this.originalParent.insertBefore(root, anchor);
+    }
+    this.originalParent = null;
+    this.originalNextSibling = null;
+
+    const anotherCropperIsOpen = Array.from(document.querySelectorAll('.cropper-backdrop.is-open'))
+      .some((element) => element !== root);
+    if (!anotherCropperIsOpen) {
+      document.body.classList.remove('nivra-cropper-open');
+    }
+  }
+
+  private syncTheme(root: HTMLElement): void {
+    const usesLightTheme = document.body.classList.contains('nivra-light-theme')
+      || document.documentElement.classList.contains('nivra-light-theme');
+    root.classList.toggle('light-theme', usesLightTheme);
   }
 
   @HostListener('document:keydown.escape')

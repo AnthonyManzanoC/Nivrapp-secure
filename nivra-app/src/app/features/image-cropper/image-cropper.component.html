@@ -1,4 +1,5 @@
 <div
+  #overlayRoot
   class="cropper-backdrop"
   [class.is-open]="isOpen"
   [attr.aria-hidden]="!isOpen"
@@ -17,32 +18,34 @@
       <span>La zona circular muestra exactamente cómo se verá en tu {{ subject }}.</span>
     </div>
 
-    <div
-      #viewport
-      class="crop-viewport"
-      [class.is-loading]="loading"
-      (pointerdown)="onPointerDown($event)"
-      (pointermove)="onPointerMove($event)"
-      (pointerup)="onPointerUp($event)"
-      (pointercancel)="onPointerUp($event)"
-      (wheel)="onWheel($event)">
-      @if (imageUrl) {
-        <img
-          #sourceImage
-          class="crop-source"
-          [src]="imageUrl"
-          [style.transform]="imageTransform()"
-          (load)="onImageLoaded($event)"
-          (error)="onImageError()"
-          alt="Vista previa para recortar"
-          draggable="false">
-      }
-      <div class="crop-mask" aria-hidden="true"></div>
-      <span class="crop-guide horizontal" aria-hidden="true"></span>
-      <span class="crop-guide vertical" aria-hidden="true"></span>
-      @if (loading) {
-        <div class="crop-status"><span class="spinner"></span>Preparando imagen...</div>
-      }
+    <div class="crop-stage">
+      <div
+        #viewport
+        class="crop-viewport"
+        [class.is-loading]="loading"
+        (pointerdown)="onPointerDown($event)"
+        (pointermove)="onPointerMove($event)"
+        (pointerup)="onPointerUp($event)"
+        (pointercancel)="onPointerUp($event)"
+        (wheel)="onWheel($event)">
+        @if (imageUrl) {
+          <img
+            #sourceImage
+            class="crop-source"
+            [src]="imageUrl"
+            [style.transform]="imageTransform()"
+            (load)="onImageLoaded($event)"
+            (error)="onImageError()"
+            alt="Vista previa para recortar"
+            draggable="false">
+        }
+        <div class="crop-mask" aria-hidden="true"></div>
+        <span class="crop-guide horizontal" aria-hidden="true"></span>
+        <span class="crop-guide vertical" aria-hidden="true"></span>
+        @if (loading) {
+          <div class="crop-status"><span class="spinner"></span>Preparando imagen...</div>
+        }
+      </div>
     </div>
 
     <div class="zoom-control">
