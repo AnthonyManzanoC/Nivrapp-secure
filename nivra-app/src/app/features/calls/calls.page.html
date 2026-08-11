@@ -100,20 +100,26 @@
                     </div>
                   }
                 } @else {
-                  @for (entry of calls.remoteEntries(); track entry[0]) {
-                    <div class="remote-tile voice-connected">
-                      <audio [appMediaStream]="entry[1]" [muted]="!calls.speaker()" autoplay playsinline></audio>
-                      <div class="call-avatar small">
-                        @if (videoParticipantPhoto(entry[0])) {
-                          <img [src]="videoParticipantPhoto(entry[0])" alt="">
-                        } @else {
-                          <strong>{{ videoParticipantInitials(entry[0]) }}</strong>
-                        }
-                      </div>
-                      <strong>{{ videoParticipantLabel(entry[0]) }}</strong>
-                      <span>{{ 'CALLS.IN_CALL' | translate:'En llamada' }} - {{ call.startedAt | date:'shortTime' }}</span>
-                    </div>
-                  }
+                  <section
+                    class="voice-participant-grid"
+                    [class.single]="calls.remoteEntries().length === 1"
+                    [class.many]="calls.remoteEntries().length > 6"
+                    [attr.aria-label]="'CALLS.CONNECTED_PARTICIPANTS' | translate:'Participantes conectados'">
+                    @for (entry of calls.remoteEntries(); track entry[0]) {
+                      <article class="remote-tile voice-connected">
+                        <audio [appMediaStream]="entry[1]" [muted]="!calls.speaker()" autoplay playsinline></audio>
+                        <div class="call-avatar small">
+                          @if (videoParticipantPhoto(entry[0])) {
+                            <img [src]="videoParticipantPhoto(entry[0])" alt="">
+                          } @else {
+                            <strong>{{ videoParticipantInitials(entry[0]) }}</strong>
+                          }
+                        </div>
+                        <strong>{{ videoParticipantLabel(entry[0]) }}</strong>
+                        <span>{{ 'CALLS.IN_CALL' | translate:'En llamada' }} - {{ call.startedAt | date:'shortTime' }}</span>
+                      </article>
+                    }
+                  </section>
                 }
               } @else {
                 <div class="waiting-tile" [class.over-video]="call.type === 'Video' && calls.localStream() && calls.phase() !== 'connected'">

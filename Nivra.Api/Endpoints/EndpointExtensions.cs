@@ -5370,10 +5370,20 @@ public static partial class EndpointExtensions
 
     private static string NormalizeVisibility(string? value, string fallback = "contacts")
     {
-        var normalized = NormalizeOptional(value)?.ToLowerInvariant();
-        return normalized is "everyone" or "contacts" or "nobody"
-            ? normalized
-            : fallback is "everyone" or "contacts" or "nobody" ? fallback : "contacts";
+        static string? NormalizeKnownValue(string? candidate)
+        {
+            return NormalizeOptional(candidate)?.ToLowerInvariant() switch
+            {
+                "everyone" or "todos" => "everyone",
+                "contacts" or "contactos" or "mis contactos" => "contacts",
+                "nobody" or "nadie" => "nobody",
+                _ => null
+            };
+        }
+
+        return NormalizeKnownValue(value)
+            ?? NormalizeKnownValue(fallback)
+            ?? "contacts";
     }
 
     private static string? VisibleProfilePhoto(UserAccount? user, string viewerUserId, bool ownerHasViewerAsContact)

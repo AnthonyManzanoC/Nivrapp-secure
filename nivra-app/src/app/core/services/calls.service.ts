@@ -22,6 +22,7 @@ interface PeerState {
   makingOffer: boolean;
   ignoreOffer: boolean;
   isSettingRemoteAnswerPending: boolean;
+  negotiationQueued: boolean;
 }
 
 interface DecodedCallSignalPayload {
@@ -768,20 +769,12 @@ export class CallsService implements OnDestroy {
   }
 
   private async replaceOutgoingVideoTrack(track: MediaStreamTrack): Promise<void> {
-    const replacements: Promise<void>[] = [];
     let requiresNegotiation = false;
     for (const peer of this.peers.values()) {
-      const sender = this.senderForKind(peer.connection, 'video');
-      if (sender) {
-        replacements.push(sender.replaceTrack(track).then(() => this.tuneOutgoingSender(sender)));
-      } else {
-        const stream = this.screenShareStream ?? this.localStream() ?? new MediaStream([track]);
-        const created = peer.connection.addTrack(track, stream);
-        replacements.push(this.tuneOutgoingSender(created));
-        requiresNegotiation = true;
-      }
+      const stream = this.screenShareStream ?? this.localStream() ?? new MediaStream([track]);
+      requiresNegotiation = await this.setOutgoingTrack(peer.connection, 'video', track, stream)
+        || requiresNegotiation;
     }
-    await Promise.all(replacements);
     if (requiresNegotiation) {
       await this.renegotiateDirectPeers();
     }
@@ -1630,6 +1623,7 @@ export class CallsService implements OnDestroy {
       makingOffer: false,
       ignoreOffer: false,
       isSettingRemoteAnswerPending: false,
+      negotiationQueued: false,
     });
     this.attachLocalTracks(connection);
 
@@ -1648,6 +1642,9 @@ export class CallsService implements OnDestroy {
         text: error.errorText,
         url: error.url,
       });
+    };
+    connection.onnegotiationneeded = () => {
+      this.queuePeerNegotiation(userId, connection);
     };
     connection.ontrack = (event) => {
       const stream = this.pendingRemoteStreams.get(userId) || this.remoteStreams()[userId] || new MediaStream();
@@ -1719,6 +1716,46 @@ export class CallsService implements OnDestroy {
     }
   }
 
+  private queuePeerNegotiation(userId: string, connection: RTCPeerConnection): void {
+    const peer = this.peers.get(userId);
+    if (!peer || peer.negotiationQueued || connection.connectionState === 'closed') {
+      return;
+    }
+    peer.negotiationQueued = true;
+    queueMicrotask(() => {
+      void (async () => {
+        try {
+          const call = this.activeCall();
+          const currentPeer = this.peers.get(userId);
+          if (
+            !call ||
+            !currentPeer ||
+            currentPeer.connection !== connection ||
+            this.isGroupCall(call) ||
+            this.phase() === 'ringing'
+          ) {
+            return;
+          }
+          if (connection.signalingState !== 'stable' || currentPeer.makingOffer) {
+            return;
+          }
+          if (this.shouldCreateOfferTo(userId)) {
+            await this.createAndSendOffer(userId);
+          } else {
+            await this.sendCallSignal(call, userId, 'renegotiate-request', {});
+          }
+        } catch {
+          this.error.set('No se pudo actualizar el video de la llamada. Intenta activar la cámara nuevamente.');
+        } finally {
+          const currentPeer = this.peers.get(userId);
+          if (currentPeer?.connection === connection) {
+            currentPeer.negotiationQueued = false;
+          }
+        }
+      })();
+    });
+  }
+
   private async renegotiateDirectPeers(forceLocalOffer = false): Promise<void> {
     const call = this.activeCall();
     if (!call || this.isGroupCall(call)) {
@@ -1726,13 +1763,21 @@ export class CallsService implements OnDestroy {
     }
     for (const userId of this.otherParticipantIds(call)) {
       const peer = this.peers.get(userId);
-      if (!peer || peer.connection.connectionState === 'closed') {
+      if (!peer || peer.connection.connectionState === 'closed' || peer.negotiationQueued) {
         continue;
       }
-      if ((forceLocalOffer || this.shouldCreateOfferTo(userId)) && peer.connection.signalingState === 'stable') {
-        await this.createAndSendOffer(userId).catch(() => undefined);
-      } else {
-        await this.sendCallSignal(call, userId, 'renegotiate-request', {}).catch(() => undefined);
+      peer.negotiationQueued = true;
+      try {
+        if ((forceLocalOffer || this.shouldCreateOfferTo(userId)) && peer.connection.signalingState === 'stable') {
+          await this.createAndSendOffer(userId).catch(() => undefined);
+        } else {
+          await this.sendCallSignal(call, userId, 'renegotiate-request', {}).catch(() => undefined);
+        }
+      } finally {
+        const currentPeer = this.peers.get(userId);
+        if (currentPeer === peer) {
+          currentPeer.negotiationQueued = false;
+        }
       }
     }
   }
@@ -2136,15 +2181,8 @@ export class CallsService implements OnDestroy {
 
     let requiresNegotiation = false;
     for (const peer of this.peers.values()) {
-      const sender = this.senderForKind(peer.connection, kind);
-      if (sender) {
-        await sender.replaceTrack(track);
-        await this.tuneOutgoingSender(sender);
-      } else {
-        const created = peer.connection.addTrack(track, stream);
-        await this.tuneOutgoingSender(created);
-        requiresNegotiation = true;
-      }
+      requiresNegotiation = await this.setOutgoingTrack(peer.connection, kind, track, stream)
+        || requiresNegotiation;
     }
     if (requiresNegotiation && renegotiate) {
       await this.renegotiateDirectPeers();
@@ -2171,9 +2209,47 @@ export class CallsService implements OnDestroy {
 
   private senderForKind(connection: RTCPeerConnection, kind: 'audio' | 'video'): RTCRtpSender | null {
     return connection.getSenders().find((sender) => sender.track?.kind === kind)
-      ?? connection.getTransceivers().find((transceiver) =>
-        transceiver.receiver.track.kind === kind)?.sender
+      ?? this.transceiverForKind(connection, kind)?.sender
       ?? null;
+  }
+
+  private transceiverForKind(connection: RTCPeerConnection, kind: 'audio' | 'video'): RTCRtpTransceiver | null {
+    return connection.getTransceivers().find((transceiver) =>
+      transceiver.sender.track?.kind === kind || transceiver.receiver.track.kind === kind) ?? null;
+  }
+
+  private async setOutgoingTrack(
+    connection: RTCPeerConnection,
+    kind: 'audio' | 'video',
+    track: MediaStreamTrack,
+    stream: MediaStream,
+  ): Promise<boolean> {
+    const transceiver = this.transceiverForKind(connection, kind);
+    const sender = connection.getSenders().find((candidate) => candidate.track?.kind === kind)
+      ?? transceiver?.sender
+      ?? null;
+    if (!sender) {
+      const created = connection.addTrack(track, stream);
+      await this.tuneOutgoingSender(created);
+      return true;
+    }
+
+    const previousTrack = sender.track;
+    await sender.replaceTrack(track);
+    await this.tuneOutgoingSender(sender);
+    if (!transceiver || previousTrack) {
+      return false;
+    }
+
+    if (transceiver.direction === 'recvonly') {
+      transceiver.direction = 'sendrecv';
+      return true;
+    }
+    if (transceiver.direction === 'inactive') {
+      transceiver.direction = 'sendonly';
+      return true;
+    }
+    return false;
   }
 
   private attachLocalTracks(connection: RTCPeerConnection): void {
@@ -2479,6 +2555,7 @@ export class CallsService implements OnDestroy {
   private closePeerConnection(connection: RTCPeerConnection): void {
     connection.onicecandidate = null;
     connection.onicecandidateerror = null;
+    connection.onnegotiationneeded = null;
     connection.ontrack = null;
     connection.onconnectionstatechange = null;
     connection.oniceconnectionstatechange = null;

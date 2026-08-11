@@ -147,6 +147,18 @@
                 <ion-icon name="checkmark-done-outline"></ion-icon>
                 <span>{{ 'CHAT.VIEW_ONCE_OPENED' | translate:'Mensaje de una vez abierto' }}</span>
               </div>
+            } @else if (isPendingViewOnce(message) && !chat.asFile(message.payload)) {
+              <button
+                type="button"
+                class="view-once-gate text-gate"
+                (click)="openViewOnce(message)"
+                [attr.aria-label]="'CHAT.OPEN_VIEW_ONCE_TEXT' | translate:'Abrir mensaje de una vez'">
+                <ion-icon name="document-text-outline"></ion-icon>
+                <span>
+                  <strong>{{ 'CHAT.VIEW_ONCE_TEXT' | translate:'Mensaje' }}</strong>
+                  <small>{{ 'CHAT.VIEW_ONCE_HINT' | translate:'Ver una vez' }}</small>
+                </span>
+              </button>
             } @else if (chat.asFile(message.payload); as file) {
               @if (isPendingViewOnce(message)) {
                 <button type="button" class="view-once-gate" (click)="openViewOnce(message)" [disabled]="downloadingId === message.id" [attr.aria-label]="('CHAT.OPEN_VIEW_ONCE' | translate:'Abrir mensaje de una vez') + ' ' + viewOnceMediaLabel(file)">
@@ -1162,6 +1174,37 @@
             (play)="markActiveAudioStarted()"
             (ended)="activeAudioEnded()">
           </audio>
+        </section>
+      }
+    </ng-template>
+  </ion-modal>
+
+  <ion-modal
+    class="view-once-text-modal"
+    [isOpen]="!!activeViewOnceTextMessage"
+    (didDismiss)="closeViewOnceText()">
+    <ng-template>
+      @if (activeViewOnceTextMessage; as viewOnceMessage) {
+        <section class="view-once-text-viewer">
+          <header>
+            <span>
+              <small>{{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }}</small>
+              <strong>{{ 'CHAT.VIEW_ONCE_TEXT_TITLE' | translate:'Mensaje privado' }}</strong>
+            </span>
+            <ion-button mode="ios" fill="clear" (click)="closeViewOnceText()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+              <ion-icon name="close-outline"></ion-icon>
+            </ion-button>
+          </header>
+          <div class="view-once-text-body">
+            <article>
+              <ion-icon name="document-text-outline"></ion-icon>
+              <p>{{ viewOnceMessage.payload.text || chat.preview(viewOnceMessage.payload) }}</p>
+            </article>
+          </div>
+          <footer>
+            <ion-icon name="lock-closed-outline"></ion-icon>
+            <span>{{ 'CHAT.VIEW_ONCE_CLOSE_NOTICE' | translate:'Al cerrar, este mensaje se marcará como abierto y dejará de estar disponible.' }}</span>
+          </footer>
         </section>
       }
     </ng-template>

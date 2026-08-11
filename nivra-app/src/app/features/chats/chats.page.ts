@@ -164,6 +164,7 @@ export class ChatsPage implements OnDestroy {
 
   ionViewDidEnter(): void {
     void this.social.load().catch(() => undefined);
+    void this.refreshRecentProfiles();
   }
 
   async openShareAccount(): Promise<void> {
@@ -179,6 +180,7 @@ export class ChatsPage implements OnDestroy {
     if (!this.query.trim()) {
       this.showRecentSearches = true;
       this.recentCollapsed = false;
+      void this.refreshRecentProfiles();
     }
   }
 
@@ -696,9 +698,19 @@ export class ChatsPage implements OnDestroy {
   }
 
   private rememberRecent(person: UserSummary): void {
-    const next = [person, ...this.recentSearches.filter((item) => item.id !== person.id)].slice(0, 8);
+    const current = this.chat.profileSummary(person);
+    const next = [current, ...this.recentSearches.filter((item) => item.id !== current.id)].slice(0, 8);
     this.recentSearches = next;
     localStorage.setItem(this.recentKey(), JSON.stringify(next));
+  }
+
+  private async refreshRecentProfiles(): Promise<void> {
+    if (!this.recentSearches.length) {
+      return;
+    }
+    await this.chat.refreshProfiles(this.recentSearches.map((person) => person.id));
+    this.recentSearches = this.recentSearches.map((person) => this.chat.profileSummary(person));
+    localStorage.setItem(this.recentKey(), JSON.stringify(this.recentSearches));
   }
 
   private loadRecent(): UserSummary[] {

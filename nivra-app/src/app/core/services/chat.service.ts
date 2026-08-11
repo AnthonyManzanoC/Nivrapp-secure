@@ -51,6 +51,7 @@ type ProfileSource = {
   bio?: string | null;
   profilePhotoDataUrl?: string | null;
   isDiscoverable?: boolean;
+  allowStoryReposts?: boolean;
   isContact?: boolean;
   isMutualContact?: boolean;
   isFavorite?: boolean;
@@ -1797,6 +1798,34 @@ export class ChatService implements OnDestroy {
     return this.isViewOnceOpenedPayload(message?.payload);
   }
 
+  profileSummary(person: UserSummary): UserSummary {
+    const profile = this.profileForUser(person.id);
+    if (!profile) {
+      return person;
+    }
+    return {
+      ...person,
+      alias: profile.alias || person.alias,
+      displayName: profile.displayName !== undefined ? profile.displayName : person.displayName,
+      phone: profile.phone !== undefined ? profile.phone : person.phone,
+      bio: profile.bio !== undefined ? profile.bio : person.bio,
+      profilePhotoDataUrl: profile.profilePhotoDataUrl !== undefined
+        ? profile.profilePhotoDataUrl
+        : person.profilePhotoDataUrl,
+      isDiscoverable: profile.isDiscoverable ?? person.isDiscoverable,
+      allowStoryReposts: profile.allowStoryReposts ?? person.allowStoryReposts,
+      isContact: profile.isContact ?? person.isContact,
+      isMutualContact: profile.isMutualContact ?? person.isMutualContact,
+      isFavorite: profile.isFavorite ?? person.isFavorite,
+      friendshipState: profile.friendshipState ?? person.friendshipState,
+    };
+  }
+
+  async refreshProfiles(userIds: Array<string | null | undefined>): Promise<void> {
+    const uniqueIds = [...new Set(userIds.filter((userId): userId is string => Boolean(userId)))];
+    await Promise.all(uniqueIds.map((userId) => this.refreshProfile(userId)));
+  }
+
   private upsertMessage(message: ChatMessageVm, options: { persist?: boolean } = {}): void {
     const messageWithPendingReactions = this.applyPendingReactions(message);
     this.messagesByConversation.update((state) => {
@@ -1808,6 +1837,7 @@ export class ChatService implements OnDestroy {
     if (options.persist !== false) {
       this.persistLocalMessage(messageWithPendingReactions);
     }
+    this.touchConversationFromMessage(messageWithPendingReactions);
     this.scheduleMessageExpiry(messageWithPendingReactions);
   }
 
@@ -1817,7 +1847,11 @@ export class ChatService implements OnDestroy {
       return;
     }
     const unread = (this.messagesByConversation()[conversationId] ?? []).filter((message) => {
-      if (message.mine || this.readReceiptSentIds.has(message.id)) {
+      if (
+        message.mine ||
+        this.readReceiptSentIds.has(message.id) ||
+        (message.deleteAfterRead && !this.isViewOnceOpened(message))
+      ) {
         return false;
       }
       const ownReceipts = (message.receipts ?? []).filter((receipt) => receipt.userId === current.user.id);
@@ -1828,19 +1862,16 @@ export class ChatService implements OnDestroy {
     }
 
     const readAt = new Date().toISOString();
-    const openedOnReadIds = unread
-      .filter((message) => this.shouldOpenViewOnceOnRead(message))
-      .map((message) => message.id);
-    this.applyOptimisticReadState(conversationId, unread, current.user.id, current.device.id, readAt, openedOnReadIds);
+    this.applyOptimisticReadState(conversationId, unread, current.user.id, current.device.id, readAt);
     await this.signalr.syncReadReceipts(conversationId, unread.map((message) => message.id), {
-      openedMessageIds: openedOnReadIds,
+      openedMessageIds: [],
     }).catch(() => undefined);
     const shouldSendReceipts = current.user.privacySettings?.readReceipts !== false;
     const receiptIds = new Set(unread
-      .filter((message) => shouldSendReceipts || openedOnReadIds.includes(message.id))
+      .filter(() => shouldSendReceipts)
       .map((message) => message.id));
     for (const message of unread.filter((item) => receiptIds.has(item.id))) {
-      await this.sendReceipt(message.id, 'Read', { opened: openedOnReadIds.includes(message.id) })
+      await this.sendReceipt(message.id, 'Read')
         .catch(() => this.readReceiptSentIds.delete(message.id));
     }
   }
@@ -1891,11 +1922,26 @@ export class ChatService implements OnDestroy {
     }
   }
 
-  private shouldOpenViewOnceOnRead(message: ChatMessageVm): boolean {
-    if (!message.deleteAfterRead || this.isViewOnceOpened(message) || this.asFile(message.payload)) {
-      return false;
+  private touchConversationFromMessage(message: ChatMessageVm): void {
+    const messageAt = Date.parse(message.at || '');
+    if (!Number.isFinite(messageAt)) {
+      return;
     }
-    return message.payload.type !== 'system' && message.payload.type !== 'call-log';
+    this.conversations.update((items) => {
+      let changed = false;
+      const next = items.map((conversation) => {
+        if (conversation.id !== message.conversationId) {
+          return conversation;
+        }
+        const currentAt = Date.parse(conversation.lastMessageAt || '') || 0;
+        if (messageAt <= currentAt) {
+          return conversation;
+        }
+        changed = true;
+        return { ...conversation, lastMessageAt: message.at };
+      });
+      return changed ? next.sort(this.compareConversations) : items;
+    });
   }
 
   private viewOnceOpenedReceipt(message: MessageResponse, currentUserId: string): DeliveryReceipt | null {
@@ -3205,6 +3251,7 @@ export class ChatService implements OnDestroy {
     if (persist) {
       void this.history.putProfiles(normalized).catch(() => undefined);
     }
+    this.syncProfileCollections(normalized.map((profile) => profile.userId));
     return normalized;
   }
 
@@ -3226,6 +3273,7 @@ export class ChatService implements OnDestroy {
       bio: has('bio') ? this.firstText(profile?.bio) : undefined,
       profilePhotoDataUrl: has('profilePhotoDataUrl') ? this.firstText(profile?.profilePhotoDataUrl) : undefined,
       isDiscoverable: profile?.isDiscoverable,
+      allowStoryReposts: profile?.allowStoryReposts,
       isContact: profile?.isContact,
       isMutualContact: profile?.isMutualContact,
       isFavorite: profile?.isFavorite,
@@ -3279,9 +3327,52 @@ export class ChatService implements OnDestroy {
           ? { ...state, [userId]: { ...previous, profilePhotoDataUrl: null, cachedAt: new Date().toISOString() } }
           : state;
       });
+      this.syncProfileCollections([userId]);
     } finally {
       this.profileFetchInFlight.delete(userId);
     }
+  }
+
+  private syncProfileCollections(userIds: string[]): void {
+    const changedIds = new Set(userIds);
+    if (!changedIds.size) {
+      return;
+    }
+    const profiles = this.profilesByUserId();
+    this.contacts.update((items) => {
+      let changed = false;
+      const next = items.map((contact) => {
+        const profile = changedIds.has(contact.userId) ? profiles[contact.userId] : null;
+        if (!profile) {
+          return contact;
+        }
+        changed = true;
+        return {
+          ...contact,
+          alias: profile.alias || contact.alias,
+          displayName: profile.displayName !== undefined ? profile.displayName : contact.displayName,
+          phone: profile.phone !== undefined ? profile.phone : contact.phone,
+          bio: profile.bio !== undefined ? profile.bio : contact.bio,
+          profilePhotoDataUrl: profile.profilePhotoDataUrl !== undefined
+            ? profile.profilePhotoDataUrl
+            : contact.profilePhotoDataUrl,
+          isFavorite: profile.isFavorite ?? contact.isFavorite,
+          isMutualContact: profile.isMutualContact ?? contact.isMutualContact,
+        };
+      });
+      return changed ? next : items;
+    });
+    this.directoryResults.update((items) => {
+      let changed = false;
+      const next = items.map((person) => {
+        if (!changedIds.has(person.id) || !profiles[person.id]) {
+          return person;
+        }
+        changed = true;
+        return this.profileSummary(person);
+      });
+      return changed ? next : items;
+    });
   }
 
   private isArchivedConversationRecord(conversation: Conversation): boolean {

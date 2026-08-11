@@ -71,20 +71,22 @@
           </div>
           <div class="recent-row">
             @for (person of recentSearches; track person.id) {
-              <div class="recent-tile">
-                <button type="button" class="recent-open" (click)="startConversation(person)">
-                  @if (person.profilePhotoDataUrl) {
-                    <img class="avatar large avatar-img" [src]="person.profilePhotoDataUrl" alt="">
-                  } @else {
-                    <span class="avatar large">{{ (person.displayName || person.phone || person.alias).slice(0, 2).toUpperCase() }}</span>
-                  }
-                  <strong>{{ person.displayName || person.phone || person.alias }}</strong>
-                  <small>{{ person.phone || '@' + person.alias }}</small>
-                </button>
-                <button type="button" class="recent-remove" (click)="removeRecent(person, $event)" [attr.aria-label]="'CHATS.REMOVE_RECENT_SEARCH' | translate:'Quitar busqueda reciente'">
-                  <ion-icon name="close-outline"></ion-icon>
-                </button>
-              </div>
+              @if (chat.profileSummary(person); as recentPerson) {
+                <div class="recent-tile">
+                  <button type="button" class="recent-open" (click)="startConversation(recentPerson)">
+                    @if (recentPerson.profilePhotoDataUrl) {
+                      <img class="avatar large avatar-img" [src]="recentPerson.profilePhotoDataUrl" alt="">
+                    } @else {
+                      <span class="avatar large">{{ (recentPerson.displayName || recentPerson.phone || recentPerson.alias).slice(0, 2).toUpperCase() }}</span>
+                    }
+                    <strong>{{ recentPerson.displayName || recentPerson.phone || recentPerson.alias }}</strong>
+                    <small>{{ recentPerson.phone || '@' + recentPerson.alias }}</small>
+                  </button>
+                  <button type="button" class="recent-remove" (click)="removeRecent(recentPerson, $event)" [attr.aria-label]="'CHATS.REMOVE_RECENT_SEARCH' | translate:'Quitar busqueda reciente'">
+                    <ion-icon name="close-outline"></ion-icon>
+                  </button>
+                </div>
+              }
             }
           </div>
         </div>

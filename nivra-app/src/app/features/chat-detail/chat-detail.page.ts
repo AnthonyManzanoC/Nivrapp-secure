@@ -50,6 +50,7 @@ import {
   closeOutline,
   copyOutline,
   createOutline,
+  documentTextOutline,
   informationCircleOutline,
   languageOutline,
   lockClosedOutline,
@@ -221,6 +222,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   activeMediaFile: FileChatPayload | null = null;
   activeMediaMessage: ChatMessageVm | null = null;
   activeMediaZoom = 1;
+  activeViewOnceTextMessage: ChatMessageVm | null = null;
   groupNameDraft = '';
   groupAvatarDraft: string | null = null;
   groupAvatarCropFile: File | null = null;
@@ -314,6 +316,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       closeOutline,
       copyOutline,
       createOutline,
+      documentTextOutline,
       informationCircleOutline,
       languageOutline,
       lockClosedOutline,
@@ -2508,7 +2511,24 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async openViewOnce(message: ChatMessageVm): Promise<void> {
-    await this.openMediaItem(message);
+    if (this.chat.asFile(message.payload)) {
+      await this.openMediaItem(message);
+      return;
+    }
+    if (!this.isPendingViewOnce(message)) {
+      return;
+    }
+    this.activeViewOnceTextMessage = message;
+  }
+
+  async closeViewOnceText(): Promise<void> {
+    const message = this.activeViewOnceTextMessage;
+    this.activeViewOnceTextMessage = null;
+    if (message && this.shouldMarkViewOnceOpened(message)) {
+      await this.chat.markMessageOpened(message).catch(() => {
+        this.notice = this.tr('CHAT.ERROR_MARK_VIEW_ONCE', 'No se pudo confirmar la apertura. Intenta nuevamente.');
+      });
+    }
   }
 
   isPendingViewOnce(message: ChatMessageVm | null | undefined): boolean {
