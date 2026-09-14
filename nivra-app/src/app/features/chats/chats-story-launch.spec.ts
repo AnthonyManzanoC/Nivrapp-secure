@@ -1,4 +1,4 @@
-import { signal } from '@angular/core';
+import { NgZone, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import { ActionSheetController } from '@ionic/angular/standalone';
@@ -15,16 +15,27 @@ import { ChatsPage } from './chats.page';
 describe('Chats story creation entry', () => {
   let page: ChatsPage;
   let navigate: jasmine.Spy;
+  let chat: any;
+  let history: any;
 
   beforeEach(() => {
     navigate = jasmine.createSpy('navigate').and.resolveTo(true);
+    chat = {
+      bootstrap: jasmine.createSpy('bootstrap').and.resolveTo(),
+      conversations: signal([]),
+      clearSelectedConversation: () => undefined,
+    };
+    history = {
+      storageError: signal(''),
+      clearStorageError: jasmine.createSpy('clearStorageError').and.callFake(() => history.storageError.set('')),
+    };
     TestBed.configureTestingModule({ providers: [
       { provide: Router, useValue: { events: EMPTY, url: '/app/chats', navigate, parseUrl: () => ({ root: { children: {} } }) } },
       { provide: AuthService, useValue: { session: signal({ user: { id: 'me', alias: 'maria' } }) } },
       { provide: AppSettingsService, useValue: {} },
-      { provide: ChatService, useValue: { conversations: signal([]), clearSelectedConversation: () => undefined } },
+      { provide: ChatService, useValue: chat },
       { provide: SocialService, useValue: { stories: signal([]), load: async () => undefined } },
-      { provide: LocalHistoryService, useValue: { storageError: signal('') } },
+      { provide: LocalHistoryService, useValue: history },
       { provide: NativeDeviceService, useValue: {} },
       { provide: ActionSheetController, useValue: {} },
       { provide: TranslateService, useValue: { instant: (_key: string, fallback: string) => fallback } },
@@ -68,5 +79,27 @@ describe('Chats story creation entry', () => {
     expect(page.storiesCollapsed).toBeTrue();
     scroll(0, 900, 480);
     expect(page.storiesCollapsed).toBeFalse();
+  });
+
+  it('clears the encrypted-history warning inside Angular after a successful retry', async () => {
+    history.storageError.set('No se pudo abrir el historial cifrado.');
+    const zoneRun = spyOn(TestBed.inject(NgZone), 'run').and.callThrough();
+
+    await page.refresh();
+
+    expect(chat.bootstrap).toHaveBeenCalledTimes(1);
+    expect(zoneRun).toHaveBeenCalled();
+    expect(history.clearStorageError).toHaveBeenCalledTimes(1);
+    expect(history.storageError()).toBe('');
+  });
+
+  it('leaves the encrypted-history warning visible when retry fails', async () => {
+    history.storageError.set('No se pudo abrir el historial cifrado.');
+    chat.bootstrap.and.rejectWith(new Error('offline'));
+
+    await page.refresh();
+
+    expect(history.clearStorageError).not.toHaveBeenCalled();
+    expect(history.storageError()).toContain('historial cifrado');
   });
 });

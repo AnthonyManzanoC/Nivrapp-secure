@@ -30,7 +30,7 @@ import { PushService } from '../../core/services/push.service';
 import { NativeDeviceService } from '../../core/services/native-device.service';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 import { formatNivraNumber } from '../../core/utils/nivra-number';
-import { RecoveryEmailComponent } from '../../shared/recovery-email.component';
+import { RecoveryEmailComponent, RecoveryEmailState } from '../../shared/recovery-email.component';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const PIN_LENGTH = 4;
@@ -61,6 +61,7 @@ export class AccountPage implements OnInit, OnDestroy {
   private originalAlias = '';
   displayName = '';
   email = '';
+  recoveryEmailVerified = false;
   phone = '';
   bio = '';
   profilePhotoDataUrl = '';
@@ -217,7 +218,9 @@ export class AccountPage implements OnInit, OnDestroy {
       this.originalAlias = this.normalizeAlias(user.alias);
       this.aliasStatus = 'idle';
       this.displayName = user.displayName ?? '';
-      this.email = user.email ?? '';
+      if (!this.recoveryEmailVerified) {
+        this.email = user.email ?? '';
+      }
       this.phone = user.phone ?? '';
       this.bio = user.bio ?? '';
       this.profilePhotoDataUrl = user.profilePhotoDataUrl ?? '';
@@ -230,6 +233,14 @@ export class AccountPage implements OnInit, OnDestroy {
       );
     }
     await this.refreshStorageEstimate();
+  }
+
+  onRecoveryEmailState(state: RecoveryEmailState): void {
+    this.recoveryEmailVerified = state.verified;
+    // Recovery email is deliberately managed by its own verified flow.  Keep
+    // the profile field in sync without letting an unverified edit reach the
+    // general /me profile endpoint.
+    this.email = state.verified ? state.email ?? '' : this.auth.session()?.user?.email ?? '';
   }
 
   async saveProfile(): Promise<void> {
@@ -247,8 +258,6 @@ export class AccountPage implements OnInit, OnDestroy {
       await this.account.updateProfile({
         alias,
         displayName: this.displayName || null,
-        email: this.email || null,
-        phone: this.phone || null,
         bio: this.bio || null,
         ...(this.profilePhotoDirty ? { profilePhotoDataUrl: this.profilePhotoDataUrl } : {}),
         isDiscoverable: this.isDiscoverable,

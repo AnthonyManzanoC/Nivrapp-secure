@@ -1,19 +1,89 @@
 @use "../shared-page";
 
-.call-game-area { display: block; min-height: 0; overflow: auto; text-align: left; }
+.call-game-area {
+  display: block;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  text-align: left;
+  -webkit-overflow-scrolling: touch;
+}
+
 .surface.call-mode.games-open .call-active {
-  grid-template-rows: minmax(120px, 30dvh) minmax(0, 1fr);
-  padding-top: calc(56px + env(safe-area-inset-top));
-  padding-bottom: calc(90px + env(safe-area-inset-bottom));
+  --call-game-panel-width: clamp(300px, 31vw, 350px);
+  --call-game-controls-reserve: calc(174px + env(safe-area-inset-bottom));
+  grid-template-rows: minmax(0, 1fr);
+  padding: 0;
 }
-.surface.call-mode.games-open .call-stage { min-height: 0; height: 100%; }
+
+.surface.call-mode.games-open .call-stage {
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+}
+
 .surface.call-mode.games-open .call-stage .video-gallery,
-.surface.call-mode.games-open .call-stage .video-composition { min-height: 0; height: 100%; }
-.surface.call-mode.games-open .call-game-area { position: relative; z-index: 9; background: var(--nivra-bg, #10191d); }
-.games-button.has-game { --color: #25d366; }
-@media (min-width: 1000px) {
-  .surface.call-mode.games-open .call-active { grid-template-columns: minmax(0, 1fr) minmax(360px, 430px); grid-template-rows: minmax(0, 1fr); }
+.surface.call-mode.games-open .call-stage .video-composition {
+  min-height: 0;
+  height: 100%;
 }
+
+/* A side panel on desktop preserves the stage's own dimensions and video aspect ratios. */
+@media (min-width: 1000px) {
+  .surface.call-mode.games-open .call-active {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+  }
+
+  .surface.call-mode.games-open .call-stage {
+    flex: 1 1 auto;
+    width: auto;
+    min-height: 0;
+  }
+
+  .surface.call-mode.games-open .call-game-area {
+    position: relative;
+    z-index: 9;
+    flex: 0 0 var(--call-game-panel-width);
+    width: var(--call-game-panel-width);
+    max-width: 350px;
+    height: 100%;
+    border-left: 1px solid rgba(255, 255, 255, .1);
+    background: var(--nivra-panel-solid, #0d161a);
+    box-shadow: -18px 0 42px rgba(0, 0, 0, .2);
+  }
+
+  .surface.call-mode.games-open .call-controls {
+    left: calc((100% - var(--call-game-panel-width)) / 2);
+    width: min(calc(100% - var(--call-game-panel-width) - 36px), 560px);
+  }
+}
+
+/* Phones keep the camera stage intact. The game becomes a scrollable sheet above controls. */
+@media (max-width: 999px) {
+  .surface.call-mode.games-open .call-active {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .surface.call-mode.games-open .call-game-area {
+    position: fixed;
+    z-index: 30;
+    right: max(0px, env(safe-area-inset-right));
+    bottom: var(--call-game-controls-reserve);
+    left: max(0px, env(safe-area-inset-left));
+    max-height: calc(100dvh - var(--call-game-controls-reserve) - 18px);
+    border: 1px solid var(--nivra-line-strong, rgba(223, 239, 234, .22));
+    border-bottom: 0;
+    border-radius: 22px 22px 0 0;
+    background: var(--nivra-panel-solid, #0d161a);
+    box-shadow: 0 -18px 50px rgba(0, 0, 0, .42);
+  }
+}
+
+.games-button.has-game { --color: #25d366; }
 
 .panel-head {
   display: flex;

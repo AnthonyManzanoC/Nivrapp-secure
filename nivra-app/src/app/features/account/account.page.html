@@ -13,7 +13,7 @@
     <section class="grid">
       <article class="panel span-7">
         <h2>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</h2>
-        <app-recovery-email></app-recovery-email>
+        <app-recovery-email (stateChange)="onRecoveryEmailState($event)"></app-recovery-email>
         @if (nivraNumber()) {
           <section class="nivra-number-card" [attr.aria-label]="'ACCOUNT.NIVRA_ID' | translate:'Tu ID Nivra'">
             <div>
@@ -101,13 +101,14 @@
             <span>{{ 'ACCOUNT.NAME' | translate:'Nombre' }}</span>
             <ion-input mode="ios" fill="outline" [(ngModel)]="displayName"></ion-input>
           </label>
-          <label>
+          <label class="recovery-email-field">
             <span>{{ 'ACCOUNT.EMAIL' | translate:'Email' }}</span>
-            <ion-input mode="ios" fill="outline" [(ngModel)]="email" type="email"></ion-input>
-          </label>
-          <label>
-            <span>{{ 'ACCOUNT.PHONE' | translate:'Telefono' }}</span>
-            <ion-input mode="ios" fill="outline" [(ngModel)]="phone" type="tel"></ion-input>
+            <ion-input mode="ios" fill="outline" [ngModel]="email" type="email" readonly aria-readonly="true" autocomplete="email"></ion-input>
+            @if (recoveryEmailVerified) {
+              <small class="alias-ok">Correo de recuperación verificado. Para cambiarlo, usa “Cambiar correo” arriba.</small>
+            } @else {
+              <small class="alias-hint">Verifica un correo de recuperación arriba para mantenerlo protegido.</small>
+            }
           </label>
           <label class="wide">
             <span>{{ 'ACCOUNT.BIO' | translate:'Bio' }}</span>

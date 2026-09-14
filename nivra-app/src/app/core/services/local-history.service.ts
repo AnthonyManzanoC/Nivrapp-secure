@@ -1,4 +1,4 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, NgZone, inject, signal } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import type { SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { IDBPDatabase, openDB } from 'idb';
@@ -99,9 +99,23 @@ interface ConversationMessagesPageOptions {
 @Injectable({ providedIn: 'root' })
 export class LocalHistoryService {
   readonly storageError = signal('');
+  private readonly ngZone = inject(NgZone);
   private readonly secureVault = inject(NativeSecureVaultService);
   private dbPromise?: Promise<IDBPDatabase | null>;
   private sqlitePromise?: Promise<SQLiteDBConnection>;
+
+  /**
+   * Native Capacitor callbacks can resolve outside Angular's zone.  Keep the
+   * banner signal mutation in the zone so a successful unlock redraws Chats
+   * immediately on Android.
+   */
+  clearStorageError(): void {
+    this.ngZone.run(() => this.storageError.set(''));
+  }
+
+  private setStorageError(message: string): void {
+    this.ngZone.run(() => this.storageError.set(message));
+  }
 
   async conversationMessagesPage(
     accountKey: string,
@@ -977,12 +991,12 @@ export class LocalHistoryService {
           created_at TEXT NOT NULL
         );
       `);
-      this.storageError.set('');
+      this.clearStorageError();
       return db;
     } catch {
       await sqlite?.closeConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
       const message = 'No se pudo abrir el historial cifrado. Desbloquea el dispositivo y vuelve a intentar. Tus datos locales se han conservado.';
-      this.storageError.set(message);
+      this.setStorageError(message);
       throw new Error(message);
     } finally {
       await sqlite?.clearEncryptionSecret().catch(() => undefined);
@@ -1281,13 +1295,13 @@ export class LocalHistoryService {
     const existing = await store.get(accountKey) as LocalVaultKeyRecord | undefined;
     const protectedKey = await this.unprotectLocalVaultKey(existing);
     if (protectedKey) {
-      this.storageError.set('');
+      this.clearStorageError();
       return protectedKey;
     }
     if (existing?.keyEnvelope) {
       // Never replace an existing encrypted key just because its protector is temporarily unavailable.
       const message = 'No se pudo desbloquear la clave del historial local. Desbloquea el dispositivo y vuelve a intentar. La clave guardada se ha conservado.';
-      this.storageError.set(message);
+      this.setStorageError(message);
       throw new Error(message);
     }
     if (existing?.key) {

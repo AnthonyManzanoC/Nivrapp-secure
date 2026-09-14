@@ -1,3 +1,4 @@
+import { NgZone } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Capacitor } from '@capacitor/core';
 import { SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
@@ -46,10 +47,12 @@ describe('local history vault recovery', () => {
     expect(fallback).not.toHaveBeenCalled();
     expect(service.storageError()).toContain('historial cifrado');
 
+    const zoneRun = spyOn(TestBed.inject(NgZone), 'run').and.callThrough();
     db.open.and.resolveTo();
     await expectAsync(service.conversationMessagesPage('account', 'conversation')).toBeResolvedTo([]);
     expect(db.open).toHaveBeenCalledTimes(2);
     expect(fallback).not.toHaveBeenCalled();
+    expect(zoneRun).toHaveBeenCalled();
     expect(service.storageError()).toBe('');
   });
 

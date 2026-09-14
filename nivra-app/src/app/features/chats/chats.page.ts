@@ -1,5 +1,5 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { Component, ElementRef, OnDestroy, ViewChild, computed, inject, signal } from '@angular/core';
+import { Component, ElementRef, NgZone, OnDestroy, ViewChild, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import {
@@ -76,6 +76,7 @@ export class ChatsPage implements OnDestroy {
   readonly appSettings = inject(AppSettingsService);
   readonly localHistory = inject(LocalHistoryService);
   private readonly translate = inject(TranslateService);
+  private readonly ngZone = inject(NgZone);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly actionSheetController = inject(ActionSheetController);
@@ -197,9 +198,18 @@ export class ChatsPage implements OnDestroy {
     this.routeSub?.unsubscribe();
   }
 
-  refresh(): void {
-    void this.chat.bootstrap();
+  async refresh(): Promise<void> {
     void this.social.load().catch(() => undefined);
+    try {
+      await this.chat.bootstrap();
+      // Capacitor's SQLite promise may resolve outside Angular's zone.  The
+      // explicit zone entry makes the encrypted-history warning disappear as
+      // soon as a manual reload succeeds.
+      this.ngZone.run(() => this.localHistory.clearStorageError());
+    } catch {
+      // Keep the warning visible when either local storage or the remote
+      // reload failed.  It contains the action the user can take next.
+    }
   }
 
   ionViewDidEnter(): void {

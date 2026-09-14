@@ -43,4 +43,20 @@ describe('CallGamePanelComponent', () => {
     expect(closed).toHaveBeenCalledTimes(1);
     expect(action).not.toHaveBeenCalled();
   });
+
+  it('keeps the game text readable when the app uses the light theme', async () => {
+    document.body.classList.add('nivra-light-theme');
+    try {
+      await TestBed.configureTestingModule({ imports: [CallGamePanelComponent] }).compileComponents();
+      const fixture = TestBed.createComponent(CallGamePanelComponent);
+      fixture.detectChanges();
+
+      const panel = fixture.nativeElement.querySelector('.call-games') as HTMLElement;
+      const title = fixture.nativeElement.querySelector('h2') as HTMLElement;
+      expect(getComputedStyle(panel).backgroundColor).toBe('rgb(255, 255, 255)');
+      expect(getComputedStyle(title).color).toBe('rgb(17, 24, 39)');
+    } finally {
+      document.body.classList.remove('nivra-light-theme');
+    }
+  });
 });

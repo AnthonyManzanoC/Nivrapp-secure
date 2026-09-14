@@ -309,6 +309,10 @@ export class ChatService implements OnDestroy {
       }
       await this.refreshPresenceForConversations();
       this.hasBootstrappedSession = true;
+      // A remote bootstrap is authoritative even when the native encrypted
+      // cache had been temporarily unavailable.  Clear its warning only once
+      // the full data reload above has completed successfully.
+      this.history.clearStorageError();
     } finally {
       this.loading.set(false);
     }

@@ -1087,6 +1087,11 @@ ion-modal.account-photo-viewer-modal::part(content) {
   --padding-start: 14px;
 }
 
+.recovery-email-field ion-input {
+  --background: rgba(24, 214, 162, .045);
+  --color: var(--nivra-text);
+}
+
 .alias-hint,
 .alias-error,
 .alias-ok {
