@@ -13,6 +13,20 @@
     <section class="grid">
       <article class="panel span-7">
         <h2>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</h2>
+        <app-recovery-email></app-recovery-email>
+        @if (nivraNumber()) {
+          <section class="nivra-number-card" [attr.aria-label]="'ACCOUNT.NIVRA_ID' | translate:'Tu ID Nivra'">
+            <div>
+              <span>{{ 'ACCOUNT.NIVRA_ID' | translate:'Tu ID Nivra' }}</span>
+              <strong dir="ltr">{{ nivraNumber() }}</strong>
+              <p>{{ 'ACCOUNT.NIVRA_ID_HELP' | translate:'Es tu identificador privado, no un teléfono. Compártelo para que te encuentren o úsalo para iniciar sesión.' }}</p>
+            </div>
+            <div class="nivra-number-actions">
+              <ion-button mode="ios" fill="outline" (click)="copyNivraNumber()"><ion-icon name="copy-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.COPY_ID' | translate:'Copiar ID' }}</ion-button>
+              <ion-button mode="ios" fill="clear" (click)="shareAccount()"><ion-icon name="share-social-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.SHARE_ID' | translate:'Compartir' }}</ion-button>
+            </div>
+          </section>
+        }
         <div class="profile-photo-row">
           <input #profilePhotoInput type="file" accept="image/*" hidden (change)="pickProfilePhoto($event)">
           <button

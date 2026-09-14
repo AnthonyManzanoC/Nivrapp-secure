@@ -1,0 +1,84 @@
+<section class="call-games" aria-label="Juegos en llamada">
+  <header>
+    <div><small>JUEGA CON TU GENTE</small><h2>{{ title() }}</h2></div>
+    <button type="button" class="close-game" (click)="closed.emit()" aria-label="Cerrar juegos">×</button>
+  </header>
+
+  @if (!transportReady) {
+    <p class="connection-note" role="status">Esperando conexión con las otras personas de la llamada…</p>
+  }
+  @if (error) { <p class="game-error" role="alert">{{ error }}</p> }
+
+  @if (!state) {
+    <p class="intro">La llamada sigue mientras juegan. Invita a quienes están contigo.</p>
+    <div class="game-selection">
+      @for (choice of choices; track choice.kind) {
+        <button type="button" [disabled]="!transportReady" (click)="create.emit(choice.kind)" class="game-choice">
+          <span class="game-art" aria-hidden="true">{{ choice.symbol }}</span>
+          <span><strong>{{ choice.title }}</strong><small>{{ choice.description }}</small></span>
+          <span class="choice-arrow" aria-hidden="true">›</span>
+        </button>
+      }
+    </div>
+    <p class="fine-print">Los tableros son para dos jugadores. En el reto de cálculo pueden participar hasta doce; las demás personas pueden mirar.</p>
+  } @else {
+    <div class="round-head"><span>Ronda {{ state.round }}</span><span>{{ state.playerIds.length }} jugadores</span></div>
+    <div class="player-list" aria-label="Jugadores">
+      @for (playerId of state.playerIds; track playerId; let index = $index) {
+        <div class="player-chip" [class.player-one]="index === 0" [class.player-two]="index === 1" [class.active-player]="state.turnUserId === playerId">
+          <span class="player-dot" aria-hidden="true"></span>
+          <strong>{{ label(playerId) }}</strong>
+          @if (state.kind === 'trivia') { <b>{{ state.scores[playerId] || 0 }}</b> }
+          @if (state.hostUserId === playerId) { <small>Anfitrión</small> }
+        </div>
+      }
+    </div>
+    <p class="game-status" [class.my-turn]="myTurn()" role="status" aria-live="polite">{{ statusLabel() }}</p>
+
+    @if (state.status === 'lobby') {
+      <div class="lobby-art" aria-hidden="true">{{ state.kind === 'trivia' ? '+ × −' : '× ○' }}</div>
+      @if (canJoin()) {
+        <button type="button" class="primary-game-action" (click)="dispatch('join')" [disabled]="!transportReady">Unirme a la partida</button>
+      } @else if (!hasJoined()) {
+        <p class="fine-print">Los puestos están completos. Puedes seguir la partida desde aquí.</p>
+      }
+      @if (isHost()) {
+        <button type="button" class="primary-game-action" (click)="dispatch('start')" [disabled]="!transportReady || state.playerIds.length < 2">Comenzar ronda</button>
+      }
+    } @else if (state.kind === 'tic-tac-toe') {
+      <div class="tic-board" role="group" aria-label="Tablero de tres en raya">
+        @for (cell of state.board; track $index; let index = $index) {
+          <button type="button" [class.player-one]="cell && cell === state.playerIds[0]" [class.player-two]="cell && cell === state.playerIds[1]"
+            [disabled]="!transportReady || !myTurn() || !!cell" (click)="move(index)"
+            [attr.aria-label]="'Casilla ' + (index + 1) + ', ' + (cell ? label(cell) : 'libre')">{{ symbol(cell) }}</button>
+        }
+      </div>
+    } @else if (state.kind === 'connect-four') {
+      <div class="drop-columns" aria-label="Elegir columna">
+        @for (column of columns; track column) {
+          <button type="button" (click)="move(column)" [disabled]="!transportReady || !myTurn() || !!state.board[column]" [attr.aria-label]="'Dejar ficha en columna ' + (column + 1)">↓</button>
+        }
+      </div>
+      <div class="four-board" role="img" aria-label="Tablero de cuatro en línea">
+        @for (cell of state.board; track $index) {
+          <span class="four-cell" [class.player-one]="cell && cell === state.playerIds[0]" [class.player-two]="cell && cell === state.playerIds[1]"><i>{{ cell ? symbol(cell) : '' }}</i></span>
+        }
+      </div>
+    } @else if (state.question && state.status === 'playing') {
+      <div class="trivia-progress"><span>Pregunta {{ state.questionIndex + 1 }} de {{ questionCount }}</span><span>{{ state.answeredPlayerIds.length }}/{{ state.playerIds.length }} respuestas</span></div>
+      <h3 class="trivia-question">{{ state.question.prompt }}</h3>
+      <div class="trivia-options">
+        @for (option of state.question.options; track $index; let index = $index) {
+          <button type="button" (click)="answer(index)" [disabled]="!transportReady || !hasJoined() || hasAnswered()"><span>{{ ['A', 'B', 'C', 'D'][index] }}</span>{{ option }}</button>
+        }
+      </div>
+    }
+
+    @if (state.status === 'finished' && isHost()) {
+      <button type="button" class="primary-game-action" (click)="dispatch('rematch')" [disabled]="!transportReady">Preparar revancha</button>
+    }
+    @if (hasJoined() && !isHost() && state.status !== 'finished') {
+      <button type="button" class="leave-game" (click)="dispatch('leave')" [disabled]="!transportReady">Dejar la partida y seguir mirando</button>
+    }
+  }
+</section>

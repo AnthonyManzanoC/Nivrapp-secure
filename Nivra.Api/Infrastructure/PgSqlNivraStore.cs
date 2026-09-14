@@ -22,10 +22,16 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
         }
     }
 
-    public Task<UserAccount?> FindUserByAliasAsync(string alias, CancellationToken cancellationToken = default)
+    public async Task<UserAccount?> FindUserByAliasAsync(string alias, CancellationToken cancellationToken = default)
     {
-        var normalized = NormalizeAlias(alias);
-        return db.Users.FirstOrDefaultAsync(user => user.Alias == normalized, cancellationToken);
+        var number = NivraNumbers.Normalize(alias);
+        if (number is not null)
+        {
+            var numberedUser = await db.Users.FirstOrDefaultAsync(user => user.NivraNumber == number, cancellationToken);
+            if (numberedUser is not null) return numberedUser;
+        }
+        var normalized = NivraNumbers.NormalizeAlias(alias);
+        return await db.Users.FirstOrDefaultAsync(user => user.Alias == normalized, cancellationToken);
     }
 
     public Task<UserAccount?> GetUserAsync(string userId, CancellationToken cancellationToken = default)

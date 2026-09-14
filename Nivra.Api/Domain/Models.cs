@@ -107,9 +107,12 @@ public enum VaultMemberStatus
 public sealed class UserAccount
 {
     public required string Id { get; init; }
+    public string NivraNumber { get; set; } = string.Empty;
     public required string Alias { get; set; }
     public string? DisplayName { get; set; }
     public string? Email { get; set; }
+    public string? RecoveryEmail { get; set; }
+    public DateTimeOffset? RecoveryEmailVerifiedAt { get; set; }
     public string? Phone { get; set; }
     public string? PhoneHash { get; set; }
     public bool RequiresAlias { get; set; }
@@ -118,7 +121,7 @@ public sealed class UserAccount
     public bool IsDiscoverable { get; set; } = true;
     public bool AllowStoryReposts { get; set; } = true;
     public string PlanCode { get; set; } = "free";
-    public required PasswordHash PasswordHash { get; init; }
+    public required PasswordHash PasswordHash { get; set; }
     public PrivacySettings PrivacySettings { get; set; } = PrivacySettings.Default();
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset UpdatedAt { get; set; }
@@ -423,12 +426,18 @@ public sealed class CallSession
     public required string Id { get; init; }
     public string? ConversationId { get; set; }
     public required string InitiatorUserId { get; init; }
+    public string? InitiatorDeviceId { get; init; }
+    public string? InitiatorSessionId { get; init; }
+    public string? MediaEncryption { get; init; }
     public CallType Type { get; set; }
     public CallStatus Status { get; set; }
     public HashSet<string> ParticipantUserIds { get; set; } = new(StringComparer.Ordinal);
+    public Dictionary<string, CallParticipantSession> ParticipantSessions { get; set; } = new(StringComparer.Ordinal);
     public DateTimeOffset StartedAt { get; init; }
     public DateTimeOffset? EndedAt { get; set; }
 }
+
+public sealed record CallParticipantSession(string DeviceId, string? ClientSessionId);
 
 public sealed class CallSignalRecord
 {
@@ -436,7 +445,10 @@ public sealed class CallSignalRecord
     public required string CallId { get; init; }
     public required string FromUserId { get; init; }
     public string? FromDeviceId { get; init; }
+    public string? FromClientSessionId { get; init; }
     public required string TargetUserId { get; init; }
+    public string? TargetDeviceId { get; init; }
+    public string? TargetClientSessionId { get; init; }
     public required string SignalType { get; init; }
     public required string PayloadCiphertext { get; init; }
     public DateTimeOffset CreatedAt { get; init; }

@@ -1520,8 +1520,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const participantUserIds = conversation.participants
       .filter((participant) => !participant.removedAt && participant.userId !== currentUserId)
       .map((participant) => participant.userId);
-    await this.calls.start(type, conversation.id, participantUserIds);
-    await this.router.navigateByUrl('/app/calls');
+    await this.runAction('call:start', async () => {
+      const room = this.chat.isGroup(conversation) ? await this.calls.refreshActiveGroupRoom(conversation.id) : null;
+      if (room) { await this.calls.joinGroupRoom(room); }
+      else { await this.calls.start(type, conversation.id, participantUserIds); }
+      if (this.calls.activeCall()) { await this.router.navigateByUrl('/app/calls'); }
+    });
   }
 
   async joinGroupCall(): Promise<void> {
@@ -1529,8 +1533,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!room) {
       return;
     }
-    await this.calls.joinGroupRoom(room);
-    await this.router.navigateByUrl('/app/calls');
+    await this.runAction('call:join', async () => {
+      await this.calls.joinGroupRoom(room);
+      if (this.calls.activeCall()) { await this.router.navigateByUrl('/app/calls'); }
+    });
   }
 
   private refreshActiveGroupCallBanner(conversationId: string | null | undefined): void {

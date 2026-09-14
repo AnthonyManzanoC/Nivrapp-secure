@@ -29,6 +29,8 @@ import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
 import { NativeDeviceService } from '../../core/services/native-device.service';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
+import { formatNivraNumber } from '../../core/utils/nivra-number';
+import { RecoveryEmailComponent } from '../../shared/recovery-email.component';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const PIN_LENGTH = 4;
@@ -38,7 +40,7 @@ type AliasStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss'],
 })
@@ -678,6 +680,19 @@ export class AccountPage implements OnInit, OnDestroy {
     return this.phone.trim() ? 'public' : 'ghost';
   }
 
+  nivraNumber(): string {
+    return formatNivraNumber(this.auth.session()?.user.nivraNumber);
+  }
+
+  async copyNivraNumber(): Promise<void> {
+    const number = this.auth.session()?.user.nivraNumber;
+    if (!number) { return; }
+    await this.run(async () => {
+      await this.nativeDevice.copyToClipboard(number, 'ID Nivra');
+      this.notice = this.t('ACCOUNT.ID_COPIED', 'ID Nivra copiado.');
+    });
+  }
+
   shareUrl(): string {
     const alias = this.auth.session()?.user?.alias || '';
     const origin = window.location.origin || window.location.href.split('/').slice(0, 3).join('/');
@@ -687,10 +702,11 @@ export class AccountPage implements OnInit, OnDestroy {
   shareMessage(): string {
     const user = this.auth.session()?.user;
     const alias = user?.alias || '';
-    const name = user?.displayName || alias;
+    const name = user?.displayName || this.nivraNumber() || alias;
     return [
       `${name} ${this.t('ACCOUNT.SHARE_LINE_1_SUFFIX', 'te invita a Nivra, mensajeria privada con chat y boveda cifrada.')}`,
       `${this.t('ACCOUNT.SHARE_LINE_2_PREFIX', 'Buscame como')} @${alias}.`,
+      ...(this.nivraNumber() ? [`ID Nivra: ${this.nivraNumber()}`] : []),
       this.t('ACCOUNT.SHARE_LINE_3', 'Si ya tienes Nivra, abre este enlace para iniciar el chat:'),
       this.shareUrl(),
     ].join('\n');

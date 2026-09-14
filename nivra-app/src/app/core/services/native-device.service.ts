@@ -1,4 +1,4 @@
-import { Injectable, inject } from '@angular/core';
+import { Injectable, effect, inject } from '@angular/core';
 import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import { AppSettingsService, type NivraAppSettings } from './app-settings.service';
 import { AuthService } from './auth.service';
@@ -102,6 +102,7 @@ interface BatteryOptimizationResponse {
 }
 
 interface NivraNativePlugin {
+  setActiveCall(options: { callId: string; video: boolean; active: boolean }): Promise<{ active: boolean }>;
   setSecureScreen(options: { enabled: boolean }): Promise<{ enabled: boolean }>;
   setAudioFocus(options: { active: boolean; mode: AudioFocusMode }): Promise<{ active: boolean }>;
   configureRaiseGestures(options: { listen: boolean; talk: boolean }): Promise<{ enabled: boolean }>;
@@ -139,6 +140,25 @@ export class NativeDeviceService {
   private readonly appSettings = inject(AppSettingsService);
 
   readonly native = Capacitor.isNativePlatform();
+
+  constructor() {
+    effect(() => {
+      if (!this.auth.isAuthenticated()) {
+        void this.setActiveCall({ callId: '', video: false, active: false });
+      }
+    });
+  }
+
+  async setActiveCall(options: { callId: string; video: boolean; active: boolean }): Promise<boolean> {
+    if (!this.native || Capacitor.getPlatform() !== 'android') {
+      return false;
+    }
+    const result = await NivraNative.setActiveCall({
+      ...options,
+      active: options.active && this.auth.isAuthenticated(),
+    }).catch(() => null);
+    return result?.active === true;
+  }
 
   async setScreenshotsAllowed(allowed: boolean): Promise<void> {
     if (typeof document !== 'undefined') {

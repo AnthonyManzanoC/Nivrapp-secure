@@ -1,5 +1,20 @@
 @use "../shared-page";
 
+.call-game-area { display: block; min-height: 0; overflow: auto; text-align: left; }
+.surface.call-mode.games-open .call-active {
+  grid-template-rows: minmax(120px, 30dvh) minmax(0, 1fr);
+  padding-top: calc(56px + env(safe-area-inset-top));
+  padding-bottom: calc(90px + env(safe-area-inset-bottom));
+}
+.surface.call-mode.games-open .call-stage { min-height: 0; height: 100%; }
+.surface.call-mode.games-open .call-stage .video-gallery,
+.surface.call-mode.games-open .call-stage .video-composition { min-height: 0; height: 100%; }
+.surface.call-mode.games-open .call-game-area { position: relative; z-index: 9; background: var(--nivra-bg, #10191d); }
+.games-button.has-game { --color: #25d366; }
+@media (min-width: 1000px) {
+  .surface.call-mode.games-open .call-active { grid-template-columns: minmax(0, 1fr) minmax(360px, 430px); grid-template-rows: minmax(0, 1fr); }
+}
+
 .panel-head {
   display: flex;
   justify-content: space-between;

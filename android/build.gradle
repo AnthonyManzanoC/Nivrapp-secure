@@ -19,6 +19,10 @@ apply from: "variables.gradle"
 
 allprojects {
     repositories {
+        exclusiveContent {
+            forRepository { maven { url = uri('https://repo.maven.apache.org/maven2') } }
+            filter { includeGroup('io.github.webrtc-sdk') }
+        }
         google()
         mavenCentral()
     }

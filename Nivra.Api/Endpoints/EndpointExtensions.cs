@@ -60,6 +60,7 @@ public static partial class EndpointExtensions
         }));
 
         app.MapAuthEndpoints();
+        app.MapRecoveryEndpoints();
         app.MapProfileEndpoints();
         app.MapDeviceAndKeyEndpoints();
         app.MapContactEndpoints();
@@ -80,6 +81,30 @@ public static partial class EndpointExtensions
     {
         var group = app.MapGroup("/auth").RequireRateLimiting("auth");
 
+        group.MapPost("/register-private", async Task<IResult> (PrivateRegisterRequest request, INivraStore store, NivraDbContext db, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
+        {
+            var internalAlias = $"n_{Guid.NewGuid():N}"[..26];
+            var validation = ValidateRegister(new RegisterRequest(internalAlias, request.Password, request.DeviceName, request.KeyBundle, null, null, null, request.HardwareId));
+            if (validation is not null) return validation;
+            var now = timeProvider.GetUtcNow();
+            var user = new UserAccount
+            {
+                Id = NivraIds.NewId("usr"), Alias = internalAlias, PasswordHash = hasher.Hash(request.Password),
+                IsDiscoverable = false, CreatedAt = now, UpdatedAt = now
+            };
+            var created = false;
+            for (var attempt = 0; attempt < 4 && !created; attempt++)
+            {
+                user.Alias = $"n_{Guid.NewGuid():N}"[..26];
+                created = await store.TryAddUserAsync(user, cancellationToken);
+            }
+            if (!created) return Error("private_registration_unavailable", "No pudimos crear la cuenta privada. Inténtalo de nuevo.", StatusCodes.Status503ServiceUnavailable);
+            var device = await UpsertDeviceAsync(db, user.Id, request.DeviceName, request.HardwareId, request.KeyBundle, now, trusted: true, cancellationToken);
+            var tokens = await tokenService.CreateSessionAsync(store, user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
+            await store.AddAuditAsync(user.Id, "auth.register_private", ClientIp(http), "Private account created without phone or email.", now, cancellationToken);
+            return Results.Created("/me", new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens));
+        });
+
         group.MapPost("/register", async Task<IResult> (RegisterRequest request, INivraStore store, NivraDbContext db, PasswordHasher hasher, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
         {
             var validation = ValidateRegister(request);
@@ -90,6 +115,11 @@ public static partial class EndpointExtensions
 
             var now = timeProvider.GetUtcNow();
             var phone = NormalizePhone(request.Phone);
+            var requestedAlias = PgSqlNivraStore.NormalizeAlias(request.Alias);
+            if (await db.Users.AnyAsync(candidate => candidate.NivraNumber == requestedAlias, cancellationToken))
+            {
+                return Error("alias_taken", "Ese alias ya está reservado como ID Nivra. Elige otro.", StatusCodes.Status409Conflict);
+            }
             if (!string.IsNullOrWhiteSpace(request.Phone) && phone is null)
             {
                 return Error("invalid_phone", "Envia un numero de telefono valido.");
@@ -129,7 +159,7 @@ public static partial class EndpointExtensions
 
         group.MapPost("/login", async Task<IResult> (LoginRequest request, INivraStore store, NivraDbContext db, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
         {
-            var alias = request.Alias.Trim();
+            var alias = request.Alias?.Trim() ?? string.Empty;
             if (string.IsNullOrWhiteSpace(alias) || string.IsNullOrWhiteSpace(request.Password))
             {
                 return Error("invalid_login", "Alias y password son obligatorios.");
@@ -140,6 +170,13 @@ public static partial class EndpointExtensions
             {
                 await store.AddAuditAsync(null, "auth.login_failed", ClientIp(http), $"Alias={alias}", timeProvider.GetUtcNow(), cancellationToken);
                 return Error("invalid_login", "Credenciales invalidas.", StatusCodes.Status401Unauthorized);
+            }
+
+            if (request.ResolveOnly)
+            {
+                // Resolve only after password verification so an ID login can reuse
+                // device keys stored under the account's canonical alias.
+                return Results.Ok(new LoginIdentityResponse(user.Alias));
             }
 
             var now = timeProvider.GetUtcNow();
@@ -390,6 +427,12 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            using var authorizationLease = await qrLogin.AcquireAuthorizationAsync(request.QrId, request.Code, cancellationToken);
+            if (authorizationLease is null)
+            {
+                return Error("invalid_qr", "QR invalido, vencido o ya utilizado.", StatusCodes.Status410Gone);
+            }
+
             var now = timeProvider.GetUtcNow();
             var linkedKeyBundle = KeyBundleToRequest(sourceDevice.KeyBundle);
             var device = await UpsertDeviceAsync(db, user.Id, challenge.DeviceName, challenge.HardwareId, linkedKeyBundle, now, trusted: true, cancellationToken);
@@ -479,7 +522,7 @@ public static partial class EndpointExtensions
 
             var current = http.GetCurrentUser();
             var occupied = await db.Users.AsNoTracking().AnyAsync(candidate =>
-                candidate.Alias == normalizedAlias &&
+                (candidate.Alias == normalizedAlias || candidate.NivraNumber == normalizedAlias) &&
                 candidate.DisabledAt == null &&
                 (current == null || candidate.Id != current.UserId),
                 cancellationToken);
@@ -525,7 +568,7 @@ public static partial class EndpointExtensions
                 if (!string.Equals(normalizedAlias, user.Alias, StringComparison.Ordinal) &&
                     await db.Users.AnyAsync(candidate =>
                         candidate.Id != user.Id &&
-                        candidate.Alias == normalizedAlias &&
+                        (candidate.Alias == normalizedAlias || candidate.NivraNumber == normalizedAlias) &&
                         candidate.DisabledAt == null,
                         cancellationToken))
                 {
@@ -898,12 +941,14 @@ public static partial class EndpointExtensions
             }
 
             var query = NormalizeOptional(q) ?? string.Empty;
-            var normalizedAlias = query.Length > 0 ? PgSqlNivraStore.NormalizeAlias(query) : string.Empty;
+            var normalizedAlias = NivraNumbers.NormalizeAlias(query);
+            var nivraNumber = NivraNumbers.Normalize(query);
             var contactIds = await ContactIdsFor(db, current.UserId, cancellationToken);
 
             var candidates = await db.Users
                 .Where(user => user.DisabledAt == null && user.Id != current.UserId)
-                .Where(user => user.IsDiscoverable || user.Alias == normalizedAlias || contactIds.Contains(user.Id))
+                .Where(user => user.IsDiscoverable || user.Alias == normalizedAlias || (nivraNumber != null && user.NivraNumber == nivraNumber) || contactIds.Contains(user.Id))
+                .Where(user => nivraNumber == null || user.NivraNumber == nivraNumber || user.Alias == normalizedAlias)
                 .OrderByDescending(user => user.UpdatedAt)
                 .Take(240)
                 .ToListAsync(cancellationToken);
@@ -3532,20 +3577,10 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
-            var isGroupMember = conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null);
-            if (!isGroupMember)
-            {
-                var activeCalls = await db.Calls
-                    .Where(call => call.ConversationId == groupId && call.EndedAt == null && call.Status != CallStatus.Ended)
-                    .OrderByDescending(call => call.StartedAt)
-                    .Take(10)
-                    .ToListAsync(cancellationToken);
-                var isInvitedToActiveCall = activeCalls.Any(call => call.ParticipantUserIds.Contains(current.UserId));
-                if (!isInvitedToActiveCall)
-                {
-                    return Results.NotFound();
-                }
-            }
+            var activeCall = await CallCoordination.FindActiveGroupCallAsync(db, groupId, cancellationToken);
+            if (activeCall is null || !activeCall.ParticipantUserIds.Contains(current.UserId)) return Results.NotFound();
+            var clientSessionId = http.Request.Query["clientSessionId"].FirstOrDefault();
+            if (!CallCoordination.IsOwner(activeCall, current.UserId, current.DeviceId, clientSessionId)) return CallOwnedElsewhere();
 
             if (!liveKit.IsConfigured)
             {
@@ -3593,11 +3628,12 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            if (!CallCoordination.IsOwner(call, current.UserId, current.DeviceId, http.Request.Query["clientSessionId"].FirstOrDefault())) return CallOwnedElsewhere();
             var token = liveKit.CreateRoomToken(LiveKitTokenService.CallRoomName(call.Id), user);
             return Results.Ok(new LiveKitRoomTokenResponse(token.ServerUrl, token.Token));
         });
 
-        group.MapPost("/start", async Task<IResult> (StartCallRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) =>
+        group.MapPost("/start", async Task<IResult> (StartCallRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3605,6 +3641,12 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            if (request.ClientProtocol < 2) return Error("client_upgrade_required", "Actualiza Nivra para usar llamadas seguras.", StatusCodes.Status426UpgradeRequired);
+            if (request.MediaEncryption is not null && request.MediaEncryption != "livekit-e2ee-v1") return Error("invalid_media_encryption", "El modo de cifrado de llamada no es válido.");
+            if (!CallCoordination.IsValidSessionId(request.ClientSessionId) || !Enum.IsDefined(request.Type))
+            {
+                return Error("invalid_call", "La sesión o el tipo de llamada no es válido.");
+            }
             var participants = (request.ParticipantUserIds ?? [])
                 .Append(current.UserId)
                 .Distinct(StringComparer.Ordinal)
@@ -3630,24 +3672,42 @@ public static partial class EndpointExtensions
             {
                 return Error("invalid_call", "La llamada necesita al menos dos usuarios validos.");
             }
+            if ((isGroupConversation || participants.Count > 2) && request.MediaEncryption != "livekit-e2ee-v1") return Error("media_encryption_required", "Las salas grupales requieren cifrado de extremo a extremo.", StatusCodes.Status409Conflict);
             if ((isGroupConversation || participants.Count > 2) && !liveKit.IsConfigured)
             {
                 return Error("livekit_not_configured", "Las llamadas grupales requieren LiveKit configurado en el servidor.", StatusCodes.Status503ServiceUnavailable);
             }
 
+            // Both HTTP and SignalR creation use this database lock; concurrent starts reuse one group room.
+            await using var transaction = await CallCoordination.LockAsync(db,
+                isGroupConversation ? $"group-call:{request.ConversationId}" : $"call-start:{current.UserId}:{current.DeviceId}:{request.ClientSessionId}", cancellationToken);
+            if (isGroupConversation)
+            {
+                var existing = await CallCoordination.FindActiveGroupCallAsync(db, request.ConversationId!, cancellationToken);
+                if (existing is not null)
+                {
+                    await transaction.CommitAsync(cancellationToken);
+                    return Results.Ok(ToCallResponse(existing));
+                }
+            }
             var call = new CallSession
             {
                 Id = NivraIds.NewId("cal"),
                 ConversationId = request.ConversationId,
                 InitiatorUserId = current.UserId,
+                InitiatorDeviceId = current.DeviceId,
+                InitiatorSessionId = request.ClientSessionId,
+                MediaEncryption = request.MediaEncryption,
                 Type = request.Type,
                 Status = CallStatus.Ringing,
                 ParticipantUserIds = participants,
                 StartedAt = timeProvider.GetUtcNow()
             };
+            CallCoordination.TryClaim(call, current.UserId, current.DeviceId, request.ClientSessionId);
 
             await store.AddCallAsync(call, cancellationToken);
-            var response = ToCallResponse(call, current.DeviceId);
+            await transaction.CommitAsync(cancellationToken);
+            var response = ToCallResponse(call);
             var callerName = await GetCallerNameAsync(store, current.UserId, cancellationToken);
             await NotifyUsers(hub, participants, "call.started", response);
             foreach (var userId in participants.Where(userId => userId != current.UserId))
@@ -3656,7 +3716,45 @@ public static partial class EndpointExtensions
             }
 
             return Results.Created($"/calls/{call.Id}", response);
+        }));
+
+        static Task<IResult> ClaimOrResume(string callId, CallSessionRequest request, HttpContext http, INivraStore store, NivraDbContext db, IHubContext<NivraHub> hub, TimeProvider timeProvider, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
+        {
+            var current = http.GetCurrentUser();
+            if (current is null) return Results.Unauthorized();
+            if (!CallCoordination.IsValidSessionId(request.ClientSessionId)) return Error("invalid_call_session", "La sesión de llamada no es válida.");
+            await using var transaction = await CallCoordination.LockAsync(db, $"call:{callId}", cancellationToken);
+            var call = await store.GetCallAsync(callId, cancellationToken);
+            if (call is null) return Results.NotFound();
+            if (!call.ParticipantUserIds.Contains(current.UserId))
+            {
+                var conversation = call.ConversationId is null ? null : await store.GetConversationAsync(call.ConversationId, cancellationToken);
+                if (conversation?.Type != ConversationType.Group || !conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null)) return Results.NotFound();
+                call.ParticipantUserIds.Add(current.UserId);
+            }
+            if (call.EndedAt is not null || call.Status == CallStatus.Ended) return Error("call_ended", "La llamada ya finalizó.", StatusCodes.Status409Conflict);
+            var resume = http.Request.Path.Value?.EndsWith("/resume", StringComparison.Ordinal) == true;
+            var claimed = resume
+                ? CallCoordination.TryResume(call, current.UserId, current.DeviceId, request.ClientSessionId)
+                : CallCoordination.TryClaim(call, current.UserId, current.DeviceId, request.ClientSessionId);
+            if (!claimed) return CallOwnedElsewhere();
+            if (current.UserId != call.InitiatorUserId || call.ParticipantSessions.Count > 1) call.Status = CallStatus.Active;
+            await store.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("call_answered_elsewhere", new
+            {
+                callId,
+                answeredByUserId = current.UserId,
+                answeredByDeviceId = current.DeviceId,
+                answeredBySessionId = request.ClientSessionId,
+                at = timeProvider.GetUtcNow()
+            }, cancellationToken);
+            var response = ToCallResponse(call);
+            await NotifyUsers(hub, call.ParticipantUserIds, "call.updated", response);
+            return Results.Ok(response);
         });
+        group.MapPost("/{callId}/claim", ClaimOrResume);
+        group.MapPost("/{callId}/resume", ClaimOrResume);
 
         group.MapGet("/active/{conversationId}", async Task<IResult> (string conversationId, HttpContext http, INivraStore store, NivraDbContext db, CancellationToken cancellationToken) =>
         {
@@ -3721,18 +3819,23 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
+            var clientSessionId = http.Request.Query["clientSessionId"].FirstOrDefault();
+            if (call.ParticipantSessions.ContainsKey(current.UserId) && !CallCoordination.IsOwner(call, current.UserId, current.DeviceId, clientSessionId)) return CallOwnedElsewhere();
             var now = timeProvider.GetUtcNow();
             var signalRecords = await db.CallSignals
                 .AsNoTracking()
                 .Where(signal =>
                     signal.CallId == callId &&
                     signal.TargetUserId == current.UserId &&
+                    (signal.TargetDeviceId == null || signal.TargetDeviceId == current.DeviceId) &&
+                    (signal.TargetClientSessionId == null || signal.TargetClientSessionId == clientSessionId) &&
                     signal.ExpiresAt > now)
                 .OrderByDescending(signal => signal.CreatedAt)
                 .ThenByDescending(signal => signal.Id)
                 .Take(200)
                 .ToListAsync(cancellationToken);
             var signals = signalRecords
+                .Where(signal => CallCoordination.IsCurrentSignalSource(call, signal))
                 .OrderBy(signal => signal.CreatedAt)
                 .ThenBy(signal => signal.Id)
                 .Select(signal => new CallSignalResponse(
@@ -3742,12 +3845,15 @@ public static partial class EndpointExtensions
                     signal.FromDeviceId,
                     signal.SignalType,
                     signal.PayloadCiphertext,
-                    signal.CreatedAt))
+                    signal.CreatedAt,
+                    signal.FromClientSessionId,
+                    signal.TargetDeviceId,
+                    signal.TargetClientSessionId))
                 .ToList();
             return Results.Ok(signals);
         });
 
-        group.MapPost("/{callId}/signal", async Task<IResult> (string callId, CallSignalRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/{callId}/signal", async Task<IResult> (string callId, CallSignalRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3755,6 +3861,8 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            if (!CallCoordination.IsValidSessionId(request.ClientSessionId)) return Error("invalid_call_session", "La sesión de llamada no es válida.");
+            await using var transaction = await CallCoordination.LockAsync(db, $"call:{callId}", cancellationToken);
             var call = await store.GetCallAsync(callId, cancellationToken);
             if (call is null ||
                 !call.ParticipantUserIds.Contains(current.UserId) ||
@@ -3783,7 +3891,10 @@ public static partial class EndpointExtensions
                 "muted",
                 "camera",
                 "screen",
-                "media-mode"
+                "media-mode",
+                "media-key-request",
+                "media-key",
+                "media-key-ready"
             };
             if (string.IsNullOrWhiteSpace(signalType) ||
                 !allowedSignalTypes.Contains(signalType) ||
@@ -3793,19 +3904,30 @@ public static partial class EndpointExtensions
                 return Error("invalid_call_signal", "La señal de llamada no es válida.");
             }
 
-            if (signalType is "accepted" or "offer" or "answer" or "ice")
+            // Even decline, ICE and timeout-related signals from a losing session must not reach the active peer.
+            if (!CallCoordination.TryAuthorizeSignal(call, current.UserId, current.DeviceId, request.ClientSessionId, signalType)) return CallOwnedElsewhere();
+            if (signalType is "accepted" or "answer")
             {
                 call.Status = CallStatus.Active;
             }
 
             var now = timeProvider.GetUtcNow();
+            call.ParticipantSessions.TryGetValue(request.TargetUserId, out var targetSession);
+            if (signalType.StartsWith("media-key", StringComparison.Ordinal) &&
+                (call.MediaEncryption != "livekit-e2ee-v1" || targetSession is null))
+            {
+                return Error("media_key_target_inactive", "El destinatario debe unirse con una sesión de cifrado compatible.", StatusCodes.Status409Conflict);
+            }
             var signal = new CallSignalRecord
             {
                 Id = NivraIds.NewId("csg"),
                 CallId = callId,
                 FromUserId = current.UserId,
                 FromDeviceId = current.DeviceId,
+                FromClientSessionId = request.ClientSessionId,
                 TargetUserId = request.TargetUserId,
+                TargetDeviceId = targetSession?.DeviceId,
+                TargetClientSessionId = targetSession?.ClientSessionId,
                 SignalType = signalType,
                 PayloadCiphertext = request.PayloadCiphertext,
                 CreatedAt = now,
@@ -3813,12 +3935,17 @@ public static partial class EndpointExtensions
             };
             db.CallSignals.Add(signal);
             await store.SaveChangesAsync(cancellationToken);
-            await hub.Clients.Group(GroupsFor.User(request.TargetUserId)).SendAsync("call.signal", new
+            await transaction.CommitAsync(cancellationToken);
+            var recipientGroup = targetSession is null ? GroupsFor.User(request.TargetUserId) : GroupsFor.Device(targetSession.DeviceId);
+            await hub.Clients.Group(recipientGroup).SendAsync("call.signal", new
             {
                 signalId = signal.Id,
                 callId,
                 fromUserId = current.UserId,
                 fromDeviceId = current.DeviceId,
+                fromClientSessionId = request.ClientSessionId,
+                targetDeviceId = signal.TargetDeviceId,
+                targetClientSessionId = signal.TargetClientSessionId,
                 signalType = signal.SignalType,
                 payloadCiphertext = signal.PayloadCiphertext,
                 createdAt = signal.CreatedAt
@@ -3830,14 +3957,15 @@ public static partial class EndpointExtensions
                     callId,
                     answeredByUserId = current.UserId,
                     answeredByDeviceId = current.DeviceId,
-                    at = DateTimeOffset.UtcNow
+                    answeredBySessionId = request.ClientSessionId,
+                    at = now
                 }, cancellationToken);
             }
 
             return Results.Accepted(value: new { signalId = signal.Id, createdAt = signal.CreatedAt });
-        });
+        }));
 
-        group.MapPatch("/{callId}/type", async Task<IResult> (string callId, UpdateCallTypeRequest request, HttpContext http, INivraStore store, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPatch("/{callId}/type", async Task<IResult> (string callId, UpdateCallTypeRequest request, HttpContext http, INivraStore store, NivraDbContext db, IHubContext<NivraHub> hub, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3845,6 +3973,7 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            await using var transaction = await CallCoordination.LockAsync(db, $"call:{callId}", cancellationToken);
             var call = await store.GetCallAsync(callId, cancellationToken);
             if (call is null || !call.ParticipantUserIds.Contains(current.UserId))
             {
@@ -3856,6 +3985,7 @@ public static partial class EndpointExtensions
                 return Error("call_ended", "La llamada ya finalizo.", StatusCodes.Status409Conflict);
             }
 
+            if (!CallCoordination.IsOwner(call, current.UserId, current.DeviceId, request.ClientSessionId)) return CallOwnedElsewhere();
             if (request.Type != CallType.Video)
             {
                 return Error("invalid_call_type", "Una llamada activa solo puede ampliarse a video.");
@@ -3867,12 +3997,13 @@ public static partial class EndpointExtensions
                 await store.SaveChangesAsync(cancellationToken);
             }
 
+            await transaction.CommitAsync(cancellationToken);
             var response = ToCallResponse(call);
             await NotifyUsers(hub, call.ParticipantUserIds, "call.updated", response);
             return Results.Ok(response);
-        });
+        }));
 
-        group.MapPost("/{callId}/invite", async Task<IResult> (string callId, InviteCallParticipantRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) =>
+        group.MapPost("/{callId}/invite", async Task<IResult> (string callId, InviteCallParticipantRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3886,6 +4017,7 @@ public static partial class EndpointExtensions
                 return Error("invalid_participant", "Selecciona un contacto valido.");
             }
 
+            await using var transaction = await CallCoordination.LockAsync(db, $"call:{callId}", cancellationToken);
             var call = await store.GetCallAsync(callId, cancellationToken);
             if (call is null || !call.ParticipantUserIds.Contains(current.UserId))
             {
@@ -3902,7 +4034,9 @@ public static partial class EndpointExtensions
                 return Error("invalid_participant", "Ese usuario no existe.");
             }
 
+            if (!CallCoordination.IsOwner(call, current.UserId, current.DeviceId, request.ClientSessionId)) return CallOwnedElsewhere();
             var isNewParticipant = !call.ParticipantUserIds.Contains(targetUserId, StringComparer.Ordinal);
+            if (isNewParticipant && call.ParticipantUserIds.Count >= 2 && call.MediaEncryption != "livekit-e2ee-v1") return Error("media_encryption_required", "Inicia una llamada nueva con cifrado grupal antes de invitar a más participantes.", StatusCodes.Status409Conflict);
             if (isNewParticipant && call.ParticipantUserIds.Count >= 2 && !liveKit.IsConfigured)
             {
                 return Error("livekit_not_configured", "Configura LiveKit antes de convertir la llamada en grupal.", StatusCodes.Status503ServiceUnavailable);
@@ -3918,16 +4052,17 @@ public static partial class EndpointExtensions
             }
             await store.SaveChangesAsync(cancellationToken);
 
-            var response = ToCallResponse(call, current.DeviceId);
+            await transaction.CommitAsync(cancellationToken);
+            var response = ToCallResponse(call);
             var callerName = await GetCallerNameAsync(store, current.UserId, cancellationToken);
             await hub.Clients.Group(GroupsFor.User(targetUserId)).SendAsync("call.started", response, cancellationToken);
             await hub.Clients.Group(GroupsFor.User(targetUserId)).SendAsync("incomingCall", response, cancellationToken);
             await NotifyUsers(hub, call.ParticipantUserIds.Distinct(StringComparer.Ordinal).Where(userId => userId != targetUserId), "group.call.started", response);
             await pushNotifications.SendIncomingCallAsync(targetUserId, call.ConversationId, call.Id, current.UserId, callerName, call.Type, cancellationToken);
             return Results.Ok(response);
-        });
+        }));
 
-        group.MapPost("/{callId}/end", async Task<IResult> (string callId, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        static Task<IResult> EndOrLeave(string callId, CallSessionRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3935,24 +4070,37 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            await using var transaction = await CallCoordination.LockAsync(db, $"call:{callId}", cancellationToken);
             var call = await store.GetCallAsync(callId, cancellationToken);
             if (call is null || !call.ParticipantUserIds.Contains(current.UserId))
             {
                 return Results.NotFound();
             }
 
-            call.Status = CallStatus.Ended;
-            call.EndedAt = timeProvider.GetUtcNow();
+            if (call.Status == CallStatus.Ended || call.EndedAt is not null) return Results.Ok(ToCallResponse(call));
+            if (request.Reason == "timeout")
+            {
+                if (!CallCoordination.IsOwner(call, current.UserId, current.DeviceId, request.ClientSessionId)) return CallOwnedElsewhere();
+                // An answer and an unanswered timer can arrive together. The same call lock decides the winner.
+                if (CallCoordination.ShouldIgnoreTimeout(call, current.UserId)) return Results.Ok(ToCallResponse(call));
+            }
+            var conversation = call.ConversationId is null ? null : await store.GetConversationAsync(call.ConversationId, cancellationToken);
+            var isGroup = conversation?.Type == ConversationType.Group || call.ParticipantUserIds.Count > 2;
+            if (!CallCoordination.TryLeave(call, current.UserId, current.DeviceId, request.ClientSessionId, isGroup, timeProvider.GetUtcNow())) return CallOwnedElsewhere();
+            var ended = call.Status == CallStatus.Ended;
             await store.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             var response = ToCallResponse(call);
-            await NotifyUsers(hub, call.ParticipantUserIds, "call.ended", response);
-            foreach (var userId in call.ParticipantUserIds.Distinct(StringComparer.Ordinal))
+            await NotifyUsers(hub, call.ParticipantUserIds, ended ? "call.ended" : "call.updated", response);
+            foreach (var userId in ended ? call.ParticipantUserIds.Distinct(StringComparer.Ordinal) : Enumerable.Empty<string>())
             {
                 await pushNotifications.SendCallEndedAsync(userId, call.ConversationId, call.Id, current.UserId, call.Type, cancellationToken);
             }
 
             return Results.Ok(response);
         });
+        group.MapPost("/{callId}/end", EndOrLeave);
+        group.MapPost("/{callId}/leave", EndOrLeave);
     }
 
     private static void MapPrivacyEndpoints(this WebApplication app)
@@ -4628,7 +4776,8 @@ public static partial class EndpointExtensions
             user.AllowStoryReposts,
             user.PlanCode,
             user.PrivacySettings,
-            user.CreatedAt);
+            user.CreatedAt,
+            user.NivraNumber);
     }
 
     private static DeviceResponse ToDeviceResponse(DeviceRecord device)
@@ -4650,7 +4799,8 @@ public static partial class EndpointExtensions
             contact.NicknameCiphertext,
             contact.IsFavorite,
             ownerIsInContacts,
-            contact.CreatedAt);
+            contact.CreatedAt,
+            user?.NivraNumber);
     }
 
     private static async Task<List<ConversationResponse>> ToConversationResponsesAsync(IEnumerable<ConversationRecord> conversations, INivraStore store, CancellationToken cancellationToken)
@@ -4823,9 +4973,11 @@ public static partial class EndpointExtensions
         return new VaultItemResponse(item.Id, item.ParentId, item.FileObjectId, item.Kind, item.EncryptedMetadata, item.CreatedAt, item.UpdatedAt);
     }
 
-    private static CallResponse ToCallResponse(CallSession call, string? initiatorDeviceId = null)
+    private static IResult CallOwnedElsewhere() => Error("call_owned_elsewhere", "Esta llamada está abierta en otra sesión. Continúa desde ese dispositivo o pestaña.", StatusCodes.Status409Conflict);
+
+    private static CallResponse ToCallResponse(CallSession call)
     {
-        return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt, initiatorDeviceId);
+        return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt, call.InitiatorDeviceId, call.InitiatorSessionId, new(call.ParticipantSessions, StringComparer.Ordinal), call.MediaEncryption);
     }
 
     private static VaultInviteLinkResponse ToVaultInviteLinkResponse(VaultRoomInvite invite, VaultRoom room, string code, HttpContext http)
@@ -4900,7 +5052,8 @@ public static partial class EndpointExtensions
             outgoing is not null,
             outgoing is not null && incoming,
             outgoing?.IsFavorite ?? false,
-            friendshipState);
+            friendshipState,
+            user.NivraNumber);
     }
 
     private static async Task<FriendRequestResponse> ToFriendRequestResponseAsync(FriendRequestRecord request, string currentUserId, NivraDbContext db, CancellationToken cancellationToken)
@@ -5138,7 +5291,8 @@ public static partial class EndpointExtensions
 
     private static int ScoreUserSearch(UserAccount user, string query)
     {
-        var normalized = (query ?? string.Empty).Trim().ToLowerInvariant();
+        var normalized = NivraNumbers.NormalizeAlias(query);
+        if (NivraNumbers.Normalize(query) is { } number && number == user.NivraNumber) return 110;
         if (normalized.Length == 0)
         {
             return 1;

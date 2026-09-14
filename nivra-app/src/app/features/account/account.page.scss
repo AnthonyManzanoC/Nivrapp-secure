@@ -1748,3 +1748,40 @@ ion-modal.pin-setup-modal {
     --width: calc(100vw - 24px);
   }
 }
+:host .nivra-number-card {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 22px;
+  padding: 18px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 14px;
+  background: linear-gradient(130deg, rgba(var(--ion-color-primary-rgb), .12), rgba(var(--ion-color-primary-rgb), .025));
+}
+
+.nivra-number-card span {
+  color: var(--nivra-soft);
+  font-size: 13px;
+}
+
+.nivra-number-card strong {
+  display: block;
+  margin: 6px 0;
+  color: var(--nivra-text);
+  font-size: clamp(26px, 5vw, 36px);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: .06em;
+}
+
+.nivra-number-card p {
+  max-width: 64ch;
+  margin: 0;
+  color: var(--nivra-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.nivra-number-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}

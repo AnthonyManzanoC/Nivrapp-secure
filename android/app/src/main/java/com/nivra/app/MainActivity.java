@@ -15,6 +15,7 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(NivraNativePlugin.class);
+        registerPlugin(NivraScreenSharePlugin.class);
         super.onCreate(savedInstanceState);
         createNotificationChannels();
         NivraNativePlugin.handleCallIntent(getIntent());

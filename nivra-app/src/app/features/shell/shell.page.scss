@@ -4,6 +4,55 @@
   overflow: hidden;
 }
 
+.update-banner {
+  position: fixed;
+  inset: max(12px, env(safe-area-inset-top)) 16px auto;
+  z-index: 40;
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-radius: 16px;
+  background: #153c30;
+  color: #fff;
+  box-shadow: 0 6px 24px #0004;
+  a { color: #99f3cb; font-weight: 700; white-space: nowrap; }
+}
+
+.ongoing-call {
+  position: fixed;
+  z-index: 18;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: calc(86px + env(safe-area-inset-bottom));
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 20px;
+  background: var(--nivra-panel, #142722);
+  color: var(--nivra-text);
+  box-shadow: 0 8px 30px #0003;
+
+  button {
+    border: 0;
+    border-radius: 12px;
+    padding: 8px 12px;
+    color: inherit;
+    background: transparent;
+    cursor: pointer;
+    font: inherit;
+  }
+
+  .ongoing-call-return { display: flex; align-items: center; gap: 12px; min-width: 0; text-align: start; }
+  span { display: grid; gap: 3px; min-width: 0; }
+  strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  small { font-size: 12px; color: var(--nivra-brand); }
+  .resume-audio { background: var(--nivra-brand); color: #06241b; font-weight: 700; }
+}
+
 .workspace {
   height: 100%;
   min-height: 0;

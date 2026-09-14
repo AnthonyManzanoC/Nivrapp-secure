@@ -1,5 +1,5 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { Component, OnDestroy, inject } from '@angular/core';
+import { Component, ElementRef, OnDestroy, ViewChild, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import {
@@ -35,6 +35,8 @@ import { TranslateService } from '../../core/services/translate.service';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 import { NativeDeviceService } from '../../core/services/native-device.service';
+import { LocalHistoryService } from '../../core/services/local-history.service';
+import { ChatStoryHighlight, chatStoryRingColor, groupChatStoryHighlights, withOwnChatStoryHighlight } from './chat-story-highlights';
 
 @Component({
   selector: 'app-chats',
@@ -72,11 +74,41 @@ export class ChatsPage implements OnDestroy {
   readonly chat = inject(ChatService);
   readonly social = inject(SocialService);
   readonly appSettings = inject(AppSettingsService);
+  readonly localHistory = inject(LocalHistoryService);
   private readonly translate = inject(TranslateService);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly actionSheetController = inject(ActionSheetController);
   private readonly nativeDevice = inject(NativeDeviceService);
+  private readonly storyStripNow = signal(Date.now());
+  readonly storyHighlights = computed(() => {
+    const currentUser = this.auth.session()?.user;
+    if (!currentUser) {
+      return [];
+    }
+    const groups = new Map(this.chat.conversations()
+      .filter((conversation) => this.chat.isGroup(conversation))
+      .map((conversation) => [conversation.id.toLowerCase(), conversation]));
+    return withOwnChatStoryHighlight(groupChatStoryHighlights(this.social.stories(), currentUser.id, this.storyStripNow()), currentUser.id)
+      .filter((highlight) => !highlight.isGroup || groups.has(highlight.targetId))
+      .map((highlight) => {
+        const group = groups.get(highlight.targetId);
+        const storyOwner = highlight.stories[highlight.stories.length - 1]?.owner;
+        const owner = highlight.isOwn ? currentUser : this.chat.profileSummary(storyOwner!);
+        const title = highlight.isOwn
+          ? this.tr('CHATS.MY_STORY', 'Mi historia')
+          : highlight.isGroup && group
+            ? this.chat.conversationTitle(group)
+            : owner.displayName || owner.alias;
+        return {
+          ...highlight,
+          title,
+          photo: highlight.isGroup && group ? this.chat.conversationPhoto(group) : owner.profilePhotoDataUrl,
+          initials: (highlight.isOwn ? owner.displayName || owner.alias : title).slice(0, 2).toUpperCase(),
+          ringColor: chatStoryRingColor(highlight),
+        };
+      });
+  });
   query = '';
   searchResults: UserSummary[] = [];
   searching = false;
@@ -120,6 +152,10 @@ export class ChatsPage implements OnDestroy {
   private pointerStartY = 0;
   private avatarPressTimer: number | null = null;
   private suppressAvatarClickUntil = 0;
+  private storyStripTimer: number | null = null;
+  storyHighlightOpening = '';
+  storiesCollapsed = false;
+  @ViewChild('conversationList', { read: ElementRef }) private conversationList?: ElementRef<HTMLElement>;
 
   constructor() {
     addIcons({
@@ -145,6 +181,7 @@ export class ChatsPage implements OnDestroy {
       }
     });
     void this.social.load().catch(() => undefined);
+    this.storyStripTimer = window.setInterval(() => this.storyStripNow.set(Date.now()), 30_000);
     queueMicrotask(() => this.syncSelectedConversationFromUrl(this.router.url));
   }
 
@@ -154,6 +191,9 @@ export class ChatsPage implements OnDestroy {
     }
     this.stopStoryProgress();
     this.cancelAvatarPress();
+    if (this.storyStripTimer !== null) {
+      window.clearInterval(this.storyStripTimer);
+    }
     this.routeSub?.unsubscribe();
   }
 
@@ -163,6 +203,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   ionViewDidEnter(): void {
+    this.storyStripNow.set(Date.now());
     void this.social.load().catch(() => undefined);
     void this.refreshRecentProfiles();
   }
@@ -177,6 +218,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   onSearchFocus(): void {
+    this.storiesCollapsed = false;
     if (!this.query.trim()) {
       this.showRecentSearches = true;
       this.recentCollapsed = false;
@@ -226,6 +268,65 @@ export class ChatsPage implements OnDestroy {
 
   conversationHasUnviewedStory(conversation: Conversation): boolean {
     return this.conversationStories(conversation).some((story) => !story.viewedByMe && !this.isMine(story));
+  }
+
+  activateStoryHighlight(highlight: ChatStoryHighlight, fileInput: HTMLInputElement): void {
+    if (highlight.isOwn && !highlight.stories.length) {
+      // Keep the real media picker in the initiating user gesture, including on mobile WebViews.
+      fileInput.click();
+      return;
+    }
+    void this.openStoryHighlight(highlight);
+  }
+
+  async storyDraftFileSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) { return; }
+    // info is transient navigation data: the chosen media is never stored in URL/history state.
+    await this.router.navigate(['/app/world'], { fragment: 'story-composer', info: { storyDraftFile: file } });
+  }
+
+  onChatListScroll(event: Event): void {
+    const list = event.target as HTMLElement;
+    if (list.scrollTop <= 8) {
+      this.storiesCollapsed = false;
+    } else if (list.scrollTop > 80 && list.scrollHeight - list.clientHeight > 180) {
+      // Short lists stay expanded so changing the viewport cannot trigger a collapse/expand loop.
+      this.storiesCollapsed = true;
+    }
+  }
+
+  expandStories(): void {
+    this.storiesCollapsed = false;
+    this.conversationList?.nativeElement.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  async openStoryHighlight(highlight: ChatStoryHighlight): Promise<void> {
+    if (this.storyHighlightOpening) {
+      return;
+    }
+    this.storyHighlightOpening = highlight.id;
+    try {
+      // Refresh through the existing audience checks before opening the shared viewer.
+      if (highlight.isGroup) {
+        await this.social.loadGroupStories(highlight.targetId).catch(() => []);
+      } else {
+        await this.social.load().catch(() => undefined);
+      }
+      this.storyStripNow.set(Date.now());
+      const current = this.storyHighlights().find((item) => item.id === highlight.id);
+      if (!current?.stories.length) {
+        return;
+      }
+      this.storyViewerQueue = current.stories;
+      const firstUnviewed = current.stories.findIndex((story) => !story.viewedByMe && !this.isMine(story));
+      this.storyViewerIndex = firstUnviewed >= 0 ? firstUnviewed : 0;
+      await this.openQueuedStory();
+    } finally {
+      this.storyHighlightOpening = '';
+    }
   }
 
   async abrirHistoria(conversation: Conversation, event: Event): Promise<void> {
@@ -504,6 +605,7 @@ export class ChatsPage implements OnDestroy {
   setFolder(value: string | number | undefined): void {
     if (value === 'all' || value === 'pinned' || value === 'unread' || value === 'archived') {
       this.selectedFolder = value;
+      this.expandStories();
     }
   }
 

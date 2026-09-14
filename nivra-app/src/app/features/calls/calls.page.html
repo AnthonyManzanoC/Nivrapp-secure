@@ -2,6 +2,7 @@
   <main
     class="surface"
     [class.call-mode]="isCallMode()"
+    [class.games-open]="calls.games.panelOpen()"
     [class.call-chrome-hidden]="isCallMode() && !controlsVisible"
     (pointerdown)="revealCallChrome()">
     <header class="page-head">
@@ -34,11 +35,7 @@
                       <button type="button" class="remote-tile main-video pinned-main" (click)="clearPinnedVideo()" [attr.aria-label]="'CALLS.UNPIN_VIDEO' | translate:'Quitar video principal'">
                         @if (hasVideoTrack(pinnedTile.stream)) {
                           <video [appMediaStream]="pinnedTile.stream" muted autoplay playsinline></video>
-                          @if (hasAudioTrack(pinnedTile.stream)) {
-                            <audio class="screen-audio-track" [appMediaStream]="pinnedTile.stream" [muted]="audioMuted(pinnedTile.id)" autoplay playsinline></audio>
-                          }
                         } @else {
-                          <audio [appMediaStream]="pinnedTile.stream" [muted]="audioMuted(pinnedTile.id)" autoplay playsinline></audio>
                           <div class="video-audio-fallback">
                             @if (videoParticipantPhoto(pinnedTile.id)) {
                               <img [src]="videoParticipantPhoto(pinnedTile.id)" alt="">
@@ -56,9 +53,6 @@
                             <button type="button" (click)="selectVideoTile(tile)" [attr.aria-label]="('CALLS.PIN_VIDEO' | translate:'Fijar video') + ' ' + videoTileLabel(tile)">
                               @if (hasVideoTrack(tile.stream)) {
                                 <video [appMediaStream]="tile.stream" muted autoplay playsinline></video>
-                                @if (hasAudioTrack(tile.stream)) {
-                                  <audio class="screen-audio-track" [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay playsinline></audio>
-                                }
                               } @else if (videoParticipantPhoto(tile.id)) {
                                 <img [src]="videoParticipantPhoto(tile.id)" [alt]="videoTileLabel(tile)">
                               } @else {
@@ -81,11 +75,7 @@
                         <button type="button" class="remote-tile gallery-tile" (click)="selectVideoTile(tile)" [attr.aria-label]="('CALLS.PIN_VIDEO' | translate:'Fijar video') + ' ' + videoTileLabel(tile)">
                           @if (hasVideoTrack(tile.stream)) {
                             <video [appMediaStream]="tile.stream" muted autoplay playsinline></video>
-                            @if (hasAudioTrack(tile.stream)) {
-                              <audio class="screen-audio-track" [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay playsinline></audio>
-                            }
                           } @else {
-                            <audio [appMediaStream]="tile.stream" [muted]="audioMuted(tile.id)" autoplay playsinline></audio>
                             <div class="video-audio-fallback">
                               @if (videoParticipantPhoto(tile.id)) {
                                 <img [src]="videoParticipantPhoto(tile.id)" alt="">
@@ -107,7 +97,6 @@
                     [attr.aria-label]="'CALLS.CONNECTED_PARTICIPANTS' | translate:'Participantes conectados'">
                     @for (entry of calls.remoteEntries(); track entry[0]) {
                       <article class="remote-tile voice-connected">
-                        <audio [appMediaStream]="entry[1]" [muted]="!calls.speaker()" autoplay playsinline></audio>
                         <div class="call-avatar small">
                           @if (videoParticipantPhoto(entry[0])) {
                             <img [src]="videoParticipantPhoto(entry[0])" alt="">
@@ -149,6 +138,14 @@
 
             </div>
 
+            @if (calls.games.panelOpen() && calls.phase() !== 'ringing') {
+              <app-call-game-panel class="call-game-area"
+                [state]="calls.games.state()" [currentUserId]="gameUserId()"
+                [participants]="gameParticipants()" [transportReady]="calls.games.ready()"
+                [error]="calls.games.error()" (create)="calls.games.create($event)"
+                (action)="calls.games.act($event)" (closed)="calls.games.panelOpen.set(false)">
+              </app-call-game-panel>
+            }
             <div class="call-controls">
               @if (calls.phase() === 'ringing') {
                 <ion-button mode="ios" class="accept" (click)="accept()">
@@ -198,6 +195,12 @@
                 }
                 <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()">
                   <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
+                </ion-button>
+                <ion-button mode="ios" fill="clear" class="games-button"
+                  [class.active]="calls.games.panelOpen()" [class.has-game]="calls.games.state()"
+                  [disabled]="calls.phase() !== 'connected'" (click)="toggleGames()"
+                  aria-label="Juegos en la llamada" [attr.aria-expanded]="calls.games.panelOpen()">
+                  <ion-icon name="game-controller-outline"></ion-icon>
                 </ion-button>
                 @if (calls.phase() === 'failed') {
                   <ion-button mode="ios" fill="clear" class="retry-call-button" (click)="calls.retryConnection()">
@@ -286,6 +289,9 @@
 
         @if (calls.error()) {
           <p class="error-copy">{{ calls.error() }}</p>
+        }
+        @if (calls.resumableCall() && !calls.activeCall()) {
+          <ion-button mode="ios" (click)="calls.resumeHere()">Continuar aquí</ion-button>
         }
       </article>
 

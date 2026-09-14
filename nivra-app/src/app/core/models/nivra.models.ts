@@ -31,6 +31,7 @@ export interface TokenPair {
 
 export interface NivraUser {
   id: string;
+  nivraNumber?: string | null;
   alias: string;
   displayName?: string | null;
   email?: string | null;
@@ -129,6 +130,7 @@ export interface Conversation {
 
 export interface Contact {
   userId: string;
+  nivraNumber?: string | null;
   alias: string;
   displayName?: string | null;
   phone?: string | null;
@@ -142,6 +144,7 @@ export interface Contact {
 
 export interface UserSummary {
   id: string;
+  nivraNumber?: string | null;
   alias: string;
   displayName?: string | null;
   phone?: string | null;
@@ -157,6 +160,7 @@ export interface UserSummary {
 
 export interface LocalProfile {
   userId: string;
+  nivraNumber?: string | null;
   id?: string;
   alias?: string | null;
   aliasLower?: string | null;
@@ -503,6 +507,9 @@ export interface CallSession {
   groupId?: string | null;
   initiatorUserId: string;
   initiatorDeviceId?: string | null;
+  initiatorSessionId?: string | null;
+  mediaEncryption?: string | null;
+  participantSessions?: Record<string, { deviceId: string; clientSessionId?: string | null }>;
   type: 'Voice' | 'Video' | string;
   status: 'Ringing' | 'Active' | 'Ended' | 'Missed' | 'Failed' | string;
   participantUserIds: string[];
@@ -540,6 +547,9 @@ export interface CallSignalEvent {
   callId: string;
   fromUserId: string;
   fromDeviceId?: string | null;
+  fromClientSessionId?: string | null;
+  targetDeviceId?: string | null;
+  targetClientSessionId?: string | null;
   signalType: string;
   payloadCiphertext?: string | null;
   createdAt?: string;

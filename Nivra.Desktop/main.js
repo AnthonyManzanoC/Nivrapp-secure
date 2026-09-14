@@ -186,7 +186,7 @@ function installApiCorsBridge(apiBaseUrl) {
         responseHeaders: {
           ...details.responseHeaders,
           "Access-Control-Allow-Origin": ["*"],
-          "Access-Control-Allow-Headers": ["authorization, content-type, x-requested-with"],
+          "Access-Control-Allow-Headers": ["authorization, content-type, x-requested-with, x-nivra-device-id, x-nivra-call-protocol, x-nivra-client-version"],
           "Access-Control-Allow-Methods": ["GET, POST, PUT, PATCH, DELETE, OPTIONS"]
         }
       });

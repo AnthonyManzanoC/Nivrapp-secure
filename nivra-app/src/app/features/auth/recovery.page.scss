@@ -1,0 +1,17 @@
+.recovery-surface { min-height: 100dvh; padding: calc(32px + env(safe-area-inset-top)) 18px 32px; display: grid; place-items: center; background: var(--nivra-bg, #eef5f2); }
+.recovery-card { width: min(100%, 460px); padding: 30px; border: 1px solid var(--nivra-line, #d8e7df); border-radius: 26px; background: var(--nivra-panel, #fff); color: var(--nivra-text, #122b22); box-shadow: 0 18px 70px #062b1912; }
+.brand { display: flex; justify-content: space-between; gap: 10px; align-items: center; color: inherit; text-decoration: none; font-weight: 800; letter-spacing: 2px; font-size: 22px; }
+.brand span { font-size: 10px; font-weight: 400; letter-spacing: .4px; color: var(--nivra-muted); }
+.recovery-symbol { margin: 38px 0 22px; height: 54px; width: 54px; display: grid; place-items: center; border-radius: 18px; font-size: 34px; background: #25d36620; color: #159b66; }
+.eyebrow { font-size: 10px; letter-spacing: 2px; color: var(--nivra-muted); }
+h1 { font-size: clamp(26px, 5vw, 32px); line-height: 1.12; letter-spacing: -.8px; }
+.copy, .privacy-note { color: var(--nivra-muted); line-height: 1.65; font-size: 14px; }
+form { display: grid; gap: 18px; margin-top: 25px; }
+label { display: grid; gap: 8px; font-size: 13px; }
+ion-input { --border-radius: 12px; }
+ion-button { --border-radius: 12px; --background: #25c58b; --color: #082e20; min-height: 47px; font-weight: 700; }
+.notice, .error { padding: 15px; border-radius: 12px; line-height: 1.5; font-size: 14px; }
+.notice { background: #25d36619; } .error { background: #ff5f6819; color: var(--ion-color-danger, #ba3342); }
+.back-link, .text-link { display: block; margin-top: 22px; color: var(--nivra-text); background: transparent; text-align: center; font-size: 13px; }
+.privacy-note { margin-top: 25px; padding-top: 20px; border-top: 1px solid var(--nivra-line); font-size: 11px; }
+small { font-size: 11px; color: var(--nivra-muted); }

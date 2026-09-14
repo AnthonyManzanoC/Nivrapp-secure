@@ -23,6 +23,45 @@ namespace Nivra.Api.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Nivra.Api.Domain.AccountRecoveryChallenge", b =>
+                {
+                    b.Property<string>("TokenHash")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset?>("ConsumedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Purpose")
+                        .IsRequired()
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("TokenHash");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("UserId", "Purpose", "CreatedAt");
+
+                    b.ToTable("account_recovery_challenges", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.AdCampaign", b =>
                 {
                     b.Property<string>("Id")
@@ -130,10 +169,26 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Property<DateTimeOffset?>("EndedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("InitiatorDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("InitiatorSessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<string>("InitiatorUserId")
                         .IsRequired()
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<string>("MediaEncryption")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ParticipantSessions")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
 
                     b.Property<string>("ParticipantUserIds")
                         .IsRequired()
@@ -179,6 +234,10 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Property<DateTimeOffset>("ExpiresAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("FromClientSessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
                     b.Property<string>("FromDeviceId")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
@@ -194,6 +253,14 @@ namespace Nivra.Api.Infrastructure.Migrations
 
                     b.Property<string>("SignalType")
                         .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("TargetClientSessionId")
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<string>("TargetDeviceId")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
@@ -800,6 +867,13 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
 
+                    b.Property<string>("NivraNumber")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasMaxLength(9)
+                        .HasColumnType("character varying(9)")
+                        .HasDefaultValueSql("((('x' || substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))::bit(32)::bigint % 900000000) + 100000000)::text");
+
                     b.Property<string>("Phone")
                         .HasMaxLength(40)
                         .HasColumnType("character varying(40)");
@@ -818,6 +892,13 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Property<string>("ProfilePhotoDataUrl")
                         .HasColumnType("text");
 
+                    b.Property<string>("RecoveryEmail")
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<DateTimeOffset?>("RecoveryEmailVerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<bool>("RequiresAlias")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
@@ -835,6 +916,9 @@ namespace Nivra.Api.Infrastructure.Migrations
 
                     b.HasIndex("IsDiscoverable");
 
+                    b.HasIndex("NivraNumber")
+                        .IsUnique();
+
                     b.HasIndex("Phone")
                         .IsUnique()
                         .HasFilter("\"Phone\" IS NOT NULL AND \"DisabledAt\" IS NULL");
@@ -843,7 +927,10 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .IsUnique()
                         .HasFilter("\"PhoneHash\" IS NOT NULL AND \"DisabledAt\" IS NULL");
 
-                    b.ToTable("users", "public");
+                    b.ToTable("users", "public", t =>
+                        {
+                            t.HasCheckConstraint("CK_users_NivraNumber", "\"NivraNumber\" ~ '^[1-9][0-9]{8}$'");
+                        });
                 });
 
             modelBuilder.Entity("Nivra.Api.Domain.UserContactHash", b =>
@@ -1062,6 +1149,15 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("vault_room_members", "public");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.AccountRecoveryChallenge", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Nivra.Api.Domain.AdImpressionAggregate", b =>

@@ -19,6 +19,8 @@ import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { ClientCompatibilityService } from '../../core/services/client-compatibility.service';
+import { NivraApiService } from '../../core/services/nivra-api.service';
 
 @Component({
   selector: 'app-shell',
@@ -31,8 +33,11 @@ export class ShellPage {
   readonly auth = inject(AuthService);
   readonly calls = inject(CallsService);
   readonly realtime = inject(SignalrService);
+  readonly compatibility = inject(ClientCompatibilityService);
+  private readonly api = inject(NivraApiService);
   private readonly router = inject(Router);
   readonly hideMobileNav = signal(this.isMobileImmersiveRoute(this.router.url));
+  readonly onCallsPage = signal(this.router.url.startsWith('/app/calls'));
 
   readonly nav = [
     { path: '/app/chats', icon: 'chatbubble-ellipses-outline', label: 'Chats', labelKey: 'TABS.CHATS' },
@@ -43,6 +48,7 @@ export class ShellPage {
   ];
 
   constructor() {
+    void this.compatibility.check(this.api.baseUrl);
     addIcons({
       albumsOutline,
       callOutline,
@@ -60,6 +66,7 @@ export class ShellPage {
       .subscribe((event) => {
         if (event instanceof NavigationEnd) {
           this.hideMobileNav.set(this.isMobileImmersiveRoute(event.urlAfterRedirects));
+          this.onCallsPage.set(event.urlAfterRedirects.startsWith('/app/calls'));
         }
       });
   }

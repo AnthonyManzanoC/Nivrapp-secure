@@ -1,6 +1,6 @@
-import { Injectable, inject } from '@angular/core';
+import { Injectable, inject, signal } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
-import type { SQLiteDBConnection } from '@capacitor-community/sqlite';
+import type { SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { IDBPDatabase, openDB } from 'idb';
 import { CallSession, ChatMessageVm, ChatPayload, Contact, Conversation, LocalProfile, Story } from '../models/nivra.models';
 import { NativeSecureVaultService } from './native-secure-vault.service';
@@ -98,9 +98,10 @@ interface ConversationMessagesPageOptions {
 
 @Injectable({ providedIn: 'root' })
 export class LocalHistoryService {
+  readonly storageError = signal('');
   private readonly secureVault = inject(NativeSecureVaultService);
   private dbPromise?: Promise<IDBPDatabase | null>;
-  private sqlitePromise?: Promise<SQLiteDBConnection | null>;
+  private sqlitePromise?: Promise<SQLiteDBConnection>;
 
   async conversationMessagesPage(
     accountKey: string,
@@ -845,8 +846,16 @@ export class LocalHistoryService {
     if (!this.shouldUseNativeSqlite()) {
       return null;
     }
-    this.sqlitePromise ??= this.createNativeSqliteConnection();
-    return this.sqlitePromise;
+    const opening = this.sqlitePromise ??= this.createNativeSqliteConnection();
+    try {
+      return await opening;
+    } catch (error) {
+      if (this.sqlitePromise === opening) {
+        this.sqlitePromise = undefined;
+      }
+      // A locked/unavailable native vault must not silently create a second history in IndexedDB.
+      throw error;
+    }
   }
 
   private async deleteIndexedDatabases(): Promise<void> {
@@ -903,26 +912,16 @@ export class LocalHistoryService {
     return typeof window !== 'undefined' && Capacitor.isNativePlatform();
   }
 
-  private async createNativeSqliteConnection(): Promise<SQLiteDBConnection | null> {
+  private async createNativeSqliteConnection(): Promise<SQLiteDBConnection> {
+    let sqlite: SQLiteConnection | undefined;
     try {
       const { CapacitorSQLite, SQLiteConnection } = await import('@capacitor-community/sqlite');
-      const sqlite = new SQLiteConnection(CapacitorSQLite);
-      const sqliteApi = sqlite as unknown as {
-        closeConnection?: (database: string, readonly: boolean) => Promise<void>;
-        deleteDatabase?: (database: string, readonly: boolean) => Promise<void>;
-      };
+      sqlite = new SQLiteConnection(CapacitorSQLite);
       const existing = await sqlite.isConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => ({ result: false }));
-      let db = existing.result
+      const db = existing.result
         ? await sqlite.retrieveConnection(NATIVE_SQLITE_DB_NAME, false)
         : await this.createEncryptedNativeConnection(sqlite);
-      try {
-        await this.withNativeSqliteSecret(sqlite, () => db.open());
-      } catch {
-        await sqliteApi.closeConnection?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
-        await sqliteApi.deleteDatabase?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
-        db = await this.createEncryptedNativeConnection(sqlite);
-        await this.withNativeSqliteSecret(sqlite, () => db.open());
-      }
+      await this.withNativeSqliteSecret(sqlite, () => db.open());
       await db.execute(`
         CREATE TABLE IF NOT EXISTS local_messages (
           key TEXT PRIMARY KEY NOT NULL,
@@ -978,10 +977,15 @@ export class LocalHistoryService {
           created_at TEXT NOT NULL
         );
       `);
-      await sqlite.clearEncryptionSecret().catch(() => undefined);
+      this.storageError.set('');
       return db;
     } catch {
-      return null;
+      await sqlite?.closeConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
+      const message = 'No se pudo abrir el historial cifrado. Desbloquea el dispositivo y vuelve a intentar. Tus datos locales se han conservado.';
+      this.storageError.set(message);
+      throw new Error(message);
+    } finally {
+      await sqlite?.clearEncryptionSecret().catch(() => undefined);
     }
   }
 
@@ -994,26 +998,16 @@ export class LocalHistoryService {
       readonly: boolean,
     ) => Promise<SQLiteDBConnection>;
     closeConnection?: (database: string, readonly: boolean) => Promise<void>;
-    deleteDatabase?: (database: string, readonly: boolean) => Promise<void>;
     clearEncryptionSecret?: () => Promise<void>;
     setEncryptionSecret?: (passphrase: string) => Promise<void>;
   }): Promise<SQLiteDBConnection> {
     try {
       await this.prepareNativeSqliteSecret(sqlite);
       return await sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
-    } catch (secretError) {
+    } catch {
       await sqlite.closeConnection?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
-      try {
-        await this.prepareNativeSqliteSecret(sqlite);
-        return await sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'encryption', 1, false);
-      } catch {
-        await sqlite.closeConnection?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
-        await sqlite.deleteDatabase?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
-        await this.prepareNativeSqliteSecret(sqlite);
-        return sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
-      } finally {
-        void secretError;
-      }
+      await this.prepareNativeSqliteSecret(sqlite);
+      return sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'encryption', 1, false);
     }
   }
 
@@ -1287,7 +1281,14 @@ export class LocalHistoryService {
     const existing = await store.get(accountKey) as LocalVaultKeyRecord | undefined;
     const protectedKey = await this.unprotectLocalVaultKey(existing);
     if (protectedKey) {
+      this.storageError.set('');
       return protectedKey;
+    }
+    if (existing?.keyEnvelope) {
+      // Never replace an existing encrypted key just because its protector is temporarily unavailable.
+      const message = 'No se pudo desbloquear la clave del historial local. Desbloquea el dispositivo y vuelve a intentar. La clave guardada se ha conservado.';
+      this.storageError.set(message);
+      throw new Error(message);
     }
     if (existing?.key) {
       return existing.key;

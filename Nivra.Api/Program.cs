@@ -28,6 +28,12 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 builder.Services.AddProblemDetails();
 builder.Services.Configure<NivraSecurityOptions>(builder.Configuration.GetSection("Security"));
+var configuredTokenSigningKey = builder.Configuration["Security:TokenSigningKey"];
+if (!builder.Environment.IsDevelopment() && string.IsNullOrWhiteSpace(configuredTokenSigningKey))
+{
+    throw new InvalidOperationException(
+        "Security:TokenSigningKey must be supplied as a production secret. Refusing to start with an ephemeral signing key.");
+}
 builder.Services.Configure<NivraStorageOptions>(builder.Configuration.GetSection("Storage"));
 builder.Services.Configure<NivraPushOptions>(builder.Configuration.GetSection("Push"));
 builder.Services.Configure<LiveKitOptions>(builder.Configuration.GetSection("LiveKit"));
@@ -44,6 +50,9 @@ if (!string.IsNullOrWhiteSpace(dataProtectionKeyRingPath))
     dataProtectionBuilder.PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeyRingPath));
 }
 builder.Services.AddHttpClient();
+builder.Services.Configure<BrevoEmailOptions>(builder.Configuration.GetSection("Brevo"));
+builder.Services.AddSingleton<BrevoEmailService>();
+builder.Services.AddHttpClient("brevo", client => client.Timeout = TimeSpan.FromSeconds(15));
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddDbContext<NivraDbContext>(options =>
 {
@@ -122,12 +131,19 @@ builder.Services.AddRateLimiter(options =>
         });
     });
 
-    options.AddFixedWindowLimiter("auth", limiter =>
+    options.AddPolicy("auth", context =>
     {
-        limiter.PermitLimit = 20;
-        limiter.Window = TimeSpan.FromMinutes(1);
-        limiter.QueueLimit = 0;
-        limiter.AutoReplenishment = true;
+        var current = context.GetCurrentUser();
+        var key = current is not null
+            ? $"user:{current.UserId}"
+            : $"ip:{context.Connection.RemoteIpAddress?.ToString() ?? "unknown"}";
+        return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 20,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
     });
 
     options.AddFixedWindowLimiter("uploads", limiter =>
@@ -186,8 +202,16 @@ app.Use(async (context, next) =>
 app.UseCors("NivraClients");
 app.UseNivraAuth();
 app.UseRateLimiter();
+app.UseCallCompatibility();
 
 app.MapNivraApi();
+app.MapGet("/client/compatibility", () => Results.Ok(ClientCompatibility.Description()));
+app.MapGet("/health/ready", async (NivraDbContext db, CancellationToken cancellationToken) =>
+{
+    var ready = await db.Database.CanConnectAsync(cancellationToken);
+    return Results.Json(new { status = ready ? "ok" : "unavailable", version = ClientCompatibility.Version, callProtocol = ClientCompatibility.CallProtocol },
+        statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
+});
 app.MapHub<NivraHub>("/hubs/realtime");
 app.MapGet("/ping", () => Results.Ok("Nivra Server Despierto"));
 app.Run();

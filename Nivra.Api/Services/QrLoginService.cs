@@ -7,7 +7,8 @@ namespace Nivra.Api.Services;
 public sealed class QrLoginService(TimeProvider timeProvider)
 {
     private readonly ConcurrentDictionary<string, QrLoginChallenge> _challenges = new(StringComparer.Ordinal);
-    private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan DeliveryLifetime = TimeSpan.FromSeconds(30);
 
     public QrLoginChallenge Start(string deviceName, KeyBundleRequest? keyBundle, string? publicKey, string? hardwareId)
     {
@@ -67,15 +68,40 @@ public sealed class QrLoginService(TimeProvider timeProvider)
 
     public bool TryAuthorize(string qrId, string code, QrLoginAuthorizedResponse authorization)
     {
-        var challenge = GetPending(qrId, code);
+        var challenge = Get(qrId, code);
         if (challenge is null)
         {
             return false;
         }
 
-        challenge.Authorization = authorization;
-        challenge.AuthorizedAt = timeProvider.GetUtcNow();
-        return true;
+        lock (challenge)
+        {
+            if (challenge.Authorization is not null || challenge.ExpiresAt <= timeProvider.GetUtcNow())
+            {
+                return false;
+            }
+            challenge.AuthorizedAt = timeProvider.GetUtcNow();
+            challenge.Authorization = authorization;
+            return true;
+        }
+    }
+
+    // Hold this lease before issuing any device credentials, so repeated scans cannot
+    // create extra sessions while the first authorization is still awaiting the database.
+    public async Task<IDisposable?> AcquireAuthorizationAsync(string qrId, string code, CancellationToken cancellationToken)
+    {
+        var challenge = GetPending(qrId, code);
+        if (challenge is null)
+        {
+            return null;
+        }
+        await challenge.AuthorizationGate.WaitAsync(cancellationToken);
+        if (!IsValid(qrId, code))
+        {
+            challenge.AuthorizationGate.Release();
+            return null;
+        }
+        return new AuthorizationLease(challenge.AuthorizationGate);
     }
 
     public void Consume(string qrId)
@@ -88,9 +114,24 @@ public sealed class QrLoginService(TimeProvider timeProvider)
         var now = timeProvider.GetUtcNow();
         foreach (var item in _challenges)
         {
-            if (item.Value.ExpiresAt <= now && item.Value.Authorization is null)
+            var deadline = item.Value.AuthorizedAt is { } authorizedAt
+                ? authorizedAt.Add(DeliveryLifetime)
+                : item.Value.ExpiresAt;
+            if (deadline <= now)
             {
                 _challenges.TryRemove(item.Key, out _);
+            }
+        }
+    }
+
+    private sealed class AuthorizationLease(SemaphoreSlim gate) : IDisposable
+    {
+        private int _released;
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _released, 1) == 0)
+            {
+                gate.Release();
             }
         }
     }
@@ -106,6 +147,7 @@ public sealed class QrLoginChallenge(
     DateTimeOffset createdAt,
     DateTimeOffset expiresAt)
 {
+    internal SemaphoreSlim AuthorizationGate { get; } = new(1, 1);
     public string Id { get; } = id;
     public string Code { get; } = code;
     public string DeviceName { get; } = deviceName;

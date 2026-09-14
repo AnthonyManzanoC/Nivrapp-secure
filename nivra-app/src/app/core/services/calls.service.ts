@@ -2,17 +2,23 @@ import { DestroyRef, Injectable, NgZone, OnDestroy, computed, effect, inject, si
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
-import { Room, RoomEvent, type AudioCaptureOptions } from 'livekit-client';
+import { Room, RoomEvent, Track, type AudioCaptureOptions } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { CallPhase, CallSession, CallSignalEvent, GroupCallRoom, PublicKeyDirectory, RecipientCipherRequest } from '../models/nivra.models';
 import { AuthService } from './auth.service';
+import { CallAudioOutputService } from './call-audio-output.service';
 import { ChatService } from './chat.service';
 import { CryptoService } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
 import { NativeDeviceService, type NativeCallActionEvent } from './native-device.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
+import { NIVRA_CALL_PROTOCOL } from '../release';
+import { CallGameSessionService } from './call-game-session.service';
+import { GroupCallCryptoService, type GroupEncryptionContext } from './group-call-crypto.service';
+import { decodeAuthenticatedMediaKeySignal } from './authenticated-media-signal';
+import { NativeScreenShareService } from './native-screen-share.service';
 
 interface PeerState {
   connection: RTCPeerConnection;
@@ -96,6 +102,11 @@ const CALL_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
 export class CallsService implements OnDestroy {
   private readonly api = inject(NivraApiService);
   private readonly auth = inject(AuthService);
+  readonly audioOutput = inject(CallAudioOutputService);
+  readonly games = inject(CallGameSessionService);
+  private readonly groupCrypto = inject(GroupCallCryptoService);
+  private readonly nativeScreen = inject(NativeScreenShareService);
+  private screenShareBusy = false;
   private readonly chat = inject(ChatService);
   private readonly crypto = inject(CryptoService);
   private readonly historyStore = inject(LocalHistoryService);
@@ -111,12 +122,16 @@ export class CallsService implements OnDestroy {
   private readonly systemLoggedCallIds = new Set<string>();
   private readonly directories = new Map<string, PublicKeyDirectory>();
   private liveKitRoom: Room | null = null;
+  private groupEncryptionContext: GroupEncryptionContext | null = null;
   private readonly textDecoder = new TextDecoder();
   private ringTimeout: number | null = null;
   private ringToneInterval: number | null = null;
   private ringAudioContext: AudioContext | null = null;
   private ringTonePhase: 'calling' | 'ringing' | null = null;
   private readonly callSignalSessionId = crypto.randomUUID();
+  private callActionInFlight = false;
+  private mediaGeneration = 0;
+  private readonly dismissedCallIds = new Set<string>();
   private connectedUiReconcileTimers: number[] = [];
   private screenShareStream: MediaStream | null = null;
   private cameraTrackBeforeScreenShare: MediaStreamTrack | null = null;
@@ -141,6 +156,7 @@ export class CallsService implements OnDestroy {
   };
   private readonly visibilityChangeHandler = () => {
     if (document.visibilityState === 'visible') {
+      this.syncNativeCall();
       const call = this.activeCall();
       if (call?.id) {
         void this.pollPersistedSignals(call.id);
@@ -166,11 +182,39 @@ export class CallsService implements OnDestroy {
   readonly mediaUpgradeInFlight = signal(false);
   readonly activeScreenShareStreamId = signal<string | null>(null);
   readonly error = signal('');
+  readonly resumableCall = signal<CallSession | null>(null);
   readonly history = signal<CallSession[]>(this.loadHistory());
   readonly activeGroupRooms = signal<Record<string, GroupCallRoom>>({});
   readonly remoteEntries = computed(() => Object.entries(this.remoteStreams()));
 
   constructor() {
+    effect(() => {
+      const call = this.activeCall();
+      const userId = this.auth.session()?.user.id;
+      untracked(() => {
+        if (call && userId) {
+          this.games.configure(call, userId);
+          void this.groupCrypto.updateRoster(call).catch(() => {
+            if (this.activeCall()?.id === call.id) {
+              this.disconnectLiveKitRoom();
+              this.phase.set('failed');
+              this.error.set('No se pudieron renovar las claves de la sala. Vuelve a unirte.');
+            }
+          });
+        }
+      });
+    });
+    effect(() => {
+      this.activeCall();
+      this.localStream();
+      this.phase();
+      untracked(() => this.syncNativeCall());
+    });
+    effect(() => {
+      const streams = this.remoteStreams();
+      const muted = !this.speaker();
+      untracked(() => this.audioOutput.sync(streams, muted));
+    });
     this.realtime.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((event) => {
       if (event.type === 'call.started' || event.type === 'incomingCall') {
         void this.receiveIncoming(event.payload as CallSession);
@@ -265,11 +309,13 @@ export class CallsService implements OnDestroy {
 
   async start(type: 'Voice' | 'Video', conversationId: string | null, participantUserIds: string[] = []): Promise<CallSession> {
     this.error.set('');
-    if (this.activeCall()) {
+    if (this.activeCall() || this.callActionInFlight) {
       const error = new Error('Ya hay una llamada activa.');
       this.error.set(error.message);
       throw error;
     }
+    this.callActionInFlight = true;
+    let ownedStart: CallSession | null = null;
     try {
       const groupCall = this.isGroupConversationId(conversationId);
       if (!groupCall) {
@@ -284,6 +330,9 @@ export class CallsService implements OnDestroy {
         participantUserIds,
         groupId: groupCall ? conversationId : null,
         roomMode: groupCall ? 'GroupRoom' : 'Direct',
+        clientSessionId: this.callSignalSessionId,
+        clientProtocol: NIVRA_CALL_PROTOCOL,
+        mediaEncryption: 'livekit-e2ee-v1',
       }));
       const normalized = this.withGroupRoomMetadata(call, conversationId, groupCall);
       this.rememberGroupRoom(normalized);
@@ -291,8 +340,11 @@ export class CallsService implements OnDestroy {
       this.phase.set('calling');
       this.addHistory(normalized);
       if (groupCall) {
+        if (!await this.claimCall(normalized)) { throw new Error('La llamada está abierta en otra sesión.'); }
+        ownedStart = normalized;
         await this.connectLiveKitRoom(normalized);
       } else {
+        ownedStart = normalized;
         this.scheduleRingTimeout(normalized);
         this.startRingingTone('calling');
         await this.flushPendingCallSignals();
@@ -300,44 +352,67 @@ export class CallsService implements OnDestroy {
       return normalized;
     } catch (error) {
       this.cleanup({ remember: false });
+      if (ownedStart) {
+        await firstValueFrom(this.api.post(`/calls/${encodeURIComponent(ownedStart.id)}/leave`, {
+          clientSessionId: this.callSignalSessionId,
+        })).catch(() => undefined);
+      }
       this.error.set(error instanceof Error ? error.message : 'No se pudo iniciar la llamada.');
       throw error;
+    } finally {
+      this.callActionInFlight = false;
     }
   }
 
   async accept(): Promise<void> {
     const call = this.activeCall();
-    if (!call) {
+    if (!call || this.callActionInFlight || this.phase() !== 'ringing') {
       return;
     }
-    this.error.set('');
-    void this.nativeDevice.clearIncomingCall(call.id);
-    if (this.isGroupCall(call)) {
+    this.callActionInFlight = true;
+    try {
+      this.error.set('');
+      if (!await this.claimCall(call) || this.activeCall()?.id !== call.id) { return; }
       this.setConnectingPhase();
       this.clearRingTimeout();
       this.stopRingingTone();
-      await this.realtime.callAnsweredElsewhere(call.id).catch(() => undefined);
-      await this.connectLiveKitRoom(call);
-      return;
+      void this.nativeDevice.clearIncomingCall(call.id);
+      if (this.isGroupCall(call)) {
+        await this.connectLiveKitRoom(call);
+        return;
+      }
+      await this.loadIceConfiguration();
+      if (this.activeCall()?.id !== call.id) { return; }
+      await this.prepareMedia(call.type === 'Video');
+      if (this.activeCall()?.id !== call.id) { this.stopLocalMedia(); return; }
+      await Promise.all(this.otherParticipantIds(call).map((userId) =>
+        this.sendCallSignal(call, userId, 'accepted', { accepted: true }).catch(() => undefined)));
+      await this.establishCallPeers();
+      await this.flushPendingCallSignals();
+      this.scheduleConnectedUiReconcile(call.id);
+    } catch (error) {
+      if (this.activeCall()?.id === call.id) {
+        this.phase.set('failed');
+        this.stopRingingTone();
+        this.clearRingTimeout();
+        this.error.set(error instanceof Error ? error.message : 'No se pudo contestar. Revisa el permiso del micrófono y vuelve a intentar.');
+      }
+    } finally {
+      this.callActionInFlight = false;
     }
-    await this.loadIceConfiguration();
-    await this.prepareMedia(call.type === 'Video');
-    this.setConnectingPhase();
-    this.clearRingTimeout();
-    this.stopRingingTone();
-    await Promise.all(this.otherParticipantIds(call).map((userId) =>
-      this.sendCallSignal(call, userId, 'accepted', { accepted: true }).catch(() => undefined)));
-    await this.realtime.callAnsweredElsewhere(call.id).catch(() => undefined);
-    await this.establishCallPeers();
-    await this.flushPendingCallSignals();
-    this.scheduleConnectedUiReconcile(call.id);
   }
 
   async decline(): Promise<void> {
     const call = this.activeCall();
-    if (!call) {
+    if (!call || this.callActionInFlight) {
       return;
     }
+    if (this.isGroupCall(call) && this.phase() === 'ringing') {
+      this.dismissedCallIds.add(call.id);
+      this.cleanup({ historyStatus: 'Rejected' });
+      return;
+    }
+    if (!this.isGroupCall(call) && !await this.claimCall(call)) { return; }
     void this.nativeDevice.clearIncomingCall(call.id);
     this.phase.set('rejected');
     await Promise.all(this.otherParticipantIds(call).map((userId) =>
@@ -348,7 +423,7 @@ export class CallsService implements OnDestroy {
     const shouldEndRoom = !this.isGroupCall(call) || call.initiatorUserId === this.currentUserId();
     this.cleanup({ historyStatus: 'Rejected' });
     if (shouldEndRoom) {
-      await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, {})).catch(() => null);
+      await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, { clientSessionId: this.callSignalSessionId })).catch(() => null);
     }
   }
 
@@ -358,16 +433,14 @@ export class CallsService implements OnDestroy {
     }
     void this.nativeDevice.clearIncomingCall(callId);
     const activeBeforeEnd = this.activeCall();
-    if (
-      activeBeforeEnd?.id === callId &&
-      this.isGroupCall(activeBeforeEnd) &&
-      this.hasRemoteGroupParticipants()
-    ) {
+    if (activeBeforeEnd?.id === callId && this.isGroupCall(activeBeforeEnd)) {
       await this.leaveGroupCallLocally(activeBeforeEnd);
       return;
     }
-    this.phase.set('ended');
-    const call = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(callId)}/end`, {}));
+    if (activeBeforeEnd?.id !== callId) { return; }
+    this.cleanup({ remember: false });
+    try {
+    const call = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(callId)}/end`, { clientSessionId: this.callSignalSessionId }));
     const callLog = {
       ...(activeBeforeEnd?.id === call.id ? activeBeforeEnd : {}),
       ...call,
@@ -379,6 +452,12 @@ export class CallsService implements OnDestroy {
       this.cleanup({ remember: false });
     }
     this.addHistory(call);
+    } catch {
+      this.addHistory({ ...activeBeforeEnd, status: 'Ended', endedAt: new Date().toISOString() });
+      if (!this.activeCall()) {
+        this.error.set('La llamada se cerró en este dispositivo. No se pudo confirmar el cierre con el servidor.');
+      }
+    }
   }
 
   async rejoin(callId: string): Promise<void> {
@@ -391,6 +470,8 @@ export class CallsService implements OnDestroy {
       return;
     }
     const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? null, this.isGroupCall(call));
+    if (!await this.claimCall(normalized)) { return; }
+    this.dismissedCallIds.delete(callId);
     if (this.isGroupCall(normalized)) {
       this.rememberGroupRoom(normalized);
       this.activeCall.set(normalized);
@@ -503,7 +584,7 @@ export class CallsService implements OnDestroy {
 
       const response = await firstValueFrom(this.api.patch<CallSession>(
         `/calls/${encodeURIComponent(call.id)}/type`,
-        { type: 'Video' },
+        { type: 'Video', clientSessionId: this.callSignalSessionId },
       ));
       const updated = {
         ...call,
@@ -544,9 +625,10 @@ export class CallsService implements OnDestroy {
 
   canOfferScreenShare(): boolean {
     const call = this.activeCall();
-    if (!call || call.type !== 'Video' || this.isNativePlatform()) {
+    if (!call || call.type !== 'Video') {
       return false;
     }
+    if (this.isNativePlatform()) return this.nativeScreen.supported();
     if (this.isGroupCall(call)) {
       const participant = this.liveKitRoom?.localParticipant as unknown as { setScreenShareEnabled?: (enabled: boolean, options?: unknown) => Promise<unknown> } | undefined;
       return typeof participant?.setScreenShareEnabled === 'function' || Boolean(this.displayMediaApi());
@@ -559,7 +641,7 @@ export class CallsService implements OnDestroy {
     if (!call || call.type !== 'Video' || !['connecting', 'connected'].includes(this.phase())) {
       return false;
     }
-    return this.canOfferScreenShare();
+    return !this.screenShareBusy && this.canOfferScreenShare();
   }
 
   async toggleScreenShare(): Promise<void> {
@@ -650,6 +732,7 @@ export class CallsService implements OnDestroy {
       return;
     }
     if (this.activeCall()?.id === room.call.id) {
+      if (this.phase() === 'ringing') { await this.accept(); }
       return;
     }
     if (this.activeCall()) {
@@ -657,6 +740,8 @@ export class CallsService implements OnDestroy {
       return;
     }
     const call = this.withGroupRoomMetadata(room.call, room.conversationId, true);
+    if (!await this.claimCall(call)) { return; }
+    this.dismissedCallIds.delete(call.id);
     this.rememberGroupRoom(call);
     this.activeCall.set(call);
     this.setConnectingPhase();
@@ -668,25 +753,25 @@ export class CallsService implements OnDestroy {
 
   private async startScreenShare(): Promise<void> {
     const call = this.activeCall();
-    if (!call || call.type !== 'Video') {
+    if (!call || call.type !== 'Video' || this.screenShareBusy) {
       return;
     }
+    const generation = this.mediaGeneration;
     this.error.set('');
-    if (this.isNativePlatform()) {
-      return;
-    }
-
-    if (this.isGroupCall(call) && this.liveKitRoom) {
+    if (!this.isNativePlatform() && this.isGroupCall(call) && this.liveKitRoom) {
+      const room = this.liveKitRoom;
       const participant = this.liveKitRoom.localParticipant as unknown as {
         setScreenShareEnabled?: (enabled: boolean, options?: unknown) => Promise<unknown>;
       };
       if (typeof participant.setScreenShareEnabled === 'function') {
+        this.screenShareBusy = true;
         try {
           await participant.setScreenShareEnabled(true, { audio: true });
+          if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) { await participant.setScreenShareEnabled(false); return; }
         } catch (error) {
           this.error.set(error instanceof Error ? error.message : 'No se pudo iniciar la pantalla compartida.');
           return;
-        }
+        } finally { this.screenShareBusy = false; }
         this.screenSharing.set(true);
         this.broadcastControl('screen', 'on');
         this.syncLiveKitLocalTracks();
@@ -695,15 +780,19 @@ export class CallsService implements OnDestroy {
     }
 
     const getDisplayMedia = this.displayMediaApi();
-    if (!getDisplayMedia) {
+    if (!getDisplayMedia && !this.nativeScreen.supported()) {
       return;
     }
-
+    this.screenShareBusy = true;
     let displayStream: MediaStream | null = null;
     try {
-      displayStream = await getDisplayMedia({ video: true, audio: true });
-    } catch {
-      this.error.set('No se pudo iniciar la captura de pantalla.');
+      displayStream = this.nativeScreen.supported() ? await this.nativeScreen.start() : await getDisplayMedia!({ video: true, audio: true });
+    } catch (error) {
+      if (this.activeCall()?.id === call.id) this.error.set(error instanceof Error ? error.message : 'No se pudo iniciar la captura de pantalla.');
+      return;
+    } finally { this.screenShareBusy = false; }
+    if (this.mediaGeneration !== generation || this.activeCall()?.id !== call.id) {
+      displayStream?.getTracks().forEach(track => track.stop());
       return;
     }
     const screenTrack = displayStream?.getVideoTracks()[0];
@@ -714,11 +803,28 @@ export class CallsService implements OnDestroy {
 
     screenTrack.contentHint = 'detail';
     this.screenShareStream = displayStream;
+    screenTrack.onended = () => { if (this.screenShareStream === displayStream) void this.stopScreenShare(); };
+    if (this.isGroupCall(call) && this.liveKitRoom) {
+      const room = this.liveKitRoom;
+      try {
+        await room.localParticipant.publishTrack(screenTrack, { source: Track.Source.ScreenShare, name: 'Pantalla', simulcast: false });
+        if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) { await room.localParticipant.unpublishTrack(screenTrack); screenTrack.stop(); return; }
+        this.screenSharing.set(true);
+        this.broadcastControl('screen', 'on');
+        this.syncLiveKitLocalTracks();
+      } catch {
+        await this.nativeScreen.stop();
+        this.screenShareStream = null;
+        this.error.set('No se pudo publicar la pantalla en la sala cifrada.');
+      }
+      return;
+    }
     this.cameraTrackBeforeScreenShare = this.localStream()?.getVideoTracks()[0] ?? null;
     await this.replaceOutgoingVideoTrack(screenTrack);
+    if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
     await this.addOutgoingScreenAudioTracks(displayStream);
+    if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
     this.publishLocalScreenTrack(screenTrack);
-    screenTrack.onended = () => void this.stopScreenShare();
     this.screenSharing.set(true);
     this.broadcastControl('screen', 'on');
   }
@@ -727,8 +833,13 @@ export class CallsService implements OnDestroy {
     const restoreCamera = options.restoreCamera !== false;
     const broadcast = options.broadcast !== false;
     const call = this.activeCall();
+    const generation = this.mediaGeneration;
+    const screenStream = this.screenShareStream;
 
     if (this.liveKitRoom && this.isGroupCall(call)) {
+      if (screenStream) {
+        for (const track of screenStream.getVideoTracks()) await this.liveKitRoom.localParticipant.unpublishTrack(track).catch(() => undefined);
+      }
       const participant = this.liveKitRoom.localParticipant as unknown as {
         setScreenShareEnabled?: (enabled: boolean, options?: unknown) => Promise<unknown>;
       };
@@ -737,6 +848,7 @@ export class CallsService implements OnDestroy {
         this.syncLiveKitLocalTracks();
       }
     }
+    if (generation !== this.mediaGeneration || this.activeCall()?.id !== call?.id) return;
 
     const previousCamera = this.cameraTrackBeforeScreenShare;
     if (restoreCamera && previousCamera && previousCamera.readyState !== 'ended') {
@@ -745,6 +857,9 @@ export class CallsService implements OnDestroy {
     }
 
     await this.removeOutgoingScreenAudioTracks();
+    if (generation !== this.mediaGeneration || this.activeCall()?.id !== call?.id) return;
+    await this.nativeScreen.stop();
+    if (generation !== this.mediaGeneration || this.activeCall()?.id !== call?.id) return;
     this.screenShareStream?.getTracks().forEach((track) => track.stop());
     this.screenShareStream = null;
     this.cameraTrackBeforeScreenShare = null;
@@ -839,6 +954,7 @@ export class CallsService implements OnDestroy {
   }
 
   private async connectLiveKitRoom(call: CallSession): Promise<void> {
+    if (this.activeCall()?.id === call.id) call = this.activeCall()!;
     const credentials = await this.liveKitCredentialsForCall(call).catch((error) => {
       this.error.set(error instanceof Error ? error.message : 'No se pudo obtener el token LiveKit.');
       return null;
@@ -848,13 +964,23 @@ export class CallsService implements OnDestroy {
       this.rememberGroupRoom(call);
       return;
     }
+    if (this.activeCall()?.id !== call.id) { return; }
     this.disconnectLiveKitRoom();
+    const encryptionContext = await this.groupCrypto.prepare(call, this.currentUserId() ?? '', async (target, type, payload) => {
+      const current = this.activeCall();
+      if (current?.id !== call.id) throw new Error('La llamada ya se cerró.');
+      return this.sendCallSignal(current, target, type, payload);
+    });
+    if (this.activeCall()?.id !== call.id) { encryptionContext.dispose(); return; }
+    this.groupEncryptionContext = encryptionContext;
     const room = new Room({
+      encryption: encryptionContext.encryption,
       audioCaptureDefaults: CALL_AUDIO_PROCESSING,
       adaptiveStream: true,
       dynacast: true,
     });
     this.liveKitRoom = room;
+    this.games.configure(this.activeCall() ?? call, this.currentUserId() ?? '');
     room.on(RoomEvent.TrackSubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
       this.addLiveKitRemoteTrack(participant?.identity || crypto.randomUUID(), track, publication);
     });
@@ -896,15 +1022,27 @@ export class CallsService implements OnDestroy {
         this.error.set('La sala perdio la conexion. Puedes intentar unirte de nuevo.');
       }
     });
+    await room.setE2EEEnabled(true);
     await this.withTimeout(
       room.connect(credentials.serverUrl, credentials.token),
       20_000,
       'La sala esta tardando demasiado en conectar.',
     );
+    if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
+      await room.disconnect();
+      return;
+    }
+    await encryptionContext.enable(room);
+    if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) { await room.disconnect(); return; }
+    this.games.transport.attachRoom(room);
     await (room.localParticipant as unknown as {
       setMicrophoneEnabled: (enabled: boolean, options?: AudioCaptureOptions) => Promise<unknown>;
       setCameraEnabled: (enabled: boolean) => Promise<unknown>;
     }).setMicrophoneEnabled(true, CALL_AUDIO_PROCESSING);
+    if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
+      await room.disconnect();
+      return;
+    }
     if (call.type === 'Video') {
       await (room.localParticipant as unknown as {
         setCameraEnabled: (enabled: boolean) => Promise<unknown>;
@@ -912,6 +1050,10 @@ export class CallsService implements OnDestroy {
         this.cameraOff.set(true);
         this.error.set('La camara no esta disponible. La llamada continuara con audio.');
       });
+    }
+    if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
+      await room.disconnect();
+      return;
     }
     this.syncLiveKitLocalTracks();
     this.refreshLiveKitRemoteStreams();
@@ -932,7 +1074,7 @@ export class CallsService implements OnDestroy {
     }
 
     const callCredentials = await firstValueFrom(
-      this.api.get<LiveKitRoomTokenResponse>(`/calls/${encodeURIComponent(call.id)}/room-token`),
+      this.api.get<LiveKitRoomTokenResponse>(`/calls/${encodeURIComponent(call.id)}/room-token?clientSessionId=${encodeURIComponent(this.callSignalSessionId)}`),
     ).catch(() => null);
     if (callCredentials?.serverUrl && callCredentials.token) {
       return callCredentials;
@@ -943,7 +1085,7 @@ export class CallsService implements OnDestroy {
       throw new Error('No se pudo resolver la sala segura para esta llamada.');
     }
 
-    const response = await firstValueFrom(this.api.get<LiveKitRoomTokenResponse>(`/api/calls/room-token/${encodeURIComponent(groupId)}`));
+    const response = await firstValueFrom(this.api.get<LiveKitRoomTokenResponse>(`/api/calls/room-token/${encodeURIComponent(groupId)}?clientSessionId=${encodeURIComponent(this.callSignalSessionId)}`));
     if (!response?.serverUrl || !response.token) {
       throw new Error('El servidor no devolvio credenciales LiveKit validas.');
     }
@@ -1079,6 +1221,8 @@ export class CallsService implements OnDestroy {
   private disconnectLiveKitRoom(): void {
     const room = this.liveKitRoom;
     this.liveKitRoom = null;
+    this.groupEncryptionContext?.dispose();
+    this.groupEncryptionContext = null;
     if (!room) {
       return;
     }
@@ -1096,6 +1240,7 @@ export class CallsService implements OnDestroy {
     try {
       const response = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/invite`, {
         userId: targetUserId,
+        clientSessionId: this.callSignalSessionId,
       }));
       const normalized = this.withGroupRoomMetadata(response, response.conversationId ?? call.conversationId ?? call.groupId ?? null, this.isGroupCall(response) || this.isGroupCall(call));
       const participantUserIds = [...new Set([...(call.participantUserIds ?? []), ...(normalized.participantUserIds ?? []), targetUserId])];
@@ -1112,9 +1257,23 @@ export class CallsService implements OnDestroy {
   }
 
   private async applyActiveCallUpdate(nextCall: CallSession): Promise<void> {
+    this.rememberGroupRoom(nextCall);
     const current = this.activeCall();
     if (!current?.id || !nextCall?.id || current.id !== nextCall.id) {
       return;
+    }
+    if (this.ownedElsewhere(nextCall)) {
+      this.dismissCallLocally(current);
+      return;
+    }
+    if (!this.isGroupCall(current)) {
+      for (const userId of this.otherParticipantIds(current)) {
+        const previous = current.participantSessions?.[userId];
+        const next = nextCall.participantSessions?.[userId];
+        if (previous && next && (previous.deviceId !== next.deviceId || previous.clientSessionId !== next.clientSessionId)) {
+          this.closePeerConnectionForUser(userId);
+        }
+      }
     }
 
     const wasGroupCall = this.isGroupCall(current);
@@ -1134,6 +1293,12 @@ export class CallsService implements OnDestroy {
     );
 
     this.activeCall.set(updated);
+    if (this.phase() === 'calling' && updated.status === 'Active' &&
+        this.otherParticipantIds(updated).some((userId) => Boolean(updated.participantSessions?.[userId]))) {
+      this.clearRingTimeout();
+      this.stopRingingTone();
+      this.setConnectingPhase();
+    }
     this.rememberGroupRoom(updated);
     this.addHistory(updated);
     if (updated.type === 'Video' && !this.localStream()?.getVideoTracks().some((track) => track.readyState === 'live')) {
@@ -1316,7 +1481,7 @@ export class CallsService implements OnDestroy {
   }
 
   private async receiveIncoming(call: CallSession): Promise<void> {
-    if (!call?.id || call.status === 'Ended' || call.endedAt) {
+    if (!call?.id || call.status === 'Ended' || call.endedAt || this.dismissedCallIds.has(call.id)) {
       return;
     }
     const currentUserId = this.currentUserId();
@@ -1325,7 +1490,9 @@ export class CallsService implements OnDestroy {
     }
     const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? call.groupId ?? null, this.isGroupCall(call));
     this.rememberGroupRoom(normalized);
-    if (normalized.initiatorUserId === currentUserId && normalized.initiatorDeviceId && normalized.initiatorDeviceId !== this.currentDeviceId()) {
+    // Only the HTTP start response opens the caller UI. A broadcast must never
+    // create another outgoing WebRTC connection, even when tabs share a device.
+    if (this.ownedElsewhere(normalized) || (normalized.initiatorUserId === currentUserId && this.activeCall()?.id !== normalized.id)) {
       this.addHistory(normalized);
       return;
     }
@@ -1333,12 +1500,14 @@ export class CallsService implements OnDestroy {
       await this.applyActiveCallUpdate(normalized);
       return;
     }
+    if (this.callActionInFlight && !this.activeCall()) { this.addHistory(normalized); return; }
     if (this.activeCall() && this.activeCall()?.id !== normalized.id && this.phase() !== 'idle') {
       if (this.isGroupCall(normalized)) {
         this.addHistory(normalized);
         return;
       }
-      await this.sendCallSignal(normalized, normalized.initiatorUserId, 'busy', { busy: true }).catch(() => undefined);
+      // A busy tab cannot reject an invitation on behalf of another free device.
+      this.addHistory(normalized);
       return;
     }
 
@@ -1362,18 +1531,82 @@ export class CallsService implements OnDestroy {
   }
 
   private handleAnsweredElsewhere(payload: unknown): void {
-    const value = payload as { callId?: string; answeredByUserId?: string; answeredByDeviceId?: string | null };
+    const value = payload as { callId?: string; answeredByUserId?: string; answeredByDeviceId?: string | null; answeredBySessionId?: string | null };
     const call = this.activeCall();
     if (!call?.id || call.id !== value.callId || value.answeredByUserId !== this.currentUserId()) {
       return;
     }
-    if (!value.answeredByDeviceId || value.answeredByDeviceId === this.currentDeviceId()) {
+    if (value.answeredBySessionId === this.callSignalSessionId ||
+        (!value.answeredBySessionId && (!value.answeredByDeviceId || value.answeredByDeviceId === this.currentDeviceId()))) {
       return;
     }
-    void this.nativeDevice.clearIncomingCall(call.id);
-    if (['ringing', 'calling', 'connecting'].includes(this.phase())) {
-      this.cleanup({ remember: false });
-      this.addHistory({ ...call, status: 'Active' });
+    this.dismissCallLocally(call);
+  }
+
+  private ownedElsewhere(call: CallSession): boolean {
+    const userId = this.currentUserId();
+    const owner = userId ? call.participantSessions?.[userId] : undefined;
+    return Boolean(owner && (owner.deviceId !== this.currentDeviceId() ||
+      (owner.clientSessionId && owner.clientSessionId !== this.callSignalSessionId)));
+  }
+
+  private dismissCallLocally(call: CallSession): void {
+    this.dismissedCallIds.add(call.id);
+    if (this.dismissedCallIds.size > 200) {
+      this.dismissedCallIds.delete(this.dismissedCallIds.values().next().value!);
+    }
+    if (this.activeCall()?.id === call.id) { this.cleanup({ remember: false }); }
+    this.addHistory({ ...call, status: 'Active' });
+  }
+
+  private async claimCall(call: CallSession): Promise<boolean> {
+    try {
+      const claimed = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/claim`, {
+        clientSessionId: this.callSignalSessionId,
+      }));
+      if (this.activeCall()?.id === call.id) {
+        this.activeCall.set({ ...call, ...claimed });
+      }
+      this.resumableCall.set(null);
+      return true;
+    } catch (error) {
+      if ((error as { status?: number }).status === 409) {
+        this.dismissCallLocally(call);
+        const code = (error as { error?: { code?: string } }).error?.code;
+        if (code === 'call_ended') {
+          this.forgetGroupRoom(call);
+          this.error.set('Esta llamada ya finalizó.');
+          return false;
+        }
+        this.resumableCall.set(call);
+        this.error.set('Esta llamada está abierta en otra sesión. Puedes continuar aquí si quieres trasladarla.');
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /** Deliberate user action; ordinary answer claims never take over another tab. */
+  async resumeHere(): Promise<void> {
+    const candidate = this.resumableCall();
+    if (!candidate || this.activeCall() || this.callActionInFlight) { return; }
+    this.callActionInFlight = true;
+    try {
+      const resumed = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(candidate.id)}/resume`, {
+        clientSessionId: this.callSignalSessionId,
+      }));
+      this.dismissedCallIds.delete(resumed.id);
+      this.resumableCall.set(null);
+      this.activeCall.set(resumed);
+      this.setConnectingPhase();
+      this.error.set('');
+      await this.router.navigateByUrl('/app/calls');
+      await this.retryConnection();
+    } catch (error) {
+      this.error.set((error as { status?: number }).status === 409
+        ? 'La llamada ya finalizó.' : 'No se pudo trasladar la llamada. Vuelve a intentar.');
+    } finally {
+      this.callActionInFlight = false;
     }
   }
 
@@ -1421,6 +1654,7 @@ export class CallsService implements OnDestroy {
 
   private async prepareMedia(withVideo: boolean): Promise<MediaStream> {
     this.stopLocalMedia();
+    const generation = this.mediaGeneration;
     this.muted.set(false);
     this.cameraOff.set(false);
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -1443,6 +1677,10 @@ export class CallsService implements OnDestroy {
       } catch {
         throw new Error('Permite camara y microfono para la videollamada.');
       }
+    }
+    if (generation !== this.mediaGeneration) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error('La llamada se cerró antes de activar el micrófono.');
     }
     this.prepareLocalTracks(stream);
     this.localStream.set(stream);
@@ -1485,6 +1723,16 @@ export class CallsService implements OnDestroy {
   }
 
   private async handleCallSignal(signal: CallSignalEvent): Promise<void> {
+    if ((signal.targetDeviceId && signal.targetDeviceId !== this.currentDeviceId()) ||
+        (signal.targetClientSessionId && signal.targetClientSessionId !== this.callSignalSessionId)) { return; }
+    if (this.dismissedCallIds.has(signal.callId)) { return; }
+    const expectedSender = this.activeCall()?.participantSessions?.[signal.fromUserId];
+    if (signal.fromClientSessionId && expectedSender && expectedSender.clientSessionId !== signal.fromClientSessionId) {
+      // A late SDP packet from the previous owner must not rebuild its peer.
+      const latest = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(signal.callId)}`)).catch(() => null);
+      if (!latest || latest.participantSessions?.[signal.fromUserId]?.clientSessionId !== signal.fromClientSessionId) { return; }
+      await this.applyActiveCallUpdate(latest);
+    }
     const call = this.activeCall();
     const signalType = (signal.signalType || '').toLowerCase();
     if (!signal.callId || !call || signal.callId !== call.id) {
@@ -1500,9 +1748,27 @@ export class CallsService implements OnDestroy {
     if (signalId && this.processedSignalIds.has(signalId)) {
       return;
     }
-    if (signalId) {
-      this.rememberProcessedSignal(signalId);
+    if (this.groupCrypto.isMediaKeySignal(signalType)) {
+      const localOwner = call.participantSessions?.[this.currentUserId() ?? ''];
+      if (this.phase() === 'ringing' || localOwner?.deviceId !== this.currentDeviceId() ||
+          localOwner?.clientSessionId !== this.callSignalSessionId) return;
+      const directory = await this.directoryForUser(signal.fromUserId);
+      const payload = await decodeAuthenticatedMediaKeySignal(signal, directory, this.auth.session(), this.crypto);
+      if (payload !== null) {
+        await this.groupCrypto.handleSignal(this.activeCall() ?? call, signal.fromUserId, signalType, payload);
+        if (signalId) this.rememberProcessedSignal(signalId);
+      }
+      return;
     }
+    // Do not mark SDP/ICE/accepted as processed while it is only queued. It
+    // must still be consumed once this session has won the answer claim.
+    if (this.phase() === 'ringing' && ['accepted', 'offer', 'answer', 'ice'].includes(signalType)) {
+      if (!signalId || !this.pendingSignals.some((pending) => this.callSignalId(pending) === signalId)) {
+        this.pendingSignals.push(signal);
+      }
+      return;
+    }
+    if (signalId) { this.rememberProcessedSignal(signalId); }
 
     if (signalType === 'accepted') {
       if (this.phase() === 'ringing') {
@@ -1626,6 +1892,9 @@ export class CallsService implements OnDestroy {
       negotiationQueued: false,
     });
     this.attachLocalTracks(connection);
+    const gameCall = this.activeCall();
+    if (gameCall) this.games.configure(gameCall, this.currentUserId() ?? '');
+    this.games.transport.attachDirect(userId, connection, this.shouldCreateOfferTo(userId));
 
     connection.onicecandidate = (event) => {
       if (event.candidate) {
@@ -1986,8 +2255,19 @@ export class CallsService implements OnDestroy {
     }
     this.signalPollInFlight = true;
     try {
+      const state = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`));
+      if (this.activeCall()?.id !== callId) { return; }
+      if (state.endedAt || state.status === 'Ended') {
+        this.forgetGroupRoom(state);
+        this.cleanup({ remember: false });
+        this.addHistory(state);
+        return;
+      }
+      if (this.ownedElsewhere(state)) { this.dismissCallLocally(state); return; }
+      await this.applyActiveCallUpdate(state);
+      if (this.phase() === 'ringing') { return; }
       const signals = await firstValueFrom(
-        this.api.get<CallSignalEvent[]>(`/calls/${encodeURIComponent(callId)}/signals`),
+        this.api.get<CallSignalEvent[]>(`/calls/${encodeURIComponent(callId)}/signals?clientSessionId=${encodeURIComponent(this.callSignalSessionId)}`),
       );
       for (const signal of signals ?? []) {
         if (this.activeCall()?.id !== callId) {
@@ -2024,17 +2304,20 @@ export class CallsService implements OnDestroy {
     if (!call?.id || !targetUserId || targetUserId === this.currentUserId()) {
       return Promise.resolve(null);
     }
+    const targetDeviceId = this.groupCrypto.isMediaKeySignal(signalType) ? call.participantSessions?.[targetUserId]?.deviceId : undefined;
+    if (this.groupCrypto.isMediaKeySignal(signalType) && !targetDeviceId) throw new Error('El participante aún no confirmó su sesión.');
     const payloadCiphertext = await this.encryptCallSignalForUser(targetUserId, {
       type: signalType,
       payload,
       at: new Date().toISOString(),
       sourceDeviceId: this.currentDeviceId(),
       sourceSessionId: this.callSignalSessionId,
-    });
+    }, targetDeviceId);
     return firstValueFrom(this.api.post(`/calls/${encodeURIComponent(call.id)}/signal`, {
       targetUserId,
       signalType,
       payloadCiphertext,
+      clientSessionId: this.callSignalSessionId,
     }));
   }
 
@@ -2048,7 +2331,7 @@ export class CallsService implements OnDestroy {
     });
   }
 
-  private async encryptCallSignalForUser(targetUserId: string, value: DecodedCallSignalPayload): Promise<string> {
+  private async encryptCallSignalForUser(targetUserId: string, value: DecodedCallSignalPayload, targetDeviceId?: string): Promise<string> {
     const current = this.auth.session();
     if (!current) {
       throw new Error('No hay sesion local para cifrar la llamada.');
@@ -2058,6 +2341,7 @@ export class CallsService implements OnDestroy {
     const recipients: RecipientCipherRequest[] = [];
     const usedDeviceIds = new Set<string>();
     for (const device of directory?.devices ?? []) {
+      if (targetDeviceId && device.deviceId !== targetDeviceId) continue;
       const publicKey = this.crypto.parsePublicJwk(device.keyBundle?.identityKey);
       if (!device.deviceId || !publicKey || usedDeviceIds.has(device.deviceId)) {
         continue;
@@ -2454,17 +2738,28 @@ export class CallsService implements OnDestroy {
 
   private async leaveGroupCallLocally(call: CallSession): Promise<void> {
     const endedAt = new Date().toISOString();
-    this.phase.set('ended');
+    this.cleanup({ remember: false });
+    try {
     await Promise.all(this.otherParticipantIds(call).map((userId) =>
       this.sendCallSignal(call, userId, 'left', { left: true, at: endedAt }).catch(() => undefined)));
+    const updated = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/leave`, {
+      clientSessionId: this.callSignalSessionId,
+    }));
+    if (updated.endedAt || updated.status === 'Ended') { this.forgetGroupRoom(updated); }
+    else { this.rememberGroupRoom(updated); }
     this.addHistory({ ...call, status: 'Ended', endedAt });
-    this.cleanup({ remember: false });
+    } catch {
+      if (!this.activeCall()) {
+        this.error.set('Saliste de la llamada, pero no se pudo avisar al servidor. Puedes volver a entrar cuando tengas conexión.');
+      }
+    }
   }
 
   private cleanup(options: { remember?: boolean; historyStatus?: string } = {}): void {
     const call = this.activeCall();
     if (call?.id) {
       void this.nativeDevice.clearIncomingCall(call.id);
+      void this.nativeDevice.setActiveCall({ callId: call.id, video: false, active: false });
     }
     this.clearRingTimeout();
     this.stopRingingTone();
@@ -2473,8 +2768,20 @@ export class CallsService implements OnDestroy {
     this.stopSignalPolling();
     this.groupMigrationCallId = null;
     this.groupMigrationPromise = null;
-    void this.stopScreenShare({ restoreCamera: false, broadcast: false });
+    // Cleanup is synchronous: an old screen-share promise must never detach the
+    // camera or screen stream belonging to a subsequent call.
+    const screenStream = this.screenShareStream;
+    const previousCamera = this.cameraTrackBeforeScreenShare;
+    this.screenShareStream = null;
+    void this.nativeScreen.stop();
+    this.screenShareBusy = false;
+    this.cameraTrackBeforeScreenShare = null;
+    this.screenShareAudioTrackIds.clear();
+    screenStream?.getTracks().forEach((track) => { track.onended = null; track.stop(); });
+    previousCamera?.stop();
     this.disconnectLiveKitRoom();
+    if (call?.id) this.groupCrypto.clear(call.id);
+    this.games.reset();
     if (call && options.remember !== false) {
       this.addHistory({
         ...call,
@@ -2486,6 +2793,7 @@ export class CallsService implements OnDestroy {
     this.closePeerConnections();
     this.stopPendingRemoteMedia();
     this.stopRemoteMedia();
+    this.audioOutput.sync({}, false);
     this.pendingSignals.splice(0);
     this.processedSignalIds.clear();
     this.activeCall.set(null);
@@ -2500,10 +2808,25 @@ export class CallsService implements OnDestroy {
     this.error.set('');
     if (!this.auth.session()?.user.id) {
       this.activeGroupRooms.set({});
+      this.resumableCall.set(null);
+      this.dismissedCallIds.clear();
     }
   }
 
+  private syncNativeCall(): void {
+    const call = this.activeCall();
+    const stream = this.localStream();
+    if (!call || !stream?.getAudioTracks().some((track) => track.readyState === 'live') || this.phase() === 'ringing') { return; }
+    // Start while visible and only after the microphone permission is granted.
+    void this.nativeDevice.setActiveCall({
+      callId: call.id,
+      active: true,
+      video: stream.getVideoTracks().some((track) => track.readyState === 'live'),
+    });
+  }
+
   private stopLocalMedia(): void {
+    this.mediaGeneration++;
     const stream = this.localStream();
     stream?.getTracks().forEach((track) => {
       track.onended = null;
@@ -2514,7 +2837,8 @@ export class CallsService implements OnDestroy {
   }
 
   private closePeerConnections(): void {
-    for (const peer of this.peers.values()) {
+    for (const [userId, peer] of this.peers) {
+      this.games.transport.detachPeer(userId);
       this.clearPeerDisconnectTimer(peer);
       this.closePeerConnection(peer.connection);
       peer.pendingIce.splice(0);
@@ -2523,6 +2847,7 @@ export class CallsService implements OnDestroy {
   }
 
   private closePeerConnectionForUser(userId: string): void {
+    this.games.transport.detachPeer(userId);
     const peer = this.peers.get(userId);
     if (peer) {
       this.clearPeerDisconnectTimer(peer);
@@ -2793,14 +3118,28 @@ export class CallsService implements OnDestroy {
 
     this.phase.set('missed');
     const endedAt = new Date().toISOString();
-    if (this.isGroupCall(call) && call.initiatorUserId !== this.currentUserId()) {
+    // Only the originating session times out the whole direct call. An
+    // unanswered invitation on another device expires locally.
+    if (this.isGroupCall(call) || call.initiatorUserId !== this.currentUserId()) {
       this.addHistory({ ...call, status: 'Missed', endedAt });
       this.cleanup({ remember: false });
       return;
     }
     this.timedOutCallIds.add(call.id);
     try {
-      const ended = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, {}));
+      const ended = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, {
+        clientSessionId: this.callSignalSessionId, reason: 'timeout',
+      }));
+      if (!ended.endedAt && ended.status !== 'Ended') {
+        this.timedOutCallIds.delete(call.id);
+        if (this.activeCall()?.id === call.id) {
+          this.activeCall.set(ended);
+          this.setConnectingPhase();
+          this.clearRingTimeout();
+          this.stopRingingTone();
+        }
+        return;
+      }
       const missedCall = {
         ...ended,
         status: 'Missed',
@@ -2817,7 +3156,7 @@ export class CallsService implements OnDestroy {
       await this.recordCallSystemOnce(missedCall, 'missed-call');
       this.addHistory(missedCall);
     } finally {
-      if (this.activeCall()?.id === callId) {
+      if (this.activeCall()?.id === callId && this.phase() === 'missed') {
         this.cleanup({ remember: false });
       }
     }

@@ -28,6 +28,8 @@ import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { environment } from '../../../environments/environment';
 import { NativeSecureVaultService } from './native-secure-vault.service';
+import { authErrorMessage } from '../utils/auth-error';
+import { normalizeNivraNumber } from '../utils/nivra-number';
 
 interface FirebasePhoneVerifyResponse {
   requiresAlias?: boolean;
@@ -90,6 +92,7 @@ export class AuthService implements OnDestroy {
   private nativePhoneListenerHandles: PluginListenerHandle[] = [];
   private qrConnection: HubConnection | null = null;
   private qrPollTimer: number | null = null;
+  private qrGeneration = 0;
   private authRefreshPromise: Promise<boolean> | null = null;
   private protectedSessionRestorePromise: Promise<void> | null = null;
   private refreshBackoffUntil = 0;
@@ -98,6 +101,8 @@ export class AuthService implements OnDestroy {
   readonly session = signal<AuthSession | null>(this.loadSession());
   readonly pendingPhoneAlias = signal<PhoneAliasChallenge | null>(null);
   readonly busy = signal(false);
+  readonly qrState = signal<'idle' | 'starting' | 'waiting' | 'authorizing' | 'expired' | 'error'>('idle');
+  readonly qrError = signal<unknown>(null);
   readonly forceWipeRequested = signal(0);
   readonly accessToken = computed(() => this.session()?.tokens.accessToken ?? '');
   readonly isAuthenticated = computed(() => Boolean(this.accessToken()));
@@ -123,17 +128,26 @@ export class AuthService implements OnDestroy {
   }
 
   async loginWithAlias(alias: string, password: string, mode: 'login' | 'register', displayName = ''): Promise<void> {
-    const normalizedAlias = alias.trim();
+    let normalizedAlias = alias.trim();
     if (!normalizedAlias || !password) {
       throw new Error('Alias y password son obligatorios.');
     }
 
     this.busy.set(true);
     try {
-      const keys = await this.crypto.prepareDeviceKeys(normalizedAlias, mode === 'register');
       const device = await this.deviceProfile();
+      if (mode === 'login' && normalizeNivraNumber(normalizedAlias)) {
+        const identity = await firstValueFrom(this.api.post<{ alias: string }>('/auth/login', {
+          alias: normalizeNivraNumber(normalizedAlias), password, deviceName: device.name,
+          hardwareId: device.hardwareId, keyBundle: null, resolveOnly: true,
+        }, { skipAuth: true }));
+        normalizedAlias = identity.alias;
+      } else if (mode === 'login') {
+        normalizedAlias = normalizedAlias.replace(/^@/, '');
+      }
+      const keys = await this.crypto.prepareDeviceKeys(normalizedAlias, mode === 'register');
       const payload = {
-        alias: normalizedAlias,
+        alias: mode === 'login' ? `@${normalizedAlias}` : normalizedAlias,
         password,
         deviceName: device.name,
         hardwareId: device.hardwareId,
@@ -145,6 +159,23 @@ export class AuthService implements OnDestroy {
       const auth = await firstValueFrom(
         this.api.post<AuthSession>(mode === 'register' ? '/auth/register' : '/auth/login', payload, { skipAuth: true }),
       );
+      await this.completeAuth(auth, keys);
+    } finally {
+      this.busy.set(false);
+    }
+  }
+
+  async createPrivateAccount(password: string): Promise<void> {
+    if (password.length < 10) {
+      throw new Error('Usa una contraseña de al menos 10 caracteres.');
+    }
+    this.busy.set(true);
+    try {
+      const keys = await this.crypto.createDeviceKeys();
+      const device = await this.deviceProfile();
+      const auth = await firstValueFrom(this.api.post<AuthSession>('/auth/register-private', {
+        password, deviceName: device.name, hardwareId: device.hardwareId, keyBundle: keys.keyBundle,
+      }, { skipAuth: true }));
       await this.completeAuth(auth, keys);
     } finally {
       this.busy.set(false);
@@ -230,7 +261,28 @@ export class AuthService implements OnDestroy {
   }
 
   async startQrLogin(): Promise<QrLoginChallenge> {
+    const generation = this.qrGeneration + 1;
     await this.stopQrLogin();
+    if (generation !== this.qrGeneration) {
+      throw new Error('QR_CANCELLED');
+    }
+    this.qrState.set('starting');
+    this.qrError.set(null);
+    try {
+      return await this.createQrLogin(generation);
+    } catch (error) {
+      if (generation === this.qrGeneration) {
+        const stopped = this.stopQrLogin();
+        this.qrState.set('error');
+        this.qrError.set(error);
+        await stopped;
+      }
+      throw error;
+    }
+  }
+
+  private async createQrLogin(generation: number): Promise<QrLoginChallenge> {
+    const isCurrent = () => generation === this.qrGeneration;
     const ephemeral = await this.crypto.createQrEphemeralKeys();
     const device = await this.deviceProfile();
     const serverChallenge = await firstValueFrom(
@@ -242,6 +294,13 @@ export class AuthService implements OnDestroy {
       }, { skipAuth: true }),
     );
 
+    if (!isCurrent()) {
+      throw new Error('QR_CANCELLED');
+    }
+    if (!serverChallenge.qrId || !serverChallenge.code || !Number.isFinite(Date.parse(serverChallenge.expiresAt))) {
+      throw new Error('No pudimos generar un QR válido. Inténtalo de nuevo.');
+    }
+
     const connection = new HubConnectionBuilder()
       .withUrl(this.api.url(`/hubs/realtime?${new URLSearchParams({
         qr_login_id: serverChallenge.qrId,
@@ -252,16 +311,29 @@ export class AuthService implements OnDestroy {
       .build();
 
     let finished = false;
-    const finish = async (authorization: QrLoginAuthorizedResponse | { encryptedPayload?: string | null; auth?: AuthSession | null }) => {
-      if (finished) {
+    let finishing = false;
+    const fail = async (error: unknown) => {
+      if (!isCurrent()) {
         return;
       }
+      const stopped = this.stopQrLogin();
+      this.ngZone.run(() => {
+        this.qrError.set(error);
+        this.qrState.set('error');
+      });
+      await stopped;
+    };
+    const finish = async (authorization: QrLoginAuthorizedResponse | { encryptedPayload?: string | null; auth?: AuthSession | null }) => {
+      if (!isCurrent() || finished || finishing) {
+        return;
+      }
+      finishing = true;
+      this.qrState.set('authorizing');
       const auth = authorization.auth;
       const encryptedPayload = authorization.encryptedPayload;
       if (!auth?.tokens?.accessToken || !encryptedPayload) {
         throw new Error('La autorizacion QR no contiene una sesion valida.');
       }
-      finished = true;
       const payload = await this.crypto.decryptQrPayload<{ keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'> }>(
         encryptedPayload,
         ephemeral.privateKey,
@@ -269,18 +341,29 @@ export class AuthService implements OnDestroy {
       if (!payload.keyMaterial?.privateJwk || !payload.keyMaterial.publicJwk) {
         throw new Error('El paquete QR no contiene llaves locales.');
       }
-      await this.stopQrLogin();
+      if (!isCurrent()) {
+        return;
+      }
       await this.completeImportedAuth(auth, payload.keyMaterial);
+      finished = true;
+      if (isCurrent()) {
+        await this.stopQrLogin();
+      }
     };
 
     connection.on('QrAuthorized', (authorization: QrLoginAuthorizedResponse) => {
-      void this.ngZone.run(() => finish(authorization));
+      void this.ngZone.run(() => finish(authorization)).catch(fail);
     });
     connection.on('auth.qrAuthorized', (authorization: QrLoginAuthorizedResponse) => {
-      void this.ngZone.run(() => finish(authorization));
+      void this.ngZone.run(() => finish(authorization)).catch(fail);
     });
     connection.on('qr-login-success', (encryptedPayload: string) => {
       void this.ngZone.run(async () => {
+        if (!isCurrent() || finished || finishing) {
+          return;
+        }
+        finishing = true;
+        this.qrState.set('authorizing');
         const payload = await this.crypto.decryptQrPayload<{
           auth?: AuthSession;
           keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>;
@@ -288,19 +371,35 @@ export class AuthService implements OnDestroy {
           if (!payload.auth?.tokens?.accessToken || !payload.keyMaterial?.privateJwk || !payload.keyMaterial.publicJwk) {
             throw new Error('El paquete QR no contiene una sesion valida.');
           }
-          await this.stopQrLogin();
+          if (!isCurrent()) {
+            return;
+          }
           await this.completeImportedAuth(payload.auth, payload.keyMaterial);
-      });
+          finished = true;
+          if (isCurrent()) {
+            await this.stopQrLogin();
+          }
+      }).catch(fail);
     });
 
-    await connection.start();
     this.qrConnection = connection;
+    // Polling can finish the same challenge when a network blocks WebSockets.
+    void connection.start().catch(() => undefined);
     const expiresAt = serverChallenge.expiresAt;
+    let polling = false;
     this.qrPollTimer = window.setInterval(() => {
-      if (finished || Date.parse(expiresAt) <= Date.now()) {
-        void this.stopQrLogin();
+      if (!isCurrent() || finished || finishing) {
         return;
       }
+      if (Date.parse(expiresAt) <= Date.now()) {
+        void this.stopQrLogin();
+        this.ngZone.run(() => this.qrState.set('expired'));
+        return;
+      }
+      if (polling) {
+        return;
+      }
+      polling = true;
       void firstValueFrom(this.api.get<QrLoginStatusResponse>(
         `/auth/qr/status/${encodeURIComponent(serverChallenge.qrId)}?code=${encodeURIComponent(serverChallenge.code)}`,
         { skipAuth: true },
@@ -311,8 +410,16 @@ export class AuthService implements OnDestroy {
           }
           return undefined;
         })
-        .catch(() => undefined);
+        .catch((error: unknown) => {
+          if (finishing) {
+            return fail(error);
+          }
+          // An intermittent poll failure is retried until the challenge expires.
+          return undefined;
+        })
+        .finally(() => { polling = false; });
     }, 2500);
+    this.qrState.set('waiting');
     const query = new URLSearchParams({
       v: '3',
       type: 'nivra-qr-login',
@@ -333,6 +440,9 @@ export class AuthService implements OnDestroy {
   }
 
   async stopQrLogin(): Promise<void> {
+    this.qrGeneration++;
+    this.qrState.set('idle');
+    this.qrError.set(null);
     if (this.qrPollTimer !== null) {
       window.clearInterval(this.qrPollTimer);
       this.qrPollTimer = null;
@@ -374,7 +484,7 @@ export class AuthService implements OnDestroy {
         qrId: challenge.qrId,
         code: challenge.code,
         encryptedPayload: sealed,
-      }));
+      })).catch((error: unknown) => { throw new Error(authErrorMessage(error, 'qr').fallback); });
       return;
     }
     if (challenge.connectionId) {
@@ -1093,7 +1203,7 @@ export class AuthService implements OnDestroy {
       payload['code'] ||= code;
     }
     const expiresAt = typeof payload['expiresAt'] === 'string' ? payload['expiresAt'] : null;
-    if (expiresAt && Date.parse(expiresAt) <= Date.now()) {
+    if (expiresAt && (!Number.isFinite(Date.parse(expiresAt)) || Date.parse(expiresAt) <= Date.now())) {
       throw new Error('Ese QR ya vencio. Genera uno nuevo.');
     }
     const keyMode = String(payload['k'] || '').toLowerCase();

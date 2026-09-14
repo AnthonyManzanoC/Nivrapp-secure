@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Nivra.Api.Domain;
+using Npgsql;
 
 namespace Nivra.Api.Infrastructure;
 
@@ -10,7 +11,32 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
+    public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            foreach (var entry in ChangeTracker.Entries<UserAccount>().Where(entry => entry.State == EntityState.Added && string.IsNullOrEmpty(entry.Entity.NivraNumber)))
+            {
+                string candidate;
+                do { candidate = NivraNumbers.Generate(); }
+                while (await Users.AnyAsync(user => user.Alias == candidate, cancellationToken));
+                entry.Entity.NivraNumber = candidate;
+            }
+            try
+            {
+                return await base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+            }
+            catch (DbUpdateException error) when (attempt < 15 && error.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation, ConstraintName: NivraNumbers.IndexName })
+            {
+                var pending = ChangeTracker.Entries<UserAccount>().Where(entry => entry.State == EntityState.Added).ToList();
+                if (pending.Count == 0) throw;
+                foreach (var entry in pending) entry.Entity.NivraNumber = string.Empty;
+            }
+        }
+    }
+
     public DbSet<UserAccount> Users => Set<UserAccount>();
+    public DbSet<AccountRecoveryChallenge> RecoveryChallenges => Set<AccountRecoveryChallenge>();
     public DbSet<DeviceRecord> Devices => Set<DeviceRecord>();
     public DbSet<SessionRecord> Sessions => Set<SessionRecord>();
     public DbSet<ContactRecord> Contacts => Set<ContactRecord>();
@@ -62,16 +88,31 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             value => JsonSerializer.Deserialize<List<T>>(JsonSerializer.Serialize(value ?? new List<T>(), JsonOptions), JsonOptions) ?? new List<T>());
 
         modelBuilder.Entity<PlanEntitlements>().HasNoKey().ToView(null);
+        modelBuilder.Entity<AccountRecoveryChallenge>(entity =>
+        {
+            entity.ToTable("account_recovery_challenges");
+            entity.HasKey(item => item.TokenHash);
+            entity.Property(item => item.TokenHash).HasMaxLength(64);
+            entity.Property(item => item.UserId).HasMaxLength(64);
+            entity.Property(item => item.Purpose).HasMaxLength(32);
+            entity.Property(item => item.Email).HasMaxLength(320);
+            entity.HasIndex(item => new { item.UserId, item.Purpose, item.CreatedAt });
+            entity.HasIndex(item => item.ExpiresAt);
+            entity.HasOne<UserAccount>().WithMany().HasForeignKey(item => item.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
 
         modelBuilder.Entity<UserAccount>(entity =>
         {
-            entity.ToTable("users");
+            entity.ToTable("users", table => table.HasCheckConstraint("CK_users_NivraNumber", "\"NivraNumber\" ~ '^[1-9][0-9]{8}$'"));
             entity.HasKey(user => user.Id);
             entity.Property(user => user.Id).HasMaxLength(64);
+            entity.Property(user => user.NivraNumber).HasMaxLength(9).IsRequired().HasDefaultValueSql(NivraNumbers.DatabaseDefaultSql);
+            entity.HasIndex(user => user.NivraNumber).IsUnique();
             entity.Property(user => user.Alias).HasMaxLength(32).IsRequired();
             entity.HasIndex(user => user.Alias).IsUnique();
             entity.Property(user => user.DisplayName).HasMaxLength(160);
             entity.Property(user => user.Email).HasMaxLength(320);
+            entity.Property(user => user.RecoveryEmail).HasMaxLength(320);
             entity.Property(user => user.Phone).HasMaxLength(40);
             entity.Property(user => user.PhoneHash).HasMaxLength(64);
             entity.Property(user => user.RequiresAlias).HasDefaultValue(false);
@@ -420,6 +461,18 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(call => call.Id).HasMaxLength(64);
             entity.Property(call => call.ConversationId).HasMaxLength(64);
             entity.Property(call => call.InitiatorUserId).HasMaxLength(64).IsRequired();
+            entity.Property(call => call.InitiatorDeviceId).HasMaxLength(64);
+            entity.Property(call => call.InitiatorSessionId).HasMaxLength(128);
+            entity.Property(call => call.MediaEncryption).HasMaxLength(64);
+            entity.Property(call => call.ParticipantSessions)
+                .HasColumnType("jsonb")
+                .HasConversion(
+                    value => JsonSerializer.Serialize(value, JsonOptions),
+                    value => JsonSerializer.Deserialize<Dictionary<string, CallParticipantSession>>(value, JsonOptions) ?? new())
+                .Metadata.SetValueComparer(new ValueComparer<Dictionary<string, CallParticipantSession>>(
+                    (left, right) => JsonSerializer.Serialize(left, JsonOptions) == JsonSerializer.Serialize(right, JsonOptions),
+                    value => StringComparer.Ordinal.GetHashCode(JsonSerializer.Serialize(value, JsonOptions)),
+                    value => new Dictionary<string, CallParticipantSession>(value, StringComparer.Ordinal)));
             entity.Property(call => call.Type).HasConversion<string>().HasMaxLength(32).IsRequired();
             entity.Property(call => call.Status).HasConversion<string>().HasMaxLength(32).IsRequired();
             entity.Property(call => call.ParticipantUserIds)
@@ -441,7 +494,10 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(signal => signal.CallId).HasMaxLength(64).IsRequired();
             entity.Property(signal => signal.FromUserId).HasMaxLength(64).IsRequired();
             entity.Property(signal => signal.FromDeviceId).HasMaxLength(64);
+            entity.Property(signal => signal.FromClientSessionId).HasMaxLength(128);
             entity.Property(signal => signal.TargetUserId).HasMaxLength(64).IsRequired();
+            entity.Property(signal => signal.TargetDeviceId).HasMaxLength(64);
+            entity.Property(signal => signal.TargetClientSessionId).HasMaxLength(128);
             entity.Property(signal => signal.SignalType).HasMaxLength(64).IsRequired();
             entity.Property(signal => signal.PayloadCiphertext).IsRequired();
             entity.HasIndex(signal => new { signal.CallId, signal.TargetUserId, signal.CreatedAt });

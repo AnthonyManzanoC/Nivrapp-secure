@@ -1,10 +1,25 @@
 <ion-content fullscreen class="chats-page" [class.three-line-list]="appSettings.settings().chatListDensity === 'three-line'">
   <section class="chat-layout">
-    <aside class="sidebar">
+    <aside class="sidebar" [class.has-story-strip]="storyHighlights().length && !query.trim() && !showRecentSearches">
       <header class="side-head">
-        <div>
+        <div class="side-heading">
           <h1>{{ 'CHATS.TITLE' | translate:'Chats' }}</h1>
-          <span>{{ conversationsForFolder().length }} {{ 'CHATS.CONVERSATIONS' | translate:'conversaciones' }}</span>
+          @if (storiesCollapsed && !query.trim() && !showRecentSearches) {
+            <button type="button" class="compact-stories" (click)="expandStories()" [attr.aria-label]="'CHATS.EXPAND_STORIES' | translate:'Mostrar historias'">
+              @for (highlight of storyHighlights().slice(0, 3); track highlight.id) {
+                <span class="compact-story-avatar" [style.border-color]="highlight.ringColor">
+                  @if (highlight.photo) {
+                    <img [src]="highlight.photo" alt="">
+                  } @else {
+                    <span>{{ highlight.initials }}</span>
+                  }
+                </span>
+              }
+              <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
+            </button>
+          } @else {
+            <span>{{ conversationsForFolder().length }} {{ 'CHATS.CONVERSATIONS' | translate:'conversaciones' }}</span>
+          }
         </div>
         <div class="side-actions">
           <ion-button mode="ios" fill="clear" size="small" (click)="openShareAccount()" [attr.aria-label]="'CHATS.SHARE_NIVRA' | translate:'Compartir Nivra'">
@@ -18,6 +33,41 @@
           </ion-button>
         </div>
       </header>
+
+      @if (storyHighlights().length && !query.trim() && !showRecentSearches) {
+        <nav class="story-strip" [class.is-collapsed]="storiesCollapsed" [attr.inert]="storiesCollapsed ? '' : null" [attr.aria-hidden]="storiesCollapsed" [attr.aria-label]="'WORLD.STORIES' | translate:'Historias'">
+          @for (highlight of storyHighlights(); track highlight.id) {
+            <button
+              type="button"
+              class="story-highlight"
+              [class.unviewed]="highlight.unviewed"
+              [disabled]="!!storyHighlightOpening"
+              [attr.aria-busy]="storyHighlightOpening === highlight.id"
+              [attr.aria-label]="highlight.isOwn && !highlight.stories.length ? ('WORLD.NEW_STORY' | translate:'Nueva historia') : highlight.title + ' · ' + (highlight.unviewed ? ('CHATS.NEW_STORIES' | translate:'Historias nuevas') : ('WORLD.VIEW_STORY' | translate:'Ver historia'))"
+              [title]="highlight.title"
+              (click)="activateStoryHighlight(highlight, storyCreateInput)">
+              <span class="avatar-action story-highlight-ring" [class.has-story]="highlight.stories.length > 0" [class.story-empty]="!highlight.stories.length" [style.--story-ring-color]="highlight.ringColor">
+                @if (highlight.photo) {
+                  <img class="avatar avatar-img" [src]="highlight.photo" alt="" loading="lazy" decoding="async">
+                } @else {
+                  <span class="avatar">{{ highlight.initials }}</span>
+                }
+                @if (highlight.isGroup) {
+                  <span class="story-group-badge" aria-hidden="true"><ion-icon name="people-outline"></ion-icon></span>
+                }
+                @if (highlight.isOwn && !highlight.stories.length) {
+                  <span class="story-add-badge" aria-hidden="true"><ion-icon name="add-outline"></ion-icon></span>
+                }
+                @if (storyHighlightOpening === highlight.id) {
+                  <span class="story-highlight-loading" aria-hidden="true"><ion-spinner name="crescent"></ion-spinner></span>
+                }
+              </span>
+              <span class="story-highlight-title">{{ highlight.title }}</span>
+            </button>
+          }
+        </nav>
+      }
+      <input #storyCreateInput type="file" hidden accept="image/*,video/*,audio/*" (change)="storyDraftFileSelected($event)">
 
       <div class="search-box" [class.has-value]="query">
         <ion-icon name="search-outline"></ion-icon>
@@ -91,7 +141,7 @@
           </div>
         </div>
       } @else {
-        <section class="chat-list-shell">
+        <section class="chat-list-shell" [class.has-history-warning]="localHistory.storageError()">
           <ion-segment
             mode="ios"
             scrollable="true"
@@ -104,7 +154,14 @@
             <ion-segment-button value="archived">{{ 'CHATS.ARCHIVED' | translate:'Archivados' }}</ion-segment-button>
           </ion-segment>
 
-          <ion-list class="list" lines="none">
+          @if (localHistory.storageError(); as storageError) {
+            <div class="local-history-warning" role="status">
+              <span>{{ storageError }}</span>
+              <button type="button" (click)="refresh()" [disabled]="chat.loading()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button>
+            </div>
+          }
+
+          <ion-list #conversationList class="list" lines="none" (scroll)="onChatListScroll($event)">
             @for (conversation of conversationsForFolder(); track conversation.id) {
               <ion-item-sliding>
                 <ion-item-options side="start">
@@ -129,6 +186,7 @@
                     tabindex="0"
                     [class.has-story]="conversationHasStory(conversation)"
                     [class.story-unviewed]="conversationHasUnviewedStory(conversation)"
+                    [class.story-group]="chat.isGroup(conversation)"
                     [class.story-viewed]="conversationHasStory(conversation) && !conversationHasUnviewedStory(conversation)"
                     (click)="abrirHistoria(conversation, $event)"
                     (touchstart)="startAvatarPress(conversation, $event)"

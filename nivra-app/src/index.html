@@ -17,11 +17,17 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <script>
     (() => {
+      let theme = 'system';
       try {
-        const theme = localStorage.getItem('nivra.theme');
-        const light = theme === 'light' || (!theme && matchMedia('(prefers-color-scheme: light)').matches);
-        document.documentElement.classList.toggle('nivra-light-theme', light);
+        const hasSession = localStorage.getItem('nivra.auth') || localStorage.getItem('nivra.auth.protected');
+        if (!location.pathname.startsWith('/auth') && hasSession) {
+          theme = localStorage.getItem('nivra.theme') || 'system';
+        }
       } catch {}
+      const light = theme === 'light' || (theme !== 'dark' && matchMedia('(prefers-color-scheme: light)').matches);
+      document.documentElement.classList.toggle('nivra-light-theme', light);
+      document.documentElement.classList.toggle('ion-palette-dark', !light);
+      document.documentElement.style.colorScheme = light ? 'light' : 'dark';
     })();
   </script>
 

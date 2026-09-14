@@ -15,6 +15,7 @@ const guest = async () => {
 };
 
 export const routes: Routes = [
+  { path: 'recover', loadComponent: () => import('./features/auth/recovery.page').then(m => m.RecoveryPage) },
   {
     path: 'vault/invite',
     loadComponent: () => import('./features/vault-invite/vault-invite.page').then((m) => m.VaultInvitePage),

@@ -26,12 +26,14 @@
         </div>
       </button>
       <ion-buttons slot="end">
-        <ion-button mode="ios" fill="clear" (click)="startCall('Voice')" [attr.aria-label]="'COMMON.CALL' | translate:'Llamada'">
+        @if (!calls.activeGroupRoomForConversation(conversation()?.id)) {
+        <ion-button mode="ios" fill="clear" [disabled]="busyAction !== ''" (click)="startCall('Voice')" [attr.aria-label]="'COMMON.CALL' | translate:'Llamada'">
           <ion-icon name="call-outline"></ion-icon>
         </ion-button>
-        <ion-button mode="ios" fill="clear" (click)="startCall('Video')" [attr.aria-label]="'COMMON.VIDEO' | translate:'Video'">
+        <ion-button mode="ios" fill="clear" [disabled]="busyAction !== ''" (click)="startCall('Video')" [attr.aria-label]="'COMMON.VIDEO' | translate:'Video'">
           <ion-icon name="videocam-outline"></ion-icon>
         </ion-button>
+        }
         <ion-button mode="ios" fill="clear" [attr.aria-label]="'COMMON.MENU' | translate:'Menu'" (click)="openChatMenu($event)">
           <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
         </ion-button>
@@ -46,7 +48,7 @@
         <span>{{ 'CHAT.CALL_IN_PROGRESS' | translate:'Llamada en curso...' }}</span>
         <small>{{ room.call.type === 'Video' ? ('CHAT.ENCRYPTED_GROUP_VIDEO_CALL' | translate:'Videollamada grupal cifrada') : ('CHAT.ENCRYPTED_GROUP_CALL' | translate:'Llamada grupal cifrada') }}</small>
       </div>
-      <ion-button mode="ios" size="small" (click)="joinGroupCall()">{{ 'COMMON.JOIN' | translate:'Unirse' }}</ion-button>
+      <ion-button mode="ios" size="small" [disabled]="busyAction !== ''" (click)="joinGroupCall()">{{ calls.activeCall()?.id === room.call.id && calls.phase() !== 'ringing' ? 'Volver' : ('COMMON.JOIN' | translate:'Unirse') }}</ion-button>
     </div>
   }
 

@@ -59,6 +59,7 @@ public sealed class SessionCleanupService(
             }
 
             await new PgSqlNivraStore(db).PurgeExpiredAsync(now, cancellationToken);
+            await db.RecoveryChallenges.Where(item => item.ExpiresAt < now.AddDays(-1)).ExecuteDeleteAsync(cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {

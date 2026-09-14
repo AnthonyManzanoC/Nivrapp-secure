@@ -22,18 +22,18 @@
       <h1>{{ 'LOGIN.TITLE' | translate:'Entra a tu espacio privado' }}</h1>
       <p class="auth-copy">{{ 'LOGIN.COPY' | translate:'Cifrado en cliente, llamadas en tiempo real y la misma cuenta en web, PC y movil.' }}</p>
 
-      <ion-segment [value]="mode" (ionChange)="setMode($any($event.detail.value))" mode="ios">
-        <ion-segment-button value="phone">
-          <ion-icon name="call-outline"></ion-icon>
-          <ion-label>{{ 'LOGIN.PHONE' | translate:'Telefono' }}</ion-label>
-        </ion-segment-button>
+      <ion-segment [value]="mode" (ionChange)="setMode($any($event.detail.value))" [disabled]="submitting || auth.busy()" mode="ios">
         <ion-segment-button value="alias">
           <ion-icon name="key-outline"></ion-icon>
-          <ion-label>{{ 'LOGIN.ALIAS' | translate:'Alias' }}</ion-label>
+          <ion-label>{{ 'LOGIN.PRIVATE_TAB' | translate:'ID / Alias' }}</ion-label>
         </ion-segment-button>
         <ion-segment-button value="qr">
           <ion-icon name="qr-code-outline"></ion-icon>
           <ion-label>{{ 'LOGIN.QR' | translate:'QR' }}</ion-label>
+        </ion-segment-button>
+        <ion-segment-button value="phone">
+          <ion-icon name="call-outline"></ion-icon>
+          <ion-label>{{ 'LOGIN.SMS' | translate:'SMS' }}</ion-label>
         </ion-segment-button>
       </ion-segment>
 
@@ -56,36 +56,29 @@
           </ion-button>
         </form>
       } @else if (mode === 'phone') {
-        <form class="auth-form" (ngSubmit)="verifyOtp()">
-          <label>
-            <span>{{ 'LOGIN.PHONE' | translate:'Telefono' }}</span>
-            <ion-input mode="ios" fill="outline" name="phone" [(ngModel)]="phone" type="tel" inputmode="tel" placeholder="+57..."></ion-input>
-          </label>
-          <div class="inline-row">
-            <label>
-              <span>{{ 'LOGIN.CODE' | translate:'Codigo' }}</span>
-              <ion-input mode="ios" fill="outline" name="code" [(ngModel)]="code" inputmode="numeric" autocomplete="one-time-code"></ion-input>
-            </label>
-            <ion-button type="button" mode="ios" fill="outline" [disabled]="auth.busy()" (click)="sendOtp()">{{ 'LOGIN.SMS' | translate:'SMS' }}</ion-button>
-          </div>
-          <ion-button type="submit" expand="block" mode="ios" [disabled]="auth.busy()">
-            @if (auth.busy()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="log-in-outline"></ion-icon> }
-            {{ 'LOGIN.ENTER' | translate:'Entrar' }}
-          </ion-button>
-        </form>
+        <section class="sms-preview" role="status">
+          <ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>
+          <h2>{{ 'LOGIN.SMS_PREVIEW_TITLE' | translate:'Tu privacidad tiene otra forma de entrar' }}</h2>
+          <p>{{ 'LOGIN.SMS_PREVIEW' | translate:'El acceso por SMS está en fase de pruebas. Usa una cuenta privada' }}</p>
+          <ion-button expand="block" mode="ios" (click)="setMode('alias'); setAliasMode('private')">{{ 'LOGIN.CREATE_PRIVATE' | translate:'Crear cuenta privada' }}</ion-button>
+          <ion-button expand="block" fill="clear" mode="ios" (click)="setMode('alias'); setAliasMode('login')">{{ 'LOGIN.HAVE_ACCOUNT' | translate:'Ya tengo una cuenta' }}</ion-button>
+        </section>
       } @else if (mode === 'alias') {
         <form class="auth-form" (ngSubmit)="submitAlias()">
           <div class="mini-tabs">
-            <button type="button" [class.active]="aliasMode === 'login'" (click)="aliasMode = 'login'">{{ 'LOGIN.ENTER' | translate:'Entrar' }}</button>
-            <button type="button" [class.active]="aliasMode === 'register'" (click)="aliasMode = 'register'">{{ 'LOGIN.CREATE' | translate:'Crear' }}</button>
+            <button type="button" [class.active]="aliasMode === 'login'" [attr.aria-pressed]="aliasMode === 'login'" [disabled]="submitting" (click)="setAliasMode('login')">{{ 'LOGIN.ENTER' | translate:'Entrar' }}</button>
+            <button type="button" [class.active]="aliasMode !== 'login'" [attr.aria-pressed]="aliasMode !== 'login'" [disabled]="submitting" (click)="setAliasMode('private')">{{ 'LOGIN.CREATE_PRIVATE' | translate:'Crear cuenta privada' }}</button>
           </div>
+          <p class="private-access"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ aliasMode === 'private' ? ('LOGIN.PRIVATE_CREATE_HELP' | translate:'Elige tu contraseña. Te asignaremos un ID Nivra único de 9 dígitos, sin teléfono ni correo.') : ('LOGIN.PRIVATE_LOGIN_HELP' | translate:'Tu ID Nivra y tu alias abren la misma cuenta. Tu número de teléfono no es necesario.') }}</p>
+          @if (aliasMode !== 'private') {
           <label>
-            <span>{{ 'LOGIN.ALIAS' | translate:'Alias' }}</span>
-            <ion-input mode="ios" fill="outline" name="alias" [(ngModel)]="alias" autocomplete="username"></ion-input>
-            @if (alias && !isAliasValid(alias)) {
-              <small class="field-hint">{{ 'LOGIN.ALIAS_HINT' | translate:'Usa 3-32 caracteres: letras, numeros, punto, guion o guion bajo.' }}</small>
+            <span>{{ aliasMode === 'login' ? ('LOGIN.IDENTIFIER' | translate:'ID Nivra o @alias') : ('LOGIN.ALIAS' | translate:'Alias') }}</span>
+            <ion-input mode="ios" fill="outline" name="alias" [(ngModel)]="alias" autocomplete="username" autocapitalize="off" [spellcheck]="false" [maxlength]="33" [attr.aria-invalid]="alias && !validIdentifier() ? 'true' : null"></ion-input>
+            @if (alias && !validIdentifier()) {
+              <small class="field-hint">{{ 'LOGIN.IDENTIFIER_ERROR' | translate:'Ingresa tu ID Nivra de 9 dígitos o tu alias.' }}</small>
             }
           </label>
+          }
           @if (aliasMode === 'register') {
             <label>
               <span>{{ 'LOGIN.NAME' | translate:'Nombre' }}</span>
@@ -94,29 +87,52 @@
           }
           <label>
             <span>{{ 'LOGIN.PASSWORD' | translate:'Password' }}</span>
-            <ion-input mode="ios" fill="outline" name="password" [(ngModel)]="password" type="password" autocomplete="current-password"></ion-input>
+            <ion-input mode="ios" fill="outline" name="password" [(ngModel)]="password" [type]="passwordVisible ? 'text' : 'password'" [autocomplete]="aliasMode !== 'login' ? 'new-password' : 'current-password'">
+              <button class="password-toggle" slot="end" type="button" [attr.aria-label]="passwordVisible ? ('LOGIN.HIDE_PASSWORD' | translate:'Ocultar contraseña') : ('LOGIN.SHOW_PASSWORD' | translate:'Mostrar contraseña')" [attr.aria-pressed]="passwordVisible" (click)="passwordVisible = !passwordVisible">
+                <ion-icon [name]="passwordVisible ? 'eye-off-outline' : 'eye-outline'" aria-hidden="true"></ion-icon>
+              </button>
+            </ion-input>
+            @if (aliasMode !== 'login') {
+              <small class="password-hint">{{ 'LOGIN.PASSWORD_HINT' | translate:'Al menos 10 caracteres. Usa una contraseña que no compartas con otras cuentas.' }}</small>
+            }
           </label>
-          <ion-button type="submit" expand="block" mode="ios" [disabled]="auth.busy() || !isAliasValid(alias)">
+          <ion-button type="submit" expand="block" mode="ios" [disabled]="auth.busy() || submitting || !validIdentifier()">
             @if (auth.busy()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="log-in-outline"></ion-icon> }
-            {{ aliasMode === 'register' ? ('LOGIN.CREATE_ACCOUNT' | translate:'Crear cuenta') : ('LOGIN.ENTER' | translate:'Entrar') }}
+            {{ aliasMode === 'private' ? ('LOGIN.CREATE_PRIVATE' | translate:'Crear cuenta privada') : aliasMode === 'register' ? ('LOGIN.CREATE_ACCOUNT' | translate:'Crear cuenta') : ('LOGIN.ENTER' | translate:'Entrar') }}
           </ion-button>
+          @if (aliasMode === 'private') {
+            <button class="alias-registration" type="button" [disabled]="submitting" (click)="setAliasMode('register')">{{ 'LOGIN.CHOOSE_ALIAS' | translate:'Prefiero elegir un alias al registrarme' }}</button>
+          }
+          @if (aliasMode === 'login') {
+            <a class="alias-registration" routerLink="/recover">¿Olvidaste tu contraseña?</a>
+          }
         </form>
       } @else {
         <section class="qr-card">
+          <p class="qr-help">{{ 'LOGIN.QR_HELP' | translate:'Abre Nivra en el dispositivo donde ya tienes tu cuenta. En Cuenta, busca Vincular por QR y escanea este código.' }}</p>
           <div class="qr-frame">
-            @if (qrDataUrl) {
-              <img [src]="qrDataUrl" alt="">
+            @if (submitting || auth.qrState() === 'authorizing') {
+              <ion-spinner name="crescent"></ion-spinner>
+            } @else if (qrDataUrl && !qrExpired() && auth.qrState() !== 'error') {
+              <img [src]="qrDataUrl" [alt]="'LOGIN.QR_IMAGE' | translate:'Código QR para vincular este dispositivo'">
             } @else {
               <ion-icon name="qr-code-outline"></ion-icon>
             }
           </div>
-          <strong>{{ qrChallenge?.shortCode || ('LOGIN.QR_READY' | translate:'QR listo') }}</strong>
-          <ion-button expand="block" mode="ios" (click)="startQr()" [disabled]="auth.busy()">{{ 'LOGIN.GENERATE_QR' | translate:'Generar QR' }}</ion-button>
+          @if (auth.qrState() === 'authorizing') {
+            <p class="qr-status" role="status">{{ 'LOGIN.QR_LINKING' | translate:'Vinculando tu cuenta de forma segura…' }}</p>
+          } @else if (qrExpired()) {
+            <p class="qr-status" role="status">{{ 'LOGIN.ERROR_QR_EXPIRED' | translate:'Este código QR venció o ya se utilizó. Genera uno nuevo para continuar.' }}</p>
+          } @else if (qrChallenge && auth.qrState() !== 'error') {
+            <strong class="qr-code">{{ qrChallenge.shortCode }}</strong>
+            <p class="qr-status">{{ 'LOGIN.QR_EXPIRES' | translate:'Vence en' }} <span>{{ qrSecondsRemaining() }} s</span></p>
+          }
+          <ion-button expand="block" mode="ios" (click)="startQr()" [disabled]="submitting || auth.busy() || auth.qrState() === 'authorizing'">{{ qrChallenge ? ('LOGIN.RENEW_QR' | translate:'Renovar QR') : ('LOGIN.GENERATE_QR' | translate:'Generar QR') }}</ion-button>
         </section>
       }
 
-      @if (notice) { <ion-note color="primary">{{ notice }}</ion-note> }
-      @if (error) { <ion-text color="danger"><p>{{ error }}</p></ion-text> }
+      @if (notice) { <ion-note class="auth-feedback success" role="status" aria-live="polite">{{ notice }}</ion-note> }
+      @if (error || (mode === 'qr' && qrErrorMessage())) { <ion-text class="auth-feedback failure" role="alert"><p>{{ error || qrErrorMessage() }}</p></ion-text> }
       <div id="phoneRecaptcha" class="recaptcha-slot"></div>
     </section>
 
@@ -129,9 +145,9 @@
         <div class="mini-bubble">{{ 'LOGIN.KEYS_READY' | translate:'Llaves listas en este dispositivo.' }}</div>
         <div class="mini-bubble mine">{{ 'LOGIN.ENCRYPTED_BEFORE_SEND' | translate:'Mensaje cifrado antes de salir.' }}</div>
         <div class="signal-strip">
-          <span>{{ 'LOGIN.SIGNALR' | translate:'SignalR' }}</span>
+          <span>{{ 'LOGIN.PRIVATE_ALIAS' | translate:'Alias privado' }}</span>
           <span>{{ 'LOGIN.E2EE' | translate:'E2EE' }}</span>
-          <span>{{ 'LOGIN.FIREBASE' | translate:'Firebase' }}</span>
+          <span>{{ 'LOGIN.LINKED_DEVICES' | translate:'Tus dispositivos' }}</span>
         </div>
       </div>
     </section>

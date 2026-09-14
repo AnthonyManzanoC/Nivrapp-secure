@@ -11,6 +11,7 @@ import {
   closeOutline,
   desktopOutline,
   enterOutline,
+  gameControllerOutline,
   micOffOutline,
   micOutline,
   peopleOutline,
@@ -30,6 +31,7 @@ import { ChatService } from '../../core/services/chat.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { MediaStreamDirective } from '../../shared/media-stream.directive';
+import { CallGamePanelComponent } from '../../shared/call-game-panel.component';
 
 type CallIdentityProfile = {
   userId?: string | null;
@@ -51,7 +53,7 @@ interface VideoTile {
 @Component({
   selector: 'app-calls',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, MediaStreamDirective],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, MediaStreamDirective, CallGamePanelComponent],
   templateUrl: './calls.page.html',
   styleUrls: ['./calls.page.scss'],
 })
@@ -77,6 +79,7 @@ export class CallsPage {
       closeOutline,
       desktopOutline,
       enterOutline,
+      gameControllerOutline,
       micOffOutline,
       micOutline,
       peopleOutline,
@@ -481,6 +484,17 @@ export class CallsPage {
     this.armControlsAutoHide();
   }
 
+  gameUserId(): string { return this.auth.session()?.user.id ?? ''; }
+
+  gameParticipants(): Array<{ userId: string; label: string }> {
+    return Object.keys(this.calls.activeCall()?.participantSessions ?? {}).map(userId => ({ userId, label: this.videoParticipantLabel(userId) }));
+  }
+
+  toggleGames(): void {
+    this.calls.games.panelOpen.update(open => !open);
+    this.revealCallChrome();
+  }
+
   videoParticipantLabel(userId: string | null | undefined): string {
     const baseId = this.baseParticipantId(userId);
     const label = this.isLocalParticipant(baseId) ? this.participantLabel(this.auth.session()?.user.id) : this.participantLabel(baseId);
@@ -528,7 +542,7 @@ export class CallsPage {
 
   private armControlsAutoHide(): void {
     this.clearControlsAutoHide();
-    if (!this.isCallMode()) {
+    if (!this.isCallMode() || this.calls.games.panelOpen()) {
       return;
     }
     this.controlsHideTimer = window.setTimeout(() => {

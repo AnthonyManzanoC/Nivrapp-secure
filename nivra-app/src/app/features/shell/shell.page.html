@@ -19,8 +19,30 @@
     </nav>
 
     <section class="app-stage">
+      @if (compatibility.updateRequired()) {
+        <div class="update-banner" role="alert">
+          <span>{{ compatibility.message() }}</span>
+          <a [href]="compatibility.updateUrl" target="_blank" rel="noopener noreferrer">Actualizar Nivra</a>
+        </div>
+      }
       <router-outlet></router-outlet>
     </section>
+
+    @if (calls.activeCall() && calls.phase() !== 'ringing') {
+      @if (!onCallsPage() || calls.audioOutput.playbackBlocked()) {
+        <aside class="ongoing-call" aria-label="Llamada en curso">
+          @if (!onCallsPage()) {
+            <button type="button" (click)="openCalls()" class="ongoing-call-return">
+              <ion-icon name="call-outline"></ion-icon>
+              <span><strong>{{ calls.callTitle(calls.activeCall()) }}</strong><small>Volver a la llamada</small></span>
+            </button>
+          }
+          @if (calls.audioOutput.playbackBlocked()) {
+            <button type="button" class="resume-audio" (click)="calls.audioOutput.resume()">Activar audio</button>
+          }
+        </aside>
+      }
+    }
 
     @if (calls.phase() === 'ringing') {
       @if (calls.activeCall(); as call) {

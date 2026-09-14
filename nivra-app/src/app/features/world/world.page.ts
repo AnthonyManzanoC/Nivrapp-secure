@@ -1,5 +1,5 @@
 import { CommonModule, DatePipe } from '@angular/common';
-import { Component, OnDestroy, OnInit, inject } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, ToastController } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -60,7 +60,7 @@ interface StoryBucket {
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })
-export class WorldPage implements OnInit, OnDestroy {
+export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
   readonly social = inject(SocialService);
   readonly auth = inject(AuthService);
   readonly chat = inject(ChatService);
@@ -68,6 +68,9 @@ export class WorldPage implements OnInit, OnDestroy {
   readonly translate = inject(TranslateService);
   private readonly router = inject(Router);
   private readonly toastController = inject(ToastController);
+  private readonly storyDraftNavigation = this.router.getCurrentNavigation()?.extras.info as { storyDraftFile?: unknown } | undefined;
+  private readonly openedFromStoryPicker = this.storyDraftNavigation?.storyDraftFile instanceof File;
+  @ViewChild('storyComposer') private storyComposer?: ElementRef<HTMLElement>;
   query = '';
   storyText = '';
   visibility = 'Contacts';
@@ -75,7 +78,7 @@ export class WorldPage implements OnInit, OnDestroy {
   durationSeconds = 24 * 60 * 60;
   viewOnce = false;
   storyAllowReposts = true;
-  storyFile: File | null = null;
+  storyFile: File | null = this.openedFromStoryPicker ? this.storyDraftNavigation!.storyDraftFile as File : null;
   radarPhones = '';
   busyId = '';
   error = '';
@@ -134,6 +137,12 @@ export class WorldPage implements OnInit, OnDestroy {
     this.storyAllowReposts = this.auth.session()?.user.allowStoryReposts !== false;
     await this.social.load();
     void this.contactSync.syncCachedContactsInBackground();
+  }
+
+  ngAfterViewInit(): void {
+    if (this.openedFromStoryPicker) {
+      requestAnimationFrame(() => this.storyComposer?.nativeElement.scrollIntoView({ block: 'start' }));
+    }
   }
 
   ngOnDestroy(): void {

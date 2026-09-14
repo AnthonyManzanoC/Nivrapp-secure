@@ -165,6 +165,10 @@ export class AppSettingsService {
   }
 
   resolvedLightTheme(settings = this.settings()): boolean {
+    // The public login follows this device, while each account keeps its own preference.
+    if (!this.auth.isAuthenticated()) {
+      return this.systemLightTheme();
+    }
     if (settings.themeMode === 'light') {
       return true;
     }
@@ -239,7 +243,9 @@ export class AppSettingsService {
   private persist(settings: NivraAppSettings): void {
     try {
       localStorage.setItem(this.currentStorageKey, JSON.stringify(settings));
-      localStorage.setItem(LEGACY_THEME_STORAGE_KEY, settings.themeMode);
+      if (this.auth.isAuthenticated()) {
+        localStorage.setItem(LEGACY_THEME_STORAGE_KEY, settings.themeMode);
+      }
     } catch {
       // Some locked-down browsers deny storage; the in-memory settings still apply.
     }
@@ -332,8 +338,10 @@ export class AppSettingsService {
     document.body.classList.toggle('nivra-animations-off', !settings.animationsEnabled);
     root.classList.toggle('nivra-animations-off', !settings.animationsEnabled);
     this.syncIonicAnimations(settings.animationsEnabled);
-    document.body.dataset['nivraThemeMode'] = settings.themeMode;
-    root.dataset['nivraThemeMode'] = settings.themeMode;
+    const themeMode = this.auth.isAuthenticated() ? settings.themeMode : 'system';
+    document.body.dataset['nivraThemeMode'] = themeMode;
+    root.dataset['nivraThemeMode'] = themeMode;
+    root.style.colorScheme = light ? 'light' : 'dark';
     document.body.dataset['nivraWallpaper'] = settings.chatWallpaper;
     document.body.dataset['nivraListDensity'] = settings.chatListDensity;
     document.body.dataset['nivraChatTone'] = this.chatBackgroundTone(settings);

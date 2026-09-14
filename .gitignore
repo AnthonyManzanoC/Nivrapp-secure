@@ -16,6 +16,7 @@ nivra-app/devserver.*.log
 
 # Ignorar compilaciones y artefactos
 artifacts/
+build-artifacts/
 bin/
 obj/
 *.dll

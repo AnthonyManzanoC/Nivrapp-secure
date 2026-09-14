@@ -1,6 +1,11 @@
 <?xml version='1.0' encoding='utf-8'?>
 <resources>
     <string name="app_name">Nivra</string>
+    <string name="active_call_channel">Llamada en curso</string>
+    <string name="screen_share_channel">Pantalla compartida</string>
+    <string name="screen_share_active">Estás compartiendo tu pantalla</string>
+    <string name="screen_share_stop">Dejar de compartir</string>
+    <string name="active_call_notification">Llamada en curso · Toca para volver</string>
     <string name="title_activity_main">Nivra</string>
     <string name="package_name">com.nivra.app</string>
     <string name="custom_url_scheme">com.nivra.app</string>

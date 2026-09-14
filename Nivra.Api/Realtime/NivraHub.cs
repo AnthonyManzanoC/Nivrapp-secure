@@ -17,6 +17,7 @@ public sealed class NivraHub(
     RealtimePresence presence,
     EncryptedFileStorage storage,
     PushNotificationService pushNotifications,
+    LiveKitTokenService liveKit,
     ILogger<NivraHub> logger,
     TimeProvider timeProvider) : Hub
 {
@@ -327,7 +328,7 @@ public sealed class NivraHub(
         }
 
         var call = await store.GetCallAsync(callId, Context.ConnectionAborted);
-        if (call is null || !call.ParticipantUserIds.Contains(currentUser.UserId))
+        if (call is null || !call.ParticipantSessions.TryGetValue(currentUser.UserId, out var owner) || owner.DeviceId != currentUser.DeviceId)
         {
             return;
         }
@@ -337,17 +338,24 @@ public sealed class NivraHub(
             callId,
             answeredByUserId = currentUser.UserId,
             answeredByDeviceId = currentUser.DeviceId,
+            answeredBySessionId = owner.ClientSessionId,
             at = timeProvider.GetUtcNow()
         }, Context.ConnectionAborted);
     }
 
-    public async Task<CallResponse> CallUser(StartCallRequest request)
+    public Task<CallResponse> CallUser(StartCallRequest request) => CallCoordination.RunAsync<CallResponse>(db, async () =>
     {
         if (!TryGetCurrentUser(out var currentUser))
         {
             throw new HubException("No autenticado.");
         }
 
+        if (request.ClientProtocol < 2) throw new HubException("CLIENT_UPGRADE_REQUIRED: Actualiza Nivra para usar llamadas seguras.");
+        if (request.MediaEncryption is not null && request.MediaEncryption != "livekit-e2ee-v1") throw new HubException("El modo de cifrado de llamada no es válido.");
+        if (!CallCoordination.IsValidSessionId(request.ClientSessionId) || !Enum.IsDefined(request.Type))
+        {
+            throw new HubException("La sesión o el tipo de llamada no es válido.");
+        }
         var participants = (request.ParticipantUserIds ?? [])
             .Append(currentUser.UserId)
             .Where(id => !string.IsNullOrWhiteSpace(id))
@@ -374,23 +382,45 @@ public sealed class NivraHub(
             throw new HubException("La llamada necesita al menos dos usuarios validos.");
         }
 
+        var isGroup = conversation?.Type == ConversationType.Group;
+        if ((isGroup || participants.Count > 2) && request.MediaEncryption != "livekit-e2ee-v1") throw new HubException("Las salas grupales requieren cifrado de extremo a extremo.");
+        if ((isGroup || participants.Count > 2) && !liveKit.IsConfigured)
+        {
+            throw new HubException("Las llamadas grupales requieren LiveKit configurado en el servidor.");
+        }
+        await using var transaction = await CallCoordination.LockAsync(db,
+            isGroup ? $"group-call:{request.ConversationId}" : $"call-start:{currentUser.UserId}:{currentUser.DeviceId}:{request.ClientSessionId}", Context.ConnectionAborted);
+        if (isGroup)
+        {
+            var existing = await CallCoordination.FindActiveGroupCallAsync(db, request.ConversationId!, Context.ConnectionAborted);
+            if (existing is not null)
+            {
+                await transaction.CommitAsync(Context.ConnectionAborted);
+                return ToCallResponse(existing);
+            }
+        }
         var call = new CallSession
         {
             Id = NivraIds.NewId("cal"),
             ConversationId = request.ConversationId,
             InitiatorUserId = currentUser.UserId,
+            InitiatorDeviceId = currentUser.DeviceId,
+            InitiatorSessionId = request.ClientSessionId,
+            MediaEncryption = request.MediaEncryption,
             Type = request.Type,
             Status = CallStatus.Ringing,
             ParticipantUserIds = participants,
             StartedAt = timeProvider.GetUtcNow()
         };
+        CallCoordination.TryClaim(call, currentUser.UserId, currentUser.DeviceId, request.ClientSessionId);
 
         await store.AddCallAsync(call, Context.ConnectionAborted);
-        var response = ToCallResponse(call, currentUser.DeviceId);
+        await transaction.CommitAsync(Context.ConnectionAborted);
+        var response = ToCallResponse(call);
         await NotifyUsersAsync(participants, "call.started", response);
         await SendIncomingCallPushesAsync(call, currentUser.UserId, participants);
         return response;
-    }
+    });
 
     public async Task Typing(string conversationId, string encryptedState)
     {
@@ -550,9 +580,9 @@ public sealed class NivraHub(
             : caller.DisplayName;
     }
 
-    private static CallResponse ToCallResponse(CallSession call, string? initiatorDeviceId = null)
+    private static CallResponse ToCallResponse(CallSession call)
     {
-        return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt, initiatorDeviceId);
+        return new CallResponse(call.Id, call.ConversationId, call.InitiatorUserId, call.Type, call.Status, call.ParticipantUserIds.ToList(), call.StartedAt, call.EndedAt, call.InitiatorDeviceId, call.InitiatorSessionId, new(call.ParticipantSessions, StringComparer.Ordinal), call.MediaEncryption);
     }
 
     private bool TryGetCurrentUser(out CurrentUser currentUser)

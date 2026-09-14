@@ -20,7 +20,11 @@ public sealed record LoginRequest(
     string Password,
     string DeviceName,
     KeyBundleRequest? KeyBundle,
-    string? HardwareId);
+    string? HardwareId,
+    bool ResolveOnly = false);
+
+public sealed record PrivateRegisterRequest(string Password, string DeviceName, KeyBundleRequest KeyBundle, string? HardwareId);
+public sealed record LoginIdentityResponse(string Alias);
 
 public sealed record RefreshTokenRequest(string RefreshToken);
 
@@ -41,7 +45,8 @@ public sealed record UserResponse(
     bool AllowStoryReposts,
     string PlanCode,
     PrivacySettings PrivacySettings,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? NivraNumber = null);
 
 public sealed record PatchProfileRequest(
     string? Alias,
@@ -136,7 +141,8 @@ public sealed record ContactResponse(
     string? NicknameCiphertext,
     bool IsFavorite,
     bool IsMutualContact,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? NivraNumber = null);
 
 public sealed record PatchContactRequest(bool? IsFavorite, string? NicknameCiphertext);
 
@@ -160,7 +166,8 @@ public sealed record UserSummaryResponse(
     bool IsContact,
     bool IsMutualContact,
     bool IsFavorite,
-    string FriendshipState);
+    string FriendshipState,
+    string? NivraNumber = null);
 
 public sealed record DirectorySearchResponse(string Query, List<UserSummaryResponse> People);
 
@@ -424,9 +431,11 @@ public sealed record VaultInviteLinkResponse(
 
 public sealed record AcceptVaultInviteRequest(string? Pin);
 
-public sealed record StartCallRequest(CallType Type, string? ConversationId, List<string>? ParticipantUserIds);
+public sealed record StartCallRequest(CallType Type, string? ConversationId, List<string>? ParticipantUserIds, string? ClientSessionId = null, string? MediaEncryption = null, int ClientProtocol = 0);
 
-public sealed record CallSignalRequest(string TargetUserId, string SignalType, string PayloadCiphertext);
+public sealed record CallSignalRequest(string TargetUserId, string SignalType, string PayloadCiphertext, string? ClientSessionId = null);
+
+public sealed record CallSessionRequest(string? ClientSessionId = null, string? Reason = null);
 
 public sealed record CallSignalResponse(
     string Id,
@@ -435,11 +444,14 @@ public sealed record CallSignalResponse(
     string? FromDeviceId,
     string SignalType,
     string PayloadCiphertext,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    string? FromClientSessionId = null,
+    string? TargetDeviceId = null,
+    string? TargetClientSessionId = null);
 
-public sealed record InviteCallParticipantRequest(string UserId);
+public sealed record InviteCallParticipantRequest(string UserId, string? ClientSessionId = null);
 
-public sealed record UpdateCallTypeRequest(CallType Type);
+public sealed record UpdateCallTypeRequest(CallType Type, string? ClientSessionId = null);
 
 public sealed record LiveKitRoomTokenResponse(string ServerUrl, string Token);
 
@@ -452,7 +464,10 @@ public sealed record CallResponse(
     List<string> ParticipantUserIds,
     DateTimeOffset StartedAt,
     DateTimeOffset? EndedAt,
-    string? InitiatorDeviceId = null);
+    string? InitiatorDeviceId = null,
+    string? InitiatorSessionId = null,
+    Dictionary<string, CallParticipantSession>? ParticipantSessions = null,
+    string? MediaEncryption = null);
 
 public sealed record PatchPrivacyRequest(
     bool? HideNotificationContent,

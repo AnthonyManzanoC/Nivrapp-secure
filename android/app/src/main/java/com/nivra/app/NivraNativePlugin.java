@@ -113,6 +113,7 @@ public class NivraNativePlugin extends Plugin {
     private Sensor proximitySensor;
     private Sensor accelerometerSensor;
     private boolean raiseListenEnabled;
+    private volatile boolean activityResumed;
     private boolean raiseTalkEnabled;
     private boolean phoneNear;
     private boolean liftedRecently = true;
@@ -154,6 +155,60 @@ public class NivraNativePlugin extends Plugin {
         activePlugin = new WeakReference<>(this);
         flushPendingCallActions();
         flushPendingShareIntents();
+    }
+
+    @Override
+    protected void handleOnResume() {
+        activityResumed = true;
+        super.handleOnResume();
+    }
+
+    @Override
+    protected void handleOnPause() {
+        activityResumed = false;
+        super.handleOnPause();
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        NivraOngoingCallService.stop(getContext(), "");
+        super.handleOnDestroy();
+    }
+
+    @PluginMethod
+    public void setActiveCall(PluginCall call) {
+        boolean active = call.getBoolean("active", false);
+        boolean video = call.getBoolean("video", false);
+        String callId = call.getString("callId", "").trim();
+        JSObject result = new JSObject();
+        result.put("active", false);
+        if (!active) {
+            NivraOngoingCallService.stop(getContext(), callId);
+            call.resolve(result);
+            return;
+        }
+        if (callId.isEmpty()) {
+            call.resolve(result);
+            return;
+        }
+        if (NivraOngoingCallService.isActive(callId, video)) {
+            result.put("active", true);
+            call.resolve(result);
+            return;
+        }
+        // Android's while-in-use permissions require starting microphone/camera
+        // service types after media permission is granted and while the app is visible.
+        if (!activityResumed || getContext().checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            call.resolve(result);
+            return;
+        }
+        try {
+            NivraOngoingCallService.start(getContext(), callId, video);
+            result.put("active", true);
+        } catch (RuntimeException ignored) {
+            // Calls in the foreground remain usable when Android denies a background service.
+        }
+        call.resolve(result);
     }
 
     @PluginMethod

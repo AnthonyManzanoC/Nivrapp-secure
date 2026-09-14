@@ -49,6 +49,11 @@
                 "glob": "**/*.svg",
                 "input": "node_modules/ionicons/dist/ionicons/svg",
                 "output": "./svg"
+              },
+              {
+                "glob": "livekit-client.e2ee.worker.js",
+                "input": "node_modules/livekit-client/dist",
+                "output": "assets/crypto"
               }
             ],
             "styles": ["src/global.scss", "src/theme/variables.scss"],
@@ -145,6 +150,11 @@
                 "glob": "**/*.svg",
                 "input": "node_modules/ionicons/dist/ionicons/svg",
                 "output": "./svg"
+              },
+              {
+                "glob": "livekit-client.e2ee.worker.js",
+                "input": "node_modules/livekit-client/dist",
+                "output": "assets/crypto"
               }
             ],
             "styles": ["src/global.scss", "src/theme/variables.scss"],
