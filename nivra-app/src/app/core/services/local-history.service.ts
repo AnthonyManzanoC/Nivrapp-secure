@@ -103,6 +103,15 @@ export class LocalHistoryService {
   private readonly secureVault = inject(NativeSecureVaultService);
   private dbPromise?: Promise<IDBPDatabase | null>;
   private sqlitePromise?: Promise<SQLiteDBConnection>;
+  private sqliteConnection?: SQLiteConnection;
+  private sqliteOpenFailed = false;
+
+  retryNativeStorage(): void {
+    if (this.sqliteOpenFailed) {
+      this.sqlitePromise = undefined;
+      this.sqliteOpenFailed = false;
+    }
+  }
 
   /**
    * Native Capacitor callbacks can resolve outside Angular's zone.  Keep the
@@ -733,6 +742,8 @@ export class LocalHistoryService {
       await sqlite.close().catch(() => undefined);
     }
     this.sqlitePromise = undefined;
+    this.sqliteConnection = undefined;
+    this.sqliteOpenFailed = false;
 
     await Promise.all([
       this.deleteIndexedDatabases(),
@@ -864,9 +875,9 @@ export class LocalHistoryService {
     try {
       return await opening;
     } catch (error) {
-      if (this.sqlitePromise === opening) {
-        this.sqlitePromise = undefined;
-      }
+      // Reusing the failed attempt prevents every background read/navigation
+      // from recreating an already-dismissed warning. Explicit Retry reopens it.
+      if (this.sqlitePromise === opening) this.sqliteOpenFailed = true;
       // A locked/unavailable native vault must not silently create a second history in IndexedDB.
       throw error;
     }
@@ -930,7 +941,12 @@ export class LocalHistoryService {
     let sqlite: SQLiteConnection | undefined;
     try {
       const { CapacitorSQLite, SQLiteConnection } = await import('@capacitor-community/sqlite');
-      sqlite = new SQLiteConnection(CapacitorSQLite);
+      if (!this.sqliteConnection) {
+        this.sqliteConnection = new SQLiteConnection(CapacitorSQLite);
+        // Reconcile handles left by a WebView restart; this does not delete data.
+        await this.sqliteConnection.checkConnectionsConsistency();
+      }
+      sqlite = this.sqliteConnection;
       const existing = await sqlite.isConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => ({ result: false }));
       const db = existing.result
         ? await sqlite.retrieveConnection(NATIVE_SQLITE_DB_NAME, false)
@@ -998,58 +1014,32 @@ export class LocalHistoryService {
       const message = 'No se pudo abrir el historial cifrado. Desbloquea el dispositivo y vuelve a intentar. Tus datos locales se han conservado.';
       this.setStorageError(message);
       throw new Error(message);
-    } finally {
-      await sqlite?.clearEncryptionSecret().catch(() => undefined);
     }
   }
 
-  private async createEncryptedNativeConnection(sqlite: {
-    createConnection: (
-      database: string,
-      encrypted: boolean,
-      mode: string,
-      version: number,
-      readonly: boolean,
-    ) => Promise<SQLiteDBConnection>;
-    closeConnection?: (database: string, readonly: boolean) => Promise<void>;
-    clearEncryptionSecret?: () => Promise<void>;
-    setEncryptionSecret?: (passphrase: string) => Promise<void>;
-  }): Promise<SQLiteDBConnection> {
-    try {
-      await this.prepareNativeSqliteSecret(sqlite);
-      return await sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
-    } catch {
-      await sqlite.closeConnection?.(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
-      await this.prepareNativeSqliteSecret(sqlite);
-      return sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'encryption', 1, false);
-    }
-  }
-
-  private async withNativeSqliteSecret<T>(
-    sqlite: {
-      clearEncryptionSecret?: () => Promise<void>;
-      setEncryptionSecret?: (passphrase: string) => Promise<void>;
-    },
-    action: () => Promise<T>,
-  ): Promise<T> {
+  private async createEncryptedNativeConnection(sqlite: SQLiteConnection): Promise<SQLiteDBConnection> {
     await this.prepareNativeSqliteSecret(sqlite);
-    try {
-      return await action();
-    } finally {
-      await sqlite.clearEncryptionSecret?.().catch(() => undefined);
-    }
+    // An opening failure must never trigger conversion or replacement of the vault.
+    return sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
   }
 
-  private async prepareNativeSqliteSecret(sqlite: {
-    clearEncryptionSecret?: () => Promise<void>;
-    setEncryptionSecret?: (passphrase: string) => Promise<void>;
-  }): Promise<void> {
+  private async withNativeSqliteSecret<T>(sqlite: SQLiteConnection, action: () => Promise<T>): Promise<T> {
+    await this.prepareNativeSqliteSecret(sqlite);
+    return action();
+  }
+
+  private async prepareNativeSqliteSecret(sqlite: SQLiteConnection): Promise<void> {
     const secret = await this.secureVault.getOrCreateSecret('local-db');
-    if (!secret) {
-      throw new Error('No se pudo abrir el secreto local de SQLite.');
+    if (!secret) throw new Error('No se pudo abrir el secreto local de SQLite.');
+    // The plugin stores this in the OS protected vault. Repeated clear/set scans
+    // databases unnecessarily and complicates reconnection after navigation.
+    if ((await sqlite.isSecretStored()).result) {
+      if (!(await sqlite.checkEncryptionSecret(secret)).result) {
+        throw new Error('La clave guardada no coincide con el historial local.');
+      }
+    } else {
+      await sqlite.setEncryptionSecret(secret);
     }
-    await sqlite.clearEncryptionSecret?.().catch(() => undefined);
-    await sqlite.setEncryptionSecret?.(secret);
   }
 
   private async sqliteConversationMessagesPage(

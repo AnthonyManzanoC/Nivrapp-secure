@@ -37,7 +37,7 @@
   background: var(--game-surface);
 }
 
-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
+header { position: sticky; top: 0; z-index: 2; background: var(--game-surface); padding-bottom: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 20px; }
 header small { color: var(--game-accent); font-size: 10px; font-weight: 900; letter-spacing: .11em; }
 h2, h3, strong { color: var(--game-text); }
 h2 { margin: 5px 0 0; font-size: 25px; line-height: 1.15; }
@@ -46,8 +46,8 @@ button:disabled { cursor: default; opacity: .55; }
 button:focus-visible { outline: 3px solid var(--game-accent-strong); outline-offset: 3px; }
 
 .close-game {
-  flex: 0 0 38px;
-  height: 38px;
+  flex: 0 0 44px;
+  height: 44px; touch-action: manipulation;
   border: 1px solid var(--game-border);
   border-radius: 50%;
   background: var(--game-surface-subtle);

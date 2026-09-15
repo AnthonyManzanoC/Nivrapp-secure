@@ -140,10 +140,13 @@
 
             @if (calls.games.panelOpen() && calls.phase() !== 'ringing') {
               <app-call-game-panel class="call-game-area"
-                [state]="calls.games.state()" [currentUserId]="gameUserId()"
+                [activeGameAvailable]="calls.games.browsing() && !!calls.games.state() && calls.games.state()?.status !== 'finished'"
+                (resume)="calls.games.browsing.set(false)"
+                [state]="calls.games.browsing() ? null : calls.games.state()" [currentUserId]="gameUserId()"
                 [participants]="gameParticipants()" [transportReady]="calls.games.ready()"
                 [error]="calls.games.error()" (create)="calls.games.create($event)"
-                (action)="calls.games.act($event)" (closed)="calls.games.panelOpen.set(false)">
+                (action)="calls.games.act($event)" (closed)="calls.games.leaveGame(true)" (catalogue)="calls.games.leaveGame()"
+                (pointerdown)="$event.stopPropagation()" (click)="$event.stopPropagation()">
               </app-call-game-panel>
             }
             <div class="call-controls">
@@ -366,3 +369,5 @@
     </ng-template>
   </ion-modal>
 </ion-content>
+
+<ion-toast [isOpen]="!!calls.screenShareNotice()" [message]="calls.screenShareNotice()" [duration]="9000" position="top" (didDismiss)="calls.screenShareNotice.set('')"></ion-toast>

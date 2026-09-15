@@ -66,6 +66,33 @@ describe('shared call game session', () => {
     act(alice, 'move', 2); expect(alice.state()?.board[2]).toBeNull();
   });
 
+  it('lets the creator close an empty lobby and start a different game without hanging up', () => {
+    bob.create('connect-four');
+    bob.leaveGame(true);
+    expect(bob.panelOpen()).toBeFalse();
+    expect(alice.state()).toBeNull();
+    expect(carol.state()).toBeNull();
+    bob.create('trivia');
+    expect(carol.state()?.kind).toBe('trivia');
+  });
+
+  it('does not let a spectator cancel the group game', () => {
+    bob.create('trivia');
+    carol.leaveGame(true);
+    expect(bob.state()?.kind).toBe('trivia');
+    peers.get('alice')!.transport.packets$.next({ senderUserId: 'carol', body: { type: 'cancel', gameId: bob.state()!.id, requestId: 'forged-cancel' } });
+    expect(alice.state()?.kind).toBe('trivia');
+  });
+
+  it('releases a two-player lobby when a player leaves so either can choose another game', () => {
+    bob.create('tic-tac-toe');
+    act(carol, 'join');
+    carol.leaveGame();
+    expect(bob.state()).toBeNull();
+    carol.create('connect-four');
+    expect(bob.state()?.hostUserId).toBe('carol');
+  });
+
   it('clears the game when its creator leaves and on call end', () => {
     bob.create('trivia');
     alice.configure({ ...call, participantSessions: { alice: call.participantSessions!['alice'], carol: call.participantSessions!['carol'] } }, 'alice');

@@ -15,9 +15,12 @@ export class CallGamePanelComponent {
   @Input() participants: Array<{ userId: string; label: string }> = [];
   @Input() transportReady = false;
   @Input() error = '';
+  @Input() activeGameAvailable = false;
+  @Output() resume = new EventEmitter<void>();
   @Output() create = new EventEmitter<CallGameKind>();
   @Output() action = new EventEmitter<CallGameAction>();
   @Output() closed = new EventEmitter<void>();
+  @Output() catalogue = new EventEmitter<void>();
   readonly questionCount = TRIVIA_QUESTION_COUNT;
   readonly columns = [0, 1, 2, 3, 4, 5, 6];
   readonly choices: Array<{ kind: CallGameKind; title: string; symbol: string; description: string }> = [

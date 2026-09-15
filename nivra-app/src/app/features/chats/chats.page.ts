@@ -199,6 +199,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   async refresh(): Promise<void> {
+    this.localHistory.retryNativeStorage();
     void this.social.load().catch(() => undefined);
     try {
       await this.chat.bootstrap();

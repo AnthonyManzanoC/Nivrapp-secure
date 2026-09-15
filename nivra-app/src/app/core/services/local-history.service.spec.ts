@@ -34,6 +34,9 @@ describe('local history vault recovery', () => {
     db.open.and.rejectWith(new Error('temporarily locked'));
     db.execute.and.resolveTo({ changes: { changes: 0 } });
     db.query.and.resolveTo({ values: [] });
+    spyOn(SQLiteConnection.prototype, 'checkConnectionsConsistency').and.resolveTo({ result: true });
+    spyOn(SQLiteConnection.prototype, 'isSecretStored').and.resolveTo({ result: true });
+    spyOn(SQLiteConnection.prototype, 'checkEncryptionSecret').and.resolveTo({ result: true });
     spyOn(SQLiteConnection.prototype, 'isConnection').and.resolveTo({ result: true });
     spyOn(SQLiteConnection.prototype, 'retrieveConnection').and.resolveTo(db);
     spyOn(SQLiteConnection.prototype, 'setEncryptionSecret').and.resolveTo();
@@ -48,12 +51,23 @@ describe('local history vault recovery', () => {
     expect(service.storageError()).toContain('historial cifrado');
 
     const zoneRun = spyOn(TestBed.inject(NgZone), 'run').and.callThrough();
+    // A successful cloud reload can dismiss this episode. Navigation must not
+    // re-run the failed native open until the user explicitly retries.
+    service.clearStorageError();
+    await expectAsync(service.conversationMessagesPage('account', 'conversation')).toBeRejected();
+    expect(service.storageError()).toBe('');
+    expect(db.open).toHaveBeenCalledTimes(1);
+    service.retryNativeStorage();
     db.open.and.resolveTo();
     await expectAsync(service.conversationMessagesPage('account', 'conversation')).toBeResolvedTo([]);
     expect(db.open).toHaveBeenCalledTimes(2);
     expect(fallback).not.toHaveBeenCalled();
     expect(zoneRun).toHaveBeenCalled();
     expect(service.storageError()).toBe('');
+    await service.conversationMessagesPage('account', 'conversation');
+    expect(db.open).toHaveBeenCalledTimes(2);
+    expect(SQLiteConnection.prototype.clearEncryptionSecret).not.toHaveBeenCalled();
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
   });
 
   it('does not replace an existing wrapped history key when its protector cannot unlock it', async () => {

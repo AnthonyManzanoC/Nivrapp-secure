@@ -27,6 +27,7 @@ describe('Chats story creation entry', () => {
     };
     history = {
       storageError: signal(''),
+      retryNativeStorage: jasmine.createSpy('retryNativeStorage'),
       clearStorageError: jasmine.createSpy('clearStorageError').and.callFake(() => history.storageError.set('')),
     };
     TestBed.configureTestingModule({ providers: [

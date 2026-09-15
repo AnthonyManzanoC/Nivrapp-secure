@@ -32,6 +32,16 @@ describe('CallAudioOutputService', () => {
     expect((output.srcObject as MediaStream).getAudioTracks()[0]).toBe(stream.getAudioTracks()[0]);
   });
 
+  it('plays microphone and screen audio independently and removes only the ended share', () => {
+    const screen = context.createMediaStreamDestination().stream;
+    service.sync({ peer: new MediaStream([...stream.getAudioTracks(), ...screen.getAudioTracks()]), duplicate: screen }, false);
+    expect(document.querySelectorAll('audio[aria-hidden="true"]').length).toBe(2);
+    screen.getTracks().forEach(track => track.stop());
+    service.sync({ peer: stream }, false);
+    expect(document.querySelectorAll('audio[aria-hidden="true"]').length).toBe(1);
+    expect(stream.getAudioTracks()[0].readyState).toBe('live');
+  });
+
   it('releases elements without stopping remote tracks and honors the audio toggle', () => {
     const stop = spyOn(stream.getAudioTracks()[0], 'stop');
     service.sync({ participant: stream }, true);

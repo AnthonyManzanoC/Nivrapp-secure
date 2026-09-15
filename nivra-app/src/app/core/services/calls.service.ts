@@ -29,6 +29,7 @@ interface PeerState {
   ignoreOffer: boolean;
   isSettingRemoteAnswerPending: boolean;
   negotiationQueued: boolean;
+  negotiationPending?: boolean;
 }
 
 interface DecodedCallSignalPayload {
@@ -182,6 +183,7 @@ export class CallsService implements OnDestroy {
   readonly mediaUpgradeInFlight = signal(false);
   readonly activeScreenShareStreamId = signal<string | null>(null);
   readonly error = signal('');
+  readonly screenShareNotice = signal('');
   readonly resumableCall = signal<CallSession | null>(null);
   readonly history = signal<CallSession[]>(this.loadHistory());
   readonly activeGroupRooms = signal<Record<string, GroupCallRoom>>({});
@@ -758,6 +760,9 @@ export class CallsService implements OnDestroy {
     }
     const generation = this.mediaGeneration;
     this.error.set('');
+    this.screenShareNotice.set(this.isNativePlatform()
+      ? 'Se compartirá el audio de las aplicaciones que permitan su captura.'
+      : 'Recuerda marcar Compartir audio en la ventana del navegador. Algunas ventanas o sistemas no ofrecen esta opción.');
     if (!this.isNativePlatform() && this.isGroupCall(call) && this.liveKitRoom) {
       const room = this.liveKitRoom;
       const participant = this.liveKitRoom.localParticipant as unknown as {
@@ -801,6 +806,9 @@ export class CallsService implements OnDestroy {
       return;
     }
 
+    if (!displayStream.getAudioTracks().length) {
+      this.screenShareNotice.set('Pantalla compartida sin audio interno. La fuente seleccionada no entregó una pista de audio; tu micrófono sigue disponible.');
+    }
     screenTrack.contentHint = 'detail';
     this.screenShareStream = displayStream;
     screenTrack.onended = () => { if (this.screenShareStream === displayStream) void this.stopScreenShare(); };
@@ -808,11 +816,18 @@ export class CallsService implements OnDestroy {
       const room = this.liveKitRoom;
       try {
         await room.localParticipant.publishTrack(screenTrack, { source: Track.Source.ScreenShare, name: 'Pantalla', simulcast: false });
-        if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) { await room.localParticipant.unpublishTrack(screenTrack); screenTrack.stop(); return; }
+        for (const audioTrack of displayStream.getAudioTracks()) {
+          await room.localParticipant.publishTrack(audioTrack, { source: Track.Source.ScreenShareAudio, name: 'Audio de pantalla' });
+        }
+        if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
+          for (const track of displayStream.getTracks()) { await room.localParticipant.unpublishTrack(track); track.stop(); }
+          return;
+        }
         this.screenSharing.set(true);
         this.broadcastControl('screen', 'on');
         this.syncLiveKitLocalTracks();
       } catch {
+        for (const track of displayStream.getTracks()) await room.localParticipant.unpublishTrack(track).catch(() => undefined);
         await this.nativeScreen.stop();
         this.screenShareStream = null;
         this.error.set('No se pudo publicar la pantalla en la sala cifrada.');
@@ -838,7 +853,7 @@ export class CallsService implements OnDestroy {
 
     if (this.liveKitRoom && this.isGroupCall(call)) {
       if (screenStream) {
-        for (const track of screenStream.getVideoTracks()) await this.liveKitRoom.localParticipant.unpublishTrack(track).catch(() => undefined);
+        for (const track of screenStream.getTracks()) await this.liveKitRoom.localParticipant.unpublishTrack(track).catch(() => undefined);
       }
       const participant = this.liveKitRoom.localParticipant as unknown as {
         setScreenShareEnabled?: (enabled: boolean, options?: unknown) => Promise<unknown>;
@@ -1814,7 +1829,8 @@ export class CallsService implements OnDestroy {
 
     if (signalType === 'renegotiate-request') {
       if (this.phase() !== 'ringing' && this.shouldCreateOfferTo(signal.fromUserId)) {
-        await this.createAndSendOffer(signal.fromUserId).catch(() => undefined);
+        const connection = this.ensurePeerConnection(signal.fromUserId);
+        if (connection) this.queuePeerNegotiation(signal.fromUserId, connection);
       }
       return;
     }
@@ -1912,14 +1928,19 @@ export class CallsService implements OnDestroy {
         url: error.url,
       });
     };
+    connection.onsignalingstatechange = () => {
+      const peer = this.peers.get(userId);
+      if (connection.signalingState === 'stable' && peer?.negotiationPending) {
+        this.queuePeerNegotiation(userId, connection);
+      }
+    };
     connection.onnegotiationneeded = () => {
       this.queuePeerNegotiation(userId, connection);
     };
     connection.ontrack = (event) => {
+      if (this.peers.get(userId)?.connection !== connection) { return; }
       const stream = this.pendingRemoteStreams.get(userId) || this.remoteStreams()[userId] || new MediaStream();
-      const incomingTracks = event.streams?.length
-        ? event.streams.flatMap((incoming) => incoming.getTracks())
-        : [event.track].filter((track): track is MediaStreamTrack => Boolean(track));
+      const incomingTracks = [event.track, ...(event.streams ?? []).flatMap(incoming => incoming.getTracks())];
       for (const track of incomingTracks) {
         if (!stream.getTracks().some((item) => item.id === track.id)) {
           stream.addTrack(track);
@@ -1931,6 +1952,8 @@ export class CallsService implements OnDestroy {
         stream.removeTrack(event.track);
         if (!this.streamHasLiveTracks(stream)) {
           this.removeRemoteStream(userId);
+        } else {
+          this.publishRemoteStreamIfConnected(userId, connection);
         }
       };
       this.publishRemoteStreamIfConnected(userId, connection);
@@ -1987,9 +2010,9 @@ export class CallsService implements OnDestroy {
 
   private queuePeerNegotiation(userId: string, connection: RTCPeerConnection): void {
     const peer = this.peers.get(userId);
-    if (!peer || peer.negotiationQueued || connection.connectionState === 'closed') {
-      return;
-    }
+    if (!peer || connection.connectionState === 'closed') { return; }
+    peer.negotiationPending = true;
+    if (peer.negotiationQueued) { return; }
     peer.negotiationQueued = true;
     queueMicrotask(() => {
       void (async () => {
@@ -2008,6 +2031,7 @@ export class CallsService implements OnDestroy {
           if (connection.signalingState !== 'stable' || currentPeer.makingOffer) {
             return;
           }
+          currentPeer.negotiationPending = false;
           if (this.shouldCreateOfferTo(userId)) {
             await this.createAndSendOffer(userId);
           } else {
@@ -2019,6 +2043,9 @@ export class CallsService implements OnDestroy {
           const currentPeer = this.peers.get(userId);
           if (currentPeer?.connection === connection) {
             currentPeer.negotiationQueued = false;
+            if (currentPeer.negotiationPending && connection.signalingState === 'stable' && !currentPeer.makingOffer && this.activeCall() && this.phase() !== 'ringing' && !this.isGroupCall(this.activeCall())) {
+              this.queuePeerNegotiation(userId, connection);
+            }
           }
         }
       })();
@@ -2032,7 +2059,9 @@ export class CallsService implements OnDestroy {
     }
     for (const userId of this.otherParticipantIds(call)) {
       const peer = this.peers.get(userId);
-      if (!peer || peer.connection.connectionState === 'closed' || peer.negotiationQueued) {
+      if (!peer || peer.connection.connectionState === 'closed') { continue; }
+      if (peer.negotiationQueued || peer.connection.signalingState !== 'stable') {
+        this.queuePeerNegotiation(userId, peer.connection);
         continue;
       }
       peer.negotiationQueued = true;
@@ -2046,6 +2075,7 @@ export class CallsService implements OnDestroy {
         const currentPeer = this.peers.get(userId);
         if (currentPeer === peer) {
           currentPeer.negotiationQueued = false;
+          if (peer.negotiationPending) this.queuePeerNegotiation(userId, peer.connection);
         }
       }
     }
@@ -2452,7 +2482,7 @@ export class CallsService implements OnDestroy {
       throw new Error(kind === 'audio' ? 'No se encontro el microfono.' : 'No se encontro la camara.');
     }
     this.prepareLocalTracks(captured);
-    const stream = this.localStream() ?? new MediaStream();
+    const stream = new MediaStream(this.localStream()?.getTracks() ?? []);
     stream.getTracks()
       .filter((item) => item.kind === kind && item.id !== track.id)
       .forEach((item) => {
@@ -2499,7 +2529,7 @@ export class CallsService implements OnDestroy {
 
   private transceiverForKind(connection: RTCPeerConnection, kind: 'audio' | 'video'): RTCRtpTransceiver | null {
     return connection.getTransceivers().find((transceiver) =>
-      transceiver.sender.track?.kind === kind || transceiver.receiver.track.kind === kind) ?? null;
+      String(transceiver.direction) !== 'stopped' && (transceiver.sender.track?.kind === kind || transceiver.receiver.track.kind === kind)) ?? null;
   }
 
   private async setOutgoingTrack(
@@ -2518,10 +2548,9 @@ export class CallsService implements OnDestroy {
       return true;
     }
 
-    const previousTrack = sender.track;
     await sender.replaceTrack(track);
     await this.tuneOutgoingSender(sender);
-    if (!transceiver || previousTrack) {
+    if (!transceiver) {
       return false;
     }
 
@@ -2530,7 +2559,7 @@ export class CallsService implements OnDestroy {
       return true;
     }
     if (transceiver.direction === 'inactive') {
-      transceiver.direction = 'sendonly';
+      transceiver.direction = 'sendrecv';
       return true;
     }
     return false;
@@ -2614,11 +2643,15 @@ export class CallsService implements OnDestroy {
 
   private publishRemoteStreamIfConnected(userId: string, connection: RTCPeerConnection): void {
     const stream = this.pendingRemoteStreams.get(userId);
-    if (!stream || !this.peerConnectionLooksConnected(connection)) {
+    if (!stream || this.peers.get(userId)?.connection !== connection || !this.peerConnectionLooksConnected(connection)) {
       return;
     }
-    this.remoteStreams.update((items) => ({ ...items, [userId]: stream }));
-    this.setConnectedPhase();
+    this.zone.run(() => {
+      // A new reference also updates a mounted <video> after an audio-only call.
+      const snapshot = new MediaStream(stream.getTracks().filter(track => track.readyState !== 'ended'));
+      this.remoteStreams.update((items) => ({ ...items, [userId]: snapshot }));
+      this.setConnectedPhase();
+    });
   }
 
   private setConnectingPhase(): void {
@@ -2882,6 +2915,7 @@ export class CallsService implements OnDestroy {
     connection.onicecandidateerror = null;
     connection.onnegotiationneeded = null;
     connection.ontrack = null;
+    connection.onsignalingstatechange = null;
     connection.onconnectionstatechange = null;
     connection.oniceconnectionstatechange = null;
     connection.getReceivers?.().forEach((receiver) => receiver.track?.stop());

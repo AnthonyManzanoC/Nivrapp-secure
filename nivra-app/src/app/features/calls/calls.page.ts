@@ -1,7 +1,7 @@
 import { CommonModule, DatePipe } from '@angular/common';
 import { Component, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { IonButton, IonContent, IonIcon, IonModal, IonSearchbar } from '@ionic/angular/standalone';
+import { IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
   arrowDownLeftBoxOutline,
@@ -53,7 +53,7 @@ interface VideoTile {
 @Component({
   selector: 'app-calls',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, MediaStreamDirective, CallGamePanelComponent],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent],
   templateUrl: './calls.page.html',
   styleUrls: ['./calls.page.scss'],
 })
@@ -491,7 +491,8 @@ export class CallsPage {
   }
 
   toggleGames(): void {
-    this.calls.games.panelOpen.update(open => !open);
+    if (this.calls.games.panelOpen()) this.calls.games.leaveGame(true);
+    else this.calls.games.panelOpen.set(true);
     this.revealCallChrome();
   }
 
@@ -521,7 +522,7 @@ export class CallsPage {
   }
 
   hasVideoTrack(stream: MediaStream | null | undefined): boolean {
-    return Boolean(stream?.getVideoTracks().length);
+    return Boolean(stream?.getVideoTracks().some(track => track.readyState !== 'ended'));
   }
 
   hasAudioTrack(stream: MediaStream | null | undefined): boolean {

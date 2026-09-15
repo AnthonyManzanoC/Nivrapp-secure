@@ -19,9 +19,11 @@ export class CallAudioOutputService implements OnDestroy {
 
   sync(streams: Record<string, MediaStream>, muted: boolean): void {
     const active = new Set<string>();
-    for (const [id, stream] of Object.entries(streams)) {
-      const tracks = stream.getAudioTracks().filter((track) => track.readyState !== 'ended');
-      if (!tracks.length) { continue; }
+    // A media element may select only one audio track. Render microphone and
+    // shared system audio separately, without ever playing an incoming track twice.
+    const tracks = new Map(Object.values(streams).flatMap(stream => stream.getAudioTracks())
+      .filter(track => track.readyState !== 'ended').map(track => [track.id, track]));
+    for (const [id, track] of tracks) {
       active.add(id);
       let output = this.outputs.get(id);
       if (!output) {
@@ -35,9 +37,8 @@ export class CallAudioOutputService implements OnDestroy {
       }
       output.muted = muted;
       const previous = output.srcObject as MediaStream | null;
-      if (!previous || tracks.length !== previous.getAudioTracks().length ||
-          tracks.some((track, index) => track !== previous.getAudioTracks()[index])) {
-        output.srcObject = new MediaStream(tracks);
+      if (!previous || previous.getAudioTracks()[0] !== track) {
+        output.srcObject = new MediaStream([track]);
       }
       void this.play(id, output);
     }

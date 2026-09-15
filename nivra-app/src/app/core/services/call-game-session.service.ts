@@ -14,6 +14,7 @@ export class CallGameSessionService implements OnDestroy {
   readonly transport = inject(CallGameTransportService);
   readonly state = signal<CallGameState | null>(null);
   readonly panelOpen = signal(false);
+  readonly browsing = signal(false);
   readonly error = signal('');
   readonly ready = computed(() => this.transport.connectedPeers().length > 0);
   private callId = '';
@@ -65,6 +66,7 @@ export class CallGameSessionService implements OnDestroy {
 
   create(kind: CallGameKind): void {
     this.error.set('');
+    this.browsing.set(false);
     this.panelOpen.set(true);
     this.request({ type: 'create', kind });
   }
@@ -72,6 +74,20 @@ export class CallGameSessionService implements OnDestroy {
   act(action: CallGameAction): void {
     this.error.set('');
     this.request({ type: 'action', action });
+  }
+
+  leaveGame(closePanel = false): void {
+    const current = this.state();
+    if (current?.hostUserId === this.localUserId) {
+      this.request({ type: 'cancel', gameId: current.id });
+    } else if (current?.playerIds.includes(this.localUserId)) {
+      this.act({ type: 'leave', gameId: current.id, expectedRevision: current.revision });
+    }
+    this.browsing.set(true);
+    this.error.set('');
+    if (closePanel) this.panelOpen.set(false);
+    // Keep the call's transport available for the next game. No media tracks
+    // or peer connections belong to the transient panel component.
   }
 
   reset(): void {
@@ -83,6 +99,7 @@ export class CallGameSessionService implements OnDestroy {
     this.requests.clear();
     this.state.set(null);
     this.panelOpen.set(false);
+    this.browsing.set(false);
     this.error.set('');
     this.transport.reset();
   }
@@ -90,7 +107,8 @@ export class CallGameSessionService implements OnDestroy {
   ngOnDestroy(): void { this.subscription.unsubscribe(); this.reset(); }
 
   private request(body: Record<string, unknown>): void {
-    if (!this.ready() || !this.coordinator || !this.users.includes(this.localUserId)) {
+    const localCancel = body['type'] === 'cancel' && this.coordinator === this.localUserId;
+    if ((!this.ready() && !localCancel) || !this.coordinator || !this.users.includes(this.localUserId)) {
       this.error.set('Espera a que la llamada conecte con otro participante.'); return;
     }
     const request = { ...body, requestId: crypto.randomUUID() };
@@ -120,6 +138,14 @@ export class CallGameSessionService implements OnDestroy {
     this.requests.add(senderUserId + ':' + requestId);
     if (this.requests.size > 512) this.requests.delete(this.requests.values().next().value!);
     const current = this.state();
+    if (body['type'] === 'cancel') {
+      // Only the creator can end this exact game, including an empty lobby.
+      if (current && current.id === body['gameId'] && current.hostUserId === senderUserId) {
+        this.state.set(null);
+        this.broadcast();
+      }
+      return;
+    }
     if (body['type'] === 'create') {
       if (!KINDS.includes(String(body['kind']))) return;
       if (current && current.status !== 'finished') { this.reject(senderUserId, 'Ya hay una partida disponible. Únete desde Juegos.'); return; }
@@ -134,7 +160,8 @@ export class CallGameSessionService implements OnDestroy {
       this.broadcast([senderUserId]);
       return;
     }
-    this.state.set(result.state);
+    const leaving = (body['action'] as CallGameAction).type === 'leave';
+    this.state.set(leaving && result.state.playerIds.length < 2 ? null : result.state);
     this.broadcast();
   }
 

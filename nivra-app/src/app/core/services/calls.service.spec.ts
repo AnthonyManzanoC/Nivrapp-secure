@@ -30,7 +30,7 @@ describe('call session isolation', () => {
       { provide: Router, useValue: { navigateByUrl: jasmine.createSpy() } },
       { provide: ChatService, useValue: { conversations: signal([]) } },
       { provide: CryptoService, useValue: {} },
-      { provide: LocalHistoryService, useValue: {} },
+      { provide: LocalHistoryService, useValue: { accountKeysForUser: async () => [], calls: async () => [], putCalls: async () => undefined } },
       { provide: NativeDeviceService, useValue: {
         onNativeCallAction: () => Promise.resolve(null), clearIncomingCall: () => Promise.resolve(),
         showIncomingCall: () => Promise.resolve(),
@@ -46,6 +46,53 @@ describe('call session isolation', () => {
   });
 
   afterEach(() => service.ngOnDestroy());
+
+  it('restores sendrecv when replacing a track on a receive-only transceiver', async () => {
+    const sender = { track: { kind: 'video' }, replaceTrack: jasmine.createSpy().and.resolveTo() };
+    const transceiver = { sender, receiver: { track: { kind: 'video' } }, direction: 'recvonly' };
+    const connection = { getSenders: () => [sender], getTransceivers: () => [transceiver] };
+    spyOn<any>(service, 'tuneOutgoingSender').and.resolveTo();
+    const renegotiate = await (service as any).setOutgoingTrack(connection, 'video', {}, new MediaStream());
+    expect(renegotiate).toBeTrue();
+    expect(transceiver.direction).toBe('sendrecv');
+  });
+
+  it('publishes a new remote stream reference when video arrives during a voice call', () => {
+    const canvas = document.createElement('canvas');
+    const video = canvas.captureStream().getVideoTracks()[0];
+    const stream = new MediaStream();
+    const connection = { connectionState: 'connected' };
+    (service as any).peers.set('peer', { connection });
+    (service as any).pendingRemoteStreams.set('peer', stream);
+    spyOn<any>(service, 'setConnectedPhase');
+    (service as any).publishRemoteStreamIfConnected('peer', connection);
+    const initial = service.remoteStreams()['peer'];
+    stream.addTrack(video);
+    (service as any).publishRemoteStreamIfConnected('peer', connection);
+    expect(service.remoteStreams()['peer']).not.toBe(initial);
+    expect(service.remoteStreams()['peer'].getVideoTracks()).toEqual([video]);
+    video.stop();
+    (service as any).peers.clear();
+  });
+
+  it('retains renegotiation requested while an earlier offer is pending', async () => {
+    service.activeCall.set({ ...invitation, status: 'Active' });
+    service.phase.set('connected');
+    const connection = { connectionState: 'connected', signalingState: 'have-local-offer' };
+    const peer = { connection, negotiationQueued: false, makingOffer: false, negotiationPending: false };
+    (service as any).peers.set('peer', peer);
+    const offer = spyOn<any>(service, 'createAndSendOffer').and.resolveTo();
+    (service as any).queuePeerNegotiation('peer', connection);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(peer.negotiationPending).toBeTrue();
+    expect(offer).not.toHaveBeenCalled();
+    connection.signalingState = 'stable';
+    (service as any).queuePeerNegotiation('peer', connection);
+    await new Promise(resolve => setTimeout(resolve, 0));
+    expect(offer).toHaveBeenCalledTimes(1);
+    expect(peer.negotiationPending).toBeFalse();
+    (service as any).peers.clear();
+  });
 
   it('does not open a second outgoing call from a broadcast to the same device', async () => {
     await (service as any).receiveIncoming({ ...invitation, initiatorUserId: 'me', initiatorDeviceId: 'shared-device' });

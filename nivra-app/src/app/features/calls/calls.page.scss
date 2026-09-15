@@ -12,7 +12,7 @@
 
 .surface.call-mode.games-open .call-active {
   --call-game-panel-width: clamp(300px, 31vw, 350px);
-  --call-game-controls-reserve: calc(174px + env(safe-area-inset-bottom));
+  --call-game-controls-reserve: calc(224px + env(safe-area-inset-bottom));
   grid-template-rows: minmax(0, 1fr);
   padding: 0;
 }
@@ -45,7 +45,7 @@
 
   .surface.call-mode.games-open .call-game-area {
     position: relative;
-    z-index: 9;
+    z-index: 30;
     flex: 0 0 var(--call-game-panel-width);
     width: var(--call-game-panel-width);
     max-width: 350px;

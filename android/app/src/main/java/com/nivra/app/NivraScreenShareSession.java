@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.media.projection.MediaProjection;
 import android.util.DisplayMetrics;
 import org.webrtc.*;
+import org.webrtc.audio.JavaAudioDeviceModule;
 import java.util.Collections;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -26,6 +27,10 @@ final class NivraScreenShareSession {
     private SurfaceTextureHelper texture;
     private VideoSource source;
     private VideoTrack track;
+    private final NivraPlaybackAudioCapture playback = new NivraPlaybackAudioCapture();
+    private JavaAudioDeviceModule audioDevice;
+    private AudioSource audioSource;
+    private AudioTrack audioTrack;
 
     NivraScreenShareSession(Context context, String sessionId, Runnable requestStop) {
         this.context = context;
@@ -38,7 +43,14 @@ final class NivraScreenShareSession {
             try {
                 PeerConnectionFactory.initialize(PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions());
                 egl = EglBase.create();
+                audioDevice = JavaAudioDeviceModule.builder(context).setInputSampleRate(48000)
+                    .setUseStereoInput(false).setUseHardwareAcousticEchoCanceler(false)
+                    .setUseHardwareNoiseSuppressor(false).setAudioBufferCallback(playback::fill)
+                    .createAudioDeviceModule();
+                // This fork supports external PCM; disable its microphone recorder.
+                audioDevice.setAudioRecordEnabled(false);
                 factory = PeerConnectionFactory.builder()
+                    .setAudioDeviceModule(audioDevice)
                     .setVideoEncoderFactory(new DefaultVideoEncoderFactory(egl.getEglBaseContext(), true, true))
                     .setVideoDecoderFactory(new DefaultVideoDecoderFactory(egl.getEglBaseContext())).createPeerConnectionFactory();
                 PeerConnection.RTCConfiguration config = new PeerConnection.RTCConfiguration(Collections.emptyList());
@@ -59,6 +71,15 @@ final class NivraScreenShareSession {
                 capturer.startCapture(size[0], size[1], 15);
                 track = factory.createVideoTrack("nivra-screen", source);
                 peer.addTrack(track, Collections.singletonList("nivra-screen-stream"));
+                if (playback.start(capturer.getMediaProjection())) {
+                    MediaConstraints audioConstraints = new MediaConstraints();
+                    audioConstraints.optional.add(new MediaConstraints.KeyValuePair("googEchoCancellation", "false"));
+                    audioConstraints.optional.add(new MediaConstraints.KeyValuePair("googNoiseSuppression", "false"));
+                    audioConstraints.optional.add(new MediaConstraints.KeyValuePair("googAutoGainControl", "false"));
+                    audioSource = factory.createAudioSource(audioConstraints);
+                    audioTrack = factory.createAudioTrack("nivra-screen-audio", audioSource);
+                    peer.addTrack(audioTrack, Collections.singletonList("nivra-screen-stream"));
+                }
                 peer.setRemoteDescription(new SdpAdapter() {
                     @Override public void onSetSuccess() {
                         run(() -> peer.createAnswer(new SdpAdapter() {
@@ -130,6 +151,7 @@ final class NivraScreenShareSession {
     void stop() {
         if (!closed.compareAndSet(false, true)) return;
         worker.execute(() -> {
+            playback.stop();
             if (capturer != null) {
                 capturer.stopCapture();
                 capturer.dispose();
@@ -137,8 +159,11 @@ final class NivraScreenShareSession {
             if (peer != null) { peer.close(); peer.dispose(); }
             if (track != null) track.dispose();
             if (source != null) source.dispose();
+            if (audioTrack != null) audioTrack.dispose();
+            if (audioSource != null) audioSource.dispose();
             if (texture != null) texture.dispose();
             if (factory != null) factory.dispose();
+            if (audioDevice != null) audioDevice.release();
             if (egl != null) egl.release();
         });
         worker.shutdown();

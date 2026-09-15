@@ -11,6 +11,9 @@
 
   @if (!state) {
     <p class="intro">La llamada sigue mientras juegan. Invita a quienes están contigo.</p>
+    @if (activeGameAvailable) {
+      <button class="primary-game-action" type="button" (click)="resume.emit()">Volver a la partida del grupo</button>
+    }
     <div class="game-selection">
       @for (choice of choices; track choice.kind) {
         <button type="button" [disabled]="!transportReady" (click)="create.emit(choice.kind)" class="game-choice">
@@ -22,6 +25,7 @@
     </div>
     <p class="fine-print">Los tableros son para dos jugadores. En el reto de cálculo pueden participar hasta doce; las demás personas pueden mirar.</p>
   } @else {
+    <button type="button" class="leave-game" (click)="catalogue.emit()">← {{ isHost() ? 'Terminar partida y cambiar de juego' : 'Salir al catálogo de juegos' }}</button>
     <div class="round-head"><span>Ronda {{ state.round }}</span><span>{{ state.playerIds.length }} jugadores</span></div>
     <div class="player-list" aria-label="Jugadores">
       @for (playerId of state.playerIds; track playerId; let index = $index) {

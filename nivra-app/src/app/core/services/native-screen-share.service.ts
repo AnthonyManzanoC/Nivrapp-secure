@@ -29,6 +29,7 @@ export class NativeScreenShareService {
     const stream = new MediaStream();
     this.stream = stream;
     peer.addTransceiver('video', { direction: 'recvonly' });
+    peer.addTransceiver('audio', { direction: 'recvonly' });
     peer.ontrack = event => { if (this.sessionId === sessionId) stream.addTrack(event.track); else event.track.stop(); };
     peer.onconnectionstatechange = () => {
       if (peer.connectionState === 'failed' && this.sessionId === sessionId) void this.finish(sessionId, true);
