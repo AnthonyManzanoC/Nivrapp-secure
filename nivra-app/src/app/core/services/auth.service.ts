@@ -965,6 +965,9 @@ export class AuthService implements OnDestroy {
   }
 
   private consumePostAuthUrl(): string {
+    const groupCode = sessionStorage.getItem('nivra_pending_group_invite');
+    sessionStorage.removeItem('nivra_pending_group_invite');
+    if (groupCode && /^[A-Za-z0-9_-]{43}$/.test(groupCode)) return `/group/invite#${groupCode}`;
     const inviteCode = localStorage.getItem(PENDING_VAULT_INVITE_KEY);
     if (inviteCode) {
       localStorage.removeItem(PENDING_VAULT_INVITE_KEY);

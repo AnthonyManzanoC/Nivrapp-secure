@@ -26,6 +26,9 @@
         </div>
       </button>
       <ion-buttons slot="end">
+        @if (!isGroupConversation()) {
+          <ion-button (click)="verifyIdentity()" aria-label="Verificar identidad"><ion-icon name="shield-checkmark-outline"></ion-icon></ion-button>
+        }
         @if (!calls.activeGroupRoomForConversation(conversation()?.id)) {
         <ion-button mode="ios" fill="clear" [disabled]="busyAction !== ''" (click)="startCall('Voice')" [attr.aria-label]="'COMMON.CALL' | translate:'Llamada'">
           <ion-icon name="call-outline"></ion-icon>
@@ -40,6 +43,12 @@
       </ion-buttons>
     </ion-toolbar>
   </ion-header>
+  @if (identityChanged()) {
+    <div role="alert" style="padding:12px;background:#8b1623;color:#fff">
+      La identidad de este contacto ha cambiado. El envío está bloqueado hasta comparar las llaves.
+      <button type="button" (click)="verifyIdentity()" style="padding:10px;color:#8b1623;background:#fff">Verificar identidad</button>
+    </div>
+  }
 
   @if (calls.activeGroupRoomForConversation(conversation()?.id); as room) {
     <div class="group-call-banner">
@@ -946,6 +955,9 @@
             </div>
           </section>
           <section class="contact-section add-members-section">
+            @if (isCurrentUserGroupAdmin()) {
+              <app-group-invite-share [conversationId]="conversation()!.id" />
+            }
             <div class="section-head">
               <h3>{{ 'CHAT.ADD_PARTICIPANTS' | translate:'Agregar participantes' }}</h3>
               <span>{{ canAddGroupMembers() ? ('CHAT.AVAILABLE' | translate:'Disponible') : ('CHAT.ADMINS_ONLY' | translate:'Solo admins') }}</span>

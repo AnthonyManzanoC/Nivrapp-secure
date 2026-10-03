@@ -39,6 +39,7 @@ import { TranslateService } from '../../core/services/translate.service';
 import { SocialService } from '../../core/services/social.service';
 import { Router } from '@angular/router';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
+import { GroupHubComponent } from './group-hub.component';
 
 interface StoryBucket {
   id: string;
@@ -56,7 +57,7 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, StoryViewerComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
+  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, StoryViewerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })

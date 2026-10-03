@@ -1,0 +1,77 @@
+/* Product surfaces only: media canvases, games and encrypted message layout keep
+   their own contracts. Theme values follow the existing explicit/system setting. */
+:root {
+  --nivra-radius-control: 14px;
+  --nivra-radius-panel: 22px;
+  --nivra-shadow-soft: 0 8px 28px rgb(0 0 0 / 18%);
+  --nivra-shadow-tiny: 0 2px 8px rgb(0 0 0 / 12%);
+}
+.nivra-light-theme {
+  --nivra-bg: #f5f7f8;
+  --nivra-muted: #52616b;
+  --nivra-line: rgb(26 45 51 / 10%);
+  --nivra-shadow-soft: 0 8px 28px rgb(26 45 51 / 6%);
+  --nivra-shadow-tiny: 0 2px 8px rgb(26 45 51 / 4%);
+}
+:root {
+body :is(button, a, input, textarea, select):focus-visible {
+  outline: 3px solid var(--nivra-brand-2);
+  outline-offset: 3px;
+}
+body ion-button::part(native):focus-visible {
+  outline: 3px solid var(--nivra-brand-2);
+  outline-offset: -3px;
+}
+app-shell .workspace { background: var(--nivra-bg); }
+app-shell .rail { background: var(--nivra-panel-solid); }
+app-shell .nav-btn { border-radius: var(--nivra-radius-control); }
+app-shell .nav-btn.active { box-shadow: none; }
+app-chats .sidebar { background: var(--nivra-panel-solid); backdrop-filter: none; }
+app-chats .side-head h1 { font-size: 28px; letter-spacing: -.8px; font-weight: 700; }
+app-chats .search-box { border-radius: var(--nivra-radius-control); box-shadow: none; }
+app-chats .conversation-item::part(native) { border-radius: 14px; box-shadow: none; }
+app-chats .chat-folders { scrollbar-width: none; }
+app-chats .chat-folders::-webkit-scrollbar { display: none; }
+app-chats .story-strip { scrollbar-width: none; }
+app-chats .story-strip::-webkit-scrollbar { display: none; }
+app-chats .empty-detail { background: var(--nivra-bg); }
+app-world .panel, app-account .panel, app-vault .panel,
+app-calls .surface:not(.call-mode) .panel {
+  border-radius: var(--nivra-radius-panel);
+  box-shadow: var(--nivra-shadow-tiny);
+  background: var(--nivra-panel-solid);
+}
+app-world .page-head h1, app-account .page-head h1,
+app-vault .page-head h1, app-calls .page-head h1 {
+  font-size: clamp(28px, 3vw, 38px); font-weight: 700; letter-spacing: -.9px;
+}
+app-world .page-head p, app-account .page-head p, app-calls .page-head p {
+  color: var(--nivra-muted); line-height: 1.6; max-width: 58ch;
+}
+app-auth .auth-shell {
+  background: var(--nivra-bg);
+  grid-template-columns: minmax(360px, 540px) minmax(0, 1fr);
+}
+app-auth .auth-panel { background: var(--nivra-panel-solid); backdrop-filter: none; }
+app-auth .auth-panel h1 { font-size: clamp(32px, 3.8vw, 48px); line-height: 1.08; letter-spacing: -1.5px; max-width: 15ch; }
+app-auth .auth-copy { color: var(--nivra-muted); line-height: 1.65; max-width: 44ch; }
+app-auth .auth-visual { flex-direction: column; gap: 36px; background: radial-gradient(ellipse at center, rgb(24 214 162 / 10%), transparent 70%); }
+app-auth .editorial-intro { max-width: 440px; padding: 0 24px; }
+app-auth .editorial-intro small { color: var(--nivra-brand-2); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
+app-auth .editorial-intro h2 { font-size: clamp(36px, 4vw, 58px); font-weight: 650; letter-spacing: -2px; line-height: 1.08; margin: 16px 0; }
+app-auth .editorial-intro p { color: var(--nivra-muted); line-height: 1.7; }
+app-auth .phone-preview { transform: none; border-radius: 28px; box-shadow: var(--nivra-shadow-soft); max-width: 360px; }
+app-auth ion-button { --border-radius: 14px; min-height: 48px; --box-shadow: none; }
+app-auth .mini-bubble.mine { color: #062b23; }
+app-auth ion-segment-button { min-width: 0; --padding-start: 12px; --padding-end: 12px; }
+app-auth ion-segment-button ion-label { font-size: 13px; overflow: visible; white-space: nowrap; }
+}
+@media (max-width: 760px) {
+  :root app-auth .auth-shell { grid-template-columns: minmax(0, 1fr); }
+  :root app-auth .auth-panel { padding-inline: 24px; }
+  :root app-auth .auth-visual { display: none; }
+  :root app-world .surface, :root app-account .surface { padding-inline: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

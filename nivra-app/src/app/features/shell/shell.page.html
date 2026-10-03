@@ -6,7 +6,7 @@
         <span>Nivra</span>
       </a>
       @for (item of nav; track item.path) {
-        <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active">
+        <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active" ariaCurrentWhenActive="page">
           <ion-icon [name]="item.icon"></ion-icon>
           <span>{{ item.labelKey | translate:item.label }}</span>
         </a>

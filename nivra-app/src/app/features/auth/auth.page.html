@@ -23,15 +23,15 @@
       <p class="auth-copy">{{ 'LOGIN.COPY' | translate:'Cifrado en cliente, llamadas en tiempo real y la misma cuenta en web, PC y movil.' }}</p>
 
       <ion-segment [value]="mode" (ionChange)="setMode($any($event.detail.value))" [disabled]="submitting || auth.busy()" mode="ios">
-        <ion-segment-button value="alias">
+        <ion-segment-button value="alias" layout="label-only">
           <ion-icon name="key-outline"></ion-icon>
           <ion-label>{{ 'LOGIN.PRIVATE_TAB' | translate:'ID / Alias' }}</ion-label>
         </ion-segment-button>
-        <ion-segment-button value="qr">
+        <ion-segment-button value="qr" layout="label-only">
           <ion-icon name="qr-code-outline"></ion-icon>
           <ion-label>{{ 'LOGIN.QR' | translate:'QR' }}</ion-label>
         </ion-segment-button>
-        <ion-segment-button value="phone">
+        <ion-segment-button value="phone" layout="label-only">
           <ion-icon name="call-outline"></ion-icon>
           <ion-label>{{ 'LOGIN.SMS' | translate:'SMS' }}</ion-label>
         </ion-segment-button>
@@ -137,6 +137,11 @@
     </section>
 
     <section class="auth-visual" aria-hidden="true">
+      <div class="editorial-intro">
+        <small>{{ 'LOGIN.EDITORIAL_LABEL' | translate:'A tu manera' }}</small>
+        <h2>{{ 'LOGIN.EDITORIAL_TITLE' | translate:'Más cerca de tu gente.' }}</h2>
+        <p>{{ 'LOGIN.EDITORIAL_COPY' | translate:'Una conversación, una llamada, una historia. Tu espacio para conectar, sin necesitar un número de teléfono.' }}</p>
+      </div>
       <div class="phone-preview">
         <div class="phone-head">
           <span>Nivra</span>

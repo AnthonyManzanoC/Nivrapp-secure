@@ -205,6 +205,7 @@ app.UseRateLimiter();
 app.UseCallCompatibility();
 
 app.MapNivraApi();
+app.MapGroupInviteEndpoints();
 app.MapGet("/client/compatibility", () => Results.Ok(ClientCompatibility.Description()));
 app.MapGet("/health/ready", async (NivraDbContext db, CancellationToken cancellationToken) =>
 {

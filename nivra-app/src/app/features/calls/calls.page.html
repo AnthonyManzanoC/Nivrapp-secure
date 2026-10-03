@@ -160,7 +160,7 @@
                   {{ 'COMMON.REJECT' | translate:'Rechazar' }}
                 </ion-button>
               } @else {
-                <ion-button mode="ios" fill="clear" [disabled]="!calls.localStream()" (click)="calls.toggleMute()">
+                <ion-button mode="ios" fill="clear" [disabled]="!calls.localStream()" (click)="calls.toggleMute()" [attr.aria-pressed]="calls.muted()" [attr.aria-label]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'" [title]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'">
                   <ion-icon [name]="calls.muted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
                 </ion-button>
                 @if (call.type === 'Video') {
@@ -196,7 +196,7 @@
                     <ion-icon name="videocam-outline"></ion-icon>
                   </ion-button>
                 }
-                <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()">
+                <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()" [attr.aria-pressed]="calls.speaker()" aria-label="Cambiar salida de audio" title="Cambiar salida de audio">
                   <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
                 </ion-button>
                 <ion-button mode="ios" fill="clear" class="games-button"

@@ -10,6 +10,7 @@ namespace Nivra.Api.Infrastructure;
 public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : DbContext(options)
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    public DbSet<GroupInviteLink> GroupInviteLinks => Set<GroupInviteLink>();
 
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
@@ -61,6 +62,13 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        modelBuilder.Entity<GroupInviteLink>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.TokenHash).IsUnique();
+            b.HasIndex(x => new { x.ConversationId, x.ExpiresAt });
+            b.HasOne<ConversationRecord>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Cascade);
+        });
 
         var stringListConverter = new ValueConverter<List<string>, string>(
             value => JsonSerializer.Serialize(value, JsonOptions),

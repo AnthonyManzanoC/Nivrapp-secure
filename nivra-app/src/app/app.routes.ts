@@ -15,6 +15,7 @@ const guest = async () => {
 };
 
 export const routes: Routes = [
+  { path: 'group/invite', loadComponent: () => import('./features/chat-detail/group-invite.page').then(m => m.GroupInvitePage) },
   { path: 'recover', loadComponent: () => import('./features/auth/recovery.page').then(m => m.RecoveryPage) },
   {
     path: 'vault/invite',
@@ -34,6 +35,7 @@ export const routes: Routes = [
     canMatch: [authenticated],
     loadComponent: () => import('./features/shell/shell.page').then((m) => m.ShellPage),
     children: [
+      { path: 'identity/:userId', loadComponent: () => import('./features/chat-detail/identity-verification.page').then(m => m.IdentityVerificationPage) },
       {
         path: 'chats',
         loadComponent: () => import('./features/chats/chats.page').then((m) => m.ChatsPage),

@@ -25,6 +25,7 @@ import {
   UserSummary,
 } from '../models/nivra.models';
 import { AuthService } from './auth.service';
+import { IdentityTrustService } from './identity-trust.service';
 import { CryptoService, PublicKeyRecipient } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
 import { E2EE_UPLOAD_LIMIT_BYTES, EncryptedUploadMode, MediaOptimizerService } from './media-optimizer.service';
@@ -102,6 +103,7 @@ const CHAT_PAYLOAD_TEXT_ENCODER = new TextEncoder();
 export class ChatService implements OnDestroy {
   private readonly api = inject(NivraApiService);
   private readonly auth = inject(AuthService);
+  private readonly identityTrust = inject(IdentityTrustService);
   private readonly crypto = inject(CryptoService);
   private readonly history = inject(LocalHistoryService);
   private readonly mediaOptimizer = inject(MediaOptimizerService);
@@ -3672,12 +3674,22 @@ export class ChatService implements OnDestroy {
     const recipients: RecipientCipherRequest[] = [];
     const groupRecipients: PublicKeyRecipient[] = [];
     const activeParticipants = conversation.participants.filter((participant) => !participant.removedAt);
-    const directories = await this.directoriesForUsers(activeParticipants.map((participant) => participant.userId));
+    // Verify the exact fresh directory used to encrypt; never fall back to stale keys.
+    const fresh: PublicKeyDirectory[] = [];
+    for (let offset = 0; offset < activeParticipants.length; offset += 128) {
+      fresh.push(...await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch', {
+        userIds: activeParticipants.slice(offset, offset + 128).map(participant => participant.userId), aliases: [],
+      })));
+    }
+    const directories = new Map(fresh.map(directory => [directory.userId, directory]));
+    for (const participant of activeParticipants) {
+      const directory = directories.get(participant.userId);
+      if (!directory?.devices.length) throw new Error('No se pudieron comprobar las llaves de todos los participantes. Reintenta antes de enviar.');
+      if (!this.isGroupConversation(conversation) && participant.userId !== current.user.id) await this.identityTrust.check(JSON.stringify([current.user.id,current.device.id]), directory);
+    }
 
     for (const participant of activeParticipants) {
-      const directory = participant.userId === current.user.id
-        ? await this.ownKeyDirectory()
-        : directories.get(participant.userId);
+      const directory = directories.get(participant.userId);
       const usedDeviceIds = new Set<string>();
       for (const device of directory?.devices ?? []) {
         const publicKey = this.crypto.parsePublicJwk(device.keyBundle?.identityKey);

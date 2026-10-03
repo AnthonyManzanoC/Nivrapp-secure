@@ -81,6 +81,8 @@ import { NativeDeviceService, type RaiseGestureEvent } from '../../core/services
 import { PerformanceModeService } from '../../core/services/performance-mode.service';
 import { PrivacyEnforcementService } from '../../core/services/privacy-enforcement.service';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
+import { GroupInviteShareComponent } from './group-invite-share.component';
+import { IdentityTrustService } from '../../core/services/identity-trust.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 
@@ -145,6 +147,7 @@ interface MessageTextPart {
     IonToolbar,
     TranslatePipe,
     StoryViewerComponent,
+    GroupInviteShareComponent,
     ChatMediaGalleryComponent,
     ImageCropperComponent,
   ],
@@ -152,6 +155,16 @@ interface MessageTextPart {
   styleUrls: ['./chat-detail.page.scss'],
 })
 export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
+  private readonly identityTrust = inject(IdentityTrustService);
+  identityChanged(): boolean {
+    const current = this.auth.session();
+    if (!current || this.isGroupConversation()) return false;
+    return Boolean(this.conversation()?.participants.some(p => p.userId !== current.user.id && this.identityTrust.isChanged(JSON.stringify([current.user.id,current.device.id]),p.userId)));
+  }
+  verifyIdentity(): void {
+    const userId = this.conversation()?.participants.find(p => !p.removedAt && p.userId !== this.auth.session()?.user.id)?.userId;
+    if (userId) void this.router.navigate(['/app/identity', userId]);
+  }
   @ViewChild(IonContent) private content?: IonContent;
   @ViewChild('micButton', { read: ElementRef }) private micButton?: ElementRef<HTMLElement>;
   readonly chat = inject(ChatService);

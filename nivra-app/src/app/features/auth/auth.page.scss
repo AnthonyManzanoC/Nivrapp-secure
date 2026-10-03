@@ -152,11 +152,13 @@ ion-segment-button::part(native) {
 }
 
 ion-segment-button ion-label {
+  flex-shrink: 0;
+  width: auto;
+  overflow: visible;
   font-size: 13px;
   letter-spacing: 0;
   text-transform: none;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
 }
 
 .auth-form {
