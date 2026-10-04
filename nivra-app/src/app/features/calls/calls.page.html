@@ -105,7 +105,7 @@
                           }
                         </div>
                         <strong>{{ videoParticipantLabel(entry[0]) }}</strong>
-                        <span>{{ 'CALLS.IN_CALL' | translate:'En llamada' }} - {{ call.startedAt | date:'shortTime' }}</span>
+                        <span>{{ 'CALLS.IN_CALL' | translate:'En llamada' }} - {{ call.startedAt | localizedDate:'shortTime' }}</span>
                       </article>
                     }
                   </section>
@@ -120,7 +120,7 @@
                     }
                   </div>
                   <strong>{{ activeCallTitle(call) }}</strong>
-                  <span>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | date:'shortTime' }}</span>
+                  <span>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | localizedDate:'shortTime' }}</span>
                   <small>{{ call.type === 'Video' ? ('CALLS.ENCRYPTED_VIDEO_CALL' | translate:'Videollamada cifrada') : ('CALLS.ENCRYPTED_CALL' | translate:'Llamada cifrada') }}</small>
                   @if (calls.isGroupCall(call)) {
                     <div class="group-call-faces" [attr.aria-label]="'CALLS.PARTICIPANTS' | translate:'Participantes'">
@@ -315,7 +315,7 @@
                   <div class="history-copy">
                     <strong>{{ historyTitle(call) }}</strong>
                     <span>{{ historySubtitle(call) }}</span>
-                    <small>{{ call.startedAt | date:'short' }}</small>
+                    <small>{{ call.startedAt | localizedDate:'short' }}</small>
                   </div>
                 </div>
                 <div class="history-actions">

@@ -1790,3 +1790,19 @@ ion-modal.pin-setup-modal {
   flex-wrap: wrap;
   gap: 6px;
 }
+
+// Native disclosure keeps form state and supports keyboard navigation.
+.surface > .grid { max-width: 1040px; margin-inline: auto; gap: 12px; }
+.account-section { display: block; grid-column: 1 / -1; padding: 0; overflow: clip; }
+.account-section > summary { cursor: pointer; padding: 22px 24px; font-weight: 650; font-size: 17px; color: var(--nivra-text); min-height: 64px; list-style: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; transition: background .18s ease, color .18s ease; }
+.account-section > summary::-webkit-details-marker { display: none; }
+.account-section > summary::after { content: ''; width: 10px; height: 10px; flex: 0 0 10px; border-right: 2px solid var(--nivra-brand-2); border-bottom: 2px solid var(--nivra-brand-2); transform: rotate(45deg); transition: transform .18s ease; }
+.account-section > summary:hover { background: color-mix(in srgb, var(--nivra-brand-2) 7%, transparent); }
+.account-section[open] > summary::after { transform: rotate(225deg); }
+.account-section > summary:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: -4px; border-radius: 18px; }
+.account-section[open] > summary { border-bottom: 1px solid var(--nivra-line); }
+.account-section-body { padding: 20px 24px; display: grid; gap: 16px; min-width: 0; animation: account-reveal .2s ease-out; }
+.account-section .device-row { flex-wrap: wrap; gap: 12px; }
+.account-section .device-row > div { min-width: 0; overflow-wrap: anywhere; }
+@media(max-width:600px) { .account-section > summary { padding: 18px; } .account-section-body { padding: 16px; } .device-row ion-button { max-width: 100%; white-space: normal; } }
+@media(prefers-reduced-motion: no-preference) { @keyframes account-reveal { from { opacity: .55; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } } }

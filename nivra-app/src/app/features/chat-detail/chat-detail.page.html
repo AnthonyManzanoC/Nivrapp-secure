@@ -99,7 +99,7 @@
                 <span>{{ chat.callLogText(message.payload) }}</span>
               </div>
             </div>
-            <small>{{ message.at | date:'shortTime' }} - {{ message.payload.callType === 'Video' ? ('COMMON.VIDEO_LOWER' | translate:'video') : ('COMMON.VOICE_LOWER' | translate:'voz') }}</small>
+            <small>{{ message.at | localizedDate:'shortTime' }} - {{ message.payload.callType === 'Video' ? ('COMMON.VIDEO_LOWER' | translate:'video') : ('COMMON.VOICE_LOWER' | translate:'voz') }}</small>
           </div>
         } @else if (message.payload.type === 'system') {
           <div class="system-message" [attr.id]="messageElementId(message.id)" [attr.data-message-id]="message.id">
@@ -356,7 +356,7 @@
               </button>
             }
             <footer>
-              <time>{{ message.at | date:'shortTime' }}</time>
+              <time>{{ message.at | localizedDate:'shortTime' }}</time>
               @if (message.status === 'editado') {
                 <span>{{ 'CHAT.EDITED' | translate:'editado' }}</span>
               }
@@ -816,7 +816,7 @@
         @if (messageInfoMessage; as infoMessage) {
           <div class="message-info-card">
             <span>{{ 'CHAT.SENT' | translate:'Enviado' }}</span>
-            <strong>{{ infoMessage.at | date:'medium' }}</strong>
+            <strong>{{ infoMessage.at | localizedDate:'medium' }}</strong>
           </div>
           <div class="receipt-list">
             @for (receipt of messageInfoRows(infoMessage); track receipt.userId + receipt.deviceId) {
@@ -1325,7 +1325,7 @@
               @for (view of story.views || []; track view.user.id) {
                 <div class="stats-row">
                   <span class="stats-avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span>
-                  <span><strong>{{ view.user.displayName || view.user.alias }}</strong><small>@{{ view.user.alias }} - {{ view.viewedAt | date:'shortTime' }}</small></span>
+                  <span><strong>{{ view.user.displayName || view.user.alias }}</strong><small>@{{ view.user.alias }} - {{ view.viewedAt | localizedDate:'shortTime' }}</small></span>
                 </div>
               } @empty {
                 <p class="stats-empty">{{ 'WORLD.NO_VIEWS' | translate:'Sin vistas todavia.' }}</p>
@@ -1336,7 +1336,7 @@
               @for (reaction of story.reactions || []; track reaction.id) {
                 <div class="stats-row">
                   <span class="stats-avatar">{{ reaction.emoji }}</span>
-                  <span><strong>{{ reaction.user.displayName || reaction.user.alias }}</strong><small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | date:'shortTime' }}</small></span>
+                  <span><strong>{{ reaction.user.displayName || reaction.user.alias }}</strong><small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | localizedDate:'shortTime' }}</small></span>
                 </div>
               } @empty {
                 <p class="stats-empty">{{ 'WORLD.NO_REACTIONS_YET' | translate:'Sin reacciones aun.' }}</p>
@@ -1347,7 +1347,7 @@
               @for (comment of story.comments || []; track comment.id) {
                 <div class="stats-row">
                   <span class="stats-avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span>
-                  <span><strong>{{ comment.user.displayName || comment.user.alias }}</strong><small>@{{ comment.user.alias }} - {{ comment.commentedAt | date:'shortTime' }}</small></span>
+                  <span><strong>{{ comment.user.displayName || comment.user.alias }}</strong><small>@{{ comment.user.alias }} - {{ comment.commentedAt | localizedDate:'shortTime' }}</small></span>
                 </div>
               } @empty {
                 <p class="stats-empty">{{ 'WORLD.NO_COMMENTS_YET' | translate:'Sin comentarios aun.' }}</p>

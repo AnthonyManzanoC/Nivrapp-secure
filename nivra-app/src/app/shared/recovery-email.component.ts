@@ -1,4 +1,5 @@
 import { Component, EventEmitter, OnInit, Output, inject } from '@angular/core';
+import { TranslatePipe } from '../core/pipes/translate.pipe';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
 import { NivraApiService } from '../core/services/nivra-api.service';
@@ -9,21 +10,21 @@ export interface RecoveryEmailState {
 }
 
 @Component({
-  selector: 'app-recovery-email', standalone: true, imports: [FormsModule],
-  template: `<section class="recovery-email"><h3>Correo de recuperación</h3>
-    <p>Un correo opcional para restablecer tu contraseña. No aparece en búsquedas ni en tu perfil público.</p>
+  selector: 'app-recovery-email', standalone: true, imports: [FormsModule, TranslatePipe],
+  template: `<section class="recovery-email"><h3>{{ 'RECOVERY.TITLE' | translate:'Correo de recuperación' }}</h3>
+    <p>{{ 'RECOVERY.COPY' | translate:'Un correo opcional para restablecer tu contraseña. No aparece en búsquedas ni en tu perfil público.' }}</p>
     @if (verifiedEmail && !editing) {
-      <p class="verified">✓ Verificado: {{ verifiedEmail }}</p>
-      <button class="change-email" type="button" (click)="beginChange()">Cambiar correo</button>
+      <p class="verified">✓ {{ 'RECOVERY.VERIFIED' | translate:'Verificado' }}: {{ verifiedEmail }}</p>
+      <button class="change-email" type="button" (click)="beginChange()">{{ 'RECOVERY.CHANGE' | translate:'Cambiar correo' }}</button>
     }
-    @else if (loaded) { <p class="recovery-warning" role="status" style="padding:14px;border:1px solid #d9a32666;border-radius:12px;background:#d9a32616"><span aria-hidden="true" style="color:#ef675d">●</span> Añade un correo de recuperación. Si olvidas tu contraseña y pierdes todas tus sesiones, no podrás recuperar el acceso a tu cuenta.</p> }
+    @else if (loaded) { <p class="recovery-warning" role="status" style="padding:14px;border:1px solid #d9a32666;border-radius:12px;background:#d9a32616"><span aria-hidden="true" style="color:#ef675d">●</span> {{ 'RECOVERY.WARNING' | translate:'Añade un correo de recuperación. Si olvidas tu contraseña y pierdes todas tus sesiones, no podrás recuperar el acceso a tu cuenta.' }}</p> }
     @if (!verifiedEmail || editing) { <form (ngSubmit)="send()">
-      <label>Correo de recuperación<input type="email" name="recoveryEmail" [(ngModel)]="email" autocomplete="email" maxlength="320" required></label>
-      <label>Contraseña actual<input type="password" name="recoveryPassword" [(ngModel)]="password" autocomplete="current-password" maxlength="1024" required></label>
-      <button type="submit" [disabled]="busy || !email || !password">{{ busy ? 'Enviando…' : 'Verificar correo' }}</button>
+      <label>{{ 'RECOVERY.TITLE' | translate:'Correo de recuperación' }}<input type="email" name="recoveryEmail" [(ngModel)]="email" autocomplete="email" maxlength="320" required></label>
+      <label>{{ 'RECOVERY.PASSWORD' | translate:'Contraseña actual' }}<input type="password" name="recoveryPassword" [(ngModel)]="password" autocomplete="current-password" maxlength="1024" required></label>
+      <button type="submit" [disabled]="busy || !email || !password">{{ busy ? ('RECOVERY.SENDING' | translate:'Enviando…') : ('RECOVERY.VERIFY' | translate:'Verificar correo') }}</button>
     </form> }
     @if (notice) { <p role="status">{{ notice }}</p> } @if (error) { <p class="error" role="alert">{{ error }}</p> }
-    <small>La confirmación llega por correo y vence en 15 minutos. Configúralo antes de olvidar tu contraseña.</small>
+    <small>{{ 'RECOVERY.EXPIRY' | translate:'La confirmación llega por correo y vence en 15 minutos. Configúralo antes de olvidar tu contraseña.' }}</small>
   </section>`,
   styles: [`:host{display:block}.recovery-email{border:1px solid var(--nivra-line);border-radius:18px;padding:20px;margin:18px 0}h3{margin:0 0 8px}p,small{color:var(--nivra-muted);font-size:12px;line-height:1.6}form{display:grid;gap:12px}label{display:grid;gap:6px;font-size:12px}input{width:100%;border:1px solid var(--nivra-line);border-radius:10px;padding:12px;background:var(--nivra-bg);color:var(--nivra-text)}button{padding:12px;border:0;border-radius:10px;background:#25c58b;color:#062d20;font-weight:700}button:disabled{opacity:.5}.change-email{margin:0 0 12px;padding:0;background:transparent;color:var(--nivra-brand);text-align:left}.verified{color:#159b66}.error{color:var(--ion-color-danger)}small{display:block;margin-top:12px}`],
 })

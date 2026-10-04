@@ -3,8 +3,8 @@
   "short_name": "Nivra",
   "start_url": "/",
   "display": "standalone",
-  "theme_color": "#05080b",
-  "background_color": "#05080b",
+  "theme_color": "#061014",
+  "background_color": "#061014",
   "icons": [
     {
       "src": "assets/icon/favicon.png",

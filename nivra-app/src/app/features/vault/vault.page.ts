@@ -1,4 +1,4 @@
-import { CommonModule, DatePipe } from '@angular/common';
+import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -33,6 +33,7 @@ import {
 } from 'ionicons/icons';
 import { DecodedVaultItem, FileChatPayload, UserSummary, VaultNoteAttachment, VaultRoom, VaultRoomMember, VaultRoomMessageVm } from '../../core/models/nivra.models';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { DeviceWipeService } from '../../core/services/device-wipe.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
@@ -42,7 +43,7 @@ import { MediaStreamDirective } from '../../shared/media-stream.directive';
 @Component({
   selector: 'app-vault',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
   templateUrl: './vault.page.html',
   styleUrls: ['./vault.page.scss'],
 })

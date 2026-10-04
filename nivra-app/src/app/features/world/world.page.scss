@@ -1203,3 +1203,8 @@ ion-modal.story-stats-modal {
     gap: 4px;
   }
 }
+
+@media(max-width:860px) {
+ .grid { grid-template-columns: minmax(0, 1fr); }
+ .grid > * { grid-column: 1 / -1; width: 100%; min-width: 0; box-sizing: border-box; }
+}

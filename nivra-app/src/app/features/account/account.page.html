@@ -11,8 +11,10 @@
     </header>
 
     <section class="grid">
-      <article class="panel span-7">
-        <h2>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</h2>
+      <details class="account-section panel span-7" open>
+        <summary>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</summary>
+        <div class="account-section-body">
+
         <app-recovery-email (stateChange)="onRecoveryEmailState($event)"></app-recovery-email>
         @if (nivraNumber()) {
           <section class="nivra-number-card" [attr.aria-label]="'ACCOUNT.NIVRA_ID' | translate:'Tu ID Nivra'">
@@ -130,25 +132,31 @@
           <ion-icon name="shield-checkmark-outline"></ion-icon>
           {{ 'ACCOUNT.SAVE_PROFILE' | translate:'Guardar perfil' }}
         </ion-button>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-5 identity-mode-panel" [class.ghost]="identityMode() === 'ghost'">
+      <details class="account-section panel span-5 identity-mode-panel" [class.ghost]="identityMode() === 'ghost'">
+        <summary>{{ identityMode() === 'ghost' ? ('ACCOUNT.IDENTITY_GHOST' | translate:'Fantasma') : ('ACCOUNT.IDENTITY_PUBLIC' | translate:'Publico controlado') }}</summary>
+        <div class="account-section-body">
         <div class="identity-mode-icon">
           <ion-icon [name]="identityMode() === 'ghost' ? 'finger-print-outline' : 'phone-portrait-outline'"></ion-icon>
         </div>
         <div>
-          <h2>{{ identityMode() === 'ghost' ? ('ACCOUNT.IDENTITY_GHOST' | translate:'Fantasma') : ('ACCOUNT.IDENTITY_PUBLIC' | translate:'Publico controlado') }}</h2>
+
           <p>{{ identityMode() === 'ghost' ? ('ACCOUNT.IDENTITY_GHOST_COPY' | translate:'Solo te encuentran por alias exacto, QR o invitacion directa.') : ('ACCOUNT.IDENTITY_PUBLIC_COPY' | translate:'Tu telefono entra al radar cifrado si tambien eres visible.') }}</p>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-5 appearance-panel">
+      <details class="account-section panel span-5 appearance-panel">
+        <summary>{{ 'ACCOUNT.APPEARANCE' | translate:'Apariencia' }}</summary>
+        <div class="account-section-body">
         <div class="appearance-heading">
           <div class="appearance-icon">
             <ion-icon [name]="themeModeIcon()"></ion-icon>
           </div>
           <div>
-            <h2>{{ 'ACCOUNT.APPEARANCE' | translate:'Apariencia' }}</h2>
+
             <p class="card-sub">{{ appearanceCopy() }}</p>
           </div>
         </div>
@@ -173,12 +181,15 @@
           <span class="preview-line long"></span>
           <span class="preview-line"></span>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-7 advanced-chat-panel">
+      <details class="account-section panel span-7 advanced-chat-panel">
+        <summary>{{ t('settings.chat.title', 'Ajustes de chats') }}</summary>
+        <div class="account-section-body">
         <div class="settings-panel-head">
           <div>
-            <h2>{{ t('settings.chat.title', 'Ajustes de chats') }}</h2>
+
             <p class="card-sub">{{ appSettings.settings().messageTextSize }} px - {{ appSettings.settings().chatListDensity === 'three-line' ? t('settings.chat.threeLines', 'Tres lineas') : t('settings.chat.twoLines', 'Dos lineas') }}</p>
           </div>
           <select class="native-select compact" [value]="appSettings.settings().themeMode" (change)="setThemeMode($any($event.target).value)" [attr.aria-label]="'settings.theme.mode' | translate:'Modo de tema'">
@@ -258,12 +269,15 @@
             <ion-toggle mode="ios" [checked]="appSettings.settings().showNextMediaOnTap" (ionChange)="setBooleanSetting('showNextMediaOnTap', $event.detail.checked)"></ion-toggle>
           </label>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-5 language-panel">
+      <details class="account-section panel span-5 language-panel">
+        <summary>{{ t('settings.language.title', 'Idioma') }}</summary>
+        <div class="account-section-body">
         <div class="settings-panel-head">
           <div>
-            <h2>{{ t('settings.language.title', 'Idioma') }}</h2>
+
             <p class="card-sub">{{ appSettings.settings().language }}</p>
           </div>
         </div>
@@ -272,10 +286,7 @@
             <span>{{ t('settings.language.showTranslate', 'Mostrar boton Traducir') }}</span>
             <ion-toggle mode="ios" [checked]="appSettings.settings().showTranslateButton" (ionChange)="setBooleanSetting('showTranslateButton', $event.detail.checked)"></ion-toggle>
           </label>
-          <label class="toggle-row">
-            <span>{{ t('settings.language.translateChats', 'Traducir chats enteros') }}</span>
-            <ion-toggle mode="ios" [checked]="appSettings.settings().translateEntireChats" (ionChange)="setBooleanSetting('translateEntireChats', $event.detail.checked)"></ion-toggle>
-          </label>
+
         </div>
         <div class="language-list">
           @for (language of languageOptions; track language.value) {
@@ -288,15 +299,18 @@
             </button>
           }
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-5 app-lock-panel" [class.enabled]="appLock.isEnabled()">
+      <details class="account-section panel span-5 app-lock-panel" [class.enabled]="appLock.isEnabled()">
+        <summary>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</summary>
+        <div class="account-section-body">
         <div class="app-lock-heading">
           <div class="app-lock-icon">
             <ion-icon [name]="appLock.isNativePlatform() ? 'finger-print-outline' : 'keypad-outline'"></ion-icon>
           </div>
           <div>
-            <h2>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</h2>
+
             <p class="card-sub">{{ appLock.isNativePlatform() ? ('ACCOUNT.SAFE_MODE_NATIVE_COPY' | translate:'APK con biometria nativa al abrir o volver.') : ('ACCOUNT.SAFE_MODE_WEB_COPY' | translate:'Web y PC con PIN local cifrado.') }}</p>
           </div>
         </div>
@@ -314,11 +328,14 @@
           <span></span>
           <span></span>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-5 share-account-panel">
+      <details class="account-section panel span-5 share-account-panel">
+        <summary>{{ 'ACCOUNT.SHARE_NIVRA' | translate:'Compartir Nivra' }}</summary>
+        <div class="account-section-body">
         <div>
-          <h2>{{ 'ACCOUNT.SHARE_NIVRA' | translate:'Compartir Nivra' }}</h2>
+
           <p class="card-sub">{{ 'ACCOUNT.SHARE_NIVRA_COPY' | translate:'Invita con enlace, mensaje o QR de contacto.' }}</p>
         </div>
         <div class="share-actions">
@@ -339,10 +356,13 @@
             {{ 'ACCOUNT.SCAN_CONTACT' | translate:'Escanear contacto' }}
           </ion-button>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-5 launch-plan-panel">
-        <h2>{{ 'ACCOUNT.PLAN' | translate:'Plan' }}</h2>
+      <details class="account-section panel span-5 launch-plan-panel">
+        <summary>{{ 'ACCOUNT.PLAN' | translate:'Plan' }}</summary>
+        <div class="account-section-body">
+
         <div class="metric">
           <strong>{{ 'ACCOUNT.PLAN_UNLIMITED' | translate:'Nivra Ilimitado (Lanzamiento)' }}</strong>
           <span>{{ 'ACCOUNT.PLAN_FREE_ACTIVE' | translate:'Plan free activo' }}</span>
@@ -352,10 +372,13 @@
           <span>{{ 'ACCOUNT.PLAN_VAULT' | translate:'Boveda: Ilimitada' }}</span>
           <span>{{ 'ACCOUNT.PLAN_ZERO_TRUST' | translate:'Zero Trust: cifrado extremo a extremo' }}</span>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-6">
-        <h2>{{ 'ACCOUNT.PRIVACY' | translate:'Privacidad' }}</h2>
+      <details class="account-section panel span-6">
+        <summary>{{ 'ACCOUNT.PRIVACY' | translate:'Privacidad' }}</summary>
+        <div class="account-section-body">
+
         @if (account.privacy(); as privacy) {
           <div class="privacy-preset-grid">
             <label>
@@ -395,36 +418,6 @@
           </div>
           <ion-button mode="ios" fill="outline" (click)="savePrivacy()" [disabled]="saving">{{ 'ACCOUNT.SAVE_PRIVACY' | translate:'Guardar privacidad' }}</ion-button>
         }
-        <div class="local-privacy-block">
-          <div class="subsection-head">
-            <strong>{{ 'ACCOUNT.DEVICE_VISIBILITY_PREFERENCES' | translate:'Preferencias de visibilidad del dispositivo' }}</strong>
-            <small>{{ 'ACCOUNT.LOCAL' | translate:'Local' }}</small>
-          </div>
-          <p class="local-privacy-copy">{{ 'ACCOUNT.SERVER_PRIVACY_EXPLANATION' | translate:'La foto del perfil se controla arriba y se aplica realmente en el servidor. Estas preferencias restantes personalizan este dispositivo.' }}</p>
-          <div class="visibility-list">
-            @for (row of visibilityRows; track row.key) {
-              <label>
-                <span>{{ row.labelKey | translate:row.label }}</span>
-                <select class="native-select compact" [value]="settingValue(row.key)" (change)="setVisibilitySetting(row.key, $any($event.target).value)">
-                  @for (option of visibilityOptions; track option.value) {
-                    <option [value]="option.value">{{ option.labelKey | translate:option.label }}</option>
-                  }
-                </select>
-              </label>
-            }
-          </div>
-          <label class="select-row">
-            <span>{{ 'ACCOUNT.DELETE_IF_AWAY' | translate:'Eliminar mi cuenta si estoy fuera' }}</span>
-            <select class="native-select compact" [value]="appSettings.settings().deleteAccountIfAwayMonths" (change)="setNumberSetting('deleteAccountIfAwayMonths', $any($event.target).value)">
-              <option value="1">{{ 'COMMON.1_MONTH' | translate:'1 mes' }}</option>
-              <option value="3">{{ 'COMMON.3_MONTHS' | translate:'3 meses' }}</option>
-              <option value="6">{{ 'COMMON.6_MONTHS' | translate:'6 meses' }}</option>
-              <option value="12">{{ 'COMMON.12_MONTHS' | translate:'12 meses' }}</option>
-              <option value="18">{{ 'COMMON.18_MONTHS' | translate:'18 meses' }}</option>
-              <option value="24">{{ 'COMMON.24_MONTHS' | translate:'24 meses' }}</option>
-            </select>
-          </label>
-        </div>
         <div class="panic-pin-box">
           <div class="panic-pin-heading">
             <ion-icon name="warning-outline"></ion-icon>
@@ -456,10 +449,13 @@
             }
           </div>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-6">
-        <h2>{{ 'ACCOUNT.NOTIFICATIONS' | translate:'Notificaciones' }}</h2>
+      <details class="account-section panel span-6">
+        <summary>{{ 'ACCOUNT.NOTIFICATIONS' | translate:'Notificaciones' }}</summary>
+        <div class="account-section-body">
+
         <div class="mini-list">
           <span>{{ 'ACCOUNT.PERMISSION' | translate:'Permiso' }}: {{ push.permission() }}</span>
           <span>{{ 'ACCOUNT.FCM_SERVER' | translate:'Servidor FCM' }}: {{ push.serverReady() ? ('ACCOUNT.READY' | translate:'listo') : ('ACCOUNT.PENDING' | translate:'pendiente') }}</span>
@@ -478,12 +474,15 @@
         @if (push.error()) {
           <p class="error">{{ push.error() }}</p>
         }
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-6 data-storage-panel">
+      <details class="account-section panel span-6 data-storage-panel">
+        <summary>{{ t('settings.data.title', 'Datos y almacenamiento') }}</summary>
+        <div class="account-section-body">
         <div class="settings-panel-head">
           <div>
-            <h2>{{ t('settings.data.title', 'Datos y almacenamiento') }}</h2>
+
             <p class="card-sub">{{ storageUsageLabel() }}</p>
           </div>
           <ion-button mode="ios" fill="clear" (click)="refreshStorageEstimate()" [attr.aria-label]="t('settings.data.refresh', 'Actualizar almacenamiento')">
@@ -499,34 +498,8 @@
             <span>{{ t('settings.data.saveGroups', 'Guardar grupos en galeria') }}</span>
             <ion-toggle mode="ios" [checked]="appSettings.settings().saveGroupMedia" (ionChange)="setBooleanSetting('saveGroupMedia', $event.detail.checked)"></ion-toggle>
           </label>
-          <label class="toggle-row">
-            <span>{{ t('settings.data.saveChannels', 'Guardar canales en galeria') }}</span>
-            <ion-toggle mode="ios" [checked]="appSettings.settings().saveChannelMedia" (ionChange)="setBooleanSetting('saveChannelMedia', $event.detail.checked)"></ion-toggle>
-          </label>
-          <label class="toggle-row">
-            <span>{{ t('settings.data.streaming', 'Streaming de video y audio') }}</span>
-            <ion-toggle mode="ios" [checked]="appSettings.settings().mediaStreaming" (ionChange)="setBooleanSetting('mediaStreaming', $event.detail.checked)"></ion-toggle>
-          </label>
-        </div>
-        <div class="settings-select-stack">
-          <label class="select-row">
-            <span>{{ t('settings.data.lowDataCalls', 'Usar menos datos en llamadas') }}</span>
-            <select class="native-select compact" [value]="appSettings.settings().lowDataCalls" (change)="setTextSetting('lowDataCalls', $any($event.target).value)">
-              @for (option of lowDataOptions; track option.value) {
-                <option [value]="option.value">{{ option.labelKey | translate:option.label }}</option>
-              }
-            </select>
-          </label>
-          <label class="toggle-row">
-            <span>{{ t('settings.data.proxy', 'Proxy') }}</span>
-            <ion-toggle mode="ios" [checked]="appSettings.settings().proxyEnabled" (ionChange)="setBooleanSetting('proxyEnabled', $event.detail.checked)"></ion-toggle>
-          </label>
-          @if (appSettings.settings().proxyEnabled) {
-            <label>
-              <span>{{ 'ACCOUNT.PROXY_SERVER' | translate:'Servidor proxy' }}</span>
-              <ion-input mode="ios" fill="outline" [ngModel]="appSettings.settings().proxyHost" (ngModelChange)="setTextSetting('proxyHost', $event)" [placeholder]="'ACCOUNT.PROXY_PLACEHOLDER' | translate:'host:puerto'"></ion-input>
-            </label>
-          }
+
+
         </div>
         <div class="account-actions compact">
           <ion-button mode="ios" fill="outline" (click)="clearDraftsAndPreviews()" [disabled]="saving">
@@ -534,23 +507,17 @@
             {{ t('settings.data.deleteDrafts', 'Eliminar borradores') }}
           </ion-button>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-6 behavior-panel">
-        <h2>{{ t('settings.behavior.title', 'Otros ajustes') }}</h2>
+      <details class="account-section panel span-6 behavior-panel">
+        <summary>{{ t('settings.behavior.title', 'Otros ajustes') }}</summary>
+        <div class="account-section-body">
+
         <div class="toggles compact-toggles">
-          <label class="toggle-row">
-            <span>{{ t('settings.behavior.directShare', 'Direct Share') }}</span>
-            <ion-toggle mode="ios" [checked]="appSettings.settings().directShare" (ionChange)="setBooleanSetting('directShare', $event.detail.checked)"></ion-toggle>
-          </label>
-          <label class="toggle-row">
-            <span>{{ t('settings.behavior.appBrowser', 'Navegador en la app') }}</span>
-            <ion-toggle mode="ios" [checked]="appSettings.settings().appBrowser" (ionChange)="setBooleanSetting('appBrowser', $event.detail.checked)"></ion-toggle>
-          </label>
-          <label class="toggle-row">
-            <span>{{ t('settings.behavior.adultContent', 'Mostrar contenido +18') }}</span>
-            <ion-toggle mode="ios" [checked]="appSettings.settings().showAdultContent" (ionChange)="setBooleanSetting('showAdultContent', $event.detail.checked)"></ion-toggle>
-          </label>
+
+
+
           <label class="toggle-row">
             <span>{{ t('settings.behavior.raiseListen', 'Levantar para escuchar') }}</span>
             <ion-toggle mode="ios" [checked]="appSettings.settings().raiseToListen" (ionChange)="setBooleanSetting('raiseToListen', $event.detail.checked)"></ion-toggle>
@@ -568,10 +535,13 @@
             <ion-toggle mode="ios" [checked]="appSettings.settings().pauseMediaOnPlayback" (ionChange)="setBooleanSetting('pauseMediaOnPlayback', $event.detail.checked)"></ion-toggle>
           </label>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-6 diagnostics-panel">
-        <h2>{{ t('settings.diagnostics.title', 'Ayuda y depuracion') }}</h2>
+      <details class="account-section panel span-6 diagnostics-panel">
+        <summary>{{ t('settings.diagnostics.title', 'Ayuda y depuracion') }}</summary>
+        <div class="account-section-body">
+
         <div class="toggles compact-toggles">
           <label class="toggle-row">
             <span>{{ t('settings.diagnostics.sendLogs', 'Enviar registros') }}</span>
@@ -591,19 +561,22 @@
             {{ t('settings.diagnostics.reset', 'Restaurar ajustes') }}
           </ion-button>
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-6">
-        <h2>{{ 'ACCOUNT.DEVICES' | translate:'Dispositivos' }}</h2>
+      <details class="account-section panel span-6">
+        <summary>{{ 'ACCOUNT.DEVICES' | translate:'Dispositivos' }}</summary>
+        <div class="account-section-body">
+
         <div class="device-list">
           @for (device of account.devices(); track device.id) {
             <div class="device-row">
               <div>
                 <strong>{{ device.name }}</strong>
-                <span>{{ device.lastSeenAt | date:'short' }}</span>
+                <span>{{ device.lastSeenAt | localizedDate:'short' }}</span>
               </div>
               @if (device.id !== auth.session()?.device?.id) {
-                <ion-button mode="ios" fill="outline" color="danger" (click)="revoke(device.hardwareId || device.id)" [attr.aria-label]="'ACCOUNT.REVOKE_DESTROY' | translate:'Revocar y destruir'">
+                <ion-button mode="ios" fill="outline" color="danger" (click)="revoke(device.hardwareId || device.id)" [disabled]="saving" [attr.aria-label]="'ACCOUNT.REVOKE_DESTROY' | translate:'Revocar y destruir'">
                   <ion-icon name="trash-outline"></ion-icon>
                   {{ 'ACCOUNT.REVOKE_DESTROY' | translate:'Revocar y Destruir' }}
                 </ion-button>
@@ -613,10 +586,13 @@
             </div>
           }
         </div>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-6">
-        <h2>{{ 'ACCOUNT.LINK_QR' | translate:'Vincular por QR' }}</h2>
+      <details class="account-section panel span-6">
+        <summary>{{ 'ACCOUNT.LINK_QR' | translate:'Vincular por QR' }}</summary>
+        <div class="account-section-body">
+
         <div class="mini-list">
           <span>{{ 'ACCOUNT.LINK_QR_COPY_1' | translate:'Escanea o pega aqui el QR generado en otro equipo.' }}</span>
           <span>{{ 'ACCOUNT.LINK_QR_COPY_2' | translate:'Se envia la llave local cifrada al nuevo dispositivo.' }}</span>
@@ -647,10 +623,13 @@
           <ion-icon name="qr-code-outline"></ion-icon>
           {{ 'ACCOUNT.AUTHORIZE_DEVICE' | translate:'Autorizar dispositivo' }}
         </ion-button>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-6 session-panel">
-        <h2>{{ 'ACCOUNT.SESSION' | translate:'Sesion' }}</h2>
+      <details class="account-section panel span-6 session-panel">
+        <summary>{{ 'ACCOUNT.SESSION' | translate:'Sesion' }}</summary>
+        <div class="account-section-body">
+
         <div class="mini-list">
           <span>{{ 'ACCOUNT.SESSION_COPY_1' | translate:'Usa esta salida en equipos compartidos o cuando quieras abrir otra cuenta.' }}</span>
           <span>{{ 'ACCOUNT.SESSION_COPY_2' | translate:'Se cerrara la sesion local de este dispositivo.' }}</span>
@@ -659,10 +638,13 @@
           <ion-icon name="log-out-outline"></ion-icon>
           {{ 'ACCOUNT.LOGOUT' | translate:'Cerrar sesion' }}
         </ion-button>
-      </article>
+      </div>
+      </details>
 
-      <article class="panel span-6 danger-zone">
-        <h2>{{ 'ACCOUNT.DANGER_ZONE' | translate:'Zona sensible' }}</h2>
+      <details class="account-section panel span-6 danger-zone">
+        <summary>{{ 'ACCOUNT.DANGER_ZONE' | translate:'Zona sensible' }}</summary>
+        <div class="account-section-body">
+
         <div class="mini-list">
           <span>{{ 'ACCOUNT.DANGER_COPY_1' | translate:'Desactiva la cuenta, revoca sesiones y minimiza datos almacenados.' }}</span>
           <span>{{ 'ACCOUNT.DANGER_COPY_2' | translate:'Escribe DELETE para confirmar.' }}</span>
@@ -672,7 +654,8 @@
           <ion-icon name="warning-outline"></ion-icon>
           {{ 'ACCOUNT.REQUEST_DELETE' | translate:'Solicitar borrado' }}
         </ion-button>
-      </article>
+      </div>
+      </details>
     </section>
 
     <ion-modal class="pin-setup-modal" [isOpen]="pinSetupModalOpen" (didDismiss)="closePinSetupModal()">

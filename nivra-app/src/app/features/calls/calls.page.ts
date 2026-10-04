@@ -1,4 +1,4 @@
-import { CommonModule, DatePipe } from '@angular/common';
+import { CommonModule } from '@angular/common';
 import { Component, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast } from '@ionic/angular/standalone';
@@ -29,6 +29,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { ChatService } from '../../core/services/chat.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { MediaStreamDirective } from '../../shared/media-stream.directive';
 import { CallGamePanelComponent } from '../../shared/call-game-panel.component';
@@ -53,7 +54,7 @@ interface VideoTile {
 @Component({
   selector: 'app-calls',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent],
   templateUrl: './calls.page.html',
   styleUrls: ['./calls.page.scss'],
 })

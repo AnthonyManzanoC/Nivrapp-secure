@@ -109,7 +109,7 @@
             <div class="vault-row">
               <div>
                 <strong>{{ item.decoded?.title || item.decoded?.name || item.kind }}</strong>
-                <span class="card-sub">{{ item.decodeError ? ('VAULT.DECODE_ERROR' | translate:'No se pudo descifrar aqui') : (item.decoded?.body || (item.updatedAt | date:'short')) }}</span>
+                <span class="card-sub">{{ item.decodeError ? ('VAULT.DECODE_ERROR' | translate:'No se pudo descifrar aqui') : (item.decoded?.body || (item.updatedAt | localizedDate:'short')) }}</span>
                 @if (!item.decodeError && vault.noteAttachmentSummary(item)) {
                   <span class="card-sub vault-note-files">{{ vault.noteAttachmentSummary(item) }}</span>
                 }
@@ -376,7 +376,7 @@
               <div class="vault-chat">
                 @for (message of vault.activeMessages(); track message.id) {
                   <div class="vault-message" [class.mine]="message.mine" [class.system]="message.payload.type === 'system'">
-                    <small>{{ vault.messageSender(message) }} - {{ message.at | date:'shortTime' }}</small>
+                    <small>{{ vault.messageSender(message) }} - {{ message.at | localizedDate:'shortTime' }}</small>
                     @if (messageFile(message); as file) {
                       <div class="file-bubble">
                         @if (vault.mediaPreviews()[file.fileId || file.downloadFile || file.previewFile || '']; as media) {

@@ -1,4 +1,4 @@
-import { CommonModule, DatePipe } from '@angular/common';
+import { CommonModule } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, ToastController } from '@ionic/angular/standalone';
@@ -35,6 +35,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { ContactSyncService } from '../../core/services/contact-sync.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { SocialService } from '../../core/services/social.service';
 import { Router } from '@angular/router';
@@ -57,7 +58,7 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, StoryViewerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })

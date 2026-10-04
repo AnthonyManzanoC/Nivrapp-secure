@@ -19,17 +19,19 @@ import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { ClientCompatibilityService } from '../../core/services/client-compatibility.service';
 import { NivraApiService } from '../../core/services/nivra-api.service';
 
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CommonModule, RouterLink, RouterLinkActive, RouterOutlet, TranslatePipe, IonApp, IonIcon],
+  imports: [LocalizedDatePipe, CommonModule, RouterLink, RouterLinkActive, RouterOutlet, TranslatePipe, IonApp, IonIcon],
   templateUrl: './shell.page.html',
   styleUrls: ['./shell.page.scss'],
 })
 export class ShellPage {
+  readonly failedAvatar = signal('');
   readonly auth = inject(AuthService);
   readonly calls = inject(CallsService);
   readonly realtime = inject(SignalrService);

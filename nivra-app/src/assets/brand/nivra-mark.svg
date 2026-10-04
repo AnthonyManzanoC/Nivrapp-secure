@@ -1,9 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
-  <rect width="1024" height="1024" fill="#05080b" rx="224" />
-  <path d="M512 160 C320 160 192 224 192 224 L192 480 C192 704 512 864 512 864 C512 864 832 704 832 480 L832 224 C832 224 704 160 512 160 Z"
-        fill="none" stroke="#00e676" stroke-width="32" stroke-linejoin="round" />
-  <path d="M576 320 L384 576 H512 L448 800 L640 512 H512 L576 320 Z"
-        fill="#00e676" />
-  <path d="M512 160 C320 160 192 224 192 224 L192 480 C192 570 250 650 320 710 Z"
-        fill="#ffffff" fill-opacity="0.05" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Nivra">
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#10292a"/>
+      <stop offset=".53" stop-color="#071215"/>
+      <stop offset="1" stop-color="#040b10"/>
+    </linearGradient>
+    <linearGradient id="mint" x1=".12" y1=".12" x2=".92" y2=".9">
+      <stop stop-color="#83ffe0"/>
+      <stop offset=".48" stop-color="#20dba6"/>
+      <stop offset="1" stop-color="#00a98a"/>
+    </linearGradient>
+    <linearGradient id="bolt" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#d7fff2"/>
+      <stop offset=".53" stop-color="#54eec2"/>
+      <stop offset="1" stop-color="#13c494"/>
+    </linearGradient>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="218" fill="url(#canvas)"/>
+  <path d="M512 143c-166 0-292 45-329 63v276c0 189 108 322 329 403 221-81 329-214 329-403V206c-37-18-163-63-329-63Z" fill="#0d2b29" stroke="url(#mint)" stroke-width="31" stroke-linejoin="round"/>
+  <path d="M512 191c-122 0-219 27-278 47v237c0 149 75 256 278 346 203-90 278-197 278-346V238c-59-20-156-47-278-47Z" fill="#061b1c" stroke="#a4ffdf" stroke-opacity=".28" stroke-width="9"/>
+  <path d="m590 295-238 294h148l-66 167 238-298H527l63-163Z" fill="url(#bolt)" stroke="#ccfff0" stroke-width="7" stroke-linejoin="round"/>
+  <path d="M238 240v232c0 117 52 211 159 285-74-99-101-229-92-483-26-12-48-22-67-34Z" fill="#fff" opacity=".045"/>
 </svg>

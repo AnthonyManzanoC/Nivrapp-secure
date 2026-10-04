@@ -244,7 +244,7 @@
             <div class="result-row">
               <div>
                 <strong>{{ request.from.displayName || request.from.alias }}</strong>
-                <span class="card-sub">{{ request.status }} - {{ request.createdAt | date:'short' }}</span>
+                <span class="card-sub">{{ request.status }} - {{ request.createdAt | localizedDate:'short' }}</span>
               </div>
               @if (request.status === 'Pending' && request.to.id === auth.session()?.user?.id) {
                 <div class="row-actions">
@@ -283,7 +283,7 @@
                 <span>
                   <strong>{{ bucket.title }}</strong>
                   <small>{{ bucket.subtitle }} - {{ bucket.stories.length }} historia{{ bucket.stories.length === 1 ? '' : 's' }}</small>
-                  <em>{{ latestStory(bucket).viewCount }} vistas - {{ bucket.latestAt | date:'short' }}</em>
+                  <em>{{ latestStory(bucket).viewCount }} vistas - {{ bucket.latestAt | localizedDate:'short' }}</em>
                 </span>
               </button>
               <div class="row-actions">
@@ -318,7 +318,7 @@
                 <span>
                   <strong>{{ bucket.title }}</strong>
                   <small>{{ bucket.subtitle }} - {{ bucket.unviewedCount }} nueva{{ bucket.unviewedCount === 1 ? '' : 's' }}</small>
-                  <em>{{ social.storyText(latestStory(bucket)) }} - {{ bucket.latestAt | date:'short' }}</em>
+                  <em>{{ social.storyText(latestStory(bucket)) }} - {{ bucket.latestAt | localizedDate:'short' }}</em>
                 </span>
               </button>
               <div class="row-actions">
@@ -350,7 +350,7 @@
                 <span>
                   <strong>{{ bucket.title }}</strong>
                   <small>{{ bucket.subtitle }} - {{ bucket.stories.length }} vista{{ bucket.stories.length === 1 ? '' : 's' }}</small>
-                  <em>{{ social.storyText(latestStory(bucket)) }} - {{ bucket.latestAt | date:'short' }}</em>
+                  <em>{{ social.storyText(latestStory(bucket)) }} - {{ bucket.latestAt | localizedDate:'short' }}</em>
                 </span>
               </button>
               <div class="row-actions">
@@ -441,7 +441,7 @@
                     }
                     <span>
                       <strong>{{ view.user.displayName || view.user.alias }}</strong>
-                      <small>@{{ view.user.alias }} - {{ view.viewedAt | date:'shortTime' }}</small>
+                      <small>@{{ view.user.alias }} - {{ view.viewedAt | localizedDate:'shortTime' }}</small>
                     </span>
                   </div>
                 } @empty {
@@ -455,7 +455,7 @@
                     <span class="stats-avatar">{{ reaction.emoji }}</span>
                     <span>
                       <strong>{{ reaction.user.displayName || reaction.user.alias }}</strong>
-                      <small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | date:'shortTime' }}</small>
+                      <small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | localizedDate:'shortTime' }}</small>
                     </span>
                   </div>
                 } @empty {
@@ -473,7 +473,7 @@
                     }
                     <span>
                       <strong>{{ comment.user.displayName || comment.user.alias }}</strong>
-                      <small>@{{ comment.user.alias }} - {{ comment.commentedAt | date:'shortTime' }}</small>
+                      <small>@{{ comment.user.alias }} - {{ comment.commentedAt | localizedDate:'shortTime' }}</small>
                       <em>{{ storyCommentText(story, comment) }}</em>
                     </span>
                   </div>

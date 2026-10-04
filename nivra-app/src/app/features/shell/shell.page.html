@@ -6,8 +6,10 @@
         <span>Nivra</span>
       </a>
       @for (item of nav; track item.path) {
-        <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active" ariaCurrentWhenActive="page">
-          <ion-icon [name]="item.icon"></ion-icon>
+        <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active" ariaCurrentWhenActive="page" [attr.aria-label]="item.labelKey | translate:item.label">
+          @if (item.path === '/app/account' && auth.session()?.user?.profilePhotoDataUrl && failedAvatar() !== auth.session()?.user?.profilePhotoDataUrl) {
+<img class="nav-profile-avatar" [src]="auth.session()?.user?.profilePhotoDataUrl" alt="" (error)="failedAvatar.set(auth.session()?.user?.profilePhotoDataUrl ?? '')">
+} @else { <ion-icon [name]="item.icon"></ion-icon> }
           <span>{{ item.labelKey | translate:item.label }}</span>
         </a>
       }
@@ -60,7 +62,7 @@
               }
             </div>
             <h2>{{ calls.callTitle(call) }}</h2>
-            <p>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | date:'shortTime' }}</p>
+            <p>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | localizedDate:'shortTime' }}</p>
             <div class="incoming-actions">
               <button class="incoming-action reject" type="button" (click)="declineCall()" [attr.aria-label]="'CALLS.REJECT_CALL' | translate:'Rechazar llamada'">
                 <ion-icon name="close-outline"></ion-icon>

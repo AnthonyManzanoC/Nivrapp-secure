@@ -1,4 +1,4 @@
-import { CommonModule, DatePipe } from '@angular/common';
+import { CommonModule } from '@angular/common';
 import { Component, NgZone, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -24,6 +24,7 @@ import { PrivacySettings } from '../../core/models/nivra.models';
 import { AppLockService } from '../../core/services/app-lock.service';
 import { AppSettingsService, NivraAppSettings, NivraThemeMode, NivraVisibility } from '../../core/services/app-settings.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
@@ -40,7 +41,7 @@ type AliasStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [CommonModule, DatePipe, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss'],
 })

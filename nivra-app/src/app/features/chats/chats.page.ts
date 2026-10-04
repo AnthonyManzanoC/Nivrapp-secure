@@ -1,4 +1,4 @@
-import { CommonModule, DatePipe } from '@angular/common';
+import { CommonModule } from '@angular/common';
 import { Component, ElementRef, NgZone, OnDestroy, ViewChild, computed, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
@@ -31,6 +31,7 @@ import { AppSettingsService } from '../../core/services/app-settings.service';
 import { ChatFolderFilter, ChatService } from '../../core/services/chat.service';
 import { SocialService } from '../../core/services/social.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
@@ -42,8 +43,8 @@ import { ChatStoryHighlight, chatStoryRingColor, groupChatStoryHighlights, withO
   selector: 'app-chats',
   standalone: true,
   imports: [
+    LocalizedDatePipe,
     CommonModule,
-    DatePipe,
     FormsModule,
     RouterOutlet,
     TranslatePipe,

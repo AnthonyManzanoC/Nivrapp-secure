@@ -216,7 +216,7 @@
                       <em>{{ chat.presenceLabel(conversation) }}</em>
                     }
                   </ion-label>
-                  <ion-note slot="end">{{ (conversation.lastMessageAt || conversation.updatedAt) | date:'shortTime' }}</ion-note>
+                  <ion-note slot="end">{{ (conversation.lastMessageAt || conversation.updatedAt) | localizedDate:'shortTime' }}</ion-note>
                 </ion-item>
 
                 <ion-item-options side="end">
@@ -466,7 +466,7 @@
                   <span class="stats-avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span>
                   <span>
                     <strong>{{ view.user.displayName || view.user.alias }}</strong>
-                    <small>@{{ view.user.alias }} - {{ view.viewedAt | date:'shortTime' }}</small>
+                    <small>@{{ view.user.alias }} - {{ view.viewedAt | localizedDate:'shortTime' }}</small>
                   </span>
                 </div>
               } @empty {
@@ -480,7 +480,7 @@
                   <span class="stats-avatar">{{ reaction.emoji }}</span>
                   <span>
                     <strong>{{ reaction.user.displayName || reaction.user.alias }}</strong>
-                    <small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | date:'shortTime' }}</small>
+                    <small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | localizedDate:'shortTime' }}</small>
                   </span>
                 </div>
               } @empty {
@@ -494,7 +494,7 @@
                   <span class="stats-avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span>
                   <span>
                     <strong>{{ comment.user.displayName || comment.user.alias }}</strong>
-                    <small>@{{ comment.user.alias }} - {{ comment.commentedAt | date:'shortTime' }}</small>
+                    <small>@{{ comment.user.alias }} - {{ comment.commentedAt | localizedDate:'shortTime' }}</small>
                     <em>{{ storyCommentText(story, comment) }}</em>
                   </span>
                 </div>

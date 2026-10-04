@@ -1,4 +1,4 @@
-import { CommonModule, DatePipe } from '@angular/common';
+import { CommonModule } from '@angular/common';
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, computed, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -76,6 +76,7 @@ import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
 import { SocialService } from '../../core/services/social.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { NativeDeviceService, type RaiseGestureEvent } from '../../core/services/native-device.service';
 import { PerformanceModeService } from '../../core/services/performance-mode.service';
@@ -126,8 +127,8 @@ interface MessageTextPart {
   selector: 'app-chat-detail',
   standalone: true,
   imports: [
+    LocalizedDatePipe,
     CommonModule,
-    DatePipe,
     FormsModule,
     IonButton,
     IonButtons,
