@@ -1,7 +1,9 @@
 import { CommonModule } from '@angular/common';
-import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, DestroyRef, NgZone, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { App } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
+import { Platform } from '@ionic/angular';
 import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { NavigationEnd, Router } from '@angular/router';
@@ -38,6 +40,8 @@ interface NativeStatusBarSurface {
   imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent],
 })
 export class AppComponent {
+  private readonly zone = inject(NgZone);
+  private resumePromise: Promise<void> | null = null;
   private readonly auth = inject(AuthService);
   private readonly appLock = inject(AppLockService);
   private readonly appSettings = inject(AppSettingsService);
@@ -80,6 +84,12 @@ export class AppComponent {
     void this.translate;
     void this.performanceMode;
     void this.privacyEnforcement;
+    if (Capacitor.getPlatform() === 'android') {
+      // Ionic overlays and router navigation retain their higher priorities.
+      // At the root, background the existing activity instead of finishing it.
+      const back = inject(Platform).backButton.subscribeWithPriority(-1, () => { void App.minimizeApp(); });
+      this.destroyRef.onDestroy(() => back.unsubscribe());
+    }
     this.bindAppLinks();
     this.bindNativeShares();
     this.bindAppLifecycleLock();
@@ -223,7 +233,8 @@ export class AppComponent {
   }
 
   private bindAppLinks(): void {
-    void App.addListener('appUrlOpen', (event) => this.handleAppUrlOpen(event.url))
+    void App.getLaunchUrl().then(event => { if (event?.url) this.zone.run(() => this.handleAppUrlOpen(event.url)); }).catch(() => undefined);
+    void App.addListener('appUrlOpen', (event) => this.zone.run(() => this.handleAppUrlOpen(event.url)))
       .then((handle) => this.destroyRef.onDestroy(() => void handle.remove()))
       .catch(() => undefined);
   }
@@ -270,7 +281,12 @@ export class AppComponent {
       .catch(() => undefined);
   }
 
-  private async handleAppResume(): Promise<void> {
+  private handleAppResume(): Promise<void> {
+    this.resumePromise ??= this.resumeExistingSession().finally(() => { this.resumePromise = null; });
+    return this.resumePromise;
+  }
+
+  private async resumeExistingSession(): Promise<void> {
     await this.appLock.refreshBiometryAvailability();
     if (!this.auth.isAuthenticated()) {
       return;
@@ -291,6 +307,10 @@ export class AppComponent {
       }
 
       const path = url.pathname.replace(/\/+$/, '');
+      if (path === '/recover') {
+        void this.router.navigateByUrl('/recover' + url.hash);
+        return;
+      }
       if (path === '/contact') {
         const alias = this.normalizeContactAlias(url.searchParams.get('alias') || '');
         if (alias) {

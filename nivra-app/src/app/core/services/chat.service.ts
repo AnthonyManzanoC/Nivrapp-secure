@@ -261,7 +261,14 @@ export class ChatService implements OnDestroy {
     return this.bootstrapInFlight;
   }
 
-  async resumeSoftSync(take = CHAT_PAGE_SIZE): Promise<void> {
+  private resumeSyncInFlight: Promise<void> | null = null;
+
+  resumeSoftSync(take = CHAT_PAGE_SIZE): Promise<void> {
+    this.resumeSyncInFlight ??= this.resumeSoftSyncCore(take).finally(() => { this.resumeSyncInFlight = null; });
+    return this.resumeSyncInFlight;
+  }
+
+  private async resumeSoftSyncCore(take = CHAT_PAGE_SIZE): Promise<void> {
     if (!this.auth.isAuthenticated()) {
       return;
     }

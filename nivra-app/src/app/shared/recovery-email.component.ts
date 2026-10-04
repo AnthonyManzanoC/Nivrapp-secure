@@ -1,4 +1,6 @@
-import { Component, EventEmitter, OnInit, Output, inject } from '@angular/core';
+import { Component, EventEmitter, OnInit, OnDestroy, NgZone, Output, inject } from '@angular/core';
+import { App } from '@capacitor/app';
+import type { PluginListenerHandle } from '@capacitor/core';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
 import { FormsModule } from '@angular/forms';
 import { firstValueFrom } from 'rxjs';
@@ -28,19 +30,49 @@ export interface RecoveryEmailState {
   </section>`,
   styles: [`:host{display:block}.recovery-email{border:1px solid var(--nivra-line);border-radius:18px;padding:20px;margin:18px 0}h3{margin:0 0 8px}p,small{color:var(--nivra-muted);font-size:12px;line-height:1.6}form{display:grid;gap:12px}label{display:grid;gap:6px;font-size:12px}input{width:100%;border:1px solid var(--nivra-line);border-radius:10px;padding:12px;background:var(--nivra-bg);color:var(--nivra-text)}button{padding:12px;border:0;border-radius:10px;background:#25c58b;color:#062d20;font-weight:700}button:disabled{opacity:.5}.change-email{margin:0 0 12px;padding:0;background:transparent;color:var(--nivra-brand);text-align:left}.verified{color:#159b66}.error{color:var(--ion-color-danger)}small{display:block;margin-top:12px}`],
 })
-export class RecoveryEmailComponent implements OnInit {
+export class RecoveryEmailComponent implements OnInit, OnDestroy {
+  private readonly zone = inject(NgZone);
+  private listener?: PluginListenerHandle;
+  private destroyed = false;
+  private refreshing = false;
+  private readonly onFocus = () => { void this.refresh(); };
+  private readonly onVisible = () => { if (!document.hidden) void this.refresh(); };
   private readonly api = inject(NivraApiService);
   @Output() readonly stateChange = new EventEmitter<RecoveryEmailState>();
   email = ''; password = ''; verifiedEmail = ''; busy = false; notice = ''; error = ''; loaded = false;
   editing = false;
   async ngOnInit(): Promise<void> {
+    window.addEventListener('focus', this.onFocus);
+    document.addEventListener('visibilitychange', this.onVisible);
+    void App.addListener('appStateChange', state => { if (state.isActive) void this.refresh(); })
+      .then(handle => { if (this.destroyed) void handle.remove(); else this.listener = handle; }).catch(() => undefined);
+    await this.refresh();
+  }
+
+  ngOnDestroy(): void {
+    this.destroyed = true;
+    window.removeEventListener('focus', this.onFocus);
+    document.removeEventListener('visibilitychange', this.onVisible);
+    void this.listener?.remove();
+  }
+
+  async refresh(): Promise<void> {
+    if (this.refreshing || this.destroyed) return;
+    this.refreshing = true;
     try {
-      const state = await firstValueFrom(this.api.get<{ email: string | null; verified: boolean }>('/auth/recovery/email'));
-      this.verifiedEmail = state.verified ? state.email ?? '' : '';
-      this.loaded = true;
-      this.publishState();
-    }
-    catch { /* The form can retry during a rolling backend deployment. */ }
+      const state = await firstValueFrom(this.api.get<RecoveryEmailState>('/auth/recovery/email'));
+      if (this.destroyed) return;
+      this.zone.run(() => {
+        const verified = state.verified ? state.email ?? '' : '';
+        if (verified && verified !== this.verifiedEmail) {
+          this.editing = false; this.password = ''; this.notice = ''; this.error = '';
+        }
+        this.verifiedEmail = verified;
+        this.loaded = true;
+        this.publishState();
+      });
+    } catch { /* Keep the last confirmed state when offline. */ }
+    finally { this.refreshing = false; }
   }
 
   beginChange(): void {
