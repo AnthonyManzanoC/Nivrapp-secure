@@ -177,7 +177,6 @@ public class NivraNativePlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         activityResumed = false;
-        NivraOngoingCallService.stop(getContext(), "");
         super.handleOnDestroy();
     }
 

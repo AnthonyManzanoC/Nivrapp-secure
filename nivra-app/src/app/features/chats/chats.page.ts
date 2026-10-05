@@ -150,6 +150,7 @@ export class ChatsPage implements OnDestroy {
   private storyProgressStartedAt = 0;
   private storyProgressElapsed = 0;
   private storyPaused = false;
+  private storyTransitionInFlight = false;
   private pointerStartedAt = 0;
   private pointerStartY = 0;
   private avatarPressTimer: number | null = null;
@@ -332,9 +333,8 @@ export class ChatsPage implements OnDestroy {
       if (!current?.stories.length) {
         return;
       }
-      this.storyViewerQueue = current.stories;
-      const firstUnviewed = current.stories.findIndex((story) => !story.viewedByMe && !this.isMine(story));
-      this.storyViewerIndex = firstUnviewed >= 0 ? firstUnviewed : 0;
+      this.storyViewerQueue = this.storiesForPlayback(current.stories, current.isOwn);
+      this.storyViewerIndex = 0;
       await this.openQueuedStory();
     } finally {
       this.storyHighlightOpening = '';
@@ -432,28 +432,47 @@ export class ChatsPage implements OnDestroy {
     if (!stories.length) {
       return;
     }
-    this.storyViewerQueue = stories;
-    const firstUnviewed = stories.findIndex((story) => !story.viewedByMe && !this.isMine(story));
-    this.storyViewerIndex = firstUnviewed >= 0 ? firstUnviewed : 0;
+    this.storyViewerQueue = this.storiesForPlayback(stories, false);
+    this.storyViewerIndex = 0;
     await this.openQueuedStory();
   }
 
   async previousStory(): Promise<void> {
+    if (this.storyTransitionInFlight) return;
+    this.storyTransitionInFlight = true;
+    this.stopStoryProgress();
+    try {
     if (this.storyViewerIndex > 0) {
       this.storyViewerIndex -= 1;
       await this.openQueuedStory();
       return;
     }
     this.restartStoryProgress();
+    } finally {
+      this.storyTransitionInFlight = false;
+    }
   }
 
   async nextStory(): Promise<void> {
+    if (this.storyTransitionInFlight || !this.storyViewerQueue.length) return;
+    this.storyTransitionInFlight = true;
+    this.stopStoryProgress();
+    try {
     if (this.storyViewerIndex < this.storyViewerQueue.length - 1) {
       this.storyViewerIndex += 1;
       await this.openQueuedStory();
       return;
     }
     this.closeStoryViewer();
+    } finally {
+      this.storyTransitionInFlight = false;
+    }
+  }
+
+  private storiesForPlayback(stories: Story[], isOwn: boolean): Story[] {
+    if (isOwn) return [...stories];
+    const unseen = stories.filter((story) => !story.viewedByMe && !this.isMine(story));
+    return unseen.length ? unseen : [...stories];
   }
 
   closeStoryViewer(): void {

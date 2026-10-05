@@ -102,6 +102,7 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
   private progressStartedAt = 0;
   private progressElapsed = 0;
   private storyPaused = false;
+  private storyTransitionInFlight = false;
   private pointerStartedAt = 0;
   private pointerStartY = 0;
 
@@ -291,14 +292,17 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
     this.viewerBuckets = this.playbackBuckets();
     this.viewerBucketIndex = Math.max(0, this.viewerBuckets.findIndex((item) => item.id === bucket.id));
     const activeBucket = this.viewerBuckets[this.viewerBucketIndex] ?? bucket;
-    this.viewerQueue = activeBucket.stories;
-    this.viewerIndex = explicitStory
-      ? Math.max(0, this.viewerQueue.findIndex((item) => item.id === explicitStory.id))
-      : this.firstUnviewedIndex(activeBucket);
+    this.viewerQueue = this.storiesForPlayback(activeBucket);
+    const explicitIndex = explicitStory ? this.viewerQueue.findIndex((item) => item.id === explicitStory.id) : -1;
+    this.viewerIndex = explicitIndex >= 0 ? explicitIndex : 0;
     await this.run(`story:${activeBucket.id}`, () => this.openQueuedStory());
   }
 
   async previousStory(): Promise<void> {
+    if (this.storyTransitionInFlight || !this.viewerQueue.length) return;
+    this.storyTransitionInFlight = true;
+    this.stopStoryProgress();
+    try {
     if (this.viewerIndex > 0) {
       this.viewerIndex -= 1;
       await this.openQueuedStory();
@@ -307,15 +311,22 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
     if (this.viewerBucketIndex > 0) {
       this.viewerBucketIndex -= 1;
       const bucket = this.viewerBuckets[this.viewerBucketIndex];
-      this.viewerQueue = bucket.stories;
-      this.viewerIndex = Math.max(0, bucket.stories.length - 1);
+      this.viewerQueue = this.storiesForPlayback(bucket);
+      this.viewerIndex = Math.max(0, this.viewerQueue.length - 1);
       await this.openQueuedStory();
       return;
     }
     this.restartStoryProgress();
+    } finally {
+      this.storyTransitionInFlight = false;
+    }
   }
 
   async nextStory(): Promise<void> {
+    if (this.storyTransitionInFlight || !this.viewerQueue.length) return;
+    this.storyTransitionInFlight = true;
+    this.stopStoryProgress();
+    try {
     if (this.viewerIndex < this.viewerQueue.length - 1) {
       this.viewerIndex += 1;
       await this.openQueuedStory();
@@ -324,12 +335,15 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
     if (this.viewerBucketIndex < this.viewerBuckets.length - 1) {
       this.viewerBucketIndex += 1;
       const bucket = this.viewerBuckets[this.viewerBucketIndex];
-      this.viewerQueue = bucket.stories;
-      this.viewerIndex = this.firstUnviewedIndex(bucket);
+      this.viewerQueue = this.storiesForPlayback(bucket);
+      this.viewerIndex = 0;
       await this.openQueuedStory();
       return;
     }
     this.closeStoryViewer();
+    } finally {
+      this.storyTransitionInFlight = false;
+    }
   }
 
   onStoryPointerDown(event: PointerEvent): void {
@@ -727,9 +741,9 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
     ];
   }
 
-  private firstUnviewedIndex(bucket: StoryBucket): number {
-    const index = bucket.stories.findIndex((story) => !story.viewedByMe && !this.isMine(story));
-    return index >= 0 ? index : 0;
+  private storiesForPlayback(bucket: StoryBucket): Story[] {
+    const unseen = bucket.stories.filter((story) => !story.viewedByMe && !this.isMine(story));
+    return unseen.length ? unseen : [...bucket.stories];
   }
 
   private latestDate(left: string, right: string): string {

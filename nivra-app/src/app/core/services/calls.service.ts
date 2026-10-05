@@ -71,6 +71,7 @@ interface LiveKitPublicationLike {
 }
 
 const CALL_RING_TIMEOUT_MS = 45_000;
+const CALL_RECOVERY_HINT_KEY = 'nivra.callRecoveryHint';
 const MAX_ICE_RESTART_ATTEMPTS = 3;
 const CALL_SIGNAL_POLL_MS = 1_500;
 const ICE_CONFIG_MAX_AGE_MS = 4 * 60_000;
@@ -131,6 +132,7 @@ export class CallsService implements OnDestroy {
   private ringTonePhase: 'calling' | 'ringing' | null = null;
   private readonly callSignalSessionId = crypto.randomUUID();
   private callActionInFlight = false;
+  private recoveryLookupInFlight = '';
   private mediaGeneration = 0;
   private readonly dismissedCallIds = new Set<string>();
   private connectedUiReconcileTimers: number[] = [];
@@ -159,6 +161,8 @@ export class CallsService implements OnDestroy {
     if (document.visibilityState === 'visible') {
       this.syncNativeCall();
       const call = this.activeCall();
+      const userId = this.auth.session()?.user.id;
+      if (!call && userId && !this.resumableCall()) void this.restoreCallRecoveryHint(userId);
       if (call?.id) {
         void this.pollPersistedSignals(call.id);
       }
@@ -195,6 +199,7 @@ export class CallsService implements OnDestroy {
       const userId = this.auth.session()?.user.id;
       untracked(() => {
         if (call && userId) {
+          this.persistCallRecoveryHint(userId, call.id);
           this.games.configure(call, userId);
           void this.groupCrypto.updateRoster(call).catch(() => {
             if (this.activeCall()?.id === call.id) {
@@ -207,10 +212,14 @@ export class CallsService implements OnDestroy {
       });
     });
     effect(() => {
-      this.activeCall();
+      const callId = this.activeCall()?.id ?? null;
+      const userId = this.auth.session()?.user.id;
       this.localStream();
       this.phase();
-      untracked(() => this.syncNativeCall());
+      untracked(() => {
+        if (callId && userId) this.persistCallRecoveryHint(userId, callId);
+        this.syncNativeCall();
+      });
     });
     effect(() => {
       const streams = this.remoteStreams();
@@ -276,6 +285,7 @@ export class CallsService implements OnDestroy {
         if (userId) {
           this.history.set(this.loadHistory());
           void this.loadPersistentHistory();
+          void this.restoreCallRecoveryHint(userId);
         } else {
           this.cleanup({ remember: false });
         }
@@ -306,7 +316,7 @@ export class CallsService implements OnDestroy {
       document.removeEventListener('visibilitychange', this.visibilityChangeHandler);
       this.networkInformation()?.removeEventListener?.('change', this.connectionChangeHandler);
     }
-    this.cleanup({ remember: false });
+    this.cleanup({ remember: false, preserveNativeCall: true });
   }
 
   async start(type: 'Voice' | 'Video', conversationId: string | null, participantUserIds: string[] = []): Promise<CallSession> {
@@ -1634,6 +1644,8 @@ export class CallsService implements OnDestroy {
     await this.nativeDevice.clearIncomingCall(callId).catch(() => undefined);
     if (action === 'open') {
       await this.router.navigateByUrl('/app/calls');
+      const userId = this.auth.session()?.user.id;
+      if (userId) await this.restoreCallRecoveryHint(userId);
       return;
     }
     if (action === 'answer') {
@@ -1653,6 +1665,43 @@ export class CallsService implements OnDestroy {
         return;
       }
       await this.rejectIncomingCallById(callId);
+    }
+  }
+
+  private persistCallRecoveryHint(userId: string, callId: string): void {
+    try {
+      localStorage.setItem(CALL_RECOVERY_HINT_KEY, JSON.stringify({ userId, callId }));
+    } catch {
+      // Call recovery is a convenience; the live session remains authoritative.
+    }
+  }
+
+  private async restoreCallRecoveryHint(userId: string): Promise<void> {
+    if (this.activeCall() || this.resumableCall() || this.recoveryLookupInFlight) return;
+    let hint: { userId?: string; callId?: string } | null = null;
+    try {
+      hint = JSON.parse(localStorage.getItem(CALL_RECOVERY_HINT_KEY) || 'null');
+    } catch {
+      localStorage.removeItem(CALL_RECOVERY_HINT_KEY);
+    }
+    if (!hint?.callId || hint.userId !== userId) {
+      if (hint?.userId !== userId) localStorage.removeItem(CALL_RECOVERY_HINT_KEY);
+      return;
+    }
+    this.recoveryLookupInFlight = hint.callId;
+    try {
+      const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(hint.callId)}`));
+      if (this.auth.session()?.user.id !== userId || this.activeCall() || this.resumableCall()) return;
+      if (call.endedAt || call.status === 'Ended' || call.status === 'Rejected' || call.status === 'Cancelled') {
+        localStorage.removeItem(CALL_RECOVERY_HINT_KEY);
+      } else {
+        // User initiated: never take a live call away from another tab or device.
+        this.resumableCall.set(call);
+      }
+    } catch {
+      // Keep the hint through temporary network/offline failures.
+    } finally {
+      this.recoveryLookupInFlight = '';
     }
   }
 
@@ -2797,11 +2846,13 @@ export class CallsService implements OnDestroy {
     }
   }
 
-  private cleanup(options: { remember?: boolean; historyStatus?: string } = {}): void {
+  private cleanup(options: { remember?: boolean; historyStatus?: string; preserveNativeCall?: boolean } = {}): void {
     const call = this.activeCall();
     if (call?.id) {
       void this.nativeDevice.clearIncomingCall(call.id);
-      void this.nativeDevice.setActiveCall({ callId: call.id, video: false, active: false });
+      if (!options.preserveNativeCall) {
+        void this.nativeDevice.setActiveCall({ callId: call.id, video: false, active: false });
+      }
     }
     this.clearRingTimeout();
     this.stopRingingTone();
@@ -3004,6 +3055,14 @@ export class CallsService implements OnDestroy {
   private addHistory(call: CallSession): void {
     if (!call?.id) {
       return;
+    }
+    if (call.endedAt || ['Ended', 'Rejected', 'Cancelled', 'Canceled', 'Busy', 'Missed', 'Failed'].includes(call.status)) {
+      try {
+        const hint = JSON.parse(localStorage.getItem(CALL_RECOVERY_HINT_KEY) || 'null') as { callId?: string } | null;
+        if (hint?.callId === call.id) localStorage.removeItem(CALL_RECOVERY_HINT_KEY);
+      } catch {
+        localStorage.removeItem(CALL_RECOVERY_HINT_KEY);
+      }
     }
     this.history.update((items) => {
       const next = [call, ...items.filter((item) => item.id !== call.id)].slice(0, 80);

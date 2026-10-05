@@ -858,7 +858,11 @@ export class AuthService implements OnDestroy {
   }
 
   async ensureSessionRestored(): Promise<boolean> {
-    await this.restoreProtectedSession();
+    for (const delayMs of [0, 180, 600]) {
+      if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
+      await this.restoreProtectedSession();
+      if (this.isAuthenticated()) return true;
+    }
     return this.isAuthenticated();
   }
 
@@ -887,11 +891,10 @@ export class AuthService implements OnDestroy {
             return;
           }
         } catch {
-          // A wiped or rotated native secret makes the protected session intentionally unusable.
+          // Keep the encrypted envelope on disk: a temporary Android Keystore/bridge failure
+          // must not turn a recoverable session into a permanent sign-out.
         }
         this.session.set(null);
-        localStorage.removeItem(PROTECTED_SESSION_KEY);
-        localStorage.removeItem(SESSION_KEY);
         return;
       }
 
@@ -902,8 +905,8 @@ export class AuthService implements OnDestroy {
           await this.persistProtectedSession(legacy);
         } catch {
           this.session.set(null);
-          localStorage.removeItem(PROTECTED_SESSION_KEY);
-          localStorage.removeItem(SESSION_KEY);
+          // Preserve the legacy record if migration fails transiently; never erase credentials
+          // until a protected replacement is safely persisted.
         }
         return;
       }

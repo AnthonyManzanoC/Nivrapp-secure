@@ -51,6 +51,9 @@ public class NivraMessagingService extends MessagingService {
         if (type.equals("end-call") || type.equals("call-ended") || type.equals("call-rejected")) {
             cancelNotification(notificationId(callId.isEmpty() ? stringValue(data, "tag") : callId));
             NivraNativePlugin.clearIncomingCallNotification(this, callId);
+            if (!callId.isEmpty()) {
+                NivraOngoingCallService.stop(this, callId);
+            }
             return;
         }
 

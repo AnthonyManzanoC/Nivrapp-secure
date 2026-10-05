@@ -105,6 +105,8 @@ public final class NivraOngoingCallService extends Service {
             manager.createNotificationChannel(channel);
         }
         Intent open = new Intent(this, MainActivity.class)
+            .setAction(NivraNativePlugin.ACTION_CALL_OPEN)
+            .putExtra("callId", requestedCallId)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent content = PendingIntent.getActivity(this, NOTIFICATION_ID, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL_ID)
@@ -118,13 +120,6 @@ public final class NivraOngoingCallService extends Service {
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .build();
-    }
-
-    @Override
-    public void onTaskRemoved(Intent rootIntent) {
-        requestedCallId = "";
-        stopSelf();
-        super.onTaskRemoved(rootIntent);
     }
 
     @Override

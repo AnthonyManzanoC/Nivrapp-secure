@@ -1,6 +1,6 @@
 {
   "name": "nivra-multiplatform",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "private": true,
   "description": "Capacitor shell for the Nivra Angular + Ionic frontend served separately from the .NET API.",
   "scripts": {
