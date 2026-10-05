@@ -2058,6 +2058,18 @@ export class ChatService implements OnDestroy {
     if (conversations.length) {
       const cachedConversations = this.applyLocalConversationState(conversations);
       this.rememberConversationParticipants(cachedConversations);
+      // Restore visible list previews from the encrypted cache before publishing
+      // the index, instead of replacing every subtitle when network sync finishes.
+      const userId = this.auth.session()?.user.id;
+      await Promise.all(cachedConversations.slice(0, 30).map(async (conversation) => {
+        const pages = await Promise.all(accountKeys.map((key) =>
+          this.history.conversationMessagesPage(key, conversation.id, { limit: 1 }).catch(() => [])));
+        if (this.auth.session()?.user.id !== userId) return;
+        for (const message of this.uniqueMessages(pages.flat()).filter((item) => !this.isExpiredMessage(item, Date.now()))) {
+          this.upsertMessage(message, { persist: false });
+        }
+      }));
+      if (this.auth.session()?.user.id !== userId) return;
       this.conversations.set(cachedConversations.sort(this.compareConversations));
       this.ensureSelectedConversation();
       void this.hydrateConversationProfiles(cachedConversations);

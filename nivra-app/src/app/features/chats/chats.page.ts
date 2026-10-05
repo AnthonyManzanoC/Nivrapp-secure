@@ -91,7 +91,7 @@ export class ChatsPage implements OnDestroy {
     const groups = new Map(this.chat.conversations()
       .filter((conversation) => this.chat.isGroup(conversation))
       .map((conversation) => [conversation.id.toLowerCase(), conversation]));
-    return withOwnChatStoryHighlight(groupChatStoryHighlights(this.social.stories(), currentUser.id, this.storyStripNow()), currentUser.id)
+    return withOwnChatStoryHighlight(groupChatStoryHighlights([...this.social.stories(), ...this.social.worldStories()], currentUser.id, this.storyStripNow()), currentUser.id)
       .filter((highlight) => !highlight.isGroup || groups.has(highlight.targetId))
       .map((highlight) => {
         const group = groups.get(highlight.targetId);

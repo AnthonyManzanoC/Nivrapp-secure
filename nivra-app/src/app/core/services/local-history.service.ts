@@ -871,7 +871,7 @@ export class LocalHistoryService {
     if (!this.shouldUseNativeSqlite()) {
       return null;
     }
-    const opening = this.sqlitePromise ??= this.createNativeSqliteConnection();
+    const opening = this.sqlitePromise ??= this.openNativeSqliteWithRetry();
     try {
       return await opening;
     } catch (error) {
@@ -935,6 +935,23 @@ export class LocalHistoryService {
 
   private shouldUseNativeSqlite(): boolean {
     return typeof window !== 'undefined' && Capacitor.isNativePlatform();
+  }
+
+  private async openNativeSqliteWithRetry(): Promise<SQLiteDBConnection> {
+    // Share a bounded retry while the native bridge/Keystore resumes.
+    // Never replace the existing encrypted database after an opening failure.
+    for (const delay of [0, 200, 600]) {
+      if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      try {
+        return await this.createNativeSqliteConnection();
+      } catch (error) {
+        if (delay === 600) {
+          this.setStorageError('No se pudo abrir el historial cifrado. Desbloquea el dispositivo y vuelve a intentar. Tus datos locales se han conservado.');
+          throw error;
+        }
+      }
+    }
+    throw new Error('No se pudo abrir el historial local.');
   }
 
   private async createNativeSqliteConnection(): Promise<SQLiteDBConnection> {
@@ -1012,7 +1029,6 @@ export class LocalHistoryService {
     } catch {
       await sqlite?.closeConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
       const message = 'No se pudo abrir el historial cifrado. Desbloquea el dispositivo y vuelve a intentar. Tus datos locales se han conservado.';
-      this.setStorageError(message);
       throw new Error(message);
     }
   }

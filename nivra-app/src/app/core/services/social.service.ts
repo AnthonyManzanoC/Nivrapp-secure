@@ -140,7 +140,10 @@ export class SocialService {
       if (accountKey) {
         const cached = await this.history.stories(accountKey).catch(() => []);
         if (cached.length && !this.stories().length) {
-          this.stories.set(this.activeStories(cached));
+          this.stories.set(this.activeStories(cached.filter((story) => story.visibility !== 'PublicWorld' || story.owner.id === this.auth.session()?.user.id)));
+          if (!this.worldStories().length) {
+            this.worldStories.set(this.activeStories(cached.filter((story) => story.visibility === 'PublicWorld')));
+          }
         }
       }
       const realtimeVersionAtRequest = this.storyRealtimeVersion;
