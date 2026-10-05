@@ -15,6 +15,7 @@ import { AppLockService } from './core/services/app-lock.service';
 import { AppSettingsService } from './core/services/app-settings.service';
 import { CallsService } from './core/services/calls.service';
 import { ChatService } from './core/services/chat.service';
+import { LocalHistoryService } from './core/services/local-history.service';
 import { ContactSyncService } from './core/services/contact-sync.service';
 import { DeviceWipeService } from './core/services/device-wipe.service';
 import { PushService } from './core/services/push.service';
@@ -47,6 +48,7 @@ export class AppComponent {
   private readonly appLock = inject(AppLockService);
   private readonly appSettings = inject(AppSettingsService);
   private readonly chat = inject(ChatService);
+  private readonly localHistory = inject(LocalHistoryService);
   private readonly contactSync = inject(ContactSyncService);
   private readonly deviceWipe = inject(DeviceWipeService);
   private readonly push = inject(PushService);
@@ -64,6 +66,7 @@ export class AppComponent {
   private startServicesPromise: Promise<void> | null = null;
   private lastPushRouteKey = '';
   private lastNativeShareId = '';
+  private initialAppRouteHandled = false;
   readonly showCallBanner = computed(() => {
     const phase = this.calls.phase();
     return this.auth.isAuthenticated()
@@ -107,6 +110,15 @@ export class AppComponent {
           const url = event.urlAfterRedirects || event.url;
           this.currentUrl.set(url);
           this.onCallsRoute.set(url.startsWith('/app/calls'));
+          const path = this.safeAppRoute(url);
+          if (path) {
+            if (!this.initialAppRouteHandled) {
+              this.initialAppRouteHandled = true;
+              void this.restoreLastAppRoute(path);
+            } else {
+              this.persistLastAppRoute(path);
+            }
+          }
         }
       });
 
@@ -280,6 +292,9 @@ export class AppComponent {
     })
       .then((handle) => this.destroyRef.onDestroy(() => void handle.remove()))
       .catch(() => undefined);
+    void App.getState().then((state) => {
+      if (state.isActive) void this.handleAppResume();
+    }).catch(() => undefined);
   }
 
   private handleAppResume(): Promise<void> {
@@ -290,14 +305,57 @@ export class AppComponent {
   private async resumeExistingSession(): Promise<void> {
     await this.appLock.refreshBiometryAvailability();
     if (!this.auth.isAuthenticated()) {
+      await this.auth.ensureSessionRestored();
+    }
+    if (!this.auth.isAuthenticated()) {
       return;
     }
+    this.localHistory.retryNativeStorage();
     if (Capacitor.isNativePlatform() && Date.now() - this.lastPushResume > 300000) {
       this.lastPushResume = Date.now();
       void this.push.initialize().catch(() => undefined);
     }
     await this.realtime.connect().catch(() => undefined);
     await this.chat.resumeSoftSync().catch(() => undefined);
+  }
+
+  private safeAppRoute(url: string): string | null {
+    const path = (url || '').split(/[?#]/)[0];
+    return /^\/app\/(?:chats(?:\/[A-Za-z0-9_-]+)?|world|vault|calls|account)$/.test(path) ? path : null;
+  }
+
+  private routeStorageKey(userId: string): string {
+    return `nivra.lastAppRoute.${userId}`;
+  }
+
+  private persistLastAppRoute(path: string): void {
+    const userId = this.auth.session()?.user.id;
+    if (!userId) return;
+    try {
+      localStorage.setItem(this.routeStorageKey(userId), path);
+    } catch {
+      // Restoring the last tab is a convenience; it must not block navigation.
+    }
+  }
+
+  private async restoreLastAppRoute(initialPath: string): Promise<void> {
+    const userId = this.auth.session()?.user.id;
+    if (!userId || this.auth.consumeFreshAuthNavigation()) {
+      this.persistLastAppRoute(initialPath);
+      return;
+    }
+    let savedPath = '';
+    try {
+      savedPath = localStorage.getItem(this.routeStorageKey(userId)) || '';
+    } catch {
+      // Continue with the normal Chats landing page if storage is unavailable.
+    }
+    const safeSavedPath = this.safeAppRoute(savedPath);
+    if (initialPath === '/app/chats' && safeSavedPath && safeSavedPath !== initialPath) {
+      await this.router.navigateByUrl(safeSavedPath, { replaceUrl: true });
+      return;
+    }
+    this.persistLastAppRoute(initialPath);
   }
 
   private handleAppUrlOpen(rawUrl: string): void {

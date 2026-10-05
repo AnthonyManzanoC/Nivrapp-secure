@@ -857,6 +857,16 @@ export class AuthService implements OnDestroy {
     }
   }
 
+  consumeFreshAuthNavigation(): boolean {
+    try {
+      const skip = sessionStorage.getItem(SKIP_ROUTE_RESTORE_ONCE_KEY) === '1';
+      sessionStorage.removeItem(SKIP_ROUTE_RESTORE_ONCE_KEY);
+      return skip;
+    } catch {
+      return false;
+    }
+  }
+
   async ensureSessionRestored(): Promise<boolean> {
     for (const delayMs of [0, 180, 600]) {
       if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));

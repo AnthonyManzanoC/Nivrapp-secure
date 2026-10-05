@@ -18,7 +18,14 @@
               <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
             </button>
           } @else {
-            <span>{{ conversationsForFolder().length }} {{ 'CHATS.CONVERSATIONS' | translate:'conversaciones' }}</span>
+            @if ((chat.loading() || localHistory.storageError()) && !conversationsForFolder().length) {
+              <span class="chat-restore-status">
+                @if (chat.loading()) { <ion-spinner name="crescent"></ion-spinner> }
+                {{ chat.loading() ? ('CHATS.RESTORING' | translate:'Restaurando tus chats') : ('CHATS.HISTORY_UNAVAILABLE' | translate:'Historial temporalmente no disponible') }}
+              </span>
+            } @else {
+              <span>{{ conversationsForFolder().length }} {{ 'CHATS.CONVERSATIONS' | translate:'conversaciones' }}</span>
+            }
           }
         </div>
         <div class="side-actions">
@@ -141,7 +148,7 @@
           </div>
         </div>
       } @else {
-        <section class="chat-list-shell" [class.has-history-warning]="localHistory.storageError()">
+        <section class="chat-list-shell" [class.has-history-warning]="localHistory.storageError() && !chat.loading()">
           <ion-segment
             mode="ios"
             scrollable="true"
@@ -155,10 +162,12 @@
           </ion-segment>
 
           @if (localHistory.storageError(); as storageError) {
-            <div class="local-history-warning" role="status">
-              <span>{{ storageError }}</span>
-              <button type="button" (click)="refresh()" [disabled]="chat.loading()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button>
-            </div>
+            @if (!chat.loading()) {
+              <div class="local-history-warning" role="status">
+                <span>{{ storageError }}</span>
+                <button type="button" (click)="refresh()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button>
+              </div>
+            }
           }
 
           <ion-list #conversationList class="list" lines="none" (scroll)="onChatListScroll($event)">
@@ -231,14 +240,22 @@
                 </ion-item-options>
               </ion-item-sliding>
             } @empty {
-              <div class="empty">
-                <strong>Nivra</strong>
-                <span>{{ 'CHATS.EMPTY_COPY' | translate:'Busca un alias para abrir tu primer chat.' }}</span>
-                <ion-button mode="ios" fill="outline" size="small" (click)="openShareAccount()">
-                  <ion-icon name="share-social-outline"></ion-icon>
-                  {{ 'CHATS.SHARE_PASS' | translate:'Compartir pase' }}
-                </ion-button>
-              </div>
+              @if (chat.loading() || localHistory.storageError()) {
+                <div class="empty chat-restore-empty" role="status">
+                  @if (chat.loading()) { <ion-spinner name="crescent"></ion-spinner> }
+                  <strong>{{ chat.loading() ? ('CHATS.RESTORING' | translate:'Restaurando tus chats') : ('CHATS.HISTORY_UNAVAILABLE' | translate:'Historial temporalmente no disponible') }}</strong>
+                  <span>{{ chat.loading() ? ('CHATS.RECONNECTING' | translate:'Conectando y sincronizando tus conversaciones.') : ('CHATS.HISTORY_RETRY_HINT' | translate:'Tus conversaciones están protegidas. Desbloquea el dispositivo y vuelve a intentar.') }}</span>
+                </div>
+              } @else {
+                <div class="empty">
+                  <strong>Nivra</strong>
+                  <span>{{ 'CHATS.EMPTY_COPY' | translate:'Busca un alias para abrir tu primer chat.' }}</span>
+                  <ion-button mode="ios" fill="outline" size="small" (click)="openShareAccount()">
+                    <ion-icon name="share-social-outline"></ion-icon>
+                    {{ 'CHATS.SHARE_PASS' | translate:'Compartir pase' }}
+                  </ion-button>
+                </div>
+              }
             }
           </ion-list>
         </section>

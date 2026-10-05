@@ -79,6 +79,19 @@
   min-width: 0;
 }
 
+.chat-restore-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--nivra-muted);
+  font-size: 12px;
+}
+
+.chat-restore-status ion-spinner {
+  width: 14px;
+  height: 14px;
+}
+
 .compact-stories {
   min-height: 28px;
   border: 0;
@@ -688,6 +701,17 @@ time {
 
 .empty.compact {
   min-height: 80px;
+}
+
+.chat-restore-empty {
+  min-height: 180px;
+  color: var(--nivra-muted);
+}
+
+.chat-restore-empty ion-spinner {
+  width: 26px;
+  height: 26px;
+  color: var(--nivra-brand);
 }
 
 .empty ion-button {

@@ -308,6 +308,9 @@ export class ChatService implements OnDestroy {
       this.rememberConversationParticipants(conversations);
       this.conversations.set(conversations.sort(this.compareConversations));
       this.ensureSelectedConversation();
+      // A successful remote bootstrap has restored the current chat index, so a
+      // failed local cache open is no longer a blocking condition for this session.
+      this.history.clearStorageError();
       await this.persistChatIndex(conversations, contacts);
       void this.hydrateConversationProfiles(conversations);
       const messages = bootstrap.messages ?? [];
@@ -318,10 +321,6 @@ export class ChatService implements OnDestroy {
       }
       await this.refreshPresenceForConversations();
       this.hasBootstrappedSession = true;
-      // A remote bootstrap is authoritative even when the native encrypted
-      // cache had been temporarily unavailable.  Clear its warning only once
-      // the full data reload above has completed successfully.
-      this.history.clearStorageError();
     } finally {
       this.loading.set(false);
     }
@@ -347,6 +346,7 @@ export class ChatService implements OnDestroy {
       const sync = await firstValueFrom(this.api.get<MessageSyncResponse>(`/messages/sync?${params.toString()}`));
       const hadDecryptError = !(await this.ingestMessageBatch(sync.messages ?? [], false));
       await this.ackDelivered(sync.messages ?? []);
+      this.history.clearStorageError();
       if (accountKey && sync.syncedAt && !hadDecryptError) {
         await this.history.setSyncWatermark(accountKey, sync.syncedAt).catch(() => undefined);
       }
