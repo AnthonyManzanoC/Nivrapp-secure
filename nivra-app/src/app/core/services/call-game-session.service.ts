@@ -1,10 +1,10 @@
 import { Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { CallSession } from '../models/nivra.models';
-import { applyCallGameAction, createCallGame, type CallGameAction, type CallGameKind, type CallGameState } from '../games/call-game-engine';
+import { CALL_GAME_KINDS, applyCallGameAction, createCallGame, type CallGameAction, type CallGameKind, type CallGameState } from '../games/call-game-engine';
 import { CallGameTransportService, type CallGamePacket } from './call-game-transport.service';
 
-const KINDS: readonly string[] = ['tic-tac-toe', 'connect-four', 'trivia', 'memory'];
+const KINDS: readonly string[] = CALL_GAME_KINDS;
 
 /** One coordinator serializes moves; the game's creator controls its lobby.
  * State lives only for the call. A participant cannot submit a move for someone else.

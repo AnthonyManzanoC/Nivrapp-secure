@@ -49,8 +49,12 @@
       @if (isHost()) {
         <button type="button" class="primary-game-action" (click)="dispatch('start')" [disabled]="!transportReady || state.playerIds.length < 2">Comenzar ronda</button>
       }
-    } @else if (state.kind === 'tic-tac-toe') {
-      <div class="tic-board" role="group" aria-label="Tablero de tres en raya">
+    } @else if (state.kind === 'take-away') {
+      <p class="game-status">{{ remaining() }} fichas restantes · La última gana</p>
+      <div class="token-pile" aria-label="Fichas disponibles">@for(cell of state.board; track $index){<span [class.taken]="cell !== null">●</span>}</div>
+      <div class="take-actions">@for(count of [1,2,3]; track count){<button type="button" (click)="move(count)" [disabled]="!transportReady || !myTurn() || remaining() < count">Retirar {{ count }}</button>}</div>
+    } @else if (state.kind === 'tic-tac-toe' || state.kind === 'gomoku') {
+      <div class="tic-board" [class.gomoku-board]="state.kind === 'gomoku'" role="group" [attr.aria-label]="title()">
         @for (cell of state.board; track $index; let index = $index) {
           <button type="button" [class.player-one]="cell && cell === state.playerIds[0]" [class.player-two]="cell && cell === state.playerIds[1]"
             [disabled]="!transportReady || !myTurn() || !!cell" (click)="move(index)"

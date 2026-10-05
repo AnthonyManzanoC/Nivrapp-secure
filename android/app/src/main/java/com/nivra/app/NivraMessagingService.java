@@ -1,7 +1,6 @@
 package com.nivra.app;
 
 import android.Manifest;
-import android.app.ActivityManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
@@ -12,7 +11,6 @@ import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.RingtoneManager;
 import android.os.Build;
-import android.os.Process;
 
 import androidx.annotation.NonNull;
 import androidx.core.app.NotificationCompat;
@@ -47,10 +45,6 @@ public class NivraMessagingService extends MessagingService {
             return;
         }
 
-        if (isAppInForeground()) {
-            return;
-        }
-
         ensureNotificationChannels();
         String type = normalizeType(data.get("type"));
         String callId = stringValue(data, "callId");
@@ -59,6 +53,8 @@ public class NivraMessagingService extends MessagingService {
             NivraNativePlugin.clearIncomingCallNotification(this, callId);
             return;
         }
+
+        if (isAppInForeground()) return;
 
         if (type.equals("incoming-call") || type.equals("incomingcall")) {
             NivraNativePlugin.showIncomingCallNotification(this, data);
@@ -145,17 +141,9 @@ public class NivraMessagingService extends MessagingService {
     }
 
     private boolean isAppInForeground() {
-        ActivityManager manager = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-        if (manager == null || manager.getRunningAppProcesses() == null) {
-            return false;
-        }
-        int pid = Process.myPid();
-        for (ActivityManager.RunningAppProcessInfo processInfo : manager.getRunningAppProcesses()) {
-            if (processInfo.pid == pid) {
-                return processInfo.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;
-            }
-        }
-        return false;
+        // FCM can temporarily raise process importance while delivering a push.
+        // Only an actually resumed activity can rely on the foreground UI.
+        return NivraNativePlugin.isActivityVisible();
     }
 
     private void ensureNotificationChannels() {

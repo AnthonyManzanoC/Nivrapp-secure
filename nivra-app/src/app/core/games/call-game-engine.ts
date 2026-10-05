@@ -1,5 +1,5 @@
 /** Pure host reducer. The transport must authenticate senders as current call participants. */
-export const CALL_GAME_KINDS = ['tic-tac-toe', 'connect-four', 'trivia'] as const;
+export const CALL_GAME_KINDS = ['tic-tac-toe', 'connect-four', 'trivia', 'gomoku', 'take-away'] as const;
 export type CallGameKind = typeof CALL_GAME_KINDS[number];
 export interface CallGameQuestion { prompt: string; options: string[]; }
 export interface CallGameState {
@@ -32,7 +32,7 @@ export function createCallGame(kind: CallGameKind, id: string, hostUserId: strin
   if (!CALL_GAME_KINDS.includes(kind) || !id || !hostUserId) { throw new Error('Partida no válida.'); }
   return {
     id, kind, hostUserId, playerIds: [hostUserId], status: 'lobby', revision: 0, round: 1,
-    board: Array<string | null>(kind === 'tic-tac-toe' ? 9 : kind === 'connect-four' ? 42 : 0).fill(null),
+    board: Array<string | null>(kind === 'tic-tac-toe' ? 9 : kind === 'connect-four' ? 42 : kind === 'gomoku' ? 64 : kind === 'take-away' ? 21 : 0).fill(null),
     turnUserId: null, winnerId: null, draw: false, scores: { [hostUserId]: 0 },
     questionIndex: 0, question: null, answeredPlayerIds: [],
   };
@@ -113,9 +113,18 @@ export function applyCallGameAction(state: CallGameState, senderUserId: string, 
   if (action.type !== 'move') { return reject('Jugada no válida.'); }
   if (state.kind === 'trivia') { return reject('Elige una respuesta para continuar.'); }
   if (state.turnUserId !== senderUserId) { return reject('Es el turno de otra persona.'); }
-  const columns = state.kind === 'tic-tac-toe' ? 3 : 7;
-  const rows = state.kind === 'tic-tac-toe' ? 3 : 6;
-  if (!Number.isInteger(action.index) || action.index < 0 || action.index >= (state.kind === 'tic-tac-toe' ? 9 : 7)) {
+  if (state.kind === 'take-away') {
+    const remaining = state.board.filter(cell => cell === null).length;
+    if (!Number.isInteger(action.index) || action.index < 1 || action.index > 3 || action.index > remaining) return reject('Retira entre una y tres fichas disponibles.');
+    let count = action.index;
+    for (let i = 0; i < next.board.length && count > 0; i++) if (next.board[i] === null) { next.board[i] = senderUserId; count--; }
+    if (remaining === action.index) { finishGame(next, senderUserId); next.scores[senderUserId]++; }
+    else next.turnUserId = next.playerIds.find(id => id !== senderUserId) ?? null;
+    return accept();
+  }
+  const columns = state.kind === 'gomoku' ? 8 : state.kind === 'tic-tac-toe' ? 3 : 7;
+  const rows = state.kind === 'gomoku' ? 8 : state.kind === 'tic-tac-toe' ? 3 : 6;
+  if (!Number.isInteger(action.index) || action.index < 0 || action.index >= (state.kind === 'gomoku' ? 64 : state.kind === 'tic-tac-toe' ? 9 : 7)) {
     return reject('Selecciona una casilla válida.');
   }
   let position = action.index;
@@ -129,7 +138,7 @@ export function applyCallGameAction(state: CallGameState, senderUserId: string, 
   }
   if (state.board[position] !== null) { return reject('Esa casilla está ocupada.'); }
   next.board[position] = senderUserId;
-  if (hasLine(next.board, position, rows, columns, state.kind === 'tic-tac-toe' ? 3 : 4)) {
+  if (hasLine(next.board, position, rows, columns, state.kind === 'gomoku' ? 5 : state.kind === 'tic-tac-toe' ? 3 : 4)) {
     finishGame(next, senderUserId);
     next.scores[senderUserId] += 1;
   } else if (next.board.every((cell) => cell !== null)) {

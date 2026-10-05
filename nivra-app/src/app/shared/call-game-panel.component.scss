@@ -121,3 +121,15 @@ button:focus-visible { outline: 3px solid var(--game-accent-strong); outline-off
   .game-choice { padding: 12px; gap: 10px; }
   .player-chip small { display: none; }
 }
+.gomoku-board { grid-template-columns: repeat(8,minmax(0,1fr)); gap: 3px; padding: 8px; border-radius: 16px; background: #b88852; box-shadow: inset 0 2px 8px #51371355; }
+.gomoku-board button { min-width: 0; border-radius: 50%; font-size: clamp(16px,4vw,24px); background: #e7c599; border-color: #986c3f; color: #182a24; }
+.gomoku-board button.player-one { background: radial-gradient(circle at 35% 25%,#6c8f84,#102d23); color: white; }
+.gomoku-board button.player-two { background: radial-gradient(circle at 35% 25%,white,#cbd5e1); color: #283548; }
+.token-pile { display:grid; grid-template-columns:repeat(7,1fr); gap:8px; padding:20px; border-radius:16px; background:var(--game-surface-subtle); }
+.token-pile span { color:var(--game-accent); text-align:center; font-size:28px; text-shadow:0 3px 2px #0003; transition:opacity .2s,transform .2s; }
+.token-pile span.taken { opacity:.12; transform:scale(.65); }
+.take-actions { display:flex; gap:8px; margin-top:16px; }
+.take-actions button { flex:1; min-height:48px; border:1px solid var(--game-border); border-radius:12px; background:var(--game-surface-subtle); color:var(--game-text); font-weight:700; }
+.game-choice:not(:disabled):active, .take-actions button:not(:disabled):active { transform:scale(.97); }
+.game-choice:focus-visible, .call-games button:focus-visible { outline:3px solid var(--game-accent); outline-offset:3px; }
+@media(prefers-reduced-motion:reduce){.token-pile span{transition:none}}

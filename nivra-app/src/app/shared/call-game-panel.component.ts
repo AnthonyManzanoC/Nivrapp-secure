@@ -26,8 +26,12 @@ export class CallGamePanelComponent {
   readonly choices: Array<{ kind: CallGameKind; title: string; symbol: string; description: string }> = [
     { kind: 'tic-tac-toe', title: '3 en raya', symbol: '× ○', description: 'Forma una línea antes que tu rival.' },
     { kind: 'connect-four', title: '4 en línea', symbol: '● ●', description: 'Deja caer fichas y conecta cuatro.' },
+    { kind: 'gomoku', title: 'Cinco en línea', symbol: '● ○', description: 'Tablero de 8 × 8. Conecta cinco piedras en cualquier dirección.' },
+    { kind: 'take-away', title: 'La última ficha', symbol: '21', description: 'Retira 1, 2 o 3 fichas. Quien toma la última gana.' },
     { kind: 'trivia', title: 'Reto de cálculo', symbol: '+ ×', description: 'Cinco preguntas para jugar en grupo.' },
   ];
+
+  remaining(): number { return this.state?.board.filter(cell => cell === null).length ?? 0; }
 
   label(userId: string | null): string {
     if (userId === this.currentUserId) { return 'Tú'; }

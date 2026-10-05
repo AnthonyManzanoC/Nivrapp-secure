@@ -81,7 +81,7 @@ export class PushService {
       }
       this.bindServiceWorkerMessages();
       if (Capacitor.isNativePlatform()) {
-        return this.initializeNativeFirebase(options);
+        return await this.initializeNativeFirebase(options);
       }
 
       if (!('Notification' in window)) {

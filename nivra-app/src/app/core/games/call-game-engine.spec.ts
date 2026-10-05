@@ -141,3 +141,21 @@ describe('authoritative call game rules', () => {
     expect(next.turnUserId).toBe('guest');
   });
 });
+
+describe('additional multiplayer boards', () => {
+  it('wins gomoku diagonally without wrapping rows', () => {
+    const state = moves(playing('gomoku'), [0,1,9,2,18,3,27,4,36]);
+    expect(state.winnerId).toBe('host'); expect(state.status).toBe('finished');
+    const edge = moves(playing('gomoku'), [6,16,7,17,8,18,9,19,10]);
+    expect(edge.status).toBe('playing');
+  });
+  it('rejects illegal take-away counts and awards the final coin', () => {
+    let state = playing('take-away');
+    for (const index of [0,4,1.5,-1]) expect(applyCallGameAction(state,'host',action(state,{type:'move',index})).accepted).toBeFalse();
+    state = moves(state,[3,3,3,3,3,3,3]);
+    expect(state.status).toBe('finished'); expect(state.winnerId).toBe('host');
+    expect(state.board.filter(cell => cell === null).length).toBe(0);
+    state = accepted(state,'host',{type:'rematch'});
+    expect(state.board.every(cell => cell === null)).toBeTrue();
+  });
+});

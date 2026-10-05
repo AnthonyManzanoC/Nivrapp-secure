@@ -1929,6 +1929,7 @@ export class CallsService implements OnDestroy {
       });
     };
     connection.onsignalingstatechange = () => {
+      if (connection.signalingState === 'stable') this.publishRemoteStreamIfConnected(userId, connection);
       const peer = this.peers.get(userId);
       if (connection.signalingState === 'stable' && peer?.negotiationPending) {
         this.queuePeerNegotiation(userId, connection);
@@ -2225,6 +2226,7 @@ export class CallsService implements OnDestroy {
     description: RTCSessionDescriptionInit,
   ): Promise<void> {
     await connection.setRemoteDescription(new RTCSessionDescription(description));
+    this.publishRemoteStreamIfConnected(userId, connection);
     await this.flushPeerIce(userId);
   }
 
@@ -2642,7 +2644,14 @@ export class CallsService implements OnDestroy {
   }
 
   private publishRemoteStreamIfConnected(userId: string, connection: RTCPeerConnection): void {
-    const stream = this.pendingRemoteStreams.get(userId);
+    if (this.peers.get(userId)?.connection !== connection) return;
+    const stream = this.pendingRemoteStreams.get(userId) ?? this.remoteStreams()[userId] ?? new MediaStream();
+    // Reused transceivers need not emit another ontrack during an audio/video upgrade.
+    for (const receiver of connection.getReceivers()) {
+      const track = receiver.track;
+      if (track && track.readyState !== 'ended' && !stream.getTracks().some(item => item.id === track.id)) stream.addTrack(track);
+    }
+    this.pendingRemoteStreams.set(userId, stream);
     if (!stream || this.peers.get(userId)?.connection !== connection || !this.peerConnectionLooksConnected(connection)) {
       return;
     }

@@ -41,6 +41,7 @@ interface NativeStatusBarSurface {
 })
 export class AppComponent {
   private readonly zone = inject(NgZone);
+  private lastPushResume = 0;
   private resumePromise: Promise<void> | null = null;
   private readonly auth = inject(AuthService);
   private readonly appLock = inject(AppLockService);
@@ -290,6 +291,10 @@ export class AppComponent {
     await this.appLock.refreshBiometryAvailability();
     if (!this.auth.isAuthenticated()) {
       return;
+    }
+    if (Capacitor.isNativePlatform() && Date.now() - this.lastPushResume > 300000) {
+      this.lastPushResume = Date.now();
+      void this.push.initialize().catch(() => undefined);
     }
     await this.realtime.connect().catch(() => undefined);
     await this.chat.resumeSoftSync().catch(() => undefined);

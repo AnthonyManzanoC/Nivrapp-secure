@@ -114,6 +114,11 @@ public class NivraNativePlugin extends Plugin {
     private Sensor accelerometerSensor;
     private boolean raiseListenEnabled;
     private volatile boolean activityResumed;
+
+    public static boolean isActivityVisible() {
+        NivraNativePlugin plugin = activePlugin == null ? null : activePlugin.get();
+        return plugin != null && plugin.activityResumed;
+    }
     private boolean raiseTalkEnabled;
     private boolean phoneNear;
     private boolean liftedRecently = true;
@@ -171,6 +176,7 @@ public class NivraNativePlugin extends Plugin {
 
     @Override
     protected void handleOnDestroy() {
+        activityResumed = false;
         NivraOngoingCallService.stop(getContext(), "");
         super.handleOnDestroy();
     }

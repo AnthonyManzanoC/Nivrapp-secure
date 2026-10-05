@@ -61,13 +61,14 @@ describe('call session isolation', () => {
     const canvas = document.createElement('canvas');
     const video = canvas.captureStream().getVideoTracks()[0];
     const stream = new MediaStream();
-    const connection = { connectionState: 'connected' };
+    let receivers: Array<{track: MediaStreamTrack}> = [];
+    const connection = { connectionState: 'connected', getReceivers: () => receivers };
     (service as any).peers.set('peer', { connection });
     (service as any).pendingRemoteStreams.set('peer', stream);
     spyOn<any>(service, 'setConnectedPhase');
     (service as any).publishRemoteStreamIfConnected('peer', connection);
     const initial = service.remoteStreams()['peer'];
-    stream.addTrack(video);
+    receivers = [{track: video}]; // No new ontrack event: reused receiver after renegotiation.
     (service as any).publishRemoteStreamIfConnected('peer', connection);
     expect(service.remoteStreams()['peer']).not.toBe(initial);
     expect(service.remoteStreams()['peer'].getVideoTracks()).toEqual([video]);
