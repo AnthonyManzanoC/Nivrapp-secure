@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, computed, effect, inject, untracked } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
@@ -46,6 +46,8 @@ import {
   banOutline,
   cameraOutline,
   checkmarkOutline,
+  chevronDownOutline,
+  chevronUpOutline,
   chevronForwardOutline,
   closeOutline,
   copyOutline,
@@ -86,6 +88,8 @@ import { GroupInviteShareComponent } from './group-invite-share.component';
 import { IdentityTrustService } from '../../core/services/identity-trust.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
+import { canQuoteMessage, insertComposerEmoji, isReplySwipe, localMessageDay, messageDeliveryState, searchThreadMessages } from './chat-thread.helpers';
+import { ChatExpressionPickerComponent } from '../../shared/chat-expression-picker/chat-expression-picker.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
 
@@ -151,9 +155,10 @@ interface MessageTextPart {
     GroupInviteShareComponent,
     ChatMediaGalleryComponent,
     ImageCropperComponent,
+    ChatExpressionPickerComponent,
   ],
   templateUrl: './chat-detail.page.html',
-  styleUrls: ['./chat-detail.page.scss'],
+  styleUrls: ['./chat-detail.page.scss', './chat-thread.scss', './chat-profile.scss'],
 })
 export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private readonly identityTrust = inject(IdentityTrustService);
@@ -168,6 +173,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
   @ViewChild(IonContent) private content?: IonContent;
   @ViewChild('micButton', { read: ElementRef }) private micButton?: ElementRef<HTMLElement>;
+  @ViewChild('draftInput') private draftInput?: IonTextarea;
   readonly chat = inject(ChatService);
   readonly appSettings = inject(AppSettingsService);
   readonly realtime = inject(SignalrService);
@@ -219,6 +225,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   messageInfoMessage: ChatMessageVm | null = null;
   quotedReplies: Record<string, QuotedReplyVm> = {};
   contactInfoOpen = false;
+  profileParticipantQuery = '';
+  profileMediaFilter: 'all' | 'image' | 'video' | 'audio' = 'all';
+  profileActionBusy = false;
   private contactInfoDismissPromise: Promise<void> | null = null;
   private contactInfoDismissResolver: (() => void) | null = null;
   private contactInfoDismissTimer: number | null = null;
@@ -260,6 +269,15 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   storyError = '';
   readonly storyReactionOptions = ['\u2764\uFE0F', '\u{1F602}', '\u{1F62E}', '\u{1F622}', '\u{1F44F}', '\u{1F525}'];
   emojiPanelOpen = false;
+  policyPanelOpen = false;
+  searchOpen = false;
+  readonly searchQuery = signal('');
+  readonly searchResults = computed(() => searchThreadMessages(this.messages(), this.searchQuery()));
+  searchIndex = 0;
+  showScrollToLatest = false;
+  private messageTouch: { id: string; x: number; y: number; moved: boolean } | null = null;
+  private composerGeneration = 0;
+  private destroyed = false;
   busyAction = '';
   notice = '';
   deleteAfterRead = false;
@@ -300,11 +318,6 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private storyPointerStartY = 0;
   private readonly quotedReplyCache = new Map<string, QuotedReplyVm>();
   private readonly quotedReplyLoads = new Set<string>();
-  readonly emojiChoices = [
-    '\u{1F600}', '\u{1F602}', '\u{1F60D}', '\u{1F914}', '\u{1F62E}', '\u{1F622}',
-    '\u{1F44D}', '\u2764\uFE0F', '\u{1F525}', '\u{1F389}', '\u{1F64F}', '\u{1F4AA}',
-  ];
-  readonly stickerChoices = ['OK', 'LOL', 'WOW', 'Nivra'];
 
   constructor() {
     addIcons({
@@ -326,6 +339,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       banOutline,
       cameraOutline,
       checkmarkOutline,
+      chevronDownOutline,
+      chevronUpOutline,
       chevronForwardOutline,
       closeOutline,
       copyOutline,
@@ -364,6 +379,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.routeSub = this.route.paramMap.subscribe((params) => {
       const id = params.get('conversationId');
       if (id) {
+        ++this.composerGeneration;
+        this.sending = false;
+        this.replyingMessage = null;
+        this.editingMessage = null;
+        this.closeSearch();
+        this.policyPanelOpen = false;
+        this.emojiPanelOpen = false;
         const requestId = ++this.initialScrollRequestId;
         void this.chat.selectConversation(id).then(() => {
           this.refreshActiveGroupCallBanner(id);
@@ -435,6 +457,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
+    ++this.composerGeneration;
     this.finishContactInfoDismiss();
     const conversationId = this.conversation()?.id;
     if (conversationId) {
@@ -887,11 +911,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.closeChatMenu();
     this.emojiPanelOpen = false;
     const buttons = [
-      {
+      ...(this.canReply(message) ? [{
         text: this.tr('CHAT_ACTIONS.REPLY', 'Responder'),
         icon: 'return-down-back-outline',
         handler: () => this.beginReply(message),
-      },
+      }] : []),
       ...(this.canTranslate(message) ? [{
         text: this.tr('CHAT_ACTIONS.TRANSLATE', 'Traducir'),
         icon: 'language-outline',
@@ -1131,6 +1155,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     this.prepareGroupInfoDraft(conversation);
+    this.profileParticipantQuery = '';
+    this.profileMediaFilter = 'all';
     this.contactInfoOpen = true;
     this.closeChatMenu();
     this.closeMessageActions();
@@ -1147,6 +1173,55 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.closeAvatarActions();
     this.contactInfoOpen = false;
     this.finishContactInfoDismiss();
+  }
+
+  async startProfileCall(type: 'Voice' | 'Video'): Promise<void> {
+    if (this.destroyed || this.profileActionBusy || !this.conversation()) return;
+    const conversationId = this.conversation()!.id;
+    const session = this.auth.session();
+    if (!session) return;
+    this.profileActionBusy = true;
+    try {
+      await this.dismissContactInfoForStory();
+      if (this.destroyed || this.conversation()?.id !== conversationId || this.auth.session()?.user.id !== session.user.id || this.auth.session()?.device.id !== session.device.id) return;
+      await this.startCall(type);
+    } finally {
+      this.profileActionBusy = false;
+    }
+  }
+
+  async verifyProfileIdentity(): Promise<void> {
+    if (this.destroyed || this.profileActionBusy || this.isGroupConversation()) return;
+    const conversationId = this.conversation()?.id;
+    const session = this.auth.session();
+    const userId = this.conversation()?.participants.find((participant) => !participant.removedAt && participant.userId !== session?.user.id)?.userId;
+    if (!session || !conversationId || !userId) return;
+    const returnUrl = this.router.url;
+    this.profileActionBusy = true;
+    try {
+      await this.dismissContactInfoForStory();
+      if (this.destroyed || this.conversation()?.id !== conversationId || this.auth.session()?.user.id !== session.user.id || this.auth.session()?.device.id !== session.device.id) return;
+      await this.router.navigate(['/app/identity', userId], { state: { identityReturnUrl: returnUrl } });
+    } finally {
+      this.profileActionBusy = false;
+    }
+  }
+
+  profileParticipants(): Participant[] {
+    const normalize = (value: string) => value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+    const query = normalize(this.profileParticipantQuery.trim());
+    return this.groupParticipants().filter((participant) => !query || normalize(`${this.participantLabel(participant)} ${this.participantSubtitle(participant)} ${participant.phone || ''}`).includes(query));
+  }
+
+  profileMediaMessages(): ChatMessageVm[] {
+    return this.sharedMediaMessages().filter((message) => {
+      const file = this.chat.asFile(message.payload);
+      if (!file) return false;
+      return this.profileMediaFilter === 'all' ||
+        (this.profileMediaFilter === 'image' && this.chat.isImage(file)) ||
+        (this.profileMediaFilter === 'video' && this.chat.isVideo(file)) ||
+        (this.profileMediaFilter === 'audio' && (this.chat.isAudio(file) || Boolean(file.voiceNote)));
+    });
   }
 
   openProfilePhotoViewer(event?: Event, photoUrl = this.conversationPhoto()): void {
@@ -1242,17 +1317,41 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   startMessagePress(message: ChatMessageVm, event: TouchEvent): void {
+    if ((event.target as HTMLElement | null)?.closest('button, a, input, audio, video') || event.touches.length !== 1) return;
     event.stopPropagation();
-    if (this.messagePressTimer !== null) {
-      window.clearTimeout(this.messagePressTimer);
-    }
+    this.cancelMessagePress();
+    const touch = event.touches[0];
+    this.messageTouch = { id: message.id, x: touch.clientX, y: touch.clientY, moved: false };
     this.messagePressTimer = window.setTimeout(() => {
-      void this.openMessageActionSheet(message);
+      this.messageTouch = null;
+      this.openMessageActions(message, new MouseEvent('click', { clientX: touch.clientX, clientY: touch.clientY }));
       this.messagePressTimer = null;
     }, 420);
   }
 
+  moveMessagePress(event: TouchEvent): void {
+    const start = this.messageTouch;
+    if (!start || event.touches.length !== 1) return;
+    const touch = event.touches[0];
+    if (Math.hypot(touch.clientX - start.x, touch.clientY - start.y) > 10) {
+      start.moved = true;
+      if (this.messagePressTimer !== null) window.clearTimeout(this.messagePressTimer);
+      this.messagePressTimer = null;
+    }
+  }
+
+  finishMessagePress(message: ChatMessageVm, event: TouchEvent): void {
+    const start = this.messageTouch;
+    const touch = event.changedTouches[0];
+    this.cancelMessagePress();
+    if (start?.id === message.id && start.moved && touch && !message.decryptError
+      && this.canSendMessages() && !this.isBlocked() && isReplySwipe(touch.clientX - start.x, touch.clientY - start.y)) {
+      this.beginReply(message);
+    }
+  }
+
   cancelMessagePress(): void {
+    this.messageTouch = null;
     if (this.messagePressTimer !== null) {
       window.clearTimeout(this.messagePressTimer);
       this.messagePressTimer = null;
@@ -1378,6 +1477,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   beginReply(message: ChatMessageVm): void {
+    if (!this.canReply(message)) return;
     this.replyingMessage = message;
     this.closeMessageActions();
     this.closeChatMenu();
@@ -1701,19 +1801,117 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  appendEmoji(value: string): void {
-    this.draft = `${this.draft}${value}`;
+  async appendEmoji(value: string): Promise<void> {
+    if (this.sending || !this.canSendMessages() || this.isBlocked()) return;
+    const conversationId = this.conversation()?.id;
+    const session = this.auth.session();
+    const generation = this.composerGeneration;
+    const input = await this.draftInput?.getInputElement();
+    if (!session || !this.composerContextCurrent(conversationId || '', session.user.id, session.device.id, generation)
+      || this.sending || !this.canSendMessages() || this.isBlocked()) return;
+    const insertion = insertComposerEmoji(this.draft, value, input?.selectionStart ?? this.draft.length, input?.selectionEnd ?? this.draft.length);
+    this.draft = insertion.text;
     this.onDraftInput();
+    this.cdr.detectChanges();
+    window.requestAnimationFrame(() => input?.setSelectionRange(insertion.caret, insertion.caret));
   }
 
-  async sendSticker(value: string): Promise<void> {
-    if (this.sending) {
-      return;
+  async sendSticker(file: File): Promise<void> {
+    const conversation = this.conversation();
+    const session = this.auth.session();
+    const generation = this.composerGeneration;
+    if (!conversation || !session || this.destroyed || this.sending || this.chat.uploading() || this.isBlocked() || !this.canSendMessages()
+      || this.editingMessage || file.type !== 'image/png' || !file.size || file.size > 2 * 1024 * 1024) return;
+    this.sending = true;
+    this.attachmentError = '';
+    try {
+      await this.chat.sendFile(conversation, file, { mode: 'document', sticker: true, policy: this.currentPolicy() });
+      if (this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation)) {
+        this.replyingMessage = null;
+        this.emojiPanelOpen = false;
+        this.scrollBottom();
+      }
+    } catch (error) {
+      if (this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation)) {
+        this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_MESSAGE', 'No se pudo enviar el mensaje.');
+      }
+    } finally {
+      if (this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation)) this.sending = false;
     }
-    this.draft = this.draft.trim() ? `${this.draft.trim()} ${value}` : value;
-    this.emojiPanelOpen = false;
-    await this.send();
   }
+
+  private composerContextCurrent(conversationId: string, userId: string, deviceId: string, generation: number): boolean {
+    return !this.destroyed && this.composerGeneration === generation && this.conversation()?.id === conversationId
+      && this.auth.session()?.user.id === userId && this.auth.session()?.device.id === deviceId;
+  }
+
+  toggleExpressionPicker(): void {
+    this.closeAttachmentMenu();
+    this.closeChatMenu();
+    this.emojiPanelOpen = !this.emojiPanelOpen;
+    if (this.emojiPanelOpen) void this.draftInput?.getInputElement().then(input => input.blur());
+  }
+
+  openSearch(): void {
+    this.closeChatMenu();
+    this.emojiPanelOpen = false;
+    this.searchOpen = true;
+  }
+
+  closeSearch(): void {
+    this.searchOpen = false;
+    this.searchQuery.set('');
+    this.searchIndex = 0;
+  }
+
+  updateSearch(query: string): void {
+    this.searchQuery.set(query.slice(0, 160));
+    this.searchIndex = 0;
+    const id = this.searchResults()[0];
+    if (id) this.scrollToMessage(id);
+  }
+
+  navigateSearch(delta: number): void {
+    const ids = this.searchResults();
+    if (!ids.length) return;
+    this.searchIndex = (this.searchIndex + delta + ids.length) % ids.length;
+    this.scrollToMessage(ids[this.searchIndex]);
+  }
+
+  onSearchEnter(event: Event): void {
+    event.preventDefault();
+    this.navigateSearch((event as KeyboardEvent).shiftKey ? -1 : 1);
+  }
+
+  isSearchResult(messageId: string): boolean {
+    return this.searchOpen && this.searchResults().includes(messageId);
+  }
+
+  showMessageDay(index: number): boolean {
+    const messages = this.messages();
+    return index === 0 || localMessageDay(messages[index]?.at || '') !== localMessageDay(messages[index - 1]?.at || '');
+  }
+
+  deliveryState(message: ChatMessageVm): 'sent' | 'delivered' | 'read' {
+    const at = Date.parse(message.at);
+    const recipients = (this.conversation()?.participants ?? []).filter(p =>
+      (!p.joinedAt || Date.parse(p.joinedAt) <= at) && (!p.removedAt || Date.parse(p.removedAt) > at));
+    return messageDeliveryState(message, this.auth.session()?.user.id || '', recipients.map(p => p.userId));
+  }
+
+  deliveryLabel(message: ChatMessageVm): string {
+    const state = this.deliveryState(message);
+    return state === 'read' ? this.tr('CHAT.READ', 'Leído') : state === 'delivered' ? this.tr('CHAT.DELIVERED', 'Entregado') : this.tr('CHAT.SENT', 'Enviado');
+  }
+
+  onThreadScroll(event: CustomEvent): void {
+    const detail = event.detail as { scrollTop?: number; scrollHeight?: number };
+    void this.content?.getScrollElement().then(element => {
+      this.showScrollToLatest = element.scrollHeight - (detail.scrollTop ?? element.scrollTop) - element.clientHeight > 280;
+    });
+  }
+
+  jumpToLatest(): void { this.closeSearch(); this.scrollBottom(); }
 
   reactions(message: ChatMessageVm): string[] {
     const reactions = message.payload.reactions ?? [];
@@ -1822,7 +2020,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   replyPreview(message: ChatMessageVm | null): string {
-    return message ? this.chat.preview(message.payload) : '';
+    return canQuoteMessage(message) ? this.chat.preview(message!.payload) : '';
+  }
+
+  canReply(message: ChatMessageVm): boolean {
+    return canQuoteMessage(message) && message.conversationId === this.conversation()?.id && this.canSendMessages() && !this.isBlocked();
   }
 
   quotedReply(message: ChatMessageVm): QuotedReplyVm | null {
@@ -1865,14 +2067,14 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   replyReference(message: ChatMessageVm | null): unknown {
-    if (!message) {
+    if (!canQuoteMessage(message)) {
       return null;
     }
     return {
-      messageId: message.id,
-      senderUserId: message.senderUserId,
-      at: message.at,
-      preview: this.chat.preview(message.payload).slice(0, 120),
+      messageId: message!.id,
+      senderUserId: message!.senderUserId,
+      at: message!.at,
+      preview: this.chat.preview(message!.payload).slice(0, 120),
     };
   }
 
@@ -2591,7 +2793,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   canTranslate(message: ChatMessageVm | null): boolean {
-    return Boolean(this.appSettings.settings().showTranslateButton && (message?.payload.text || this.chat.preview(message?.payload ?? { type: 'text', text: '' }).trim()));
+    return Boolean(message && this.canCopyMessage(message) && this.appSettings.settings().showTranslateButton
+      && (message.payload.text || this.chat.preview(message.payload).trim()));
   }
 
   messageElementId(messageId: string): string {
@@ -2603,6 +2806,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async translateMessage(message: ChatMessageVm): Promise<void> {
+    if (!this.canTranslate(message)) return;
     const text = (message.payload.text || this.chat.preview(message.payload)).trim();
     if (!text) {
       return;

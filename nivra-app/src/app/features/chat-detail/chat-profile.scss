@@ -1,0 +1,192 @@
+ion-modal.contact-info-modal {
+  --width: min(520px, calc(100vw - 40px));
+  --height: min(860px, calc(100dvh - 48px));
+  --border-radius: 24px;
+  --background: var(--nivra-panel-solid);
+  --box-shadow: 0 24px 80px #0005;
+  color: var(--nivra-text);
+}
+
+.contact-info {
+  --profile-accent: var(--nivra-brand);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--nivra-text);
+  background: var(--nivra-panel-solid);
+}
+
+.profile-header {
+  flex: 0 0 auto;
+  min-height: 64px;
+  padding: 10px 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--nivra-line);
+  background: var(--nivra-panel-solid);
+  h2 { flex: 1; margin: 0; font-size: 16px; font-weight: 700; }
+  .profile-private { font-size: 18px; color: var(--nivra-muted); }
+}
+
+.profile-close {
+  flex: 0 0 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: var(--nivra-text);
+  background: color-mix(in srgb, var(--nivra-text) 5%, transparent);
+  ion-icon { font-size: 23px; }
+}
+
+.profile-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 16px 20px;
+  scroll-padding: 12px;
+}
+
+.profile-hero {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 24px 12px 20px;
+  text-align: center;
+  h1 { max-width: 100%; margin: 8px 0 0; font-size: 24px; font-weight: 750; line-height: 1.2; overflow-wrap: anywhere; }
+  p { margin: 0; color: var(--nivra-muted); font-size: 14px; }
+  .profile-bio { max-width: 360px; margin-top: 6px; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+}
+
+.profile-avatar-wrap { position: relative; }
+.profile-avatar {
+  width: 112px;
+  height: 112px;
+  flex-shrink: 0;
+  border: 2px solid var(--nivra-line);
+  border-radius: 50%;
+  padding: 4px;
+  display: grid;
+  place-items: center;
+  color: var(--nivra-text);
+  background: var(--nivra-panel-solid);
+  img, strong, .profile-avatar-photo { width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+  strong, .profile-avatar-photo.fallback { display: grid; place-items: center; background: color-mix(in srgb, var(--nivra-brand) 18%, var(--nivra-panel-solid)); font-size: 30px; font-weight: 700; }
+  &.has-active-story { border-color: var(--nivra-muted); }
+  &.story-unviewed { border-color: var(--nivra-brand); box-shadow: 0 0 0 3px color-mix(in srgb, var(--nivra-brand) 10%, transparent); }
+  &:disabled { opacity: 1; }
+  &.small { width: 48px; height: 48px; padding: 2px; strong { font-size: 18px; } }
+}
+
+.profile-photo-edit {
+  position: absolute;
+  bottom: 2px;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  border: 3px solid var(--nivra-panel-solid);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #031b14;
+  background: var(--nivra-brand);
+  ion-icon { font-size: 18px; }
+}
+
+.profile-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
+  padding: 4px 9px;
+  border-radius: 20px;
+  color: var(--profile-accent);
+  background: color-mix(in srgb, var(--nivra-brand) 9%, transparent);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.profile-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+  button { min-height: 54px; border: 1px solid color-mix(in srgb, var(--nivra-brand) 26%, var(--nivra-line)); border-radius: 16px; display: flex; align-items: center; justify-content: center; gap: 9px; color: var(--nivra-text); background: color-mix(in srgb, var(--nivra-brand) 7%, var(--nivra-panel-solid)); font-size: 14px; font-weight: 650; }
+  ion-icon { color: var(--profile-accent); font-size: 22px; }
+}
+
+.profile-card {
+  width: 100%;
+  display: block;
+  margin-bottom: 12px;
+  padding: 16px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 18px;
+  color: var(--nivra-text);
+  background: color-mix(in srgb, var(--nivra-text) 2%, var(--nivra-panel-solid));
+  text-align: left;
+}
+
+.profile-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  h3 { margin: 0; font-size: 15px; font-weight: 700; }
+  > span { padding: 3px 8px; border-radius: 20px; color: var(--nivra-muted); background: color-mix(in srgb, var(--nivra-text) 5%, transparent); font-size: 11px; }
+  > ion-icon { font-size: 18px; color: var(--nivra-muted); }
+}
+
+.profile-security, .profile-story-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  div { min-width: 0; }
+  strong { display: block; font-size: 13px; font-weight: 650; }
+  small { display: block; margin-top: 4px; color: var(--nivra-muted); font-size: 11px; line-height: 1.5; }
+  > ion-icon { font-size: 17px; color: var(--nivra-muted); }
+}
+.profile-row-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 12px; background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); ion-icon { color: var(--profile-accent); font-size: 22px; } }
+.profile-security.identity-alert { border-color: #e49b46; .profile-row-icon { background: #e49b461a; ion-icon { color: #d68a33; } } }
+.profile-story-row { width: 100%; padding: 0; border: 0; color: var(--nivra-text); background: transparent; text-align: left; &:disabled { opacity: 1; cursor: default; } }
+.profile-story-strip { display: flex; gap: 10px; overflow-x: auto; padding: 3px; }
+.profile-story-item { flex: 0 0 66px; min-width: 0; padding: 0; display: grid; justify-items: center; gap: 5px; border: 0; background: transparent; color: var(--nivra-text); img, > span { width: 52px; height: 52px; padding: 3px; border: 2px solid var(--nivra-brand); border-radius: 50%; object-fit: cover; } > span { display: grid; place-items: center; } small { max-width: 66px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; } &.viewed img, &.viewed > span { border-color: var(--nivra-muted); } }
+
+.profile-media-filters { display: flex; gap: 6px; overflow-x: auto; margin-bottom: 12px; padding: 2px 0; button { flex-shrink: 0; min-height: 34px; padding: 5px 10px; border: 0; border-radius: 20px; display: inline-flex; align-items: center; gap: 5px; color: var(--nivra-muted); background: color-mix(in srgb, var(--nivra-text) 5%, transparent); font-size: 11px; font-weight: 650; &.active { color: var(--nivra-text); background: color-mix(in srgb, var(--nivra-brand) 18%, transparent); } } }
+.profile-media-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.profile-media-tile { position: relative; aspect-ratio: 1; padding: 0; border: 0; border-radius: 12px; overflow: hidden; display: grid; place-items: center; color: var(--nivra-text); background: color-mix(in srgb, var(--nivra-text) 7%, transparent); img, video { width: 100%; height: 100%; object-fit: cover; } > ion-icon { font-size: 28px; } .profile-video-mark { position: absolute; inset: 0; margin: auto; color: white; filter: drop-shadow(0 1px 3px #000a); } small { position: absolute; inset: auto 0 0; padding: 16px 6px 6px; overflow: hidden; color: white !important; background: linear-gradient(transparent, #000a); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; } }
+.profile-empty { grid-column: 1 / -1; width: 100%; margin: 0; padding: 8px 0; display: grid; justify-items: center; gap: 8px; text-align: center; color: var(--nivra-muted); font-size: 12px; line-height: 1.5; ion-icon { font-size: 28px; opacity: .7; } }
+.profile-view-all { width: 100%; min-height: 42px; margin-top: 10px; padding: 8px; border: 0; border-radius: 10px; display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--profile-accent); background: color-mix(in srgb, var(--nivra-brand) 6%, transparent); font-size: 12px; font-weight: 650; }
+
+.profile-field { display: grid; gap: 7px; > span { font-size: 12px; color: var(--nivra-muted); } input { min-width: 0; min-height: 44px; padding: 10px 12px; border: 1px solid var(--nivra-line); border-radius: 12px; color: var(--nivra-text); background: var(--nivra-panel-solid); font: inherit; font-size: 14px; } }
+.profile-save { width: 100%; min-height: 44px; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px; padding: 10px; border: 0; border-radius: 12px; color: #031b14; background: var(--nivra-brand); font-size: 13px; font-weight: 700; }
+.profile-settings { label { min-height: 48px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; border-bottom: 1px solid var(--nivra-line); &:last-child { border: 0; } > span { font-size: 12px; } } ion-select { max-width: 140px; min-height: 42px; padding-inline: 4px; font-size: 12px; color: var(--nivra-text); &::part(icon) { color: var(--nivra-muted); } } }
+.profile-search { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding: 0 10px; border: 1px solid var(--nivra-line); border-radius: 12px; color: var(--nivra-muted); input { width: 100%; min-height: 42px; border: 0; outline: 0; background: transparent; color: var(--nivra-text); font: inherit; font-size: 13px; } }
+.profile-member-list, .profile-add-list { display: grid; }
+.profile-member, .profile-add-member { min-height: 60px; padding: 9px 0; display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 10px; border: 0; border-bottom: 1px solid var(--nivra-line); background: transparent; color: var(--nivra-text); text-align: left; > div { min-width: 0; } strong, small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } strong { font-size: 13px; font-weight: 650; } small { margin-top: 4px; font-size: 11px; color: var(--nivra-muted); } em { max-width: 80px; font-size: 10px; color: var(--profile-accent); font-style: normal; text-align: right; } &:last-child { border: 0; } }
+.profile-member-avatar { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; object-fit: cover; background: color-mix(in srgb, var(--nivra-brand) 15%, transparent); font-size: 14px; font-weight: 700; }
+.profile-admin { min-height: 40px; max-width: 92px; padding: 5px 7px; border: 1px solid var(--nivra-line); border-radius: 10px; display: grid; justify-items: center; gap: 3px; font-size: 10px; color: var(--nivra-muted); background: transparent; &.active { color: var(--profile-accent); border-color: color-mix(in srgb, var(--nivra-brand) 30%, var(--nivra-line)); } }
+.profile-add-member { padding-inline: 8px; border-radius: 10px; &.selected { background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); } > ion-icon { color: var(--profile-accent); } }
+.profile-footnote { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: var(--nivra-muted); }
+.profile-add-submit { margin: 12px 0 0; --border-radius: 12px; --box-shadow: none; ion-icon { margin-right: 8px; } }
+.profile-invite { margin: 0 0 16px; }
+.profile-error { margin: 12px 0; color: #df6969 !important; font-size: 12px; line-height: 1.5; }
+.profile-danger { width: 100%; min-height: 48px; display: flex; align-items: center; justify-content: center; gap: 9px; border: 1px solid #dd54542b; border-radius: 14px; color: #d34d53; background: #dd545408; font-size: 13px; font-weight: 650; &.unblock { color: var(--profile-accent); border-color: var(--nivra-line); background: transparent; } }
+.contact-info button { cursor: pointer; transition: background 160ms ease, transform 160ms ease; &:disabled { cursor: default; opacity: .5; } &:not(:disabled):active { transform: scale(.98); } &:focus-visible { outline: 2px solid var(--profile-accent); outline-offset: 3px; } }
+.contact-info input:focus-visible, .profile-settings ion-select:focus-visible { outline: 2px solid var(--profile-accent); outline-offset: 2px; }
+.contact-info .profile-avatar:disabled, .contact-info .profile-story-row:disabled { opacity: 1; }
+
+@media (max-width: 768px) {
+  ion-modal.contact-info-modal { --width: 100vw; --height: 100dvh; --border-radius: 0; }
+  .profile-header { padding: calc(10px + var(--safe-area-inset-top, var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))) max(14px, var(--safe-area-inset-right, env(safe-area-inset-right, 0px))) 10px max(14px, var(--safe-area-inset-left, env(safe-area-inset-left, 0px))); }
+  .profile-body { padding: 0 max(14px, var(--safe-area-inset-right, env(safe-area-inset-right, 0px))) calc(24px + var(--safe-area-inset-bottom, var(--ion-safe-area-bottom, env(safe-area-inset-bottom, 0px)))) max(14px, var(--safe-area-inset-left, env(safe-area-inset-left, 0px))); }
+}
+@media (prefers-reduced-motion: reduce) { .contact-info button { transition: none; } }
+
+:host-context(.nivra-light-theme) .contact-info { --profile-accent: #14745b; }

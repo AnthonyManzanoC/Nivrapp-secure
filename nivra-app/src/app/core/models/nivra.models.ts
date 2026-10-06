@@ -261,6 +261,7 @@ export interface FileChatPayload extends ChatPayload {
   fileKey?: string;
   fileIv?: string;
   voiceNote?: boolean;
+  sticker?: boolean;
 }
 
 export interface MediaPreview {

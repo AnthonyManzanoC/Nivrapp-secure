@@ -69,6 +69,11 @@ interface SendPayloadOptions {
   deleteAfterRead?: boolean;
 }
 
+interface ChatSendContext {
+  userId: string;
+  deviceId: string;
+}
+
 export interface MessagePolicyOptions {
   deleteAfterRead?: boolean;
   ttlSeconds?: number | null;
@@ -137,6 +142,7 @@ export class ChatService implements OnDestroy {
   private readonly launchPreviewAt = signal<Record<string, string | null>>({});
   private syncInFlight = false;
   private selectedConversationLoadId = 0;
+  private fileSendSequence = 0;
 
   readonly quickReactions = QUICK_REACTIONS;
   readonly conversations = signal<Conversation[]>([]);
@@ -771,8 +777,10 @@ export class ChatService implements OnDestroy {
   async sendFile(
     conversation: Conversation,
     file: File,
-    options: { forwardedFrom?: unknown; voiceNote?: boolean; policy?: MessagePolicyOptions; mode?: EncryptedUploadMode; caption?: string } = {},
+    options: { forwardedFrom?: unknown; voiceNote?: boolean; sticker?: boolean; policy?: MessagePolicyOptions; mode?: EncryptedUploadMode; caption?: string } = {},
   ): Promise<MessageResponse | null> {
+    const context = this.captureSendContext();
+    const uploadSequence = this.fileSendSequence = (this.fileSendSequence || 0) + 1;
     this.uploading.set(true);
     this.uploadStatus.set('Optimizando y sellando (E2EE)...');
     try {
@@ -781,14 +789,23 @@ export class ChatService implements OnDestroy {
         mode: options.mode ?? 'document',
         maxBytes: MAX_ATTACHMENT_BYTES,
       });
+      this.assertSendContext(context);
       const uploadFile = prepared.file;
-      const encrypted = uploadFile.size > LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES
-        ? await this.crypto.encryptAttachmentFile(uploadFile, {
-            onProgress: ({ processedBytes, totalBytes }) => {
+      let encrypted;
+      if (uploadFile.size > LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES) {
+        encrypted = await this.crypto.encryptAttachmentFile(uploadFile, {
+          onProgress: ({ processedBytes, totalBytes }) => {
+            if (this.isSendContextCurrent(context) && this.fileSendSequence === uploadSequence) {
               this.uploadStatus.set(`Sellando archivo grande (E2EE) ${Math.min(99, Math.round((processedBytes / Math.max(1, totalBytes)) * 100))}%...`);
-            },
-          })
-        : await this.crypto.encryptAttachment(await uploadFile.arrayBuffer());
+            }
+          },
+        });
+      } else {
+        const plain = await uploadFile.arrayBuffer();
+        this.assertSendContext(context);
+        encrypted = await this.crypto.encryptAttachment(plain);
+      }
+      this.assertSendContext(context);
       const allowedUserIds = conversation.participants
         .filter((participant) => !participant.removedAt)
         .map((participant) => participant.userId);
@@ -800,14 +817,16 @@ export class ChatService implements OnDestroy {
         allowedUserIds,
         expiresAt: sendOptions.expiresAt,
       }));
+      this.assertSendContext(context);
       this.uploadStatus.set(uploadFile.size > LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES ? 'Subiendo archivo grande cifrado...' : 'Subiendo archivo cifrado...');
       await firstValueFrom(this.api.putRaw<FileResponse>(
         `/files/${encodeURIComponent(fileRecord.id)}/blob`,
         'body' in encrypted ? encrypted.body : encrypted.bytes,
       ));
+      this.assertSendContext(context);
       this.rememberMediaPreview(fileRecord.id, uploadFile, mime, uploadFile.name);
 
-      return this.sendPayload(
+      return await this.sendPayload(
         conversation,
         {
           type: 'file',
@@ -819,6 +838,8 @@ export class ChatService implements OnDestroy {
           fileKey: encrypted.key,
           fileIv: encrypted.iv,
           voiceNote: options.voiceNote ?? false,
+          ...(options.sticker && mime.startsWith('image/') ? { sticker: true } : {}),
+          ...(options.policy?.replyTo ? { replyTo: options.policy.replyTo } : {}),
           forwardedFrom: options.forwardedFrom,
         },
         this.fileKind(uploadFile),
@@ -826,8 +847,10 @@ export class ChatService implements OnDestroy {
         sendOptions,
       );
     } finally {
-      this.uploading.set(false);
-      this.uploadStatus.set('');
+      if (this.fileSendSequence === uploadSequence) {
+        this.uploading.set(false);
+        this.uploadStatus.set('');
+      }
     }
   }
 
@@ -838,6 +861,7 @@ export class ChatService implements OnDestroy {
     fileObjectId: string | null = null,
     options: SendPayloadOptions = {},
   ): Promise<MessageResponse | null> {
+    const context = this.captureSendContext();
     if (this.isConversationBlocked(conversation.id)) {
       throw new Error('Este chat esta bloqueado en este dispositivo.');
     }
@@ -846,7 +870,8 @@ export class ChatService implements OnDestroy {
     }
     const outgoingPayload = this.normalizeOutgoingPayload(conversation, payload);
     const wirePayload = this.withUniformMessagePadding(outgoingPayload);
-    const recipients = await this.encryptedRecipients(conversation, wirePayload, fileObjectId);
+    const recipients = await this.encryptedRecipients(conversation, wirePayload, fileObjectId, context);
+    this.assertSendContext(context);
     if (!recipients.length) {
       throw new Error('No hay llaves publicas disponibles para enviar.');
     }
@@ -865,12 +890,15 @@ export class ChatService implements OnDestroy {
     try {
       response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
     } catch (error) {
+      this.assertSendContext(context);
       if (!this.isTransientMessageSendError(error)) {
         throw error;
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
+      this.assertSendContext(context);
       response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
     }
+    this.assertSendContext(context);
     if (!options.suppressLocalMessage) {
       await this.ingestLocalSent(response, outgoingPayload);
     }
@@ -3830,16 +3858,39 @@ export class ChatService implements OnDestroy {
     return status === 0 || [408, 425, 429, 500, 502, 503, 504].includes(status);
   }
 
+  private captureSendContext(): ChatSendContext {
+    const current = this.auth.session();
+    if (!current?.user.id || !current.device.id) {
+      throw new Error('Inicia sesión antes de enviar un mensaje.');
+    }
+    return { userId: current.user.id, deviceId: current.device.id };
+  }
+
+  private isSendContextCurrent(context: ChatSendContext): boolean {
+    const current = this.auth.session();
+    return current?.user.id === context.userId && current?.device.id === context.deviceId;
+  }
+
+  private assertSendContext(context: ChatSendContext): void {
+    if (!this.isSendContextCurrent(context)) {
+      throw new Error('La cuenta o el dispositivo cambió durante el envío. Vuelve al chat y reintenta.');
+    }
+  }
+
   private async encryptedRecipients(
     conversation: Conversation,
     payload: ChatPayload,
     fileObjectId: string | null = null,
+    context?: ChatSendContext,
   ): Promise<RecipientCipherRequest[]> {
     const current = this.auth.session();
     if (!current) {
       return [];
     }
+    const sendContext = context ?? this.captureSendContext();
+    this.assertSendContext(sendContext);
     const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+    this.assertSendContext(sendContext);
     const recipients: RecipientCipherRequest[] = [];
     const groupRecipients: PublicKeyRecipient[] = [];
     const activeParticipants = conversation.participants.filter((participant) => !participant.removedAt);
@@ -3849,12 +3900,14 @@ export class ChatService implements OnDestroy {
       fresh.push(...await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch', {
         userIds: activeParticipants.slice(offset, offset + 128).map(participant => participant.userId), aliases: [],
       })));
+      this.assertSendContext(sendContext);
     }
     const directories = new Map(fresh.map(directory => [directory.userId, directory]));
     for (const participant of activeParticipants) {
       const directory = directories.get(participant.userId);
       if (!directory?.devices.length) throw new Error('No se pudieron comprobar las llaves de todos los participantes. Reintenta antes de enviar.');
       if (!this.isGroupConversation(conversation) && participant.userId !== current.user.id) await this.identityTrust.check(JSON.stringify([current.user.id,current.device.id]), directory);
+      this.assertSendContext(sendContext);
     }
 
     for (const participant of activeParticipants) {
@@ -3875,6 +3928,7 @@ export class ChatService implements OnDestroy {
           continue;
         }
         const sealed = await this.crypto.encryptForPublicKey(own, publicKey, payload);
+        this.assertSendContext(sendContext);
         recipients.push({
           userId: participant.userId,
           deviceId: device.deviceId,
@@ -3895,6 +3949,7 @@ export class ChatService implements OnDestroy {
           continue;
         }
         const sealed = await this.crypto.encryptForPublicKey(own, own.publicJwk, payload);
+        this.assertSendContext(sendContext);
         recipients.push({
           userId: current.user.id,
           deviceId: current.device.id,
@@ -3906,7 +3961,9 @@ export class ChatService implements OnDestroy {
     }
 
     if (this.isGroupConversation(conversation)) {
-      return this.crypto.encryptGroupPayloadForRecipients(own, groupRecipients, payload, fileObjectId);
+      const sealed = await this.crypto.encryptGroupPayloadForRecipients(own, groupRecipients, payload, fileObjectId);
+      this.assertSendContext(sendContext);
+      return sealed;
     }
     return recipients;
   }

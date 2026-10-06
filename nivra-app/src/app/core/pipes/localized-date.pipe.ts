@@ -11,7 +11,7 @@ export class LocalizedDatePipe implements PipeTransform {
   private static readonly formatters = new Map<string, Intl.DateTimeFormat>();
   private readonly translate = inject(TranslateService);
 
-  transform(value: string | number | Date | null | undefined, format: 'short' | 'shortTime' | 'medium' = 'short'): string {
+  transform(value: string | number | Date | null | undefined, format: 'short' | 'shortTime' | 'medium' | 'mediumDate' = 'short'): string {
     if (value === null || value === undefined || value === '') return '';
     const date = value instanceof Date ? value : new Date(value);
     if (Number.isNaN(date.getTime())) return '';
@@ -21,6 +21,8 @@ export class LocalizedDatePipe implements PipeTransform {
     if (!formatter) {
       const options: Intl.DateTimeFormatOptions = format === 'shortTime'
         ? { hour: 'numeric', minute: '2-digit' }
+        : format === 'mediumDate'
+          ? { year: 'numeric', month: 'short', day: 'numeric' }
         : format === 'medium'
           ? { year: 'numeric', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }
           : { year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' };

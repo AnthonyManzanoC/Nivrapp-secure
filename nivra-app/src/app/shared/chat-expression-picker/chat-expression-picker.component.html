@@ -1,0 +1,46 @@
+<section class="expression-picker" [attr.aria-label]="t('TITLE', 'Emojis y stickers')" [attr.aria-busy]="busy">
+  <header class="picker-header">
+    <div class="picker-tabs" role="tablist" [attr.aria-label]="t('TITLE', 'Emojis y stickers')" (keydown)="onTabKey($event)">
+      <button type="button" role="tab" data-tab="emoji" [class.active]="tab === 'emoji'" [attr.aria-selected]="tab === 'emoji'" [attr.tabindex]="tab === 'emoji' ? 0 : -1" (click)="selectTab('emoji')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M8 14.5q4 4 8 0M8.5 8.5h.01M15.5 8.5h.01"/></svg>
+        {{ t('EMOJIS', 'Emojis') }}
+      </button>
+      <button type="button" role="tab" data-tab="sticker" [class.active]="tab === 'sticker'" [attr.aria-selected]="tab === 'sticker'" [attr.tabindex]="tab === 'sticker' ? 0 : -1" (click)="selectTab('sticker')">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 21H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v7l-7 7Z"/><path d="M14 21v-4a3 3 0 0 1 3-3h4M8 8h.01M15 8h.01M8 11q3 3 6 0"/></svg>
+        {{ t('STICKERS', 'Stickers') }}
+      </button>
+    </div>
+    <button type="button" class="close-button" [attr.aria-label]="t('CLOSE', 'Cerrar selector')" (click)="close()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg></button>
+  </header>
+
+  <div class="picker-search">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
+    <input type="search" [(ngModel)]="query" [placeholder]="t('SEARCH', 'Buscar una emoción, gesto o sticker')" [attr.aria-label]="t('SEARCH', 'Buscar una emoción, gesto o sticker')" autocomplete="off" autocorrect="off" spellcheck="false" />
+    <button *ngIf="query" type="button" [attr.aria-label]="t('CLEAR_SEARCH', 'Borrar búsqueda')" (click)="clearSearch()"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 10M17 7 7 17"/></svg></button>
+  </div>
+
+  <nav *ngIf="tab === 'emoji'" class="category-strip" [attr.aria-label]="t('CATEGORIES', 'Categorías')">
+    <button type="button" [class.selected]="category === 'recent' && !query" [attr.aria-pressed]="category === 'recent' && !query" [attr.aria-label]="t('RECENT', 'Recientes')" [title]="t('RECENT', 'Recientes')" (click)="selectCategory('recent')"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></button>
+    <button *ngFor="let item of categories" type="button" [class.selected]="category === item.id && !query" [attr.aria-pressed]="category === item.id && !query" [attr.aria-label]="t('CATEGORY_' + item.id.toUpperCase(), item.es)" [title]="t('CATEGORY_' + item.id.toUpperCase(), item.es)" (click)="selectCategory(item.id)"><span aria-hidden="true">{{ item.icon }}</span></button>
+  </nav>
+  <nav *ngIf="tab === 'sticker'" class="sticker-packs" [attr.aria-label]="t('STICKER_PACKS', 'Colecciones de stickers')">
+    <button type="button" [class.selected]="stickerCategory === 'all' && !query" [attr.aria-pressed]="stickerCategory === 'all' && !query" (click)="selectStickerCategory('all')">{{ t('STICKER_PACK', 'Momentos Nivra') }}</button>
+    <button type="button" [class.selected]="stickerCategory === 'recent' && !query" [attr.aria-pressed]="stickerCategory === 'recent' && !query" (click)="selectStickerCategory('recent')">{{ t('RECENT', 'Recientes') }}</button>
+  </nav>
+
+  <div class="picker-scroll" role="tabpanel" [attr.aria-label]="tab === 'emoji' ? t('EMOJIS', 'Emojis') : t('STICKERS', 'Stickers')">
+    <div class="section-caption">
+      <span>{{ sectionLabel }}</span>
+      <button *ngIf="!query && ((tab === 'emoji' && category === 'recent' && recentEmojis.length) || (tab === 'sticker' && stickerCategory === 'recent' && recentStickers.length))" type="button" (click)="clearRecents()">{{ t('CLEAR_RECENTS', 'Borrar recientes') }}</button>
+    </div>
+    <div *ngIf="tab === 'emoji'" class="expression-grid emoji-grid" (keydown)="onGridKey($event)">
+      <button *ngFor="let item of emojis; trackBy: trackEmoji" type="button" class="emoji-option" [disabled]="disabled || busy" [attr.aria-label]="name(item)" [title]="name(item)" (click)="selectEmoji(item)"><span aria-hidden="true">{{ item.value }}</span></button>
+    </div>
+    <div *ngIf="tab === 'sticker'" class="expression-grid sticker-grid" (keydown)="onGridKey($event)">
+      <button *ngFor="let item of stickers; trackBy: trackSticker" type="button" class="sticker-option" [disabled]="disabled || stickersDisabled || busy" [attr.aria-label]="t('SEND_STICKER', 'Enviar sticker') + ': ' + name(item)" [title]="name(item)" (click)="selectSticker(item)"><img [src]="item.preview" alt="" draggable="false" loading="lazy" /><span>{{ name(item) }}</span></button>
+    </div>
+    <div *ngIf="(tab === 'emoji' ? emojis.length : stickers.length) === 0" class="empty-state"><span aria-hidden="true">{{ query ? '🔎' : '✨' }}</span><p>{{ query ? t('NO_RESULTS', 'No hay resultados. Prueba otra palabra.') : t('NO_RECENTS', 'Los emojis y stickers que uses aparecerán aquí.') }}</p></div>
+    <p *ngIf="error" class="picker-error" role="alert">{{ error }}</p>
+  </div>
+  <footer class="picker-hint" aria-live="polite"><span class="preparing-dot" *ngIf="busy" aria-hidden="true"></span>{{ busy ? t('PREPARING', 'Preparando sticker…') : tab === 'emoji' ? t('EMOJI_HINT', 'Toca un emoji para añadirlo a tu mensaje.') : t('STICKER_HINT', 'Toca un sticker para enviarlo.') }}</footer>
+</section>

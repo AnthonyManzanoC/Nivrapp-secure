@@ -1,0 +1,100 @@
+.chat-header { border-bottom: 1px solid var(--nivra-line); }
+.chat-header ion-toolbar { --min-height: 62px; padding-inline: 8px; }
+.chat-header ion-buttons ion-button { --border-radius: 50%; width: 40px; height: 40px; margin: 0; }
+.title-wrap { width: calc(100% - 172px); max-width: calc(100% - 172px); gap: 10px; }
+.title-wrap h1 { font-size: 16px; font-weight: 650; letter-spacing: -.25px; }
+.title-wrap p { margin-top: 3px; font-size: 11px; }
+.title-wrap .avatar { width: 40px; height: 40px; border-radius: 14px; box-shadow: none; }
+.messages { gap: 7px; padding: 16px 22px 20px; }
+.message { border-radius: 17px 17px 17px 5px; border: 0; padding: 10px 12px 6px; box-shadow: 0 2px 6px rgba(0,0,0,.13); color: var(--nivra-text); }
+.message.mine { border-radius: 17px 17px 5px 17px; box-shadow: 0 2px 6px rgba(0,0,0,.13); }
+.message p { font-size: 14px; line-height: 1.5; }
+.message-sender { display: block; margin: 0 24px 5px 0; color: var(--nivra-brand); font-size: 11px; font-weight: 650; }
+.message footer { gap: 4px; font-size: 10px; }
+.message-receipt { display: inline-flex; align-items: center; }
+.message-receipt ion-icon { font-size: 14px; }
+.message-receipt.receipt-read { color: #63c8ff; }
+.message-more { top: 3px; right: 3px; width: 24px; height: 24px; background: transparent; }
+.message-day { display: flex; justify-content: center; margin: 10px 0 7px; }
+.message-day span { padding: 5px 12px; border-radius: 99px; font-size: 10px; font-weight: 600; color: var(--nivra-soft); background: var(--nivra-panel-solid); box-shadow: 0 2px 5px rgba(0,0,0,.1); }
+.call-log-message { max-width: min(85%, 310px); width: 100%; margin: 3px 0; }
+.call-log-bubble { width: 100%; border-radius: 16px; grid-template-columns: 38px minmax(0,1fr) 16px; gap: 10px; padding: 10px 12px; box-shadow: 0 2px 6px rgba(0,0,0,.12); background: var(--nivra-panel-solid); border: 1px solid var(--nivra-line); }
+.call-log-icon { width: 38px; height: 38px; border-radius: 13px; display: grid; place-items: center; background: rgba(var(--ion-color-primary-rgb),.12); color: var(--nivra-brand-2); }
+.call-log-bubble .call-log-icon ion-icon { width: 20px; height: 20px; padding: 0; background: transparent; color: inherit; border-radius: 0; }
+.call-log-bubble .call-log-redial { width: 16px; height: 16px; padding: 0; background: transparent; color: var(--nivra-muted); }
+.call-log-bubble strong { font-size: 12px; font-weight: 650; line-height: 1.35; }
+.call-log-bubble span { font-size: 11px; }
+.call-log-bubble small { display: block; margin-top: 4px; font-size: 10px; color: var(--nivra-muted); text-align: start; }
+.call-log-message.missed .call-log-icon { color: var(--nivra-danger); background: rgba(var(--ion-color-danger-rgb),.12); }
+.search-hit { outline: 2px solid var(--nivra-amber); outline-offset: 3px; }
+.thread-search { position: relative; z-index: 2; flex: 0 0 auto; display: flex; align-items: center; flex-wrap: wrap; gap: 3px; padding: 8px 12px; background: var(--nivra-panel-solid); border-bottom: 1px solid var(--nivra-line); }
+.thread-search-input { display: flex; align-items: center; gap: 8px; min-width: 100px; flex: 1; padding: 8px 10px; border-radius: 12px; background: var(--nivra-panel-2); }
+.thread-search-input input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--nivra-text); outline: 0; font-size: 13px; }
+.thread-search-input span { font-size: 10px; color: var(--nivra-muted); }
+.thread-search > button { width: 34px; height: 38px; border: 0; border-radius: 10px; display: grid; place-items: center; background: transparent; color: var(--nivra-soft); }
+.thread-search small { flex-basis: 100%; color: var(--nivra-muted); font-size: 10px; padding-inline: 10px; }
+.jump-latest { right: 14px; bottom: 14px; width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--nivra-line); border-radius: 50%; background: var(--nivra-panel-solid); color: var(--nivra-text); box-shadow: var(--nivra-shadow-tiny); }
+.jump-latest ion-icon { font-size: 23px; }
+.composer-footer { padding-bottom: var(--safe-area-inset-bottom, var(--ion-safe-area-bottom, env(safe-area-inset-bottom, 0px))); }
+.composer { padding: 7px 12px 3px; gap: 8px; border-top: 1px solid var(--nivra-line); background: var(--nivra-panel-solid); backdrop-filter: none; align-items: flex-end; }
+.composer-input { flex: 1; min-width: 0; display: flex; align-items: flex-end; border: 1px solid var(--nivra-line); border-radius: 24px; padding: 2px 3px; background: var(--nivra-panel-2); }
+.composer .composer-input ion-button { width: 34px; min-width: 34px; flex: 0 0 34px; min-height: 38px; height: 38px; --background: transparent; --color: var(--nivra-muted); --box-shadow: none; }
+.composer .composer-input .composer-icon { width: 34px !important; min-width: 34px !important; flex-basis: 34px !important; }
+.composer .composer-input ion-textarea { --background: transparent; --padding-top: 9px; --padding-bottom: 8px; --padding-start: 6px; --padding-end: 4px; border: 0; box-shadow: none; border-radius: 0; min-height: 38px; margin: 0; font-size: 14px; }
+.composer > ion-button { width: 44px !important; min-width: 44px !important; flex-basis: 44px !important; min-height: 44px; height: 44px; --background: var(--nivra-brand); --color: #04100d; --box-shadow: none; }
+.composer:not(.has-draft) > .send, .composer.has-draft:not(.voice-active) > .mic { display: none !important; }
+.composer .send { --background: var(--nivra-brand); --color: #04100d; --box-shadow: none; }
+.privacy-summary { min-height: 28px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 2px 12px 5px; border: 0; background: var(--nivra-panel-solid); color: var(--nivra-muted); font-size: 10px; }
+.privacy-summary ion-icon { font-size: 13px; }
+.privacy-summary.custom-policy { color: var(--nivra-brand-2); }
+.policy-row { padding: 8px 12px; background: var(--nivra-panel-solid); gap: 8px; }
+.policy-toggle { min-height: 34px; font-weight: 600; border-color: var(--nivra-line); }
+.policy-row ion-select { min-height: 34px; font-weight: 500; }
+ion-popover.attachment-popover { --width: min(340px, calc(100vw - 24px)); --background: var(--nivra-panel-solid); }
+ion-popover.attachment-popover::part(content) { border-radius: 22px; }
+.attachment-menu { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 12px 9px; gap: 6px; }
+.attachment-menu .attachment-option { min-width: 0; min-height: 90px; grid-template-columns: 1fr; gap: 7px; padding: 9px 2px; justify-items: center; align-content: start; border: 0; border-radius: 16px; box-shadow: none; background: transparent !important; text-align: center; }
+.attachment-menu .attachment-option > span:last-child { min-width: 0; max-width: 100%; }
+.attachment-menu strong { font-size: 11px; font-weight: 600; text-align: center; }
+.attachment-menu small { display: none; }
+.attachment-menu .attachment-icon { width: 46px; height: 46px; border-radius: 16px; display: grid; place-items: center; background: #905cdb; color: #fff; }
+.attachment-menu .document .attachment-icon { background: #487edd; }
+.attachment-menu .audio .attachment-icon { background: #df9845; }
+.attachment-menu .capture .attachment-icon { background: #d06484; }
+.attachment-menu .expressions .attachment-icon { background: #627bcc; }
+.attachment-menu .info .attachment-icon { background: #30a488; }
+.attachment-menu .attachment-icon ion-icon { width: 23px; height: 23px; border-radius: 0; padding: 0; color: inherit !important; background: transparent; box-shadow: none; }
+.popover-menu button { min-height: 40px; border-radius: 11px; padding: 9px 12px; font-size: 13px; gap: 10px; background: transparent !important; box-shadow: none; }
+.popover-menu button:active { background: var(--nivra-panel-2) !important; }
+ion-popover.chat-options-popover::part(content), ion-popover.message-actions-popover::part(content) { border-radius: 18px; border-color: var(--nivra-line); }
+.popover-reactions { padding: 8px 3px; border-radius: 13px; background: var(--nivra-panel-2); }
+.popover-reactions button { width: 35px; height: 35px; font-size: 23px; }
+.message.sticker-message { background: transparent !important; box-shadow: none !important; border: 0; padding: 0 3px; }
+.media-message-card.sticker { background: transparent; border: 0; width: 170px; box-shadow: none; }
+.media-message-card.sticker .media-message-preview { background: transparent; width: 170px; height: 170px; min-height: 0; }
+.media-message-card.sticker img { width: 100%; height: 100%; object-fit: contain; }
+.media-message-card.sticker .media-message-meta { display: none; }
+.sticker-message footer { margin: 3px 0 0 auto; width: fit-content; padding: 3px 7px; border-radius: 12px; background: var(--nivra-panel-solid); color: var(--nivra-muted); }
+:is(.thread-search button, .attachment-option, .call-log-bubble, .privacy-summary, .jump-latest):focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 2px; }
+:host-context(.nivra-light-theme) .message.mine { background: #dbf5e9; color: #152e27; box-shadow: 0 2px 6px rgba(0,0,0,.08); }
+:host-context(.nivra-light-theme) .message.mine p, :host-context(.nivra-light-theme) .message.mine .file-copy strong { color: #152e27; }
+:host-context(.nivra-light-theme) .message.mine footer { color: #507b6a; }
+:host-context(.nivra-light-theme) .message-sender { color: #14745b; }
+:host-context(.nivra-light-theme) .message-receipt.receipt-read { color: #147dab; }
+:host-context(.nivra-light-theme) .call-log-bubble { background: #fff; border-color: rgba(0,0,0,.06); }
+:host-context(.nivra-light-theme) .call-log-bubble .call-log-icon ion-icon, :host-context(.nivra-light-theme) .call-log-bubble .call-log-redial { background: transparent; color: inherit; }
+:host-context(.nivra-light-theme) .composer .composer-input ion-textarea { --background: transparent; box-shadow: none; }
+:host-context(.nivra-light-theme) .composer .send { --background: var(--nivra-brand); --color: #04100d; --box-shadow: none; }
+@media (max-width: 768px) {
+  .chat-header ion-toolbar { --min-height: 58px; padding-inline: 0; }
+  .chat-header ion-buttons ion-button { width: 35px; height: 40px; --padding-start: 6px; --padding-end: 6px; }
+  .title-wrap { width: calc(100vw - 152px); max-width: calc(100vw - 152px); gap: 8px; }
+  .title-wrap h1 { font-size: 15px; }
+  .messages { padding: 12px 11px 15px; }
+  .message { max-width: 87%; }
+  .message-more { opacity: 0; }
+  .message:focus-within .message-more, .message.actions-open .message-more { opacity: 1; }
+  .composer { padding-inline: max(8px, env(safe-area-inset-left)) max(8px, env(safe-area-inset-right)); }
+}
+@media (max-width: 350px) { .composer .composer-input .camera { display: none !important; } .title-wrap .avatar { width: 34px; height: 34px; } }
+@media (prefers-reduced-motion: reduce) { .message { animation: none; } }
