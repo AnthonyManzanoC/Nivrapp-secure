@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { firstValueFrom } from 'rxjs';
 import {
@@ -35,6 +35,13 @@ interface StoryRecipientPlan {
   skippedUserIds: string[];
 }
 
+interface UnconfirmedPublishedStory {
+  story: Story;
+  accountDeviceKey: string;
+  feedConfirmed: boolean;
+  worldConfirmed: boolean;
+}
+
 @Injectable({ providedIn: 'root' })
 export class SocialService {
   private readonly api = inject(NivraApiService);
@@ -65,8 +72,14 @@ export class SocialService {
   private loadQueued = false;
   private storyRealtimeVersion = 0;
   private readonly deletedStoryIds = new Set<string>();
+  private readonly unconfirmedPublishedStories = new Map<string, UnconfirmedPublishedStory>();
+  private socialAccountDeviceKey = this.accountDeviceKey();
 
   constructor() {
+    effect(() => {
+      this.accountDeviceKey();
+      untracked(() => this.syncSocialAccountState());
+    });
     this.realtime.events$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
@@ -111,6 +124,7 @@ export class SocialService {
   }
 
   async load(): Promise<void> {
+    this.syncSocialAccountState();
     if (!this.auth.isAuthenticated()) {
       return;
     }
@@ -134,11 +148,20 @@ export class SocialService {
   }
 
   private async loadOnce(): Promise<void> {
+    const sessionAtRequest = this.auth.session();
+    const accountDeviceKeyAtRequest = this.accountDeviceKey();
+    if (!sessionAtRequest || !accountDeviceKeyAtRequest) {
+      return;
+    }
     this.loading.set(true);
     try {
-      const accountKey = this.localAccountKey();
+      const accountKey = sessionAtRequest.user.id;
       if (accountKey) {
         const cached = await this.history.stories(accountKey).catch(() => []);
+        this.syncSocialAccountState();
+        if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+          return;
+        }
         if (cached.length && !this.stories().length) {
           this.stories.set(this.activeStories(cached.filter((story) => story.visibility !== 'PublicWorld' || story.owner.id === this.auth.session()?.user.id)));
           if (!this.worldStories().length) {
@@ -153,6 +176,10 @@ export class SocialService {
         firstValueFrom(this.api.get<Story[]>('/stories/feed')),
         firstValueFrom(this.api.get<Story[]>('/stories/world')),
       ]);
+      this.syncSocialAccountState();
+      if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+        return;
+      }
       if (contactsResult.status === 'fulfilled') {
         this.contacts.set(contactsResult.value);
       }
@@ -162,7 +189,9 @@ export class SocialService {
 
       let persisted: Story[] = [];
       if (feedResult.status === 'fulfilled') {
-        const normalizedFeed = this.activeStories(feedResult.value.map((story) => this.normalizeStory(story)));
+        const normalizedFeed = this.preserveUnconfirmedPublishedStories(
+          this.activeStories(feedResult.value.map((story) => this.normalizeStory(story))), false,
+        );
         const nextFeed = realtimeVersionAtRequest === this.storyRealtimeVersion
           ? normalizedFeed
           : this.mergeStories(this.stories(), normalizedFeed);
@@ -170,7 +199,9 @@ export class SocialService {
         persisted = [...persisted, ...nextFeed];
       }
       if (worldResult.status === 'fulfilled') {
-        const normalizedWorld = this.activeStories(worldResult.value.map((story) => this.normalizeStory(story)));
+        const normalizedWorld = this.preserveUnconfirmedPublishedStories(
+          this.activeStories(worldResult.value.map((story) => this.normalizeStory(story))), true,
+        );
         const nextWorld = realtimeVersionAtRequest === this.storyRealtimeVersion
           ? normalizedWorld
           : this.mergeStories(this.worldStories(), normalizedWorld);
@@ -181,19 +212,27 @@ export class SocialService {
         this.persistStories(persisted);
       }
     } finally {
-      this.loading.set(false);
+      if (accountDeviceKeyAtRequest === this.accountDeviceKey()) {
+        this.loading.set(false);
+      }
     }
   }
 
   async loadGroupStories(groupId: string | null | undefined): Promise<Story[]> {
+    this.syncSocialAccountState();
     const normalizedGroupId = String(groupId || '').trim();
-    if (!normalizedGroupId || !this.auth.isAuthenticated()) {
+    const accountDeviceKeyAtRequest = this.accountDeviceKey();
+    if (!normalizedGroupId || !this.auth.isAuthenticated() || !accountDeviceKeyAtRequest) {
       return [];
     }
     const realtimeVersionAtRequest = this.storyRealtimeVersion;
     const remote = await firstValueFrom(
       this.api.get<Story[]>(`/stories/group/${encodeURIComponent(normalizedGroupId)}`),
     );
+    this.syncSocialAccountState();
+    if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+      return [];
+    }
     const normalized = this.activeStories(remote.map((story) => this.normalizeStory(story)));
     const current = this.stories();
     const currentGroup = current.filter((story) => this.sameId(story.targetId, normalizedGroupId));
@@ -211,6 +250,8 @@ export class SocialService {
   }
 
   async search(query: string): Promise<UserSummary[]> {
+    this.syncSocialAccountState();
+    const accountDeviceKeyAtRequest = this.accountDeviceKey();
     const normalized = query.trim();
     if (normalized.length < 2) {
       this.people.set([]);
@@ -219,11 +260,20 @@ export class SocialService {
     const response = await firstValueFrom(
       this.api.get<DirectorySearchResponse>(`/directory/search?q=${encodeURIComponent(normalized)}`),
     );
+    this.syncSocialAccountState();
+    if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+      return [];
+    }
     this.people.set(response.people ?? []);
     return response.people ?? [];
   }
 
   async scanPhoneRadar(rawPhones: string): Promise<ContactRadarScanResponse> {
+    this.syncSocialAccountState();
+    const accountDeviceKeyAtRequest = this.accountDeviceKey();
+    const discarded = (): ContactRadarScanResponse => ({
+      submitted: 0, matched: 0, currentUserInRadar: false, people: [],
+    });
     const phones = this.extractPhones(rawPhones);
     if (!phones.length) {
       const empty: ContactRadarScanResponse = {
@@ -240,16 +290,27 @@ export class SocialService {
     this.radarLoading.set(true);
     try {
       const phoneHashes = await Promise.all(phones.map((phone) => this.hashPhone(phone)));
+      this.syncSocialAccountState();
+      if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+        return discarded();
+      }
       const response = await firstValueFrom(this.api.post<ContactRadarScanResponse>('/contacts/radar/scan', {
         phoneHashes,
       }));
+      this.syncSocialAccountState();
+      if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+        return discarded();
+      }
       this.radarMatches.set(response.people ?? []);
       const seen = this.radarSeenIds();
       this.radarNewCount.set((response.people ?? []).filter((person) => !seen.has(person.id)).length);
       this.rememberRadarSeen(response.people ?? []);
       return response;
     } finally {
-      this.radarLoading.set(false);
+      this.syncSocialAccountState();
+      if (accountDeviceKeyAtRequest === this.accountDeviceKey()) {
+        this.radarLoading.set(false);
+      }
     }
   }
 
@@ -271,16 +332,20 @@ export class SocialService {
   }
 
   async toggleFavorite(contact: Contact): Promise<void> {
+    const assertSession = this.captureSocialSessionGuard();
     const next = await firstValueFrom(this.api.patch<Contact>(`/contacts/${encodeURIComponent(contact.userId)}`, {
       isFavorite: !contact.isFavorite,
       nicknameCiphertext: null,
     }));
+    assertSession();
     this.contacts.update((items) => [next, ...items.filter((item) => item.userId !== contact.userId)]
       .sort((left, right) => Number(right.isFavorite) - Number(left.isFavorite) || left.alias.localeCompare(right.alias)));
   }
 
   async deleteContact(contact: Contact): Promise<void> {
+    const assertSession = this.captureSocialSessionGuard();
     await firstValueFrom(this.api.delete(`/contacts/${encodeURIComponent(contact.userId)}`));
+    assertSession();
     this.contacts.update((items) => items.filter((item) => item.userId !== contact.userId));
   }
 
@@ -315,11 +380,16 @@ export class SocialService {
     if (!text && !file) {
       return;
     }
+    const publisher = this.auth.session();
+    const publisherAccountDeviceKey = publisher ? `${publisher.user.id}:${publisher.device.id}` : '';
+    const assertPublishingSession = () => this.assertSocialSession(publisherAccountDeviceKey);
+    assertPublishingSession();
 
     this.publishing.set(true);
     this.publishingStatus.set(file ? 'Optimizando y sellando (E2EE)...' : '');
     this.storyDeliveryWarning.set('');
     try {
+      assertPublishingSession();
       const durationSeconds = options.durationSeconds ?? 24 * 60 * 60;
       const allowedUserIds = [...new Set((options.allowedUserIds ?? []).filter(Boolean))];
       const contacts = options.visibility === 'MutualContacts'
@@ -333,20 +403,26 @@ export class SocialService {
             ? allowedUserIds
             : contacts.map((contact) => contact.userId)),
       ].filter((userId): userId is string => Boolean(userId)))];
-      const recipientPlan = await this.resolveStoryRecipients(audienceUserIds, options.visibility);
+      const recipientPlan = await this.resolveStoryRecipients(audienceUserIds, options.visibility, assertPublishingSession);
+      assertPublishingSession();
       const securedAudienceUserIds = options.visibility === 'PublicWorld'
         ? []
         : recipientPlan.recipientUserIds;
       let mediaFileObjectId: string | null = null;
       let media: StoryPayload['media'] = null;
+      let preparedMediaFile: File | null = null;
 
       if (file) {
         const prepared = await this.mediaOptimizer.prepareForEncryptedUpload(file, {
           mode: 'media',
           maxBytes: MAX_STORY_MEDIA_BYTES,
         });
+        assertPublishingSession();
         const uploadFile = prepared.file;
-        const encrypted = await this.crypto.encryptAttachment(await uploadFile.arrayBuffer());
+        const plainBytes = await uploadFile.arrayBuffer();
+        assertPublishingSession();
+        const encrypted = await this.crypto.encryptAttachment(plainBytes);
+        assertPublishingSession();
         const mime = uploadFile.type || 'application/octet-stream';
         const expiresAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
         const fileRecord = await firstValueFrom(this.api.post<FileResponse>('/files', {
@@ -356,7 +432,9 @@ export class SocialService {
           allowedUserIds: securedAudienceUserIds,
           expiresAt,
         }));
+        assertPublishingSession();
         await firstValueFrom(this.api.putRaw<FileResponse>(`/files/${encodeURIComponent(fileRecord.id)}/blob`, encrypted.bytes));
+        assertPublishingSession();
         mediaFileObjectId = fileRecord.id;
         media = {
           fileId: fileRecord.id,
@@ -366,11 +444,12 @@ export class SocialService {
           fileKey: encrypted.key,
           fileIv: encrypted.iv,
         };
-        this.rememberMediaPreview(`story-file:${fileRecord.id}`, uploadFile, mime, uploadFile.name);
+        preparedMediaFile = uploadFile;
       }
 
       const decodedPayload: StoryPayload = { v: 2, type: media ? 'media' : 'text', text, media };
-      const payload = await this.encodeStoryPayload(decodedPayload, recipientPlan, options.visibility);
+      const payload = await this.encodeStoryPayload(decodedPayload, recipientPlan, options.visibility, assertPublishingSession);
+      assertPublishingSession();
       const story = await firstValueFrom(this.api.post<Story>('/stories', {
         visibility: options.visibility,
         targetType: options.targetType ?? 'contacts',
@@ -383,14 +462,28 @@ export class SocialService {
         allowReposts: options.allowReposts !== false,
         durationSeconds,
       }));
+      assertPublishingSession();
+      if (preparedMediaFile && media) {
+        this.rememberMediaPreview(`story-file:${media.fileId}`, preparedMediaFile, media.mime, media.fileName);
+      }
       this.decodedPayloads.update((items) => ({ ...items, [story.id]: decodedPayload }));
-      this.stories.update((items) => [this.normalizeStory(story), ...items.filter((item) => item.id !== story.id)]);
-      this.persistStories([story]);
+      this.unconfirmedPublishedStories.set(story.id, {
+        story: this.normalizeStory(story),
+        accountDeviceKey: publisherAccountDeviceKey,
+        feedConfirmed: false,
+        worldConfirmed: story.visibility !== 'PublicWorld',
+      });
+      this.storyRealtimeVersion += 1;
+      this.applyStoryUpdate(story);
       this.storyDeliveryWarning.set(this.deliveryWarningFor(recipientPlan));
-      await this.load();
+      // The POST has committed. A delayed or unavailable feed must not make
+      // the composer report failure and invite the user to publish it again.
+      await this.load().catch(() => undefined);
     } finally {
-      this.publishing.set(false);
-      this.publishingStatus.set('');
+      if (publisherAccountDeviceKey === this.accountDeviceKey()) {
+        this.publishing.set(false);
+        this.publishingStatus.set('');
+      }
     }
   }
 
@@ -399,13 +492,16 @@ export class SocialService {
   }
 
   async viewStory(story: Story): Promise<void> {
+    const assertSession = this.captureSocialSessionGuard();
     const local = this.normalizeStory(story);
     this.activeStory.set(local);
     const prepareLocal = this.prepareStory(local);
     const freshRequest = firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/view`, {}));
     const [fresh] = await Promise.all([freshRequest, prepareLocal]);
+    assertSession();
     const normalized = this.normalizeStory(fresh);
     await this.decodeStoryPayload(normalized);
+    assertSession();
     this.applyStoryUpdate(normalized);
     if (this.storyPayload(fresh).media) {
       await this.ensureStoryMedia(fresh).catch(() => null);
@@ -413,6 +509,7 @@ export class SocialService {
   }
 
   async preloadStory(story: Story | null | undefined): Promise<void> {
+    this.syncSocialAccountState();
     if (!story || story.viewOnce) {
       return;
     }
@@ -420,23 +517,29 @@ export class SocialService {
   }
 
   async reactStory(story: Story, emoji: string): Promise<Story> {
+    const assertSession = this.captureSocialSessionGuard();
     const isRemovingCurrentReaction = story.myReaction === emoji;
     const updated = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/react`, {
       emoji: isRemovingCurrentReaction ? story.myReaction : emoji,
     }));
+    assertSession();
     return this.applyStoryUpdate(updated);
   }
 
   async commentStory(story: Story, messageId: string | null): Promise<Story> {
+    const assertSession = this.captureSocialSessionGuard();
     const updated = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/comment`, {
       messageId,
     }));
+    assertSession();
     return this.applyStoryUpdate(updated);
   }
 
   async repostStory(story: Story, visibility = 'Contacts'): Promise<Story> {
+    const assertSession = this.captureSocialSessionGuard();
     this.storyDeliveryWarning.set('');
     const decodedPayload = await this.decodeStoryPayload(story);
+    assertSession();
     const contacts = visibility === 'MutualContacts'
       ? this.contacts().filter((contact) => contact.isMutualContact)
       : this.contacts();
@@ -444,8 +547,10 @@ export class SocialService {
       this.auth.session()?.user.id,
       ...(visibility === 'PublicWorld' ? [] : contacts.map((contact) => contact.userId)),
     ].filter((userId): userId is string => Boolean(userId)))];
-    const recipientPlan = await this.resolveStoryRecipients(audienceUserIds, visibility);
-    const encryptedPayload = await this.encodeStoryPayload(decodedPayload, recipientPlan, visibility);
+    const recipientPlan = await this.resolveStoryRecipients(audienceUserIds, visibility, assertSession);
+    assertSession();
+    const encryptedPayload = await this.encodeStoryPayload(decodedPayload, recipientPlan, visibility, assertSession);
+    assertSession();
     const repost = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/repost`, {
       visibility,
       durationSeconds: 24 * 60 * 60,
@@ -453,6 +558,7 @@ export class SocialService {
       allowedUserIds: visibility === 'PublicWorld' ? [] : recipientPlan.recipientUserIds,
       allowReposts: this.auth.session()?.user.allowStoryReposts !== false,
     }));
+    assertSession();
     this.decodedPayloads.update((items) => ({ ...items, [repost.id]: decodedPayload }));
     this.applyStoryUpdate(repost);
     this.storyDeliveryWarning.set(this.deliveryWarningFor(recipientPlan));
@@ -461,12 +567,16 @@ export class SocialService {
   }
 
   async deleteStory(story: Story): Promise<void> {
+    const assertSession = this.captureSocialSessionGuard();
     await firstValueFrom(this.api.delete(`/stories/${encodeURIComponent(story.id)}`));
+    assertSession();
     this.storyRealtimeVersion += 1;
     this.removeStoryLocally(story.id);
   }
 
   async ensureStoryMedia(story: Story): Promise<StoryMediaPreview | null> {
+    const assertSession = this.captureSocialSessionGuard();
+    const accountDeviceKeyAtRequest = this.accountDeviceKey();
     const payload = this.storyPayload(story);
     if (!payload.media?.fileKey || !payload.media.fileIv) {
       return null;
@@ -479,13 +589,17 @@ export class SocialService {
     this.setStoryMediaError(story.id, '');
     try {
       const encrypted = await firstValueFrom(this.api.getArrayBuffer(`/stories/${encodeURIComponent(story.id)}/media`));
+      assertSession();
       const plain = await this.crypto.decryptAttachment(encrypted, payload.media.fileKey, payload.media.fileIv);
+      assertSession();
       return this.rememberMediaPreview(story.id, new Blob([plain], { type: payload.media.mime }), payload.media.mime, payload.media.fileName);
     } catch (error) {
       const message = typeof navigator !== 'undefined' && !navigator.onLine
         ? 'Sin conexion. El contenido cifrado seguira disponible para reintentar.'
         : 'No se pudo descargar o descifrar el contenido. Toca Reintentar.';
-      this.setStoryMediaError(story.id, message);
+      if (accountDeviceKeyAtRequest === this.accountDeviceKey()) {
+        this.setStoryMediaError(story.id, message);
+      }
       throw error;
     }
   }
@@ -570,7 +684,10 @@ export class SocialService {
     return mime.startsWith('audio/');
   }
 
-  private async resolveStoryRecipients(userIds: string[], visibility: string): Promise<StoryRecipientPlan> {
+  private async resolveStoryRecipients(
+    userIds: string[], visibility: string, assertSession: () => void = () => undefined,
+  ): Promise<StoryRecipientPlan> {
+    assertSession();
     if (visibility === 'PublicWorld') {
       return { recipients: [], recipientUserIds: [], skippedUserIds: [] };
     }
@@ -580,11 +697,13 @@ export class SocialService {
       throw new Error('La sesion no esta disponible para cifrar la historia.');
     }
     const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+    assertSession();
     const requestedUserIds = [...new Set([...userIds, current.user.id].filter(Boolean))];
     const directories: PublicKeyDirectory[] = [];
     const batchSize = 96;
     for (let index = 0; index < requestedUserIds.length; index += batchSize) {
-      directories.push(...await this.fetchStoryKeyBatch(requestedUserIds.slice(index, index + batchSize)));
+      directories.push(...await this.fetchStoryKeyBatch(requestedUserIds.slice(index, index + batchSize), assertSession));
+      assertSession();
     }
 
     const recipientsByDevice = new Map<string, PublicKeyRecipient>();
@@ -619,17 +738,26 @@ export class SocialService {
     return { recipients, recipientUserIds, skippedUserIds };
   }
 
-  private async fetchStoryKeyBatch(userIds: string[]): Promise<PublicKeyDirectory[]> {
+  private async fetchStoryKeyBatch(
+    userIds: string[], assertSession: () => void = () => undefined,
+  ): Promise<PublicKeyDirectory[]> {
+    assertSession();
     try {
-      return await firstValueFrom(
+      const result = await firstValueFrom(
         this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds, aliases: [] }),
       );
+      assertSession();
+      return result;
     } catch {
+      assertSession();
       try {
-        return await firstValueFrom(
+        const result = await firstValueFrom(
           this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds, aliases: [] }),
         );
+        assertSession();
+        return result;
       } catch {
+        assertSession();
         throw new Error('No se pudo sincronizar el cifrado de la audiencia. Revisa la conexion e intenta de nuevo.');
       }
     }
@@ -649,7 +777,11 @@ export class SocialService {
     return `Entrega cifrada completada para ${deliveredLabel}. ${skippedLabel}`;
   }
 
-  private async encodeStoryPayload(payload: StoryPayload, plan: StoryRecipientPlan, visibility: string): Promise<string> {
+  private async encodeStoryPayload(
+    payload: StoryPayload, plan: StoryRecipientPlan, visibility: string,
+    assertSession: () => void = () => undefined,
+  ): Promise<string> {
+    assertSession();
     const normalized = { v: 2, ...payload, type: payload.type || 'text' };
     if (visibility === 'PublicWorld') {
       return this.crypto.b64(new TextEncoder().encode(JSON.stringify(normalized)));
@@ -660,7 +792,9 @@ export class SocialService {
       throw new Error('La sesion no esta disponible para cifrar la historia.');
     }
     const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+    assertSession();
     const sealed = await this.crypto.encryptGroupPayloadForRecipients(own, plan.recipients, normalized);
+    assertSession();
     if (!sealed.length) {
       throw new Error('No hay llaves publicas para cifrar la audiencia de la historia.');
     }
@@ -673,6 +807,7 @@ export class SocialService {
   }
 
   private async decodeStoryPayload(story: Story): Promise<StoryPayload> {
+    const assertSession = this.captureSocialSessionGuard();
     const cached = this.decodedPayloads()[story.id];
     if (cached) {
       return cached;
@@ -695,13 +830,17 @@ export class SocialService {
       throw new Error('Esta historia no fue cifrada para este dispositivo.');
     }
     const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+    assertSession();
     const payload = await this.crypto.decryptEnvelope<StoryPayload>(own, recipient.header, recipient.ciphertext);
+    assertSession();
     this.decodedPayloads.update((items) => ({ ...items, [story.id]: payload }));
     return payload;
   }
 
   private async prepareStory(story: Story): Promise<void> {
+    const assertSession = this.captureSocialSessionGuard();
     const payload = await this.decodeStoryPayload(story);
+    assertSession();
     if (payload.media) {
       await this.ensureStoryMedia(story).catch(() => null);
     }
@@ -836,6 +975,7 @@ export class SocialService {
   }
 
   private removeStoryLocally(storyId: string): void {
+    this.unconfirmedPublishedStories.delete(storyId);
     this.deletedStoryIds.add(storyId);
     if (this.deletedStoryIds.size > 512) {
       const oldest = this.deletedStoryIds.values().next().value as string | undefined;
@@ -883,6 +1023,36 @@ export class SocialService {
     return this.activeStories([...storiesById.values()]);
   }
 
+  private preserveUnconfirmedPublishedStories(snapshot: Story[], isWorld: boolean): Story[] {
+    const session = this.auth.session();
+    const accountDeviceKey = session ? `${session.user.id}:${session.device.id}` : null;
+    const confirmedIds = new Set(snapshot.map((story) => story.id));
+    const missing: Story[] = [];
+    for (const [id, pending] of this.unconfirmedPublishedStories) {
+      if (pending.accountDeviceKey !== accountDeviceKey || this.deletedStoryIds.has(id) ||
+          (pending.story.expiresAt && Date.parse(pending.story.expiresAt) <= Date.now())) {
+        this.unconfirmedPublishedStories.delete(id);
+        continue;
+      }
+      if (isWorld && pending.story.visibility !== 'PublicWorld') {
+        continue;
+      }
+      if (confirmedIds.has(id)) {
+        if (isWorld) {
+          pending.worldConfirmed = true;
+        } else {
+          pending.feedConfirmed = true;
+        }
+      } else if (isWorld ? !pending.worldConfirmed : !pending.feedConfirmed) {
+        missing.push(pending.story);
+      }
+      if (pending.feedConfirmed && pending.worldConfirmed) {
+        this.unconfirmedPublishedStories.delete(id);
+      }
+    }
+    return this.mergeStories(missing, snapshot);
+  }
+
   private sameId(left: string | null | undefined, right: string | null | undefined): boolean {
     return Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase());
   }
@@ -906,6 +1076,55 @@ export class SocialService {
 
   private localAccountKey(): string | null {
     return this.auth.session()?.user.id ?? null;
+  }
+
+  private accountDeviceKey(): string | null {
+    const current = this.auth.session();
+    return current ? `${current.user.id}:${current.device.id}` : null;
+  }
+
+  private captureSocialSessionGuard(): () => void {
+    this.syncSocialAccountState();
+    const accountDeviceKey = this.accountDeviceKey();
+    this.assertSocialSession(accountDeviceKey);
+    return () => this.assertSocialSession(accountDeviceKey);
+  }
+
+  private assertSocialSession(accountDeviceKey: string | null): void {
+    this.syncSocialAccountState();
+    if (!accountDeviceKey || accountDeviceKey !== this.accountDeviceKey()) {
+      throw new Error('La sesion cambio. Vuelve a abrir este contenido desde tu cuenta actual.');
+    }
+  }
+
+  private syncSocialAccountState(): void {
+    const accountDeviceKey = this.accountDeviceKey();
+    if (accountDeviceKey === this.socialAccountDeviceKey) {
+      return;
+    }
+    this.socialAccountDeviceKey = accountDeviceKey;
+    for (const preview of Object.values(this.mediaPreviews())) {
+      URL.revokeObjectURL(preview.url);
+    }
+    this.people.set([]);
+    this.contacts.set([]);
+    this.friendRequests.set([]);
+    this.stories.set([]);
+    this.worldStories.set([]);
+    this.radarMatches.set([]);
+    this.radarNewCount.set(0);
+    this.activeStory.set(null);
+    this.mediaPreviews.set({});
+    this.storyMediaErrors.set({});
+    this.decodedPayloads.set({});
+    this.loading.set(false);
+    this.radarLoading.set(false);
+    this.publishing.set(false);
+    this.publishingStatus.set('');
+    this.storyDeliveryWarning.set('');
+    this.unconfirmedPublishedStories.clear();
+    this.deletedStoryIds.clear();
+    this.storyRealtimeVersion += 1;
   }
 
   private enrichStoryUser(user: UserSummary): UserSummary {

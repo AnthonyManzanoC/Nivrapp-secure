@@ -38,6 +38,7 @@ import { ImageCropperComponent } from '../image-cropper/image-cropper.component'
 import { NativeDeviceService } from '../../core/services/native-device.service';
 import { LocalHistoryService } from '../../core/services/local-history.service';
 import { ChatStoryHighlight, chatStoryRingColor, groupChatStoryHighlights, withOwnChatStoryHighlight } from './chat-story-highlights';
+import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
 
 @Component({
   selector: 'app-chats',
@@ -49,6 +50,7 @@ import { ChatStoryHighlight, chatStoryRingColor, groupChatStoryHighlights, withO
     RouterOutlet,
     TranslatePipe,
     StoryViewerComponent,
+    StoryComposerComponent,
     ImageCropperComponent,
     IonAvatar,
     IonButton,
@@ -136,6 +138,8 @@ export class ChatsPage implements OnDestroy {
   viewerUiHidden = false;
   storyBusyId = '';
   storyError = '';
+  storyComposerOpen = false;
+  storyPublishNotice = '';
   avatarActionsOpen = false;
   avatarActionsEvent: Event | null = null;
   avatarActionsConversation: Conversation | null = null;
@@ -309,22 +313,23 @@ export class ChatsPage implements OnDestroy {
     return this.conversationStories(conversation).some((story) => !story.viewedByMe && !this.isMine(story));
   }
 
-  activateStoryHighlight(highlight: ChatStoryHighlight, fileInput: HTMLInputElement): void {
+  activateStoryHighlight(highlight: ChatStoryHighlight): void {
     if (highlight.isOwn && !highlight.stories.length) {
-      // Keep the real media picker in the initiating user gesture, including on mobile WebViews.
-      fileInput.click();
+      this.openStoryComposer();
       return;
     }
     void this.openStoryHighlight(highlight);
   }
 
-  async storyDraftFileSelected(event: Event): Promise<void> {
-    const input = event.target as HTMLInputElement;
-    const file = input.files?.[0];
-    input.value = '';
-    if (!file) { return; }
-    // info is transient navigation data: the chosen media is never stored in URL/history state.
-    await this.router.navigate(['/app/world'], { fragment: 'story-composer', info: { storyDraftFile: file } });
+  openStoryComposer(event?: Event): void {
+    event?.stopPropagation();
+    this.storyPublishNotice = '';
+    this.storyComposerOpen = true;
+  }
+
+  storyPublished(message: string): void {
+    this.storyPublishNotice = message;
+    this.storyStripNow.set(Date.now());
   }
 
   onChatListScroll(event: Event): void {

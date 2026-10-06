@@ -651,9 +651,10 @@ export class CallsService implements OnDestroy {
           .some((track) => track.readyState === 'live' && track.enabled && !track.muted) : false;
         const requestId = crypto.randomUUID();
         if (!remoteVideo) this.beginAwaitingVideoResponse(call.id, requestId);
-        this.broadcastControl('media-mode', { type: 'Video', video: true, action: 'request', requestId });
+        await this.broadcastControl('media-mode', { type: 'Video', video: true, action: 'request', requestId });
+        if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
         this.broadcastControl('camera', 'on');
-        await this.renegotiateDirectPeers(true);
+        await this.renegotiateDirectPeers();
       }
     } catch (error) {
       if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) {
@@ -673,7 +674,7 @@ export class CallsService implements OnDestroy {
       if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
       this.finishAwaitingVideoResponse();
       this.cameraOff.set(true);
-      this.error.set(error instanceof Error ? error.message : 'No se pudo activar el video en esta llamada.');
+      this.error.set(this.videoUpgradeError(error));
     } finally {
       if (generation === this.mediaGeneration && this.activeCall()?.id === call.id) this.mediaUpgradeInFlight.set(false);
     }
@@ -746,6 +747,10 @@ export class CallsService implements OnDestroy {
       for (const [userId, peer] of this.peers.entries()) {
         peer.iceRestartAttempts = 0;
         peer.connection.setConfiguration({
+          // setConfiguration replaces the configuration; omitted values use
+          // defaults. Keep the negotiated pool, certificates and transport
+          // options immutable while refreshing only the ICE credentials.
+          ...peer.connection.getConfiguration(),
           iceServers: this.iceServers,
           iceTransportPolicy: this.iceTransportPolicy,
         });
@@ -1761,7 +1766,7 @@ export class CallsService implements OnDestroy {
       if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id || this.isGroupCall(this.activeCall())) return;
       this.cameraOff.set(false);
       this.localStream()?.getVideoTracks().forEach((track) => { track.enabled = true; });
-      await this.renegotiateDirectPeers(true);
+      await this.renegotiateDirectPeers();
       if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
       this.mediaUpgradeRequested.set(false);
       this.incomingVideoRequestId = '';
@@ -1772,11 +1777,26 @@ export class CallsService implements OnDestroy {
         await this.removeDirectVideoTrack();
         if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
         this.cameraOff.set(true);
-        this.error.set(error instanceof Error ? error.message : 'No se pudo activar la cámara.');
+        this.error.set(this.videoUpgradeError(error));
       }
     } finally {
       if (generation === this.mediaGeneration && this.activeCall()?.id === call.id) this.mediaUpgradeInFlight.set(false);
     }
+  }
+
+  private videoUpgradeError(error: unknown): string {
+    const name = (error as { name?: string } | null)?.name;
+    console.warn('Nivra: no se pudo actualizar el video', {
+      name: name ?? 'Error',
+      ...(error instanceof Error || error instanceof DOMException ? { message: error.message } : {}),
+    });
+    if (['NotAllowedError', 'SecurityError', 'PermissionDeniedError'].includes(name ?? '')) {
+      return 'Permite el acceso a la cámara y vuelve a intentarlo. El audio continúa.';
+    }
+    if (['NotFoundError', 'DevicesNotFoundError', 'NotReadableError', 'TrackStartError', 'OverconstrainedError'].includes(name ?? '')) {
+      return 'La cámara no está disponible. Comprueba que otra aplicación no la esté usando; el audio continúa.';
+    }
+    return 'No se pudo actualizar el video. El audio continúa; vuelve a intentarlo.';
   }
 
   /** Dismiss the request without ending the voice call or exposing our camera. */
@@ -2200,9 +2220,14 @@ export class CallsService implements OnDestroy {
     }
     peer.makingOffer = true;
     try {
+      // Unified Plan uses transceiver directions. The legacy
+      // offerToReceiveVideo:false option changes a newly added camera's
+      // sendrecv transceiver to sendonly while the server still says Voice.
+      // Never downgrade that receiver during a voice-to-video upgrade.
+      if (call.type === 'Video' && !this.transceiverForKind(connection, 'video')) {
+        connection.addTransceiver('video', { direction: 'recvonly' });
+      }
       const offer = await connection.createOffer({
-        offerToReceiveAudio: true,
-        offerToReceiveVideo: call.type === 'Video',
         iceRestart,
       });
       if (connection.signalingState !== 'stable') {
@@ -2259,7 +2284,7 @@ export class CallsService implements OnDestroy {
     });
   }
 
-  private async renegotiateDirectPeers(forceLocalOffer = false): Promise<void> {
+  private async renegotiateDirectPeers(): Promise<void> {
     const call = this.activeCall();
     if (!call || this.isGroupCall(call)) {
       return;
@@ -2273,7 +2298,9 @@ export class CallsService implements OnDestroy {
       }
       peer.negotiationQueued = true;
       try {
-        if ((forceLocalOffer || this.shouldCreateOfferTo(userId)) && peer.connection.signalingState === 'stable') {
+        // Keep the same offer owner for upgrades. Camera controls from both
+        // ends may overlap; making both ends offer creates avoidable glare.
+        if (this.shouldCreateOfferTo(userId) && peer.connection.signalingState === 'stable') {
           await this.createAndSendOffer(userId).catch(() => undefined);
         } else {
           await this.sendCallSignal(call, userId, 'renegotiate-request', {}).catch(() => undefined);
@@ -2559,14 +2586,13 @@ export class CallsService implements OnDestroy {
     }));
   }
 
-  private broadcastControl(signalType: 'muted' | 'camera' | 'screen' | 'media-mode', payload: unknown): void {
+  private async broadcastControl(signalType: 'muted' | 'camera' | 'screen' | 'media-mode', payload: unknown): Promise<void> {
     const call = this.activeCall();
     if (!call) {
       return;
     }
-    this.otherParticipantIds(call).forEach((userId) => {
-      void this.sendCallSignal(call, userId, signalType, payload).catch(() => undefined);
-    });
+    await Promise.all(this.otherParticipantIds(call).map((userId) =>
+      this.sendCallSignal(call, userId, signalType, payload).catch(() => undefined)));
   }
 
   private async encryptCallSignalForUser(targetUserId: string, value: DecodedCallSignalPayload, targetDeviceId?: string): Promise<string> {

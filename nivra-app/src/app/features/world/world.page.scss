@@ -52,6 +52,23 @@
   overflow: hidden;
 }
 
+.story-launcher {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 14px;
+  background: linear-gradient(140deg, color-mix(in srgb, var(--nivra-brand) 8%, transparent), transparent), var(--nivra-panel);
+}
+.story-launcher-icon { width: 58px; height: 58px; border-radius: 18px; display: grid; place-items: center; color: var(--nivra-brand); background: color-mix(in srgb, var(--nivra-brand) 12%, transparent); }
+.story-launcher-icon ion-icon { font-size: 28px; }
+.story-launcher h2, .story-launcher p { margin: 0; }
+.story-launcher p { color: var(--nivra-muted); line-height: 1.6; max-width: 450px; }
+.story-launch-button { display: inline-flex; gap: 8px; align-items: center; justify-content: center; min-height: 48px; border: 0; padding: 12px 24px; border-radius: 16px; color: #05291f; background: var(--nivra-brand); font: inherit; font-weight: 750; cursor: pointer; }
+.story-launch-button ion-icon { font-size: 23px; }
+.story-launch-button:focus-visible { outline: 3px solid var(--nivra-brand); outline-offset: 4px; }
+.story-launcher > small { color: var(--nivra-muted); line-height: 1.5; font-size: 12px; }
+
 .search-line {
   grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
@@ -364,111 +381,6 @@
 
 .story-grid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.audience-block {
-  min-width: 0;
-  max-width: 100%;
-  border: 1px solid rgba(255, 255, 255, .1);
-  border-radius: 8px;
-  display: grid;
-  gap: 7px;
-  padding: 10px;
-  background:
-    linear-gradient(135deg, rgba(24, 214, 162, .08), rgba(107, 168, 255, .04)),
-    rgba(255, 255, 255, .035);
-}
-
-.audience-block label {
-  display: grid;
-  gap: 6px;
-}
-
-.audience-block label span {
-  color: var(--nivra-muted);
-  font-size: 12px;
-  font-weight: 850;
-}
-
-.audience-block small {
-  color: var(--nivra-brand-2);
-  font-weight: 800;
-}
-
-.story-compose-media {
-  min-width: 0;
-  max-width: 100%;
-  min-height: 48px;
-  border: 1px dashed rgba(255, 255, 255, .16);
-  border-radius: 8px;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  padding: 6px;
-}
-
-.story-compose-media button {
-  min-width: 0;
-  max-width: 100%;
-  border: 0;
-  border-radius: 8px;
-  min-height: 38px;
-  padding: 0 10px;
-  color: var(--nivra-text);
-  background: rgba(255, 255, 255, .055);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.story-compose-media span {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.story-compose-media .clear-file {
-  width: 38px;
-  padding: 0;
-  justify-content: center;
-  color: #ffb4b4;
-}
-
-.story-compose-status {
-  min-height: 38px;
-  border: 1px solid rgba(114, 240, 202, .2);
-  border-radius: 8px;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 0 10px;
-  color: var(--nivra-brand-2);
-  background: rgba(24, 214, 162, .07);
-  font-size: 12px;
-  font-weight: 850;
-}
-
-.story-compose-status ion-spinner {
-  width: 16px;
-  height: 16px;
-}
-
-.story-settings {
-  min-width: 0;
-  max-width: 100%;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-}
-
-.native-check {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--nivra-muted);
-  font-size: 13px;
 }
 
 .story-row {
@@ -1076,10 +988,6 @@ ion-modal.story-stats-modal {
 }
 
 @media (max-width: 720px) {
-  .story-settings {
-    grid-template-columns: 1fr;
-  }
-
   .contact-card,
   .person-result,
   .story-row {
@@ -1188,15 +1096,6 @@ ion-modal.story-stats-modal {
 @media (max-width: 360px) {
   .surface {
     padding-inline: max(8px, env(safe-area-inset-left)) max(8px, env(safe-area-inset-right));
-  }
-
-  .story-compose-media {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .story-compose-media .clear-file {
-    width: 100%;
-    justify-content: center;
   }
 
   .row-actions {

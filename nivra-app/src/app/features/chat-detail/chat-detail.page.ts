@@ -164,7 +164,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
   verifyIdentity(): void {
     const userId = this.conversation()?.participants.find(p => !p.removedAt && p.userId !== this.auth.session()?.user.id)?.userId;
-    if (userId) void this.router.navigate(['/app/identity', userId]);
+    if (userId) void this.router.navigate(['/app/identity', userId], { state: { identityReturnUrl: this.router.url } });
   }
   @ViewChild(IonContent) private content?: IonContent;
   @ViewChild('micButton', { read: ElementRef }) private micButton?: ElementRef<HTMLElement>;

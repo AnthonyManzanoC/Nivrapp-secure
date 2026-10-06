@@ -1,0 +1,170 @@
+<ion-modal class="story-composer-modal" [isOpen]="isOpen" [canDismiss]="canDismiss" [backdropDismiss]="false" (didDismiss)="onDismissed()">
+  <ng-template>
+    <section class="composer" [class.camera-mode]="mode === 'camera'" [attr.aria-label]="'WORLD.NEW_STORY' | translate:'Nueva historia'">
+      <header class="composer-header">
+        <div>
+          <span class="eyebrow">{{ 'STORY_COMPOSER.EYEBROW' | translate:'Tu momento' }}</span>
+          <h2>{{ 'WORLD.NEW_STORY' | translate:'Nueva historia' }}</h2>
+        </div>
+        <button type="button" class="icon-button close" (click)="requestClose()" [disabled]="busy" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+          <ion-icon name="close-outline"></ion-icon>
+        </button>
+      </header>
+
+      <input #galleryInput type="file" accept="image/*,video/*,audio/*" hidden (change)="fileSelected($event)">
+      <input #deviceVideoInput type="file" accept="video/*" [attr.capture]="facing" hidden (change)="fileSelected($event)">
+
+      @if (confirmingDiscard) {
+        <div class="discard-confirmation" role="alert">
+          <strong>{{ 'STORY_COMPOSER.DISCARD_TITLE' | translate:'¿Descartar esta historia?' }}</strong>
+          <p>{{ 'STORY_COMPOSER.DISCARD_COPY' | translate:'Todavía no se ha publicado.' }}</p>
+          <div class="discard-actions">
+            <button type="button" class="secondary-button" (click)="confirmingDiscard = false">{{ 'STORY_COMPOSER.KEEP_EDITING' | translate:'Seguir editando' }}</button>
+            <button type="button" class="discard-button" (click)="discardAndClose()">{{ 'STORY_COMPOSER.DISCARD' | translate:'Descartar' }}</button>
+          </div>
+        </div>
+      }
+
+      <div class="composer-body">
+        @if (mode === 'choose') {
+          <div class="choose-intro">
+            <span class="intro-symbol"><ion-icon name="camera-outline"></ion-icon></span>
+            <h3>{{ 'STORY_COMPOSER.CHOOSE_TITLE' | translate:'Una historia a tu manera' }}</h3>
+            <p>{{ 'STORY_COMPOSER.CHOOSE_COPY' | translate:'Captura algo nuevo o comparte un momento de tu galería.' }}</p>
+          </div>
+          <div class="source-grid">
+            <button type="button" class="source-button" (click)="galleryInput.click()">
+              <ion-icon name="image-outline"></ion-icon>
+              <strong>{{ 'STORY_COMPOSER.GALLERY' | translate:'Galería' }}</strong>
+              <span>{{ 'STORY_COMPOSER.GALLERY_COPY' | translate:'Foto, video o audio' }}</span>
+            </button>
+            <button type="button" class="source-button" (click)="openCamera()">
+              <ion-icon name="camera-outline"></ion-icon>
+              <strong>{{ 'COMMON.CAMERA' | translate:'Cámara' }}</strong>
+              <span>{{ 'STORY_COMPOSER.CAMERA_COPY' | translate:'Captura o graba' }}</span>
+            </button>
+            <button type="button" class="source-button source-text" (click)="chooseText()">
+              <ion-icon name="text-outline"></ion-icon>
+              <strong>{{ 'STORY_COMPOSER.TEXT' | translate:'Texto' }}</strong>
+              <span>{{ 'STORY_COMPOSER.TEXT_COPY' | translate:'Escribe lo que sientes' }}</span>
+            </button>
+          </div>
+          <p class="privacy-copy"><ion-icon name="shield-checkmark-outline"></ion-icon>{{ 'STORY_COMPOSER.PRIVACY_COPY' | translate:'Tú eliges quién puede verla antes de publicar.' }}</p>
+        } @else if (mode === 'camera') {
+          <div class="camera-stage">
+            @if (cameraStream) {
+              <video #cameraPreview [appMediaStream]="cameraStream" autoplay playsinline muted [class.selfie]="facing === 'user'"></video>
+            } @else {
+              <div class="camera-placeholder">
+                @if (cameraBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="camera-outline"></ion-icon> }
+                <p>{{ 'STORY_COMPOSER.CAMERA_PREPARING' | translate:'Prepara tu momento' }}</p>
+              </div>
+            }
+            @if (recording) {
+              <span class="recording-status" role="status"><i></i>{{ recordingSeconds }} / 60 s</span>
+            }
+            <span class="camera-tip">{{ 'STORY_COMPOSER.RECORD_LIMIT' | translate:'Videos de hasta 60 segundos' }}</span>
+          </div>
+          <div class="camera-controls">
+            <button type="button" class="icon-button" (click)="switchCamera()" [disabled]="cameraBusy || recording" [attr.aria-label]="'STORY_COMPOSER.SWITCH_CAMERA' | translate:'Cambiar cámara'">
+              <ion-icon name="refresh-outline"></ion-icon>
+            </button>
+            <button type="button" class="capture-button" (click)="takePhoto()" [disabled]="!cameraStream || cameraBusy || recording" [attr.aria-label]="'CHAT.TAKE_PHOTO' | translate:'Tomar foto'"><span></span></button>
+            @if (recording) {
+              <button type="button" class="record-button is-recording" (click)="finishRecording()" [attr.aria-label]="'STORY_COMPOSER.STOP_RECORDING' | translate:'Terminar video'"><span></span></button>
+            } @else {
+              <button type="button" class="record-button" (click)="startRecording()" [disabled]="!cameraStream || cameraBusy || !recordingSupported" [attr.aria-label]="'CHAT.RECORD_VIDEO' | translate:'Grabar video'"><ion-icon name="videocam-outline"></ion-icon></button>
+            }
+          </div>
+          <div class="camera-alternatives">
+            <button type="button" class="text-button" (click)="leaveCamera()" [disabled]="cameraBusy || recording">{{ 'COMMON.BACK' | translate:'Atrás' }}</button>
+            @if (native) {
+              <button type="button" class="text-button" (click)="takeNativePhoto()" [disabled]="cameraBusy || recording">{{ 'STORY_COMPOSER.DEVICE_CAMERA' | translate:'Cámara del dispositivo' }}</button>
+            }
+            @if (!recordingSupported || !cameraStream) {
+              <button type="button" class="text-button" (click)="deviceVideoInput.click()" [disabled]="cameraBusy || recording">{{ 'CHAT.RECORD_VIDEO' | translate:'Grabar video' }}</button>
+            }
+          </div>
+        } @else {
+          <div class="editor-grid">
+            <div class="preview-column">
+              <div class="story-preview" [class.text-preview]="!file" [class.audio-preview]="mediaKind === 'audio'">
+                @if (mediaKind === 'image') {
+                  <img [src]="previewUrl" [attr.style]="imagePreviewTransform()" (load)="imageLoaded($event)" (error)="previewFailed()" [alt]="'STORY_COMPOSER.PREVIEW' | translate:'Vista previa de tu historia'">
+                } @else if (mediaKind === 'video') {
+                  <video [src]="previewUrl" controls playsinline preload="metadata" (error)="previewFailed()"></video>
+                } @else if (mediaKind === 'audio') {
+                  <div class="audio-art"><ion-icon name="musical-notes-outline"></ion-icon></div>
+                  <audio [src]="previewUrl" controls preload="metadata" (error)="previewFailed()"></audio>
+                } @else {
+                  <p class="text-story">{{ text || ('STORY_COMPOSER.TEXT_PREVIEW' | translate:'Tu historia empieza aquí…') }}</p>
+                }
+                @if (imageLoading) { <ion-spinner name="crescent" class="preview-loading"></ion-spinner> }
+              </div>
+              @if (mediaKind === 'image') {
+                <div class="image-edit-tools">
+                  <button type="button" (click)="rotateImage()" [disabled]="busy || imageLoading"><ion-icon name="refresh-outline"></ion-icon>{{ 'STORY_COMPOSER.ROTATE' | translate:'Girar' }}</button>
+                  <button type="button" (click)="imageCrop = !imageCrop" [disabled]="busy || imageLoading" [attr.aria-pressed]="imageCrop"><ion-icon name="expand-outline"></ion-icon>{{ imageCrop ? ('STORY_COMPOSER.ORIGINAL' | translate:'Foto completa') : ('STORY_COMPOSER.CROP' | translate:'Recortar vertical') }}</button>
+                </div>
+              }
+              <div class="media-edit-tools">
+                <button type="button" class="text-button" (click)="galleryInput.click()" [disabled]="busy"><ion-icon name="image-outline"></ion-icon>{{ file ? ('STORY_COMPOSER.REPLACE' | translate:'Cambiar') : ('STORY_COMPOSER.ADD_MEDIA' | translate:'Añadir foto o video') }}</button>
+                <button type="button" class="text-button" (click)="openCamera()" [disabled]="busy"><ion-icon name="camera-outline"></ion-icon>{{ 'COMMON.CAMERA' | translate:'Cámara' }}</button>
+                @if (file) { <button type="button" class="text-button" (click)="removeFile()" [disabled]="busy">{{ 'WORLD.REMOVE_FILE' | translate:'Quitar archivo' }}</button> }
+              </div>
+            </div>
+            <div class="draft-options">
+              <label class="caption-label" for="story-caption">{{ 'STORY_COMPOSER.CAPTION' | translate:'Añade unas palabras' }}</label>
+              <textarea #captionInput id="story-caption" [(ngModel)]="text" [disabled]="busy" rows="3" maxlength="4000" [placeholder]="'WORLD.STORY_PLACEHOLDER' | translate:'Comparte una historia cifrada'"></textarea>
+              <button type="button" class="audience-summary" (click)="settingsOpen = !settingsOpen" [disabled]="busy" [attr.aria-expanded]="settingsOpen">
+                <ion-icon name="settings-outline"></ion-icon>
+                <span><small>{{ 'WORLD.AUDIENCE' | translate:'Audiencia' }}</small><strong>{{ audienceLabel() }}</strong></span>
+                <span class="duration-label">{{ durationSeconds === 3600 ? ('COMMON.1_HOUR' | translate:'1 hora') : durationSeconds === 604800 ? ('COMMON.7_DAYS' | translate:'7 días') : ('COMMON.24_HOURS' | translate:'24 horas') }}</span>
+              </button>
+              @if (settingsOpen) {
+                <div class="publish-settings">
+                  <label>{{ 'WORLD.AUDIENCE' | translate:'Audiencia' }}
+                    <select [(ngModel)]="audience" [disabled]="busy">
+                      <option value="contacts">{{ 'WORLD.MY_CONTACTS' | translate:'Mis contactos' }}</option>
+                      @for (group of groups(); track group.id) { <option [value]="group.id">{{ chat.conversationTitle(group) }}</option> }
+                    </select>
+                  </label>
+                  @if (audience === 'contacts') {
+                    <label>{{ 'STORY_COMPOSER.VISIBILITY' | translate:'Quién puede verla' }}
+                      <select [(ngModel)]="visibility" [disabled]="busy">
+                        <option value="Contacts">{{ 'WORLD.CONTACTS' | translate:'Contactos' }}</option>
+                        <option value="MutualContacts">{{ 'WORLD.MUTUALS' | translate:'Mutuos' }}</option>
+                        <option value="PublicWorld">{{ 'WORLD.WORLD' | translate:'Mundo' }}</option>
+                      </select>
+                    </label>
+                  } @else { <p class="settings-note">{{ 'WORLD.GROUP_MEMBERS_ONLY' | translate:'Solo miembros del grupo' }}</p> }
+                  @if (audience === 'contacts' && visibility === 'PublicWorld') { <p class="settings-note">{{ 'STORY_COMPOSER.PUBLIC_COPY' | translate:'Esta historia será visible en Mundo. Elige Contactos para compartirla en privado.' }}</p> }
+                  <label>{{ 'STORY_COMPOSER.DURATION' | translate:'Visible durante' }}
+                    <select [(ngModel)]="durationSeconds" [disabled]="busy">
+                      <option [ngValue]="3600">{{ 'COMMON.1_HOUR' | translate:'1 hora' }}</option>
+                      <option [ngValue]="86400">{{ 'COMMON.24_HOURS' | translate:'24 horas' }}</option>
+                      <option [ngValue]="604800">{{ 'COMMON.7_DAYS' | translate:'7 días' }}</option>
+                    </select>
+                  </label>
+                  <label class="check-option"><input type="checkbox" [(ngModel)]="viewOnce" [disabled]="busy"><span>{{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }}</span></label>
+                  <label class="check-option"><input type="checkbox" [(ngModel)]="allowReposts" [disabled]="busy"><span>{{ 'WORLD.ALLOW_REPOSTS' | translate:'Permitir que otros republiquen esta historia' }}</span></label>
+                </div>
+              }
+              <p class="privacy-copy"><ion-icon name="shield-checkmark-outline"></ion-icon>{{ 'STORY_COMPOSER.PRIVACY_COPY' | translate:'Tú eliges quién puede verla antes de publicar.' }}</p>
+            </div>
+          </div>
+        }
+        @if (error) { <p class="composer-error" role="alert">{{ error }}</p> }
+      </div>
+      @if (mode === 'edit') {
+        <footer class="composer-footer">
+          @if (busy) { <span class="publish-status" role="status">{{ social.publishingStatus() || ('STORY_COMPOSER.PUBLISHING' | translate:'Publicando tu historia…') }}</span> }
+          <button type="button" class="publish-button" (click)="publish()" [disabled]="busy || social.publishing() || !hasDraft() || imageLoading">
+            @if (busy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
+            {{ 'COMMON.PUBLISH' | translate:'Publicar' }}
+          </button>
+        </footer>
+      }
+    </section>
+  </ng-template>
+</ion-modal>

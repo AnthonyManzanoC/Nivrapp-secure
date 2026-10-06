@@ -194,6 +194,15 @@ ion-header {
 ion-button {
   text-transform: none;
   letter-spacing: 0;
+  font-weight: 650;
+}
+
+ion-button::part(native) {
+  transition: background-color .18s ease, box-shadow .18s ease, transform .12s ease;
+}
+
+ion-button:not([disabled]):active::part(native) {
+  transform: scale(.985);
 }
 
 ion-input,

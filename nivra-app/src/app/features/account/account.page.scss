@@ -796,6 +796,59 @@
   font-weight: 900;
 }
 
+.session-footer {
+  grid-column: 1 / -1;
+  padding: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.session-footer-heading {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.session-footer-icon {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  color: var(--ion-color-danger);
+  background: rgba(var(--ion-color-danger-rgb), .08);
+  font-size: 23px;
+}
+
+.session-footer h2,
+.session-footer p {
+  margin: 0;
+}
+
+.session-footer h2 {
+  font-size: 17px;
+  font-weight: 750;
+}
+
+.session-footer p {
+  margin-top: 5px;
+  max-width: 48ch;
+  color: var(--nivra-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.session-footer .logout-action {
+  margin: 0;
+  flex: 0 0 auto;
+  min-height: 48px;
+  --border-radius: 12px;
+}
+
 .identity-mode-panel {
   display: grid;
   grid-template-columns: 54px minmax(0, 1fr);
@@ -1643,6 +1696,17 @@ ion-modal.pin-setup-modal {
 }
 
 @media (max-width: 640px) {
+  .session-footer {
+    padding: 20px 18px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 18px;
+  }
+
+  .session-footer .logout-action {
+    width: 100%;
+  }
+
   .profile-photo-row {
     align-items: flex-start;
     flex-wrap: wrap;

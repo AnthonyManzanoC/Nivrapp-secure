@@ -45,7 +45,7 @@ describe('call session isolation', () => {
       } },
       { provide: SignalrService, useValue: { events$: new Subject() } },
       { provide: CallAudioOutputService, useValue: { sync: jasmine.createSpy(), resume: jasmine.createSpy().and.resolveTo(), playbackBlocked: signal(false) } },
-      { provide: CallGameSessionService, useValue: { configure: jasmine.createSpy(), reset: jasmine.createSpy(), transport: { detachPeer: jasmine.createSpy() } } },
+      { provide: CallGameSessionService, useValue: { configure: jasmine.createSpy(), reset: jasmine.createSpy(), transport: { detachPeer: jasmine.createSpy(), attachDirect: jasmine.createSpy() } } },
       { provide: GroupCallCryptoService, useValue: { updateRoster: jasmine.createSpy().and.resolveTo(), clear: jasmine.createSpy(), isMediaKeySignal: () => false } },
       { provide: NativeScreenShareService, useValue: { stop: jasmine.createSpy().and.resolveTo(), supported: () => false } },
     ] });
@@ -57,6 +57,37 @@ describe('call session isolation', () => {
 
   afterEach(() => service.ngOnDestroy());
 
+  it('refreshes ICE credentials without changing immutable negotiated configuration', async () => {
+    const connection = new RTCPeerConnection({ iceCandidatePoolSize: 4, bundlePolicy: 'max-bundle' });
+    connection.addTransceiver('audio');
+    await connection.setLocalDescription(await connection.createOffer());
+    // This is the exact browser exception seen after a network recovery on 1.2.8.
+    expect(() => connection.setConfiguration({ iceServers: [], iceTransportPolicy: 'all' }))
+      .toThrowError(/configuration/i);
+    const original = connection.getConfiguration();
+    service.activeCall.set({ ...invitation, status: 'Active' });
+    service.phase.set('connected');
+    service.localStream.set(new MediaStream());
+    (service as any).peers.set('peer', { connection, iceRestartAttempts: 1, pendingIce: [], disconnectTimer: null });
+    (service as any).iceServers = [{ urls: 'turn:relay.example.test:3478', username: 'renewed', credential: 'renewed-key' }];
+    (service as any).iceTransportPolicy = 'relay';
+    spyOn<any>(service, 'loadIceConfiguration').and.resolveTo();
+    spyOn<any>(service, 'sendCallSignal').and.resolveTo();
+    spyOn<any>(service, 'establishCallPeers').and.resolveTo();
+    spyOn<any>(service, 'pollPersistedSignals').and.resolveTo();
+    spyOn<any>(service, 'scheduleConnectedUiReconcile');
+    const restart = spyOn<any>(service, 'restartIceForPeer').and.resolveTo();
+    await service.retryConnection();
+    const refreshed = connection.getConfiguration();
+    expect(service.error()).toBe('');
+    expect(refreshed.iceCandidatePoolSize).toBe(4);
+    expect(refreshed.bundlePolicy).toBe(original.bundlePolicy);
+    expect(refreshed.certificates).toEqual(original.certificates);
+    expect(refreshed.iceTransportPolicy).toBe('relay');
+    expect(refreshed.iceServers?.[0].username).toBe('renewed');
+    expect(restart).toHaveBeenCalledWith('peer', true);
+  });
+
   it('restores sendrecv when replacing a track on a receive-only transceiver', async () => {
     const sender = { track: { kind: 'video' }, replaceTrack: jasmine.createSpy().and.resolveTo() };
     const transceiver = { sender, receiver: { track: { kind: 'video' } }, direction: 'recvonly' };
@@ -65,6 +96,33 @@ describe('call session isolation', () => {
     const renegotiate = await (service as any).setOutgoingTrack(connection, 'video', {}, new MediaStream());
     expect(renegotiate).toBeTrue();
     expect(transceiver.direction).toBe('sendrecv');
+  });
+
+  it('keeps a newly attached camera bidirectional before the voice type update reaches the server', async () => {
+    service.activeCall.set({ ...invitation, status: 'Active' });
+    service.phase.set('connected');
+    const capture = document.createElement('canvas').captureStream();
+    service.localStream.set(capture);
+    (service as any).iceServers = [];
+    spyOn<any>(service, 'sendCallSignal').and.resolveTo();
+    const connection = (service as any).ensurePeerConnection('peer') as RTCPeerConnection;
+    await (service as any).createAndSendOffer('peer');
+    expect(connection.getTransceivers()[0].direction).toBe('sendrecv');
+    expect(connection.localDescription?.sdp).toContain('a=sendrecv');
+    expect(connection.localDescription?.sdp).not.toContain('a=sendonly');
+  });
+
+  it('still negotiates a video receiver when a video call has no local camera', async () => {
+    service.activeCall.set({ ...invitation, type: 'Video', status: 'Active' });
+    service.phase.set('connected');
+    service.localStream.set(new MediaStream());
+    (service as any).iceServers = [];
+    spyOn<any>(service, 'sendCallSignal').and.resolveTo();
+    const connection = (service as any).ensurePeerConnection('peer') as RTCPeerConnection;
+    await (service as any).createAndSendOffer('peer');
+    expect(connection.getTransceivers()[0].direction).toBe('recvonly');
+    expect(connection.localDescription?.sdp).toContain('m=video');
+    expect(connection.localDescription?.sdp).toContain('a=recvonly');
   });
 
   it('publishes a new remote stream reference when video arrives during a voice call', () => {
@@ -232,7 +290,7 @@ describe('call session isolation', () => {
     const broadcast = spyOn<any>(service, 'broadcastControl');
     await service.acceptVideoUpgrade();
     expect(capture).toHaveBeenCalledWith('video', false);
-    expect(renegotiate).toHaveBeenCalledWith(true);
+    expect(renegotiate).toHaveBeenCalledWith();
     expect(service.cameraOff()).toBeFalse();
     expect(service.mediaUpgradeRequested()).toBeFalse();
     expect(broadcast).toHaveBeenCalledWith('media-mode', { type: 'Video', video: true, action: 'accepted', requestId: 'upgrade-1' });
@@ -256,6 +314,24 @@ describe('call session isolation', () => {
     expect(capture).not.toHaveBeenCalled();
     expect(broadcast).toHaveBeenCalledWith('media-mode', jasmine.objectContaining({ action: 'declined' }));
   });
+
+  for (const name of ['NotAllowedError', 'NotReadableError', 'InvalidModificationError']) {
+    it(`keeps audio active and explains a ${name} camera failure without exposing a browser exception`, async () => {
+      service.activeCall.set({ ...invitation, type: 'Video', status: 'Active' });
+      service.phase.set('connected');
+      service.mediaUpgradeRequested.set(true);
+      service.localStream.set(new MediaStream());
+      spyOn<any>(service, 'restoreDirectMediaTrack').and.rejectWith(new DOMException('Internal browser details', name));
+      spyOn(console, 'warn');
+      await service.acceptVideoUpgrade();
+      expect(service.phase()).toBe('connected');
+      expect(service.activeCall()?.id).toBe(invitation.id);
+      expect(service.cameraOff()).toBeTrue();
+      expect(service.error()).toContain('audio continúa');
+      expect(service.error()).not.toContain('Internal browser details');
+      expect(service.error()).not.toContain('RTCPeerConnection');
+    });
+  }
 
   it('bounds video-response waiting without failing the active audio call', fakeAsync(() => {
     service.activeCall.set({ ...invitation, status: 'Active' });

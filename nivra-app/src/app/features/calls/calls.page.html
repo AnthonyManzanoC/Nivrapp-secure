@@ -187,7 +187,7 @@
                     </div>
                     <div class="video-upgrade-actions">
                       <ion-button mode="ios" class="accept-video-upgrade" [disabled]="calls.mediaUpgradeInFlight()" (click)="acceptVideoUpgrade()">
-                        <ion-icon name="videocam-outline" aria-hidden="true"></ion-icon>
+                        <ion-icon name="videocam-outline" slot="start" aria-hidden="true"></ion-icon>
                         {{ 'CALLS.ENABLE_YOUR_CAMERA' | translate:'Activar mi cámara' }}
                       </ion-button>
                       <ion-button mode="ios" fill="outline" [disabled]="calls.mediaUpgradeInFlight()" (click)="declineVideoUpgrade()">
@@ -208,7 +208,7 @@
                   <div class="call-audio-blocked" role="status">
                     <small>{{ 'CALLS.AUDIO_PLAYBACK_BLOCKED' | translate:'Toca para escuchar la llamada.' }}</small>
                     <ion-button mode="ios" size="small" (click)="calls.resumeAudioPlayback()">
-                      <ion-icon name="volume-high-outline" aria-hidden="true"></ion-icon>
+                      <ion-icon name="volume-high-outline" slot="start" aria-hidden="true"></ion-icon>
                       {{ 'CALLS.ENABLE_AUDIO' | translate:'Activar audio' }}
                     </ion-button>
                   </div>
@@ -233,11 +233,11 @@
             <div class="call-controls">
               @if (calls.phase() === 'ringing') {
                 <ion-button mode="ios" class="accept" (click)="accept()">
-                  <ion-icon name="call-outline"></ion-icon>
+                  <ion-icon name="call-outline" slot="start"></ion-icon>
                   {{ 'COMMON.ACCEPT' | translate:'Aceptar' }}
                 </ion-button>
                 <ion-button mode="ios" color="danger" (click)="decline()">
-                  <ion-icon name="close-outline"></ion-icon>
+                  <ion-icon name="close-outline" slot="start"></ion-icon>
                   {{ 'COMMON.REJECT' | translate:'Rechazar' }}
                 </ion-button>
               } @else {
@@ -291,7 +291,7 @@
                 </ion-button>
                 @if (calls.phase() === 'failed') {
                   <ion-button mode="ios" fill="clear" class="retry-call-button" (click)="calls.retryConnection()" [attr.aria-label]="'COMMON.RETRY' | translate:'Reintentar'">
-                    <ion-icon name="refresh-outline"></ion-icon>
+                    <ion-icon name="refresh-outline" slot="start"></ion-icon>
                     {{ 'COMMON.RETRY' | translate:'Reintentar' }}
                   </ion-button>
                 }
@@ -304,7 +304,7 @@
                   <ion-icon name="person-add-outline"></ion-icon>
                 </ion-button>
                 <ion-button mode="ios" color="danger" (click)="endActive()" [attr.aria-label]="'CALLS.HANG_UP' | translate:'Colgar'">
-                  <ion-icon name="close-outline"></ion-icon>
+                  <ion-icon name="close-outline" slot="start"></ion-icon>
                   {{ 'CALLS.HANG_UP' | translate:'Colgar' }}
                 </ion-button>
               }

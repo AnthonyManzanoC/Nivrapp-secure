@@ -22,20 +22,20 @@
       <h1>{{ 'LOGIN.TITLE' | translate:'Entra a tu espacio privado' }}</h1>
       <p class="auth-copy">{{ 'LOGIN.COPY' | translate:'Cifrado en cliente, llamadas en tiempo real y la misma cuenta en web, PC y movil.' }}</p>
 
-      <ion-segment [value]="mode" (ionChange)="setMode($any($event.detail.value))" [disabled]="submitting || auth.busy()" mode="ios">
-        <ion-segment-button value="alias" layout="label-only">
-          <ion-icon name="key-outline"></ion-icon>
-          <ion-label>{{ 'LOGIN.PRIVATE_TAB' | translate:'ID / Alias' }}</ion-label>
-        </ion-segment-button>
-        <ion-segment-button value="qr" layout="label-only">
-          <ion-icon name="qr-code-outline"></ion-icon>
-          <ion-label>{{ 'LOGIN.QR' | translate:'QR' }}</ion-label>
-        </ion-segment-button>
-        <ion-segment-button value="phone" layout="label-only">
-          <ion-icon name="call-outline"></ion-icon>
-          <ion-label>{{ 'LOGIN.SMS' | translate:'SMS' }}</ion-label>
-        </ion-segment-button>
-      </ion-segment>
+      <div class="auth-modes" role="group" [attr.aria-label]="'LOGIN.ACCESS_METHOD' | translate:'Forma de acceso'">
+        <button type="button" [class.active]="mode === 'alias'" [attr.aria-pressed]="mode === 'alias'" [disabled]="submitting || auth.busy()" (click)="setMode('alias')">
+          <ion-icon name="key-outline" aria-hidden="true"></ion-icon>
+          <span>{{ 'LOGIN.PRIVATE_TAB' | translate:'ID / Alias' }}</span>
+        </button>
+        <button type="button" [class.active]="mode === 'qr'" [attr.aria-pressed]="mode === 'qr'" [disabled]="submitting || auth.busy()" (click)="setMode('qr')">
+          <ion-icon name="qr-code-outline" aria-hidden="true"></ion-icon>
+          <span>{{ 'LOGIN.QR' | translate:'QR' }}</span>
+        </button>
+        <button type="button" [class.active]="mode === 'phone'" [attr.aria-pressed]="mode === 'phone'" [disabled]="submitting || auth.busy()" (click)="setMode('phone')">
+          <ion-icon name="call-outline" aria-hidden="true"></ion-icon>
+          <span>{{ 'LOGIN.SMS' | translate:'SMS' }}</span>
+        </button>
+      </div>
 
       @if (auth.pendingPhoneAlias()) {
         <form class="auth-form" (ngSubmit)="completeAlias()">
@@ -51,7 +51,7 @@
             <ion-input mode="ios" fill="outline" name="displayName" [(ngModel)]="displayName"></ion-input>
           </label>
           <ion-button type="submit" expand="block" mode="ios" [disabled]="auth.busy() || !isAliasValid(alias)">
-            @if (auth.busy()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="shield-checkmark-outline"></ion-icon> }
+            @if (auth.busy()) { <ion-spinner slot="start" name="crescent"></ion-spinner> } @else { <ion-icon slot="start" name="shield-checkmark-outline"></ion-icon> }
             {{ 'LOGIN.ACTIVATE_ACCOUNT' | translate:'Activar cuenta' }}
           </ion-button>
         </form>
@@ -97,7 +97,7 @@
             }
           </label>
           <ion-button type="submit" expand="block" mode="ios" [disabled]="auth.busy() || submitting || !validIdentifier()">
-            @if (auth.busy()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="log-in-outline"></ion-icon> }
+            @if (auth.busy()) { <ion-spinner slot="start" name="crescent"></ion-spinner> } @else { <ion-icon slot="start" name="log-in-outline"></ion-icon> }
             {{ aliasMode === 'private' ? ('LOGIN.CREATE_PRIVATE' | translate:'Crear cuenta privada') : aliasMode === 'register' ? ('LOGIN.CREATE_ACCOUNT' | translate:'Crear cuenta') : ('LOGIN.ENTER' | translate:'Entrar') }}
           </ion-button>
           @if (aliasMode === 'private') {

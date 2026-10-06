@@ -1,11 +1,12 @@
 import { CommonModule } from '@angular/common';
-import { AfterViewInit, Component, ElementRef, OnDestroy, OnInit, ViewChild, inject } from '@angular/core';
+import { Component, OnDestroy, OnInit, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, ToastController } from '@ionic/angular/standalone';
+import { IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, ToastController } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
   addOutline,
   barChartOutline,
+  cameraOutline,
   chatbubbleEllipsesOutline,
   checkmarkOutline,
   closeOutline,
@@ -30,7 +31,7 @@ import {
   timeOutline,
   trashOutline,
 } from 'ionicons/icons';
-import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
+import { ChatMessageVm, Contact, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { ContactSyncService } from '../../core/services/contact-sync.service';
@@ -41,6 +42,7 @@ import { SocialService } from '../../core/services/social.service';
 import { Router } from '@angular/router';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { GroupHubComponent } from './group-hub.component';
+import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
 
 interface StoryBucket {
   id: string;
@@ -58,11 +60,11 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })
-export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
+export class WorldPage implements OnInit, OnDestroy {
   readonly social = inject(SocialService);
   readonly auth = inject(AuthService);
   readonly chat = inject(ChatService);
@@ -70,17 +72,8 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
   readonly translate = inject(TranslateService);
   private readonly router = inject(Router);
   private readonly toastController = inject(ToastController);
-  private readonly storyDraftNavigation = this.router.getCurrentNavigation()?.extras.info as { storyDraftFile?: unknown } | undefined;
-  private readonly openedFromStoryPicker = this.storyDraftNavigation?.storyDraftFile instanceof File;
-  @ViewChild('storyComposer') private storyComposer?: ElementRef<HTMLElement>;
   query = '';
-  storyText = '';
-  visibility = 'Contacts';
-  storyAudience = 'contacts';
-  durationSeconds = 24 * 60 * 60;
-  viewOnce = false;
-  storyAllowReposts = true;
-  storyFile: File | null = this.openedFromStoryPicker ? this.storyDraftNavigation!.storyDraftFile as File : null;
+  storyComposerOpen = false;
   radarPhones = '';
   busyId = '';
   error = '';
@@ -110,6 +103,7 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
     addIcons({
       addOutline,
       barChartOutline,
+      cameraOutline,
       chatbubbleEllipsesOutline,
       checkmarkOutline,
       closeOutline,
@@ -137,15 +131,8 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
   }
 
   async ngOnInit(): Promise<void> {
-    this.storyAllowReposts = this.auth.session()?.user.allowStoryReposts !== false;
     await this.social.load();
     void this.contactSync.syncCachedContactsInBackground();
-  }
-
-  ngAfterViewInit(): void {
-    if (this.openedFromStoryPicker) {
-      requestAnimationFrame(() => this.storyComposer?.nativeElement.scrollIntoView({ block: 'start' }));
-    }
   }
 
   ngOnDestroy(): void {
@@ -162,14 +149,9 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
     this.timer = window.setTimeout(() => void this.social.search(this.query), 300);
   }
 
-  storyFileSelected(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    this.storyFile = input.files?.[0] ?? null;
-    input.value = '';
-  }
-
-  clearStoryFile(): void {
-    this.storyFile = null;
+  openStoryComposer(): void {
+    this.notice = '';
+    this.storyComposerOpen = true;
   }
 
   async request(person: UserSummary): Promise<void> {
@@ -246,38 +228,6 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
 
   async cancel(id: string): Promise<void> {
     await this.run(id, () => this.social.cancel(id));
-  }
-
-  async publishStory(): Promise<void> {
-    const text = this.storyText.trim();
-    if (!text && !this.storyFile) {
-      return;
-    }
-    const group = this.selectedStoryGroup();
-    const targetType = group ? 'group' : 'contacts';
-    const allowedUserIds = group
-      ? group.participants.filter((participant) => !participant.removedAt).map((participant) => participant.userId)
-      : [];
-    await this.run('story', async () => {
-      await this.social.publishStory({
-        text,
-        visibility: group ? 'SelectedUsers' : this.visibility,
-        file: this.storyFile,
-        durationSeconds: Number(this.durationSeconds),
-        viewOnce: this.viewOnce,
-        allowReposts: this.storyAllowReposts,
-        targetType,
-        targetId: group?.id ?? null,
-        allowedUserIds,
-      });
-      this.storyText = '';
-      this.storyFile = null;
-      this.viewOnce = false;
-      this.storyAllowReposts = this.auth.session()?.user.allowStoryReposts !== false;
-      this.storyAudience = 'contacts';
-      this.notice = this.social.storyDeliveryWarning() ||
-        this.tr('WORLD.NOTICE_STORY_PUBLISHED', 'Historia publicada.');
-    });
   }
 
   async openStory(story: Story): Promise<void> {
@@ -521,22 +471,6 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
     return text || 'Comentario cifrado en el chat';
   }
 
-  storyGroups(): Conversation[] {
-    const currentUserId = this.auth.session()?.user.id;
-    return this.chat.conversations()
-      .filter((conversation) => this.chat.isGroup(conversation))
-      .filter((conversation) => conversation.participants.some((participant) =>
-        !participant.removedAt && participant.userId === currentUserId))
-      .sort((left, right) => this.chat.conversationTitle(left).localeCompare(this.chat.conversationTitle(right)));
-  }
-
-  selectedStoryGroup(): Conversation | null {
-    if (this.storyAudience === 'contacts') {
-      return null;
-    }
-    return this.storyGroups().find((conversation) => conversation.id === this.storyAudience) ?? null;
-  }
-
   contactStories(): Story[] {
     return this.social.contactStories();
   }
@@ -567,11 +501,6 @@ export class WorldPage implements OnInit, OnDestroy, AfterViewInit {
   storyGroupTitle(story: Story): string {
     const group = this.chat.conversations().find((conversation) => conversation.id === story.targetId);
     return group ? this.chat.conversationTitle(group) : 'Grupo';
-  }
-
-  storyAudienceLabel(): string {
-    const group = this.selectedStoryGroup();
-    return group ? `Publicar en ${this.chat.conversationTitle(group)}` : 'Publicar para tus contactos';
   }
 
   isGhostMode(): boolean {

@@ -47,37 +47,41 @@
       @if (storyHighlights().length && !query.trim() && !showRecentSearches) {
         <nav class="story-strip" [class.is-collapsed]="storiesCollapsed" [attr.inert]="storiesCollapsed ? '' : null" [attr.aria-hidden]="storiesCollapsed" [attr.aria-label]="'WORLD.STORIES' | translate:'Historias'">
           @for (highlight of storyHighlights(); track highlight.id) {
-            <button
-              type="button"
-              class="story-highlight"
-              [class.unviewed]="highlight.unviewed"
-              [disabled]="!!storyHighlightOpening"
-              [attr.aria-busy]="storyHighlightOpening === highlight.id"
-              [attr.aria-label]="highlight.isOwn && !highlight.stories.length ? ('WORLD.NEW_STORY' | translate:'Nueva historia') : highlight.title + ' · ' + (highlight.unviewed ? ('CHATS.NEW_STORIES' | translate:'Historias nuevas') : ('WORLD.VIEW_STORY' | translate:'Ver historia'))"
-              [title]="highlight.title"
-              (click)="activateStoryHighlight(highlight, storyCreateInput)">
-              <span class="avatar-action story-highlight-ring" [class.has-story]="highlight.stories.length > 0" [class.story-empty]="!highlight.stories.length" [style.--story-ring-color]="highlight.ringColor">
-                @if (highlight.photo) {
-                  <img class="avatar avatar-img" [src]="highlight.photo" alt="" loading="lazy" decoding="async">
-                } @else {
-                  <span class="avatar">{{ highlight.initials }}</span>
-                }
-                @if (highlight.isGroup) {
-                  <span class="story-group-badge" aria-hidden="true"><ion-icon name="people-outline"></ion-icon></span>
-                }
-                @if (highlight.isOwn && !highlight.stories.length) {
-                  <span class="story-add-badge" aria-hidden="true"><ion-icon name="add-outline"></ion-icon></span>
-                }
-                @if (storyHighlightOpening === highlight.id) {
-                  <span class="story-highlight-loading" aria-hidden="true"><ion-spinner name="crescent"></ion-spinner></span>
-                }
-              </span>
-              <span class="story-highlight-title">{{ highlight.title }}</span>
-            </button>
+            <div class="story-highlight-item">
+              <button
+                type="button"
+                class="story-highlight"
+                [class.unviewed]="highlight.unviewed"
+                [disabled]="!!storyHighlightOpening"
+                [attr.aria-busy]="storyHighlightOpening === highlight.id"
+                [attr.aria-label]="highlight.isOwn && !highlight.stories.length ? ('WORLD.NEW_STORY' | translate:'Nueva historia') : highlight.title + ' · ' + (highlight.unviewed ? ('CHATS.NEW_STORIES' | translate:'Historias nuevas') : ('WORLD.VIEW_STORY' | translate:'Ver historia'))"
+                [title]="highlight.title"
+                (click)="activateStoryHighlight(highlight)">
+                <span class="avatar-action story-highlight-ring" [class.has-story]="highlight.stories.length > 0" [class.story-empty]="!highlight.stories.length" [style.--story-ring-color]="highlight.ringColor">
+                  @if (highlight.photo) {
+                    <img class="avatar avatar-img" [src]="highlight.photo" alt="" loading="lazy" decoding="async">
+                  } @else {
+                    <span class="avatar">{{ highlight.initials }}</span>
+                  }
+                  @if (highlight.isGroup) {
+                    <span class="story-group-badge" aria-hidden="true"><ion-icon name="people-outline"></ion-icon></span>
+                  }
+                  @if (storyHighlightOpening === highlight.id) {
+                    <span class="story-highlight-loading" aria-hidden="true"><ion-spinner name="crescent"></ion-spinner></span>
+                  }
+                </span>
+                <span class="story-highlight-title">{{ highlight.title }}</span>
+              </button>
+              @if (highlight.isOwn) {
+                <button type="button" class="story-add-badge" (click)="openStoryComposer($event)" [attr.aria-label]="'STORY_COMPOSER.ADD_STORY' | translate:'Añadir otra historia'">
+                  <span><ion-icon name="add-outline" aria-hidden="true"></ion-icon></span>
+                </button>
+              }
+            </div>
           }
         </nav>
       }
-      <input #storyCreateInput type="file" hidden accept="image/*,video/*,audio/*" (change)="storyDraftFileSelected($event)">
+      @if (storyPublishNotice) { <p class="story-publish-notice" role="status">{{ storyPublishNotice }}</p> }
 
       <div class="search-box" [class.has-value]="query">
         <ion-icon name="search-outline"></ion-icon>
@@ -420,6 +424,7 @@
     (cropped)="applyNewGroupAvatarCrop($event)">
   </app-image-cropper>
 
+  <app-story-composer [isOpen]="storyComposerOpen" (closed)="storyComposerOpen = false" (published)="storyPublished($event)" />
   <ion-modal class="nivra-story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="closeStoryViewer()">
     <ng-template>
       @if (social.activeStory(); as story) {

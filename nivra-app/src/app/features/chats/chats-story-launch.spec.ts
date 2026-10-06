@@ -47,28 +47,31 @@ describe('Chats story creation entry', () => {
 
   afterEach(() => page.ngOnDestroy());
 
-  it('opens the real media picker synchronously from an empty own avatar', () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    const click = spyOn(input, 'click');
+  it('opens the shared composer from an empty own avatar without leaving Chats', () => {
     const own = page.storyHighlights()[0];
     expect(own.isOwn).toBeTrue();
     expect(own.initials).toBe('MA');
-    page.activateStoryHighlight(own, input);
-    expect(click).toHaveBeenCalledTimes(1);
+    page.activateStoryHighlight(own);
+    expect(page.storyComposerOpen).toBeTrue();
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it('passes the selected file to the existing World composer as transient data', async () => {
-    const file = new File(['photo'], 'story.jpg', { type: 'image/jpeg' });
-    const input = { files: [file], value: 'selected' };
-    await page.storyDraftFileSelected({ target: input } as unknown as Event);
-    expect(input.value).toBe('');
-    expect(navigate).toHaveBeenCalledOnceWith(['/app/world'], { fragment: 'story-composer', info: { storyDraftFile: file } });
+  it('keeps existing own stories playable while the separate add button creates another', () => {
+    const own = { ...page.storyHighlights()[0], stories: [{ id: 'story-1' } as any] };
+    const openViewer = spyOn(page, 'openStoryHighlight').and.resolveTo();
+    page.activateStoryHighlight(own);
+    expect(openViewer).toHaveBeenCalledOnceWith(own);
+    expect(page.storyComposerOpen).toBeFalse();
+    const event = { stopPropagation: jasmine.createSpy('stopPropagation') } as unknown as Event;
+    page.openStoryComposer(event);
+    expect(event.stopPropagation).toHaveBeenCalled();
+    expect(page.storyComposerOpen).toBeTrue();
+    expect(navigate).not.toHaveBeenCalled();
   });
 
-  it('keeps Chats open when the media picker is cancelled', async () => {
-    await page.storyDraftFileSelected({ target: { files: [], value: '' } } as unknown as Event);
+  it('keeps Chats open after a publication and updates the inline confirmation', () => {
+    page.storyPublished('Historia publicada.');
+    expect(page.storyPublishNotice).toBe('Historia publicada.');
     expect(navigate).not.toHaveBeenCalled();
   });
 

@@ -24,8 +24,8 @@
               <p>{{ 'ACCOUNT.NIVRA_ID_HELP' | translate:'Es tu identificador privado, no un teléfono. Compártelo para que te encuentren o úsalo para iniciar sesión.' }}</p>
             </div>
             <div class="nivra-number-actions">
-              <ion-button mode="ios" fill="outline" (click)="copyNivraNumber()"><ion-icon name="copy-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.COPY_ID' | translate:'Copiar ID' }}</ion-button>
-              <ion-button mode="ios" fill="clear" (click)="shareAccount()"><ion-icon name="share-social-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.SHARE_ID' | translate:'Compartir' }}</ion-button>
+              <ion-button mode="ios" fill="outline" (click)="copyNivraNumber()"><ion-icon slot="start" name="copy-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.COPY_ID' | translate:'Copiar ID' }}</ion-button>
+              <ion-button mode="ios" fill="clear" (click)="shareAccount()"><ion-icon slot="start" name="share-social-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.SHARE_ID' | translate:'Compartir' }}</ion-button>
             </div>
           </section>
         }
@@ -54,12 +54,12 @@
           <div class="profile-photo-actions">
             <div class="profile-photo-buttons">
               <ion-button mode="ios" fill="outline" (click)="profilePhotoInput.click()" [disabled]="saving">
-                <ion-icon name="camera-outline"></ion-icon>
+                <ion-icon slot="start" name="camera-outline"></ion-icon>
                 {{ profilePhotoDataUrl ? ('ACCOUNT.CHANGE_PHOTO' | translate:'Cambiar foto') : ('ACCOUNT.UPLOAD_PHOTO' | translate:'Subir foto') }}
               </ion-button>
               @if (profilePhotoDataUrl) {
                 <ion-button mode="ios" fill="clear" color="danger" (click)="removeProfilePhoto()" [disabled]="saving">
-                  <ion-icon name="trash-outline"></ion-icon>
+                  <ion-icon slot="start" name="trash-outline"></ion-icon>
                   {{ 'ACCOUNT.REMOVE' | translate:'Quitar' }}
                 </ion-button>
               }
@@ -129,7 +129,7 @@
           </label>
         </div>
         <ion-button mode="ios" (click)="saveProfile()" [disabled]="saving || !canSaveProfile()">
-          <ion-icon name="shield-checkmark-outline"></ion-icon>
+          <ion-icon slot="start" name="shield-checkmark-outline"></ion-icon>
           {{ 'ACCOUNT.SAVE_PROFILE' | translate:'Guardar perfil' }}
         </ion-button>
       </div>
@@ -340,19 +340,19 @@
         </div>
         <div class="share-actions">
           <ion-button mode="ios" fill="outline" (click)="copyShareMessage()" [disabled]="saving">
-            <ion-icon name="copy-outline"></ion-icon>
+            <ion-icon slot="start" name="copy-outline"></ion-icon>
             {{ 'COMMON.COPY' | translate:'Copiar' }}
           </ion-button>
           <ion-button mode="ios" fill="outline" (click)="shareAccount()" [disabled]="saving">
-            <ion-icon name="share-social-outline"></ion-icon>
+            <ion-icon slot="start" name="share-social-outline"></ion-icon>
             {{ 'COMMON.SHARE' | translate:'Compartir' }}
           </ion-button>
           <ion-button mode="ios" fill="outline" (click)="openShareModal()" [disabled]="saving || shareBusy">
-            @if (shareBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="qr-code-outline"></ion-icon> }
+            @if (shareBusy) { <ion-spinner slot="start" name="crescent"></ion-spinner> } @else { <ion-icon slot="start" name="qr-code-outline"></ion-icon> }
             {{ 'ACCOUNT.SHOW_QR' | translate:'Mostrar QR' }}
           </ion-button>
           <ion-button mode="ios" fill="outline" (click)="startContactScanner()" [disabled]="saving || contactScannerBusy">
-            @if (contactScannerBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="scan-outline"></ion-icon> }
+            @if (contactScannerBusy) { <ion-spinner slot="start" name="crescent"></ion-spinner> } @else { <ion-icon slot="start" name="scan-outline"></ion-icon> }
             {{ 'ACCOUNT.SCAN_CONTACT' | translate:'Escanear contacto' }}
           </ion-button>
         </div>
@@ -438,12 +438,12 @@
           </div>
           <div class="account-actions compact">
             <ion-button mode="ios" fill="outline" (click)="savePanicPin()" [disabled]="saving || !panicPinValue || !panicPinConfirm">
-              <ion-icon name="shield-checkmark-outline"></ion-icon>
+              <ion-icon slot="start" name="shield-checkmark-outline"></ion-icon>
               {{ 'ACCOUNT.SAVE_PANIC_PIN' | translate:'Guardar PIN de panico' }}
             </ion-button>
             @if (panicPin.isConfigured()) {
               <ion-button mode="ios" fill="clear" color="danger" (click)="clearPanicPin()" [disabled]="saving">
-                <ion-icon name="trash-outline"></ion-icon>
+                <ion-icon slot="start" name="trash-outline"></ion-icon>
                 {{ 'ACCOUNT.REMOVE' | translate:'Quitar' }}
               </ion-button>
             }
@@ -463,11 +463,11 @@
         </div>
         <div class="account-actions">
           <ion-button mode="ios" fill="outline" (click)="enablePush()" [disabled]="saving || push.permission() === 'unsupported'">
-            <ion-icon name="notifications-outline"></ion-icon>
+            <ion-icon slot="start" name="notifications-outline"></ion-icon>
             {{ 'ACCOUNT.ENABLE_NOTIFICATIONS' | translate:'Activar avisos' }}
           </ion-button>
           <ion-button mode="ios" fill="clear" color="danger" (click)="revokePush()" [disabled]="saving || !push.tokenId()">
-            <ion-icon name="notifications-off-outline"></ion-icon>
+            <ion-icon slot="start" name="notifications-off-outline"></ion-icon>
             {{ 'ACCOUNT.REVOKE_TOKEN' | translate:'Revocar token' }}
           </ion-button>
         </div>
@@ -503,7 +503,7 @@
         </div>
         <div class="account-actions compact">
           <ion-button mode="ios" fill="outline" (click)="clearDraftsAndPreviews()" [disabled]="saving">
-            <ion-icon name="trash-outline"></ion-icon>
+            <ion-icon slot="start" name="trash-outline"></ion-icon>
             {{ t('settings.data.deleteDrafts', 'Eliminar borradores') }}
           </ion-button>
         </div>
@@ -554,7 +554,7 @@
         </div>
         <div class="account-actions compact">
           <ion-button mode="ios" fill="outline" (click)="copyDiagnostics()" [disabled]="saving">
-            <ion-icon name="copy-outline"></ion-icon>
+            <ion-icon slot="start" name="copy-outline"></ion-icon>
             {{ t('settings.diagnostics.copy', 'Copiar diagnostico') }}
           </ion-button>
           <ion-button mode="ios" fill="clear" (click)="resetAppSettings()" [disabled]="saving">
@@ -577,7 +577,7 @@
               </div>
               @if (device.id !== auth.session()?.device?.id) {
                 <ion-button mode="ios" fill="outline" color="danger" (click)="revoke(device.hardwareId || device.id)" [disabled]="saving" [attr.aria-label]="'ACCOUNT.REVOKE_DESTROY' | translate:'Revocar y destruir'">
-                  <ion-icon name="trash-outline"></ion-icon>
+                  <ion-icon slot="start" name="trash-outline"></ion-icon>
                   {{ 'ACCOUNT.REVOKE_DESTROY' | translate:'Revocar y Destruir' }}
                 </ion-button>
               } @else {
@@ -607,12 +607,12 @@
         <ion-textarea mode="ios" fill="outline" rows="3" [(ngModel)]="qrText" placeholder="nivra://login/qr?..."></ion-textarea>
         <div class="account-actions">
           <ion-button mode="ios" fill="outline" (click)="startQrScanner()" [disabled]="saving || qrScannerBusy">
-            @if (qrScannerBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="camera-outline"></ion-icon> }
+            @if (qrScannerBusy) { <ion-spinner slot="start" name="crescent"></ion-spinner> } @else { <ion-icon slot="start" name="camera-outline"></ion-icon> }
             {{ 'COMMON.CAMERA' | translate:'Camara' }}
           </ion-button>
           <input #qrFileInput type="file" accept="image/*" hidden (change)="scanQrFile($event)">
           <ion-button mode="ios" fill="outline" (click)="qrFileInput.click()" [disabled]="saving || qrScannerBusy">
-            <ion-icon name="image-outline"></ion-icon>
+            <ion-icon slot="start" name="image-outline"></ion-icon>
             {{ 'COMMON.IMAGE' | translate:'Imagen' }}
           </ion-button>
           @if (qrScannerOpen) {
@@ -620,23 +620,8 @@
           }
         </div>
         <ion-button mode="ios" fill="outline" (click)="authorizeQr()" [disabled]="saving || !qrText.trim()">
-          <ion-icon name="qr-code-outline"></ion-icon>
+          <ion-icon slot="start" name="qr-code-outline"></ion-icon>
           {{ 'ACCOUNT.AUTHORIZE_DEVICE' | translate:'Autorizar dispositivo' }}
-        </ion-button>
-      </div>
-      </details>
-
-      <details class="account-section panel span-6 session-panel">
-        <summary>{{ 'ACCOUNT.SESSION' | translate:'Sesion' }}</summary>
-        <div class="account-section-body">
-
-        <div class="mini-list">
-          <span>{{ 'ACCOUNT.SESSION_COPY_1' | translate:'Usa esta salida en equipos compartidos o cuando quieras abrir otra cuenta.' }}</span>
-          <span>{{ 'ACCOUNT.SESSION_COPY_2' | translate:'Se cerrara la sesion local de este dispositivo.' }}</span>
-        </div>
-        <ion-button class="logout-action" mode="ios" fill="outline" color="danger" (click)="logout()" [disabled]="saving">
-          <ion-icon name="log-out-outline"></ion-icon>
-          {{ 'ACCOUNT.LOGOUT' | translate:'Cerrar sesion' }}
         </ion-button>
       </div>
       </details>
@@ -651,11 +636,25 @@
         </div>
         <ion-input mode="ios" fill="outline" [(ngModel)]="deleteConfirmation" placeholder="DELETE"></ion-input>
         <ion-button mode="ios" color="danger" fill="outline" (click)="deleteAccount()" [disabled]="saving || deleteConfirmation !== 'DELETE'">
-          <ion-icon name="warning-outline"></ion-icon>
+          <ion-icon slot="start" name="warning-outline"></ion-icon>
           {{ 'ACCOUNT.REQUEST_DELETE' | translate:'Solicitar borrado' }}
         </ion-button>
       </div>
       </details>
+
+      <section class="panel session-panel session-footer" aria-labelledby="account-session-heading">
+        <div class="session-footer-heading">
+          <span class="session-footer-icon" aria-hidden="true"><ion-icon name="log-out-outline"></ion-icon></span>
+          <div>
+            <h2 id="account-session-heading">{{ 'ACCOUNT.SESSION' | translate:'Sesión' }}</h2>
+            <p>{{ 'ACCOUNT.SESSION_COPY_2' | translate:'Se cerrará la sesión local de este dispositivo.' }}</p>
+          </div>
+        </div>
+        <ion-button class="logout-action" mode="ios" fill="outline" color="danger" (click)="logout()" [disabled]="saving">
+          <ion-icon slot="start" name="log-out-outline" aria-hidden="true"></ion-icon>
+          {{ 'ACCOUNT.LOGOUT' | translate:'Cerrar sesión' }}
+        </ion-button>
+      </section>
     </section>
 
     <ion-modal class="pin-setup-modal" [isOpen]="pinSetupModalOpen" (didDismiss)="closePinSetupModal()">
@@ -710,7 +709,7 @@
           }
 
           <ion-button mode="ios" (click)="confirmWebPin()" [disabled]="saving || setupPin.length !== 4 || setupPinConfirm.length !== 4 || setupPin !== setupPinConfirm">
-            <ion-icon name="lock-closed-outline"></ion-icon>
+            <ion-icon slot="start" name="lock-closed-outline"></ion-icon>
             {{ 'ACCOUNT.ENABLE_SAFE_MODE' | translate:'Activar Modo Seguro' }}
           </ion-button>
         </section>
@@ -739,11 +738,11 @@
           <p class="share-link">{{ shareUrl() }}</p>
           <div class="account-actions compact">
             <ion-button mode="ios" fill="outline" (click)="copyShareMessage()">
-              <ion-icon name="copy-outline"></ion-icon>
+              <ion-icon slot="start" name="copy-outline"></ion-icon>
               {{ 'ACCOUNT.COPY_MESSAGE' | translate:'Copiar mensaje' }}
             </ion-button>
             <ion-button mode="ios" (click)="shareAccount()">
-              <ion-icon name="share-social-outline"></ion-icon>
+              <ion-icon slot="start" name="share-social-outline"></ion-icon>
               {{ 'COMMON.SHARE' | translate:'Compartir' }}
             </ion-button>
           </div>
@@ -770,11 +769,11 @@
           <input #contactQrFileInput type="file" accept="image/*" hidden (change)="scanContactQrFile($event)">
           <div class="account-actions compact">
             <ion-button mode="ios" fill="outline" (click)="contactQrFileInput.click()" [disabled]="contactScannerBusy">
-              <ion-icon name="image-outline"></ion-icon>
+              <ion-icon slot="start" name="image-outline"></ion-icon>
               {{ 'COMMON.IMAGE' | translate:'Imagen' }}
             </ion-button>
             <ion-button mode="ios" (click)="startContactScanner()" [disabled]="contactScannerBusy">
-              @if (contactScannerBusy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="camera-outline"></ion-icon> }
+              @if (contactScannerBusy) { <ion-spinner slot="start" name="crescent"></ion-spinner> } @else { <ion-icon slot="start" name="camera-outline"></ion-icon> }
               {{ 'COMMON.CAMERA' | translate:'Camara' }}
             </ion-button>
           </div>
