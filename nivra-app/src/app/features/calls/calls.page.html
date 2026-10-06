@@ -8,7 +8,7 @@
     <header class="page-head">
       <div>
         <h1>{{ 'CALLS.TITLE' | translate:'Llamadas' }}</h1>
-        <p>{{ 'CALLS.COPY' | translate:'WebRTC con senalizacion real por backend y SignalR.' }}</p>
+        <p>{{ 'CALLS.COPY' | translate:'Conecta por voz o video con tus contactos.' }}</p>
       </div>
     </header>
 
@@ -16,13 +16,13 @@
       <article class="panel calls-panel" [class.span-12]="isCallMode()" [class.span-7]="!isCallMode()">
         <div class="panel-head">
           <h2>{{ calls.activeCall() ? ('CALLS.ACTIVE' | translate:'Activa') : ('CALLS.AGENDA' | translate:'Agenda') }}</h2>
-          <span>{{ uiPhase() }}</span>
+          <span role="status" aria-live="polite">{{ uiPhase() }}</span>
         </div>
 
         @if (calls.activeCall(); as call) {
           <div class="call-active" [class.video]="call.type === 'Video'" [class.incoming]="calls.phase() === 'ringing'">
-            <div class="call-stage" [class.has-local-video]="call.type === 'Video' && calls.localStream() && calls.phase() !== 'connected'">
-              @if (call.type === 'Video' && calls.phase() !== 'connected') {
+            <div class="call-stage" [class.has-local-video]="call.type === 'Video' && videoParticipantHasVideo(calls.localStream(), gameUserId()) && calls.phase() !== 'connected'">
+              @if (call.type === 'Video' && calls.phase() !== 'connected' && videoParticipantHasVideo(calls.localStream(), gameUserId())) {
                 @if (calls.localStream(); as local) {
                   <video id="localVideo" class="local-preview-main" [appMediaStream]="local" muted autoplay playsinline></video>
                 }
@@ -30,10 +30,44 @@
 
               @if (calls.phase() === 'connected' && (calls.remoteEntries().length || (call.type === 'Video' && calls.localStream()))) {
                 @if (call.type === 'Video') {
-                  @if (pinnedVideoTile(); as pinnedTile) {
+                  @if (!calls.isGroupCall(call) && !pinnedVideoTile()) {
+                    <div class="video-composition direct-video">
+                      <div class="remote-tile main-video" [class.no-video]="!videoParticipantHasVideo(mainVideoStream(), mainVideoParticipantId())">
+                        @if (videoParticipantHasVideo(mainVideoStream(), mainVideoParticipantId())) {
+                          <video [appMediaStream]="mainVideoStream()" muted autoplay playsinline></video>
+                        } @else {
+                          <div class="video-audio-fallback">
+                            @if (videoParticipantPhoto(mainVideoParticipantId())) {
+                              <img [src]="videoParticipantPhoto(mainVideoParticipantId())" alt="">
+                            } @else {
+                              <strong>{{ videoParticipantInitials(mainVideoParticipantId()) }}</strong>
+                            }
+                            <small>{{ videoFallbackStatus(mainVideoParticipantId()) }}</small>
+                          </div>
+                        }
+                        <span>{{ videoParticipantLabel(mainVideoParticipantId()) }}</span>
+                      </div>
+                      <button type="button" class="local-preview" (click)="toggleVideoSwap()"
+                        [disabled]="!primaryRemoteEntry() || !calls.localStream()"
+                        [attr.aria-label]="'CALLS.SWAP_VIDEO' | translate:'Intercambiar videos'">
+                        @if (videoParticipantHasVideo(pipVideoStream(), pipVideoParticipantId())) {
+                          <video [appMediaStream]="pipVideoStream()" muted autoplay playsinline></video>
+                        } @else {
+                          <div class="pip-avatar">
+                            @if (videoParticipantPhoto(pipVideoParticipantId())) {
+                              <img [src]="videoParticipantPhoto(pipVideoParticipantId())" alt="">
+                            } @else {
+                              <strong>{{ videoParticipantInitials(pipVideoParticipantId()) }}</strong>
+                            }
+                          </div>
+                        }
+                        <span>{{ videoParticipantLabel(pipVideoParticipantId()) }}</span>
+                      </button>
+                    </div>
+                  } @else if (pinnedVideoTile(); as pinnedTile) {
                     <div class="video-composition pinned-layout">
                       <button type="button" class="remote-tile main-video pinned-main" (click)="clearPinnedVideo()" [attr.aria-label]="'CALLS.UNPIN_VIDEO' | translate:'Quitar video principal'">
-                        @if (hasVideoTrack(pinnedTile.stream)) {
+                        @if (videoParticipantHasVideo(pinnedTile.stream, pinnedTile.id)) {
                           <video [appMediaStream]="pinnedTile.stream" muted autoplay playsinline></video>
                         } @else {
                           <div class="video-audio-fallback">
@@ -42,6 +76,7 @@
                             } @else {
                               <strong>{{ videoParticipantInitials(pinnedTile.id) }}</strong>
                             }
+                            <small>{{ videoFallbackStatus(pinnedTile.id) }}</small>
                           </div>
                         }
                         <span>{{ videoTileLabel(pinnedTile) }}</span>
@@ -51,7 +86,7 @@
                         <div class="participant-strip video-thumb-strip" [attr.aria-label]="'CALLS.CONNECTED_PARTICIPANTS' | translate:'Participantes conectados'">
                           @for (tile of galleryVideoTiles(); track tile.id) {
                             <button type="button" (click)="selectVideoTile(tile)" [attr.aria-label]="('CALLS.PIN_VIDEO' | translate:'Fijar video') + ' ' + videoTileLabel(tile)">
-                              @if (hasVideoTrack(tile.stream)) {
+                              @if (videoParticipantHasVideo(tile.stream, tile.id)) {
                                 <video [appMediaStream]="tile.stream" muted autoplay playsinline></video>
                               } @else if (videoParticipantPhoto(tile.id)) {
                                 <img [src]="videoParticipantPhoto(tile.id)" [alt]="videoTileLabel(tile)">
@@ -73,7 +108,7 @@
                       [class.many]="videoGallerySizeClass() === 'many'">
                       @for (tile of galleryVideoTiles(); track tile.id) {
                         <button type="button" class="remote-tile gallery-tile" (click)="selectVideoTile(tile)" [attr.aria-label]="('CALLS.PIN_VIDEO' | translate:'Fijar video') + ' ' + videoTileLabel(tile)">
-                          @if (hasVideoTrack(tile.stream)) {
+                          @if (videoParticipantHasVideo(tile.stream, tile.id)) {
                             <video [appMediaStream]="tile.stream" muted autoplay playsinline></video>
                           } @else {
                             <div class="video-audio-fallback">
@@ -82,6 +117,7 @@
                               } @else {
                                 <strong>{{ videoParticipantInitials(tile.id) }}</strong>
                               }
+                              <small>{{ videoFallbackStatus(tile.id) }}</small>
                             </div>
                           }
                           <span>{{ videoTileLabel(tile) }}</span>
@@ -111,7 +147,7 @@
                   </section>
                 }
               } @else {
-                <div class="waiting-tile" [class.over-video]="call.type === 'Video' && calls.localStream() && calls.phase() !== 'connected'">
+                <div class="waiting-tile" [class.over-video]="call.type === 'Video' && videoParticipantHasVideo(calls.localStream(), gameUserId()) && calls.phase() !== 'connected'">
                   <div class="call-avatar" [class.ringing]="calls.phase() === 'calling' || calls.phase() === 'ringing'">
                     @if (activeCallPhoto(call)) {
                       <img [src]="activeCallPhoto(call)" alt="">
@@ -138,6 +174,51 @@
 
             </div>
 
+            @if (calls.mediaUpgradeRequested() || calls.mediaUpgradeAwaitingPeer() || calls.mediaUpgradeNotice() || calls.audioPlaybackBlocked() || calls.error()) {
+              <div class="call-notices">
+                @if (calls.mediaUpgradeRequested()) {
+                  <section class="video-upgrade-prompt" role="group" [attr.aria-label]="'CALLS.VIDEO_REQUEST' | translate:'Invitación a video'">
+                    <div class="video-upgrade-copy">
+                      <ion-icon name="videocam-outline" aria-hidden="true"></ion-icon>
+                      <div>
+                        <strong>{{ 'CALLS.VIDEO_REQUEST' | translate:'Invitación a video' }}</strong>
+                        <small>{{ 'CALLS.VIDEO_UPGRADE_PRIVACY' | translate:'Tu cámara seguirá apagada hasta que aceptes. El audio continúa.' }}</small>
+                      </div>
+                    </div>
+                    <div class="video-upgrade-actions">
+                      <ion-button mode="ios" class="accept-video-upgrade" [disabled]="calls.mediaUpgradeInFlight()" (click)="acceptVideoUpgrade()">
+                        <ion-icon name="videocam-outline" aria-hidden="true"></ion-icon>
+                        {{ 'CALLS.ENABLE_YOUR_CAMERA' | translate:'Activar mi cámara' }}
+                      </ion-button>
+                      <ion-button mode="ios" fill="outline" [disabled]="calls.mediaUpgradeInFlight()" (click)="declineVideoUpgrade()">
+                        {{ 'CALLS.KEEP_AUDIO_ONLY' | translate:'Seguir solo con audio' }}
+                      </ion-button>
+                    </div>
+                  </section>
+                } @else if (calls.mediaUpgradeAwaitingPeer()) {
+                  <p class="video-upgrade-pending" role="status">
+                    <ion-icon name="videocam-outline" aria-hidden="true"></ion-icon>
+                    {{ 'CALLS.WAITING_FOR_PEER_CAMERA' | translate:'Esperando que active su cámara…' }}
+                  </p>
+                } @else if (calls.mediaUpgradeNotice()) {
+                  <p class="video-upgrade-pending" role="status">{{ calls.mediaUpgradeNotice() }}</p>
+                }
+
+                @if (calls.audioPlaybackBlocked()) {
+                  <div class="call-audio-blocked" role="status">
+                    <small>{{ 'CALLS.AUDIO_PLAYBACK_BLOCKED' | translate:'Toca para escuchar la llamada.' }}</small>
+                    <ion-button mode="ios" size="small" (click)="calls.resumeAudioPlayback()">
+                      <ion-icon name="volume-high-outline" aria-hidden="true"></ion-icon>
+                      {{ 'CALLS.ENABLE_AUDIO' | translate:'Activar audio' }}
+                    </ion-button>
+                  </div>
+                }
+                @if (calls.error()) {
+                  <p class="call-inline-error" role="alert">{{ calls.error() }}</p>
+                }
+              </div>
+            }
+
             @if (calls.games.panelOpen() && calls.phase() !== 'ringing') {
               <app-call-game-panel class="call-game-area"
                 [activeGameAvailable]="calls.games.browsing() && !!calls.games.state() && calls.games.state()?.status !== 'finished'"
@@ -160,14 +241,16 @@
                   {{ 'COMMON.REJECT' | translate:'Rechazar' }}
                 </ion-button>
               } @else {
-                <ion-button mode="ios" fill="clear" [disabled]="!calls.localStream()" (click)="calls.toggleMute()" [attr.aria-pressed]="calls.muted()" [attr.aria-label]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'" [title]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'">
+                <ion-button mode="ios" fill="clear" [class.control-off]="calls.muted()" [disabled]="!canControlLocalMedia()" (click)="calls.toggleMute()" [attr.aria-pressed]="calls.muted()" [attr.aria-label]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'" [title]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'">
                   <ion-icon [name]="calls.muted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
                 </ion-button>
                 @if (call.type === 'Video') {
                   <ion-button
                     mode="ios"
                     fill="clear"
-                    [disabled]="!calls.localStream() || calls.mediaUpgradeInFlight()"
+                    [class.control-off]="calls.cameraOff()"
+                    [attr.aria-pressed]="!calls.cameraOff()"
+                    [disabled]="!canControlLocalMedia() || calls.mediaUpgradeInFlight()"
                     (click)="calls.toggleCamera()"
                     [attr.aria-label]="calls.cameraOff() ? ('CALLS.ENABLE_CAMERA' | translate:'Activar camara') : ('CALLS.DISABLE_CAMERA' | translate:'Desactivar camara')">
                     <ion-icon [name]="calls.cameraOff() ? 'videocam-off-outline' : 'videocam-outline'"></ion-icon>
@@ -178,6 +261,7 @@
                       fill="clear"
                       class="screen-share-button"
                       [class.active]="calls.screenSharing()"
+                      [attr.aria-pressed]="calls.screenSharing()"
                       [disabled]="!calls.canShareScreen()"
                       (click)="toggleScreenShare()"
                       [attr.aria-label]="'CALLS.SHARE_SCREEN' | translate:'Compartir pantalla'">
@@ -196,7 +280,7 @@
                     <ion-icon name="videocam-outline"></ion-icon>
                   </ion-button>
                 }
-                <ion-button mode="ios" fill="clear" (click)="calls.toggleSpeaker()" [attr.aria-pressed]="calls.speaker()" aria-label="Cambiar salida de audio" title="Cambiar salida de audio">
+                <ion-button mode="ios" fill="clear" [class.control-off]="!calls.speaker()" (click)="calls.toggleSpeaker()" [attr.aria-pressed]="calls.speaker()" aria-label="Cambiar salida de audio" title="Cambiar salida de audio">
                   <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
                 </ion-button>
                 <ion-button mode="ios" fill="clear" class="games-button"
@@ -206,7 +290,7 @@
                   <ion-icon name="game-controller-outline"></ion-icon>
                 </ion-button>
                 @if (calls.phase() === 'failed') {
-                  <ion-button mode="ios" fill="clear" class="retry-call-button" (click)="calls.retryConnection()">
+                  <ion-button mode="ios" fill="clear" class="retry-call-button" (click)="calls.retryConnection()" [attr.aria-label]="'COMMON.RETRY' | translate:'Reintentar'">
                     <ion-icon name="refresh-outline"></ion-icon>
                     {{ 'COMMON.RETRY' | translate:'Reintentar' }}
                   </ion-button>
@@ -219,7 +303,7 @@
                   [attr.aria-label]="'CALLS.ADD_PARTICIPANT' | translate:'Anadir participante'">
                   <ion-icon name="person-add-outline"></ion-icon>
                 </ion-button>
-                <ion-button mode="ios" color="danger" (click)="endActive()">
+                <ion-button mode="ios" color="danger" (click)="endActive()" [attr.aria-label]="'CALLS.HANG_UP' | translate:'Colgar'">
                   <ion-icon name="close-outline"></ion-icon>
                   {{ 'CALLS.HANG_UP' | translate:'Colgar' }}
                 </ion-button>
@@ -290,7 +374,7 @@
           </div>
         }
 
-        @if (calls.error()) {
+        @if (calls.error() && !calls.activeCall()) {
           <p class="error-copy">{{ calls.error() }}</p>
         }
         @if (calls.resumableCall() && !calls.activeCall()) {

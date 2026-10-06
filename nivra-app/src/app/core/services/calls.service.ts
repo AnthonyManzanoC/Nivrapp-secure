@@ -71,6 +71,7 @@ interface LiveKitPublicationLike {
 }
 
 const CALL_RING_TIMEOUT_MS = 45_000;
+const VIDEO_UPGRADE_RESPONSE_TIMEOUT_MS = 30_000;
 const CALL_RECOVERY_HINT_KEY = 'nivra.callRecoveryHint';
 const MAX_ICE_RESTART_ATTEMPTS = 3;
 const CALL_SIGNAL_POLL_MS = 1_500;
@@ -129,7 +130,10 @@ export class CallsService implements OnDestroy {
   private ringTimeout: number | null = null;
   private ringToneInterval: number | null = null;
   private ringAudioContext: AudioContext | null = null;
-  private ringTonePhase: 'calling' | 'ringing' | null = null;
+  private ringTonePhase: 'calling' | 'ringing' | 'connecting' | null = null;
+  private mediaUpgradeAwaitTimer: number | null = null;
+  private outgoingVideoRequestId = '';
+  private incomingVideoRequestId = '';
   private readonly callSignalSessionId = crypto.randomUUID();
   private callActionInFlight = false;
   private recoveryLookupInFlight = '';
@@ -185,6 +189,12 @@ export class CallsService implements OnDestroy {
   readonly speaker = signal(true);
   readonly screenSharing = signal(false);
   readonly mediaUpgradeInFlight = signal(false);
+  /** A direct-call peer asked us to turn on our camera. Camera capture requires our own action. */
+  readonly mediaUpgradeRequested = signal(false);
+  /** Our camera is on, but the other participant has not answered the video request yet. */
+  readonly mediaUpgradeAwaitingPeer = signal(false);
+  readonly mediaUpgradeNotice = signal('');
+  readonly audioPlaybackBlocked = this.audioOutput.playbackBlocked;
   readonly activeScreenShareStreamId = signal<string | null>(null);
   readonly error = signal('');
   readonly screenShareNotice = signal('');
@@ -225,6 +235,13 @@ export class CallsService implements OnDestroy {
       const streams = this.remoteStreams();
       const muted = !this.speaker();
       untracked(() => this.audioOutput.sync(streams, muted));
+    });
+    effect(() => {
+      const phase = this.phase();
+      untracked(() => {
+        if (['calling', 'ringing', 'connecting'].includes(phase)) this.startRingingTone(phase);
+        else this.stopRingingTone();
+      });
     });
     this.realtime.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((event) => {
       if (event.type === 'call.started' || event.type === 'incomingCall') {
@@ -387,7 +404,6 @@ export class CallsService implements OnDestroy {
       if (!await this.claimCall(call) || this.activeCall()?.id !== call.id) { return; }
       this.setConnectingPhase();
       this.clearRingTimeout();
-      this.stopRingingTone();
       void this.nativeDevice.clearIncomingCall(call.id);
       if (this.isGroupCall(call)) {
         await this.connectLiveKitRoom(call);
@@ -532,23 +548,31 @@ export class CallsService implements OnDestroy {
 
   async toggleCamera(): Promise<void> {
     const call = this.activeCall();
+    if (!call || this.mediaUpgradeInFlight()) return;
+    if (this.mediaUpgradeRequested()) {
+      await this.acceptVideoUpgrade();
+      return;
+    }
     if (call && call.type !== 'Video') {
       await this.enableVideo();
       return;
     }
     const next = !this.cameraOff();
-    if (next && this.screenSharing()) {
-      await this.stopScreenShare();
-    }
+    const generation = this.mediaGeneration;
+    this.mediaUpgradeInFlight.set(true);
     try {
+      if (next && this.screenSharing()) await this.stopScreenShare();
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
       if (this.isGroupCall(call) && this.liveKitRoom) {
         await (this.liveKitRoom.localParticipant as unknown as {
           setCameraEnabled: (enabled: boolean) => Promise<unknown>;
         }).setCameraEnabled(!next);
+        if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
         this.syncLiveKitLocalTracks();
       } else if (!next && !this.localStream()?.getVideoTracks().some((track) => track.readyState === 'live')) {
         await this.restoreDirectMediaTrack('video');
       }
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
       this.cameraOff.set(next);
       this.localStream()?.getVideoTracks().forEach((track) => {
         track.enabled = !next;
@@ -556,8 +580,11 @@ export class CallsService implements OnDestroy {
       this.error.set('');
       this.broadcastControl('camera', next ? 'off' : 'on');
     } catch {
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
       this.cameraOff.set(true);
       this.error.set('No se pudo reactivar la camara. Revisa el permiso del dispositivo.');
+    } finally {
+      if (generation === this.mediaGeneration && this.activeCall()?.id === call.id) this.mediaUpgradeInFlight.set(false);
     }
   }
 
@@ -580,6 +607,8 @@ export class CallsService implements OnDestroy {
     this.mediaUpgradeInFlight.set(true);
     this.error.set('');
     const groupCall = this.isGroupCall(call);
+    const generation = this.mediaGeneration;
+    this.mediaUpgradeNotice.set('');
     try {
       if (groupCall) {
         const participant = this.liveKitRoom?.localParticipant as unknown as {
@@ -589,15 +618,23 @@ export class CallsService implements OnDestroy {
           throw new Error('La sala aun no esta lista para publicar video.');
         }
         await participant.setCameraEnabled(true);
+        if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
         this.syncLiveKitLocalTracks();
       } else {
         await this.restoreDirectMediaTrack('video', false);
+      }
+
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) {
+        throw new Error('La llamada ya terminó.');
       }
 
       const response = await firstValueFrom(this.api.patch<CallSession>(
         `/calls/${encodeURIComponent(call.id)}/type`,
         { type: 'Video', clientSessionId: this.callSignalSessionId },
       ));
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) {
+        throw new Error('La llamada ya terminó.');
+      }
       const updated = {
         ...call,
         ...response,
@@ -609,10 +646,19 @@ export class CallsService implements OnDestroy {
       this.addHistory(updated);
 
       if (!groupCall) {
-        this.broadcastControl('media-mode', { type: 'Video', video: true });
+        const remoteUserId = this.otherParticipantIds(updated)[0];
+        const remoteVideo = remoteUserId && this.remoteStates()[remoteUserId]?.['camera'] !== 'off' ? this.remoteStreams()[remoteUserId]?.getVideoTracks()
+          .some((track) => track.readyState === 'live' && track.enabled && !track.muted) : false;
+        const requestId = crypto.randomUUID();
+        if (!remoteVideo) this.beginAwaitingVideoResponse(call.id, requestId);
+        this.broadcastControl('media-mode', { type: 'Video', video: true, action: 'request', requestId });
+        this.broadcastControl('camera', 'on');
         await this.renegotiateDirectPeers(true);
       }
     } catch (error) {
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) {
+        return;
+      }
       if (groupCall) {
         const participant = this.liveKitRoom?.localParticipant as unknown as {
           setCameraEnabled?: (enabled: boolean) => Promise<unknown>;
@@ -624,15 +670,22 @@ export class CallsService implements OnDestroy {
       } else {
         await this.removeDirectVideoTrack();
       }
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
+      this.finishAwaitingVideoResponse();
       this.cameraOff.set(true);
       this.error.set(error instanceof Error ? error.message : 'No se pudo activar el video en esta llamada.');
     } finally {
-      this.mediaUpgradeInFlight.set(false);
+      if (generation === this.mediaGeneration && this.activeCall()?.id === call.id) this.mediaUpgradeInFlight.set(false);
     }
   }
 
   toggleSpeaker(): void {
     this.speaker.update((value) => !value);
+  }
+
+  async resumeAudioPlayback(): Promise<void> {
+    this.speaker.set(true);
+    await this.audioOutput.resume();
   }
 
   canOfferScreenShare(): boolean {
@@ -672,7 +725,7 @@ export class CallsService implements OnDestroy {
     if (this.isGroupCall(call)) {
       this.setConnectingPhase();
       this.error.set('');
-      await this.connectLiveKitRoom(call).catch((error) => {
+      await this.connectLiveKitRoom(call, true).catch((error) => {
         this.phase.set('failed');
         this.error.set(error instanceof Error ? error.message : 'No se pudo reconectar la sala.');
       });
@@ -758,7 +811,6 @@ export class CallsService implements OnDestroy {
     this.activeCall.set(call);
     this.setConnectingPhase();
     this.clearRingTimeout();
-    this.stopRingingTone();
     this.addHistory(call);
     await this.connectLiveKitRoom(call);
   }
@@ -978,7 +1030,7 @@ export class CallsService implements OnDestroy {
     this.localStream.set(new MediaStream([...audioTracks, cameraTrack]));
   }
 
-  private async connectLiveKitRoom(call: CallSession): Promise<void> {
+  private async connectLiveKitRoom(call: CallSession, preserveMediaIntent = false): Promise<void> {
     if (this.activeCall()?.id === call.id) call = this.activeCall()!;
     const credentials = await this.liveKitCredentialsForCall(call).catch((error) => {
       this.error.set(error instanceof Error ? error.message : 'No se pudo obtener el token LiveKit.');
@@ -1060,22 +1112,7 @@ export class CallsService implements OnDestroy {
     await encryptionContext.enable(room);
     if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) { await room.disconnect(); return; }
     this.games.transport.attachRoom(room);
-    await (room.localParticipant as unknown as {
-      setMicrophoneEnabled: (enabled: boolean, options?: AudioCaptureOptions) => Promise<unknown>;
-      setCameraEnabled: (enabled: boolean) => Promise<unknown>;
-    }).setMicrophoneEnabled(true, CALL_AUDIO_PROCESSING);
-    if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
-      await room.disconnect();
-      return;
-    }
-    if (call.type === 'Video') {
-      await (room.localParticipant as unknown as {
-        setCameraEnabled: (enabled: boolean) => Promise<unknown>;
-      }).setCameraEnabled(true).catch(() => {
-        this.cameraOff.set(true);
-        this.error.set('La camara no esta disponible. La llamada continuara con audio.');
-      });
-    }
+    await this.publishLiveKitLocalMedia(room, call, preserveMediaIntent);
     if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
       await room.disconnect();
       return;
@@ -1085,6 +1122,34 @@ export class CallsService implements OnDestroy {
     this.setConnectedPhase();
     if (!this.cameraOff()) {
       this.error.set('');
+    }
+  }
+
+  /** A room migration/reconnect preserves the participant's own capture choices. */
+  private async publishLiveKitLocalMedia(room: Room, call: CallSession, preserveMediaIntent: boolean): Promise<void> {
+    await (room.localParticipant as unknown as {
+      setMicrophoneEnabled: (enabled: boolean, options?: AudioCaptureOptions) => Promise<unknown>;
+      setCameraEnabled: (enabled: boolean) => Promise<unknown>;
+    }).setMicrophoneEnabled(preserveMediaIntent ? !this.muted() : true, CALL_AUDIO_PROCESSING);
+    if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
+      await room.disconnect();
+      return;
+    }
+    if (call.type !== 'Video') {
+      this.cameraOff.set(true);
+      return;
+    }
+    if (!preserveMediaIntent || !this.cameraOff()) {
+      try {
+        await (room.localParticipant as unknown as {
+          setCameraEnabled: (enabled: boolean) => Promise<unknown>;
+        }).setCameraEnabled(true);
+        if (this.activeCall()?.id === call.id && this.liveKitRoom === room) this.cameraOff.set(false);
+      } catch {
+        if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) return;
+        this.cameraOff.set(true);
+        this.error.set('La camara no esta disponible. La llamada continuara con audio.');
+      }
     }
   }
 
@@ -1331,6 +1396,10 @@ export class CallsService implements OnDestroy {
     }
 
     if (!wasGroupCall && this.isGroupCall(updated) && this.phase() !== 'ringing') {
+      this.finishAwaitingVideoResponse();
+      this.mediaUpgradeRequested.set(false);
+      this.mediaUpgradeNotice.set('');
+      this.incomingVideoRequestId = '';
       await this.migrateDirectCallToGroupRoom(updated);
     }
   }
@@ -1351,7 +1420,7 @@ export class CallsService implements OnDestroy {
     this.setConnectingPhase();
     this.groupMigrationPromise = (async () => {
       try {
-        await this.connectLiveKitRoom(call);
+        await this.connectLiveKitRoom(call, true);
         if (this.activeCall()?.id !== call.id) {
           this.disconnectLiveKitRoom();
           return;
@@ -1676,6 +1745,69 @@ export class CallsService implements OnDestroy {
     }
   }
 
+  /** The recipient explicitly allows camera capture for a direct-call video request. */
+  async acceptVideoUpgrade(): Promise<void> {
+    const call = this.activeCall();
+    if (!call || this.isGroupCall(call) || !this.mediaUpgradeRequested() || this.mediaUpgradeInFlight()) return;
+    const generation = this.mediaGeneration;
+    const requestId = this.incomingVideoRequestId;
+    this.mediaUpgradeInFlight.set(true);
+    this.error.set('');
+    this.mediaUpgradeNotice.set('');
+    try {
+      if (!this.localStream()?.getVideoTracks().some((track) => track.readyState === 'live')) {
+        await this.restoreDirectMediaTrack('video', false);
+      }
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id || this.isGroupCall(this.activeCall())) return;
+      this.cameraOff.set(false);
+      this.localStream()?.getVideoTracks().forEach((track) => { track.enabled = true; });
+      await this.renegotiateDirectPeers(true);
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
+      this.mediaUpgradeRequested.set(false);
+      this.incomingVideoRequestId = '';
+      this.broadcastControl('media-mode', { type: 'Video', video: true, action: 'accepted', requestId });
+      this.broadcastControl('camera', 'on');
+    } catch (error) {
+      if (generation === this.mediaGeneration && this.activeCall()?.id === call.id && !this.isGroupCall(this.activeCall())) {
+        await this.removeDirectVideoTrack();
+        if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
+        this.cameraOff.set(true);
+        this.error.set(error instanceof Error ? error.message : 'No se pudo activar la cámara.');
+      }
+    } finally {
+      if (generation === this.mediaGeneration && this.activeCall()?.id === call.id) this.mediaUpgradeInFlight.set(false);
+    }
+  }
+
+  /** Dismiss the request without ending the voice call or exposing our camera. */
+  declineVideoUpgrade(): void {
+    const call = this.activeCall();
+    if (!call || !this.mediaUpgradeRequested() || this.mediaUpgradeInFlight() || this.isGroupCall(call)) return;
+    this.mediaUpgradeRequested.set(false);
+    this.cameraOff.set(true);
+    this.broadcastControl('media-mode', { type: 'Video', video: true, action: 'declined', requestId: this.incomingVideoRequestId });
+    this.incomingVideoRequestId = '';
+  }
+
+  private beginAwaitingVideoResponse(callId: string, requestId: string): void {
+    this.finishAwaitingVideoResponse();
+    this.outgoingVideoRequestId = requestId;
+    this.mediaUpgradeAwaitingPeer.set(true);
+    this.mediaUpgradeNotice.set('');
+    this.mediaUpgradeAwaitTimer = window.setTimeout(() => {
+      if (this.activeCall()?.id !== callId || this.outgoingVideoRequestId !== requestId) return;
+      this.finishAwaitingVideoResponse(true);
+      this.mediaUpgradeNotice.set('El contacto aún no ha activado su cámara. Puedes seguir conversando por audio.');
+    }, VIDEO_UPGRADE_RESPONSE_TIMEOUT_MS);
+  }
+
+  private finishAwaitingVideoResponse(preserveRequestId = false): void {
+    if (this.mediaUpgradeAwaitTimer !== null) window.clearTimeout(this.mediaUpgradeAwaitTimer);
+    this.mediaUpgradeAwaitTimer = null;
+    if (!preserveRequestId) this.outgoingVideoRequestId = '';
+    this.mediaUpgradeAwaitingPeer.set(false);
+  }
+
   private async restoreCallRecoveryHint(userId: string): Promise<void> {
     if (this.activeCall() || this.resumableCall() || this.recoveryLookupInFlight) return;
     let hint: { userId?: string; callId?: string } | null = null;
@@ -1841,7 +1973,6 @@ export class CallsService implements OnDestroy {
       }
       this.setConnectingPhase();
       this.clearRingTimeout();
-      this.stopRingingTone();
       await this.loadIceConfiguration(true);
       if (!this.localStream()) {
         await this.prepareMedia(call.type === 'Video');
@@ -1894,10 +2025,36 @@ export class CallsService implements OnDestroy {
     }
 
     if (signalType === 'media-mode') {
+      if (this.isGroupCall(call) || !['connecting', 'connected'].includes(this.phase()) ||
+          !this.otherParticipantIds(call).includes(signal.fromUserId)) return;
+      const generation = this.mediaGeneration;
       const decoded = await this.decodeCallSignalPayload(signal);
-      const payload = decoded?.payload as { type?: string; video?: boolean } | undefined;
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
+      const payload = decoded?.payload as { type?: string; video?: boolean; action?: string; requestId?: string } | undefined;
       if (payload?.type === 'Video' || payload?.video === true) {
+        if (payload.action === 'accepted' || payload.action === 'declined') {
+          if (payload.requestId && payload.requestId !== this.outgoingVideoRequestId) return;
+          this.finishAwaitingVideoResponse();
+          this.mediaUpgradeNotice.set(payload.action === 'declined'
+            ? 'El contacto prefiere continuar por audio.' : '');
+          this.updateRemoteCallState(signal.fromUserId, 'camera', payload.action === 'declined' ? 'off' : 'on');
+          return;
+        }
+        if (payload.action && payload.action !== 'request') return;
         await this.applyActiveCallUpdate({ ...call, type: 'Video' });
+        if (this.activeCall()?.id !== call.id || this.isGroupCall(this.activeCall())) return;
+        const localVideo = this.localStream()?.getVideoTracks()
+          .some((track) => track.readyState === 'live' && track.enabled);
+        if (localVideo) {
+          this.mediaUpgradeRequested.set(false);
+          this.incomingVideoRequestId = '';
+          this.broadcastControl('media-mode', { type: 'Video', video: true, action: 'accepted', requestId: payload.requestId });
+          this.broadcastControl('camera', 'on');
+        } else {
+          this.incomingVideoRequestId = payload.requestId ?? '';
+          this.mediaUpgradeNotice.set('');
+          this.mediaUpgradeRequested.set(true);
+        }
       }
       return;
     }
@@ -2168,7 +2325,7 @@ export class CallsService implements OnDestroy {
     this.clearPeerDisconnectTimer(peer);
     if (peer.iceRestartAttempts >= MAX_ICE_RESTART_ATTEMPTS) {
       this.removeRemoteStream(userId);
-      this.error.set('La red no pudo recuperar el video. Revisa tu conexion o configura un servidor TURN.');
+      this.error.set('No se pudo recuperar la conexión de la llamada. Revisa tu red y toca Reintentar.');
       return;
     }
     peer.iceRestartAttempts += 1;
@@ -2523,10 +2680,16 @@ export class CallsService implements OnDestroy {
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('Este dispositivo no permite recuperar audio o video.');
     }
+    const generation = this.mediaGeneration;
+    const callId = this.activeCall()?.id;
     const captured = await navigator.mediaDevices.getUserMedia({
       audio: kind === 'audio' ? CALL_AUDIO_CONSTRAINTS : false,
       video: kind === 'video' ? CALL_VIDEO_CONSTRAINTS : false,
     });
+    if (generation !== this.mediaGeneration || !callId || this.activeCall()?.id !== callId || this.isGroupCall(this.activeCall())) {
+      captured.getTracks().forEach((item) => item.stop());
+      throw new Error('La llamada terminó antes de activar el dispositivo.');
+    }
     const track = kind === 'audio' ? captured.getAudioTracks()[0] : captured.getVideoTracks()[0];
     if (!track) {
       captured.getTracks().forEach((item) => item.stop());
@@ -2548,6 +2711,11 @@ export class CallsService implements OnDestroy {
     for (const peer of this.peers.values()) {
       requiresNegotiation = await this.setOutgoingTrack(peer.connection, kind, track, stream)
         || requiresNegotiation;
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== callId) {
+        track.onended = null;
+        track.stop();
+        throw new Error('La llamada terminó antes de publicar el dispositivo.');
+      }
     }
     if (requiresNegotiation && renegotiate) {
       await this.renegotiateDirectPeers();
@@ -2701,6 +2869,11 @@ export class CallsService implements OnDestroy {
       if (track && track.readyState !== 'ended' && !stream.getTracks().some(item => item.id === track.id)) stream.addTrack(track);
     }
     this.pendingRemoteStreams.set(userId, stream);
+    if (this.remoteStates()[userId]?.['camera'] !== 'off' &&
+        stream.getVideoTracks().some((track) => track.readyState === 'live' && track.enabled && !track.muted)) {
+      this.finishAwaitingVideoResponse(true);
+      this.mediaUpgradeNotice.set('');
+    }
     if (!stream || this.peers.get(userId)?.connection !== connection || !this.peerConnectionLooksConnected(connection)) {
       return;
     }
@@ -2715,6 +2888,7 @@ export class CallsService implements OnDestroy {
   private setConnectingPhase(): void {
     if (this.phase() !== 'connected') {
       this.phase.set('connecting');
+      this.startRingingTone('connecting');
     }
     this.scheduleConnectionWatchdog(this.activeCall()?.id);
   }
@@ -2746,9 +2920,7 @@ export class CallsService implements OnDestroy {
       this.connectionFailureTimer = null;
       if (this.activeCall()?.id === callId && this.phase() === 'connecting') {
         this.phase.set('failed');
-        this.error.set(this.hasTurnServer()
-          ? 'No se pudo completar la conexion. Toca Reintentar para negociar una ruta nueva.'
-          : 'Esta red parece requerir TURN. Configura el relay de produccion y toca Reintentar.');
+        this.error.set('No se pudo conectar la llamada. Toca Reintentar o prueba con otra red.');
       }
     }, CONNECTION_FAILURE_DELAY_MS);
   }
@@ -2857,6 +3029,8 @@ export class CallsService implements OnDestroy {
     this.clearRingTimeout();
     this.stopRingingTone();
     this.clearConnectedUiReconcileTimers();
+    this.finishAwaitingVideoResponse();
+    this.incomingVideoRequestId = '';
     this.clearConnectionWatchdog();
     this.stopSignalPolling();
     this.groupMigrationCallId = null;
@@ -2896,6 +3070,9 @@ export class CallsService implements OnDestroy {
     this.cameraOff.set(false);
     this.screenSharing.set(false);
     this.mediaUpgradeInFlight.set(false);
+    this.mediaUpgradeRequested.set(false);
+    this.mediaUpgradeAwaitingPeer.set(false);
+    this.mediaUpgradeNotice.set('');
     this.activeScreenShareStreamId.set(null);
     this.speaker.set(true);
     this.error.set('');
@@ -3142,16 +3319,17 @@ export class CallsService implements OnDestroy {
   }
 
   private startRingingTone(phase: CallPhase): void {
-    if (!['calling', 'ringing'].includes(phase)) {
+    if (!['calling', 'ringing', 'connecting'].includes(phase)) {
       return;
     }
-    const nextPhase = phase as 'calling' | 'ringing';
+    const nextPhase = phase as 'calling' | 'ringing' | 'connecting';
     if (this.ringToneInterval !== null && this.ringTonePhase === nextPhase) {
       return;
     }
     this.stopRingingTone();
     this.ringTonePhase = nextPhase;
     const playPulse = () => {
+      if (this.phase() !== nextPhase || !this.activeCall()) return;
       try {
         const AudioContextCtor = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (!AudioContextCtor) {
@@ -3159,18 +3337,20 @@ export class CallsService implements OnDestroy {
         }
         this.ringAudioContext ??= new AudioContextCtor();
         const context = this.ringAudioContext;
-        void context.resume?.();
-        const pattern = nextPhase === 'calling'
+        void context.resume?.().catch(() => undefined);
+        const pattern = nextPhase === 'connecting'
+          ? [{ offset: 0, duration: .20, frequency: 523.25 }, { offset: .25, duration: .24, frequency: 659.25 }]
+          : nextPhase === 'calling'
           ? [{ offset: 0, duration: .48, frequency: 420 }, { offset: .62, duration: .42, frequency: 420 }]
           : [{ offset: 0, duration: .32, frequency: 720 }, { offset: .42, duration: .32, frequency: 860 }];
         for (const pulse of pattern) {
           const oscillator = context.createOscillator();
           const gain = context.createGain();
           const startAt = context.currentTime + pulse.offset;
-          oscillator.type = nextPhase === 'calling' ? 'sine' : 'triangle';
+          oscillator.type = nextPhase === 'ringing' ? 'triangle' : 'sine';
           oscillator.frequency.setValueAtTime(pulse.frequency, startAt);
           gain.gain.setValueAtTime(0.0001, startAt);
-          gain.gain.exponentialRampToValueAtTime(nextPhase === 'calling' ? 0.042 : 0.052, startAt + 0.035);
+          gain.gain.exponentialRampToValueAtTime(nextPhase === 'connecting' ? 0.025 : nextPhase === 'calling' ? 0.042 : 0.052, startAt + 0.035);
           gain.gain.exponentialRampToValueAtTime(0.0001, startAt + pulse.duration);
           oscillator.connect(gain);
           gain.connect(context.destination);
@@ -3182,7 +3362,7 @@ export class CallsService implements OnDestroy {
       }
     };
     playPulse();
-    this.ringToneInterval = window.setInterval(playPulse, nextPhase === 'calling' ? 2200 : 1800);
+    this.ringToneInterval = window.setInterval(playPulse, nextPhase === 'connecting' ? 3200 : nextPhase === 'calling' ? 2200 : 1800);
   }
 
   private stopRingingTone(): void {
@@ -3238,7 +3418,6 @@ export class CallsService implements OnDestroy {
           this.activeCall.set(ended);
           this.setConnectingPhase();
           this.clearRingTimeout();
-          this.stopRingingTone();
         }
         return;
       }

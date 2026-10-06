@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, effect, inject, untracked } from '@angular/core';
+import { Component, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -70,6 +70,7 @@ export class CallsPage {
   pinnedParticipantId: string | null = null;
   controlsVisible = true;
   private controlsHideTimer: number | null = null;
+  private readonly videoTrackRevision = signal(0);
 
   constructor() {
     addIcons({
@@ -107,6 +108,44 @@ export class CallsPage {
           this.revealCallChrome();
         }
       });
+    });
+
+    // Track readiness changes on the same MediaStream object. Refresh the tile when
+    // the browser starts (or stops) receiving frames, without polling the camera.
+    effect((onCleanup) => {
+      const streams = [this.calls.localStream(), ...this.calls.remoteEntries().map((entry) => entry[1])]
+        .filter((stream): stream is MediaStream => Boolean(stream));
+      const listeners: Array<() => void> = [];
+      const observed = new Set<MediaStreamTrack>();
+      const refresh = () => this.videoTrackRevision.update((revision) => revision + 1);
+      const observeTracks = (stream: MediaStream) => {
+        for (const track of stream.getVideoTracks()) {
+          if (observed.has(track)) continue;
+          observed.add(track);
+          for (const eventName of ['mute', 'unmute', 'ended']) {
+            track.addEventListener(eventName, refresh);
+            listeners.push(() => track.removeEventListener(eventName, refresh));
+          }
+        }
+      };
+      for (const stream of streams) {
+        observeTracks(stream);
+        const onTrackChange = () => {
+          observeTracks(stream);
+          refresh();
+        };
+        stream.addEventListener('addtrack', onTrackChange);
+        stream.addEventListener('removetrack', onTrackChange);
+        listeners.push(() => stream.removeEventListener('addtrack', onTrackChange));
+        listeners.push(() => stream.removeEventListener('removetrack', onTrackChange));
+      }
+      onCleanup(() => listeners.forEach((remove) => remove()));
+    });
+
+    effect(() => {
+      if (this.calls.mediaUpgradeRequested()) {
+        untracked(() => this.revealCallChrome());
+      }
     });
   }
 
@@ -189,6 +228,16 @@ export class CallsPage {
     await this.calls.enableVideo();
   }
 
+  async acceptVideoUpgrade(): Promise<void> {
+    this.revealCallChrome();
+    await this.calls.acceptVideoUpgrade();
+  }
+
+  declineVideoUpgrade(): void {
+    this.calls.declineVideoUpgrade();
+    this.revealCallChrome();
+  }
+
   async rejoin(callId: string): Promise<void> {
     this.videoSwapped = false;
     this.pinnedParticipantId = null;
@@ -266,7 +315,10 @@ export class CallsPage {
   }
 
   uiPhase(): string {
-    return this.calls.activeCall() ? this.calls.phase() : 'idle';
+    if (!this.calls.activeCall()) return this.tr('CALLS.READY', 'Lista para llamar');
+    if (this.calls.mediaUpgradeRequested()) return this.tr('CALLS.VIDEO_REQUEST', 'Invitación a video');
+    if (this.calls.mediaUpgradeAwaitingPeer()) return this.tr('CALLS.VIDEO_WAITING', 'Esperando video');
+    return this.calls.callStatusLabel(this.calls.activeCall());
   }
 
   isCallMode(): boolean {
@@ -450,26 +502,48 @@ export class CallsPage {
   mainVideoStream(): MediaStream | null {
     const remote = this.primaryRemoteEntry()?.[1] ?? null;
     const local = this.calls.localStream();
-    return this.videoSwapped ? local || remote : remote || local;
+    return this.videoSwapped ? local : remote;
   }
 
   mainVideoParticipantId(): string {
-    const remoteId = this.primaryRemoteEntry()?.[0] || '';
-    return this.videoSwapped ? this.localParticipantId() : remoteId || this.localParticipantId();
+    const remoteId = this.primaryRemoteParticipantId();
+    return this.videoSwapped ? this.localParticipantId() : remoteId;
   }
 
   pipVideoStream(): MediaStream | null {
     const remote = this.primaryRemoteEntry()?.[1] ?? null;
     const local = this.calls.localStream();
-    if (!remote || !local) {
-      return null;
-    }
     return this.videoSwapped ? remote : local;
   }
 
   pipVideoParticipantId(): string {
-    const remoteId = this.primaryRemoteEntry()?.[0] || '';
+    const remoteId = this.primaryRemoteParticipantId();
     return this.videoSwapped ? remoteId : this.localParticipantId();
+  }
+
+  videoFallbackStatus(userId: string | null | undefined): string {
+    if (this.isScreenVideoParticipant(userId)) {
+      return this.tr('CALLS.SCREEN_STARTING', 'Conectando la pantalla compartida…');
+    }
+    if (this.isLocalParticipant(this.baseParticipantId(userId))) {
+      return this.calls.cameraOff()
+        ? this.tr('CALLS.YOUR_CAMERA_OFF', 'Tu cámara está apagada')
+        : this.tr('CALLS.STARTING_CAMERA', 'Activando tu cámara…');
+    }
+    if (this.calls.mediaUpgradeAwaitingPeer()) {
+      return this.tr('CALLS.WAITING_FOR_PEER_CAMERA', 'Esperando que active su cámara…');
+    }
+    if (this.calls.mediaUpgradeRequested()) {
+      return this.tr('CALLS.VIDEO_REQUEST_PENDING', 'Tu contacto te invitó a activar el video');
+    }
+    if (this.calls.mediaUpgradeNotice()) {
+      return this.calls.mediaUpgradeNotice();
+    }
+    const baseId = this.baseParticipantId(userId);
+    if (baseId && this.calls.remoteStates()[baseId]?.['camera'] === 'off') {
+      return this.tr('CALLS.PEER_CAMERA_OFF', 'Su cámara está apagada');
+    }
+    return this.tr('CALLS.PEER_CAMERA_UNAVAILABLE', 'Cámara apagada o conectando…');
   }
 
   toggleVideoSwap(): void {
@@ -500,7 +574,7 @@ export class CallsPage {
   videoParticipantLabel(userId: string | null | undefined): string {
     const baseId = this.baseParticipantId(userId);
     const label = this.isLocalParticipant(baseId) ? this.participantLabel(this.auth.session()?.user.id) : this.participantLabel(baseId);
-    return this.isScreenShareTileId(userId)
+    return this.isScreenVideoParticipant(userId)
       ? `${label} - ${this.tr('CALLS.SCREEN_SHARE', 'Pantalla compartida')}`
       : label;
   }
@@ -523,11 +597,30 @@ export class CallsPage {
   }
 
   hasVideoTrack(stream: MediaStream | null | undefined): boolean {
-    return Boolean(stream?.getVideoTracks().some(track => track.readyState !== 'ended'));
+    this.videoTrackRevision();
+    return Boolean(stream?.getVideoTracks().some((track) => track.readyState === 'live' && track.enabled && !track.muted));
+  }
+
+  videoParticipantHasVideo(stream: MediaStream | null | undefined, userId: string | null | undefined): boolean {
+    if (!this.isScreenVideoParticipant(userId)) {
+      const baseId = this.baseParticipantId(userId);
+      if (this.isLocalParticipant(baseId) && this.calls.cameraOff()) {
+        return false;
+      }
+      if (baseId && this.calls.remoteStates()[baseId]?.['camera'] === 'off') {
+        return false;
+      }
+    }
+    return this.hasVideoTrack(stream);
   }
 
   hasAudioTrack(stream: MediaStream | null | undefined): boolean {
     return Boolean(stream?.getAudioTracks().length);
+  }
+
+  canControlLocalMedia(): boolean {
+    const call = this.calls.activeCall();
+    return Boolean(this.calls.localStream() || (call && this.calls.isGroupCall(call) && this.calls.phase() === 'connected'));
   }
 
   private resetIdleUi(clearSearch: boolean): void {
@@ -544,12 +637,12 @@ export class CallsPage {
 
   private armControlsAutoHide(): void {
     this.clearControlsAutoHide();
-    if (!this.isCallMode() || this.calls.games.panelOpen()) {
+    if (!this.isCallMode() || this.calls.phase() !== 'connected' || this.calls.games.panelOpen() || this.calls.mediaUpgradeRequested()) {
       return;
     }
     this.controlsHideTimer = window.setTimeout(() => {
       const phase = this.calls.phase();
-      if (this.isCallMode() && (phase === 'connected' || phase === 'connecting')) {
+      if (this.isCallMode() && phase === 'connected') {
         this.controlsVisible = false;
       }
     }, 5000);
@@ -691,12 +784,31 @@ export class CallsPage {
     return this.auth.session()?.user.id || 'local';
   }
 
+  private primaryRemoteParticipantId(): string {
+    const call = this.calls.activeCall();
+    return this.primaryRemoteEntry()?.[0] || (call ? this.callParticipantIds(call)[0] : '') || '';
+  }
+
   private baseParticipantId(userId: string | null | undefined): string | null | undefined {
     return this.isScreenShareTileId(userId) ? userId?.replace(/:screen$/, '') : userId;
   }
 
   private isScreenShareTileId(userId: string | null | undefined): boolean {
     return typeof userId === 'string' && userId.endsWith(':screen');
+  }
+
+  private isScreenVideoParticipant(userId: string | null | undefined): boolean {
+    if (this.isScreenShareTileId(userId)) {
+      return true;
+    }
+    const call = this.calls.activeCall();
+    if (!call || this.calls.isGroupCall(call)) {
+      return false;
+    }
+    const baseId = this.baseParticipantId(userId);
+    return this.isLocalParticipant(baseId)
+      ? this.calls.screenSharing()
+      : Boolean(baseId && this.calls.remoteStates()[baseId]?.['screen'] === 'on');
   }
 
   private isLocalParticipant(userId: string | null | undefined): boolean {

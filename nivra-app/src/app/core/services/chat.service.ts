@@ -120,6 +120,7 @@ export class ChatService implements OnDestroy {
   private readonly pendingReactionSends = new Set<string>();
   private readonly pendingReactionsByMessageId = new Map<string, MessageReaction[]>();
   private readonly profileFetchInFlight = new Set<string>();
+  private readonly profileSources = new Map<string, 'authoritative' | 'summary' | 'cache'>();
   private readonly directConversationInFlight = new Map<string, Promise<Conversation>>();
   private readonly typingTimers = new Map<string, number>();
   private readonly typingEventAt = new Map<string, number>();
@@ -167,6 +168,7 @@ export class ChatService implements OnDestroy {
       const userId = this.auth.session()?.user.id;
       const conversations = this.conversations();
       this.contacts();
+      this.profilesByUserId();
       this.messagesByConversation();
       if (userId && conversations.length) {
         untracked(() => this.scheduleLaunchCacheSave(userId));
@@ -323,6 +325,8 @@ export class ChatService implements OnDestroy {
       const conversations = this.applyLocalConversationState(bootstrap.conversations ?? []);
       this.remoteIndexRevision += 1;
       this.contacts.set(contacts);
+      // ContactResponse is authoritative, including a null photo when its
+      // owner removes/restricts it. A genuinely omitted field stays cached.
       this.rememberProfiles(contacts, true);
       this.rememberConversationParticipants(conversations);
       this.conversations.set(conversations.sort(this.compareConversations));
@@ -1436,9 +1440,11 @@ export class ChatService implements OnDestroy {
   }
 
   participantPhoto(userId: string | null | undefined, fallback?: ProfileSource | null): string {
-    return this.participantProfile(userId)?.profilePhotoDataUrl
-      || this.normalizeProfile(fallback)?.profilePhotoDataUrl
-      || '';
+    const profile = this.participantProfile(userId);
+    // An explicit removal/visibility restriction must not revive an older
+    // photo still present in a conversation participant snapshot.
+    if (profile?.profilePhotoDataUrl !== undefined) return profile.profilePhotoDataUrl || '';
+    return this.normalizeProfile(fallback)?.profilePhotoDataUrl || '';
   }
 
   participantAlias(userId: string | null | undefined, fallback?: ProfileSource | null): string {
@@ -2063,7 +2069,7 @@ export class ChatService implements OnDestroy {
     const publish = (items: Conversation[]) => {
       if (!items.length || this.auth.session()?.user.id !== userId) return;
       const cached = this.applyLocalConversationState(items);
-      this.rememberConversationParticipants(cached);
+      this.rememberConversationParticipants(cached, 'cache');
       this.conversations.set(cached.sort(this.compareConversations));
       this.ensureSelectedConversation();
       void this.hydrateConversationProfiles(cached);
@@ -2090,10 +2096,10 @@ export class ChatService implements OnDestroy {
     ]).then(([contactGroups, profiles]) => {
       if (this.auth.session()?.user.id !== userId || this.remoteIndexRevision !== revision) return;
       const contacts = this.uniqueContacts(contactGroups.flat());
-      if (profiles.length) this.rememberProfiles(profiles, false);
+      if (profiles.length) this.rememberProfiles(profiles, false, 'cache');
       if (contacts.length) {
         this.contacts.set(contacts);
-        this.rememberProfiles(contacts, false);
+        this.rememberProfiles(contacts, false, 'cache');
         if (accountKeys.some((key) => key !== userId)) {
           void this.history.putContacts(userId, contacts).catch(() => undefined);
         }
@@ -2133,12 +2139,12 @@ export class ChatService implements OnDestroy {
     this.launchPreviews.set(cached.previews);
     this.launchPreviewAt.set(Object.fromEntries(cached.conversations.map((conversation) =>
       [conversation.id, conversation.lastMessageAt ?? null])));
-    this.rememberConversationParticipants(conversations);
+    this.rememberConversationParticipants(conversations, 'cache');
     this.conversations.set(conversations.sort(this.compareConversations));
     this.ensureSelectedConversation();
     if (cached.contacts.length) {
       this.contacts.set(cached.contacts);
-      this.rememberProfiles(cached.contacts, false);
+      this.rememberProfiles(cached.contacts, false, 'cache');
     }
   }
 
@@ -2148,7 +2154,24 @@ export class ChatService implements OnDestroy {
     this.launchCacheSaveTimer = window.setTimeout(() => {
       this.launchCacheSaveTimer = null;
       if (this.auth.session()?.user.id !== userId || this.launchCacheEpoch !== epoch) return;
-      const conversations = this.conversations().slice(0, 80);
+      const profiles = this.profilesByUserId();
+      const conversations = this.conversations().slice(0, 80).map((conversation) => ({
+        ...conversation,
+        participants: conversation.participants.map((participant) => {
+          const profile = profiles[participant.userId];
+          if (!profile) return participant;
+          return {
+            ...participant,
+            alias: profile.alias ?? participant.alias,
+            displayName: profile.displayName !== undefined ? profile.displayName : participant.displayName,
+            phone: profile.phone !== undefined ? profile.phone : participant.phone,
+            profilePhotoDataUrl: profile.profilePhotoDataUrl !== undefined
+              ? profile.profilePhotoDataUrl : participant.profilePhotoDataUrl,
+            cachedAt: profile.cachedAt,
+            updatedAt: profile.updatedAt,
+          };
+        }),
+      }));
       if (!conversations.length) return;
       const previews = Object.fromEntries(conversations.flatMap((conversation) => {
         const messages = this.messagesByConversation()[conversation.id] ?? [];
@@ -3318,14 +3341,20 @@ export class ChatService implements OnDestroy {
     return this.firstText(profile?.displayName, profile?.phone, profile?.alias) || '';
   }
 
-  private rememberConversationParticipants(conversations: Conversation[]): void {
+  private rememberConversationParticipants(conversations: Conversation[], source: 'summary' | 'cache' = 'summary'): void {
     const profiles = conversations.flatMap((conversation) => conversation.participants ?? []);
-    this.rememberProfiles(profiles, true);
+    // Participant summaries frequently contain only an alias. Empty fields in
+    // these summaries are not evidence that a known photo or name was removed.
+    this.rememberProfiles(profiles, true, source);
   }
 
-  private rememberProfiles(profiles: Array<ProfileSource | null | undefined>, persist = false): LocalProfile[] {
+  private rememberProfiles(
+    profiles: Array<ProfileSource | null | undefined>,
+    persist = false,
+    source: 'authoritative' | 'summary' | 'cache' = 'authoritative',
+  ): LocalProfile[] {
     const normalized = profiles
-      .map((profile) => this.normalizeProfile(profile))
+      .map((profile) => this.normalizeProfile(profile, source === 'authoritative'))
       .filter((profile): profile is LocalProfile => Boolean(profile));
     if (!normalized.length) {
       return [];
@@ -3335,31 +3364,60 @@ export class ChatService implements OnDestroy {
       const next = { ...state };
       for (const profile of normalized) {
         const previous: LocalProfile = next[profile.userId] ?? { userId: profile.userId };
+        const previousSource = this.profileSources.get(profile.userId);
+        const previousTime = Date.parse(previous.cachedAt || previous.updatedAt || '') || 0;
+        const incomingTime = Date.parse(profile.cachedAt || profile.updatedAt || '') || 0;
+        const newerCache = source === 'cache' && previousSource !== 'authoritative' && incomingTime > previousTime;
+        const field = (key: 'alias' | 'displayName' | 'phone' | 'bio' | 'profilePhotoDataUrl') => {
+          if (profile[key] === undefined) return previous[key];
+          if (source === 'summary' && !profile[key]) return previous[key];
+          // Older client versions stamped sparse SQL records as fresh. Their
+          // empty fields cannot remove a known value; a full server response
+          // still applies explicit removals immediately.
+          if (source === 'cache' && !profile[key] && previous[key]) return previous[key];
+          if (source !== 'authoritative' && previous[key] !== undefined) {
+            // A complete response owns its fields for this session. Otherwise
+            // a newer SQL profile may enrich/replace a launch snapshot, while
+            // an unversioned empty cache can still be filled by richer cache.
+            const fillsUnversionedEmpty = source === 'cache' && previousSource !== 'authoritative'
+              && !previous[key] && !previousTime && Boolean(profile[key]);
+            if (!newerCache && !fillsUnversionedEmpty) return previous[key];
+          }
+          return profile[key] || null;
+        };
+        const alias = field('alias');
+        const updateTimes = source === 'authoritative' || newerCache;
         const merged = {
           ...previous,
-          ...profile,
-          alias: profile.alias !== undefined ? profile.alias || previous.alias || null : previous.alias || null,
-          displayName: profile.displayName !== undefined ? profile.displayName || null : previous.displayName || null,
-          phone: profile.phone !== undefined ? profile.phone || null : previous.phone || null,
-          bio: profile.bio !== undefined ? profile.bio || null : previous.bio || null,
-          profilePhotoDataUrl: profile.profilePhotoDataUrl !== undefined
-            ? profile.profilePhotoDataUrl || null
-            : previous.profilePhotoDataUrl || null,
-          cachedAt: profile.cachedAt || previous.cachedAt,
+          ...Object.fromEntries(Object.entries(profile).filter(([, value]) => value !== undefined)),
+          alias,
+          aliasLower: alias?.toLowerCase() ?? previous.aliasLower,
+          displayName: field('displayName'),
+          phone: field('phone'),
+          bio: field('bio'),
+          profilePhotoDataUrl: field('profilePhotoDataUrl'),
+          updatedAt: updateTimes ? profile.updatedAt || previous.updatedAt : previous.updatedAt || profile.updatedAt,
+          cachedAt: updateTimes ? profile.cachedAt || previous.cachedAt : previous.cachedAt || profile.cachedAt,
         } satisfies LocalProfile;
         next[profile.userId] = merged;
+        if (source === 'authoritative' || !previousSource || (source === 'cache' && previousSource === 'summary')) {
+          this.profileSources.set(profile.userId, source);
+        }
         changed = true;
       }
       return changed ? next : state;
     });
     if (persist) {
-      void this.history.putProfiles(normalized).catch(() => undefined);
+      // Persist the merged record; writing a sparse participant would erase
+      // the richer profile on the next cold launch.
+      const merged = this.profilesByUserId();
+      void this.history.putProfiles(normalized.map((profile) => merged[profile.userId])).catch(() => undefined);
     }
     this.syncProfileCollections(normalized.map((profile) => profile.userId));
     return normalized;
   }
 
-  private normalizeProfile(profile: ProfileSource | null | undefined): LocalProfile | null {
+  private normalizeProfile(profile: ProfileSource | null | undefined, timestampIfMissing = true): LocalProfile | null {
     const userId = this.firstText(profile?.userId, profile?.id);
     if (!userId) {
       return null;
@@ -3381,9 +3439,9 @@ export class ChatService implements OnDestroy {
       isContact: profile?.isContact,
       isMutualContact: profile?.isMutualContact,
       isFavorite: profile?.isFavorite,
-      friendshipState: profile?.friendshipState ?? null,
-      updatedAt: profile?.updatedAt || (authoritative ? new Date().toISOString() : undefined),
-      cachedAt: profile?.cachedAt || (authoritative ? new Date().toISOString() : undefined),
+      friendshipState: has('friendshipState') ? profile?.friendshipState ?? null : undefined,
+      updatedAt: profile?.updatedAt || (authoritative && timestampIfMissing ? new Date().toISOString() : undefined),
+      cachedAt: profile?.cachedAt || (authoritative && timestampIfMissing ? new Date().toISOString() : undefined),
     };
   }
 
@@ -3421,17 +3479,19 @@ export class ChatService implements OnDestroy {
       return;
     }
     this.profileFetchInFlight.add(userId);
+    const accountUserId = this.auth.session()?.user.id;
+    const epoch = this.launchCacheEpoch;
     try {
       const person = await firstValueFrom(this.api.get<UserSummary>(`/directory/users/${encodeURIComponent(userId)}`));
+      if (this.auth.session()?.user.id !== accountUserId || this.launchCacheEpoch !== epoch) return;
       this.rememberProfiles([person], true);
-    } catch {
-      this.profilesByUserId.update((state) => {
-        const previous = state[userId];
-        return previous
-          ? { ...state, [userId]: { ...previous, profilePhotoDataUrl: null, cachedAt: new Date().toISOString() } }
-          : state;
-      });
-      this.syncProfileCollections([userId]);
+    } catch (error) {
+      // A timeout/offline response must not erase a verified local photo.
+      const status = (error as { status?: number })?.status;
+      if ((status === 404 || status === 403) && this.auth.session()?.user.id === accountUserId
+        && this.launchCacheEpoch === epoch) {
+        this.rememberProfiles([{ userId, profilePhotoDataUrl: null }], true);
+      }
     } finally {
       this.profileFetchInFlight.delete(userId);
     }
@@ -3666,6 +3726,7 @@ export class ChatService implements OnDestroy {
     this.mediaPreviews.set({});
     this.directoryResults.set([]);
     this.profilesByUserId.set({});
+    this.profileSources.clear();
     this.typingByConversation.set({});
     this.presenceByUser.set({});
     this.directories.clear();

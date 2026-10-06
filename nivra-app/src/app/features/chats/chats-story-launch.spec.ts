@@ -1,5 +1,5 @@
 import { NgZone, signal } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
+import { TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import { ActionSheetController } from '@ionic/angular/standalone';
 import { EMPTY } from 'rxjs';
@@ -23,6 +23,7 @@ describe('Chats story creation entry', () => {
     chat = {
       bootstrap: jasmine.createSpy('bootstrap').and.resolveTo(),
       conversations: signal([]),
+      loading: signal(false),
       clearSelectedConversation: () => undefined,
     };
     history = {
@@ -35,7 +36,7 @@ describe('Chats story creation entry', () => {
       { provide: AuthService, useValue: { session: signal({ user: { id: 'me', alias: 'maria' } }) } },
       { provide: AppSettingsService, useValue: {} },
       { provide: ChatService, useValue: chat },
-      { provide: SocialService, useValue: { stories: signal([]), load: async () => undefined } },
+      { provide: SocialService, useValue: { stories: signal([]), worldStories: signal([]), load: async () => undefined } },
       { provide: LocalHistoryService, useValue: history },
       { provide: NativeDeviceService, useValue: {} },
       { provide: ActionSheetController, useValue: {} },
@@ -103,4 +104,38 @@ describe('Chats story creation entry', () => {
     expect(history.clearStorageError).not.toHaveBeenCalled();
     expect(history.storageError()).toContain('historial cifrado');
   });
+
+  it('does not flash a warning that recovers during a foreground transition', fakeAsync(() => {
+    history.storageError.set('Historial temporalmente bloqueado');
+    TestBed.flushEffects();
+    tick(100);
+    history.storageError.set('');
+    TestBed.flushEffects();
+    tick(1000);
+    expect(page.visibleStorageError()).toBe('');
+  }));
+
+  it('shows a persistent history failure after recovery has had time to finish', fakeAsync(() => {
+    history.storageError.set('No se pudo abrir el historial cifrado.');
+    TestBed.flushEffects();
+    tick(899);
+    expect(page.visibleStorageError()).toBe('');
+    tick(1);
+    expect(page.visibleStorageError()).toContain('historial cifrado');
+    history.storageError.set('');
+    TestBed.flushEffects();
+    expect(page.visibleStorageError()).toBe('');
+  }));
+
+  it('starts the warning delay after initial chat loading finishes', fakeAsync(() => {
+    chat.loading.set(true);
+    history.storageError.set('No se pudo abrir el historial cifrado.');
+    TestBed.flushEffects();
+    tick(1000);
+    expect(page.visibleStorageError()).toBe('');
+    chat.loading.set(false);
+    TestBed.flushEffects();
+    tick(900);
+    expect(page.visibleStorageError()).toContain('historial cifrado');
+  }));
 });

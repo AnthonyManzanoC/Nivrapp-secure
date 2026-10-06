@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, ElementRef, NgZone, OnDestroy, ViewChild, computed, inject, signal } from '@angular/core';
+import { Component, EffectRef, ElementRef, NgZone, OnDestroy, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import {
@@ -76,6 +76,7 @@ export class ChatsPage implements OnDestroy {
   readonly social = inject(SocialService);
   readonly appSettings = inject(AppSettingsService);
   readonly localHistory = inject(LocalHistoryService);
+  readonly visibleStorageError = signal('');
   private readonly translate = inject(TranslateService);
   private readonly ngZone = inject(NgZone);
   private readonly auth = inject(AuthService);
@@ -156,11 +157,32 @@ export class ChatsPage implements OnDestroy {
   private avatarPressTimer: number | null = null;
   private suppressAvatarClickUntil = 0;
   private storyStripTimer: number | null = null;
+  private storageWarningTimer: number | null = null;
+  private readonly storageWarningEffect: EffectRef;
   storyHighlightOpening = '';
   storiesCollapsed = false;
   @ViewChild('conversationList', { read: ElementRef }) private conversationList?: ElementRef<HTMLElement>;
 
   constructor() {
+    this.storageWarningEffect = effect((onCleanup) => {
+      const warning = this.localHistory.storageError();
+      const loading = this.chat.loading();
+      this.visibleStorageError.set('');
+      if (warning && !loading) {
+        // Brief native vault errors can recover during foreground sync. Avoid
+        // flashing a warning for an episode that resolves by itself.
+        this.storageWarningTimer = window.setTimeout(() => {
+          this.storageWarningTimer = null;
+          if (this.localHistory.storageError() === warning && !this.chat.loading()) {
+            this.ngZone.run(() => this.visibleStorageError.set(warning));
+          }
+        }, 900);
+        onCleanup(() => {
+          if (this.storageWarningTimer !== null) window.clearTimeout(this.storageWarningTimer);
+          this.storageWarningTimer = null;
+        });
+      }
+    });
     addIcons({
       addOutline,
       archiveOutline,
@@ -189,6 +211,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.storageWarningEffect.destroy();
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
     }
@@ -196,6 +219,9 @@ export class ChatsPage implements OnDestroy {
     this.cancelAvatarPress();
     if (this.storyStripTimer !== null) {
       window.clearInterval(this.storyStripTimer);
+    }
+    if (this.storageWarningTimer !== null) {
+      window.clearTimeout(this.storageWarningTimer);
     }
     this.routeSub?.unsubscribe();
   }
