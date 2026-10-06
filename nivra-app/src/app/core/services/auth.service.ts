@@ -28,6 +28,7 @@ import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { environment } from '../../../environments/environment';
 import { NativeSecureVaultService } from './native-secure-vault.service';
+import { ChatLaunchCacheService } from './chat-launch-cache.service';
 import { authErrorMessage } from '../utils/auth-error';
 import { normalizeNivraNumber } from '../utils/nivra-number';
 
@@ -81,6 +82,7 @@ export class AuthService implements OnDestroy {
   private readonly api = inject(NivraApiService);
   private readonly crypto = inject(CryptoService);
   private readonly secureVault = inject(NativeSecureVaultService);
+  private readonly launchCache = inject(ChatLaunchCacheService);
   private readonly router = inject(Router);
   private readonly ngZone = inject(NgZone);
   private firebaseApp: FirebaseApp | null = null;
@@ -574,6 +576,7 @@ export class AuthService implements OnDestroy {
   }
 
   async logout(skipServer = false): Promise<void> {
+    const accountId = this.session()?.user.id;
     if (!skipServer && this.accessToken()) {
       await firstValueFrom(this.api.post('/auth/logout', {}, {})).catch(() => null);
     }
@@ -582,6 +585,7 @@ export class AuthService implements OnDestroy {
     await this.clearNativePhoneListeners();
     await this.nativeFirebaseSignOut();
     this.session.set(null);
+    if (accountId) this.launchCache.clear(accountId);
     this.pendingPhoneAlias.set(null);
     // Logout only removes credentials; NivraDB chat history and conversations must stay local.
     localStorage.removeItem(SESSION_KEY);

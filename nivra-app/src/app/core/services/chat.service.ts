@@ -28,6 +28,7 @@ import { AuthService } from './auth.service';
 import { IdentityTrustService } from './identity-trust.service';
 import { CryptoService, PublicKeyRecipient } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
+import { ChatLaunchCacheService } from './chat-launch-cache.service';
 import { E2EE_UPLOAD_LIMIT_BYTES, EncryptedUploadMode, MediaOptimizerService } from './media-optimizer.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
@@ -106,6 +107,7 @@ export class ChatService implements OnDestroy {
   private readonly identityTrust = inject(IdentityTrustService);
   private readonly crypto = inject(CryptoService);
   private readonly history = inject(LocalHistoryService);
+  private readonly launchCache = inject(ChatLaunchCacheService);
   private readonly mediaOptimizer = inject(MediaOptimizerService);
   private readonly signalr = inject(SignalrService);
   private readonly appSettings = inject(AppSettingsService);
@@ -127,6 +129,11 @@ export class ChatService implements OnDestroy {
   private lastTypingSentAt = 0;
   private bootstrapInFlight: Promise<void> | null = null;
   private hasBootstrappedSession = false;
+  private launchCacheSaveTimer: number | null = null;
+  private launchCacheSaveTask: Promise<void> = Promise.resolve();
+  private launchCacheEpoch = 0;
+  private readonly launchPreviews = signal<Record<string, string>>({});
+  private readonly launchPreviewAt = signal<Record<string, string | null>>({});
   private syncInFlight = false;
   private selectedConversationLoadId = 0;
 
@@ -142,6 +149,7 @@ export class ChatService implements OnDestroy {
   readonly typingByConversation = signal<Record<string, string[]>>({});
   readonly presenceByUser = signal<Record<string, PresenceResponse>>({});
   readonly loading = signal(false);
+  private remoteIndexRevision = 0;
   readonly uploading = signal(false);
   readonly uploadStatus = signal('');
   readonly selectedConversationId = signal<string | null>(this.initialSelectedConversationId());
@@ -155,6 +163,15 @@ export class ChatService implements OnDestroy {
   });
 
   constructor() {
+    effect(() => {
+      const userId = this.auth.session()?.user.id;
+      const conversations = this.conversations();
+      this.contacts();
+      this.messagesByConversation();
+      if (userId && conversations.length) {
+        untracked(() => this.scheduleLaunchCacheSave(userId));
+      }
+    });
     this.signalr.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((event) => {
       if (event.type === 'message.received') {
         void this.ingestMessage(event.payload as MessageResponse, true);
@@ -294,6 +311,7 @@ export class ChatService implements OnDestroy {
     this.loading.set(true);
     try {
       this.restoreSelectedConversationId();
+      await this.loadLaunchCache();
       await this.loadCachedChatIndex();
       await this.loadCachedSelectedMessages();
       await this.purgeExpiredLocalMessages();
@@ -303,6 +321,7 @@ export class ChatService implements OnDestroy {
       const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>(`/sync/bootstrap?messageTake=${CHAT_PAGE_SIZE}`));
       const contacts = bootstrap.contacts ?? [];
       const conversations = this.applyLocalConversationState(bootstrap.conversations ?? []);
+      this.remoteIndexRevision += 1;
       this.contacts.set(contacts);
       this.rememberProfiles(contacts, true);
       this.rememberConversationParticipants(conversations);
@@ -1197,6 +1216,8 @@ export class ChatService implements OnDestroy {
       ? 'Bloqueado'
       : this.isConversationArchived(conversation.id) ? 'Archivado' : '';
     if (!last) {
+      const cached = this.launchPreviews()[conversation.id];
+      if (cached && this.launchPreviewAt()[conversation.id] === (conversation.lastMessageAt ?? null)) return cached;
       const fallback = this.isGroupConversation(conversation) ? 'Grupo cifrado listo' : 'Cifrado extremo a extremo';
       return state ? `${state} - ${fallback}` : fallback;
     }
@@ -2037,53 +2058,111 @@ export class ChatService implements OnDestroy {
   }
 
   private async loadCachedChatIndex(): Promise<void> {
-    const accountKeys = await this.localAccountKeys();
-    if (!accountKeys.length) {
-      return;
-    }
-    const [conversationGroups, contactGroups, profiles] = await Promise.all([
-      Promise.all(accountKeys.map((accountKey) => this.history.conversations(accountKey).catch(() => []))),
-      Promise.all(accountKeys.map((accountKey) => this.history.contacts(accountKey).catch(() => []))),
-      this.history.profiles().catch(() => []),
-    ]);
-    const conversations = this.uniqueConversations(conversationGroups.flat());
-    const contacts = this.uniqueContacts(contactGroups.flat());
-    if (profiles.length) {
-      this.rememberProfiles(profiles, false);
-    }
-    if (contacts.length) {
-      this.contacts.set(contacts);
-      this.rememberProfiles(contacts, false);
-    }
-    if (conversations.length) {
-      const cachedConversations = this.applyLocalConversationState(conversations);
-      this.rememberConversationParticipants(cachedConversations);
-      // Restore visible list previews from the encrypted cache before publishing
-      // the index, instead of replacing every subtitle when network sync finishes.
-      const userId = this.auth.session()?.user.id;
-      await Promise.all(cachedConversations.slice(0, 30).map(async (conversation) => {
-        const pages = await Promise.all(accountKeys.map((key) =>
-          this.history.conversationMessagesPage(key, conversation.id, { limit: 1 }).catch(() => [])));
-        if (this.auth.session()?.user.id !== userId) return;
-        for (const message of this.uniqueMessages(pages.flat()).filter((item) => !this.isExpiredMessage(item, Date.now()))) {
-          this.upsertMessage(message, { persist: false });
-        }
-      }));
-      if (this.auth.session()?.user.id !== userId) return;
-      this.conversations.set(cachedConversations.sort(this.compareConversations));
+    const userId = this.auth.session()?.user.id;
+    if (!userId) return;
+    const publish = (items: Conversation[]) => {
+      if (!items.length || this.auth.session()?.user.id !== userId) return;
+      const cached = this.applyLocalConversationState(items);
+      this.rememberConversationParticipants(cached);
+      this.conversations.set(cached.sort(this.compareConversations));
       this.ensureSelectedConversation();
-      void this.hydrateConversationProfiles(cachedConversations);
-      const primary = this.localAccountKey();
-      if (primary) {
-        void this.history.putConversations(primary, cachedConversations).catch(() => undefined);
+      void this.hydrateConversationProfiles(cached);
+    };
+
+    // Most records use the current account key. Show that index as soon as the
+    // encrypted database opens, before scanning legacy keys or loading profiles.
+    const primaryConversations = await this.history.conversations(userId).catch(() => []);
+    publish(primaryConversations);
+    const accountKeys = await this.localAccountKeys();
+    if (this.auth.session()?.user.id !== userId) return;
+    const legacyGroups = await Promise.all(accountKeys.filter((key) => key !== userId).map((key) =>
+      this.history.conversations(key).catch(() => [])));
+    if (this.auth.session()?.user.id !== userId) return;
+    const conversations = this.uniqueConversations([...primaryConversations, ...legacyGroups.flat()]);
+    if (legacyGroups.some((group) => group.length)) publish(conversations);
+
+    // Contacts and IndexedDB profiles may be slow on a cold WebView. They must
+    // not delay server sync or replace a newer server result when they finish.
+    const revision = this.remoteIndexRevision;
+    void Promise.all([
+      Promise.all(accountKeys.map((key) => this.history.contacts(key).catch(() => []))),
+      this.history.profiles().catch(() => []),
+    ]).then(([contactGroups, profiles]) => {
+      if (this.auth.session()?.user.id !== userId || this.remoteIndexRevision !== revision) return;
+      const contacts = this.uniqueContacts(contactGroups.flat());
+      if (profiles.length) this.rememberProfiles(profiles, false);
+      if (contacts.length) {
+        this.contacts.set(contacts);
+        this.rememberProfiles(contacts, false);
+        if (accountKeys.some((key) => key !== userId)) {
+          void this.history.putContacts(userId, contacts).catch(() => undefined);
+        }
+      }
+    }).catch(() => undefined);
+    if (conversations.length) {
+      // Read list previews in small batches so WebView/SQLite stays responsive.
+      const previewRevision = this.remoteIndexRevision;
+      void (async () => {
+        for (let index = 0; index < Math.min(conversations.length, 30); index += 3) {
+          if (this.auth.session()?.user.id !== userId || this.remoteIndexRevision !== previewRevision) return;
+          await Promise.all(conversations.slice(index, index + 3).map(async (conversation) => {
+            const pages = await Promise.all(accountKeys.map((key) =>
+              this.history.conversationMessagesPage(key, conversation.id, { limit: 1 }).catch(() => [])));
+            if (this.auth.session()?.user.id !== userId || this.remoteIndexRevision !== previewRevision
+              || !this.conversations().some((item) => item.id === conversation.id)) return;
+            for (const message of this.uniqueMessages(pages.flat()).filter((item) => !this.isExpiredMessage(item, Date.now()))) {
+              // A remote bootstrap may already have delivered a fresher copy.
+              if (this.messagesByConversation()[conversation.id]?.some((current) => current.id === message.id)) continue;
+              this.upsertMessage(message, { persist: false });
+            }
+          }));
+        }
+      })().catch(() => undefined);
+      if (legacyGroups.some((group) => group.length)) {
+        void this.history.putConversations(userId, conversations).catch(() => undefined);
       }
     }
-    if (contacts.length) {
-      const primary = this.localAccountKey();
-      if (primary) {
-        void this.history.putContacts(primary, contacts).catch(() => undefined);
-      }
+  }
+
+  private async loadLaunchCache(): Promise<void> {
+    const userId = this.auth.session()?.user.id;
+    if (!userId) return;
+    const cached = await this.launchCache.load(userId);
+    if (!cached?.conversations.length || this.auth.session()?.user.id !== userId) return;
+    const conversations = this.applyLocalConversationState(cached.conversations);
+    this.launchPreviews.set(cached.previews);
+    this.launchPreviewAt.set(Object.fromEntries(cached.conversations.map((conversation) =>
+      [conversation.id, conversation.lastMessageAt ?? null])));
+    this.rememberConversationParticipants(conversations);
+    this.conversations.set(conversations.sort(this.compareConversations));
+    this.ensureSelectedConversation();
+    if (cached.contacts.length) {
+      this.contacts.set(cached.contacts);
+      this.rememberProfiles(cached.contacts, false);
     }
+  }
+
+  private scheduleLaunchCacheSave(userId: string): void {
+    const epoch = this.launchCacheEpoch;
+    if (this.launchCacheSaveTimer !== null) window.clearTimeout(this.launchCacheSaveTimer);
+    this.launchCacheSaveTimer = window.setTimeout(() => {
+      this.launchCacheSaveTimer = null;
+      if (this.auth.session()?.user.id !== userId || this.launchCacheEpoch !== epoch) return;
+      const conversations = this.conversations().slice(0, 80);
+      if (!conversations.length) return;
+      const previews = Object.fromEntries(conversations.flatMap((conversation) => {
+        const messages = this.messagesByConversation()[conversation.id] ?? [];
+        const last = messages[messages.length - 1];
+        // A temporary or view-once message must never survive its lifetime in
+        // a separate launch snapshot, even when the app stays closed at expiry.
+        if (last?.expiresAt || last?.deleteAfterRead) return [];
+        return [[conversation.id, this.conversationSubtitle(conversation)]];
+      }));
+      const snapshot = { conversations, contacts: this.contacts().slice(0, 200), previews };
+      this.launchCacheSaveTask = this.launchCacheSaveTask.catch(() => undefined)
+        .then(() => this.auth.session()?.user.id === userId && this.launchCacheEpoch === epoch
+          ? this.launchCache.save(userId, snapshot) : undefined);
+    }, 350);
   }
 
   private async persistChatIndex(conversations: Conversation[], contacts: Contact[]): Promise<void> {
@@ -3573,6 +3652,11 @@ export class ChatService implements OnDestroy {
   }
 
   private resetInMemoryState(): void {
+    this.launchCacheEpoch += 1;
+    if (this.launchCacheSaveTimer !== null) window.clearTimeout(this.launchCacheSaveTimer);
+    this.launchCacheSaveTimer = null;
+    this.launchPreviews.set({});
+    this.launchPreviewAt.set({});
     this.revokeMediaPreviews();
     this.hasBootstrappedSession = false;
     this.conversations.set([]);
@@ -3601,6 +3685,11 @@ export class ChatService implements OnDestroy {
   }
 
   private pauseForLoggedOutSession(): void {
+    this.launchCacheEpoch += 1;
+    if (this.launchCacheSaveTimer !== null) window.clearTimeout(this.launchCacheSaveTimer);
+    this.launchCacheSaveTimer = null;
+    this.launchPreviews.set({});
+    this.launchPreviewAt.set({});
     this.hasBootstrappedSession = false;
     this.directories.clear();
     this.directoryCachedAt.clear();

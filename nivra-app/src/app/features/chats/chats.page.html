@@ -20,8 +20,11 @@
           } @else {
             @if ((chat.loading() || localHistory.storageError()) && !conversationsForFolder().length) {
               <span class="chat-restore-status">
-                @if (chat.loading()) { <ion-spinner name="crescent"></ion-spinner> }
-                {{ chat.loading() ? ('CHATS.RESTORING' | translate:'Restaurando tus chats') : ('CHATS.HISTORY_UNAVAILABLE' | translate:'Historial temporalmente no disponible') }}
+                @if (chat.loading()) {
+                  <span class="chat-loading-line" aria-hidden="true"></span>
+                } @else {
+                  {{ 'CHATS.HISTORY_UNAVAILABLE' | translate:'Historial temporalmente no disponible' }}
+                }
               </span>
             } @else {
               <span>{{ conversationsForFolder().length }} {{ 'CHATS.CONVERSATIONS' | translate:'conversaciones' }}</span>
@@ -36,7 +39,7 @@
             <ion-icon name="people-outline"></ion-icon>
           </ion-button>
           <ion-button mode="ios" fill="clear" size="small" (click)="refresh()" [attr.aria-label]="'CHATS.SYNC' | translate:'Sincronizar'">
-            @if (chat.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="sync-outline"></ion-icon> }
+            <ion-icon name="sync-outline" [class.chat-syncing-icon]="chat.loading()"></ion-icon>
           </ion-button>
         </div>
       </header>
@@ -240,11 +243,19 @@
                 </ion-item-options>
               </ion-item-sliding>
             } @empty {
-              @if (chat.loading() || localHistory.storageError()) {
+              @if (chat.loading()) {
+                <div class="chat-list-skeleton" role="status" [attr.aria-label]="'CHATS.RESTORING' | translate:'Abriendo tus chats'">
+                  @for (row of [1, 2, 3, 4]; track row) {
+                    <div class="chat-skeleton-row" aria-hidden="true">
+                      <span class="chat-skeleton-avatar"></span>
+                      <span class="chat-skeleton-lines"><i></i><i></i></span>
+                    </div>
+                  }
+                </div>
+              } @else if (localHistory.storageError()) {
                 <div class="empty chat-restore-empty" role="status">
-                  @if (chat.loading()) { <ion-spinner name="crescent"></ion-spinner> }
-                  <strong>{{ chat.loading() ? ('CHATS.RESTORING' | translate:'Restaurando tus chats') : ('CHATS.HISTORY_UNAVAILABLE' | translate:'Historial temporalmente no disponible') }}</strong>
-                  <span>{{ chat.loading() ? ('CHATS.RECONNECTING' | translate:'Conectando y sincronizando tus conversaciones.') : ('CHATS.HISTORY_RETRY_HINT' | translate:'Tus conversaciones están protegidas. Desbloquea el dispositivo y vuelve a intentar.') }}</span>
+                  <strong>{{ 'CHATS.HISTORY_UNAVAILABLE' | translate:'Historial temporalmente no disponible' }}</strong>
+                  <span>{{ 'CHATS.HISTORY_RETRY_HINT' | translate:'Tus conversaciones están protegidas. Desbloquea el dispositivo y vuelve a intentar.' }}</span>
                 </div>
               } @else {
                 <div class="empty">
