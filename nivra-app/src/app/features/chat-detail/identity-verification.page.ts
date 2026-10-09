@@ -100,6 +100,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   private readonly previousUrl = this.navigation?.previousNavigation?.finalUrl?.toString();
   private target = '';
   private destroyed = false;
+  private comparisonRequest = 0;
   code = '';
   qr = '';
   comparison = '';
@@ -120,26 +121,41 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.destroyed = true;
+    this.comparisonRequest++;
   }
 
   async loadIdentity(): Promise<void> {
+    const scope = this.auth.session();
+    const request = ++this.comparisonRequest;
+    const active = () => !this.destroyed && request === this.comparisonRequest && this.sameSession(scope?.user.id, scope?.device.id);
     this.loading = true;
     this.message = '';
     this.verified = false;
+    this.code = '';
+    this.qr = '';
     try {
       const pair = await this.load();
       const code = (await deriveUnverifiedSafetyNumber(pair[0], pair[1])).display;
-      const qrModule = await import('qrcode');
-      const qr = await qrModule.toDataURL(`nivra-identity-v1:${code}`, { width: 256, margin: 2 });
-      if (!this.destroyed) {
+      const qr = await this.qrForComparison(code);
+      if (active()) {
         this.code = code;
         this.qr = qr;
       }
     } catch {
-      if (!this.destroyed) this.message = this.t('IDENTITY.LOAD_ERROR', 'No se pudieron cargar las llaves. Reintenta con conexión.');
+      if (active()) this.message = this.t('IDENTITY.LOAD_ERROR', 'No se pudieron cargar las llaves. Reintenta con conexión.');
     } finally {
-      if (!this.destroyed) this.loading = false;
+      if (active()) this.loading = false;
     }
+  }
+
+  private async qrForComparison(code: string): Promise<string> {
+    const qrModule = await import('qrcode');
+    return qrModule.toDataURL(`nivra-identity-v1:${code}`, { width: 256, margin: 2 });
+  }
+
+  private sameSession(userId: string | undefined, deviceId: string | undefined): boolean {
+    const current = this.auth.session();
+    return Boolean(userId && deviceId && current?.user.id === userId && current.device.id === deviceId);
   }
 
   private async load(): Promise<[PublicKeyDirectory, PublicKeyDirectory]> {
@@ -159,6 +175,9 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
 
   async confirm(): Promise<void> {
     if (this.busy || this.destroyed) return;
+    const scope = this.auth.session();
+    const request = this.comparisonRequest;
+    const active = () => !this.destroyed && request === this.comparisonRequest && this.sameSession(scope?.user.id, scope?.device.id);
     this.busy = true;
     this.verified = false;
     try {
@@ -167,21 +186,22 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
         this.message = this.t('IDENTITY.MISMATCH', 'Los códigos no coinciden. No se ha aceptado la identidad.');
         return;
       }
-      const scope = this.auth.session();
       const pair = await this.load();
-      if ((await deriveUnverifiedSafetyNumber(pair[0], pair[1])).display !== this.code) {
+      const latestCode = (await deriveUnverifiedSafetyNumber(pair[0], pair[1])).display;
+      if (!active()) return;
+      if (latestCode !== this.code) {
         this.message = this.t('IDENTITY.KEYS_CHANGED', 'Las llaves cambiaron durante la comparación. Vuelve a abrir esta pantalla.');
         return;
       }
       const current = this.auth.session();
-      if (this.destroyed || !scope || !current || current.user.id !== scope.user.id || current.device.id !== scope.device.id) return;
+      if (!active() || !current) return;
       await this.trust.confirm(JSON.stringify([current.user.id, current.device.id]), pair[1]);
-      if (!this.destroyed) {
+      if (active()) {
         this.verified = true;
         this.message = this.t('IDENTITY.SAVED', 'Código comparado y verificación guardada en este dispositivo.');
       }
     } catch {
-      if (!this.destroyed) this.message = this.t('IDENTITY.SAVE_ERROR', 'No se pudo guardar la verificación. Reintenta con conexión.');
+      if (active()) this.message = this.t('IDENTITY.SAVE_ERROR', 'No se pudo guardar la verificación. Reintenta con conexión.');
     } finally {
       this.busy = false;
     }

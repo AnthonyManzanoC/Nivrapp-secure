@@ -34,6 +34,7 @@ import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 import { AppSettingsService } from './app-settings.service';
 import { NativeDeviceService } from './native-device.service';
+import { HistoryDeviceSyncService } from './history-device-sync.service';
 
 const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 const LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
@@ -117,6 +118,8 @@ export class ChatService implements OnDestroy {
   private readonly signalr = inject(SignalrService);
   private readonly appSettings = inject(AppSettingsService);
   private readonly nativeDevice = inject(NativeDeviceService);
+  readonly deviceHistory = inject(HistoryDeviceSyncService);
+  private readonly pendingHistoryEnvelopes = new Map<string, MessageResponse>();
   private readonly destroyRef = inject(DestroyRef);
   private readonly directories = new Map<string, PublicKeyDirectory>();
   private readonly directoryCachedAt = new Map<string, number>();
@@ -170,6 +173,9 @@ export class ChatService implements OnDestroy {
   });
 
   constructor() {
+    this.deviceHistory.recovered$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
+      void this.retryRecoveredHistory();
+    });
     effect(() => {
       const userId = this.auth.session()?.user.id;
       const conversations = this.conversations();
@@ -315,18 +321,24 @@ export class ChatService implements OnDestroy {
     if (!this.auth.isAuthenticated()) {
       return;
     }
+    const context = this.captureSendContext();
 
     this.loading.set(true);
     try {
       this.restoreSelectedConversationId();
       await this.loadLaunchCache();
+      if (!this.isSendContextCurrent(context)) return;
       await this.loadCachedChatIndex();
+      if (!this.isSendContextCurrent(context)) return;
       await this.loadCachedSelectedMessages();
+      if (!this.isSendContextCurrent(context)) return;
       await this.purgeExpiredLocalMessages();
       if (!await this.auth.ensureFreshSession()) {
         return;
       }
+      if (!this.isSendContextCurrent(context)) return;
       const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>(`/sync/bootstrap?messageTake=${CHAT_PAGE_SIZE}`));
+      if (!this.isSendContextCurrent(context)) return;
       const contacts = bootstrap.contacts ?? [];
       const conversations = this.applyLocalConversationState(bootstrap.conversations ?? []);
       this.remoteIndexRevision += 1;
@@ -341,9 +353,11 @@ export class ChatService implements OnDestroy {
       // failed local cache open is no longer a blocking condition for this session.
       this.history.clearStorageError();
       await this.persistChatIndex(conversations, contacts);
+      if (!this.isSendContextCurrent(context)) return;
       void this.hydrateConversationProfiles(conversations);
       const messages = bootstrap.messages ?? [];
-      const decodedCleanly = await this.ingestMessageBatch(messages, false);
+      const decodedCleanly = await this.ingestMessageBatch(messages, false, context);
+      if (!this.isSendContextCurrent(context)) return;
       await this.ackDelivered(messages);
       if (decodedCleanly) {
         await this.rememberSyncWatermark(messages);
@@ -359,13 +373,16 @@ export class ChatService implements OnDestroy {
     if (!this.auth.isAuthenticated() || this.syncInFlight) {
       return;
     }
+    const context = this.captureSendContext();
     if (!await this.auth.ensureFreshSession()) {
       return;
     }
+    if (!this.isSendContextCurrent(context)) return;
     this.syncInFlight = true;
     try {
       const accountKey = this.localAccountKey();
       const storedWatermark = accountKey ? await this.history.getSyncWatermark(accountKey).catch(() => null) : null;
+      if (!this.isSendContextCurrent(context)) return;
       const watermark = this.newestIso(storedWatermark, this.latestLoadedMessageAt());
       const params = new URLSearchParams({ take: String(Math.max(1, Math.min(take, 100))) });
       const retryDecryptErrors = Object.values(this.messagesByConversation()).some((messages) => messages.some((message) => message.decryptError));
@@ -373,7 +390,9 @@ export class ChatService implements OnDestroy {
         params.set('since', watermark);
       }
       const sync = await firstValueFrom(this.api.get<MessageSyncResponse>(`/messages/sync?${params.toString()}`));
-      const hadDecryptError = !(await this.ingestMessageBatch(sync.messages ?? [], false));
+      if (!this.isSendContextCurrent(context)) return;
+      const hadDecryptError = !(await this.ingestMessageBatch(sync.messages ?? [], false, context));
+      if (!this.isSendContextCurrent(context)) return;
       await this.ackDelivered(sync.messages ?? []);
       this.history.clearStorageError();
       if (accountKey && sync.syncedAt && !hadDecryptError) {
@@ -482,6 +501,7 @@ export class ChatService implements OnDestroy {
     conversationId: string,
     options: { before?: string | null; beforeId?: string | null } = {},
   ): Promise<MessageResponse[]> {
+    const context = this.captureSendContext();
     const params = new URLSearchParams({ take: String(CHAT_PAGE_SIZE) });
     if (options.before) {
       params.set('before', options.before);
@@ -492,7 +512,9 @@ export class ChatService implements OnDestroy {
     const messages = await firstValueFrom(
       this.api.get<MessageResponse[]>(`/conversations/${encodeURIComponent(conversationId)}/messages?${params.toString()}`),
     );
-    await this.ingestMessageBatch(messages ?? [], false);
+    if (!this.isSendContextCurrent(context)) return [];
+    await this.ingestMessageBatch(messages ?? [], false, context);
+    if (!this.isSendContextCurrent(context)) return [];
     const existingHasMore = this.conversationPaging()[conversationId]?.hasMore === true;
     this.refreshConversationPageState(conversationId, (messages ?? []).length >= CHAT_PAGE_SIZE || (!options.before && existingHasMore));
     return messages ?? [];
@@ -1633,7 +1655,9 @@ export class ChatService implements OnDestroy {
     if (!current) {
       return false;
     }
+    const ingestContext: ChatSendContext = { userId: current.user.id, deviceId: current.device.id };
     const recipients = this.ownRecipientCandidates(message.recipients, current.user.id, current.device.id);
+    if (!recipients.length) return false;
     const recipient = recipients[0];
     let payload: ChatPayload;
     let decryptError = false;
@@ -1653,23 +1677,21 @@ export class ChatService implements OnDestroy {
         if (cached?.payload && !cached.decryptError) {
           payload = cached.payload;
         } else {
-          if (await this.shouldSkipUnavailableEnvelope(
-            message,
-            current.user.id,
-            current.user.alias,
-            current.device.id,
-            recipients,
-          )) {
-            return true;
-          }
           decryptError = true;
-          payload = { type: 'system', title: 'Mensaje protegido', text: 'No se pudo descifrar en este dispositivo.' };
+          payload = { type: 'system', title: 'Historial protegido', text: 'Pendiente de sincronizar desde otro dispositivo de tu cuenta.' };
         }
       }
     } else if (message.senderUserId === current.user.id) {
       payload = { type: 'system', text: 'Mensaje enviado desde otro dispositivo.' };
     } else {
       payload = { type: 'system', text: 'Paquete cifrado no disponible para este dispositivo.' };
+    }
+    if (!this.isSendContextCurrent(ingestContext)) return false;
+    if (decryptError) {
+      this.pendingHistoryEnvelopes.set(message.id, message);
+      this.deviceHistory.requestHistory();
+    } else {
+      this.pendingHistoryEnvelopes.delete(message.id);
     }
     payload = this.stripMessagePadding(payload);
 
@@ -1741,13 +1763,28 @@ export class ChatService implements OnDestroy {
     return !decryptError;
   }
 
-  private async ingestMessageBatch(messages: MessageResponse[], markDelivered: boolean): Promise<boolean> {
+  private async retryRecoveredHistory(): Promise<void> {
+    const context = this.captureSendContext();
+    const pending = [...this.pendingHistoryEnvelopes.values()];
+    await this.ingestMessageBatch(pending, false, context);
+    if (!this.isSendContextCurrent(context)) return;
+    await this.bootstrap();
+    if (!this.isSendContextCurrent(context)) return;
+    const selectedId = this.selectedConversationId();
+    if (selectedId) await this.loadMessages(selectedId).catch(() => undefined);
+    if (this.isSendContextCurrent(context) && !this.pendingHistoryEnvelopes.size) this.deviceHistory.markHistoryReadable();
+  }
+
+  private async ingestMessageBatch(messages: MessageResponse[], markDelivered: boolean, context = this.captureSendContext()): Promise<boolean> {
     let hadDecryptError = false;
     let index = 0;
     for (const message of messages ?? []) {
+      if (!this.isSendContextCurrent(context)) return false;
       hadDecryptError = !(await this.ingestMessage(message, markDelivered)) || hadDecryptError;
+      if (!this.isSendContextCurrent(context)) return false;
       if (++index % 8 === 0) {
         await this.yieldToMainThread();
+        if (!this.isSendContextCurrent(context)) return false;
       }
     }
     return !hadDecryptError;
@@ -2272,7 +2309,9 @@ export class ChatService implements OnDestroy {
     conversationId: string,
     options: { before?: string | null; beforeId?: string | null; limit?: number } = {},
   ): Promise<ChatMessageVm[]> {
+    const context = this.captureSendContext();
     const accountKeys = await this.localAccountKeys();
+    if (!this.isSendContextCurrent(context)) return [];
     if (!accountKeys.length || !conversationId) {
       return [];
     }
@@ -2283,6 +2322,7 @@ export class ChatService implements OnDestroy {
         beforeId: options.beforeId ?? null,
         limit,
       }).catch(() => [])));
+    if (!this.isSendContextCurrent(context)) return [];
     const now = Date.now();
     const messages = this.uniqueMessages(groups.flat())
       .filter((message) => !this.isExpiredMessage(message, now))
@@ -3740,6 +3780,7 @@ export class ChatService implements OnDestroy {
   }
 
   private resetInMemoryState(): void {
+    this.pendingHistoryEnvelopes.clear();
     this.launchCacheEpoch += 1;
     if (this.launchCacheSaveTimer !== null) window.clearTimeout(this.launchCacheSaveTimer);
     this.launchCacheSaveTimer = null;
@@ -3774,6 +3815,7 @@ export class ChatService implements OnDestroy {
   }
 
   private pauseForLoggedOutSession(): void {
+    this.pendingHistoryEnvelopes.clear();
     this.launchCacheEpoch += 1;
     if (this.launchCacheSaveTimer !== null) window.clearTimeout(this.launchCacheSaveTimer);
     this.launchCacheSaveTimer = null;
@@ -3903,10 +3945,31 @@ export class ChatService implements OnDestroy {
       this.assertSendContext(sendContext);
     }
     const directories = new Map(fresh.map(directory => [directory.userId, directory]));
+    const ownDirectory = directories.get(current.user.id);
+    const publishedOwn = ownDirectory?.devices.find(device => device.deviceId === current.device.id);
+    const publishedOwnKey = this.crypto.parsePublicJwk(publishedOwn?.keyBundle?.identityKey);
+    if (!publishedOwn || !publishedOwnKey || !['kty', 'crv', 'x', 'y'].every(field => publishedOwnKey[field as keyof JsonWebKey] === own.publicJwk[field as keyof JsonWebKey])) {
+      // A legacy/phone login can have an authenticated device without a published
+      // bundle. Repair only our own device; never substitute a contact's old key.
+      await firstValueFrom(this.api.post('/keys/prekeys', own.keyBundle));
+      this.assertSendContext(sendContext);
+      const refreshed = await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds: [current.user.id], aliases: [] }));
+      this.assertSendContext(sendContext);
+      for (const directory of refreshed) directories.set(directory.userId, directory);
+    }
     for (const participant of activeParticipants) {
       const directory = directories.get(participant.userId);
-      if (!directory?.devices.length) throw new Error('No se pudieron comprobar las llaves de todos los participantes. Reintenta antes de enviar.');
-      if (!this.isGroupConversation(conversation) && participant.userId !== current.user.id) await this.identityTrust.check(JSON.stringify([current.user.id,current.device.id]), directory);
+      // Legacy sessions without a published identity cannot receive an envelope.
+      // Keep every published device; a malformed published key still blocks delivery.
+      const publishedDevices = directory?.devices.filter(device => Boolean(device.keyBundle?.identityKey?.trim())) ?? [];
+      if (!publishedDevices.length || publishedDevices.some(device => !device.deviceId || !this.crypto.parsePublicJwk(device.keyBundle?.identityKey))) {
+        const label = participant.displayName || participant.alias || this.contacts().find(contact => contact.userId === participant.userId)?.displayName || 'Este contacto';
+        if (!publishedDevices.length) throw new Error(`${label} no tiene un dispositivo autorizado con llaves disponibles. Debe abrir Nivra e iniciar sesión para recibir mensajes cifrados.`);
+        throw new Error(`No se pudieron comprobar las llaves de ${label}. Pídele que actualice Nivra e inicie sesión de nuevo; el mensaje no se ha enviado.`);
+      }
+      const deliveryDirectory = { ...directory!, devices: publishedDevices };
+      directories.set(participant.userId, deliveryDirectory);
+      if (!this.isGroupConversation(conversation) && participant.userId !== current.user.id) await this.identityTrust.check(JSON.stringify([current.user.id,current.device.id]), deliveryDirectory);
       this.assertSendContext(sendContext);
     }
 

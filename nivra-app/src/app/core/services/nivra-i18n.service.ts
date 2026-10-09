@@ -590,6 +590,300 @@ const GLOBAL_TRANSLATIONS: TranslationDictionary = {
   },
 };
 
+const LAUNCH_TRANSLATIONS: TranslationDictionary = {
+  "es": {
+    "LAUNCH.CHECKING": "Preparando tu espacio privado",
+    "LAUNCH.ENCRYPTED": "Tus mensajes permanecen cifrados",
+    "settings.wallpaper.silk": "Seda"
+  },
+  "en": {
+    "LAUNCH.CHECKING": "Preparing your private space",
+    "LAUNCH.ENCRYPTED": "Your messages stay encrypted",
+    "settings.wallpaper.silk": "Silk"
+  },
+  "ar": {
+    "LAUNCH.CHECKING": "جارٍ تجهيز مساحتك الخاصة",
+    "LAUNCH.ENCRYPTED": "تبقى رسائلك مشفرة",
+    "settings.wallpaper.silk": "حرير"
+  },
+  "de": {
+    "LAUNCH.CHECKING": "Dein privater Bereich wird vorbereitet",
+    "LAUNCH.ENCRYPTED": "Deine Nachrichten bleiben verschlüsselt",
+    "settings.wallpaper.silk": "Seide"
+  },
+  "fr": {
+    "LAUNCH.CHECKING": "Préparation de votre espace privé",
+    "LAUNCH.ENCRYPTED": "Vos messages restent chiffrés",
+    "settings.wallpaper.silk": "Soie"
+  },
+  "hi": {
+    "LAUNCH.CHECKING": "आपका निजी स्थान तैयार हो रहा है",
+    "LAUNCH.ENCRYPTED": "आपके संदेश एन्क्रिप्टेड रहते हैं",
+    "settings.wallpaper.silk": "रेशम"
+  },
+  "ja": {
+    "LAUNCH.CHECKING": "プライベートな空間を準備しています",
+    "LAUNCH.ENCRYPTED": "メッセージは暗号化されたままです",
+    "settings.wallpaper.silk": "シルク"
+  },
+  "pt": {
+    "LAUNCH.CHECKING": "Preparando seu espaço privado",
+    "LAUNCH.ENCRYPTED": "Suas mensagens permanecem criptografadas",
+    "settings.wallpaper.silk": "Seda"
+  },
+  "ru": {
+    "LAUNCH.CHECKING": "Подготовка вашего личного пространства",
+    "LAUNCH.ENCRYPTED": "Ваши сообщения остаются зашифрованными",
+    "settings.wallpaper.silk": "Шёлк"
+  },
+  "zh-Hans": {
+    "LAUNCH.CHECKING": "正在准备你的私人空间",
+    "LAUNCH.ENCRYPTED": "你的消息始终保持加密",
+    "settings.wallpaper.silk": "丝绸"
+  }
+};
+for (const [language, terms] of Object.entries(LAUNCH_TRANSLATIONS)) {
+  Object.assign(TRANSLATIONS[language] ??= {}, terms);
+}
+
+const CAMERA_RECOVERY_TRANSLATIONS: TranslationDictionary = {
+  "es": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "Permite el acceso a la cámara y vuelve a intentarlo. El audio continúa.",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "No se encontró una cámara. Conecta una cámara y vuelve a intentarlo; el audio continúa.",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "No se pudo iniciar la cámara. Revisa los permisos del navegador y si otra aplicación la está usando; el audio continúa.",
+    "CALLS.CAMERA_UPGRADE_ERROR": "No se pudo actualizar el video. El audio continúa; vuelve a intentarlo."
+  },
+  "en": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "Allow camera access and try again. Audio continues.",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "No camera was found. Connect a camera and try again; audio continues.",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "The camera could not start. Check browser permissions and whether another app is using it; audio continues.",
+    "CALLS.CAMERA_UPGRADE_ERROR": "Video could not be updated. Audio continues; try again."
+  },
+  "ar": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "اسمح بالوصول إلى الكاميرا ثم حاول مجددًا. يستمر الصوت.",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "لم يتم العثور على كاميرا. صِل كاميرا ثم حاول مجددًا؛ يستمر الصوت.",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "تعذر تشغيل الكاميرا. تحقق من أذونات المتصفح ومن استخدام تطبيق آخر لها؛ يستمر الصوت.",
+    "CALLS.CAMERA_UPGRADE_ERROR": "تعذر تحديث الفيديو. يستمر الصوت؛ حاول مجددًا."
+  },
+  "de": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "Erlaube den Kamerazugriff und versuche es erneut. Das Audio läuft weiter.",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "Keine Kamera gefunden. Schließe eine Kamera an und versuche es erneut; das Audio läuft weiter.",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "Die Kamera konnte nicht starten. Prüfe die Browserberechtigungen und ob eine andere App sie nutzt; das Audio läuft weiter.",
+    "CALLS.CAMERA_UPGRADE_ERROR": "Das Video konnte nicht aktualisiert werden. Das Audio läuft weiter; versuche es erneut."
+  },
+  "fr": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "Autorisez l’accès à la caméra et réessayez. L’audio continue.",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "Aucune caméra trouvée. Branchez une caméra et réessayez ; l’audio continue.",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "La caméra n’a pas pu démarrer. Vérifiez les autorisations du navigateur et si une autre application l’utilise ; l’audio continue.",
+    "CALLS.CAMERA_UPGRADE_ERROR": "La vidéo n’a pas pu être mise à jour. L’audio continue ; réessayez."
+  },
+  "hi": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "कैमरे की अनुमति दें और फिर कोशिश करें। ऑडियो जारी है।",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "कोई कैमरा नहीं मिला। कैमरा कनेक्ट करें और फिर कोशिश करें; ऑडियो जारी है।",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "कैमरा शुरू नहीं हो सका। ब्राउज़र की अनुमतियाँ और किसी दूसरे ऐप द्वारा कैमरे का उपयोग जाँचें; ऑडियो जारी है।",
+    "CALLS.CAMERA_UPGRADE_ERROR": "वीडियो अपडेट नहीं हो सका। ऑडियो जारी है; फिर कोशिश करें।"
+  },
+  "ja": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "カメラへのアクセスを許可して再試行してください。音声は続きます。",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "カメラが見つかりません。カメラを接続して再試行してください。音声は続きます。",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "カメラを起動できませんでした。ブラウザの権限や他のアプリが使用していないか確認してください。音声は続きます。",
+    "CALLS.CAMERA_UPGRADE_ERROR": "映像を更新できませんでした。音声は続きます。再試行してください。"
+  },
+  "pt": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "Permita o acesso à câmera e tente novamente. O áudio continua.",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "Nenhuma câmera encontrada. Conecte uma câmera e tente novamente; o áudio continua.",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "Não foi possível iniciar a câmera. Confira as permissões do navegador e se outro aplicativo está usando a câmera; o áudio continua.",
+    "CALLS.CAMERA_UPGRADE_ERROR": "Não foi possível atualizar o vídeo. O áudio continua; tente novamente."
+  },
+  "ru": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "Разрешите доступ к камере и повторите попытку. Звук продолжается.",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "Камера не найдена. Подключите камеру и повторите попытку; звук продолжается.",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "Не удалось запустить камеру. Проверьте разрешения браузера и не использует ли её другое приложение; звук продолжается.",
+    "CALLS.CAMERA_UPGRADE_ERROR": "Не удалось обновить видео. Звук продолжается; повторите попытку."
+  },
+  "zh-Hans": {
+    "CALLS.CAMERA_PERMISSION_ERROR": "请允许访问摄像头后重试。音频会继续。",
+    "CALLS.CAMERA_NOT_FOUND_ERROR": "未找到摄像头。请连接摄像头后重试；音频会继续。",
+    "CALLS.CAMERA_UNAVAILABLE_ERROR": "无法启动摄像头。请检查浏览器权限以及其他应用是否正在使用它；音频会继续。",
+    "CALLS.CAMERA_UPGRADE_ERROR": "无法更新视频。音频会继续；请重试。"
+  }
+};
+for (const [language, terms] of Object.entries(CAMERA_RECOVERY_TRANSLATIONS)) {
+  Object.assign(TRANSLATIONS[language] ??= {}, terms);
+}
+
+const HISTORY_DEVICE_TRANSLATIONS: TranslationDictionary = {
+  "es": {
+    "HISTORY_DEVICE.SYNCING": "Sincronizando tu historial",
+    "HISTORY_DEVICE.PENDING": "Historial cifrado pendiente",
+    "HISTORY_DEVICE.HINT": "Abre la versión actual de Nivra en un dispositivo donde ya veas tus chats y autoriza este código. Después tu historial se sincronizará cifrado.",
+    "HISTORY_DEVICE.APPROVE_TITLE": "Vincular historial cifrado",
+    "HISTORY_DEVICE.NEW_DEVICE": "Nuevo dispositivo",
+    "HISTORY_DEVICE.COMPARE_HINT": "Compara este código con el que aparece en tu otro dispositivo. Compártelo sólo si ambos coinciden.",
+    "HISTORY_DEVICE.COMPARED": "Los códigos coinciden en mis dos dispositivos",
+    "HISTORY_DEVICE.SHARE": "Compartir mi historial",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "No se pudo compartir el historial. Comprueba el código y vuelve a intentar."
+  },
+  "en": {
+    "HISTORY_DEVICE.SYNCING": "Syncing your history",
+    "HISTORY_DEVICE.PENDING": "Encrypted history pending",
+    "HISTORY_DEVICE.HINT": "Open the current version of Nivra on a device where you can already see your chats and approve this code. Your history will then sync encrypted.",
+    "HISTORY_DEVICE.APPROVE_TITLE": "Link encrypted history",
+    "HISTORY_DEVICE.NEW_DEVICE": "New device",
+    "HISTORY_DEVICE.COMPARE_HINT": "Compare this code with the one shown on your other device. Share only if both match.",
+    "HISTORY_DEVICE.COMPARED": "The codes match on both of my devices",
+    "HISTORY_DEVICE.SHARE": "Share my history",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "History could not be shared. Check the code and try again."
+  },
+  "ar": {
+    "HISTORY_DEVICE.SYNCING": "جارٍ مزامنة سجلك",
+    "HISTORY_DEVICE.PENDING": "السجل المشفر قيد الانتظار",
+    "HISTORY_DEVICE.HINT": "افتح الإصدار الحالي من Nivra على جهاز تظهر فيه محادثاتك بالفعل ووافق على هذا الرمز. بعدها ستتم مزامنة سجلك مشفرًا.",
+    "HISTORY_DEVICE.APPROVE_TITLE": "ربط السجل المشفر",
+    "HISTORY_DEVICE.NEW_DEVICE": "جهاز جديد",
+    "HISTORY_DEVICE.COMPARE_HINT": "قارن هذا الرمز بالرمز الظاهر على جهازك الآخر. شارك فقط إذا تطابقا.",
+    "HISTORY_DEVICE.COMPARED": "الرمزان متطابقان على جهازيّ",
+    "HISTORY_DEVICE.SHARE": "مشاركة سجلي",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "تعذرت مشاركة السجل. تحقق من الرمز ثم حاول مجددًا."
+  },
+  "de": {
+    "HISTORY_DEVICE.SYNCING": "Dein Verlauf wird synchronisiert",
+    "HISTORY_DEVICE.PENDING": "Verschlüsselter Verlauf ausstehend",
+    "HISTORY_DEVICE.HINT": "Öffne die aktuelle Nivra-Version auf einem Gerät, auf dem du deine Chats bereits siehst, und bestätige diesen Code. Dein Verlauf wird dann verschlüsselt synchronisiert.",
+    "HISTORY_DEVICE.APPROVE_TITLE": "Verschlüsselten Verlauf verknüpfen",
+    "HISTORY_DEVICE.NEW_DEVICE": "Neues Gerät",
+    "HISTORY_DEVICE.COMPARE_HINT": "Vergleiche diesen Code mit dem auf deinem anderen Gerät. Teile nur, wenn beide übereinstimmen.",
+    "HISTORY_DEVICE.COMPARED": "Die Codes stimmen auf meinen beiden Geräten überein",
+    "HISTORY_DEVICE.SHARE": "Meinen Verlauf teilen",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "Der Verlauf konnte nicht geteilt werden. Prüfe den Code und versuche es erneut."
+  },
+  "fr": {
+    "HISTORY_DEVICE.SYNCING": "Synchronisation de votre historique",
+    "HISTORY_DEVICE.PENDING": "Historique chiffré en attente",
+    "HISTORY_DEVICE.HINT": "Ouvrez la version actuelle de Nivra sur un appareil où vos discussions sont déjà visibles et autorisez ce code. Votre historique sera ensuite synchronisé de façon chiffrée.",
+    "HISTORY_DEVICE.APPROVE_TITLE": "Lier l’historique chiffré",
+    "HISTORY_DEVICE.NEW_DEVICE": "Nouvel appareil",
+    "HISTORY_DEVICE.COMPARE_HINT": "Comparez ce code avec celui affiché sur votre autre appareil. Partagez seulement si les deux correspondent.",
+    "HISTORY_DEVICE.COMPARED": "Les codes correspondent sur mes deux appareils",
+    "HISTORY_DEVICE.SHARE": "Partager mon historique",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "L’historique n’a pas pu être partagé. Vérifiez le code et réessayez."
+  },
+  "hi": {
+    "HISTORY_DEVICE.SYNCING": "आपका इतिहास सिंक हो रहा है",
+    "HISTORY_DEVICE.PENDING": "एन्क्रिप्टेड इतिहास लंबित है",
+    "HISTORY_DEVICE.HINT": "जिस डिवाइस पर आपकी चैट पहले से दिखती हैं, वहाँ Nivra का मौजूदा संस्करण खोलें और इस कोड को मंज़ूरी दें। इसके बाद आपका इतिहास एन्क्रिप्टेड रूप में सिंक होगा।",
+    "HISTORY_DEVICE.APPROVE_TITLE": "एन्क्रिप्टेड इतिहास लिंक करें",
+    "HISTORY_DEVICE.NEW_DEVICE": "नया डिवाइस",
+    "HISTORY_DEVICE.COMPARE_HINT": "इस कोड की तुलना अपने दूसरे डिवाइस पर दिखने वाले कोड से करें। दोनों मेल खाने पर ही साझा करें।",
+    "HISTORY_DEVICE.COMPARED": "मेरे दोनों डिवाइस पर कोड मेल खाते हैं",
+    "HISTORY_DEVICE.SHARE": "मेरा इतिहास साझा करें",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "इतिहास साझा नहीं हो सका। कोड जाँचें और फिर कोशिश करें।"
+  },
+  "ja": {
+    "HISTORY_DEVICE.SYNCING": "履歴を同期しています",
+    "HISTORY_DEVICE.PENDING": "暗号化された履歴の同期待ち",
+    "HISTORY_DEVICE.HINT": "チャットがすでに表示される端末で最新のNivraを開き、このコードを承認してください。その後、履歴は暗号化された状態で同期されます。",
+    "HISTORY_DEVICE.APPROVE_TITLE": "暗号化された履歴をリンク",
+    "HISTORY_DEVICE.NEW_DEVICE": "新しい端末",
+    "HISTORY_DEVICE.COMPARE_HINT": "このコードをもう一方の端末のコードと比較してください。両方が一致する場合のみ共有してください。",
+    "HISTORY_DEVICE.COMPARED": "両方の端末でコードが一致しています",
+    "HISTORY_DEVICE.SHARE": "履歴を共有",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "履歴を共有できませんでした。コードを確認して再試行してください。"
+  },
+  "pt": {
+    "HISTORY_DEVICE.SYNCING": "Sincronizando seu histórico",
+    "HISTORY_DEVICE.PENDING": "Histórico criptografado pendente",
+    "HISTORY_DEVICE.HINT": "Abra a versão atual do Nivra em um dispositivo onde seus chats já aparecem e autorize este código. Depois, seu histórico será sincronizado com criptografia.",
+    "HISTORY_DEVICE.APPROVE_TITLE": "Vincular histórico criptografado",
+    "HISTORY_DEVICE.NEW_DEVICE": "Novo dispositivo",
+    "HISTORY_DEVICE.COMPARE_HINT": "Compare este código com o que aparece no outro dispositivo. Compartilhe somente se ambos forem iguais.",
+    "HISTORY_DEVICE.COMPARED": "Os códigos coincidem nos meus dois dispositivos",
+    "HISTORY_DEVICE.SHARE": "Compartilhar meu histórico",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "Não foi possível compartilhar o histórico. Confira o código e tente novamente."
+  },
+  "ru": {
+    "HISTORY_DEVICE.SYNCING": "Синхронизация вашей истории",
+    "HISTORY_DEVICE.PENDING": "Ожидается зашифрованная история",
+    "HISTORY_DEVICE.HINT": "Откройте текущую версию Nivra на устройстве, где уже видны ваши чаты, и подтвердите этот код. Затем история синхронизируется в зашифрованном виде.",
+    "HISTORY_DEVICE.APPROVE_TITLE": "Связать зашифрованную историю",
+    "HISTORY_DEVICE.NEW_DEVICE": "Новое устройство",
+    "HISTORY_DEVICE.COMPARE_HINT": "Сравните этот код с кодом на другом устройстве. Делитесь только при совпадении.",
+    "HISTORY_DEVICE.COMPARED": "Коды совпадают на обоих моих устройствах",
+    "HISTORY_DEVICE.SHARE": "Поделиться моей историей",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "Не удалось поделиться историей. Проверьте код и повторите попытку."
+  },
+  "zh-Hans": {
+    "HISTORY_DEVICE.SYNCING": "正在同步你的历史记录",
+    "HISTORY_DEVICE.PENDING": "加密历史记录等待同步",
+    "HISTORY_DEVICE.HINT": "在已经能看到聊天的设备上打开当前版本的 Nivra，并授权此代码。之后历史记录将以加密方式同步。",
+    "HISTORY_DEVICE.APPROVE_TITLE": "关联加密历史记录",
+    "HISTORY_DEVICE.NEW_DEVICE": "新设备",
+    "HISTORY_DEVICE.COMPARE_HINT": "将此代码与另一台设备上显示的代码进行比较。仅在两者一致时共享。",
+    "HISTORY_DEVICE.COMPARED": "两台设备上的代码一致",
+    "HISTORY_DEVICE.SHARE": "共享我的历史记录",
+    "HISTORY_DEVICE.APPROVAL_ERROR": "无法共享历史记录。请检查代码后重试。"
+  }
+};
+for (const [language, terms] of Object.entries(HISTORY_DEVICE_TRANSLATIONS)) {
+  Object.assign(TRANSLATIONS[language] ??= {}, terms);
+}
+
+const IDENTITY_CHANGE_TRANSLATIONS: TranslationDictionary = {
+  "es": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "El código de seguridad cambió",
+    "CHAT.IDENTITY_CHANGED_COPY": "Puede ocurrir al vincular otro dispositivo o reinstalar. Compara el código con tu contacto para continuar.",
+    "CHAT.IDENTITY_VERIFY_ACTION": "Verificar identidad"
+  },
+  "en": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "The security code changed",
+    "CHAT.IDENTITY_CHANGED_COPY": "This can happen after linking another device or reinstalling. Compare the code with your contact to continue.",
+    "CHAT.IDENTITY_VERIFY_ACTION": "Verify identity"
+  },
+  "ar": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "تغيّر رمز الأمان",
+    "CHAT.IDENTITY_CHANGED_COPY": "قد يحدث هذا عند ربط جهاز آخر أو إعادة التثبيت. قارن الرمز مع جهة اتصالك للمتابعة.",
+    "CHAT.IDENTITY_VERIFY_ACTION": "التحقق من الهوية"
+  },
+  "de": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "Der Sicherheitscode hat sich geändert",
+    "CHAT.IDENTITY_CHANGED_COPY": "Dies kann nach dem Verknüpfen eines weiteren Geräts oder einer Neuinstallation passieren. Vergleiche den Code mit deinem Kontakt, um fortzufahren.",
+    "CHAT.IDENTITY_VERIFY_ACTION": "Identität prüfen"
+  },
+  "fr": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "Le code de sécurité a changé",
+    "CHAT.IDENTITY_CHANGED_COPY": "Cela peut arriver après l’association d’un autre appareil ou une réinstallation. Comparez le code avec votre contact pour continuer.",
+    "CHAT.IDENTITY_VERIFY_ACTION": "Vérifier l’identité"
+  },
+  "hi": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "सुरक्षा कोड बदल गया है",
+    "CHAT.IDENTITY_CHANGED_COPY": "ऐसा कोई दूसरा डिवाइस जोड़ने या दोबारा इंस्टॉल करने के बाद हो सकता है। जारी रखने के लिए अपने संपर्क से कोड की तुलना करें।",
+    "CHAT.IDENTITY_VERIFY_ACTION": "पहचान सत्यापित करें"
+  },
+  "ja": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "セキュリティコードが変更されました",
+    "CHAT.IDENTITY_CHANGED_COPY": "別のデバイスのリンクや再インストールによって変更されることがあります。続けるには相手とコードを比較してください。",
+    "CHAT.IDENTITY_VERIFY_ACTION": "本人確認"
+  },
+  "pt": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "O código de segurança mudou",
+    "CHAT.IDENTITY_CHANGED_COPY": "Isso pode acontecer após vincular outro dispositivo ou reinstalar. Compare o código com seu contato para continuar.",
+    "CHAT.IDENTITY_VERIFY_ACTION": "Verificar identidade"
+  },
+  "ru": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "Код безопасности изменился",
+    "CHAT.IDENTITY_CHANGED_COPY": "Это может произойти после привязки другого устройства или переустановки. Сравните код с контактом, чтобы продолжить.",
+    "CHAT.IDENTITY_VERIFY_ACTION": "Проверить личность"
+  },
+  "zh-Hans": {
+    "CHAT.IDENTITY_CHANGED_TITLE": "安全代码已更改",
+    "CHAT.IDENTITY_CHANGED_COPY": "关联其他设备或重新安装后可能出现这种情况。请与联系人核对代码后继续。",
+    "CHAT.IDENTITY_VERIFY_ACTION": "验证身份"
+  }
+};
+for (const [language, terms] of Object.entries(IDENTITY_CHANGE_TRANSLATIONS)) {
+  Object.assign(TRANSLATIONS[language] ??= {}, terms);
+}
+
 @Injectable({ providedIn: 'root' })
 export class NivraI18nService {
   private readonly appSettings = inject(AppSettingsService);

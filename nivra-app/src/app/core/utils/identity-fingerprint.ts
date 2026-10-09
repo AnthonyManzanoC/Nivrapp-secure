@@ -29,8 +29,9 @@ interface CanonicalIdentityDirectory {
 const BASE64_URL_P256_COORDINATE = /^[A-Za-z0-9_-]{43}$/;
 
 /**
- * Hashes the exact public-key directory returned by the service. A directory change
- * (new, revoked, or rotated device key) changes the result. It never records trust
+ * Hashes the published public identities in the directory returned by the service.
+ * Legacy devices without a published identity cannot participate. A directory change
+ * (new, revoked, or rotated public device key) changes the result. It never records trust
  * locally and cannot establish identity without a separate authenticated comparison.
  */
 export async function deriveDirectoryFingerprint(directory: PublicKeyDirectory): Promise<DirectoryFingerprint> {
@@ -78,14 +79,19 @@ function canonicalizeDirectory(directory: PublicKeyDirectory): CanonicalIdentity
   }
 
   const seen = new Set<string>();
-  const devices = (directory.devices ?? []).map((device) => {
+  const devices = (directory.devices ?? []).flatMap((device) => {
     const deviceId = String(device?.deviceId || '').trim();
-    const identity = parseP256IdentityKey(device?.keyBundle?.identityKey);
-    if (!deviceId || deviceId.length > 128 || !identity || seen.has(deviceId)) {
+    if (!deviceId || deviceId.length > 128 || seen.has(deviceId)) {
       throw new Error('El directorio contiene una llave de dispositivo inválida.');
     }
     seen.add(deviceId);
-    return { deviceId, ...identity };
+    const publishedKey = device?.keyBundle?.identityKey;
+    if (publishedKey == null || (typeof publishedKey === 'string' && !publishedKey.trim())) {
+      return [];
+    }
+    const identity = parseP256IdentityKey(publishedKey);
+    if (!identity) throw new Error('El directorio contiene una llave de dispositivo inválida.');
+    return [{ deviceId, ...identity }];
   }).sort((left, right) => compareCanonicalStrings(left.deviceId, right.deviceId));
 
   if (!devices.length) {
@@ -97,7 +103,7 @@ function canonicalizeDirectory(directory: PublicKeyDirectory): CanonicalIdentity
 function parseP256IdentityKey(value: string | null | undefined): { x: string; y: string } | null {
   try {
     const key = JSON.parse(value || '') as Partial<JsonWebKey>;
-    if (key.kty !== 'EC' || key.crv !== 'P-256' ||
+    if (Object.prototype.hasOwnProperty.call(key, 'd') || key.kty !== 'EC' || key.crv !== 'P-256' ||
         typeof key.x !== 'string' || typeof key.y !== 'string' ||
         !BASE64_URL_P256_COORDINATE.test(key.x) || !BASE64_URL_P256_COORDINATE.test(key.y)) {
       return null;

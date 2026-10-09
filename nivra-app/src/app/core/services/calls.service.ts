@@ -2,7 +2,7 @@ import { DestroyRef, Injectable, NgZone, OnDestroy, computed, effect, inject, si
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
-import { Room, RoomEvent, Track, type AudioCaptureOptions } from 'livekit-client';
+import { Room, RoomEvent, Track, type AudioCaptureOptions, type VideoCaptureOptions } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { CallPhase, CallSession, CallSignalEvent, GroupCallRoom, PublicKeyDirectory, RecipientCipherRequest } from '../models/nivra.models';
@@ -19,6 +19,7 @@ import { CallGameSessionService } from './call-game-session.service';
 import { GroupCallCryptoService, type GroupEncryptionContext } from './group-call-crypto.service';
 import { decodeAuthenticatedMediaKeySignal } from './authenticated-media-signal';
 import { NativeScreenShareService } from './native-screen-share.service';
+import { CALL_CAMERA_PREFERENCES, cameraFailureMessage, canRetryCameraCapture, captureCallMedia } from './call-media-capture';
 
 interface PeerState {
   connection: RTCPeerConnection;
@@ -93,12 +94,6 @@ const CALL_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
   autoGainControl: true,
   channelCount: { ideal: 1 },
   sampleRate: { ideal: 48_000 },
-};
-const CALL_VIDEO_CONSTRAINTS: MediaTrackConstraints = {
-  facingMode: 'user',
-  width: { ideal: 1280, max: 1920 },
-  height: { ideal: 720, max: 1080 },
-  frameRate: { ideal: 30, max: 30 },
 };
 
 @Injectable({ providedIn: 'root' })
@@ -564,12 +559,10 @@ export class CallsService implements OnDestroy {
       if (next && this.screenSharing()) await this.stopScreenShare();
       if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
       if (this.isGroupCall(call) && this.liveKitRoom) {
-        await (this.liveKitRoom.localParticipant as unknown as {
-          setCameraEnabled: (enabled: boolean) => Promise<unknown>;
-        }).setCameraEnabled(!next);
+        await this.setLiveKitCameraEnabled(this.liveKitRoom, !next, call.id);
         if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
         this.syncLiveKitLocalTracks();
-      } else if (!next && !this.localStream()?.getVideoTracks().some((track) => track.readyState === 'live')) {
+      } else if (!next) {
         await this.restoreDirectMediaTrack('video');
       }
       if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
@@ -579,10 +572,19 @@ export class CallsService implements OnDestroy {
       });
       this.error.set('');
       this.broadcastControl('camera', next ? 'off' : 'on');
-    } catch {
+    } catch (error) {
+      if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
+      if (this.isGroupCall(call) && this.liveKitRoom) {
+        this.localStream()?.getVideoTracks().forEach(track => { track.enabled = false; });
+        await this.setLiveKitCameraEnabled(this.liveKitRoom, false, call.id).catch(() => undefined);
+        this.syncLiveKitLocalTracks();
+      } else {
+        await this.removeDirectVideoTrack();
+      }
       if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
       this.cameraOff.set(true);
-      this.error.set('No se pudo reactivar la camara. Revisa el permiso del dispositivo.');
+      this.broadcastControl('camera', 'off');
+      this.error.set(this.videoUpgradeError(error));
     } finally {
       if (generation === this.mediaGeneration && this.activeCall()?.id === call.id) this.mediaUpgradeInFlight.set(false);
     }
@@ -617,7 +619,7 @@ export class CallsService implements OnDestroy {
         if (typeof participant?.setCameraEnabled !== 'function') {
           throw new Error('La sala aun no esta lista para publicar video.');
         }
-        await participant.setCameraEnabled(true);
+        await this.setLiveKitCameraEnabled(this.liveKitRoom!, true, call.id);
         if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id) return;
         this.syncLiveKitLocalTracks();
       } else {
@@ -1146,15 +1148,49 @@ export class CallsService implements OnDestroy {
     }
     if (!preserveMediaIntent || !this.cameraOff()) {
       try {
-        await (room.localParticipant as unknown as {
-          setCameraEnabled: (enabled: boolean) => Promise<unknown>;
-        }).setCameraEnabled(true);
+        await this.setLiveKitCameraEnabled(room, true, call.id);
         if (this.activeCall()?.id === call.id && this.liveKitRoom === room) this.cameraOff.set(false);
-      } catch {
+      } catch (error) {
         if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) return;
         this.cameraOff.set(true);
-        this.error.set('La camara no esta disponible. La llamada continuara con audio.');
+        this.error.set(this.videoUpgradeError(error));
       }
+    }
+  }
+
+  private async setLiveKitCameraEnabled(room: Room, enabled: boolean, callId: string): Promise<void> {
+    const generation = this.mediaGeneration;
+    const participant = room.localParticipant as unknown as {
+      setCameraEnabled: (enabled: boolean, options?: VideoCaptureOptions) => Promise<unknown>;
+      getTrackPublication?: (source: Track.Source) => {
+        track?: { mediaStreamTrack?: MediaStreamTrack; restartTrack?: (options?: VideoCaptureOptions) => Promise<void> };
+      } | undefined;
+    };
+    const isCurrent = () => generation === this.mediaGeneration && this.liveKitRoom === room && this.activeCall()?.id === callId;
+    if (!isCurrent()) return;
+    const publish = async (options?: VideoCaptureOptions) => {
+      const camera = participant.getTrackPublication?.(Track.Source.Camera)?.track;
+      if (enabled && camera?.mediaStreamTrack &&
+          (camera.mediaStreamTrack.readyState === 'ended' || camera.mediaStreamTrack.muted) && camera.restartTrack) {
+        // An interrupted device can leave a publication whose unmute is a no-op.
+        // Restart that SDK-owned source without touching any microphone/screen tracks.
+        await camera.restartTrack(options);
+        if (!isCurrent()) return;
+      }
+      if (options) await participant.setCameraEnabled(enabled, options);
+      else await participant.setCameraEnabled(enabled);
+    };
+    try {
+      await publish();
+    } catch (error) {
+      if (!enabled || !canRetryCameraCapture(error) || !isCurrent()) throw error;
+      // The SDK keeps the microphone publication intact; lower the camera's
+      // capture preference once instead of replacing the room or all tracks.
+      await publish({ resolution: { width: 640, height: 360, frameRate: 24 } });
+    }
+    if (enabled && !isCurrent()) {
+      // A late permission grant belongs to this old room, never the next call.
+      await participant.setCameraEnabled(false).catch(() => undefined);
     }
   }
 
@@ -1760,9 +1796,7 @@ export class CallsService implements OnDestroy {
     this.error.set('');
     this.mediaUpgradeNotice.set('');
     try {
-      if (!this.localStream()?.getVideoTracks().some((track) => track.readyState === 'live')) {
-        await this.restoreDirectMediaTrack('video', false);
-      }
+      await this.restoreDirectMediaTrack('video', false);
       if (generation !== this.mediaGeneration || this.activeCall()?.id !== call.id || this.isGroupCall(this.activeCall())) return;
       this.cameraOff.set(false);
       this.localStream()?.getVideoTracks().forEach((track) => { track.enabled = true; });
@@ -1790,13 +1824,7 @@ export class CallsService implements OnDestroy {
       name: name ?? 'Error',
       ...(error instanceof Error || error instanceof DOMException ? { message: error.message } : {}),
     });
-    if (['NotAllowedError', 'SecurityError', 'PermissionDeniedError'].includes(name ?? '')) {
-      return 'Permite el acceso a la cámara y vuelve a intentarlo. El audio continúa.';
-    }
-    if (['NotFoundError', 'DevicesNotFoundError', 'NotReadableError', 'TrackStartError', 'OverconstrainedError'].includes(name ?? '')) {
-      return 'La cámara no está disponible. Comprueba que otra aplicación no la esté usando; el audio continúa.';
-    }
-    return 'No se pudo actualizar el video. El audio continúa; vuelve a intentarlo.';
+    return cameraFailureMessage(error);
   }
 
   /** Dismiss the request without ending the voice call or exposing our camera. */
@@ -1877,19 +1905,20 @@ export class CallsService implements OnDestroy {
       throw new Error('Este navegador no expone microfono/camara.');
     }
     let stream: MediaStream;
+    let cameraFailure: { error: unknown } | null = null;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
+      stream = await captureCallMedia(constraints => navigator.mediaDevices.getUserMedia(constraints), {
         audio: CALL_AUDIO_CONSTRAINTS,
-        video: withVideo ? CALL_VIDEO_CONSTRAINTS : false,
-      });
-    } catch {
+        video: withVideo ? CALL_CAMERA_PREFERENCES : false,
+      }, () => generation === this.mediaGeneration);
+    } catch (error) {
+      if (generation !== this.mediaGeneration) throw new Error('La llamada se cerró antes de activar el dispositivo.');
       if (!withVideo) {
         throw new Error('Permite el microfono para la llamada.');
       }
       try {
         stream = await navigator.mediaDevices.getUserMedia({ audio: CALL_AUDIO_CONSTRAINTS, video: false });
-        this.cameraOff.set(true);
-        this.error.set('La camara no esta disponible. La llamada continuara con audio.');
+        cameraFailure = { error };
       } catch {
         throw new Error('Permite camara y microfono para la videollamada.');
       }
@@ -1897,6 +1926,10 @@ export class CallsService implements OnDestroy {
     if (generation !== this.mediaGeneration) {
       stream.getTracks().forEach((track) => track.stop());
       throw new Error('La llamada se cerró antes de activar el micrófono.');
+    }
+    if (cameraFailure) {
+      this.cameraOff.set(true);
+      this.error.set(this.videoUpgradeError(cameraFailure.error));
     }
     this.prepareLocalTracks(stream);
     this.localStream.set(stream);
@@ -2708,10 +2741,30 @@ export class CallsService implements OnDestroy {
     }
     const generation = this.mediaGeneration;
     const callId = this.activeCall()?.id;
-    const captured = await navigator.mediaDevices.getUserMedia({
-      audio: kind === 'audio' ? CALL_AUDIO_CONSTRAINTS : false,
-      video: kind === 'video' ? CALL_VIDEO_CONSTRAINTS : false,
-    });
+    const isCurrent = () => generation === this.mediaGeneration && Boolean(callId) && this.activeCall()?.id === callId && !this.isGroupCall(this.activeCall());
+    if (!isCurrent()) throw new Error('La llamada terminó antes de activar el dispositivo.');
+    const existing = this.localStream()?.getTracks().find(item => item.kind === kind && item.readyState === 'live' && !item.muted);
+    let captured: MediaStream;
+    if (existing) {
+      // Reopening an owned camera can fail on Safari or suspend its first feed.
+      // A tap to turn it on should reuse the permitted capture instead.
+      existing.enabled = true;
+      captured = new MediaStream([existing]);
+    } else {
+      if (kind === 'video') {
+        const previous = this.localStream();
+        previous?.getVideoTracks().forEach(item => {
+          previous.removeTrack(item);
+          item.onended = null;
+          item.stop();
+        });
+        if (previous) this.localStream.set(new MediaStream(previous.getTracks()));
+      }
+      captured = await captureCallMedia(constraints => navigator.mediaDevices.getUserMedia(constraints), {
+        audio: kind === 'audio' ? CALL_AUDIO_CONSTRAINTS : false,
+        video: kind === 'video' ? CALL_CAMERA_PREFERENCES : false,
+      }, isCurrent);
+    }
     if (generation !== this.mediaGeneration || !callId || this.activeCall()?.id !== callId || this.isGroupCall(this.activeCall())) {
       captured.getTracks().forEach((item) => item.stop());
       throw new Error('La llamada terminó antes de activar el dispositivo.');
@@ -2749,6 +2802,8 @@ export class CallsService implements OnDestroy {
   }
 
   private async removeDirectVideoTrack(): Promise<void> {
+    const generation = this.mediaGeneration;
+    const callId = this.activeCall()?.id;
     const stream = this.localStream();
     const videoTracks = stream?.getVideoTracks() ?? [];
     videoTracks.forEach((track) => {
@@ -2762,6 +2817,9 @@ export class CallsService implements OnDestroy {
         await sender.replaceTrack(null).catch(() => undefined);
       }
     }));
+    // Sender replacement can finish after hangup and a new call's capture.
+    // Never restore the old microphone stream over that newer local media.
+    if (generation !== this.mediaGeneration || this.activeCall()?.id !== callId || this.localStream() !== stream) return;
     const remainingTracks = stream?.getTracks() ?? [];
     this.localStream.set(remainingTracks.length ? new MediaStream(remainingTracks) : null);
   }
@@ -2799,11 +2857,9 @@ export class CallsService implements OnDestroy {
       return false;
     }
 
-    if (transceiver.direction === 'recvonly') {
-      transceiver.direction = 'sendrecv';
-      return true;
-    }
-    if (transceiver.direction === 'inactive') {
+    if (['recvonly', 'sendonly', 'inactive'].includes(transceiver.direction)) {
+      // Older clients may have negotiated sendonly while still marked Voice.
+      // Publishing a camera must enable the reverse path as well.
       transceiver.direction = 'sendrecv';
       return true;
     }

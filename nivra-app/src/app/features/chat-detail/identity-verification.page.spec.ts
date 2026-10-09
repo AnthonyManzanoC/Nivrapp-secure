@@ -124,6 +124,29 @@ describe('Identity verification return and comparison', () => {
     expect(page.busy).toBeFalse();
   });
 
+  it('loads the same comparison code alongside legacy devices without published identities', async () => {
+    const expected = (await deriveUnverifiedSafetyNumber(own, other)).display;
+    const legacy = { ...other.devices[0], deviceId: 'old-browser', keyBundle: { ...other.devices[0].keyBundle, identityKey: null } };
+    own.devices.push({ ...legacy, deviceId: 'old-own-browser' });
+    other.devices.push(legacy, { ...legacy, deviceId: 'empty-browser', keyBundle: { ...legacy.keyBundle, identityKey: '  ' } });
+    const page = createPage(); await page.loadIdentity();
+    expect(page.loading).toBeFalse(); expect(page.message).toBe('');
+    expect(page.code).toBe(expected); expect(page.qr).toMatch(/^data:image\/png/);
+    expect(trust.confirm).not.toHaveBeenCalled(); expect(page.verified).toBeFalse();
+    page.comparison = page.code; await page.confirm();
+    expect(trust.confirm).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other);
+    expect(page.verified).toBeTrue();
+  });
+
+  it('does not prepare or accept a comparison for a nonempty malformed identity', async () => {
+    const page = createPage();
+    other.devices.push({ ...other.devices[0], deviceId: 'invalid', keyBundle: { ...other.devices[0].keyBundle, identityKey: '{broken' } });
+    await page.loadIdentity();
+    expect(page.code).toBe(''); expect(page.qr).toBe(''); expect(page.message).toContain('No se pudieron cargar');
+    page.comparison = 'invented'; await page.confirm();
+    expect(trust.confirm).not.toHaveBeenCalled(); expect(page.verified).toBeFalse();
+  });
+
   it('refuses to verify when peer keys change after the QR was prepared', async () => {
     const page = createPage();
     page.code = (await deriveUnverifiedSafetyNumber(own, other)).display;
@@ -145,5 +168,55 @@ describe('Identity verification return and comparison', () => {
     await page.confirm();
     expect(trust.confirm).not.toHaveBeenCalled();
     expect(page.verified).toBeFalse();
+  });
+
+  it('does not publish an old account comparison after delayed QR generation finishes', async () => {
+    const page = createPage();
+    let release!: (qr: string) => void;
+    let reached!: () => void;
+    const pending = new Promise<string>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { reached = resolve; });
+    spyOn<any>(page, 'qrForComparison').and.callFake(() => { reached(); return pending; });
+    const loading = page.loadIdentity(); await started;
+    session.set({ user: { id: 'other-account', alias: 'other-account' }, device: { id: 'other-device' } });
+    release('data:image/png;base64,old-account'); await loading;
+    expect(page.code).toBe(''); expect(page.qr).toBe(''); expect(page.message).toBe('');
+    expect(trust.confirm).not.toHaveBeenCalled();
+  });
+
+  it('keeps the latest retry when an older QR request finishes afterward', async () => {
+    const page = createPage();
+    let release!: (qr: string) => void;
+    let reached!: () => void;
+    let calls = 0;
+    const pending = new Promise<string>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { reached = resolve; });
+    spyOn<any>(page, 'qrForComparison').and.callFake(() => {
+      if (++calls === 1) { reached(); return pending; }
+      return Promise.resolve('data:image/png;base64,latest');
+    });
+    const oldRequest = page.loadIdentity(); await started;
+    other = directory('bob', 'D');
+    const expected = (await deriveUnverifiedSafetyNumber(own, other)).display;
+    await page.loadIdentity();
+    release('data:image/png;base64,old'); await oldRequest;
+    expect(page.loading).toBeFalse(); expect(page.code).toBe(expected);
+    expect(page.qr).toBe('data:image/png;base64,latest');
+  });
+
+  it('does not show verification success to another account after trust storage finishes', async () => {
+    const page = createPage();
+    page.code = (await deriveUnverifiedSafetyNumber(own, other)).display;
+    page.comparison = page.code;
+    let release!: () => void;
+    let reached!: () => void;
+    const pending = new Promise<void>(resolve => { release = resolve; });
+    const started = new Promise<void>(resolve => { reached = resolve; });
+    trust.confirm.and.callFake(() => { reached(); return pending; });
+    const confirmation = page.confirm(); await started;
+    session.set({ user: { id: 'other-account', alias: 'other-account' }, device: { id: 'other-device' } });
+    release(); await confirmation;
+    expect(trust.confirm).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other);
+    expect(page.verified).toBeFalse(); expect(page.message).toBe('');
   });
 });

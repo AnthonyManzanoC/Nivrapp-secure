@@ -4,6 +4,7 @@ import { Router, provideRouter } from '@angular/router';
 import { TestBed } from '@angular/core/testing';
 
 import { AppComponent } from './app.component';
+import { WEB_LAUNCH_RUNTIME } from './core/services/web-launch.service';
 
 describe('AppComponent', () => {
 
@@ -13,6 +14,7 @@ describe('AppComponent', () => {
       providers: [
         provideHttpClient(),
         provideRouter([]),
+        { provide: WEB_LAUNCH_RUNTIME, useValue: { isWeb: false, sensitiveRoute: () => false } },
       ],
       schemas: [CUSTOM_ELEMENTS_SCHEMA],
     }).compileComponents();

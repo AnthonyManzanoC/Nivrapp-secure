@@ -27,6 +27,7 @@ import {
 import { CallSession, Contact, Conversation, Participant, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
+import { CALL_CAMERA_FAILURE_MESSAGES } from '../../core/services/call-media-capture';
 import { ChatService } from '../../core/services/chat.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
@@ -235,6 +236,25 @@ export class CallsPage {
 
   declineVideoUpgrade(): void {
     this.calls.declineVideoUpgrade();
+    this.revealCallChrome();
+  }
+
+  callErrorText(): string {
+    const error = this.calls.error();
+    const camera = Object.values(CALL_CAMERA_FAILURE_MESSAGES).find(item => item.fallback === error);
+    return camera ? this.tr(camera.key, camera.fallback) : error;
+  }
+
+  canRetryCamera(): boolean {
+    return this.calls.activeCall()?.type === 'Video' && this.calls.phase() === 'connected' &&
+      this.calls.cameraOff() && !this.calls.mediaUpgradeRequested() &&
+      Object.values(CALL_CAMERA_FAILURE_MESSAGES).some(item => item.fallback === this.calls.error());
+  }
+
+  async retryCamera(): Promise<void> {
+    if (!this.canRetryCamera()) return;
+    this.revealCallChrome();
+    await this.calls.toggleCamera();
     this.revealCallChrome();
   }
 

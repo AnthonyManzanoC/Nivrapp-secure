@@ -22,7 +22,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { PrivacySettings } from '../../core/models/nivra.models';
 import { AppLockService } from '../../core/services/app-lock.service';
-import { AppSettingsService, NivraAppSettings, NivraThemeMode, NivraVisibility } from '../../core/services/app-settings.service';
+import { AppSettingsService, NivraAppSettings, NivraChatWallpaper, NivraThemeMode, NivraVisibility } from '../../core/services/app-settings.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
@@ -110,13 +110,19 @@ export class AccountPage implements OnInit, OnDestroy {
     { label: 'Cian', value: 'cyan', color: '#12b5cb', second: '#75e6f2' },
     { label: 'Slate', value: 'slate', color: '#64748b', second: '#b6c2d1' },
   ];
-  readonly wallpaperChoices = [
+  readonly wallpaperChoices: Array<{ label: string; labelKey: string; value: NivraChatWallpaper }> = [
     { label: 'Nivra', labelKey: 'settings.wallpaper.nivra', value: 'nivra' },
+    { label: 'Seda', labelKey: 'settings.wallpaper.silk', value: 'silk' },
     { label: 'Limpio', labelKey: 'settings.wallpaper.clean', value: 'clean' },
     { label: 'Botanico', labelKey: 'settings.wallpaper.botanic', value: 'botanic' },
     { label: 'Nocturno', labelKey: 'settings.wallpaper.midnight', value: 'midnight' },
     { label: 'Papel', labelKey: 'settings.wallpaper.paper', value: 'paper' },
   ];
+
+  wallpaperSettings(wallpaper: NivraChatWallpaper): NivraAppSettings {
+    return { ...this.appSettings.settings(), chatWallpaper: wallpaper };
+  }
+
   readonly densityOptions = [
     { label: 'Dos lineas', labelKey: 'settings.chat.twoLines', value: 'two-line' },
     { label: 'Tres lineas', labelKey: 'settings.chat.threeLines', value: 'three-line' },

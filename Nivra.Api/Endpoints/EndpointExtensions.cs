@@ -63,6 +63,7 @@ public static partial class EndpointExtensions
         app.MapRecoveryEndpoints();
         app.MapProfileEndpoints();
         app.MapDeviceAndKeyEndpoints();
+        app.MapHistoryKeyTransferEndpoints();
         app.MapContactEndpoints();
         app.MapDirectoryAndFriendEndpoints();
         app.MapConversationAndMessageEndpoints();
@@ -176,7 +177,9 @@ public static partial class EndpointExtensions
             {
                 // Resolve only after password verification so an ID login can reuse
                 // device keys stored under the account's canonical alias.
-                return Results.Ok(new LoginIdentityResponse(user.Alias));
+                var hardwareId = NormalizeHardwareId(request.HardwareId);
+                var existingDevice = hardwareId is null ? null : await db.Devices.AsNoTracking().FirstOrDefaultAsync(candidate => candidate.UserId == user.Id && candidate.HardwareId == hardwareId && candidate.RevokedAt == null && candidate.IsTrusted, cancellationToken);
+                return Results.Ok(new LoginIdentityResponse(user.Alias, user.Id, existingDevice?.Id, existingDevice?.KeyBundle.IdentityKey));
             }
 
             var now = timeProvider.GetUtcNow();
@@ -368,6 +371,7 @@ public static partial class EndpointExtensions
                 return Error("invalid_device", "El nombre del dispositivo es obligatorio.");
             }
 
+            if (request.KeyBundle is not null && !ValidHistoryPublicKey(request.KeyBundle.IdentityKey)) return Error("invalid_qr_identity", "La identidad del dispositivo QR no es válida.");
             var challenge = qrLogin.Start(request.DeviceName, request.KeyBundle, request.PublicKey, request.HardwareId);
             var syncToken = $"{challenge.Id}.{challenge.Code}";
             return Results.Ok(new QrLoginStartResponse(
@@ -420,6 +424,7 @@ public static partial class EndpointExtensions
             var sourceDevice = await db.Devices.FirstOrDefaultAsync(candidate =>
                 candidate.Id == current.DeviceId &&
                 candidate.UserId == user.Id &&
+                candidate.IsTrusted &&
                 candidate.RevokedAt == null,
                 cancellationToken);
             if (sourceDevice is null)
@@ -434,7 +439,7 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var linkedKeyBundle = KeyBundleToRequest(sourceDevice.KeyBundle);
+            var linkedKeyBundle = QrTargetKeyBundle(challenge, sourceDevice);
             var device = await UpsertDeviceAsync(db, user.Id, challenge.DeviceName, challenge.HardwareId, linkedKeyBundle, now, trusted: true, cancellationToken);
             db.SecurityAuditEvents.Add(new SecurityAuditEvent
             {
@@ -4740,6 +4745,8 @@ public static partial class EndpointExtensions
             LastRotatedAt = now
         };
     }
+
+    internal static KeyBundleRequest QrTargetKeyBundle(QrLoginChallenge challenge, DeviceRecord sourceDevice) => challenge.KeyBundle ?? KeyBundleToRequest(sourceDevice.KeyBundle);
 
     private static KeyBundleRequest KeyBundleToRequest(KeyBundle keyBundle)
     {

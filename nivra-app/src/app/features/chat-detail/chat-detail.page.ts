@@ -90,6 +90,9 @@ import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 import { canQuoteMessage, insertComposerEmoji, isReplySwipe, localMessageDay, messageDeliveryState, searchThreadMessages } from './chat-thread.helpers';
 import { ChatExpressionPickerComponent } from '../../shared/chat-expression-picker/chat-expression-picker.component';
+import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.component';
+import { ChatVerificationDraftService } from './chat-verification-draft.service';
+import { ChatIdentityChangeNoticeComponent } from './chat-identity-change-notice.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
 
@@ -156,20 +159,42 @@ interface MessageTextPart {
     ChatMediaGalleryComponent,
     ImageCropperComponent,
     ChatExpressionPickerComponent,
+    HistorySyncNoticeComponent,
+    ChatIdentityChangeNoticeComponent,
   ],
   templateUrl: './chat-detail.page.html',
   styleUrls: ['./chat-detail.page.scss', './chat-thread.scss', './chat-profile.scss'],
 })
 export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private readonly identityTrust = inject(IdentityTrustService);
+  private readonly verificationDraft = inject(ChatVerificationDraftService);
   identityChanged(): boolean {
     const current = this.auth.session();
     if (!current || this.isGroupConversation()) return false;
-    return Boolean(this.conversation()?.participants.some(p => p.userId !== current.user.id && this.identityTrust.isChanged(JSON.stringify([current.user.id,current.device.id]),p.userId)));
+    return Boolean(this.conversation()?.participants.some(p => !p.removedAt && p.userId !== current.user.id && this.identityTrust.isChanged(JSON.stringify([current.user.id,current.device.id]),p.userId)));
   }
-  verifyIdentity(): void {
-    const userId = this.conversation()?.participants.find(p => !p.removedAt && p.userId !== this.auth.session()?.user.id)?.userId;
-    if (userId) void this.router.navigate(['/app/identity', userId], { state: { identityReturnUrl: this.router.url } });
+  async verifyIdentity(): Promise<void> {
+    const conversation = this.conversation();
+    const current = this.auth.session();
+    if (this.destroyed || !conversation || !current || this.isGroupConversation()) return;
+    const userId = conversation.participants.find(p => !p.removedAt && p.userId !== current.user.id)?.userId;
+    if (!userId) return;
+    this.verificationDraft.save(conversation.id, this.draft);
+    try {
+      const opened = await this.router.navigate(['/app/identity', userId], { state: { identityReturnUrl: this.router.url } });
+      if (!opened) this.verificationDraft.discard(conversation.id);
+    } catch {
+      this.verificationDraft.discard(conversation.id);
+    }
+  }
+
+  identityErrorIsDuplicated(): boolean {
+    return this.identityChanged() && this.attachmentError === 'La identidad de este contacto ha cambiado. Abre Verificar identidad y compara el código antes de continuar.';
+  }
+
+  private restoreVerificationDraft(conversationId: string): void {
+    const text = this.verificationDraft.take(conversationId);
+    if (text !== null && !this.draft) this.draft = text;
   }
   @ViewChild(IonContent) private content?: IonContent;
   @ViewChild('micButton', { read: ElementRef }) private micButton?: ElementRef<HTMLElement>;
@@ -386,6 +411,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.closeSearch();
         this.policyPanelOpen = false;
         this.emojiPanelOpen = false;
+        this.restoreVerificationDraft(id);
         const requestId = ++this.initialScrollRequestId;
         void this.chat.selectConversation(id).then(() => {
           this.refreshActiveGroupCallBanner(id);
@@ -413,6 +439,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   ionViewDidEnter(): void {
     const conversationId = this.conversation()?.id;
     if (conversationId) {
+      this.restoreVerificationDraft(conversationId);
       void this.chat.markConversationRead(conversationId);
       this.refreshActiveGroupCallBanner(conversationId);
       void this.refreshConversationStories();
@@ -1201,7 +1228,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     try {
       await this.dismissContactInfoForStory();
       if (this.destroyed || this.conversation()?.id !== conversationId || this.auth.session()?.user.id !== session.user.id || this.auth.session()?.device.id !== session.device.id) return;
-      await this.router.navigate(['/app/identity', userId], { state: { identityReturnUrl: returnUrl } });
+      this.verificationDraft.save(conversationId, this.draft);
+      const opened = await this.router.navigate(['/app/identity', userId], { state: { identityReturnUrl: returnUrl } });
+      if (!opened) this.verificationDraft.discard(conversationId);
+    } catch {
+      this.verificationDraft.discard(conversationId);
     } finally {
       this.profileActionBusy = false;
     }

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="480" viewBox="0 0 480 480">
+  <!-- Original Nivra silk: quiet contours and a small moon, drawn for seamless repeats. -->
+  <g fill="none" stroke="#a8bdc8" stroke-width="1.3" stroke-linecap="round" opacity=".24">
+    <path d="M-30 83c69-56 113-63 177-28s117 79 174 50 91-33 189 6"/>
+    <path d="M-30 103c69-56 113-63 177-28s117 79 174 50 91-33 189 6"/>
+    <path d="M-30 123c69-56 113-63 177-28s117 79 174 50 91-33 189 6"/>
+    <path d="M-30 328c45-9 84-47 129-71s89-27 150 4 154 72 261 46"/>
+    <path d="M-30 348c45-9 84-47 129-71s89-27 150 4 154 72 261 46"/>
+    <path d="M-30 368c45-9 84-47 129-71s89-27 150 4 154 72 261 46"/>
+    <path d="M350 184a26 26 0 0 0 37 30 30 30 0 1 1-37-30Z"/>
+    <path d="M84 205v10M79 210h10M290 408v8M286 412h8"/>
+    <circle cx="165" cy="178" r="2.5"/><circle cx="427" cy="407" r="3"/>
+    <circle cx="35" cy="416" r="2"/><circle cx="307" cy="26" r="2"/>
+  </g>
+</svg>

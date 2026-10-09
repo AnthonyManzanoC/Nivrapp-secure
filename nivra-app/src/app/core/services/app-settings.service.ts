@@ -5,7 +5,7 @@ import { AuthService } from './auth.service';
 
 export type NivraThemeMode = 'system' | 'dark' | 'light';
 export type NivraChatListDensity = 'two-line' | 'three-line';
-export type NivraChatWallpaper = 'nivra' | 'clean' | 'botanic' | 'midnight' | 'paper';
+export type NivraChatWallpaper = 'nivra' | 'silk' | 'clean' | 'botanic' | 'midnight' | 'paper';
 export type NivraLowDataMode = 'never' | 'mobile' | 'roaming' | 'always';
 export type NivraVisibility = 'everyone' | 'contacts' | 'nobody';
 
@@ -200,11 +200,15 @@ export class AppSettingsService {
         return light
           ? 'linear-gradient(90deg, rgba(17, 24, 39, .055) 1px, transparent 1px), linear-gradient(180deg, #f8f1e4, #eadcc3)'
           : 'linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px), linear-gradient(180deg, rgba(239, 196, 107, .08), rgba(107, 168, 255, .03)), #15120d';
+      case 'silk':
+        return light
+          ? 'url("assets/wallpapers/silk-light.svg"), linear-gradient(150deg, #f0f5f8 0%, #eef3f5 45%, #e4edef 100%)'
+          : 'url("assets/wallpapers/silk-dark.svg"), linear-gradient(150deg, #101b23 0%, #12212a 45%, #15282e 100%)';
       case 'nivra':
       default:
         return light
-          ? 'radial-gradient(circle at 20px 20px, rgba(24, 214, 162, .10) 1px, transparent 2px), linear-gradient(135deg, rgba(24, 214, 162, .08), rgba(47, 140, 255, .06)), #f3fbf8'
-          : 'linear-gradient(180deg, rgba(255, 255, 255, .024), transparent 20%), radial-gradient(circle at 20px 20px, rgba(255, 255, 255, .026) 1px, transparent 1px), linear-gradient(135deg, rgba(107, 168, 255, .026), transparent 34%), var(--nivra-bg)';
+          ? 'url("assets/wallpapers/nivra-doodles-light.svg"), linear-gradient(135deg, #faf7f1 0%, #f5efe5 100%)'
+          : 'url("assets/wallpapers/nivra-doodles-dark.svg"), linear-gradient(135deg, #0d1a18 0%, #10201d 100%)';
     }
   }
 
@@ -216,18 +220,41 @@ export class AppSettingsService {
   }
 
   chatPreviewBackgroundCss(settings = this.settings()): string {
+    // A preview must render the selected theme, rather than replace a real chat's
+    // background with a dark thumbnail when its ion-content inherits this value.
+    return this.chatBackgroundCss(settings);
+  }
+
+  chatBackgroundSizeCss(settings = this.settings(), scale = 1): string {
+    const factor = Number.isFinite(scale) && scale > 0 ? Math.min(scale, 1) : 1;
     switch (settings.chatWallpaper) {
-      case 'clean':
-        return 'linear-gradient(180deg, #ffffff 0%, #e8edf5 100%)';
-      case 'botanic':
-        return 'radial-gradient(circle at 24px 18px, rgba(80, 190, 118, .35) 4px, transparent 5px), linear-gradient(135deg, #bfe6b8, #6bae8c)';
-      case 'midnight':
-        return 'radial-gradient(circle at 28px 20px, rgba(124, 199, 255, .35) 2px, transparent 3px), linear-gradient(135deg, #06101a, #111b2d)';
-      case 'paper':
-        return 'linear-gradient(90deg, rgba(17, 24, 39, .1) 1px, transparent 1px), linear-gradient(180deg, #fbf3df, #dfcfae)';
       case 'nivra':
+        return `${360 * factor}px ${360 * factor}px, cover`;
+      case 'silk':
+        return `${480 * factor}px ${480 * factor}px, cover`;
+      case 'clean':
+      case 'midnight':
+        return 'cover';
+      case 'botanic':
+        return `${92 * factor}px ${92 * factor}px, ${84 * factor}px ${84 * factor}px, cover`;
+      case 'paper':
+        return `${26 * factor}px ${26 * factor}px, cover`;
       default:
-        return 'radial-gradient(circle at 20px 20px, rgba(114, 240, 202, .16) 2px, transparent 3px), linear-gradient(135deg, rgba(var(--ion-color-primary-rgb), .22), rgba(47, 140, 255, .12)), #10272c';
+        return 'cover';
+    }
+  }
+
+  chatBackgroundRepeatCss(settings = this.settings()): string {
+    switch (settings.chatWallpaper) {
+      case 'nivra':
+      case 'silk':
+        return 'repeat, no-repeat';
+      case 'botanic':
+        return 'repeat, repeat, no-repeat';
+      case 'paper':
+        return 'repeat, no-repeat';
+      default:
+        return 'no-repeat';
     }
   }
 
@@ -287,7 +314,7 @@ export class AppSettingsService {
     next.accentColor = ACCENTS[next.accentColor] ? next.accentColor : DEFAULT_SETTINGS.accentColor;
     next.messageTextSize = this.clampNumber(next.messageTextSize, 12, 22, DEFAULT_SETTINGS.messageTextSize);
     next.messageCornerRadius = this.clampNumber(next.messageCornerRadius, 4, 24, DEFAULT_SETTINGS.messageCornerRadius);
-    next.chatWallpaper = this.oneOf(next.chatWallpaper, ['nivra', 'clean', 'botanic', 'midnight', 'paper'], DEFAULT_SETTINGS.chatWallpaper);
+    next.chatWallpaper = this.oneOf(next.chatWallpaper, ['nivra', 'silk', 'clean', 'botanic', 'midnight', 'paper'], DEFAULT_SETTINGS.chatWallpaper);
     next.chatListDensity = this.oneOf(next.chatListDensity, ['two-line', 'three-line'], DEFAULT_SETTINGS.chatListDensity);
     next.lowDataCalls = this.oneOf(next.lowDataCalls, ['never', 'mobile', 'roaming', 'always'], DEFAULT_SETTINGS.lowDataCalls);
     next.language = this.oneOf(next.language, ['es', 'en', 'zh-Hans', 'hi', 'ar', 'pt', 'ru', 'ja', 'fr', 'de'], DEFAULT_SETTINGS.language);
@@ -368,6 +395,8 @@ export class AppSettingsService {
     setGlobalVar('--nivra-brand-tint', tint);
     setGlobalVar('--nivra-brand-contrast', contrast);
     setGlobalVar('--nivra-chat-background', this.chatBackgroundCss(settings));
+    setGlobalVar('--nivra-chat-background-size', this.chatBackgroundSizeCss(settings));
+    setGlobalVar('--nivra-chat-background-repeat', this.chatBackgroundRepeatCss(settings));
     setGlobalVar('--nivra-chat-on-background', this.chatBackgroundTone(settings) === 'light' ? '#111827' : '#f8fafc');
     setGlobalVar('--ion-color-primary', accent.primary);
     setGlobalVar('--ion-color-primary-rgb', primaryRgb);

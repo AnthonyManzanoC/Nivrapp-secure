@@ -39,6 +39,7 @@ import { NativeDeviceService } from '../../core/services/native-device.service';
 import { LocalHistoryService } from '../../core/services/local-history.service';
 import { ChatStoryHighlight, chatStoryRingColor, groupChatStoryHighlights, withOwnChatStoryHighlight } from './chat-story-highlights';
 import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
+import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.component';
 
 @Component({
   selector: 'app-chats',
@@ -51,6 +52,7 @@ import { StoryComposerComponent } from '../../shared/story-composer/story-compos
     TranslatePipe,
     StoryViewerComponent,
     StoryComposerComponent,
+    HistorySyncNoticeComponent,
     ImageCropperComponent,
     IonAvatar,
     IonButton,

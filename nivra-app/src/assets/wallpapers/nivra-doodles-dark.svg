@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="360" viewBox="0 0 360 360">
+  <!-- Original Nivra line art: moments, conversation, travel and privacy. -->
+  <g fill="none" stroke="#54766a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity=".32">
+    <g transform="translate(20 21) rotate(-12 24 22)"><path d="M8 10h31a7 7 0 0 1 7 7v13a7 7 0 0 1-7 7H22l-10 9v-9H8a7 7 0 0 1-7-7V17a7 7 0 0 1 7-7Z"/><path d="M12 22h21M12 28h14"/><circle cx="38" cy="4" r="3"/></g>
+    <g transform="translate(100 15) rotate(14 28 24)"><path d="M1 42 26 4l27 38ZM26 4l-3 25 9-7 7 20M8 31l9 5"/><circle cx="50" cy="3" r="3"/><path d="m6 7 2-4 2 4 4 2-4 2-2 4-2-4-4-2Z"/></g>
+    <g transform="translate(204 17) rotate(-10 24 25)"><path d="M25 48V20M25 32C8 32 4 19 5 7c12 0 23 6 20 25ZM25 24c-1-13 10-19 22-18 1 14-10 25-22 18ZM13 18l12 14M25 24l12-10"/><path d="m4 41 4 4M47 40l-4 4"/></g>
+    <g transform="translate(284 30) rotate(12 23 18)"><path d="m1 18 43-17-11 37-10-13-11 7V21ZM12 21 44 1 23 25"/><path d="M9 41H1M16 47H8"/></g>
+    <g transform="translate(13 111) rotate(10 28 22)"><rect x="1" y="9" width="55" height="37" rx="9"/><path d="m11 9 6-8h19l6 8"/><circle cx="28" cy="27" r="11"/><circle cx="28" cy="27" r="5"/><path d="M45 17h3"/><path d="m61 3 2-4 2 4 4 2-4 2-2 4-2-4-4-2Z"/></g>
+    <g transform="translate(106 103) rotate(-13 25 27)"><path d="M1 22C1 11 11 3 25 3s24 8 24 19v16M1 22v16"/><rect x="1" y="21" width="10" height="21" rx="4"/><rect x="39" y="21" width="10" height="21" rx="4"/><path d="M19 43c0 6 7 10 17 10h8"/><path d="M23 15v20M17 21v8M29 19v12"/></g>
+    <g transform="translate(198 112) rotate(9 27 23)"><path d="M1 40 15 13l13 22 9-16 17 21ZM10 23l5 5 4-5M32 28l5 4 4-4"/><path d="M1 48h54"/><circle cx="42" cy="4" r="5"/></g>
+    <g transform="translate(286 116) rotate(-11 25 23)"><path d="M23 44 4 27C-9 12 9-2 23 10c14-12 32 2 19 17Z"/><path d="m11 12-3 4M40 33l4 4"/><circle cx="53" cy="2" r="3"/></g>
+    <g transform="translate(17 212) rotate(-10 23 24)"><path d="M23 1C14 8 8 8 2 9v16c0 14 13 24 21 27 8-3 21-13 21-27V9C37 8 30 8 23 1Z"/><path d="m12 26 8 7 13-15"/><path d="M54 9v9M50 13h8"/></g>
+    <g transform="translate(106 211) rotate(15 29 26)"><path d="M1 43c13-4 28-2 29 6 1-8 16-10 29-6V3C44-1 33 4 30 11 27 4 16-1 1 3ZM30 11v38"/><path d="M8 13c6-1 11 0 15 3M8 22c6-1 11 0 15 3M38 16c4-3 9-4 14-3M38 25c4-3 9-4 14-3"/></g>
+    <g transform="translate(205 212) rotate(-14 25 21)"><path d="M2 15h37v10c0 15-7 23-18 23S2 40 2 25ZM39 20h5a9 9 0 0 1 0 18h-8"/><path d="M18 7c-8-5 7-6 0-12M29 8c-8-5 7-6 0-12M1 54h46"/></g>
+    <g transform="translate(290 212) rotate(8 24 24)"><path d="M24 2 31 17l17 2-13 12 4 17-15-9-15 9 4-17L0 19l17-2Z"/><path d="m54 1 4 4M51 47h7"/><circle cx="1" cy="4" r="3"/></g>
+    <g transform="translate(24 303) rotate(12 24 17)"><path d="M1 18c0-8 7-14 15-11 4-12 24-11 27 2 13-2 20 19 6 23H12C6 32 1 25 1 18Z"/><path d="M16 40v7M29 39v7M42 40v7"/><circle cx="62" cy="18" r="3"/></g>
+    <g transform="translate(124 297) rotate(-8 18 26)"><path d="M18 49V5l23-4v34"/><ellipse cx="9" cy="48" rx="9" ry="6"/><ellipse cx="32" cy="35" rx="9" ry="6"/><path d="m18 14 23-5M1 13l-4 4"/></g>
+    <g transform="translate(209 298) rotate(10 25 24)"><path d="M10 12H1v40h49V12h-9M10 25h31M25 1v32M17 25l8 8 8-8"/><path d="M11 42h28"/><circle cx="56" cy="7" r="3"/></g>
+    <g transform="translate(290 303) rotate(-12 24 22)"><path d="M2 36c5-18 10-27 20-28 8-2 17 4 22 15-14 16-27 20-42 13ZM2 36l32-20"/><path d="M2 36c-2 6-4 9-7 12M13 22l6 5M27 12l2 7"/></g>
+    <g stroke-width="1.4"><circle cx="88" cy="77" r="3"/><circle cx="178" cy="188" r="3"/><circle cx="277" cy="81" r="2"/><circle cx="79" cy="283" r="2"/><path d="M173 70v8M169 74h8M274 281v8M270 285h8M81 182l4 4M83 180l4 4"/></g>
+  </g>
+</svg>

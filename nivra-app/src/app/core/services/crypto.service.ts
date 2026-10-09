@@ -49,6 +49,12 @@ export interface PublicKeyRecipient {
   publicJwk: JsonWebKey;
 }
 
+export interface HistoricalDeviceKeyMaterial {
+  publicJwk: JsonWebKey;
+  privateJwk: JsonWebKey;
+  createdAt?: string;
+}
+
 export interface EncryptedAttachmentFile {
   body: Blob;
   encryptedSize: number;
@@ -75,9 +81,22 @@ export class CryptoService {
   private dbPromise?: Promise<IDBPDatabase>;
   private deviceKeyHardeningPromise?: Promise<void>;
 
-  async prepareDeviceKeys(alias?: string | null, registration = false): Promise<DeviceKeys> {
+  async prepareDeviceKeys(alias?: string | null, registration = false, identity?: { userId: string; deviceId?: string | null; identityKey?: string | null }): Promise<DeviceKeys> {
+    if (identity && !identity.userId) throw new Error('No se pudo comprobar la identidad de la cuenta. Actualiza Nivra.');
     if (!registration) {
-      const existing = alias ? await this.latestDeviceKeysForAlias(alias) : await this.latestDeviceKeys();
+      let existing: StoredDeviceKeys | null;
+      if (identity?.userId) {
+        const assigned = await this.exportDeviceKeyMaterialsForUser(identity.userId, alias);
+        const verifiedPublicKey = this.parsePublicJwk(identity.identityKey);
+        existing = assigned.find(record => record.deviceId === identity.deviceId && this.samePublicKey(record.publicJwk, verifiedPublicKey)) ?? null;
+        if (!existing && alias && identity.deviceId && identity.identityKey) {
+          const legacy = await this.getDeviceKeys(alias, identity.deviceId);
+          if (legacy && (!legacy.userId || legacy.userId === identity.userId) && this.samePublicKey(legacy.publicJwk, verifiedPublicKey)) existing = legacy;
+        }
+        existing ??= this.latestKeyRecord(assigned);
+      } else {
+        existing = alias ? await this.latestDeviceKeysForAlias(alias) : await this.latestDeviceKeys();
+      }
       if (existing) {
         return this.materialToDeviceKeys(existing);
       }
@@ -117,6 +136,7 @@ export class CryptoService {
     deviceId: string,
     keys: DeviceKeys,
     metadata: { userId?: string } = {},
+    isCurrent: () => boolean = () => true,
   ): Promise<void> {
     const now = new Date().toISOString();
     const record: StoredDeviceKeys = {
@@ -130,7 +150,27 @@ export class CryptoService {
       updatedAt: now,
     };
     const db = await this.open();
-    await db.put(LOCAL_KEY_STORE, await this.protectDeviceKeysRecord(record));
+    const previous = await db.get(LOCAL_KEY_STORE, record.id) as StoredDeviceKeysRecord | undefined;
+    if (!isCurrent()) return;
+    if (metadata.userId && previous) {
+      const material = await this.unprotectDeviceKeysRecord(previous);
+      if (material && !this.samePublicKey(material.publicJwk, keys.publicJwk)) {
+        if (previous.userId) {
+          await this.importHistoricalDeviceKeys(previous.userId, material.alias, [material], isCurrent);
+        } else {
+          // Preserve unknown legacy ownership locally without promoting a
+          // mutable alias to authority for exporting the old private key.
+          const digest = this.b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', textEncoder.encode(JSON.stringify([material.id, material.publicJwk])))));
+          const id = `history:legacy:${digest}`;
+          const archived = await this.protectDeviceKeysRecord({ ...material, id, deviceId: id });
+          if (!isCurrent()) return;
+          await db.put(LOCAL_KEY_STORE, archived);
+        }
+      }
+    }
+    const protectedRecord = await this.protectDeviceKeysRecord(record);
+    if (!isCurrent()) return;
+    await db.put(LOCAL_KEY_STORE, protectedRecord);
     this.purgeLegacyPlaintextKeyCopies(alias, deviceId);
   }
 
@@ -166,8 +206,7 @@ export class CryptoService {
     return records
       .filter((record) => record.privateJwk && record.publicJwk)
       .filter((record) =>
-        (normalizedUserId && record.userId === normalizedUserId) ||
-        (normalizedAlias && record.aliasLower === normalizedAlias))
+        record.userId ? record.userId === normalizedUserId : Boolean(normalizedAlias && record.aliasLower === normalizedAlias))
       .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')))
       .filter((record) => {
         const fingerprint = `${JSON.stringify(record.publicJwk)}:${JSON.stringify(record.privateJwk)}`;
@@ -177,6 +216,52 @@ export class CryptoService {
         seen.add(fingerprint);
         return true;
       });
+  }
+
+  async exportDeviceKeyMaterialsForUser(userId: string, alias?: string | null): Promise<StoredDeviceKeys[]> {
+    // A mutable alias alone is not proof of ownership for transferring secrets.
+    return (await this.deviceKeyMaterialsForUser(userId, alias)).filter(record => record.userId === userId);
+  }
+
+  samePublicKey(left: JsonWebKey | null | undefined, right: JsonWebKey | null | undefined): boolean {
+    return Boolean(left && right && ['kty', 'crv', 'x', 'y'].every(field => left[field as keyof JsonWebKey] === right[field as keyof JsonWebKey]));
+  }
+
+  async importHistoricalDeviceKeys(userId: string, alias: string, materials: HistoricalDeviceKeyMaterial[], isCurrent: () => boolean = () => true): Promise<number> {
+    if (!userId || !alias || !Array.isArray(materials) || materials.length > 256) throw new Error('Paquete de historial inválido.');
+    const unique = new Map<string, HistoricalDeviceKeyMaterial>();
+    for (const material of materials) {
+      await this.validateHistoricalDeviceKey(material);
+      if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación del historial.');
+      unique.set(JSON.stringify([material.publicJwk.kty, material.publicJwk.crv, material.publicJwk.x, material.publicJwk.y]), material);
+    }
+    const db = await this.open();
+    let imported = 0;
+    for (const [fingerprint, material] of unique) {
+      const digest = this.b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', textEncoder.encode(fingerprint))));
+      const id = `history:${userId}:${digest}`;
+      if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación del historial.');
+      if (await db.get(LOCAL_KEY_STORE, id)) continue;
+      const now = new Date().toISOString();
+      const record: StoredDeviceKeys = { ...this.materialToDeviceKeys(material), id, userId, alias, aliasLower: this.normalizeAlias(alias), deviceId: id, createdAt: material.createdAt && Number.isFinite(Date.parse(material.createdAt)) ? material.createdAt : now, updatedAt: now };
+      const protectedRecord = await this.protectDeviceKeysRecord(record);
+      if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación del historial.');
+      await db.put(LOCAL_KEY_STORE, protectedRecord);
+      imported++;
+    }
+    return imported;
+  }
+
+  private async validateHistoricalDeviceKey(material: HistoricalDeviceKeyMaterial): Promise<void> {
+    const pub = material?.publicJwk; const secret = material?.privateJwk;
+    if (pub?.kty !== 'EC' || pub.crv !== 'P-256' || pub.d || typeof pub.x !== 'string' || typeof pub.y !== 'string' || pub.x.length !== 43 || pub.y.length !== 43 || !secret?.d || secret.d.length !== 43 || !this.samePublicKey(pub, secret)) throw new Error('La llave de historial no es válida.');
+    // Derive in both directions to prove the supplied public point matches d.
+    const privateKey = await crypto.subtle.importKey('jwk', { ...secret, key_ops: ['deriveBits'] }, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+    const publicKey = await crypto.subtle.importKey('jwk', { ...pub, key_ops: [] }, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+    const probe = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveBits']);
+    const left = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: probe.publicKey }, privateKey, 256));
+    const right = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: publicKey }, probe.privateKey, 256));
+    if (left.some((byte, index) => byte !== right[index])) throw new Error('La llave de historial no coincide con su identidad.');
   }
 
   async destroyLocalDeviceKeyProtector(): Promise<void> {
@@ -201,12 +286,9 @@ export class CryptoService {
     if (!value) {
       return null;
     }
-    if (typeof value === 'object' && value !== null && 'kty' in value) {
-      return value as JsonWebKey;
-    }
     try {
-      const parsed = JSON.parse(String(value)) as JsonWebKey;
-      return parsed?.kty ? parsed : null;
+      const parsed = (typeof value === 'object' ? value : JSON.parse(String(value))) as JsonWebKey;
+      return parsed?.kty === 'EC' && parsed.crv === 'P-256' && !parsed.d && typeof parsed.x === 'string' && typeof parsed.y === 'string' && /^[A-Za-z0-9_-]{43}$/.test(parsed.x) && /^[A-Za-z0-9_-]{43}$/.test(parsed.y) ? parsed : null;
     } catch {
       return null;
     }
@@ -685,6 +767,7 @@ export class CryptoService {
 
   private latestKeyRecord(records: StoredDeviceKeys[]): StoredDeviceKeys | null {
     return records
+      .filter((record) => !record.id?.startsWith('history:'))
       .filter((record) => record.privateJwk && record.publicJwk)
       .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')))[0] ?? null;
   }

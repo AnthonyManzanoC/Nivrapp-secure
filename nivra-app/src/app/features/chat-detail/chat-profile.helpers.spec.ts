@@ -21,6 +21,8 @@ describe('Chat profile interactions', () => {
       conversation: () => conversation,
       auth: { session: () => session },
       router: { url: '/app/chats/chat?source=notification', navigate },
+      verificationDraft: { save: jasmine.createSpy('save'), discard: jasmine.createSpy('discard') },
+      draft: 'Borrador sin enviar',
       chat: {
         isGroup: (chat: Conversation) => chat.type === 'Group',
         isGroupAdmin: () => false,
@@ -77,6 +79,7 @@ describe('Chat profile interactions', () => {
     page.onContactInfoDidDismiss();
     await action;
     expect(navigate).toHaveBeenCalledOnceWith(['/app/identity', 'peer'], { state: { identityReturnUrl: '/app/chats/chat?source=notification' } });
+    expect((page as unknown as { verificationDraft: { save: jasmine.Spy } }).verificationDraft.save).toHaveBeenCalledOnceWith('chat', 'Borrador sin enviar');
     expect(page.profileActionBusy).toBeFalse();
   });
 

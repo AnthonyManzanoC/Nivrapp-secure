@@ -222,6 +222,8 @@ export class SignalrService implements OnDestroy {
       'FORCE_WIPE',
       'device.revoked',
       'device.listChanged',
+      'history.requested',
+      'history.available',
     ].forEach((eventName) => connection.on(eventName, forward(eventName)));
 
     connection.onreconnecting(() => this.connectionState.set(HubConnectionState.Reconnecting));
@@ -282,6 +284,8 @@ export class SignalrService implements OnDestroy {
       'FORCE_WIPE',
       'device.revoked',
       'device.listChanged',
+      'history.requested',
+      'history.available',
     ].forEach((eventName) => connection.off(eventName));
   }
 

@@ -548,6 +548,68 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.ToTable("GroupInviteLinks", "public");
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.HistoryKeyTransfer", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("TargetDeviceId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TargetIdentityKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("UserId", "TargetDeviceId", "ExpiresAt");
+
+                    b.ToTable("HistoryKeyTransfers", "public");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.HistoryKeyTransferResponse", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Ciphertext")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("Header")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceDeviceId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("SourceIdentityKey")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<string>("TransferId")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TransferId");
+
+                    b.ToTable("HistoryKeyTransferResponses", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.MessageEnvelope", b =>
                 {
                     b.Property<string>("Id")
@@ -1470,6 +1532,24 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.ConversationRecord", null)
                         .WithMany()
                         .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.HistoryKeyTransfer", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.HistoryKeyTransferResponse", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.HistoryKeyTransfer", null)
+                        .WithMany()
+                        .HasForeignKey("TransferId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

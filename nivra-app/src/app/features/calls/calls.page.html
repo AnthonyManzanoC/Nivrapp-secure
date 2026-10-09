@@ -214,7 +214,15 @@
                   </div>
                 }
                 @if (calls.error()) {
-                  <p class="call-inline-error" role="alert">{{ calls.error() }}</p>
+                  <div class="call-inline-error">
+                    <p role="alert">{{ callErrorText() }}</p>
+                    @if (canRetryCamera()) {
+                      <ion-button mode="ios" fill="outline" size="small" [disabled]="calls.mediaUpgradeInFlight()" (click)="retryCamera()">
+                        <ion-icon name="videocam-outline" slot="start" aria-hidden="true"></ion-icon>
+                        {{ 'CALLS.ENABLE_YOUR_CAMERA' | translate:'Activar mi cámara' }}
+                      </ion-button>
+                    }
+                  </div>
                 }
               </div>
             }

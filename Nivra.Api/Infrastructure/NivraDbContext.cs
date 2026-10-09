@@ -11,6 +11,8 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     public DbSet<GroupInviteLink> GroupInviteLinks => Set<GroupInviteLink>();
+    public DbSet<HistoryKeyTransfer> HistoryKeyTransfers => Set<HistoryKeyTransfer>();
+    public DbSet<HistoryKeyTransferResponse> HistoryKeyTransferResponses => Set<HistoryKeyTransferResponse>();
 
     public override async Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
     {
@@ -62,6 +64,18 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        modelBuilder.Entity<HistoryKeyTransfer>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => new { x.UserId, x.TargetDeviceId, x.ExpiresAt });
+            b.HasOne<UserAccount>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<HistoryKeyTransferResponse>(b =>
+        {
+            b.HasKey(x => x.Id);
+            b.HasIndex(x => x.TransferId);
+            b.HasOne<HistoryKeyTransfer>().WithMany().HasForeignKey(x => x.TransferId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<GroupInviteLink>(b =>
         {
             b.HasKey(x => x.Id);

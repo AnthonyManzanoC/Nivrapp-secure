@@ -47,4 +47,48 @@ describe('identity directory fingerprints', () => {
     malformed.devices[0].keyBundle.identityKey = '{"kty":"RSA"}';
     await expectAsync(deriveDirectoryFingerprint(malformed)).toBeRejected();
   });
+
+  it('ignores only legacy devices without a published identity and preserves the comparison code', async () => {
+    const alice = directory('alice', [{ id: 'phone', x: coordinate('A'), y: coordinate('B') }]);
+    const legacy = directory('alice', [{ id: 'legacy-null', x: coordinate('C'), y: coordinate('D') }]).devices[0];
+    const mixed = { ...alice, devices: [
+      ...alice.devices,
+      { ...legacy, deviceId: 'legacy-null', keyBundle: { ...legacy.keyBundle, identityKey: null } },
+      { ...legacy, deviceId: 'legacy-empty', keyBundle: { ...legacy.keyBundle, identityKey: '' } },
+      { ...legacy, deviceId: 'legacy-space', keyBundle: { ...legacy.keyBundle, identityKey: '  \n  ' } },
+    ] };
+    const bob = directory('bob', [{ id: 'phone', x: coordinate('C'), y: coordinate('D') }]);
+    expect((await deriveDirectoryFingerprint(mixed)).digest).toBe((await deriveDirectoryFingerprint(alice)).digest);
+    expect((await deriveDirectoryFingerprint(mixed)).deviceIds).toEqual(['phone']);
+    expect((await deriveUnverifiedSafetyNumber(mixed, bob)).display).toBe((await deriveUnverifiedSafetyNumber(alice, bob)).display);
+    await expectAsync(deriveDirectoryFingerprint({ ...mixed, devices: mixed.devices.slice(1) })).toBeRejected();
+  });
+
+  it('does not accept a malformed nonempty or private identity alongside valid devices', async () => {
+    const valid = directory('alice', [{ id: 'phone', x: coordinate('A'), y: coordinate('B') }]);
+    const extra = { ...valid.devices[0], deviceId: 'extra', keyBundle: { ...valid.devices[0].keyBundle } };
+    for (const invalid of ['malformed', 'null', '{}', JSON.stringify({ ...JSON.parse(extra.keyBundle.identityKey!), d: coordinate('D') })]) {
+      extra.keyBundle.identityKey = invalid;
+      await expectAsync(deriveDirectoryFingerprint({ ...valid, devices: [...valid.devices, extra] })).toBeRejected();
+    }
+  });
+
+  it('rejects duplicate device IDs even when one duplicate has no published key', async () => {
+    const valid = directory('alice', [{ id: 'phone', x: coordinate('A'), y: coordinate('B') }]);
+    const duplicate = { ...valid.devices[0], keyBundle: { ...valid.devices[0].keyBundle, identityKey: null } };
+    await expectAsync(deriveDirectoryFingerprint({ ...valid, devices: [...valid.devices, duplicate] })).toBeRejected();
+  });
+
+  it('ignores JWK serialization metadata but changes for real published device additions and removals', async () => {
+    const first = directory('alice', [{ id: 'phone', x: coordinate('A'), y: coordinate('B') }]);
+    const metadata = directory('alice', [{ id: 'phone', x: coordinate('A'), y: coordinate('B') }]);
+    metadata.devices[0].keyBundle.identityKey = JSON.stringify({ key_ops: ['deriveKey'], ext: true, y: coordinate('B'), x: coordinate('A'), crv: 'P-256', kty: 'EC' });
+    expect((await deriveDirectoryFingerprint(metadata)).digest).toBe((await deriveDirectoryFingerprint(first)).digest);
+    const added = directory('alice', [
+      { id: 'phone', x: coordinate('A'), y: coordinate('B') },
+      { id: 'new-pc', x: coordinate('C'), y: coordinate('D') },
+    ]);
+    expect((await deriveDirectoryFingerprint(added)).digest).not.toBe((await deriveDirectoryFingerprint(first)).digest);
+    expect((await deriveDirectoryFingerprint({ ...added, devices: added.devices.slice(1) })).digest).not.toBe((await deriveDirectoryFingerprint(added)).digest);
+  });
 });

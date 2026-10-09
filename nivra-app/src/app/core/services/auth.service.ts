@@ -24,7 +24,7 @@ import {
   QrLoginStartResponse,
   StoredDeviceKeys,
 } from '../models/nivra.models';
-import { CryptoService } from './crypto.service';
+import { CryptoService, HistoricalDeviceKeyMaterial } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { environment } from '../../../environments/environment';
 import { NativeSecureVaultService } from './native-secure-vault.service';
@@ -66,6 +66,12 @@ interface ProtectedAuthSessionEnvelope {
   updatedAt: string;
 }
 
+interface QrHistoryPayload {
+  userId?: string;
+  keyring?: HistoricalDeviceKeyMaterial[];
+  keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>;
+}
+
 const FIREBASE_APP_NAME = 'nivra-web-phone-auth';
 const SESSION_KEY = 'nivra.auth';
 const PROTECTED_SESSION_KEY = 'nivra.auth.protected';
@@ -95,6 +101,7 @@ export class AuthService implements OnDestroy {
   private qrConnection: HubConnection | null = null;
   private qrPollTimer: number | null = null;
   private qrGeneration = 0;
+  private sessionWriteEpoch = 0;
   private authRefreshPromise: Promise<boolean> | null = null;
   private protectedSessionRestorePromise: Promise<void> | null = null;
   private refreshBackoffUntil = 0;
@@ -138,16 +145,21 @@ export class AuthService implements OnDestroy {
     this.busy.set(true);
     try {
       const device = await this.deviceProfile();
-      if (mode === 'login' && normalizeNivraNumber(normalizedAlias)) {
-        const identity = await firstValueFrom(this.api.post<{ alias: string }>('/auth/login', {
-          alias: normalizeNivraNumber(normalizedAlias), password, deviceName: device.name,
+      let identity: { alias: string; userId: string; deviceId?: string | null; identityKey?: string | null } | undefined;
+      if (mode === 'login') {
+        identity = await firstValueFrom(this.api.post<{ alias: string; userId: string; deviceId?: string | null; identityKey?: string | null }>('/auth/login', {
+          alias: normalizeNivraNumber(normalizedAlias) || `@${normalizedAlias.replace(/^@/, '')}`, password, deviceName: device.name,
           hardwareId: device.hardwareId, keyBundle: null, resolveOnly: true,
         }, { skipAuth: true }));
+        if (!identity || typeof identity.alias !== 'string' || !/^[A-Za-z0-9_.-]{3,32}$/.test(identity.alias)
+          || ('userId' in identity && (typeof identity.userId !== 'string' || !identity.userId.trim()))) throw new Error('No se pudo comprobar la identidad de tu cuenta. Actualiza Nivra.');
         normalizedAlias = identity.alias;
-      } else if (mode === 'login') {
-        normalizedAlias = normalizedAlias.replace(/^@/, '');
       }
-      const keys = await this.crypto.prepareDeviceKeys(normalizedAlias, mode === 'register');
+      // Older servers resolve only aliases. Keep login usable, but never infer
+      // ownership of an existing private key from a mutable alias alone.
+      const keys = identity && !('userId' in identity)
+        ? await this.crypto.createDeviceKeys()
+        : await this.crypto.prepareDeviceKeys(normalizedAlias, mode === 'register', identity);
       const payload = {
         alias: mode === 'login' ? `@${normalizedAlias}` : normalizedAlias,
         password,
@@ -161,6 +173,7 @@ export class AuthService implements OnDestroy {
       const auth = await firstValueFrom(
         this.api.post<AuthSession>(mode === 'register' ? '/auth/register' : '/auth/login', payload, { skipAuth: true }),
       );
+      if (identity?.userId && auth.user?.id !== identity.userId) throw new Error('La identidad de la cuenta cambió durante el inicio de sesión. Vuelve a intentar.');
       await this.completeAuth(auth, keys);
     } finally {
       this.busy.set(false);
@@ -286,12 +299,14 @@ export class AuthService implements OnDestroy {
   private async createQrLogin(generation: number): Promise<QrLoginChallenge> {
     const isCurrent = () => generation === this.qrGeneration;
     const ephemeral = await this.crypto.createQrEphemeralKeys();
+    const localKeys = await this.crypto.createDeviceKeys();
     const device = await this.deviceProfile();
+    if (!isCurrent()) throw new Error('QR_CANCELLED');
     const serverChallenge = await firstValueFrom(
       this.api.post<QrLoginStartResponse>('/auth/qr/start', {
         deviceName: device.name,
         hardwareId: device.hardwareId,
-        keyBundle: null,
+        keyBundle: localKeys.keyBundle,
         publicKey: this.crypto.base64UrlJson(ephemeral.publicJwk),
       }, { skipAuth: true }),
     );
@@ -336,17 +351,14 @@ export class AuthService implements OnDestroy {
       if (!auth?.tokens?.accessToken || !encryptedPayload) {
         throw new Error('La autorizacion QR no contiene una sesion valida.');
       }
-      const payload = await this.crypto.decryptQrPayload<{ keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'> }>(
+      const payload = await this.crypto.decryptQrPayload<QrHistoryPayload>(
         encryptedPayload,
         ephemeral.privateKey,
       );
-      if (!payload.keyMaterial?.privateJwk || !payload.keyMaterial.publicJwk) {
-        throw new Error('El paquete QR no contiene llaves locales.');
-      }
       if (!isCurrent()) {
         return;
       }
-      await this.completeImportedAuth(auth, payload.keyMaterial);
+      await this.completeLocalQrAuth(auth, payload, localKeys, isCurrent);
       finished = true;
       if (isCurrent()) {
         await this.stopQrLogin();
@@ -366,21 +378,10 @@ export class AuthService implements OnDestroy {
         }
         finishing = true;
         this.qrState.set('authorizing');
-        const payload = await this.crypto.decryptQrPayload<{
-          auth?: AuthSession;
-          keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>;
-        }>(encryptedPayload, ephemeral.privateKey);
-          if (!payload.auth?.tokens?.accessToken || !payload.keyMaterial?.privateJwk || !payload.keyMaterial.publicJwk) {
-            throw new Error('El paquete QR no contiene una sesion valida.');
-          }
-          if (!isCurrent()) {
-            return;
-          }
-          await this.completeImportedAuth(payload.auth, payload.keyMaterial);
-          finished = true;
-          if (isCurrent()) {
-            await this.stopQrLogin();
-          }
+        // This obsolete transport copies the source session/device credentials.
+        // Publishing a destination identity with those tokens would rotate the
+        // source's key. A fresh v3 challenge issues a distinct target session.
+        throw new Error('Renueva el QR de vinculación y escanéalo de nuevo. Este QR antiguo no permite vincular un dispositivo de forma segura.');
       }).catch(fail);
     });
 
@@ -466,8 +467,12 @@ export class AuthService implements OnDestroy {
       throw new Error('Necesitas una sesion activa para vincular otro dispositivo.');
     }
     const keyMaterial = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+    const keyring = await this.crypto.exportDeviceKeyMaterialsForUser(current.user.id, current.user.alias);
+    if (this.session()?.user.id !== current.user.id || this.session()?.device.id !== current.device.id) throw new Error('La sesión cambió durante la vinculación.');
     const device = await this.deviceProfile();
     const payload = {
+      userId: current.user.id,
+      keyring: keyring.map(key => ({ privateJwk: key.privateJwk, publicJwk: key.publicJwk, createdAt: key.createdAt })),
       keyMaterial: {
         privateJwk: keyMaterial.privateJwk,
         publicJwk: keyMaterial.publicJwk,
@@ -481,6 +486,7 @@ export class AuthService implements OnDestroy {
       throw new Error('Ese QR no trae llave publica de vinculacion.');
     }
     const sealed = await this.crypto.encryptQrPayload(publicMaterial, challenge.qrId && challenge.code ? payload : { ...payload, auth: current });
+    if (this.session()?.user.id !== current.user.id || this.session()?.device.id !== current.device.id) throw new Error('La sesión cambió durante la vinculación.');
     if (challenge.qrId && challenge.code) {
       await firstValueFrom(this.api.post('/api/auth/qr-login', {
         qrId: challenge.qrId,
@@ -512,6 +518,13 @@ export class AuthService implements OnDestroy {
     }
 
     const currentSession = this.session();
+    const refreshEpoch = this.sessionWriteEpoch;
+    const sameRefreshContext = () => {
+      const current = this.session();
+      return current?.user.id === currentSession?.user.id && current?.device.id === currentSession?.device.id
+        && current?.tokens.refreshToken === refreshToken;
+    };
+    const mayApplyRefresh = () => this.sessionWriteEpoch === refreshEpoch && sameRefreshContext();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (currentSession?.device?.id) {
       headers['X-Nivra-Device-Id'] = currentSession.device.id;
@@ -523,12 +536,15 @@ export class AuthService implements OnDestroy {
       body: JSON.stringify({ refreshToken }),
     })
       .then(async (response) => {
+        if (!mayApplyRefresh()) return false;
         if (!response.ok) {
           if (await this.isForceWipeResponse(response)) {
+            if (!mayApplyRefresh()) return false;
             this.forceWipeRequested.update((value) => value + 1);
             this.refreshHardFailure = true;
             return false;
           }
+          if (!mayApplyRefresh()) return false;
           this.refreshHardFailure = response.status === 401 || response.status === 403;
           if (response.status === 429 || response.status >= 500) {
             this.refreshBackoffUntil = Date.now() + this.refreshRetryDelayMs(response);
@@ -536,6 +552,7 @@ export class AuthService implements OnDestroy {
           return false;
         }
         const tokens = await response.json() as AuthSession['tokens'];
+        if (!mayApplyRefresh()) return false;
         const current = this.session();
         if (!current?.tokens || !tokens.accessToken) {
           this.refreshHardFailure = true;
@@ -544,10 +561,10 @@ export class AuthService implements OnDestroy {
         this.refreshHardFailure = false;
         this.refreshBackoffUntil = 0;
         const next = { ...current, tokens };
-        await this.persistSession(next);
-        return true;
+        return this.persistSession(next, sameRefreshContext);
       })
       .catch(() => {
+        if (!mayApplyRefresh()) return false;
         this.refreshHardFailure = false;
         this.refreshBackoffUntil = Date.now() + 30000;
         return false;
@@ -576,6 +593,7 @@ export class AuthService implements OnDestroy {
   }
 
   async logout(skipServer = false): Promise<void> {
+    this.sessionWriteEpoch++;
     const accountId = this.session()?.user.id;
     if (!skipServer && this.accessToken()) {
       await firstValueFrom(this.api.post('/auth/logout', {}, {})).catch(() => null);
@@ -598,9 +616,10 @@ export class AuthService implements OnDestroy {
     if (!auth?.tokens?.accessToken || !auth.user?.alias || !auth.device?.id) {
       throw new Error('La respuesta de autenticacion no contiene una sesion valida.');
     }
+    await this.stopQrLogin();
     await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id });
     this.markFreshAuthNavigation();
-    await this.persistSession(auth);
+    if (!await this.persistSession(auth)) return;
     await this.router.navigateByUrl(this.consumePostAuthUrl());
   }
 
@@ -714,7 +733,9 @@ export class AuthService implements OnDestroy {
       throw new Error('Firebase no entrego un token valido para este telefono.');
     }
 
-    const keys = await this.crypto.prepareDeviceKeys(null, false);
+    // The phone account is not resolved yet. Reusing the browser's latest
+    // key could give a different account ownership of another user's secrets.
+    const keys = await this.crypto.createDeviceKeys();
     const device = await this.deviceProfile();
     const response = await firstValueFrom(
       this.api.post<FirebasePhoneVerifyResponse>('/api/auth/phone/verify-firebase', {
@@ -842,14 +863,42 @@ export class AuthService implements OnDestroy {
     return 'Browser';
   }
 
+  private async completeLocalQrAuth(auth: AuthSession, payload: QrHistoryPayload, localKeys: DeviceKeys, isCurrent: () => boolean): Promise<void> {
+    if (!isCurrent()) return;
+    if (!this.isValidAuthSession(auth) || (payload.userId && payload.userId !== auth.user.id)) throw new Error('El historial QR pertenece a otra cuenta.');
+    if (!payload.keyMaterial?.privateJwk || !payload.keyMaterial.publicJwk || (payload.keyring !== undefined && !Array.isArray(payload.keyring))) throw new Error('El paquete QR no contiene un historial válido.');
+    // The destination identity must have been generated on this device. The
+    // sealed source payload supplies historical decryption keys only.
+    const response = await fetch(this.api.url('/keys/batch'), {
+      method: 'POST', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.tokens.accessToken}`, 'X-Nivra-Device-Id': auth.device.id },
+      body: JSON.stringify({ userIds: [auth.user.id], aliases: [] }),
+    });
+    if (!isCurrent()) return;
+    if (!response.ok) throw new Error('Actualiza Nivra y renueva el QR de vinculación.');
+    const directories = await response.json() as Array<{ userId: string; devices: Array<{ deviceId: string; keyBundle?: { identityKey?: string | null } }> }>;
+    if (!isCurrent()) return;
+    const published = directories?.find(directory => directory.userId === auth.user.id)?.devices?.find(device => device.deviceId === auth.device.id);
+    if (!this.crypto.samePublicKey(localKeys.publicJwk, this.crypto.parsePublicJwk(published?.keyBundle?.identityKey))) throw new Error('Actualiza Nivra y renueva el QR. No se pudo comprobar la identidad local de este dispositivo.');
+    const historical = [...(payload.keyring ?? [])];
+    if (!historical.some(key => this.crypto.samePublicKey(key.publicJwk, payload.keyMaterial!.publicJwk))) historical.push(payload.keyMaterial);
+    await this.completeImportedAuth(auth, localKeys, historical, isCurrent);
+  }
+
   private async completeImportedAuth(
     auth: AuthSession,
     keyMaterial: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>,
+    keyring?: HistoricalDeviceKeyMaterial[],
+    isCurrent: () => boolean = () => true,
   ): Promise<void> {
+    if (!isCurrent()) return;
+    if (keyring?.length) await this.crypto.importHistoricalDeviceKeys(auth.user.id, auth.user.alias, keyring, isCurrent);
+    if (!isCurrent()) return;
     const keys = this.crypto.materialToDeviceKeys(keyMaterial);
-    await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id });
+    await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id }, isCurrent);
+    if (!isCurrent()) return;
     this.markFreshAuthNavigation();
-    await this.persistSession(auth);
+    if (!await this.persistSession(auth, isCurrent) || !isCurrent()) return;
     await this.router.navigateByUrl(this.consumePostAuthUrl());
   }
 
@@ -880,14 +929,20 @@ export class AuthService implements OnDestroy {
     return this.isAuthenticated();
   }
 
-  private async persistSession(auth: AuthSession): Promise<void> {
-    this.session.set(auth);
+  private async persistSession(auth: AuthSession, isCurrent: () => boolean = () => true): Promise<boolean> {
+    const epoch = ++this.sessionWriteEpoch;
+    const mayWrite = () => this.sessionWriteEpoch === epoch && isCurrent();
+    if (!mayWrite()) return false;
     if (this.secureVault.requiresProtection()) {
-      await this.persistProtectedSession(auth);
-      return;
+      if (!await this.persistProtectedSession(auth, mayWrite) || !mayWrite()) return false;
+    } else {
+      if (!mayWrite()) return false;
+      localStorage.setItem(SESSION_KEY, JSON.stringify(auth));
+      localStorage.removeItem(PROTECTED_SESSION_KEY);
     }
-    localStorage.setItem(SESSION_KEY, JSON.stringify(auth));
-    localStorage.removeItem(PROTECTED_SESSION_KEY);
+    if (!mayWrite()) return false;
+    this.session.set(auth);
+    return true;
   }
 
   private async restoreProtectedSession(): Promise<void> {
@@ -895,10 +950,14 @@ export class AuthService implements OnDestroy {
       return;
     }
     this.protectedSessionRestorePromise ??= (async () => {
+      const restoreEpoch = this.sessionWriteEpoch;
+      const initialSession = this.session();
+      const mayRestore = () => this.sessionWriteEpoch === restoreEpoch && this.session() === initialSession;
       const encrypted = this.readProtectedSessionEnvelope();
       if (encrypted) {
         try {
           const restored = await this.decryptProtectedSession(encrypted);
+          if (!mayRestore()) return;
           if (this.isValidAuthSession(restored)) {
             this.session.set(restored);
             localStorage.removeItem(SESSION_KEY);
@@ -908,38 +967,40 @@ export class AuthService implements OnDestroy {
           // Keep the encrypted envelope on disk: a temporary Android Keystore/bridge failure
           // must not turn a recoverable session into a permanent sign-out.
         }
+        if (!mayRestore()) return;
         this.session.set(null);
         return;
       }
 
       const legacy = this.readPlainSession();
       if (legacy) {
-        this.session.set(legacy);
         try {
-          await this.persistProtectedSession(legacy);
+          if (await this.persistProtectedSession(legacy, mayRestore) && mayRestore()) this.session.set(legacy);
         } catch {
-          this.session.set(null);
+          if (mayRestore()) this.session.set(null);
           // Preserve the legacy record if migration fails transiently; never erase credentials
           // until a protected replacement is safely persisted.
         }
         return;
       }
 
-      localStorage.removeItem(SESSION_KEY);
+      if (mayRestore()) localStorage.removeItem(SESSION_KEY);
     })().finally(() => {
       this.protectedSessionRestorePromise = null;
     });
     await this.protectedSessionRestorePromise;
   }
 
-  private async persistProtectedSession(auth: AuthSession): Promise<void> {
+  private async persistProtectedSession(auth: AuthSession, isCurrent: () => boolean = () => true): Promise<boolean> {
     const key = await this.authSessionProtectorKey();
+    if (!isCurrent()) return false;
     const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
     const ciphertext = await globalThis.crypto.subtle.encrypt(
       { name: 'AES-GCM', iv },
       key,
       authTextEncoder.encode(JSON.stringify(auth)),
     );
+    if (!isCurrent()) return false;
     const envelope: ProtectedAuthSessionEnvelope = {
       v: 1,
       alg: 'NIVRA-AUTH-SESSION-A256GCM',
@@ -949,6 +1010,7 @@ export class AuthService implements OnDestroy {
     };
     localStorage.setItem(PROTECTED_SESSION_KEY, JSON.stringify(envelope));
     localStorage.removeItem(SESSION_KEY);
+    return true;
   }
 
   private async decryptProtectedSession(envelope: ProtectedAuthSessionEnvelope): Promise<unknown> {

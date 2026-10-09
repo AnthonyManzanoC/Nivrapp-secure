@@ -1,5 +1,5 @@
 <ion-app>
-  <ion-router-outlet></ion-router-outlet>
+  <ion-router-outlet [attr.inert]="webLaunch.checking() ? '' : null"></ion-router-outlet>
   @if (showCallBanner()) {
     @if (calls.activeCall(); as call) {
       <button type="button" class="global-call-banner" (click)="openActiveCall()" [attr.aria-label]="'CALLS.RETURN_TO_CALL' | translate:'Volver a la llamada'">
@@ -15,4 +15,16 @@
     }
   }
   <app-lock-screen></app-lock-screen>
+  <app-history-approval-dialog />
+  @if (webLaunch.checking()) {
+    <div class="web-launch" role="status" aria-live="polite">
+      <div class="web-launch-brand">
+        <img src="assets/brand/nivra-mark.svg" alt="" width="68" height="68">
+        <h1>Nivra</h1>
+        <p>{{ 'LAUNCH.CHECKING' | translate:'Preparando tu espacio privado' }}</p>
+        <span class="web-launch-progress" aria-hidden="true"></span>
+        <small><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'LAUNCH.ENCRYPTED' | translate:'Tus mensajes permanecen cifrados' }}</small>
+      </div>
+    </div>
+  }
 </ion-app>

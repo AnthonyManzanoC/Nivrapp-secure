@@ -15,7 +15,7 @@ describe('chat profile continuity during recovery', () => {
     service.profileFetchInFlight = new Set();
     service.profileSources = new Map();
     service.launchCacheEpoch = 0;
-    service.auth = { session: signal({ user: { id: 'self' } }) };
+    service.auth = { session: signal({ user: { id: 'self', alias: 'self' }, device: { id: 'browser' } }) };
     service.history = { putProfiles: jasmine.createSpy('putProfiles').and.resolveTo() };
     service.api = { get: jasmine.createSpy('get').and.returnValue(of({ id: 'peer', alias: 'alias', displayName: 'Nombre completo', profilePhotoDataUrl: null })) };
     return service;
@@ -131,7 +131,7 @@ describe('chat profile continuity during recovery', () => {
     const response = new Subject();
     service.api.get.and.returnValue(response);
     const pending = service.refreshProfile('peer');
-    service.auth.session.set({ user: { id: 'second-user' } });
+    service.auth.session.set({ user: { id: 'second-user', alias: 'second-user' }, device: { id: 'second-browser' } });
     service.profilesByUserId.set({});
     response.next({ id: 'peer', alias: 'alias', profilePhotoDataUrl: 'old-account-photo' });
     await pending;

@@ -5,6 +5,26 @@
   overflow: hidden;
 }
 
+.web-launch {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  display: grid;
+  place-items: center;
+  padding: 28px;
+  background: var(--nivra-bg, #061014);
+  color: var(--nivra-text, #eef7f4);
+}
+.web-launch-brand { width: min(320px, 100%); text-align: center; }
+.web-launch-brand img { display: block; margin: 0 auto 16px; border-radius: 20px; }
+.web-launch-brand h1 { margin: 0; font-size: 25px; font-weight: 650; letter-spacing: -.5px; }
+.web-launch-brand p { margin: 9px 0 28px; font-size: 13px; color: var(--nivra-muted); }
+.web-launch-brand small { margin-top: 26px; display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 11px; color: var(--nivra-muted); }
+.web-launch-progress { display: block; position: relative; overflow: hidden; height: 3px; border-radius: 99px; background: var(--nivra-line); }
+.web-launch-progress::after { content: ''; position: absolute; inset: 0; width: 40%; background: var(--nivra-brand); border-radius: inherit; animation: launchProgress 1s ease-in-out infinite; }
+@keyframes launchProgress { from { transform: translateX(-100%); } to { transform: translateX(350%); } }
+@media(prefers-reduced-motion: reduce) { .web-launch-progress::after { animation: none; width: 100%; opacity: .5; } }
+
 .global-call-banner {
   position: fixed;
   z-index: 14;

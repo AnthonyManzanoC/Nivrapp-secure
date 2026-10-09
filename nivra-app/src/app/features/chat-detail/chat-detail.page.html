@@ -40,6 +40,7 @@
       </ion-buttons>
     </ion-toolbar>
   </ion-header>
+  <app-history-sync-notice [showApprovals]="false" />
   @if (searchOpen) {
     <section class="thread-search" [attr.aria-label]="'CHAT.SEARCH_CHAT' | translate:'Buscar en este chat'">
       <div class="thread-search-input">
@@ -53,13 +54,6 @@
       <small>{{ (searchQuery() && !searchResults().length ? 'CHAT.SEARCH_EMPTY' : 'CHAT.SEARCH_LOADED') | translate:(searchQuery() && !searchResults().length ? 'Sin coincidencias' : 'Mensajes disponibles en este dispositivo') }}</small>
     </section>
   }
-  @if (identityChanged()) {
-    <div role="alert" style="padding:12px;background:#8b1623;color:#fff">
-      La identidad de este contacto ha cambiado. El envío está bloqueado hasta comparar las llaves.
-      <button type="button" (click)="verifyIdentity()" style="padding:10px;color:#8b1623;background:#fff">Verificar identidad</button>
-    </div>
-  }
-
   @if (calls.activeGroupRoomForConversation(conversation()?.id); as room) {
     <div class="group-call-banner">
       <div>
@@ -76,12 +70,14 @@
     [scrollEvents]="true"
     (ionScroll)="onThreadScroll($event)"
     [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
-    [style.--nivra-chat-background]="appSettings.chatPreviewBackgroundCss()">
+    [style.--nivra-chat-background]="appSettings.chatBackgroundCss()"
+    [style.--nivra-chat-background-size]="appSettings.chatBackgroundSizeCss()"
+    [style.--nivra-chat-background-repeat]="appSettings.chatBackgroundRepeatCss()">
     <div
       class="real-chat-bg"
       aria-hidden="true"
       [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
-      [style.background]="appSettings.chatPreviewBackgroundCss()">
+      [style.background]="appSettings.chatBackgroundCss()">
     </div>
     <ion-infinite-scroll
       position="top"
@@ -406,6 +402,9 @@
   </ion-content>
 
   <ion-footer class="composer-footer">
+    @if (identityChanged()) {
+      <app-chat-identity-change-notice [disabled]="sending || profileActionBusy" (verify)="verifyIdentity()" />
+    }
     @if (editingMessage) {
       <div class="edit-bar">
         <ion-icon name="create-outline"></ion-icon>
@@ -552,7 +551,7 @@
     @if (!isBlocked() && !canSendMessages()) {
       <p class="composer-notice">{{ 'CHAT.ADMINS_ONLY_MESSAGES' | translate:'Solo los admins pueden enviar mensajes en este grupo.' }}</p>
     }
-    @if (attachmentError) {
+    @if (attachmentError && !identityErrorIsDuplicated()) {
       <p class="composer-error">{{ attachmentError }}</p>
     }
     @if (notice) {

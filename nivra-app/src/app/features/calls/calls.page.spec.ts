@@ -5,6 +5,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { ChatService } from '../../core/services/chat.service';
 import { TranslateService } from '../../core/services/translate.service';
+import { CALL_CAMERA_FAILURE_MESSAGES } from '../../core/services/call-media-capture';
 
 describe('call video presentation', () => {
   let page: CallsPage;
@@ -25,6 +26,7 @@ describe('call video presentation', () => {
       screenSharing: signal(false), isGroupCall: jasmine.createSpy().and.returnValue(false),
       mediaUpgradeRequested: signal(false), mediaUpgradeAwaitingPeer: signal(false),
       mediaUpgradeNotice: signal(''), games: { panelOpen: signal(false) },
+      error: signal(''), mediaUpgradeInFlight: signal(false), toggleCamera: jasmine.createSpy().and.resolveTo(),
       acceptVideoUpgrade: jasmine.createSpy().and.resolveTo(),
       declineVideoUpgrade: jasmine.createSpy(), clearInactiveCallUi: jasmine.createSpy(),
     };
@@ -118,6 +120,28 @@ describe('call video presentation', () => {
     calls.phase.set('connected');
     calls.isGroupCall.and.returnValue(false);
     expect(page.canControlLocalMedia()).toBeFalse();
+  });
+
+  it('shows a camera retry only for recoverable camera feedback in an active video call', async () => {
+    calls.cameraOff.set(true);
+    calls.error.set(CALL_CAMERA_FAILURE_MESSAGES.unavailable.fallback);
+    expect(page.canRetryCamera()).toBeTrue();
+    await page.retryCamera();
+    expect(calls.toggleCamera).toHaveBeenCalledTimes(1);
+    calls.mediaUpgradeRequested.set(true);
+    expect(page.canRetryCamera()).toBeFalse(); // The existing consent prompt provides its own action.
+    calls.mediaUpgradeRequested.set(false);
+    calls.error.set('La conexión de la sala se perdió.');
+    expect(page.canRetryCamera()).toBeFalse();
+  });
+
+  it('localizes camera diagnostics without replacing unrelated connection errors', () => {
+    const translation = spyOn(TestBed.inject(TranslateService), 'instant').and.returnValue('Camera access was denied. Audio continues.');
+    calls.error.set(CALL_CAMERA_FAILURE_MESSAGES.permission.fallback);
+    expect(page.callErrorText()).toBe('Camera access was denied. Audio continues.');
+    expect(translation).toHaveBeenCalledWith('CALLS.CAMERA_PERMISSION_ERROR', CALL_CAMERA_FAILURE_MESSAGES.permission.fallback);
+    calls.error.set('La conexión de la sala se perdió.');
+    expect(page.callErrorText()).toBe('La conexión de la sala se perdió.');
   });
 
   it('keeps call controls visible through connection and camera consent', fakeAsync(() => {

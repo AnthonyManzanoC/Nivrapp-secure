@@ -202,7 +202,9 @@
         <div
           class="chat-settings-preview"
           [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
-          [style.background]="appSettings.chatPreviewBackgroundCss()"
+          [style.--preview-background]="appSettings.chatPreviewBackgroundCss()"
+          [style.--preview-background-size]="appSettings.chatBackgroundSizeCss()"
+          [style.--preview-background-repeat]="appSettings.chatBackgroundRepeatCss()"
           [style.--preview-radius]="appSettings.settings().messageCornerRadius + 'px'"
           [style.--preview-font]="appSettings.settings().messageTextSize + 'px'">
           <div class="preview-message">
@@ -230,8 +232,11 @@
             <span class="choice-title">{{ t('settings.chat.wallpaper', 'Fondo') }}</span>
             <div class="wallpaper-row">
               @for (wallpaper of wallpaperChoices; track wallpaper.value) {
-                <button type="button" class="wallpaper-tile" [class.active]="appSettings.settings().chatWallpaper === wallpaper.value" [attr.data-wallpaper]="wallpaper.value" (click)="setTextSetting('chatWallpaper', wallpaper.value)">
-                  <span></span>
+                <button type="button" class="wallpaper-tile" [class.active]="appSettings.settings().chatWallpaper === wallpaper.value" [attr.aria-pressed]="appSettings.settings().chatWallpaper === wallpaper.value" [attr.data-wallpaper]="wallpaper.value" (click)="setTextSetting('chatWallpaper', wallpaper.value)">
+                  <span aria-hidden="true"
+                    [style.--wallpaper-thumbnail-bg]="appSettings.chatBackgroundCss(wallpaperSettings(wallpaper.value))"
+                    [style.--wallpaper-thumbnail-size]="appSettings.chatBackgroundSizeCss(wallpaperSettings(wallpaper.value), .3)"
+                    [style.--wallpaper-thumbnail-repeat]="appSettings.chatBackgroundRepeatCss(wallpaperSettings(wallpaper.value))"></span>
                   <strong>{{ wallpaper.labelKey | translate:wallpaper.label }}</strong>
                 </button>
               }

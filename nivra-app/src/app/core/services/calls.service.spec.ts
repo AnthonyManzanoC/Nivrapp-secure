@@ -98,6 +98,60 @@ describe('call session isolation', () => {
     expect(transceiver.direction).toBe('sendrecv');
   });
 
+  it('restores incoming video when a legacy camera transceiver was send-only', async () => {
+    const sender = { track: { kind: 'video' }, replaceTrack: jasmine.createSpy().and.resolveTo() };
+    const transceiver = { sender, receiver: { track: { kind: 'video' } }, direction: 'sendonly' };
+    const connection = { getSenders: () => [sender], getTransceivers: () => [transceiver] };
+    spyOn<any>(service, 'tuneOutgoingSender').and.resolveTo();
+    expect(await (service as any).setOutgoingTrack(connection, 'video', {}, new MediaStream())).toBeTrue();
+    expect(transceiver.direction).toBe('sendrecv');
+  });
+
+  it('reuses an owned live camera when upgrading voice instead of opening it twice', async () => {
+    service.activeCall.set({ ...invitation, status: 'Active' });
+    service.phase.set('connected');
+    const stream = document.createElement('canvas').captureStream();
+    const video = stream.getVideoTracks()[0];
+    video.enabled = false;
+    service.localStream.set(stream);
+    const capture = spyOn(navigator.mediaDevices, 'getUserMedia');
+    spyOn<any>(service, 'broadcastControl').and.resolveTo();
+    spyOn<any>(service, 'renegotiateDirectPeers').and.resolveTo();
+    await service.enableVideo();
+    expect(capture).not.toHaveBeenCalled();
+    expect(service.localStream()?.getVideoTracks()[0]).toBe(video);
+    expect(video.enabled).toBeTrue();
+    expect(video.readyState).toBe('live');
+    expect(service.cameraOff()).toBeFalse();
+  });
+
+  it('stops a newly acquired camera after publication fails while retaining microphone audio', async () => {
+    service.activeCall.set({ ...invitation, type: 'Video', status: 'Active' });
+    service.phase.set('connected');
+    service.cameraOff.set(true);
+    const context = new AudioContext();
+    const microphone = context.createMediaStreamDestination().stream.getAudioTracks()[0];
+    const camera = document.createElement('canvas').captureStream().getVideoTracks()[0];
+    service.localStream.set(new MediaStream([microphone]));
+    spyOn<any>(service, 'restoreDirectMediaTrack').and.callFake(async () => {
+      service.localStream.set(new MediaStream([microphone, camera]));
+      throw new DOMException('publication failed', 'InvalidModificationError');
+    });
+    const broadcast = spyOn<any>(service, 'broadcastControl').and.resolveTo();
+    spyOn(console, 'warn');
+    try {
+      await service.toggleCamera();
+      expect(camera.readyState).toBe('ended');
+      expect(microphone.readyState).toBe('live');
+      expect(service.localStream()?.getAudioTracks()).toEqual([microphone]);
+      expect(service.localStream()?.getVideoTracks()).toEqual([]);
+      expect(service.phase()).toBe('connected');
+      expect(broadcast).toHaveBeenCalledWith('camera', 'off');
+    } finally {
+      await context.close();
+    }
+  });
+
   it('keeps a newly attached camera bidirectional before the voice type update reaches the server', async () => {
     service.activeCall.set({ ...invitation, status: 'Active' });
     service.phase.set('connected');
@@ -384,6 +438,50 @@ describe('call session isolation', () => {
     expect(service.localStream()).toBeNull();
   });
 
+  it('does not overwrite a new call stream when old camera sender removal finishes late', async () => {
+    service.activeCall.set({ ...invitation, type: 'Video', status: 'Active' });
+    const camera = document.createElement('canvas').captureStream().getVideoTracks()[0];
+    service.localStream.set(new MediaStream([camera]));
+    let removed!: () => void;
+    const replace = jasmine.createSpy().and.returnValue(new Promise<void>(resolve => { removed = resolve; }));
+    const connection = { getSenders: () => [{ track: camera, replaceTrack: replace }], getTransceivers: () => [] };
+    (service as any).peers.set('peer', { connection });
+    const removing = (service as any).removeDirectVideoTrack();
+    expect(camera.readyState).toBe('ended');
+    (service as any).mediaGeneration++;
+    (service as any).peers.clear();
+    const nextStream = document.createElement('canvas').captureStream();
+    service.activeCall.set({ ...invitation, id: 'next-call', type: 'Video', status: 'Active' });
+    service.localStream.set(nextStream);
+    removed();
+    await removing;
+    expect(service.localStream()).toBe(nextStream);
+    expect(nextStream.getVideoTracks()[0].readyState).toBe('live');
+    expect(service.activeCall()?.id).toBe('next-call');
+  });
+
+  it('does not publish old camera feedback when a microphone fallback is granted after a new call starts', async () => {
+    let granted!: (stream: MediaStream) => void;
+    const fallback = new Promise<MediaStream>(resolve => { granted = resolve; });
+    spyOn(navigator.mediaDevices, 'getUserMedia').and.returnValues(
+      Promise.reject(new DOMException('camera absent', 'NotFoundError')), fallback);
+    const pending = (service as any).prepareMedia(true);
+    await Promise.resolve(); await Promise.resolve();
+    (service as any).mediaGeneration++;
+    const nextStream = document.createElement('canvas').captureStream();
+    service.activeCall.set({ ...invitation, id: 'next-call', type: 'Video', status: 'Active' });
+    service.localStream.set(nextStream);
+    service.cameraOff.set(false);
+    service.error.set('Next call status');
+    const stopped = jasmine.createSpy('stopLateMicrophone');
+    granted({ getTracks: () => [{ stop: stopped }] } as unknown as MediaStream);
+    await expectAsync(pending).toBeRejected();
+    expect(stopped).toHaveBeenCalledTimes(1);
+    expect(service.localStream()).toBe(nextStream);
+    expect(service.cameraOff()).toBeFalse();
+    expect(service.error()).toBe('Next call status');
+  });
+
   it('does not restore an ended call when the video type update arrives late', async () => {
     service.activeCall.set({ ...invitation, status: 'Active' });
     service.phase.set('connected');
@@ -412,6 +510,74 @@ describe('call session isolation', () => {
     expect(service.activeCall()?.type).toBe('Video');
     expect(service.mediaUpgradeAwaitingPeer()).toBeFalse();
     expect(broadcast).not.toHaveBeenCalled();
+    (service as any).liveKitRoom = null;
+  });
+
+  it('recovers a group camera with a modest resolution without replacing the microphone or room', async () => {
+    const call = { ...invitation, type: 'Video', isGroupRoom: true, status: 'Active' };
+    service.activeCall.set(call);
+    service.phase.set('connected');
+    const camera = jasmine.createSpy().and.returnValues(
+      Promise.reject(new DOMException('capture unavailable', 'NotReadableError')), Promise.resolve());
+    const microphone = jasmine.createSpy();
+    const room = { localParticipant: { setCameraEnabled: camera, setMicrophoneEnabled: microphone } };
+    (service as any).liveKitRoom = room;
+    await (service as any).setLiveKitCameraEnabled(room, true, call.id);
+    expect(camera.calls.count()).toBe(2);
+    expect(camera.calls.mostRecent().args).toEqual([true, { resolution: { width: 640, height: 360, frameRate: 24 } }]);
+    expect(microphone).not.toHaveBeenCalled();
+    expect((service as any).liveKitRoom).toBe(room);
+    expect(service.phase()).toBe('connected');
+    (service as any).liveKitRoom = null;
+  });
+
+  it('does not retry a denied group camera permission', async () => {
+    const call = { ...invitation, type: 'Video', isGroupRoom: true, status: 'Active' };
+    service.activeCall.set(call);
+    const camera = jasmine.createSpy().and.rejectWith(new DOMException('permission denied', 'NotAllowedError'));
+    const room = { localParticipant: { setCameraEnabled: camera } };
+    (service as any).liveKitRoom = room;
+    await expectAsync((service as any).setLiveKitCameraEnabled(room, true, call.id)).toBeRejected();
+    expect(camera.calls.count()).toBe(1);
+    (service as any).liveKitRoom = null;
+  });
+
+  it('restarts an interrupted group camera publication before enabling it', async () => {
+    const call = { ...invitation, type: 'Video', isGroupRoom: true, status: 'Active' };
+    service.activeCall.set(call);
+    const restart = jasmine.createSpy().and.resolveTo();
+    const camera = jasmine.createSpy().and.resolveTo();
+    const microphone = jasmine.createSpy();
+    const room = { localParticipant: {
+      setCameraEnabled: camera, setMicrophoneEnabled: microphone,
+      getTrackPublication: () => ({ track: { mediaStreamTrack: { readyState: 'ended' }, restartTrack: restart } }),
+    } };
+    (service as any).liveKitRoom = room;
+    await (service as any).setLiveKitCameraEnabled(room, true, call.id);
+    expect(restart).toHaveBeenCalledTimes(1);
+    expect(camera).toHaveBeenCalledWith(true);
+    expect(microphone).not.toHaveBeenCalled();
+    (service as any).liveKitRoom = null;
+  });
+
+  it('turns off a late camera grant on its old group room without changing the next room', async () => {
+    const call = { ...invitation, type: 'Video', isGroupRoom: true, status: 'Active' };
+    service.activeCall.set(call);
+    let grant!: () => void;
+    const camera = jasmine.createSpy().and.returnValues(new Promise<void>(resolve => { grant = resolve; }), Promise.resolve());
+    const oldRoom = { localParticipant: { setCameraEnabled: camera } };
+    (service as any).liveKitRoom = oldRoom;
+    const publication = (service as any).setLiveKitCameraEnabled(oldRoom, true, call.id);
+    const nextCamera = jasmine.createSpy();
+    const nextRoom = { localParticipant: { setCameraEnabled: nextCamera } };
+    service.activeCall.set({ ...call, id: 'next-call' });
+    (service as any).liveKitRoom = nextRoom;
+    grant();
+    await publication;
+    expect(camera).toHaveBeenCalledWith(false);
+    expect(nextCamera).not.toHaveBeenCalled();
+    expect((service as any).liveKitRoom).toBe(nextRoom);
+    expect(service.activeCall()?.id).toBe('next-call');
     (service as any).liveKitRoom = null;
   });
 

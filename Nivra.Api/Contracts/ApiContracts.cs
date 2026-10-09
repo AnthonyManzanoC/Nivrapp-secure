@@ -24,7 +24,7 @@ public sealed record LoginRequest(
     bool ResolveOnly = false);
 
 public sealed record PrivateRegisterRequest(string Password, string DeviceName, KeyBundleRequest KeyBundle, string? HardwareId);
-public sealed record LoginIdentityResponse(string Alias);
+public sealed record LoginIdentityResponse(string Alias, string UserId, string? DeviceId, string? IdentityKey);
 
 public sealed record RefreshTokenRequest(string RefreshToken);
 

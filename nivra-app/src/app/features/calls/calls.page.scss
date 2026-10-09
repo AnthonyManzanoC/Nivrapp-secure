@@ -1025,6 +1025,9 @@
   color: rgba(239, 255, 249, .78);
   font-size: 12px;
   line-height: 1.45;
+
+  p { margin: 0; }
+  ion-button { margin: 10px 0 0; --border-color: rgba(255, 213, 216, .4); --color: #fff3f4; }
 }
 
 .video-upgrade-actions {

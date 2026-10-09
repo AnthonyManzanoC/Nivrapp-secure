@@ -9,7 +9,7 @@ import { StatusBar, Style } from '@capacitor/status-bar';
 import { NavigationEnd, Router } from '@angular/router';
 import { IonApp, IonIcon, IonRouterOutlet } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { callOutline, videocamOutline } from 'ionicons/icons';
+import { callOutline, shieldCheckmarkOutline, videocamOutline } from 'ionicons/icons';
 import { AuthService } from './core/services/auth.service';
 import { AppLockService } from './core/services/app-lock.service';
 import { AppSettingsService } from './core/services/app-settings.service';
@@ -26,6 +26,9 @@ import { NativeDeviceService, type NativeShareIntent } from './core/services/nat
 import { PerformanceModeService } from './core/services/performance-mode.service';
 import { PrivacyEnforcementService } from './core/services/privacy-enforcement.service';
 import { AppLockScreenComponent } from './shared/app-lock-screen.component';
+import { WebLaunchService } from './core/services/web-launch.service';
+import { UnreadTabService } from './core/services/unread-tab.service';
+import { HistoryApprovalDialogComponent } from './shared/history-approval-dialog.component';
 
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 interface NativeStatusBarSurface {
@@ -38,7 +41,7 @@ interface NativeStatusBarSurface {
   templateUrl: 'app.component.html',
   styleUrls: ['app.component.scss'],
   standalone: true,
-  imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent],
+  imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent, HistoryApprovalDialogComponent],
 })
 export class AppComponent {
   private readonly zone = inject(NgZone);
@@ -60,6 +63,8 @@ export class AppComponent {
   private readonly privacyEnforcement = inject(PrivacyEnforcementService);
   private readonly destroyRef = inject(DestroyRef);
   readonly calls = inject(CallsService);
+  readonly webLaunch = inject(WebLaunchService);
+  private readonly unreadTab = inject(UnreadTabService);
   private readonly now = signal(Date.now());
   private readonly currentUrl = signal(this.router.url);
   private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
@@ -88,6 +93,8 @@ export class AppComponent {
     void this.translate;
     void this.performanceMode;
     void this.privacyEnforcement;
+    void this.unreadTab;
+    void this.webLaunch.start(() => this.canApplyWebUpdate());
     if (Capacitor.getPlatform() === 'android') {
       // Ionic overlays and router navigation retain their higher priorities.
       // At the root, background the existing activity instead of finishing it.
@@ -97,7 +104,7 @@ export class AppComponent {
     this.bindAppLinks();
     this.bindNativeShares();
     this.bindAppLifecycleLock();
-    addIcons({ callOutline, videocamOutline });
+    addIcons({ callOutline, shieldCheckmarkOutline, videocamOutline });
     void this.configureNativeKeyboard();
 
     const timer = window.setInterval(() => this.now.set(Date.now()), 1000);
@@ -107,6 +114,7 @@ export class AppComponent {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
         if (event instanceof NavigationEnd) {
+          void this.webLaunch.start(() => this.canApplyWebUpdate());
           const url = event.urlAfterRedirects || event.url;
           this.currentUrl.set(url);
           this.onCallsRoute.set(url.startsWith('/app/calls'));
@@ -184,6 +192,13 @@ export class AppComponent {
         void this.router.navigateByUrl(`/app/chats/${data['conversationId']}`);
       }
     });
+  }
+
+  private canApplyWebUpdate(): boolean {
+    const history = this.chat.deviceHistory;
+    return !this.auth.busy() && !this.calls.activeCall() && !this.calls.resumableCall()
+      && !this.chat.uploading() && !history.approvingRequestId()
+      && history.state() !== 'syncing' && history.pendingRequests().length === 0;
   }
 
   private async configureNativeKeyboard(): Promise<void> {
