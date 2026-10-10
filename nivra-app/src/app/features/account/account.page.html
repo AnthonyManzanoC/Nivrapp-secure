@@ -647,6 +647,17 @@
       </div>
       </details>
 
+      @if (androidUpdates.supported) {
+        <section class="panel" aria-labelledby="android-updates-heading">
+          <h2 id="android-updates-heading">{{ 'UPDATE.ACCOUNT_TITLE' | translate:'Actualizaciones de Nivra' }}</h2>
+          <p>{{ 'UPDATE.ACCOUNT_HINT' | translate:'Comprueba si hay una nueva versión para este teléfono.' }}</p>
+          <ion-button fill="outline" [disabled]="androidUpdates.checking()" (click)="androidUpdates.check(true)">
+            <ion-icon name="refresh-outline" slot="start" />{{ 'UPDATE.CHECK' | translate:'Buscar actualización' }}
+          </ion-button>
+          @if (androidUpdates.checkResult() === 'current') { <p role="status">{{ 'UPDATE.CURRENT' | translate:'Tienes la versión más reciente.' }}</p> }
+          @if (androidUpdates.checkResult() === 'error') { <p role="status">{{ 'UPDATE.CHECK_ERROR' | translate:'No se pudo comprobar. Revisa tu conexión y reintenta.' }}</p> }
+        </section>
+      }
       <section class="panel session-panel session-footer" aria-labelledby="account-session-heading">
         <div class="session-footer-heading">
           <span class="session-footer-icon" aria-hidden="true"><ion-icon name="log-out-outline"></ion-icon></span>

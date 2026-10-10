@@ -52,6 +52,7 @@ public interface INivraStore
     Task<CallSession?> GetCallAsync(string callId, CancellationToken cancellationToken = default);
 
     Task AddPushTokenAsync(PushTokenRecord pushToken, CancellationToken cancellationToken = default);
+    Task<bool> TryRenewNativePushTokenAsync(PushTokenRecord pushToken, CancellationToken cancellationToken = default);
     Task<PushTokenRecord?> GetPushTokenAsync(string pushTokenId, CancellationToken cancellationToken = default);
     Task<List<PushTokenRecord>> ActivePushTokensForUserAsync(string userId, CancellationToken cancellationToken = default);
 

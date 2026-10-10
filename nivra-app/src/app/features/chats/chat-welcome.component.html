@@ -1,0 +1,47 @@
+<section class="welcome" [class.compact]="compact()" [class.returning]="!firstConversation()">
+  <div class="welcome-hero">
+    <span class="brand-mark"><img src="assets/brand/nivra-mark.svg" alt="" width="64" height="64"></span>
+    <span class="eyebrow">{{ 'CHATS.WELCOME_EYEBROW' | translate:'Tu espacio privado' }}</span>
+    <h2>{{ firstConversation() ? ('CHATS.WELCOME_TITLE' | translate:'Aquí empiezan tus conversaciones') : ('CHATS.WELCOME_BACK_TITLE' | translate:'Un espacio para tu gente') }}</h2>
+    <p>{{ firstConversation() ? ('CHATS.WELCOME_COPY' | translate:'Encuentra a alguien por su alias o ID Nivra. Tu número de teléfono no es necesario.') : ('CHATS.WELCOME_BACK_COPY' | translate:'Abre una conversación de la lista o empieza algo nuevo.') }}</p>
+  </div>
+  <div class="welcome-start">
+    <button type="button" class="primary-action" (click)="newChat.emit()">
+      <ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon>
+      {{ 'CHATS.NEW_CHAT' | translate:'Nuevo chat' }}
+      <ion-icon name="arrow-forward-outline" aria-hidden="true"></ion-icon>
+    </button>
+    <button type="button" class="secondary-action" (click)="sharePass.emit()">
+      <ion-icon name="share-social-outline" aria-hidden="true"></ion-icon>
+      {{ 'CHATS.SHARE_PASS' | translate:'Compartir pase' }}
+    </button>
+  </div>
+  @if (firstConversation()) {
+    <div class="welcome-guide" [attr.aria-label]="'CHATS.WELCOME_GUIDE' | translate:'Cómo empezar'">
+      <button type="button" class="guide-card" (click)="newChat.emit()">
+        <span class="guide-icon"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon></span>
+        <span><strong>{{ 'CHATS.WELCOME_FIND_TITLE' | translate:'Encuentra a tu gente' }}</strong><small>{{ 'CHATS.WELCOME_FIND_COPY' | translate:'Escribe su alias o ID en el buscador y abre el chat.' }}</small></span>
+        <ion-icon name="arrow-forward-outline" aria-hidden="true"></ion-icon>
+      </button>
+      <button type="button" class="guide-card" (click)="newGroup.emit()">
+        <span class="guide-icon"><ion-icon name="people-outline" aria-hidden="true"></ion-icon></span>
+        <span><strong>{{ 'CHATS.NEW_GROUP' | translate:'Nuevo grupo' }}</strong><small>{{ 'CHATS.WELCOME_GROUP_COPY' | translate:'Reúne a tus contactos para conversar y llamar juntos.' }}</small></span>
+        <ion-icon name="arrow-forward-outline" aria-hidden="true"></ion-icon>
+      </button>
+      <button type="button" class="guide-card" (click)="newStory.emit()">
+        <span class="guide-icon"><ion-icon name="image-outline" aria-hidden="true"></ion-icon></span>
+        <span><strong>{{ 'WORLD.NEW_STORY' | translate:'Nueva historia' }}</strong><small>{{ 'CHATS.WELCOME_STORY_COPY' | translate:'Comparte un momento y elige quién puede verlo.' }}</small></span>
+        <ion-icon name="arrow-forward-outline" aria-hidden="true"></ion-icon>
+      </button>
+    </div>
+  }
+  @if (showCallAlertsSetup()) {
+    <aside class="call-alerts-setup">
+      <ion-icon name="notifications-outline" aria-hidden="true"></ion-icon>
+      <div><strong>{{ 'CHATS.CALL_ALERTS_TITLE' | translate:'Entérate cuando te llamen' }}</strong><p>{{ 'CHATS.CALL_ALERTS_COPY' | translate:'Permite las notificaciones para recibir avisos de llamadas cuando Nivra esté en segundo plano.' }}</p></div>
+      <button type="button" [disabled]="enablingCallAlerts()" (click)="enableCallAlerts.emit()">{{ (enablingCallAlerts() ? 'CHATS.CALL_ALERTS_ENABLING' : 'CHATS.CALL_ALERTS_ACTION') | translate:(enablingCallAlerts() ? 'Activando…' : 'Activar avisos') }}</button>
+    </aside>
+  }
+  @if (callAlertsNotice()) { <p class="call-alerts-notice" role="status">{{ callAlertsNotice() }}</p> }
+  <p class="privacy-note"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.WELCOME_PRIVATE' | translate:'Tus mensajes se cifran en tus dispositivos.' }}</p>
+</section>

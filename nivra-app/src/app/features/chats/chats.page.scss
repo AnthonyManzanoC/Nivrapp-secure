@@ -30,14 +30,15 @@
     linear-gradient(180deg, rgba(9, 14, 18, .95), rgba(7, 11, 14, .86));
   backdrop-filter: var(--nivra-glass);
   min-width: 0;
-  display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   min-height: 0;
   overflow: hidden;
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, .03);
 }
 
 .side-head {
+  flex: none;
   padding:
     calc(18px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
     max(18px, env(safe-area-inset-right))
@@ -54,6 +55,7 @@
 }
 
 .story-strip {
+  flex: none;
   min-width: 0;
   display: flex;
   gap: 6px;
@@ -275,21 +277,63 @@ time {
   gap: 8px;
 }
 
+.chat-more-button { width: 44px; min-height: 44px; margin: 0; --border-radius: 14px; --background-hover: color-mix(in srgb, var(--nivra-brand) 9%, transparent); --color: var(--nivra-text); }
+.chat-more-button ion-icon { font-size: 23px; }
+.search-panel { flex: none; padding: 0 16px 13px; }
+.search-line { display: flex; align-items: center; gap: 5px; }
+.search-line .search-box { flex: 1; min-width: 0; }
+.search-cancel { width: 40px; height: 44px; flex: none; border: 0; border-radius: 14px; display: grid; place-items: center; color: var(--nivra-muted); background: transparent; cursor: pointer; }
+.search-cancel ion-icon { font-size: 20px; }
+.search-scopes { display: flex; gap: 7px; padding-top: 9px; }
+.search-scopes button { display: flex; align-items: center; gap: 5px; border: 1px solid var(--nivra-line); border-radius: 999px; min-height: 38px; padding: 6px 12px; font: inherit; font-size: 12px; font-weight: 650; color: var(--nivra-muted); background: transparent; cursor: pointer; }
+.search-scopes button.selected { color: var(--nivra-brand-2); border-color: color-mix(in srgb, var(--nivra-brand) 28%, var(--nivra-line)); background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); }
+.search-scopes ion-icon { font-size: 14px; }
+.search-hint, .sync-notice { margin: 9px 3px 0; color: var(--nivra-muted); font-size: 12px; line-height: 1.5; }
+.sync-notice { color: var(--nivra-brand-2); }
+.call-alerts-banner { display: flex; align-items: center; gap: 7px; margin-top: 11px; padding: 9px 11px; border: 1px solid color-mix(in srgb, var(--nivra-brand) 22%, var(--nivra-line)); border-radius: 14px; background: color-mix(in srgb, var(--nivra-brand) 6%, transparent); }
+.call-alerts-banner > ion-icon { flex: none; color: var(--nivra-brand-2); font-size: 16px; }
+.call-alerts-banner strong { flex: 1; color: var(--nivra-text); font-size: 11px; font-weight: 650; }
+.call-alerts-banner button { min-height: 38px; border: 0; border-radius: 9px; padding: 6px 8px; font: inherit; font-size: 11px; font-weight: 700; color: var(--nivra-brand-2); background: transparent; cursor: pointer; }
+.call-alerts-banner button:disabled { opacity: .5; cursor: progress; }
+.call-alerts-banner button:focus-visible { outline: 2px solid var(--nivra-brand); }
+.search-section-title { display: flex; justify-content: space-between; align-items: center; margin: 14px 9px 10px; color: var(--nivra-muted); font-size: 11px; font-weight: 750; letter-spacing: .025em; }
+.search-section-title span { font-size: 10px; border: 1px solid var(--nivra-line); border-radius: 999px; padding: 3px 7px; }
+.search-empty-inline { margin: 0; padding: 4px 10px 12px; color: var(--nivra-muted); font-size: 12px; line-height: 1.6; }
+.search-progress { display: flex; gap: 8px; align-items: center; margin: 12px 10px; color: var(--nivra-muted); font-size: 12px; }
+.search-progress ion-spinner { width: 20px; height: 20px; }
+.search-retry { margin: 8px; border: 1px solid var(--nivra-line); border-radius: 16px; padding: 13px; background: color-mix(in srgb, var(--nivra-amber) 7%, transparent); color: var(--nivra-text); font-size: 12px; line-height: 1.5; }
+.search-retry p { margin: 0 0 6px; }
+.search-retry button, .folder-empty button { min-height: 40px; padding: 8px 13px; border: 1px solid var(--nivra-line); border-radius: 12px; color: var(--nivra-brand-2); background: var(--nivra-panel-solid); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.search-error { color: var(--ion-color-danger); }
+.welcome-stage { height: 100%; overflow: auto; display: grid; align-items: center; padding: 24px; background: radial-gradient(ellipse at 50% 28%, color-mix(in srgb, var(--nivra-brand) 5%, transparent), transparent 62%); }
+.welcome-stage app-chat-welcome { width: 100%; }
+.folder-empty > ion-icon { font-size: 30px; padding: 15px; border-radius: 22px; color: var(--nivra-brand-2); background: color-mix(in srgb, var(--nivra-brand) 8%, transparent); }
+.folder-empty strong { color: var(--nivra-text); font-size: 14px; }
+ion-popover.chats-actions-popover { --width: 250px; --background: var(--nivra-panel-solid); --box-shadow: 0 16px 50px #0003; --border-radius: 18px; }
+.chats-actions-menu { padding: 7px; border: 1px solid var(--nivra-line); border-radius: 18px; color: var(--nivra-text); background: var(--nivra-panel-solid); }
+.chats-actions-menu button { width: 100%; min-height: 46px; border: 0; border-radius: 12px; padding: 11px 13px; display: flex; align-items: center; gap: 12px; background: transparent; color: inherit; font: inherit; font-size: 13px; font-weight: 600; text-align: start; cursor: pointer; }
+.chats-actions-menu button:hover, .chats-actions-menu button:focus-visible { background: color-mix(in srgb, var(--nivra-brand) 8%, transparent); }
+.chats-actions-menu button:disabled { opacity: .45; cursor: default; }
+.chats-actions-menu ion-icon { flex: none; font-size: 19px; color: var(--nivra-brand-2); }
+.menu-divider { display: block; height: 1px; margin: 5px 10px; background: var(--nivra-line); }
+.search-cancel:focus-visible, .search-box button:focus-visible, .search-scopes button:focus-visible, .search-retry button:focus-visible, .folder-empty button:focus-visible, .chats-actions-menu button:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 2px; }
+.chat-list-shell > app-history-sync-notice, .local-history-warning, .story-publish-notice { flex: none; }
+
 .search-box {
   position: relative;
-  margin: 0 18px 14px;
+  margin: 0;
   border: 1px solid var(--nivra-line);
-  border-radius: 8px;
+  border-radius: 18px;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr) 0;
+  grid-template-columns: 40px minmax(0, 1fr) 0;
   align-items: center;
   background: rgba(255, 255, 255, .072);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06), 0 10px 28px rgba(0, 0, 0, .18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
   transition: border-color .16s, background .16s, box-shadow .16s;
 }
 
 .search-box.has-value {
-  grid-template-columns: 34px minmax(0, 1fr) 34px;
+  grid-template-columns: 40px minmax(0, 1fr) 44px;
 }
 
 .search-box:focus-within {
@@ -307,12 +351,12 @@ time {
   --background: transparent;
   --color: var(--nivra-text);
   --placeholder-color: var(--nivra-muted);
-  min-height: 44px;
+  min-height: 48px;
 }
 
 .search-box button {
-  width: 30px;
-  height: 30px;
+  width: 40px;
+  height: 40px;
   border: 0;
   border-radius: 999px;
   display: grid;
@@ -322,20 +366,22 @@ time {
 }
 
 .chat-list-shell {
+  flex: 1;
   min-height: 0;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
 }
 
 .chat-folders {
+  flex: none;
   width: auto;
-  margin: 0 10px 10px;
+  margin: 0 14px 10px;
   padding: 4px;
-  border: 1px solid var(--nivra-line);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, .058);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .06);
+  border: 0;
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--nivra-muted) 6%, transparent);
+  box-shadow: none;
 }
 
 .chat-list-shell.has-history-warning {
@@ -365,9 +411,9 @@ time {
 }
 
 .chat-folders ion-segment-button {
-  min-width: 96px;
-  min-height: 34px;
-  --border-radius: 6px;
+  min-width: 84px;
+  min-height: 40px;
+  --border-radius: 12px;
   --color: var(--nivra-muted);
   --color-checked: var(--nivra-text);
   --indicator-color: rgba(114, 240, 202, .18);
@@ -378,6 +424,7 @@ time {
 }
 
 .list {
+  flex: 1;
   min-height: 0;
   background: transparent;
   overflow: auto;
@@ -595,6 +642,7 @@ time {
 }
 
 .recent-searches {
+  flex: 1;
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);

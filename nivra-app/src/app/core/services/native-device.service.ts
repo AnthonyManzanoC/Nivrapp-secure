@@ -36,6 +36,8 @@ export type NativeCallActionEvent = {
   callerUserId?: string;
   callType?: string;
   conversationId?: string;
+  recipientUserId?: string;
+  recipientDeviceId?: string;
   at?: number;
 };
 export type NativeDeviceContact = {
@@ -51,6 +53,10 @@ export type FirebaseSigningDiagnostics = {
   signingSha1: string;
   signingSha256: string;
 };
+
+export type NativeAppUpdateState = { phase: 'idle' | 'downloading' | 'ready' | 'permission' | 'error'; progress: number; error?: string };
+export type AndroidRelease = { version: string; versionCode: number; url: string; sha256: string; size: number };
+export type NativePushRegistration = { apiBaseUrl: string; userId: string; deviceId: string; accessToken?: string; refreshToken: string };
 
 interface NativeDiagnostics {
   platform?: string;
@@ -102,6 +108,14 @@ interface BatteryOptimizationResponse {
 }
 
 interface NivraNativePlugin {
+  syncPushRegistration(options: NativePushRegistration): Promise<{ registered?: boolean; ready?: boolean }>;
+  clearPushRegistration(): Promise<void>;
+  openNotificationSettings(options: { section: 'app' | 'calls' | 'full-screen' }): Promise<void>;
+  getAppUpdateState(): Promise<NativeAppUpdateState>;
+  downloadAppUpdate(options: AndroidRelease): Promise<NativeAppUpdateState>;
+  installAppUpdate(): Promise<NativeAppUpdateState>;
+  cancelAppUpdate(): Promise<NativeAppUpdateState>;
+  setAppUpdateAllowed(options: { allowed: boolean }): Promise<void>;
   setActiveCall(options: { callId: string; video: boolean; active: boolean }): Promise<{ active: boolean }>;
   setSecureScreen(options: { enabled: boolean }): Promise<{ enabled: boolean }>;
   setAudioFocus(options: { active: boolean; mode: AudioFocusMode }): Promise<{ active: boolean }>;
@@ -129,6 +143,7 @@ interface NivraNativePlugin {
   addListener(eventName: 'raiseGesture', listener: (event: RaiseGestureEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'nativeCallAction', listener: (event: NativeCallActionEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'nativeShareIntent', listener: (event: NativeShareIntent) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'nativeAppUpdateState', listener: (event: NativeAppUpdateState) => void): Promise<PluginListenerHandle>;
 }
 
 const NivraNative = registerPlugin<NivraNativePlugin>('NivraNative');
@@ -140,6 +155,28 @@ export class NativeDeviceService {
   private readonly appSettings = inject(AppSettingsService);
 
   readonly native = Capacitor.isNativePlatform();
+
+  async syncPushRegistration(options: NativePushRegistration): Promise<boolean> {
+    if (Capacitor.getPlatform() !== 'android') return false;
+    const result = await NivraNative.syncPushRegistration(options).catch(() => null);
+    return result?.registered === true || result?.ready === true;
+  }
+  async clearPushRegistration(): Promise<void> {
+    if (Capacitor.getPlatform() === 'android') await NivraNative.clearPushRegistration();
+  }
+  async openNotificationSettings(section: 'app' | 'calls' | 'full-screen' = 'app'): Promise<void> {
+    if (Capacitor.getPlatform() === 'android') await NivraNative.openNotificationSettings({ section });
+  }
+  async getAppUpdateState(): Promise<NativeAppUpdateState> { return NivraNative.getAppUpdateState(); }
+  async downloadAppUpdate(release: AndroidRelease): Promise<NativeAppUpdateState> { return NivraNative.downloadAppUpdate(release); }
+  async installAppUpdate(): Promise<NativeAppUpdateState> { return NivraNative.installAppUpdate(); }
+  async cancelAppUpdate(): Promise<NativeAppUpdateState> { return NivraNative.cancelAppUpdate(); }
+  async setAppUpdateAllowed(allowed: boolean): Promise<void> {
+    if (Capacitor.getPlatform() === 'android') await NivraNative.setAppUpdateAllowed({ allowed });
+  }
+  async onAppUpdateState(listener: (state: NativeAppUpdateState) => void): Promise<PluginListenerHandle> {
+    return NivraNative.addListener('nativeAppUpdateState', listener);
+  }
 
   constructor() {
     effect(() => {

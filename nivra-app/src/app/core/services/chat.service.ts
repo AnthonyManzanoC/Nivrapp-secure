@@ -35,6 +35,7 @@ import { SignalrService } from './signalr.service';
 import { AppSettingsService } from './app-settings.service';
 import { NativeDeviceService } from './native-device.service';
 import { HistoryDeviceSyncService } from './history-device-sync.service';
+import { uniqueCallSummaries, validatedCallSummary } from './call-summary.helpers';
 
 const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 const LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
@@ -64,6 +65,7 @@ type ProfileSource = {
 };
 
 interface SendPayloadOptions {
+  clientMessageId?: string;
   suppressLocalMessage?: boolean;
   encryptedPolicy?: string | null;
   expiresAt?: string | null;
@@ -169,7 +171,7 @@ export class ChatService implements OnDestroy {
   });
   readonly selectedMessages = computed(() => {
     const id = this.selectedConversationId();
-    return id ? this.messagesByConversation()[id] ?? [] : [];
+    return id ? uniqueCallSummaries(this.messagesByConversation()[id] ?? []) : [];
   });
 
   constructor() {
@@ -887,10 +889,11 @@ export class ChatService implements OnDestroy {
     if (this.isConversationBlocked(conversation.id)) {
       throw new Error('Este chat esta bloqueado en este dispositivo.');
     }
-    if (!this.canSendToConversation(conversation)) {
+    if (!this.canSendToConversation(conversation) && !options.clientMessageId?.startsWith('call-summary:')) {
       throw new Error('Solo los admins pueden enviar mensajes en este grupo.');
     }
-    const outgoingPayload = this.normalizeOutgoingPayload(conversation, payload);
+    const outgoingPayload = validatedCallSummary(options.clientMessageId, this.normalizeOutgoingPayload(conversation, payload), conversation.id);
+    if (!outgoingPayload) throw new Error('El resumen de llamada no es válido.');
     const wirePayload = this.withUniformMessagePadding(outgoingPayload);
     const recipients = await this.encryptedRecipients(conversation, wirePayload, fileObjectId, context);
     this.assertSendContext(context);
@@ -898,10 +901,10 @@ export class ChatService implements OnDestroy {
       throw new Error('No hay llaves publicas disponibles para enviar.');
     }
     const request = {
-      clientMessageId: `web-${crypto.randomUUID()}`,
+      clientMessageId: options.clientMessageId ?? `web-${crypto.randomUUID()}`,
       // El tipo funcional vive dentro del payload E2EE; el transporte usa una
       // categoria uniforme para no revelar si es texto, audio, archivo o control.
-      kind: 'Text',
+      kind: options.clientMessageId?.startsWith('call-summary:') ? 'System' : 'Text',
       recipients,
       encryptedPolicy: options.encryptedPolicy ?? null,
       expiresAt: options.expiresAt ?? null,
@@ -922,7 +925,8 @@ export class ChatService implements OnDestroy {
     }
     this.assertSendContext(context);
     if (!options.suppressLocalMessage) {
-      await this.ingestLocalSent(response, outgoingPayload);
+      if (options.clientMessageId?.startsWith('call-summary:') && response.senderUserId !== context.userId) await this.ingestMessage(response, false);
+      else await this.ingestLocalSent(response, outgoingPayload);
     }
     return response;
   }
@@ -1022,10 +1026,11 @@ export class ChatService implements OnDestroy {
       groupCall: group,
     };
     await this.sendPayload(conversation, payload, 'System', null, {
+      clientMessageId: `call-summary:${call.id}:${event}`,
       encryptedPolicy: null,
       deleteAfterRead: false,
       suppressLocalMessage: false,
-    }).catch(() => undefined);
+    });
   }
 
   async editMessage(conversation: Conversation, message: ChatMessageVm, newText: string): Promise<void> {
@@ -1659,6 +1664,8 @@ export class ChatService implements OnDestroy {
     const recipients = this.ownRecipientCandidates(message.recipients, current.user.id, current.device.id);
     if (!recipients.length) return false;
     const recipient = recipients[0];
+    if (message.clientMessageId?.startsWith('call-summary:') &&
+        (message.encryptedPolicy?.startsWith('system:') || recipient?.header?.startsWith('system:'))) return false;
     let payload: ChatPayload;
     let decryptError = false;
     if (message.encryptedPolicy?.startsWith('system:') || recipient?.header?.startsWith('system:')) {
@@ -1694,6 +1701,11 @@ export class ChatService implements OnDestroy {
       this.pendingHistoryEnvelopes.delete(message.id);
     }
     payload = this.stripMessagePadding(payload);
+    if (!decryptError) {
+      const validated = validatedCallSummary(message.clientMessageId, payload, message.conversationId);
+      if (!validated) return false;
+      payload = validated;
+    }
 
     let vm: ChatMessageVm = {
       id: message.id,

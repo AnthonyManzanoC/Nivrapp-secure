@@ -65,6 +65,9 @@ export class CallsPage {
   private readonly translate = inject(TranslateService);
   private readonly auth = inject(AuthService);
   inviteModalOpen = false;
+  exitModalOpen = false;
+  callExitBusy = false;
+  private exitCallId: string | null = null;
   callQuery = '';
   callBusyId = '';
   videoSwapped = false;
@@ -148,6 +151,12 @@ export class CallsPage {
         untracked(() => this.revealCallChrome());
       }
     });
+    effect(() => {
+      const callId = this.calls.activeCall()?.id ?? null;
+      untracked(() => {
+        if (this.exitModalOpen && callId !== this.exitCallId) this.closeExitModal();
+      });
+    });
   }
 
   ionViewWillEnter(): void {
@@ -213,10 +222,37 @@ export class CallsPage {
   }
 
   async endActive(): Promise<void> {
+    if (this.callExitBusy) return;
     this.videoSwapped = false;
     this.pinnedParticipantId = null;
     this.revealCallChrome();
-    await this.calls.end();
+    if (this.calls.isGroupCall(this.calls.activeCall()) && this.calls.canEndGroupForEveryone()) {
+      this.exitCallId = this.calls.activeCall()?.id ?? null;
+      this.exitModalOpen = true;
+      return;
+    }
+    await this.leaveActive();
+  }
+
+  closeExitModal(): void {
+    if (this.callExitBusy) return;
+    this.exitModalOpen = false;
+    this.exitCallId = null;
+  }
+
+  async leaveActive(): Promise<void> {
+    if (this.callExitBusy) return;
+    const callId = this.exitCallId ?? this.calls.activeCall()?.id;
+    this.callExitBusy = true;
+    try { await this.calls.end(callId); }
+    finally { this.callExitBusy = false; this.closeExitModal(); }
+  }
+
+  async endForEveryone(): Promise<void> {
+    if (this.callExitBusy || !this.exitCallId || this.calls.activeCall()?.id !== this.exitCallId || !this.calls.canEndGroupForEveryone()) return;
+    this.callExitBusy = true;
+    try { await this.calls.endGroupForEveryone(); }
+    finally { this.callExitBusy = false; this.closeExitModal(); }
   }
 
   async toggleScreenShare(): Promise<void> {
@@ -241,6 +277,7 @@ export class CallsPage {
 
   callErrorText(): string {
     const error = this.calls.error();
+    if (error === 'No se pudo finalizar la sala. Inténtalo otra vez.') return this.tr('CALLS.END_ROOM_ERROR', error);
     const camera = Object.values(CALL_CAMERA_FAILURE_MESSAGES).find(item => item.fallback === error);
     return camera ? this.tr(camera.key, camera.fallback) : error;
   }

@@ -26,10 +26,13 @@ public final class NivraOngoingCallService extends Service {
     private static volatile String runningCallId = "";
     private static volatile boolean runningVideo;
     private PowerManager.WakeLock wakeLock;
+    private String ownedCallId = "";
 
     public static boolean isActive(String callId, boolean video) {
         return !callId.isEmpty() && callId.equals(requestedCallId) && callId.equals(runningCallId) && video == runningVideo;
     }
+
+    public static boolean hasActiveCall() { return !requestedCallId.isEmpty() || !runningCallId.isEmpty(); }
 
     public static void start(Context context, String callId, boolean video) {
         requestedCallId = callId;
@@ -62,6 +65,7 @@ public final class NivraOngoingCallService extends Service {
             stopSelf(startId);
             return START_NOT_STICKY;
         }
+        ownedCallId = callId;
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             stopSelf(startId);
             return START_NOT_STICKY;
@@ -124,6 +128,7 @@ public final class NivraOngoingCallService extends Service {
 
     @Override
     public void onDestroy() {
+        if (ownedCallId.equals(requestedCallId)) requestedCallId = "";
         runningCallId = "";
         runningVideo = false;
         if (wakeLock != null && wakeLock.isHeld()) {

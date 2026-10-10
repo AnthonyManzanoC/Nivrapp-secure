@@ -49,6 +49,28 @@ Check(!CallCoordination.TryClaim(call, "alice", "phone-a", "tab-a"), "ended room
 Check(!CallCoordination.TryClaim(NewCall(), "outsider", "phone-x", "tab-x"), "nonparticipant cannot claim call");
 Check(!CallCoordination.IsValidSessionId(new string('a', 129)) && !CallCoordination.IsValidSessionId("tab with spaces"), "invalid session ids are rejected");
 
+var roomEnd = NewCall();
+CallCoordination.TryClaim(roomEnd, "alice", "phone-a", "tab-a");
+CallCoordination.TryClaim(roomEnd, "bob", "phone-b", "tab-b");
+Check(!CallCoordination.TryEndForAll(roomEnd, "bob", "phone-b", "tab-b", DateTimeOffset.UtcNow), "ordinary participant cannot end room for everyone");
+Check(!CallCoordination.TryEndForAll(roomEnd, "alice", "other-phone", "other-tab", DateTimeOffset.UtcNow), "initiator's unclaimed device cannot end room for everyone");
+Check(!CallCoordination.TryEndForAll(roomEnd, "alice", "phone-a", "other-tab", DateTimeOffset.UtcNow), "initiator's other tab cannot end room for everyone");
+Check(roomEnd.EndedAt is null && roomEnd.ParticipantSessions.Count == 2, "rejected room termination preserves all current owners");
+Check(CallCoordination.TryEndForAll(roomEnd, "alice", "phone-a", "tab-a", DateTimeOffset.UtcNow), "explicit initiating owner can end room for everyone");
+Check(roomEnd.Status == CallStatus.Ended && roomEnd.EndedAt is not null && roomEnd.ParticipantSessions.Count == 0, "explicit termination clears every room owner");
+var summaryCall = NewCall(); summaryCall.ConversationId = "group";
+Check(CallSummaryPolicy.TryParse("call-summary:cal_test:call-ended", out var parsedCallId, out var parsedEvent) && parsedCallId == "cal_test" && parsedEvent == "call-ended", "encrypted summary identifier binds call and final event");
+Check(!CallSummaryPolicy.TryParse("call-summary:cal_test:message", out _, out _) && !CallSummaryPolicy.TryParse("call-summary:cal_test:call-ended:extra", out _, out _), "summary namespace rejects arbitrary or ambiguous events");
+Check(!CallSummaryPolicy.CanPublish(summaryCall, "group", "alice", "call-ended"), "active room cannot publish a final summary");
+foreach (var finalEvent in new[] { "missed-call", "call-rejected", "call-failed" })
+    Check(!CallSummaryPolicy.CanPublish(summaryCall, "group", "alice", finalEvent), $"active room cannot occupy the {finalEvent} summary identifier");
+summaryCall.Status = CallStatus.Ended; summaryCall.EndedAt = DateTimeOffset.UtcNow;
+Check(CallSummaryPolicy.CanPublish(summaryCall, "group", "bob", "call-ended"), "remaining participant can publish summary after the initiator leaves");
+Check(!CallSummaryPolicy.CanPublish(summaryCall, "other-group", "bob", "call-ended"), "summary cannot be moved to another conversation");
+Check(!CallSummaryPolicy.CanPublish(summaryCall, "group", "outsider", "call-ended"), "outsider cannot occupy the global call summary identifier");
+summaryCall.Status = CallStatus.Failed;
+Check(!CallSummaryPolicy.CanPublish(summaryCall, "group", "alice", "call-rejected") && CallSummaryPolicy.CanPublish(summaryCall, "group", "alice", "call-failed"), "failed call permits only a compatible final event");
+
 var transfer = NewCall();
 CallCoordination.TryClaim(transfer, "alice", "phone-a", "tab-a");
 CallCoordination.TryClaim(transfer, "bob", "phone-b", "tab-b");

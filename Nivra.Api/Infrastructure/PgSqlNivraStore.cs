@@ -369,22 +369,39 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
 
     public async Task AddPushTokenAsync(PushTokenRecord pushToken, CancellationToken cancellationToken = default)
     {
-        var existing = await db.PushTokens.FirstOrDefaultAsync(candidate => candidate.TokenHash == pushToken.TokenHash, cancellationToken);
-        if (existing is null)
-        {
-            db.PushTokens.Add(pushToken);
-        }
-        else
-        {
-            existing.UserId = pushToken.UserId;
-            existing.DeviceId = pushToken.DeviceId;
-            existing.Provider = pushToken.Provider;
-            existing.TokenCiphertext = pushToken.TokenCiphertext;
-            existing.RevokedAt = null;
-        }
-
-        await db.SaveChangesAsync(cancellationToken);
+        _ = await UpsertPushTokenAsync(pushToken, allowReassignment: true, cancellationToken);
     }
+
+    public Task<bool> TryRenewNativePushTokenAsync(PushTokenRecord pushToken, CancellationToken cancellationToken = default) =>
+        UpsertPushTokenAsync(pushToken, allowReassignment: false, cancellationToken);
+
+    private Task<bool> UpsertPushTokenAsync(PushTokenRecord pushToken, bool allowReassignment, CancellationToken cancellationToken) =>
+        db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
+        {
+            await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+            var destinationLock = $"Nivra.PushToken:{pushToken.TokenHash}";
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"SELECT pg_advisory_xact_lock(hashtextextended({destinationLock}, 0))", cancellationToken);
+            // An uncertain-commit retry must reload ownership instead of using an
+            // entity tracked before another login reassigned this destination.
+            foreach (var entry in db.ChangeTracker.Entries<PushTokenRecord>().Where(entry => entry.Entity.TokenHash == pushToken.TokenHash).ToList())
+                entry.State = EntityState.Detached;
+            var existing = await db.PushTokens.FirstOrDefaultAsync(candidate => candidate.TokenHash == pushToken.TokenHash, cancellationToken);
+            if (!allowReassignment && !Nivra.Api.Services.NativePushRegistrationPolicy.CanRenewDestination(existing, pushToken.UserId, pushToken.DeviceId))
+                return false;
+            if (existing is null) db.PushTokens.Add(pushToken);
+            else
+            {
+                existing.UserId = pushToken.UserId;
+                existing.DeviceId = pushToken.DeviceId;
+                existing.Provider = pushToken.Provider;
+                existing.TokenCiphertext = pushToken.TokenCiphertext;
+                existing.RevokedAt = null;
+            }
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            return true;
+        });
 
     public Task<PushTokenRecord?> GetPushTokenAsync(string pushTokenId, CancellationToken cancellationToken = default)
     {

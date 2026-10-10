@@ -10,6 +10,7 @@ import { SocialService } from '../../core/services/social.service';
 import { LocalHistoryService } from '../../core/services/local-history.service';
 import { NativeDeviceService } from '../../core/services/native-device.service';
 import { TranslateService } from '../../core/services/translate.service';
+import { PushService } from '../../core/services/push.service';
 import { ChatsPage } from './chats.page';
 
 describe('Chats story creation entry', () => {
@@ -39,6 +40,7 @@ describe('Chats story creation entry', () => {
       { provide: SocialService, useValue: { stories: signal([]), worldStories: signal([]), load: async () => undefined } },
       { provide: LocalHistoryService, useValue: history },
       { provide: NativeDeviceService, useValue: {} },
+      { provide: PushService, useValue: { permission: signal('unsupported'), registering: signal(false) } },
       { provide: ActionSheetController, useValue: {} },
       { provide: TranslateService, useValue: { instant: (_key: string, fallback: string) => fallback } },
     ] });

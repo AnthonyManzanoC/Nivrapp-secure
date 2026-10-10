@@ -81,6 +81,16 @@ ion-toolbar {
   min-height: 34px;
   font-weight: 900;
 }
+.header-join-call {
+  --background: #008f72;
+  --color: #fff;
+  --border-radius: 999px;
+  --padding-start: 12px;
+  --padding-end: 12px;
+  height: 36px;
+  font-size: 12px;
+  font-weight: 700;
+}
 
 ion-popover.chat-options-popover,
 ion-popover.message-actions-popover,

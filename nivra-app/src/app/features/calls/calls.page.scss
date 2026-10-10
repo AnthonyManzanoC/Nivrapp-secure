@@ -1,5 +1,25 @@
 @use "../shared-page";
 
+ion-modal.call-exit-modal {
+  --width: min(440px, calc(100vw - 32px));
+  --height: auto;
+  --border-radius: 24px;
+  --background: var(--nivra-panel-solid);
+  --backdrop-opacity: .56;
+}
+.call-exit-sheet { padding: 22px; color: var(--nivra-text); }
+.call-exit-sheet header { display: flex; justify-content: space-between; align-items: center; }
+.call-exit-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 16px; background: rgba(24, 214, 162, .12); color: #008f72; font-size: 25px; }
+.call-exit-sheet h2 { margin: 18px 0 8px; font-size: 23px; }
+.call-exit-sheet p { margin: 0 0 20px; color: var(--nivra-muted); line-height: 1.5; }
+.call-exit-choice { display: flex; align-items: center; gap: 12px; width: 100%; padding: 16px 12px; margin-top: 10px; border: 1px solid var(--nivra-line); border-radius: 16px; background: var(--nivra-panel-solid); color: var(--nivra-text); text-align: start; }
+.call-exit-choice ion-icon { font-size: 24px; flex-shrink: 0; }
+.call-exit-choice span { display: grid; gap: 5px; }
+.call-exit-choice small { color: var(--nivra-muted); line-height: 1.4; }
+.call-exit-choice.end-everyone { color: #d94350; }
+.call-exit-choice:focus-visible { outline: 2px solid #008f72; outline-offset: 3px; }
+.call-exit-choice:disabled { opacity: .55; }
+
 .call-game-area {
   display: block;
   min-width: 0;

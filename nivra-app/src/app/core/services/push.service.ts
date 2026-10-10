@@ -1,4 +1,4 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import { FirebaseMessaging, Importance, Visibility, type Notification as NativeFcmNotification } from '@capacitor-firebase/messaging';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -54,6 +54,7 @@ export class PushService {
   private serviceWorkerBound = false;
   private nativeBound = false;
   private initializing = false;
+  private observedNativeSession = false;
   private webConfigPromise?: Promise<ResolvedFirebaseWebConfig | null>;
   private readonly visualDedupe = new Map<string, number>();
 
@@ -63,12 +64,31 @@ export class PushService {
   readonly tokenId = signal<string | null>(null);
   readonly lastMessage = signal<MessagePayload | null>(null);
   readonly error = signal('');
+  readonly registering = signal(false);
+  readonly nativeBackgroundReady = computed(() => this.permission() === 'granted' && this.serverReady() && Boolean(this.tokenId()));
+
+  constructor() {
+    effect(() => {
+      const session = this.auth.session();
+      if (!Capacitor.isNativePlatform()) return;
+      if (session?.tokens.refreshToken) {
+        this.observedNativeSession = true;
+        if (this.nativeBound) void this.syncNativeRegistration().catch(() => undefined);
+      } else if (this.observedNativeSession) {
+        this.observedNativeSession = false;
+        this.tokenId.set(null);
+        this.serverReady.set(false);
+        void this.nativeDevice.clearPushRegistration().catch(() => undefined);
+      }
+    });
+  }
 
   async initialize(options: { requestPermission?: boolean } = {}): Promise<boolean> {
     if (this.initializing || !this.auth.isAuthenticated()) {
       return false;
     }
     this.initializing = true;
+    this.registering.set(true);
     this.error.set('');
     try {
       if (!await this.auth.ensureFreshSession()) {
@@ -130,6 +150,7 @@ export class PushService {
       return false;
     } finally {
       this.initializing = false;
+      this.registering.set(false);
     }
   }
 
@@ -146,7 +167,7 @@ export class PushService {
     }
     const status = await firstValueFrom(this.api.get<PushStatusResponse>('/push-tokens/status')).catch(() => null);
     if (status) {
-      this.serverReady.set(status.serverReady);
+      this.serverReady.set(Capacitor.isNativePlatform() ? status.fcmReady ?? status.serverReady : status.serverReady);
     }
     if ('Notification' in window) {
       this.permission.set(Notification.permission);
@@ -220,13 +241,24 @@ export class PushService {
 
     await this.ensureNativeChannels(options.requestPermission === true);
     await this.bindNativeFirebaseListeners();
+    await this.syncNativeRegistration();
     const token = (await FirebaseMessaging.getToken()).token;
     if (!token) {
       this.error.set('No se obtuvo token FCM nativo.');
       return false;
     }
     await this.registerServerToken(token);
+    if (!this.serverReady()) this.error.set('El servidor todavía no tiene avisos FCM activos para este teléfono.');
     return true;
+  }
+
+  private async syncNativeRegistration(): Promise<void> {
+    const session = this.auth.session();
+    if (!session?.tokens.refreshToken || !Capacitor.isNativePlatform()) return;
+    await this.nativeDevice.syncPushRegistration({
+      apiBaseUrl: this.api.baseUrl, userId: session.user.id, deviceId: session.device.id,
+      accessToken: session.tokens.accessToken, refreshToken: session.tokens.refreshToken,
+    });
   }
 
   private async resolveWebFirebaseConfig(): Promise<ResolvedFirebaseWebConfig | null> {
@@ -573,15 +605,20 @@ export class PushService {
   }
 
   private async registerServerToken(token: string, provider: PushRegistration['provider'] = 'fcm'): Promise<void> {
+    const initial = this.auth.session();
+    const sameAccount = () => Boolean(initial && this.auth.session()?.user.id === initial.user.id &&
+      this.auth.session()?.device.id === initial.device.id);
     if (!await this.auth.ensureFreshSession()) {
       throw new Error('Sesion vencida; no se pudo registrar el token push.');
     }
+    if (!sameAccount()) return;
     const response = await firstValueFrom(this.api.post<PushTokenResponse>('/push-tokens', {
       provider,
       token,
     }));
+    if (!sameAccount()) return;
     this.tokenId.set(response.id);
-    this.serverReady.set(response.serverReady);
+    this.serverReady.set(Capacitor.isNativePlatform() ? response.fcmReady ?? response.serverReady : response.serverReady);
   }
 
   private async handleNativeNotification(notification: NativeFcmNotification, actionId = ''): Promise<void> {
@@ -596,6 +633,9 @@ export class PushService {
 
   private async handlePushData(rawData: Record<string, string>, source: PushSource): Promise<void> {
     const data = this.normalizeWebData(rawData);
+    const session = this.auth.session();
+    if (!session || (data['recipientUserId'] && data['recipientUserId'] !== session.user.id) ||
+      (data['recipientDeviceId'] && data['recipientDeviceId'] !== session.device.id)) return;
     this.lastMessage.set({ data } as MessagePayload);
 
     const type = this.normalizePushType(data['type']);

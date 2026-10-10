@@ -207,10 +207,17 @@ app.UseCallCompatibility();
 app.MapNivraApi();
 app.MapGroupInviteEndpoints();
 app.MapGet("/client/compatibility", () => Results.Ok(ClientCompatibility.Description()));
-app.MapGet("/health/ready", async (NivraDbContext db, CancellationToken cancellationToken) =>
+app.MapGet("/client/android-release", (HttpContext context) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    var release = AndroidReleaseService.Read(app.Environment.ContentRootPath);
+    return release is null ? Results.StatusCode(503) : Results.Ok(release);
+});
+app.MapGet("/health/ready", async (NivraDbContext db, PushNotificationService push, CancellationToken cancellationToken) =>
 {
     var ready = await db.Database.CanConnectAsync(cancellationToken);
-    return Results.Json(new { status = ready ? "ok" : "unavailable", version = ClientCompatibility.Version, callProtocol = ClientCompatibility.CallProtocol },
+    return Results.Json(new { status = ready ? "ok" : "unavailable", version = ClientCompatibility.Version, callProtocol = ClientCompatibility.CallProtocol,
+        pushFcmReady = push.IsFcmConfigured, pushWebReady = push.IsWebPushConfigured },
         statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 });
 app.MapHub<NivraHub>("/hubs/realtime");

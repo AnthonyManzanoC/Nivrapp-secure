@@ -1626,7 +1626,7 @@ public static partial class EndpointExtensions
             return Results.Ok(response);
         });
 
-        conversations.MapPost("/{conversationId}/messages", async Task<IResult> (string conversationId, SendMessageRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        conversations.MapPost("/{conversationId}/messages", async Task<IResult> (string conversationId, SendMessageRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1640,13 +1640,6 @@ public static partial class EndpointExtensions
             {
                 return Results.NotFound();
             }
-            if (conversation.Type == ConversationType.Group &&
-                NormalizeGroupSettings(conversation.Settings).SendMessages == "admins" &&
-                !CanAdministerGroup(senderParticipant, allowInviteOnly: false))
-            {
-                return Error("forbidden", "Solo los admins pueden enviar mensajes en este grupo.", StatusCodes.Status403Forbidden);
-            }
-
             if (string.IsNullOrWhiteSpace(request.ClientMessageId) || request.Recipients.Count == 0)
             {
                 return Error("invalid_message", "ClientMessageId y recipients son obligatorios.");
@@ -1656,10 +1649,33 @@ public static partial class EndpointExtensions
                 return Error("invalid_message", "El identificador o la cantidad de destinatarios excede el limite permitido.");
             }
 
+            var callSummary = request.ClientMessageId.StartsWith(CallSummaryPolicy.Prefix, StringComparison.Ordinal);
+            if (callSummary)
+            {
+                if (request.Kind != MessageKind.System) return Error("invalid_call_summary", "El resumen debe usar el tipo de sistema.");
+                if (!CallSummaryPolicy.TryParse(request.ClientMessageId, out var summaryCallId, out var summaryEvent))
+                    return Error("invalid_call_summary", "El resumen de llamada no es válido.");
+                var summaryCall = await store.GetCallAsync(summaryCallId, cancellationToken);
+                if (summaryCall is null || !CallSummaryPolicy.CanPublish(summaryCall, conversationId, current.UserId, summaryEvent))
+                    return Error("invalid_call_summary", "La llamada no autoriza este resumen.", StatusCodes.Status403Forbidden);
+            }
+            else if (conversation.Type == ConversationType.Group &&
+                NormalizeGroupSettings(conversation.Settings).SendMessages == "admins" &&
+                !CanAdministerGroup(senderParticipant, allowInviteOnly: false))
+            {
+                return Error("forbidden", "Solo los admins pueden enviar mensajes en este grupo.", StatusCodes.Status403Forbidden);
+            }
+
+            // Every participant may observe the room ending, including after
+            // its initiator left. One persisted encrypted summary wins globally.
+            await using var summaryTransaction = callSummary
+                ? await CallCoordination.LockAsync(db, $"call-summary:{conversationId}:{request.ClientMessageId}", cancellationToken)
+                : null;
+
             var existingMessage = await db.Messages
                 .AsNoTracking()
                 .FirstOrDefaultAsync(message =>
-                    message.SenderUserId == current.UserId &&
+                    (callSummary ? message.ConversationId == conversationId : message.SenderUserId == current.UserId) &&
                     message.ClientMessageId == request.ClientMessageId,
                     cancellationToken);
             if (existingMessage is not null)
@@ -1758,6 +1774,8 @@ public static partial class EndpointExtensions
                 throw;
             }
 
+            if (summaryTransaction is not null) await summaryTransaction.CommitAsync(cancellationToken);
+
             foreach (var recipient in message.Recipients)
             {
                 await hub.Clients.Group(GroupsFor.Device(recipient.DeviceId)).SendAsync(
@@ -1777,7 +1795,7 @@ public static partial class EndpointExtensions
             }
 
             return Results.Created($"/messages/{message.Id}", ToMessageResponse(message));
-        });
+        }));
 
         conversations.MapPost("/{conversationId}/delete-request", async Task<IResult> (string conversationId, DeleteConversationRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
@@ -3577,7 +3595,8 @@ public static partial class EndpointExtensions
             }
 
             var conversation = await store.GetConversationAsync(groupId, cancellationToken);
-            if (conversation is null || conversation.Type != ConversationType.Group)
+            if (conversation is null || conversation.Type != ConversationType.Group ||
+                !conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null))
             {
                 return Results.NotFound();
             }
@@ -3621,6 +3640,10 @@ public static partial class EndpointExtensions
             {
                 return Results.NotFound();
             }
+
+            var roomConversation = call.ConversationId is null ? null : await store.GetConversationAsync(call.ConversationId, cancellationToken);
+            if (roomConversation?.Type == ConversationType.Group &&
+                !roomConversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null)) return Results.NotFound();
 
             if (!liveKit.IsConfigured)
             {
@@ -3731,6 +3754,9 @@ public static partial class EndpointExtensions
             await using var transaction = await CallCoordination.LockAsync(db, $"call:{callId}", cancellationToken);
             var call = await store.GetCallAsync(callId, cancellationToken);
             if (call is null) return Results.NotFound();
+            var claimConversation = call.ConversationId is null ? null : await store.GetConversationAsync(call.ConversationId, cancellationToken);
+            if (claimConversation?.Type == ConversationType.Group &&
+                !claimConversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null)) return Results.NotFound();
             if (!call.ParticipantUserIds.Contains(current.UserId))
             {
                 var conversation = call.ConversationId is null ? null : await store.GetConversationAsync(call.ConversationId, cancellationToken);
@@ -4091,7 +4117,14 @@ public static partial class EndpointExtensions
             }
             var conversation = call.ConversationId is null ? null : await store.GetConversationAsync(call.ConversationId, cancellationToken);
             var isGroup = conversation?.Type == ConversationType.Group || call.ParticipantUserIds.Count > 2;
-            if (!CallCoordination.TryLeave(call, current.UserId, current.DeviceId, request.ClientSessionId, isGroup, timeProvider.GetUtcNow())) return CallOwnedElsewhere();
+            if (request.Reason == "end-for-all")
+            {
+                if (conversation?.Type == ConversationType.Group &&
+                    !conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null)) return Results.NotFound();
+                if (!isGroup || !CallCoordination.TryEndForAll(call, current.UserId, current.DeviceId, request.ClientSessionId, timeProvider.GetUtcNow()))
+                    return Error("call_end_forbidden", "Solo quien inició la sala puede finalizarla para todos desde su sesión activa.", StatusCodes.Status403Forbidden);
+            }
+            else if (!CallCoordination.TryLeave(call, current.UserId, current.DeviceId, request.ClientSessionId, isGroup, timeProvider.GetUtcNow())) return CallOwnedElsewhere();
             var ended = call.Status == CallStatus.Ended;
             await store.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
@@ -4186,8 +4219,33 @@ public static partial class EndpointExtensions
             };
 
             await store.AddPushTokenAsync(push, cancellationToken);
-            return Results.Created($"/push-tokens/{push.Id}", new PushTokenResponse(push.Id, push.Provider, push.CreatedAt, push.RevokedAt, pushNotifications.IsConfigured));
+            var stored = (await store.ActivePushTokensForUserAsync(current.UserId, cancellationToken))
+                .FirstOrDefault(candidate => candidate.TokenHash == push.TokenHash && candidate.DeviceId == current.DeviceId) ?? push;
+            return Results.Created($"/push-tokens/{stored.Id}", new PushTokenResponse(stored.Id, stored.Provider, stored.CreatedAt, stored.RevokedAt, pushNotifications.IsConfigured, pushNotifications.IsFcmConfigured, pushNotifications.IsWebPushConfigured));
         });
+
+        // This narrowly scoped operation renews FCM while the WebView is asleep.
+        // It never issues access tokens, rotates refresh credentials or extends a session.
+        group.MapPost("/native-renew", async Task<IResult> (RenewNativePushTokenRequest request, INivraStore store, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        {
+            if (string.IsNullOrWhiteSpace(request.RefreshToken) || request.RefreshToken.Length > 4096 ||
+                string.IsNullOrWhiteSpace(request.UserId) || string.IsNullOrWhiteSpace(request.DeviceId) ||
+                string.IsNullOrWhiteSpace(request.Token) || request.Token.Length > 4096)
+                return Results.Unauthorized();
+            var session = await store.FindSessionByRefreshHashAsync(tokenService.HashOpaqueToken(request.RefreshToken), timeProvider.GetUtcNow(), cancellationToken);
+            var user = session is null ? null : await store.GetUserAsync(session.UserId, cancellationToken);
+            var device = session is null ? null : await store.GetDeviceAsync(session.DeviceId, cancellationToken);
+            if (!NativePushRegistrationPolicy.IsAllowed(session, user, device, request.UserId, request.DeviceId, timeProvider.GetUtcNow()))
+                return Results.Unauthorized();
+            var push = new PushTokenRecord
+            {
+                Id = NivraIds.NewId("psh"), UserId = session!.UserId, DeviceId = session.DeviceId,
+                Provider = "fcm", TokenHash = tokenService.HashOpaqueToken(request.Token.Trim()),
+                TokenCiphertext = pushNotifications.ProtectToken(request.Token.Trim()), CreatedAt = timeProvider.GetUtcNow()
+            };
+            if (!await store.TryRenewNativePushTokenAsync(push, cancellationToken)) return Results.Unauthorized();
+            return Results.Ok(new { registered = true, fcmReady = pushNotifications.IsFcmConfigured });
+        }).RequireRateLimiting("auth");
 
         group.MapPost("/sync-contacts", async Task<IResult> (List<string>? contactPhoneHashes, HttpContext http, NivraDbContext db, CancellationToken cancellationToken) =>
         {
@@ -4227,7 +4285,7 @@ public static partial class EndpointExtensions
             var current = http.GetCurrentUser();
             return current is null
                 ? Results.Unauthorized()
-                : Results.Ok(new { serverReady = pushNotifications.IsConfigured, provider = "Fcm" });
+                : Results.Ok(new { serverReady = pushNotifications.IsConfigured, fcmReady = pushNotifications.IsFcmConfigured, webPushReady = pushNotifications.IsWebPushConfigured, provider = "Fcm" });
         });
 
         group.MapDelete("/{pushTokenId}", async Task<IResult> (string pushTokenId, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>

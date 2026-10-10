@@ -27,13 +27,28 @@ public class NivraMessagingService extends MessagingService {
     private static final String CHANNEL_CALLS = NivraNativePlugin.CHANNEL_CALLS;
 
     @Override
-    public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
-        super.onMessageReceived(remoteMessage);
+    public void onNewToken(@NonNull String token) {
+        super.onNewToken(token);
+        NivraNativePushRegistration.tokenChanged(this, token);
+    }
 
+    @Override
+    public void onMessageReceived(@NonNull RemoteMessage remoteMessage) {
         Map<String, String> data = remoteMessage.getData();
         if (data == null || data.isEmpty()) {
             return;
         }
+        // Account switches clear notifications under this same monitor. Keep
+        // acceptance and publication atomic so a previously accepted payload
+        // cannot reappear after that cleanup.
+        synchronized (NivraNativePushRegistration.class) {
+            if (!NivraNativePushRegistration.accepts(this, data)) return;
+            super.onMessageReceived(remoteMessage);
+            handleCurrentMessage(remoteMessage, data);
+        }
+    }
+
+    private void handleCurrentMessage(RemoteMessage remoteMessage, Map<String, String> data) {
 
         if (isForceWipeEvent(data)) {
             try {
@@ -48,18 +63,20 @@ public class NivraMessagingService extends MessagingService {
         ensureNotificationChannels();
         String type = normalizeType(data.get("type"));
         String callId = stringValue(data, "callId");
-        if (type.equals("end-call") || type.equals("call-ended") || type.equals("call-rejected")) {
+        if (type.equals("end-call") || type.equals("call-ended") || type.equals("call-rejected") || type.equals("missed-call")) {
+            NivraCallPushPolicy.markEnded(this, callId);
             cancelNotification(notificationId(callId.isEmpty() ? stringValue(data, "tag") : callId));
             NivraNativePlugin.clearIncomingCallNotification(this, callId);
             if (!callId.isEmpty()) {
                 NivraOngoingCallService.stop(this, callId);
             }
-            return;
+            if (!type.equals("missed-call")) return;
         }
 
         if (isAppInForeground()) return;
 
         if (type.equals("incoming-call") || type.equals("incomingcall")) {
+            if (!NivraCallPushPolicy.isCurrent(this, data, remoteMessage.getSentTime(), System.currentTimeMillis())) return;
             NivraNativePlugin.showIncomingCallNotification(this, data);
             return;
         }
@@ -80,7 +97,7 @@ public class NivraMessagingService extends MessagingService {
         int id = notificationId(isCall && !callId.isEmpty() ? callId : tag);
 
         PendingIntent openIntent = openIntent(remoteMessage, data, "tap", id);
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, isCall ? CHANNEL_CALLS : CHANNEL_MESSAGES)
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(this, incomingCall ? CHANNEL_CALLS : CHANNEL_MESSAGES)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Nivra")
             .setContentText(bodyForType(type))

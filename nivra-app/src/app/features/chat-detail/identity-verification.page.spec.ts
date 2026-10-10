@@ -5,12 +5,13 @@ import { ActivatedRoute, Navigation, Router, convertToParamMap } from '@angular/
 import { of } from 'rxjs';
 import { PublicKeyDirectory } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
+import { AppLockService } from '../../core/services/app-lock.service';
 import { CryptoService } from '../../core/services/crypto.service';
 import { IdentityTrustService } from '../../core/services/identity-trust.service';
 import { NivraApiService } from '../../core/services/nivra-api.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { deriveUnverifiedSafetyNumber } from '../../core/utils/identity-fingerprint';
-import { IdentityVerificationPage, identityConversationReturnUrl } from './identity-verification.page';
+import { IDENTITY_QR_SCANNER_LOADER, IdentityVerificationPage, identityConversationReturnUrl } from './identity-verification.page';
 
 const directory = (userId: string, x: string): PublicKeyDirectory => ({
   userId,
@@ -33,7 +34,10 @@ describe('Identity verification return and comparison', () => {
   let own: PublicKeyDirectory;
   let other: PublicKeyDirectory;
   let api: { post: jasmine.Spy };
-  let trust: { confirm: jasmine.Spy };
+  let trust: { confirm: jasmine.Spy; continuity: jasmine.Spy };
+  let lock: { isLocked: ReturnType<typeof signal<boolean>> };
+  let scanner: { start: jasmine.Spy; stop: jasmine.Spy; clear: jasmine.Spy; scanFile: jasmine.Spy };
+  let pages: IdentityVerificationPage[];
   let cryptoService: { currentKeyMaterial: jasmine.Spy; parsePublicJwk: (value: string) => JsonWebKey };
 
   beforeEach(() => {
@@ -49,13 +53,18 @@ describe('Identity verification return and comparison', () => {
     own = directory('alice', 'A');
     other = directory('bob', 'C');
     api = { post: jasmine.createSpy('post').and.callFake(() => of([own, other])) };
-    trust = { confirm: jasmine.createSpy('confirm').and.resolveTo() };
+    trust = { confirm: jasmine.createSpy('confirm').and.resolveTo(), continuity: jasmine.createSpy('continuity').and.resolveTo({ state: 'unknown' }) };
+    lock = { isLocked: signal(false) };
+    pages = [];
+    scanner = { start: jasmine.createSpy('start').and.resolveTo(), stop: jasmine.createSpy('stop').and.resolveTo(), clear: jasmine.createSpy('clear'), scanFile: jasmine.createSpy('scanFile') };
     cryptoService = {
       currentKeyMaterial: jasmine.createSpy('currentKeyMaterial').and.resolveTo({ publicJwk: JSON.parse(own.devices[0].keyBundle.identityKey!) }),
       parsePublicJwk: (value: string) => JSON.parse(value),
     };
     TestBed.configureTestingModule({ providers: [
       { provide: AuthService, useValue: { session } },
+      { provide: AppLockService, useValue: lock },
+      { provide: IDENTITY_QR_SCANNER_LOADER, useValue: async () => () => scanner },
       { provide: CryptoService, useValue: cryptoService },
       { provide: NivraApiService, useValue: api },
       { provide: IdentityTrustService, useValue: trust },
@@ -69,8 +78,11 @@ describe('Identity verification return and comparison', () => {
   function createPage(): IdentityVerificationPage {
     const page = TestBed.runInInjectionContext(() => new IdentityVerificationPage());
     (page as unknown as { target: string }).target = 'bob';
+    pages.push(page);
     return page;
   }
+
+  afterEach(() => pages.forEach(page => page.ngOnDestroy()));
 
   it('returns through history to the exact conversation that opened verification', () => {
     createPage().back();
@@ -119,7 +131,7 @@ describe('Identity verification return and comparison', () => {
     page.code = (await deriveUnverifiedSafetyNumber(own, other)).display;
     page.comparison = `nivra-identity-v1:${page.code.toUpperCase()}`;
     await page.confirm();
-    expect(trust.confirm).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other);
+    expect(trust.confirm).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other, jasmine.any(Function));
     expect(page.verified).toBeTrue();
     expect(page.busy).toBeFalse();
   });
@@ -134,7 +146,7 @@ describe('Identity verification return and comparison', () => {
     expect(page.code).toBe(expected); expect(page.qr).toMatch(/^data:image\/png/);
     expect(trust.confirm).not.toHaveBeenCalled(); expect(page.verified).toBeFalse();
     page.comparison = page.code; await page.confirm();
-    expect(trust.confirm).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other);
+    expect(trust.confirm).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other, jasmine.any(Function));
     expect(page.verified).toBeTrue();
   });
 
@@ -216,7 +228,162 @@ describe('Identity verification return and comparison', () => {
     const confirmation = page.confirm(); await started;
     session.set({ user: { id: 'other-account', alias: 'other-account' }, device: { id: 'other-device' } });
     release(); await confirmation;
-    expect(trust.confirm).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other);
+    expect(trust.confirm).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other, jasmine.any(Function));
     expect(page.verified).toBeFalse(); expect(page.message).toBe('');
+  });
+
+  it('automatically checks continuity on opening without confirming a new identity', async () => {
+    const page = createPage();
+    trust.continuity.and.resolveTo({ state: 'unchanged' });
+    await page.loadIdentity();
+    expect(page.continuity).toBe('unchanged');
+    expect(page.verified).toBeFalse();
+    expect(page.checkedAt).toBeTruthy();
+    expect(trust.continuity).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other);
+    expect(trust.confirm).not.toHaveBeenCalled();
+  });
+
+  it('restores an already compared identity only when its locally stored pin matches', async () => {
+    const page = createPage();
+    trust.continuity.and.resolveTo({ state: 'verified', verifiedAt: '2026-10-09T12:00:00Z' });
+    await page.loadIdentity();
+    expect(page.verified).toBeTrue();
+    expect(page.verifiedAt).toBe('2026-10-09T12:00:00Z');
+    trust.continuity.and.resolveTo({ state: 'changed' });
+    await page.loadIdentity();
+    expect(page.continuity).toBe('changed');
+    expect(page.verified).toBeFalse();
+    expect(trust.confirm).not.toHaveBeenCalled();
+  });
+
+  it('compares a matching QR and saves it without a second button tap', async () => {
+    const page = createPage();
+    await page.loadIdentity();
+    await page.compareQr(`nivra-identity-v1:${page.code}`);
+    expect(trust.confirm).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other, jasmine.any(Function));
+    expect(page.verified).toBeTrue();
+  });
+
+  it('rejects a different contact QR and unrelated QR payloads without changing trust', async () => {
+    const page = createPage();
+    await page.loadIdentity();
+    await page.compareQr(`nivra-identity-v1:${'f'.repeat(64)}`);
+    expect(page.message).toContain('no coinciden');
+    await page.compareQr('https://nivrapp-secure.vercel.app/contact?alias=bob');
+    expect(page.message).toContain('no es un código');
+    expect(trust.confirm).not.toHaveBeenCalled();
+  });
+
+  it('automatically compares a QR image and clears its scanner afterward', async () => {
+    const page = createPage();
+    await page.loadIdentity();
+    scanner.scanFile.and.resolveTo(`nivra-identity-v1:${page.code}`);
+    const input = { files: [new File(['qr'], 'qr.png', { type: 'image/png' })], value: 'qr.png' };
+    await page.scan({ target: input } as unknown as Event);
+    expect(input.value).toBe('');
+    expect(scanner.clear).toHaveBeenCalledTimes(1);
+    expect(page.verified).toBeTrue();
+    expect(trust.confirm).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards an image decoded after switching accounts', async () => {
+    const page = createPage();
+    await page.loadIdentity();
+    let release!: (value: string) => void;
+    let reached!: () => void;
+    const started = new Promise<void>(resolve => { reached = resolve; });
+    scanner.scanFile.and.callFake(() => { reached(); return new Promise<string>(resolve => { release = resolve; }); });
+    const task = page.scan({ target: { files: [new File(['qr'], 'qr.png')], value: '' } } as unknown as Event);
+    await started;
+    const oldCode = page.code;
+    session.set({ user: { id: 'new', alias: 'new' }, device: { id: 'other-device' } });
+    TestBed.flushEffects();
+    release(`nivra-identity-v1:${oldCode}`);
+    await task;
+    expect(trust.confirm).not.toHaveBeenCalled();
+    expect(page.code).toBe('');
+    expect(page.verified).toBeFalse();
+  });
+
+  it('starts the camera only on the action and stops it when going back', async () => {
+    const page = createPage();
+    await page.loadIdentity();
+    spyOn<any>(page, 'waitForCameraElement').and.resolveTo();
+    expect(scanner.start).not.toHaveBeenCalled();
+    await page.startCamera();
+    expect(scanner.start).toHaveBeenCalledTimes(1);
+    expect(page.cameraOpen).toBeTrue();
+    page.back();
+    await Promise.resolve();
+    expect(scanner.stop).toHaveBeenCalled();
+    expect(page.cameraOpen).toBeFalse();
+  });
+
+  it('compares a decoded camera QR automatically and stops capture before saving', async () => {
+    const page = createPage();
+    await page.loadIdentity();
+    spyOn<any>(page, 'waitForCameraElement').and.resolveTo();
+    await page.startCamera();
+    const callback = scanner.start.calls.mostRecent().args[2] as (value: string) => void;
+    const stored = new Promise<void>(resolve => trust.confirm.and.callFake(async () => { expect(scanner.stop).toHaveBeenCalled(); resolve(); }));
+    callback(`nivra-identity-v1:${page.code}`);
+    callback(`nivra-identity-v1:${page.code}`);
+    await stored;
+    await Promise.resolve();
+    expect(trust.confirm).toHaveBeenCalledTimes(1);
+    expect(page.cameraOpen).toBeFalse();
+    expect(page.verified).toBeTrue();
+  });
+
+  it('releases a camera whose permission result arrives after cancellation', async () => {
+    const page = createPage();
+    await page.loadIdentity();
+    spyOn<any>(page, 'waitForCameraElement').and.resolveTo();
+    let release!: () => void;
+    let reached!: () => void;
+    const started = new Promise<void>(resolve => { reached = resolve; });
+    scanner.start.and.callFake(() => { reached(); return new Promise<void>(resolve => { release = resolve; }); });
+    scanner.stop.and.callFake(() => { throw new Error('not yet running'); });
+    const task = page.startCamera();
+    await started;
+    page.cancelCamera();
+    expect(page.cameraOpen).toBeFalse();
+    expect(page.cameraCapturePending).toBeTrue();
+    scanner.stop.and.resolveTo();
+    release();
+    await task;
+    expect(scanner.stop).toHaveBeenCalledTimes(2);
+    expect(scanner.clear).toHaveBeenCalled();
+    expect(page.cameraCapturePending).toBeFalse();
+    expect(trust.confirm).not.toHaveBeenCalled();
+  });
+
+  it('stops and clears the camera if the application locks', async () => {
+    const page = createPage();
+    await page.loadIdentity();
+    spyOn<any>(page, 'waitForCameraElement').and.resolveTo();
+    await page.startCamera();
+    lock.isLocked.set(true);
+    TestBed.flushEffects();
+    await Promise.resolve();
+    expect(page.cameraOpen).toBeFalse();
+    expect(page.code).toBe('');
+    expect(scanner.stop).toHaveBeenCalled();
+    expect(trust.confirm).not.toHaveBeenCalled();
+  });
+
+  it('blocks a pending trust transaction through the supplied scope guard', async () => {
+    const page = createPage();
+    await page.loadIdentity();
+    page.comparison = page.code;
+    let guard: () => boolean = () => true;
+    trust.confirm.and.callFake(async (_scope: string, _directory: PublicKeyDirectory, current: () => boolean) => {
+      guard = current;
+      session.set({ user: { id: 'new', alias: 'new' }, device: { id: 'new-device' } });
+      expect(current()).toBeFalse();
+    });
+    await page.confirm();
+    expect(guard()).toBeFalse();
+    expect(page.verified).toBeFalse();
   });
 });

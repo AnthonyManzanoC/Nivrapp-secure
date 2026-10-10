@@ -2,7 +2,11 @@ import { Injectable, signal } from '@angular/core';
 import { PublicKeyDirectory } from '../models/nivra.models';
 import { deriveDirectoryFingerprint } from '../utils/identity-fingerprint';
 
-interface Pin { digest: string; verified: boolean; }
+interface Pin { digest: string; verified: boolean; verifiedAt?: string; }
+export interface IdentityContinuity {
+  state: 'unknown' | 'unchanged' | 'verified' | 'changed';
+  verifiedAt?: string;
+}
 @Injectable({providedIn:'root'})
 export class IdentityTrustService {
   private readonly changed = signal<ReadonlySet<string>>(new Set());
@@ -25,9 +29,26 @@ export class IdentityTrustService {
       return current || {digest:fingerprint.digest,verified:false};
     });
   }
-  async confirm(scope:string,directory:PublicKeyDirectory):Promise<void>{
+  /** Read-only continuity against a local pin; this never establishes new trust. */
+  async continuity(scope:string,directory:PublicKeyDirectory):Promise<IdentityContinuity>{
     const fingerprint=await deriveDirectoryFingerprint(directory);
-    await this.update(scope,directory.userId,()=>({digest:fingerprint.digest,verified:true}));
+    const db=await this.open();
+    const pin=await new Promise<Pin|undefined>((resolve,reject)=>{
+      const tx=db.transaction('pins','readonly');const request=tx.objectStore('pins').get(JSON.stringify([scope,directory.userId]));
+      request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
+      tx.onabort=()=>reject(tx.error || new Error('No se pudo comprobar la identidad.'));
+    });
+    if(!pin)return {state:'unknown'};
+    if(pin.digest!==fingerprint.digest)return {state:'changed'};
+    return {state:pin.verified?'verified':'unchanged',...(pin.verifiedAt?{verifiedAt:pin.verifiedAt}:{})};
+  }
+  async confirm(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true):Promise<void>{
+    const fingerprint=await deriveDirectoryFingerprint(directory);
+    if(!isCurrent())throw new Error('La comparación ya no está activa.');
+    await this.update(scope,directory.userId,()=>{
+      if(!isCurrent())throw new Error('La comparación ya no está activa.');
+      return {digest:fingerprint.digest,verified:true,verifiedAt:new Date().toISOString()};
+    });
     this.changed.update(previous=>{const next=new Set(previous);next.delete(JSON.stringify([scope,directory.userId]));return next;});
   }
   private async update(scope:string,userId:string,change:(pin:Pin|undefined)=>Pin):Promise<void>{

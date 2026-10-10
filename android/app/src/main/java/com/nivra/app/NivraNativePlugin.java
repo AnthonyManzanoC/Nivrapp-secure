@@ -114,6 +114,7 @@ public class NivraNativePlugin extends Plugin {
     private Sensor accelerometerSensor;
     private boolean raiseListenEnabled;
     private volatile boolean activityResumed;
+    private NativeAppUpdateManager appUpdateManager;
 
     public static boolean isActivityVisible() {
         NivraNativePlugin plugin = activePlugin == null ? null : activePlugin.get();
@@ -158,8 +159,24 @@ public class NivraNativePlugin extends Plugin {
     @Override
     public void load() {
         activePlugin = new WeakReference<>(this);
+        appUpdateManager = new NativeAppUpdateManager(getActivity(), getContext(), state -> {
+            JSObject event = new JSObject();
+            java.util.Iterator<String> keys = state.keys();
+            while (keys.hasNext()) {
+                String key = keys.next();
+                event.put(key, state.opt(key));
+            }
+            notifyListeners("nativeAppUpdateState", event, true);
+        });
         flushPendingCallActions();
         flushPendingShareIntents();
+    }
+
+    @Override
+    @PluginMethod(returnType = PluginMethod.RETURN_NONE)
+    public void addListener(PluginCall call) {
+        super.addListener(call);
+        if ("nativeCallAction".equals(call.getString("eventName"))) flushPendingCallActions();
     }
 
     @Override
@@ -177,7 +194,71 @@ public class NivraNativePlugin extends Plugin {
     @Override
     protected void handleOnDestroy() {
         activityResumed = false;
+        if (appUpdateManager != null) appUpdateManager.destroy();
         super.handleOnDestroy();
+    }
+
+    @PluginMethod
+    public void syncPushRegistration(PluginCall call) {
+        try {
+            NivraNativePushRegistration.sync(getContext(), call.getData());
+            JSObject result = new JSObject();
+            result.put("registered", true);
+            call.resolve(result);
+        } catch (Exception error) { call.reject("No se pudo mantener el registro de avisos.", error); }
+    }
+
+    @PluginMethod
+    public void clearPushRegistration(PluginCall call) {
+        NivraNativePushRegistration.clear(getContext());
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void getAppUpdateState(PluginCall call) {
+        JSObject result = new JSObject();
+        org.json.JSONObject state = appUpdateManager.readState();
+        java.util.Iterator<String> keys = state.keys();
+        while (keys.hasNext()) {
+            String key = keys.next();
+            result.put(key, state.opt(key));
+        }
+        call.resolve(result);
+    }
+
+    @PluginMethod public void downloadAppUpdate(PluginCall call) { appUpdateManager.startDownload(call.getData(), call); }
+    @PluginMethod public void installAppUpdate(PluginCall call) { appUpdateManager.install(call); }
+    @PluginMethod public void cancelAppUpdate(PluginCall call) { appUpdateManager.cancel(call); }
+    @PluginMethod
+    public void setAppUpdateAllowed(PluginCall call) {
+        appUpdateManager.setAllowed(call.getBoolean("allowed", false));
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void openNotificationSettings(PluginCall call) {
+        String section = call.getString("section", "app");
+        Intent intent;
+        if ("full-screen".equals(section) && Build.VERSION.SDK_INT >= 34) {
+            intent = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
+                .setData(Uri.parse("package:" + getContext().getPackageName()));
+        } else if ("calls".equals(section) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            intent = new Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName())
+                .putExtra(Settings.EXTRA_CHANNEL_ID, CHANNEL_CALLS);
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+        } else {
+            intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(Uri.parse("package:" + getContext().getPackageName()));
+        }
+        try {
+            Activity activity = getActivity();
+            if (activity != null) activity.startActivity(intent);
+            else getContext().startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+            call.resolve();
+        } catch (Exception error) { call.reject("No se pudieron abrir los ajustes de avisos.", error); }
     }
 
     @PluginMethod
@@ -321,6 +402,16 @@ public class NivraNativePlugin extends Plugin {
         result.put("sdkInt", Build.VERSION.SDK_INT);
         result.put("manufacturer", Build.MANUFACTURER);
         result.put("model", Build.MODEL);
+        NivraNativePushRegistration.diagnostics(getContext(), result);
+        NotificationManager notificationManager = getContext().getSystemService(NotificationManager.class);
+        result.put("notificationsEnabled", NotificationManagerCompat.from(getContext()).areNotificationsEnabled());
+        result.put("fullScreenIntentAllowed", Build.VERSION.SDK_INT < 34 ||
+            (notificationManager != null && notificationManager.canUseFullScreenIntent()));
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notificationManager != null) {
+            NotificationChannel channel = notificationManager.getNotificationChannel(CHANNEL_CALLS);
+            result.put("incomingCallChannelEnabled", channel == null || channel.getImportance() != NotificationManager.IMPORTANCE_NONE);
+            result.put("incomingCallChannelAudible", channel == null || channel.getSound() != null);
+        }
         try {
             PackageInfo info = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), 0);
             result.put("appVersion", info.versionName);
@@ -503,13 +594,20 @@ public class NivraNativePlugin extends Plugin {
 
     @PluginMethod
     public void showIncomingCall(PluginCall call) {
-        Map<String, String> data = new HashMap<>();
-        data.put("callId", call.getString("callId", ""));
-        data.put("callerName", call.getString("callerName", "Nivra"));
-        data.put("callerUserId", call.getString("callerUserId", ""));
-        data.put("callType", call.getString("callType", "Voice"));
-        data.put("conversationId", call.getString("conversationId", ""));
-        showIncomingCallNotification(getContext(), data);
+        synchronized (NivraNativePushRegistration.class) {
+            org.json.JSONObject session = NivraNativePushRegistration.read(getContext());
+            if (session != null) {
+                Map<String, String> data = new HashMap<>();
+                data.put("callId", call.getString("callId", ""));
+                data.put("callerName", call.getString("callerName", "Nivra"));
+                data.put("callerUserId", call.getString("callerUserId", ""));
+                data.put("callType", call.getString("callType", "Voice"));
+                data.put("conversationId", call.getString("conversationId", ""));
+                data.put("recipientUserId", session.optString("userId"));
+                data.put("recipientDeviceId", session.optString("deviceId"));
+                showIncomingCallNotification(getContext(), data);
+            }
+        }
         call.resolve();
     }
 
@@ -617,14 +715,29 @@ public class NivraNativePlugin extends Plugin {
             .setOnlyAlertOnce(false)
             .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
             .setVibrate(new long[] { 320, 140, 320, 140, 480 })
-            .setTimeoutAfter(75_000)
+            .setTimeoutAfter(remainingIncomingRingTime(data))
             .addAction(android.R.drawable.ic_menu_call, "Contestar", answerIntent)
             .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Rechazar", rejectIntent);
 
         if (!canPostNotifications(context)) {
             return;
         }
-        NotificationManagerCompat.from(context).notify(notificationId, builder.build());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            androidx.core.app.Person caller = new androidx.core.app.Person.Builder().setName(callerName).setImportant(true).build();
+            builder.setStyle(NotificationCompat.CallStyle.forIncomingCall(caller, rejectIntent, answerIntent).setIsVideo(video));
+        }
+        Notification notification = builder.build();
+        // Keep ringing until the user answers/rejects or the bounded notification
+        // expires, rather than playing only the first sample of the ringtone.
+        notification.flags |= Notification.FLAG_INSISTENT;
+        NotificationManagerCompat.from(context).notify(notificationId, notification);
+    }
+
+    private static long remainingIncomingRingTime(Map<String, String> data) {
+        String expiry = data.get("expiresAt");
+        if (expiry == null || expiry.isEmpty()) return 75_000;
+        try { return Math.max(1, Math.min(75_000, Long.parseLong(expiry) - System.currentTimeMillis())); }
+        catch (NumberFormatException ignored) { return 1; }
     }
 
     public static void clearIncomingCallNotification(Context context, String callId) {
@@ -663,8 +776,8 @@ public class NivraNativePlugin extends Plugin {
         }
         JSObject payload = callPayload(intent, mappedAction);
         NivraNativePlugin plugin = activePlugin.get();
-        if (plugin != null) {
-            plugin.notifyListeners("nativeCallAction", payload, true);
+        if (plugin != null && plugin.hasListeners("nativeCallAction")) {
+            plugin.notifyListeners("nativeCallAction", payload, false);
             return true;
         } else {
             synchronized (pendingCallActions) {
@@ -701,12 +814,17 @@ public class NivraNativePlugin extends Plugin {
     }
 
     private void flushPendingCallActions() {
+        if (!hasListeners("nativeCallAction")) return;
+        List<JSObject> actions;
         synchronized (pendingCallActions) {
-            for (JSObject payload : pendingCallActions) {
-                notifyListeners("nativeCallAction", payload, true);
-            }
+            actions = new ArrayList<>(pendingCallActions);
             pendingCallActions.clear();
         }
+        for (JSObject payload : actions) notifyListeners("nativeCallAction", payload, false);
+    }
+
+    static void discardPendingCallActions() {
+        synchronized (pendingCallActions) { pendingCallActions.clear(); }
     }
 
     private void flushPendingShareIntents() {
@@ -991,6 +1109,7 @@ public class NivraNativePlugin extends Plugin {
     }
 
     static void clearAllSecureSecrets(Context context) throws Exception {
+        NivraNativePushRegistration.clear(context);
         clearSecureSecretName(context, "local-db");
         clearSecureSecretName(context, "device-keys");
         clearSecureSecretName(context, "auth-session");
@@ -1182,6 +1301,8 @@ public class NivraNativePlugin extends Plugin {
         payload.put("callerUserId", firstNonBlank(intent.getStringExtra("callerUserId"), intent.getStringExtra("callerId"), ""));
         payload.put("callType", intent.getStringExtra("callType"));
         payload.put("conversationId", intent.getStringExtra("conversationId"));
+        payload.put("recipientUserId", intent.getStringExtra("recipientUserId"));
+        payload.put("recipientDeviceId", intent.getStringExtra("recipientDeviceId"));
         payload.put("at", System.currentTimeMillis());
         return payload;
     }

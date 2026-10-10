@@ -5,6 +5,8 @@ Backend MVP para Nivra: una app de mensajería privada, gratuita primero, con ba
 La capa de datos ya usa PostgreSQL/Supabase con Entity Framework Core y migraciones automáticas al arrancar.
 El backend funciona como API pura + SignalR. El SPA vanilla original se conserva en `Nivra.Api/wwwroot_legacy` como historial y guia de migracion; el nuevo frontend vive en `nivra-app` con Angular + Ionic.
 
+La versión 2.0.0 incorpora verificación QR rápida, bienvenida y búsqueda de chats, salas con salida/reingreso, avisos Android nativos y actualización verificada del APK. Véase [la guía de versión y despliegue](docs/release-2.0.0.md).
+
 ## Principios
 
 - El backend no lee contenido de mensajes, archivos ni metadata sensible.
@@ -26,6 +28,8 @@ El script del frontend usa `ng serve --force-esbuild` para que el servidor local
 La API expone:
 
 - `GET /health`
+- `GET /health/ready`
+- `GET /client/android-release`
 - `POST /auth/register`
 - `POST /auth/login`
 - `POST /auth/refresh`
@@ -54,6 +58,7 @@ La API expone:
 - `POST /calls/{callId}/end`
 - `GET/PATCH /privacy`
 - `POST/DELETE /push-tokens`
+- `POST /push-tokens/native-renew`
 - `GET /monetization/entitlements`
 - `GET /monetization/ad-catalog`
 - `POST /monetization/ad-impressions`

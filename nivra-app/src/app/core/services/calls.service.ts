@@ -133,6 +133,7 @@ export class CallsService implements OnDestroy {
   private callActionInFlight = false;
   private recoveryLookupInFlight = '';
   private mediaGeneration = 0;
+  private mediaPreparation: { generation: number; withVideo: boolean; promise: Promise<MediaStream> } | null = null;
   private readonly dismissedCallIds = new Set<string>();
   private connectedUiReconcileTimers: number[] = [];
   private screenShareStream: MediaStream | null = null;
@@ -150,14 +151,19 @@ export class CallsService implements OnDestroy {
   private networkRecoveryInFlight = false;
   private groupMigrationCallId: string | null = null;
   private groupMigrationPromise: Promise<void> | null = null;
+  private readonly groupRoomRevisions = new Map<string, number>();
+  private groupDiscoveryScope = '';
+  private groupDiscoverySignature = '';
   private readonly onlineHandler = () => {
     void this.recoverAfterNetworkChange();
+    void this.refreshActiveGroupRooms();
   };
   private readonly connectionChangeHandler = () => {
     void this.recoverAfterNetworkChange();
   };
   private readonly visibilityChangeHandler = () => {
     if (document.visibilityState === 'visible') {
+      void this.refreshActiveGroupRooms();
       this.syncNativeCall();
       const call = this.activeCall();
       const userId = this.auth.session()?.user.id;
@@ -287,6 +293,25 @@ export class CallsService implements OnDestroy {
       }
     });
 
+    effect(() => {
+      const session = this.auth.session();
+      const ids = this.chat.conversations().filter(item => String(item.type).toLowerCase() === 'group').map(item => item.id).sort();
+      const scope = session ? `${session.user.id}:${session.device.id}` : '';
+      const signature = `${scope}:${ids.join('|')}`;
+      untracked(() => {
+        if (scope !== this.groupDiscoveryScope) {
+          if (this.groupDiscoveryScope) this.cleanup({ remember: false });
+          this.groupDiscoveryScope = scope;
+          this.activeGroupRooms.set({});
+          this.groupRoomRevisions.clear();
+        }
+        if (signature !== this.groupDiscoverySignature) {
+          this.groupDiscoverySignature = signature;
+          if (scope) void this.refreshActiveGroupRooms();
+        }
+      });
+    });
+
     void this.nativeDevice.onNativeCallAction((event) => {
       void this.handleNativeCallAction(event);
     }).catch(() => undefined);
@@ -408,6 +433,7 @@ export class CallsService implements OnDestroy {
       if (this.activeCall()?.id !== call.id) { return; }
       await this.prepareMedia(call.type === 'Video');
       if (this.activeCall()?.id !== call.id) { this.stopLocalMedia(); return; }
+      await this.broadcastControl('camera', this.cameraOff() ? 'off' : 'on');
       await Promise.all(this.otherParticipantIds(call).map((userId) =>
         this.sendCallSignal(call, userId, 'accepted', { accepted: true }).catch(() => undefined)));
       await this.establishCallPeers();
@@ -440,13 +466,11 @@ export class CallsService implements OnDestroy {
     this.phase.set('rejected');
     await Promise.all(this.otherParticipantIds(call).map((userId) =>
       this.sendCallSignal(call, userId, 'declined', { declined: true }).catch(() => undefined)));
-    if (!this.isGroupCall(call)) {
-      await this.chat.recordCallSystemMessage(call, 'call-rejected').catch(() => undefined);
-    }
     const shouldEndRoom = !this.isGroupCall(call) || call.initiatorUserId === this.currentUserId();
     this.cleanup({ historyStatus: 'Rejected' });
     if (shouldEndRoom) {
-      await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, { clientSessionId: this.callSignalSessionId })).catch(() => null);
+      const ended = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, { clientSessionId: this.callSignalSessionId })).catch(() => null);
+      if (ended && !this.isGroupCall(call)) await this.recordCallSystemOnce({ ...call, ...ended }, 'call-rejected');
     }
   }
 
@@ -483,17 +507,46 @@ export class CallsService implements OnDestroy {
     }
   }
 
+  canEndGroupForEveryone(): boolean {
+    const call = this.activeCall();
+    return Boolean(call && this.isGroupCall(call) && call.initiatorUserId === this.currentUserId() &&
+      !this.ownedElsewhere(call) && this.phase() !== 'ringing');
+  }
+
+  async endGroupForEveryone(): Promise<void> {
+    const call = this.activeCall();
+    if (!call || !this.canEndGroupForEveryone() || this.callActionInFlight) return;
+    this.callActionInFlight = true;
+    try {
+      const ended = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, {
+        clientSessionId: this.callSignalSessionId, reason: 'end-for-all',
+      }));
+      this.forgetGroupRoom(ended);
+      if (this.activeCall()?.id === call.id) this.cleanup({ remember: false });
+      this.addHistory(ended);
+      await this.recordCallSystemOnce(ended, 'call-ended', this.durationMsForCall(ended));
+    } catch (error) {
+      if (this.activeCall()?.id === call.id) this.error.set(error instanceof Error ? error.message : 'No se pudo finalizar la sala. Inténtalo otra vez.');
+    } finally {
+      this.callActionInFlight = false;
+    }
+  }
+
   async rejoin(callId: string): Promise<void> {
     if (!callId || this.activeCall()) {
       return;
     }
+    const session = this.auth.session();
+    if (!session) return;
+    const isCurrent = () => this.auth.session()?.user.id === session.user.id && this.auth.session()?.device.id === session.device.id;
     const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`));
+    if (!isCurrent() || this.activeCall()) return;
     if (call.status === 'Ended' || call.endedAt) {
       this.addHistory(call);
       return;
     }
     const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? null, this.isGroupCall(call));
-    if (!await this.claimCall(normalized)) { return; }
+    if (!await this.claimCall(normalized) || !isCurrent()) { return; }
     this.dismissedCallIds.delete(callId);
     if (this.isGroupCall(normalized)) {
       this.rememberGroupRoom(normalized);
@@ -505,7 +558,13 @@ export class CallsService implements OnDestroy {
       return;
     }
     await this.loadIceConfiguration();
-    await this.prepareMedia(normalized.type === 'Video');
+    if (!isCurrent()) return;
+    const media = await this.prepareMedia(normalized.type === 'Video');
+    if (!isCurrent()) {
+      media.getTracks().forEach(track => { track.onended = null; track.stop(); });
+      if (this.localStream() === media) this.localStream.set(null);
+      return;
+    }
     this.rememberGroupRoom(normalized);
     this.activeCall.set(normalized);
     this.setConnectingPhase();
@@ -785,8 +844,18 @@ export class CallsService implements OnDestroy {
       return null;
     }
 
+    const session = this.auth.session();
+    if (!session) return null;
+    const scope = `${session.user.id}:${session.device.id}`;
+    const revision = this.groupRoomRevisions.get(id) ?? 0;
+    const current = () => {
+      const next = this.auth.session();
+      return Boolean(next && `${next.user.id}:${next.device.id}` === scope);
+    };
     try {
       const call = await firstValueFrom(this.api.get<CallSession | null>(`/calls/active/${encodeURIComponent(id)}`));
+      if (!current()) return null;
+      if ((this.groupRoomRevisions.get(id) ?? 0) !== revision) return this.activeGroupRoomForConversation(id);
       if (!call || call.status === 'Ended' || call.endedAt) {
         this.forgetGroupRoom({ id: '', conversationId: id, groupId: id } as CallSession);
         return null;
@@ -794,9 +863,22 @@ export class CallsService implements OnDestroy {
       const normalized = this.withGroupRoomMetadata(call, id, true);
       this.rememberGroupRoom(normalized);
       return this.activeGroupRoomForConversation(id);
-    } catch {
+    } catch (error) {
+      if (!current()) return null;
+      if ((error as { status?: number })?.status === 404 && (this.groupRoomRevisions.get(id) ?? 0) === revision) {
+        this.forgetGroupRoom({ id: '', conversationId: id } as CallSession);
+        return null;
+      }
       return this.activeGroupRoomForConversation(id);
     }
+  }
+
+  async refreshActiveGroupRooms(): Promise<void> {
+    const ids = this.chat.conversations().filter(item => String(item.type).toLowerCase() === 'group').map(item => item.id);
+    let index = 0;
+    await Promise.all(Array.from({ length: Math.min(4, ids.length) }, async () => {
+      while (index < ids.length) await this.refreshActiveGroupRoom(ids[index++]);
+    }));
   }
 
   async joinGroupRoom(room: GroupCallRoom): Promise<void> {
@@ -807,19 +889,28 @@ export class CallsService implements OnDestroy {
       if (this.phase() === 'ringing') { await this.accept(); }
       return;
     }
-    if (this.activeCall()) {
+    if (this.activeCall() || this.callActionInFlight) {
       this.error.set('Ya hay una llamada activa.');
       return;
     }
-    const call = this.withGroupRoomMetadata(room.call, room.conversationId, true);
-    if (!await this.claimCall(call)) { return; }
-    this.dismissedCallIds.delete(call.id);
-    this.rememberGroupRoom(call);
-    this.activeCall.set(call);
-    this.setConnectingPhase();
-    this.clearRingTimeout();
-    this.addHistory(call);
-    await this.connectLiveKitRoom(call);
+    this.callActionInFlight = true;
+    const session = this.auth.session();
+    try {
+      const fresh = await this.refreshActiveGroupRoom(room.conversationId);
+      if (!fresh || this.auth.session()?.user.id !== session?.user.id || this.auth.session()?.device.id !== session?.device.id) return;
+      const call = this.withGroupRoomMetadata(fresh.call, fresh.conversationId, true);
+      if (!await this.claimCall(call)) return;
+      if (this.auth.session()?.user.id !== session?.user.id || this.auth.session()?.device.id !== session?.device.id) return;
+      this.dismissedCallIds.delete(call.id);
+      this.rememberGroupRoom(call);
+      this.activeCall.set(call);
+      this.setConnectingPhase();
+      this.clearRingTimeout();
+      this.addHistory(call);
+      await this.connectLiveKitRoom(call);
+    } finally {
+      this.callActionInFlight = false;
+    }
   }
 
   private async startScreenShare(): Promise<void> {
@@ -1081,6 +1172,13 @@ export class CallsService implements OnDestroy {
     });
     room.on(RoomEvent.LocalTrackPublished, () => this.syncLiveKitLocalTracks());
     room.on(RoomEvent.LocalTrackUnpublished, () => this.syncLiveKitLocalTracks());
+    const reconcilePublication = () => {
+      if (this.liveKitRoom !== room || this.activeCall()?.id !== call.id) return;
+      this.syncLiveKitLocalTracks();
+      this.refreshLiveKitRemoteStreams();
+    };
+    room.on(RoomEvent.TrackMuted, reconcilePublication);
+    room.on(RoomEvent.TrackUnmuted, reconcilePublication);
     room.on(RoomEvent.SignalReconnecting, () => {
       if (this.activeCall()?.id === call.id) {
         this.setConnectingPhase();
@@ -1134,6 +1232,7 @@ export class CallsService implements OnDestroy {
 
   /** A room migration/reconnect preserves the participant's own capture choices. */
   private async publishLiveKitLocalMedia(room: Room, call: CallSession, preserveMediaIntent: boolean): Promise<void> {
+    const cameraWanted = call.type === 'Video' && (!preserveMediaIntent || !this.cameraOff());
     await (room.localParticipant as unknown as {
       setMicrophoneEnabled: (enabled: boolean, options?: AudioCaptureOptions) => Promise<unknown>;
       setCameraEnabled: (enabled: boolean) => Promise<unknown>;
@@ -1146,7 +1245,7 @@ export class CallsService implements OnDestroy {
       this.cameraOff.set(true);
       return;
     }
-    if (!preserveMediaIntent || !this.cameraOff()) {
+    if (cameraWanted) {
       try {
         await this.setLiveKitCameraEnabled(room, true, call.id);
         if (this.activeCall()?.id === call.id && this.liveKitRoom === room) this.cameraOff.set(false);
@@ -1340,13 +1439,18 @@ export class CallsService implements OnDestroy {
 
   private syncLiveKitLocalTracks(): void {
     const localParticipant = this.liveKitRoom?.localParticipant as unknown as {
-      trackPublications?: Map<string, { source?: unknown; track?: { mediaStreamTrack?: MediaStreamTrack; source?: unknown } | null }>;
+      trackPublications?: Map<string, { source?: unknown; isMuted?: boolean; track?: { mediaStreamTrack?: MediaStreamTrack; source?: unknown } | null }>;
     } | undefined;
-    const tracks = [...(localParticipant?.trackPublications?.values() ?? [])]
+    const publications = [...(localParticipant?.trackPublications?.values() ?? [])];
+    const tracks = publications
       .filter((publication) => !this.isLiveKitScreenShareAudio(publication.track, publication))
       .map((publication) => publication.track?.mediaStreamTrack)
       .filter((track): track is MediaStreamTrack => Boolean(track));
     this.localStream.set(tracks.length ? new MediaStream(tracks) : null);
+    const camera = publications.find(publication => this.liveKitTrackSource(publication.track, publication) === 'camera');
+    const microphone = publications.find(publication => this.liveKitTrackSource(publication.track, publication) === 'microphone');
+    if (camera) this.cameraOff.set(Boolean(camera.isMuted) || camera.track?.mediaStreamTrack?.readyState !== 'live' || !camera.track?.mediaStreamTrack?.enabled);
+    if (microphone) this.muted.set(Boolean(microphone.isMuted) || microphone.track?.mediaStreamTrack?.readyState !== 'live' || !microphone.track?.mediaStreamTrack?.enabled);
   }
 
   private disconnectLiveKitRoom(): void {
@@ -1432,7 +1536,7 @@ export class CallsService implements OnDestroy {
     }
     this.rememberGroupRoom(updated);
     this.addHistory(updated);
-    if (updated.type === 'Video' && !this.localStream()?.getVideoTracks().some((track) => track.readyState === 'live')) {
+    if (updated.type === 'Video' && !this.mediaPreparation && !this.localStream()?.getVideoTracks().some((track) => track.readyState === 'live' && track.enabled)) {
       this.cameraOff.set(true);
     }
 
@@ -1751,21 +1855,29 @@ export class CallsService implements OnDestroy {
     if (!action || !callId) {
       return;
     }
+    if (!this.auth.session()) await this.auth.ensureSessionRestored?.();
+    const session = this.auth.session();
+    if (!session || (event.recipientUserId && event.recipientUserId !== session.user.id) ||
+        (event.recipientDeviceId && event.recipientDeviceId !== session.device.id)) return;
+    const isCurrent = () => this.auth.session()?.user.id === session.user.id && this.auth.session()?.device.id === session.device.id;
     await this.nativeDevice.clearIncomingCall(callId).catch(() => undefined);
+    if (!isCurrent()) return;
     if (action === 'open') {
       await this.router.navigateByUrl('/app/calls');
+      if (!isCurrent()) return;
       const userId = this.auth.session()?.user.id;
       if (userId) await this.restoreCallRecoveryHint(userId);
       return;
     }
     if (action === 'answer') {
       await this.router.navigateByUrl('/app/calls');
+      if (!isCurrent()) return;
       if (this.activeCall()?.id === callId) {
         await this.accept();
         return;
       }
       await this.rejoin(callId).catch((error) => {
-        this.error.set(error instanceof Error ? error.message : 'No se pudo contestar la llamada.');
+        if (isCurrent()) this.error.set(error instanceof Error ? error.message : 'No se pudo contestar la llamada.');
       });
       return;
     }
@@ -1886,7 +1998,10 @@ export class CallsService implements OnDestroy {
   }
 
   private async rejectIncomingCallById(callId: string): Promise<void> {
+    const session = this.auth.session();
+    if (!session) return;
     const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`)).catch(() => null);
+    if (this.auth.session()?.user.id !== session.user.id || this.auth.session()?.device.id !== session.device.id || this.activeCall()) return;
     if (!call || call.endedAt || call.status === 'Ended') {
       return;
     }
@@ -1896,11 +2011,26 @@ export class CallsService implements OnDestroy {
     await this.decline();
   }
 
-  private async prepareMedia(withVideo: boolean): Promise<MediaStream> {
+  private prepareMedia(withVideo: boolean): Promise<MediaStream> {
+    const pending = this.mediaPreparation;
+    if (pending?.generation === this.mediaGeneration && (pending.withVideo || !withVideo)) {
+      // Claim updates and an early SDP offer can arrive while permissions are
+      // open. They must share one capture instead of reopening the camera.
+      return pending.promise;
+    }
     this.stopLocalMedia();
     const generation = this.mediaGeneration;
+    const promise = this.capturePreparedMedia(withVideo, generation);
+    this.mediaPreparation = { generation, withVideo, promise };
+    void promise.finally(() => {
+      if (this.mediaPreparation?.promise === promise) this.mediaPreparation = null;
+    }).catch(() => undefined);
+    return promise;
+  }
+
+  private async capturePreparedMedia(withVideo: boolean, generation: number): Promise<MediaStream> {
     this.muted.set(false);
-    this.cameraOff.set(false);
+    this.cameraOff.set(true);
     if (!navigator.mediaDevices?.getUserMedia) {
       throw new Error('Este navegador no expone microfono/camara.');
     }
@@ -1933,6 +2063,10 @@ export class CallsService implements OnDestroy {
     }
     this.prepareLocalTracks(stream);
     this.localStream.set(stream);
+    // Publish the capture and its UI state together after the asynchronous
+    // permission grant. A claim notification cannot leave a live camera hidden.
+    this.cameraOff.set(!stream.getVideoTracks().some(track => track.readyState === 'live' && track.enabled));
+    this.muted.set(!stream.getAudioTracks().some(track => track.readyState === 'live' && track.enabled));
     return stream;
   }
 
@@ -2721,7 +2855,7 @@ export class CallsService implements OnDestroy {
         track.contentHint = 'speech';
       }
       track.onended = () => {
-        if (!this.activeCall()) {
+        if (!this.activeCall() || !this.localStream()?.getTracks().includes(track)) {
           return;
         }
         if (track.kind === 'video') {
@@ -3571,13 +3705,17 @@ export class CallsService implements OnDestroy {
     if (!call || !this.isGroupCall(call) || !call.conversationId) {
       return;
     }
+    if (call.endedAt || call.status === 'Ended') { this.forgetGroupRoom(call); return; }
+    const previous = this.activeGroupRoomForConversation(call.conversationId);
+    if (previous && previous.call.id !== call.id && Date.parse(previous.startedAt) > Date.parse(call.startedAt)) return;
+    this.groupRoomRevisions.set(call.conversationId, (this.groupRoomRevisions.get(call.conversationId) ?? 0) + 1);
     const room: GroupCallRoom = {
       roomId: call.roomId || call.id,
       groupId: call.groupId || call.conversationId,
       conversationId: call.conversationId,
       call,
       participantUserIds: call.participantUserIds ?? [],
-      joinedParticipantIds: call.joinedParticipantIds ?? [],
+      joinedParticipantIds: call.joinedParticipantIds ?? Object.keys(call.participantSessions ?? {}),
       startedAt: call.startedAt || new Date().toISOString(),
       endedAt: call.endedAt ?? null,
     };
@@ -3589,6 +3727,9 @@ export class CallsService implements OnDestroy {
     if (!conversationId) {
       return;
     }
+    const known = this.activeGroupRoomForConversation(conversationId);
+    if (call?.id && known && known.call.id !== call.id) return;
+    this.groupRoomRevisions.set(conversationId, (this.groupRoomRevisions.get(conversationId) ?? 0) + 1);
     this.activeGroupRooms.update((rooms) => {
       if (!rooms[conversationId]) {
         return rooms;
@@ -3615,8 +3756,11 @@ export class CallsService implements OnDestroy {
     if (!call?.id || this.systemLoggedCallIds.has(`${call.id}:${event}`)) {
       return;
     }
-    this.systemLoggedCallIds.add(`${call.id}:${event}`);
-    await this.chat.recordCallSystemMessage(call, event, durationMs).catch(() => undefined);
+    const key = `${call.id}:${event}`;
+    this.systemLoggedCallIds.add(key);
+    await this.chat.recordCallSystemMessage(call, event, durationMs).catch(() => {
+      this.systemLoggedCallIds.delete(key);
+    });
   }
 
   private async directoryForUser(userId: string): Promise<PublicKeyDirectory | null> {

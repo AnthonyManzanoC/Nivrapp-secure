@@ -23,7 +23,7 @@ import {
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { addOutline, archiveOutline, checkmarkOutline, chevronForwardOutline, closeOutline, imageOutline, notificationsOffOutline, notificationsOutline, peopleOutline, pinOutline, playCircleOutline, searchOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, imageOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
@@ -40,6 +40,13 @@ import { LocalHistoryService } from '../../core/services/local-history.service';
 import { ChatStoryHighlight, chatStoryRingColor, groupChatStoryHighlights, withOwnChatStoryHighlight } from './chat-story-highlights';
 import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
 import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.component';
+import { ChatWelcomeComponent } from './chat-welcome.component';
+import { ChatPassComponent } from './chat-pass.component';
+import { PushService } from '../../core/services/push.service';
+import { Capacitor } from '@capacitor/core';
+
+type ChatSearchScope = 'all' | 'chats' | 'people';
+type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'refresh' | 'settings';
 
 @Component({
   selector: 'app-chats',
@@ -53,6 +60,8 @@ import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.com
     StoryViewerComponent,
     StoryComposerComponent,
     HistorySyncNoticeComponent,
+    ChatWelcomeComponent,
+    ChatPassComponent,
     ImageCropperComponent,
     IonAvatar,
     IonButton,
@@ -87,6 +96,8 @@ export class ChatsPage implements OnDestroy {
   private readonly router = inject(Router);
   private readonly actionSheetController = inject(ActionSheetController);
   private readonly nativeDevice = inject(NativeDeviceService);
+  private readonly push = inject(PushService);
+  private readonly nativeAndroid = Capacitor.getPlatform() === 'android';
   private readonly storyStripNow = signal(Date.now());
   readonly storyHighlights = computed(() => {
     const currentUser = this.auth.session()?.user;
@@ -119,6 +130,17 @@ export class ChatsPage implements OnDestroy {
   query = '';
   searchResults: UserSummary[] = [];
   searching = false;
+  searchScope: ChatSearchScope = 'all';
+  searchError = '';
+  startingPersonId = '';
+  refreshing = false;
+  syncNotice = '';
+  chatMenuOpen = false;
+  chatMenuEvent: Event | null = null;
+  sharePassOpen = false;
+  enablingCallAlerts = false;
+  callAlertsNotice = '';
+  private pendingMenuAction: { action: ChatMenuAction; scope: string } | null = null;
   recentSearches = this.loadRecent();
   showRecentSearches = false;
   recentCollapsed = true;
@@ -165,11 +187,47 @@ export class ChatsPage implements OnDestroy {
   private storyStripTimer: number | null = null;
   private storageWarningTimer: number | null = null;
   private readonly storageWarningEffect: EffectRef;
+  private readonly accountScopeEffect: EffectRef;
+  private accountScope = this.searchContext();
+  private alive = true;
   storyHighlightOpening = '';
   storiesCollapsed = false;
   @ViewChild('conversationList', { read: ElementRef }) private conversationList?: ElementRef<HTMLElement>;
+  @ViewChild('chatSearchInput') private chatSearchInput?: IonInput;
 
   constructor() {
+    this.accountScopeEffect = effect(() => {
+      const scope = this.searchContext();
+      if (scope !== this.accountScope) {
+        this.accountScope = scope;
+        this.searchSeq += 1;
+        if (this.timer !== null) window.clearTimeout(this.timer);
+        this.timer = null;
+        this.query = '';
+        this.searchResults = [];
+        this.searching = false;
+        this.searchError = '';
+        this.startingPersonId = '';
+        this.syncNotice = '';
+        this.refreshing = false;
+        this.showRecentSearches = false;
+        this.recentSearches = this.loadRecent();
+        this.selectedFolder = 'all';
+        this.sharePassOpen = false;
+        this.enablingCallAlerts = false;
+        this.callAlertsNotice = '';
+        this.chatMenuOpen = false;
+        this.pendingMenuAction = null;
+        this.groupModalOpen = false;
+        this.groupName = '';
+        this.groupAvatar = null;
+        this.groupAvatarCropFile = null;
+        this.selectedGroupUserIds = new Set<string>();
+        this.storyComposerOpen = false;
+        this.storyViewerQueue = [];
+        this.stopStoryProgress();
+      }
+    });
     this.storageWarningEffect = effect((onCleanup) => {
       const warning = this.localHistory.storageError();
       const loading = this.chat.loading();
@@ -192,16 +250,20 @@ export class ChatsPage implements OnDestroy {
     addIcons({
       addOutline,
       archiveOutline,
+      chatbubbleEllipsesOutline,
       checkmarkOutline,
       chevronForwardOutline,
       closeOutline,
+      ellipsisVerticalOutline,
       imageOutline,
       notificationsOffOutline,
       notificationsOutline,
       peopleOutline,
+      personOutline,
       pinOutline,
       playCircleOutline,
       searchOutline,
+      settingsOutline,
       shareSocialOutline,
       syncOutline,
       trashOutline,
@@ -217,6 +279,9 @@ export class ChatsPage implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.alive = false;
+    this.searchSeq += 1;
+    this.accountScopeEffect.destroy();
     this.storageWarningEffect.destroy();
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
@@ -233,17 +298,26 @@ export class ChatsPage implements OnDestroy {
   }
 
   async refresh(): Promise<void> {
+    if (this.refreshing) return;
+    const scope = this.searchContext();
+    this.refreshing = true;
+    this.syncNotice = '';
     this.localHistory.retryNativeStorage();
     void this.social.load().catch(() => undefined);
     try {
       await this.chat.bootstrap();
+      if (!this.isCurrentScope(scope)) return;
       // Capacitor's SQLite promise may resolve outside Angular's zone.  The
       // explicit zone entry makes the encrypted-history warning disappear as
       // soon as a manual reload succeeds.
       this.ngZone.run(() => this.localHistory.clearStorageError());
+      this.syncNotice = this.tr('CHATS.SYNCED', 'Tus chats están al día.');
     } catch {
       // Keep the warning visible when either local storage or the remote
       // reload failed.  It contains the action the user can take next.
+      if (this.isCurrentScope(scope)) this.syncNotice = this.tr('CHATS.SYNC_ERROR', 'No se pudo actualizar. Inténtalo cuando tengas conexión.');
+    } finally {
+      if (this.isCurrentScope(scope)) this.refreshing = false;
     }
   }
 
@@ -254,12 +328,69 @@ export class ChatsPage implements OnDestroy {
   }
 
   async openShareAccount(): Promise<void> {
-    await this.router.navigateByUrl('/app/account');
+    if (this.auth.session()) this.sharePassOpen = true;
+  }
+
+  openChatMenu(event: Event): void {
+    this.chatMenuEvent = event;
+    this.pendingMenuAction = null;
+    this.chatMenuOpen = true;
+  }
+
+  chooseChatMenuAction(action: ChatMenuAction): void {
+    this.pendingMenuAction = { action, scope: this.searchContext() };
+    this.chatMenuOpen = false;
+  }
+
+  onChatMenuDismiss(): void {
+    const pending = this.pendingMenuAction;
+    this.chatMenuOpen = false;
+    this.chatMenuEvent = null;
+    this.pendingMenuAction = null;
+    if (!pending || !this.isCurrentScope(pending.scope)) return;
+    switch (pending.action) {
+      case 'new-chat': this.startNewChat(); break;
+      case 'new-group': this.openGroupModal(); break;
+      case 'new-story': this.openStoryComposer(); break;
+      case 'share-pass': void this.openShareAccount(); break;
+      case 'refresh': void this.refresh(); break;
+      case 'settings': void this.router.navigateByUrl('/app/account'); break;
+    }
+  }
+
+  onChatMenuKeydown(event: KeyboardEvent): void {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const menu = event.currentTarget as HTMLElement;
+    const buttons = Array.from(menu.querySelectorAll<HTMLButtonElement>('button:not([disabled])'));
+    if (!buttons.length) return;
+    event.preventDefault();
+    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+      : event.key === 'ArrowDown' ? (index + 1) % buttons.length
+      : (index - 1 + buttons.length) % buttons.length;
+    buttons[next].focus();
+  }
+
+  startNewChat(): void {
+    this.query = '';
+    this.searchScope = 'people';
+    this.invalidateSearch();
+    this.onSearchFocus();
+    void this.chatSearchInput?.setFocus();
+  }
+
+  closeSearch(): void {
+    this.clearSearch();
+    this.hideRecent();
+    this.searchScope = 'all';
   }
 
   ionViewWillLeave(): void {
     this.showRecentSearches = false;
     this.recentCollapsed = true;
+    this.chatMenuOpen = false;
+    this.pendingMenuAction = null;
+    this.invalidateSearch();
   }
 
   onSearchFocus(): void {
@@ -272,33 +403,106 @@ export class ChatsPage implements OnDestroy {
   }
 
   onSearchChange(): void {
+    this.invalidateSearch();
+    this.syncNotice = '';
     if (this.query.trim().length >= 2) {
       this.showRecentSearches = false;
       this.recentCollapsed = true;
     }
-    if (this.timer !== null) {
-      window.clearTimeout(this.timer);
+    if (this.query.trim().length >= 2 && this.searchScope !== 'chats') {
+      this.searching = true;
+      this.timer = window.setTimeout(() => { this.timer = null; void this.search(); }, 280);
     }
-    this.timer = window.setTimeout(() => void this.search(), 280);
+  }
+
+  setSearchScope(scope: ChatSearchScope): void {
+    if (this.searchScope === scope) return;
+    this.searchScope = scope;
+    this.onSearchChange();
+  }
+
+  matchingConversations(): Conversation[] {
+    if (this.searchScope === 'people') return [];
+    const term = this.normalizeSearch(this.query);
+    if (!term) return [];
+    const visible = [...this.chat.chatFolderConversations('all'), ...this.chat.chatFolderConversations('archived')];
+    return visible.filter((conversation) => this.normalizeSearch(this.chat.conversationTitle(conversation)).includes(term));
   }
 
   async search(): Promise<void> {
     const term = this.query.trim();
-    if (term.length < 2) {
+    if (term.length < 2 || this.searchScope === 'chats') {
       this.searchResults = [];
+      this.searching = false;
       return;
     }
     const seq = ++this.searchSeq;
+    const scope = this.searchContext();
     this.searching = true;
+    this.searchError = '';
     try {
       const results = await this.chat.searchPeople(term);
-      if (seq === this.searchSeq && this.query.trim() === term) {
+      if (seq === this.searchSeq && this.query.trim() === term && this.isCurrentScope(scope)) {
         this.searchResults = results;
       }
+    } catch {
+      if (seq === this.searchSeq && this.isCurrentScope(scope)) {
+        this.searchResults = [];
+        this.searchError = this.tr('CHATS.SEARCH_ERROR', 'No se pudo buscar personas. Tus chats siguen disponibles.');
+      }
     } finally {
-      if (seq === this.searchSeq) {
+      if (seq === this.searchSeq && this.isCurrentScope(scope)) {
         this.searching = false;
       }
+    }
+  }
+
+  private invalidateSearch(): void {
+    this.searchSeq += 1;
+    if (this.timer !== null) window.clearTimeout(this.timer);
+    this.timer = null;
+    this.searchResults = [];
+    this.searching = false;
+    this.searchError = '';
+  }
+
+  private normalizeSearch(value: string): string {
+    return value.trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+  }
+
+  private searchContext(): string {
+    const session = this.auth.session();
+    return JSON.stringify([session?.user.id ?? '', session?.device?.id ?? '']);
+  }
+
+  private isCurrentScope(scope: string): boolean {
+    return this.alive && this.searchContext() === scope;
+  }
+
+  firstConversation(): boolean { return this.chat.conversations().length === 0; }
+
+  showCallAlertsSetup(): boolean {
+    return this.nativeAndroid && this.push.permission() !== 'granted' && this.push.permission() !== 'unsupported';
+  }
+
+  callAlertsBusy(): boolean { return this.enablingCallAlerts || this.push.registering(); }
+
+  async enableCallAlerts(): Promise<void> {
+    if (this.callAlertsBusy() || !this.showCallAlertsSetup()) return;
+    const scope = this.searchContext();
+    this.enablingCallAlerts = true;
+    this.callAlertsNotice = '';
+    try {
+      const ready = await this.push.requestPermissionAndRegister();
+      if (this.isCurrentScope(scope)) {
+        this.callAlertsNotice = ready
+          ? this.tr('CHATS.CALL_ALERTS_READY', 'Avisos activados en este teléfono.')
+          : this.tr('CHATS.CALL_ALERTS_ERROR', 'No se activaron los avisos. Revisa el permiso de notificaciones en los ajustes del teléfono y vuelve a intentar.');
+      }
+    } catch {
+      if (this.isCurrentScope(scope)) this.callAlertsNotice = this.tr('CHATS.CALL_ALERTS_ERROR', 'No se activaron los avisos. Revisa el permiso de notificaciones en los ajustes del teléfono y vuelve a intentar.');
+    } finally {
+      if (this.isCurrentScope(scope)) this.enablingCallAlerts = false;
     }
   }
 
@@ -689,17 +893,25 @@ export class ChatsPage implements OnDestroy {
   }
 
   async startConversation(person: UserSummary): Promise<void> {
-    const conversation = await this.chat.createDirectConversation(person);
-    this.rememberRecent(person);
-    this.query = '';
-    this.searchResults = [];
-    this.showRecentSearches = false;
-    this.recentCollapsed = true;
-    await this.router.navigate(['/app/chats', conversation.id]);
+    if (this.startingPersonId) return;
+    const scope = this.searchContext();
+    this.startingPersonId = person.id;
+    this.searchError = '';
+    try {
+      const conversation = await this.chat.createDirectConversation(person);
+      if (!this.isCurrentScope(scope)) return;
+      this.rememberRecent(person);
+      this.closeSearch();
+      await this.router.navigate(['/app/chats', conversation.id]);
+    } catch {
+      if (this.isCurrentScope(scope)) this.searchError = this.tr('CHATS.OPEN_CHAT_ERROR', 'No se pudo abrir el chat. Vuelve a intentarlo.');
+    } finally {
+      if (this.isCurrentScope(scope)) this.startingPersonId = '';
+    }
   }
 
   clearSearch(): void {
-    this.searchSeq += 1;
+    this.invalidateSearch();
     this.query = '';
     this.searchResults = [];
     this.searching = false;
@@ -710,12 +922,12 @@ export class ChatsPage implements OnDestroy {
   removeRecent(person: UserSummary, event: Event): void {
     event.stopPropagation();
     this.recentSearches = this.recentSearches.filter((item) => item.id !== person.id);
-    localStorage.setItem(this.recentKey(), JSON.stringify(this.recentSearches));
+    this.persistRecent();
   }
 
   clearRecent(): void {
     this.recentSearches = [];
-    localStorage.removeItem(this.recentKey());
+    try { localStorage.removeItem(this.recentKey()); } catch { /* Private browsers may block storage. */ }
   }
 
   hideRecent(event?: Event): void {
@@ -867,26 +1079,30 @@ export class ChatsPage implements OnDestroy {
     const current = this.chat.profileSummary(person);
     const next = [current, ...this.recentSearches.filter((item) => item.id !== current.id)].slice(0, 8);
     this.recentSearches = next;
-    localStorage.setItem(this.recentKey(), JSON.stringify(next));
+    this.persistRecent();
   }
 
   private async refreshRecentProfiles(): Promise<void> {
     if (!this.recentSearches.length) {
       return;
     }
-    await this.chat.refreshProfiles(this.recentSearches.map((person) => person.id));
+    const scope = this.searchContext();
+    try { await this.chat.refreshProfiles(this.recentSearches.map((person) => person.id)); }
+    catch { return; }
+    if (!this.isCurrentScope(scope)) return;
     this.recentSearches = this.recentSearches.map((person) => this.chat.profileSummary(person));
-    localStorage.setItem(this.recentKey(), JSON.stringify(this.recentSearches));
+    this.persistRecent();
   }
 
   private loadRecent(): UserSummary[] {
+    if (!this.auth.session()?.user.id) return [];
     try {
       const scoped = JSON.parse(localStorage.getItem(this.recentKey()) || 'null') as UserSummary[] | null;
       if (Array.isArray(scoped)) {
         return scoped;
       }
-      const legacy = JSON.parse(localStorage.getItem('nivra_recent_searches') || '[]') as UserSummary[];
-      return Array.isArray(legacy) ? legacy : [];
+      // The old unscoped key may belong to another account on a shared device.
+      return [];
     } catch {
       return [];
     }
@@ -895,6 +1111,12 @@ export class ChatsPage implements OnDestroy {
   private recentKey(): string {
     const session = this.auth.session();
     return session?.user?.id ? `nivra_recent_searches.${session.user.id}` : 'nivra_recent_searches';
+  }
+
+  private persistRecent(): void {
+    if (!this.auth.session()?.user.id) return;
+    try { localStorage.setItem(this.recentKey(), JSON.stringify(this.recentSearches)); }
+    catch { /* Recents remain useful in memory when storage is unavailable. */ }
   }
 
   private syncSelectedConversationFromUrl(url: string): void {

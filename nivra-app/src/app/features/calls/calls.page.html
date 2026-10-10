@@ -311,9 +311,9 @@
                   [attr.aria-label]="'CALLS.ADD_PARTICIPANT' | translate:'Anadir participante'">
                   <ion-icon name="person-add-outline"></ion-icon>
                 </ion-button>
-                <ion-button mode="ios" color="danger" (click)="endActive()" [attr.aria-label]="'CALLS.HANG_UP' | translate:'Colgar'">
+                <ion-button mode="ios" color="danger" [disabled]="callExitBusy" (click)="endActive()" [attr.aria-label]="(calls.isGroupCall(calls.activeCall()) ? 'CALLS.LEAVE_ROOM' : 'CALLS.HANG_UP') | translate:(calls.isGroupCall(calls.activeCall()) ? 'Salir de la sala' : 'Colgar')">
                   <ion-icon name="close-outline" slot="start"></ion-icon>
-                  {{ 'CALLS.HANG_UP' | translate:'Colgar' }}
+                  {{ (calls.isGroupCall(calls.activeCall()) ? 'CALLS.LEAVE_ROOM' : 'CALLS.HANG_UP') | translate:(calls.isGroupCall(calls.activeCall()) ? 'Salir de la sala' : 'Colgar') }}
                 </ion-button>
               }
             </div>
@@ -429,6 +429,29 @@
       }
     </section>
   </main>
+
+  <ion-modal class="call-exit-modal" [isOpen]="exitModalOpen" [canDismiss]="!callExitBusy" (didDismiss)="closeExitModal()">
+    <ng-template>
+      <section class="call-exit-sheet" aria-labelledby="call-exit-title">
+        <header>
+          <span class="call-exit-icon"><ion-icon name="people-outline" aria-hidden="true"></ion-icon></span>
+          <ion-button fill="clear" [disabled]="callExitBusy" (click)="closeExitModal()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline"></ion-icon></ion-button>
+        </header>
+        <h2 id="call-exit-title">{{ 'CALLS.EXIT_ROOM_TITLE' | translate:'¿Cómo quieres salir?' }}</h2>
+        <p>{{ 'CALLS.EXIT_ROOM_COPY' | translate:'Puedes salir y dejar la sala abierta para quienes siguen conectados.' }}</p>
+        <button type="button" class="call-exit-choice" [disabled]="callExitBusy" (click)="leaveActive()">
+          <ion-icon name="enter-outline" aria-hidden="true"></ion-icon>
+          <span><strong>{{ 'CALLS.LEAVE_ROOM' | translate:'Salir de la sala' }}</strong><small>{{ 'CALLS.KEEP_ROOM_OPEN' | translate:'La sala continúa con quienes se quedan.' }}</small></span>
+        </button>
+        @if (calls.canEndGroupForEveryone()) {
+          <button type="button" class="call-exit-choice end-everyone" [disabled]="callExitBusy" (click)="endForEveryone()">
+            <ion-icon name="close-circle-outline" aria-hidden="true"></ion-icon>
+            <span><strong>{{ 'CALLS.END_FOR_ALL' | translate:'Finalizar para todos' }}</strong><small>{{ 'CALLS.END_FOR_ALL_COPY' | translate:'Se desconectará a todos los participantes.' }}</small></span>
+          </button>
+        }
+      </section>
+    </ng-template>
+  </ion-modal>
 
   <ion-modal class="invite-modal" [isOpen]="inviteModalOpen" (didDismiss)="closeInviteModal()">
     <ng-template>

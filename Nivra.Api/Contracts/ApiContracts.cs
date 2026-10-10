@@ -479,8 +479,9 @@ public sealed record PatchPrivacyRequest(
     string? ProfilePhotoVisibility);
 
 public sealed record RegisterPushTokenRequest(string Provider, string Token);
+public sealed record RenewNativePushTokenRequest(string RefreshToken, string UserId, string DeviceId, string Token);
 
-public sealed record PushTokenResponse(string Id, string Provider, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt, bool ServerReady);
+public sealed record PushTokenResponse(string Id, string Provider, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt, bool ServerReady, bool FcmReady = false, bool WebPushReady = false);
 
 public sealed record ContactHashSyncResponse(int Submitted, int Stored);
 

@@ -1,0 +1,56 @@
+<main class="identity-sheet">
+  <header class="identity-header">
+    <button type="button" class="back-action" (click)="back()"><ion-icon name="arrow-back-outline" aria-hidden="true"></ion-icon>{{ 'IDENTITY.BACK' | translate:'Volver' }}</button>
+    <span class="privacy-label"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'IDENTITY.PRIVATE_CHECK' | translate:'Comparación privada' }}</span>
+  </header>
+  <section class="identity-card" aria-labelledby="identity-title">
+    <div class="identity-heading">
+      <span class="identity-mark" aria-hidden="true"><ion-icon name="shield-checkmark-outline"></ion-icon></span>
+      <h1 id="identity-title">{{ 'IDENTITY.AUTO_TITLE' | translate:'Comprobación de seguridad' }}</h1>
+      @if (contactAlias) { <span class="contact-alias" dir="ltr">@{{ contactAlias }}</span> }
+      <p>{{ 'IDENTITY.AUTO_COPY' | translate:'Revisamos si las llaves coinciden con las guardadas en este dispositivo. Para confirmar a tu contacto, compara el QR en persona o por un canal de confianza.' }}</p>
+    </div>
+    @if (loading) {
+      <div class="identity-loading" role="status"><ion-spinner name="crescent" aria-hidden="true"></ion-spinner><span>{{ 'IDENTITY.AUTO_CHECKING' | translate:'Comprobando las llaves…' }}</span></div>
+    } @else if (qr) {
+      <aside class="continuity-card" [class.checked]="continuity === 'verified' || continuity === 'unchanged'" [class.changed]="continuity === 'changed'" role="status" aria-live="polite">
+        <ion-icon [name]="continuity === 'changed' ? 'warning-outline' : 'shield-checkmark-outline'" aria-hidden="true"></ion-icon>
+        <div>
+          @switch (continuity) {
+            @case ('verified') { <strong>{{ 'IDENTITY.STATE_VERIFIED' | translate:'Identidad comparada' }}</strong><p>{{ 'IDENTITY.STATE_VERIFIED_COPY' | translate:'Las llaves de tu contacto coinciden con las que ya comparaste en este dispositivo.' }}</p> }
+            @case ('unchanged') { <strong>{{ 'IDENTITY.STATE_UNCHANGED' | translate:'Llaves sin cambios' }}</strong><p>{{ 'IDENTITY.STATE_UNCHANGED_COPY' | translate:'Las llaves de tu contacto coinciden con las guardadas. Puedes comparar el QR para confirmar su identidad.' }}</p> }
+            @case ('changed') { <strong>{{ 'IDENTITY.STATE_CHANGED' | translate:'El código de seguridad cambió' }}</strong><p>{{ 'IDENTITY.STATE_CHANGED_COPY' | translate:'Compara el QR con tu contacto antes de continuar. Puede cambiar al vincular dispositivos o reinstalar.' }}</p> }
+            @default { <strong>{{ 'IDENTITY.STATE_UNKNOWN' | translate:'Listo para comparar' }}</strong><p>{{ 'IDENTITY.STATE_UNKNOWN_COPY' | translate:'Es la primera comprobación en este dispositivo. Escanea el QR de tu contacto para confirmar su identidad.' }}</p> }
+          }
+          @if (checkedAt) { <small>{{ 'IDENTITY.CHECKED_NOW' | translate:'Llaves comprobadas' }} · {{ checkedAt | localizedDate:'shortTime' }}</small> }
+          @if (verifiedAt && continuity === 'verified') { <small>{{ 'IDENTITY.LAST_COMPARED' | translate:'Código comparado' }} · {{ verifiedAt | localizedDate:'mediumDate' }}</small> }
+        </div>
+      </aside>
+      @if (cameraOpen) {
+        <section class="camera-section" (keydown.escape)="cancelCamera()" [attr.aria-label]="'IDENTITY.CAMERA_ACTION' | translate:'Escanear QR del contacto'">
+          <div id="identity-camera-reader" class="camera-reader"></div>
+          <p role="status">{{ cameraMessage }}</p>
+          <button type="button" class="image-action" (click)="cancelCamera()"><ion-icon name="close-outline" aria-hidden="true"></ion-icon>{{ 'COMMON.CANCEL' | translate:'Cancelar' }}</button>
+        </section>
+      } @else {
+        <div class="identity-qr"><img [src]="qr" [alt]="'IDENTITY.QR_ALT' | translate:'Código QR de comparación'" width="256" height="256"></div>
+        <p class="qr-hint">{{ 'IDENTITY.QR_HINT' | translate:'Tu contacto puede escanear este QR desde su pantalla de verificación.' }}</p>
+        <button type="button" class="confirm-action" [disabled]="busy || scanning || cameraCapturePending" (click)="startCamera()"><ion-icon name="camera-outline" aria-hidden="true"></ion-icon>{{ 'IDENTITY.CAMERA_ACTION' | translate:'Escanear QR del contacto' }}</button>
+        <input #qrFile type="file" accept="image/*" hidden (change)="scan($event)">
+        <button type="button" class="image-action" (click)="qrFile.click()" [disabled]="busy || scanning">@if (scanning) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="image-outline" aria-hidden="true"></ion-icon> }{{ 'IDENTITY.READ_IMAGE' | translate:'Leer QR de una imagen' }}</button>
+        <details class="other-methods">
+          <summary>{{ 'IDENTITY.OTHER_METHODS' | translate:'Otros métodos' }}</summary>
+          <p class="safety-code" dir="ltr">{{ code }}</p>
+          <label class="comparison-field"><span>{{ 'IDENTITY.CONTACT_CODE' | translate:'Código que muestra tu contacto' }}</span><input [(ngModel)]="comparison" maxlength="180" autocomplete="off" autocapitalize="off" [spellcheck]="false" [disabled]="busy || scanning" [placeholder]="'IDENTITY.CODE_PLACEHOLDER' | translate:'Pega su código de seguridad'"></label>
+          <button type="button" class="image-action" (click)="pasteCode()" [disabled]="busy || scanning"><ion-icon name="copy-outline" aria-hidden="true"></ion-icon>{{ 'IDENTITY.PASTE_ACTION' | translate:'Pegar y comparar' }}</button>
+          <button type="button" class="confirm-action" [disabled]="busy || scanning || !comparison.trim()" (click)="confirm()">@if (busy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="checkmark-circle-outline" aria-hidden="true"></ion-icon> }{{ 'IDENTITY.CONFIRM' | translate:'Comparar y guardar verificación' }}</button>
+        </details>
+      }
+      <div id="identity-file-reader" class="file-reader" aria-hidden="true"></div>
+    } @else {
+      <button type="button" class="image-action" (click)="loadIdentity()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button>
+    }
+    @if (busy) { <p class="comparison-progress" role="status"><ion-spinner name="crescent" aria-hidden="true"></ion-spinner>{{ 'IDENTITY.AUTO_CHECKING' | translate:'Comprobando las llaves…' }}</p> }
+    @if (message) { <p class="identity-feedback" [class.success]="verified" role="status" aria-live="polite">{{ message }}</p> }
+  </section>
+</main>

@@ -1,0 +1,25 @@
+<ion-modal class="chat-pass-modal" [isOpen]="modalOpen" (didDismiss)="closed.emit()">
+  <ng-template>
+    <section class="pass-sheet">
+      <header>
+        <h2>{{ 'ACCOUNT.NIVRA_PASS' | translate:'Pase Nivra' }}</h2>
+        <ion-button mode="ios" fill="clear" (click)="close()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></ion-button>
+      </header>
+      <div class="pass-content">
+        <p>{{ 'CHATS.PASS_HELP' | translate:'Tu contacto puede escanear este QR o abrir el enlace para encontrarte en Nivra.' }}</p>
+        <div class="pass-qr">
+          @if (qr) { <img [src]="qr" width="240" height="240" [alt]="'ACCOUNT.NIVRA_PASS' | translate:'Pase Nivra'"> }
+          @else if (!error) { <ion-spinner name="crescent"></ion-spinner> }
+        </div>
+        <strong dir="ltr">@{{ alias }}</strong>
+        <p class="pass-link" dir="ltr">{{ link }}</p>
+        @if (notice) { <p class="pass-notice" role="status">{{ notice }}</p> }
+        @if (error) { <p class="pass-error" role="alert">{{ error }}</p> }
+      </div>
+      <footer>
+        <ion-button mode="ios" fill="outline" (click)="copy()" [disabled]="busy"><ion-icon slot="start" name="copy-outline" aria-hidden="true"></ion-icon>{{ 'COMMON.COPY' | translate:'Copiar' }}</ion-button>
+        <ion-button mode="ios" (click)="share()" [disabled]="busy"><ion-icon slot="start" name="share-social-outline" aria-hidden="true"></ion-icon>{{ 'COMMON.SHARE' | translate:'Compartir' }}</ion-button>
+      </footer>
+    </section>
+  </ng-template>
+</ion-modal>

@@ -26,6 +26,7 @@ public class NivraIncomingCallActivity extends Activity {
     private TextView subtitleView;
     private BroadcastReceiver dismissReceiver;
     private boolean routed;
+    private final android.os.Handler expiryHandler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -53,6 +54,11 @@ public class NivraIncomingCallActivity extends Activity {
     protected void onStop() {
         unregisterDismissReceiver();
         super.onStop();
+    }
+
+    @Override protected void onDestroy() {
+        expiryHandler.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     private void configureWindow() {
@@ -121,6 +127,15 @@ public class NivraIncomingCallActivity extends Activity {
             return;
         }
         callId = stringExtra(intent, "callId", callId);
+        expiryHandler.removeCallbacksAndMessages(null);
+        long remaining = 75_000;
+        try { remaining = Long.parseLong(stringExtra(intent, "expiresAt", String.valueOf(System.currentTimeMillis() + remaining))) - System.currentTimeMillis(); }
+        catch (NumberFormatException ignored) { remaining = 0; }
+        if (remaining <= 0) { finish(); return; }
+        expiryHandler.postDelayed(() -> {
+            NivraNativePlugin.clearIncomingCallNotification(this, callId);
+            finish();
+        }, Math.min(remaining, 75_000));
         String callerName = stringExtra(intent, "callerName", "Nivra");
         String callType = stringExtra(intent, "callType", "Voice");
         if (callerView != null) {
@@ -168,7 +183,7 @@ public class NivraIncomingCallActivity extends Activity {
             @Override
             public void onReceive(Context context, Intent intent) {
                 String dismissedCallId = intent == null ? "" : intent.getStringExtra("callId");
-                if (callId.isEmpty() || callId.equals(dismissedCallId)) {
+                if ((intent != null && intent.getBooleanExtra("all", false)) || callId.isEmpty() || callId.equals(dismissedCallId)) {
                     finish();
                 }
             }

@@ -343,6 +343,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private storyPointerStartY = 0;
   private readonly quotedReplyCache = new Map<string, QuotedReplyVm>();
   private readonly quotedReplyLoads = new Set<string>();
+  private groupRoomRefreshTimer: number | null = null;
 
   constructor() {
     addIcons({
@@ -437,6 +438,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ionViewDidEnter(): void {
+    this.stopGroupRoomRefresh();
+    this.groupRoomRefreshTimer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') this.refreshActiveGroupCallBanner(this.conversation()?.id);
+    }, 15_000);
     const conversationId = this.conversation()?.id;
     if (conversationId) {
       this.restoreVerificationDraft(conversationId);
@@ -458,6 +463,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.refreshActiveGroupCallBanner(conversationId);
       void this.refreshConversationStories();
     }
+  }
+
+  ionViewWillLeave(): void { this.stopGroupRoomRefresh(); }
+
+  private stopGroupRoomRefresh(): void {
+    if (this.groupRoomRefreshTimer !== null) window.clearInterval(this.groupRoomRefreshTimer);
+    this.groupRoomRefreshTimer = null;
   }
 
   async loadOlderMessages(event: Event): Promise<void> {
@@ -484,6 +496,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.stopGroupRoomRefresh();
     this.destroyed = true;
     ++this.composerGeneration;
     this.finishContactInfoDismiss();

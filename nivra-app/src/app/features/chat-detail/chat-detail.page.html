@@ -33,6 +33,11 @@
         <ion-button mode="ios" fill="clear" [disabled]="busyAction !== ''" (click)="startCall('Video')" [attr.aria-label]="'COMMON.VIDEO' | translate:'Video'">
           <ion-icon name="videocam-outline"></ion-icon>
         </ion-button>
+        } @else {
+          <ion-button mode="ios" fill="solid" class="header-join-call" [disabled]="busyAction !== ''" (click)="joinGroupCall()">
+            <ion-icon [name]="calls.activeGroupRoomForConversation(conversation()?.id)?.call?.type === 'Video' ? 'videocam-outline' : 'call-outline'" slot="start"></ion-icon>
+            {{ 'COMMON.JOIN' | translate:'Unirse' }}
+          </ion-button>
         }
         <ion-button mode="ios" fill="clear" [attr.aria-label]="'COMMON.MENU' | translate:'Menu'" (click)="openChatMenu($event)">
           <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
@@ -57,11 +62,11 @@
   @if (calls.activeGroupRoomForConversation(conversation()?.id); as room) {
     <div class="group-call-banner">
       <div>
-        <ion-icon name="call-outline"></ion-icon>
-        <span>{{ 'CHAT.CALL_IN_PROGRESS' | translate:'Llamada en curso...' }}</span>
-        <small>{{ room.call.type === 'Video' ? ('CHAT.ENCRYPTED_GROUP_VIDEO_CALL' | translate:'Videollamada grupal cifrada') : ('CHAT.ENCRYPTED_GROUP_CALL' | translate:'Llamada grupal cifrada') }}</small>
+        <ion-icon [name]="room.call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
+        <span>{{ 'CHAT.ROOM_ACTIVE' | translate:'Sala activa' }}</span>
+        <small aria-live="polite">{{ room.joinedParticipantIds?.length || 0 }} {{ 'CHAT.ROOM_PARTICIPANTS' | translate:'en la sala' }} · {{ room.call.type === 'Video' ? ('COMMON.VIDEO' | translate:'Video') : ('COMMON.CALL' | translate:'Llamada') }}</small>
       </div>
-      <ion-button mode="ios" size="small" [disabled]="busyAction !== ''" (click)="joinGroupCall()">{{ calls.activeCall()?.id === room.call.id && calls.phase() !== 'ringing' ? 'Volver' : ('COMMON.JOIN' | translate:'Unirse') }}</ion-button>
+      <ion-button mode="ios" size="small" [disabled]="busyAction !== ''" (click)="joinGroupCall()">{{ calls.activeCall()?.id === room.call.id && calls.phase() !== 'ringing' ? ('CHAT.RETURN_CALL' | translate:'Volver a la llamada') : ('COMMON.JOIN' | translate:'Unirse') }}</ion-button>
     </div>
   }
 

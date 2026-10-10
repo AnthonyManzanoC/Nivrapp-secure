@@ -29,6 +29,8 @@ import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 import { WebLaunchService } from './core/services/web-launch.service';
 import { UnreadTabService } from './core/services/unread-tab.service';
 import { HistoryApprovalDialogComponent } from './shared/history-approval-dialog.component';
+import { AndroidUpdateService } from './core/services/android-update.service';
+import { AndroidUpdateDialogComponent } from './shared/android-update-dialog.component';
 
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 interface NativeStatusBarSurface {
@@ -41,7 +43,7 @@ interface NativeStatusBarSurface {
   templateUrl: 'app.component.html',
   styleUrls: ['app.component.scss'],
   standalone: true,
-  imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent, HistoryApprovalDialogComponent],
+  imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent, HistoryApprovalDialogComponent, AndroidUpdateDialogComponent],
 })
 export class AppComponent {
   private readonly zone = inject(NgZone);
@@ -65,6 +67,7 @@ export class AppComponent {
   readonly calls = inject(CallsService);
   readonly webLaunch = inject(WebLaunchService);
   private readonly unreadTab = inject(UnreadTabService);
+  private readonly androidUpdates = inject(AndroidUpdateService);
   private readonly now = signal(Date.now());
   private readonly currentUrl = signal(this.router.url);
   private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
@@ -95,6 +98,8 @@ export class AppComponent {
     void this.privacyEnforcement;
     void this.unreadTab;
     void this.webLaunch.start(() => this.canApplyWebUpdate());
+    this.androidUpdates.start();
+    effect(() => this.androidUpdates.safe.set(!this.appLock.isLocked() && this.canApplyWebUpdate()));
     if (Capacitor.getPlatform() === 'android') {
       // Ionic overlays and router navigation retain their higher priorities.
       // At the root, background the existing activity instead of finishing it.

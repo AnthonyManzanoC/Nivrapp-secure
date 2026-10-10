@@ -58,6 +58,8 @@ public sealed class PushNotificationService(
     };
 
     private readonly IDataProtector _tokenProtector = dataProtectionProvider.CreateProtector("Nivra.PushTokens.v1");
+    private readonly PushTokenCipher? _durableTokenCipher = string.IsNullOrWhiteSpace(configuration["Security:TokenSigningKey"])
+        ? null : new PushTokenCipher(configuration["Security:TokenSigningKey"]!);
     private readonly SemaphoreSlim _accessTokenLock = new(1, 1);
     private string? _accessToken;
     private string? _accessTokenCredentialKey;
@@ -83,6 +85,24 @@ public sealed class PushNotificationService(
                     return false;
                 }
             }
+        }
+    }
+
+    public bool IsFcmConfigured
+    {
+        get
+        {
+            try { return ResolveFcmRuntimeConfig(options.CurrentValue, initializeFirebaseApp: true) is not null; }
+            catch { return false; }
+        }
+    }
+
+    public bool IsWebPushConfigured
+    {
+        get
+        {
+            try { return ResolveStandardWebPushRuntimeConfig(options.CurrentValue) is not null; }
+            catch { return false; }
         }
     }
 
@@ -123,7 +143,7 @@ public sealed class PushNotificationService(
 
     public string ProtectToken(string token)
     {
-        return _tokenProtector.Protect(token);
+        return _durableTokenCipher?.Protect(token) ?? _tokenProtector.Protect(token);
     }
 
     public async Task SendMessageAsync(
@@ -169,6 +189,7 @@ public sealed class PushNotificationService(
                 ["callerUserId"] = callerUserId,
                 ["callerName"] = callerName,
                 ["callType"] = callType.ToString(),
+                ["expiresAt"] = DateTimeOffset.UtcNow.AddSeconds(75).ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["conversationId"] = conversationId ?? "",
                 ["pushIntent"] = "wake_call",
                 ["silent"] = "1",
@@ -323,6 +344,7 @@ public sealed class PushNotificationService(
         var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
         var tokens = await db.PushTokens
             .Where(token => token.UserId == userId &&
+                db.Devices.Any(device => device.Id == token.DeviceId && device.UserId == userId && device.IsTrusted && device.RevokedAt == null) &&
                 (targetDeviceId == null || token.DeviceId == targetDeviceId) &&
                 token.RevokedAt == null &&
                 (token.Provider == "fcm" ||
@@ -351,17 +373,20 @@ public sealed class PushNotificationService(
             var rawToken = TryUnprotectToken(token.TokenCiphertext);
             if (string.IsNullOrWhiteSpace(rawToken))
             {
-                token.RevokedAt = DateTimeOffset.UtcNow;
                 unreadableCount += 1;
-                changed = true;
                 logger.LogWarning(
-                    "Revoked unreadable push token {PushTokenId} for user {UserId}. DataProtection keys may not be persisted.",
+                    "Push destination {PushTokenId} for user {UserId} needs re-registration. Legacy DataProtection keys may not be persisted.",
                     token.Id,
                     userId);
                 continue;
             }
 
             FcmSendResult result;
+            var scopedData = new Dictionary<string, string>(data, StringComparer.Ordinal)
+            {
+                ["recipientUserId"] = token.UserId,
+                ["recipientDeviceId"] = token.DeviceId
+            };
             if (IsStandardWebPushProvider(token.Provider))
             {
                 if (webPushConfig is null)
@@ -369,7 +394,7 @@ public sealed class PushNotificationService(
                     skippedCount += 1;
                     continue;
                 }
-                result = await SendStandardWebPushAsync(webPushConfig, rawToken, title, body, data, includeNotificationPayload, silentDataOnly, cancellationToken);
+                result = await SendStandardWebPushAsync(webPushConfig, rawToken, title, body, scopedData, includeNotificationPayload, silentDataOnly, cancellationToken);
             }
             else
             {
@@ -378,7 +403,7 @@ public sealed class PushNotificationService(
                     skippedCount += 1;
                     continue;
                 }
-                result = await SendFcmAsync(fcmConfig, rawToken, title, body, data, includeNotificationPayload, silentDataOnly, cancellationToken);
+                result = await SendFcmAsync(fcmConfig, rawToken, title, body, scopedData, includeNotificationPayload, silentDataOnly, cancellationToken);
             }
             if (result.Sent)
             {
@@ -534,7 +559,7 @@ public sealed class PushNotificationService(
         var normalizedType = data.TryGetValue("type", out var type)
             ? type.Replace('_', '-').ToLowerInvariant()
             : "";
-        var isTerminalCall = normalizedType is "end-call" or "missed-call" or "call-ended";
+        var isTerminalCall = normalizedType is "end-call" or "missed-call" or "call-ended" or "call-rejected" or "call-timeout" or "call-failed";
         var isIncomingCall = normalizedType.Contains("call", StringComparison.Ordinal) && !isTerminalCall;
         var androidTtl = isIncomingCall ? "75s" : isTerminalCall ? "300s" : "86400s";
         var webTtl = isIncomingCall ? "75" : isTerminalCall ? "300" : "86400";
@@ -977,7 +1002,9 @@ public sealed class PushNotificationService(
 
         try
         {
-            return _tokenProtector.Unprotect(tokenCiphertext);
+            return tokenCiphertext.StartsWith(PushTokenCipher.Prefix, StringComparison.Ordinal)
+                ? _durableTokenCipher?.Unprotect(tokenCiphertext)
+                : _tokenProtector.Unprotect(tokenCiphertext);
         }
         catch (Exception exception)
         {

@@ -103,6 +103,17 @@ public static class CallCoordination
         return true;
     }
 
+    // Ending a room is distinct from leaving it. Only its initiator's currently
+    // claimed session can perform this explicit action; another tab cannot.
+    public static bool TryEndForAll(CallSession call, string userId, string deviceId, string? sessionId, DateTimeOffset now)
+    {
+        if (call.InitiatorUserId != userId || !IsOwner(call, userId, deviceId, sessionId)) return false;
+        call.Status = CallStatus.Ended;
+        call.EndedAt ??= now;
+        call.ParticipantSessions.Clear();
+        return true;
+    }
+
     public static bool ShouldIgnoreTimeout(CallSession call, string userId) =>
         call.Status == CallStatus.Active || call.ParticipantSessions.Keys.Any(participant => participant != userId);
 }

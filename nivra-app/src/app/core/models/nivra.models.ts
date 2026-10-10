@@ -572,6 +572,8 @@ export interface PushTokenResponse {
   createdAt: string;
   revokedAt?: string | null;
   serverReady: boolean;
+  fcmReady?: boolean;
+  webPushReady?: boolean;
 }
 
 export interface ContactHashSyncResponse {
@@ -581,6 +583,8 @@ export interface ContactHashSyncResponse {
 
 export interface PushStatusResponse {
   serverReady: boolean;
+  fcmReady?: boolean;
+  webPushReady?: boolean;
   provider: string;
 }
 

@@ -57,6 +57,82 @@ describe('call session isolation', () => {
 
   afterEach(() => service.ngOnDestroy());
 
+  it('ignores a native answer addressed to a different account before clearing or loading the call', async () => {
+    const clear = spyOn(TestBed.inject(NativeDeviceService), 'clearIncomingCall').and.resolveTo();
+    const answer = spyOn(service, 'accept').and.resolveTo();
+    const rejoin = spyOn(service, 'rejoin').and.resolveTo();
+    await (service as any).handleNativeCallAction({ action: 'answer', callId: invitation.id,
+      recipientUserId: 'previous-account', recipientDeviceId: 'shared-device' });
+    expect(clear).not.toHaveBeenCalled();
+    expect(TestBed.inject(Router).navigateByUrl).not.toHaveBeenCalled();
+    expect(api.get).not.toHaveBeenCalled();
+    expect(answer).not.toHaveBeenCalled();
+    expect(rejoin).not.toHaveBeenCalled();
+  });
+
+  it('ignores a native answer addressed to another device of the same account', async () => {
+    const clear = spyOn(TestBed.inject(NativeDeviceService), 'clearIncomingCall').and.resolveTo();
+    await (service as any).handleNativeCallAction({ action: 'answer', callId: invitation.id,
+      recipientUserId: 'me', recipientDeviceId: 'previous-device' });
+    expect(clear).not.toHaveBeenCalled();
+    expect(TestBed.inject(Router).navigateByUrl).not.toHaveBeenCalled();
+    expect(api.get).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('still answers a matching native invitation and supports earlier events without recipient fields', async () => {
+    service.activeCall.set(invitation);
+    const answer = spyOn(service, 'accept').and.resolveTo();
+    await (service as any).handleNativeCallAction({ action: 'answer', callId: invitation.id,
+      recipientUserId: 'me', recipientDeviceId: 'shared-device' });
+    await (service as any).handleNativeCallAction({ action: 'answer', callId: invitation.id });
+    expect(answer).toHaveBeenCalledTimes(2);
+  });
+
+  it('abandons a native action if the account changes while dismissing its notification', async () => {
+    let dismiss!: () => void;
+    spyOn(TestBed.inject(NativeDeviceService), 'clearIncomingCall').and.returnValue(new Promise<void>(resolve => dismiss = resolve));
+    const answer = spyOn(service, 'accept').and.resolveTo();
+    const rejoin = spyOn(service, 'rejoin').and.resolveTo();
+    const action = (service as any).handleNativeCallAction({ action: 'answer', callId: invitation.id,
+      recipientUserId: 'me', recipientDeviceId: 'shared-device' });
+    (service as any).auth.session.set({ user: { id: 'other-account' }, device: { id: 'other-device' } });
+    dismiss();
+    await action;
+    expect(TestBed.inject(Router).navigateByUrl).not.toHaveBeenCalled();
+    expect(answer).not.toHaveBeenCalled();
+    expect(rejoin).not.toHaveBeenCalled();
+    expect(api.get).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a shared group after the native answer lookup crosses an account change', fakeAsync(() => {
+    const response = new Subject<CallSession>();
+    api.get.and.returnValue(response);
+    const action = (service as any).handleNativeCallAction({ action: 'answer', callId: invitation.id,
+      recipientUserId: 'me', recipientDeviceId: 'shared-device' });
+    flushMicrotasks();
+    expect(api.get).toHaveBeenCalledWith('/calls/incoming');
+    (service as any).auth.session.set({ user: { id: 'other-account' }, device: { id: 'other-device' } });
+    response.next({ ...invitation, conversationId: 'shared-group', isGroupRoom: true });
+    response.complete();
+    flushMicrotasks();
+    expect(api.post).not.toHaveBeenCalled();
+    expect(service.activeCall()).toBeNull();
+    void action;
+  }));
+
+  it('does not reject a previous device invitation after its call lookup finishes', async () => {
+    const response = new Subject<CallSession>();
+    api.get.and.returnValue(response);
+    const reject = (service as any).rejectIncomingCallById(invitation.id);
+    (service as any).auth.session.set({ user: { id: 'me' }, device: { id: 'new-device' } });
+    response.next(invitation);
+    response.complete();
+    await reject;
+    expect(api.post).not.toHaveBeenCalled();
+    expect(service.activeCall()).toBeNull();
+  });
+
   it('refreshes ICE credentials without changing immutable negotiated configuration', async () => {
     const connection = new RTCPeerConnection({ iceCandidatePoolSize: 4, bundlePolicy: 'max-bundle' });
     connection.addTransceiver('audio');
@@ -674,6 +750,162 @@ describe('call session isolation', () => {
     expect(camera).not.toHaveBeenCalled();
     expect(service.cameraOff()).toBeTrue();
     (service as any).liveKitRoom = null;
+  });
+
+  it('coalesces an answer and early offer capture and reconciles camera state after a claim update', async () => {
+    const call = { ...invitation, type: 'Video', status: 'Active' };
+    service.activeCall.set(call);
+    service.phase.set('connecting');
+    let resolveCapture!: (stream: MediaStream) => void;
+    const capture = spyOn(navigator.mediaDevices, 'getUserMedia').and.returnValue(new Promise<MediaStream>(resolve => resolveCapture = resolve));
+    const camera = document.createElement('canvas').captureStream().getVideoTracks()[0];
+    const context = new AudioContext();
+    const microphone = context.createMediaStreamDestination().stream.getAudioTracks()[0];
+    const stream = new MediaStream([microphone, camera]);
+    try {
+      const answerCapture = (service as any).prepareMedia(true);
+      const earlyOfferCapture = (service as any).prepareMedia(true);
+      expect(earlyOfferCapture).toBe(answerCapture);
+      await (service as any).applyActiveCallUpdate(call);
+      resolveCapture(stream);
+      await Promise.all([answerCapture, earlyOfferCapture]);
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(service.cameraOff()).toBeFalse();
+      expect(service.localStream()?.getVideoTracks()).toEqual([camera]);
+      expect(camera.readyState).toBe('live');
+      expect(service.muted()).toBeFalse();
+    } finally { await context.close(); }
+  });
+
+  it('preserves camera intent when a group microphone publication temporarily changes local UI state', async () => {
+    const call = { ...invitation, type: 'Video', isGroupRoom: true, status: 'Active' };
+    service.activeCall.set(call);
+    service.cameraOff.set(false);
+    const camera = jasmine.createSpy().and.resolveTo();
+    const room = { localParticipant: {
+      setCameraEnabled: camera,
+      setMicrophoneEnabled: jasmine.createSpy().and.callFake(async () => service.cameraOff.set(true)),
+    } };
+    (service as any).liveKitRoom = room;
+    await (service as any).publishLiveKitLocalMedia(room, call, true);
+    expect(camera).toHaveBeenCalledWith(true);
+    expect(service.cameraOff()).toBeFalse();
+    (service as any).liveKitRoom = null;
+  });
+
+  it('reconciles local room camera UI with muted and unmuted publications', () => {
+    const track = document.createElement('canvas').captureStream().getVideoTracks()[0];
+    const publication = { source: 'camera', isMuted: false, track: { mediaStreamTrack: track } };
+    (service as any).liveKitRoom = { localParticipant: { trackPublications: new Map([['camera', publication]]) } };
+    service.cameraOff.set(true);
+    (service as any).syncLiveKitLocalTracks();
+    expect(service.cameraOff()).toBeFalse();
+    publication.isMuted = true;
+    (service as any).syncLiveKitLocalTracks();
+    expect(service.cameraOff()).toBeTrue();
+    publication.isMuted = false;
+    (service as any).syncLiveKitLocalTracks();
+    expect(service.cameraOff()).toBeFalse();
+    (service as any).liveKitRoom = null;
+  });
+
+  it('leaves an initiated group without ending the room or writing a final chat log', async () => {
+    const call = { ...invitation, conversationId: 'group', initiatorUserId: 'me', isGroupRoom: true, status: 'Active' };
+    service.activeCall.set(call);
+    service.phase.set('connected');
+    const continuing = { ...call, participantSessions: { peer: { deviceId: 'peer-device', clientSessionId: 'peer-tab' } } };
+    api.post.and.returnValue(of(continuing));
+    spyOn<any>(service, 'sendCallSignal').and.resolveTo();
+    const summary = spyOn<any>(service, 'recordCallSystemOnce').and.resolveTo();
+    await service.end();
+    expect(api.post).toHaveBeenCalledWith('/calls/incoming/leave', jasmine.any(Object));
+    expect(api.post.calls.allArgs().some(args => args[0].endsWith('/end'))).toBeFalse();
+    expect(service.activeCall()).toBeNull();
+    expect(service.activeGroupRoomForConversation('group')?.call.status).toBe('Active');
+    expect(summary).not.toHaveBeenCalled();
+  });
+
+  it('only explicitly ends a group for everyone from its initiating session', async () => {
+    const call = { ...invitation, conversationId: 'group', initiatorUserId: 'peer', isGroupRoom: true, status: 'Active' };
+    service.activeCall.set(call);
+    service.phase.set('connected');
+    await service.endGroupForEveryone();
+    expect(api.post).not.toHaveBeenCalled();
+    const ownCall = { ...call, initiatorUserId: 'me' };
+    service.activeCall.set(ownCall);
+    const ended = { ...ownCall, status: 'Ended', endedAt: new Date().toISOString(), participantSessions: {} };
+    api.post.and.returnValue(of(ended));
+    spyOn<any>(service, 'recordCallSystemOnce').and.resolveTo();
+    await service.endGroupForEveryone();
+    expect(api.post).toHaveBeenCalledWith('/calls/incoming/end', jasmine.objectContaining({ reason: 'end-for-all' }));
+    expect(service.activeCall()).toBeNull();
+    expect(service.activeGroupRoomForConversation('group')).toBeNull();
+  });
+
+  it('keeps the local room active if ending it for everyone fails', async () => {
+    const call = { ...invitation, conversationId: 'group', initiatorUserId: 'me', isGroupRoom: true, status: 'Active' };
+    service.activeCall.set(call);
+    service.phase.set('connected');
+    api.post.and.returnValue(throwError(() => new Error('Server unavailable')));
+    await service.endGroupForEveryone();
+    expect(service.activeCall()?.id).toBe(call.id);
+    expect(service.phase()).toBe('connected');
+    expect(service.error()).toContain('Server unavailable');
+  });
+
+  it('does not remove a newer group room when an older ended event arrives late', () => {
+    const older = { ...invitation, conversationId: 'group', isGroupRoom: true, startedAt: '2026-10-09T10:00:00Z' };
+    const newer = { ...older, id: 'newer', startedAt: '2026-10-09T10:05:00Z' };
+    (service as any).rememberGroupRoom(newer);
+    (service as any).forgetGroupRoom({ ...older, status: 'Ended' });
+    (service as any).rememberGroupRoom(older);
+    expect(service.activeGroupRoomForConversation('group')?.call.id).toBe('newer');
+  });
+
+  it('discards an active-room lookup after the account or device changes', async () => {
+    spyOn<any>(service, 'isGroupConversationId').and.returnValue(true);
+    const response = new Subject<CallSession>();
+    api.get.and.returnValue(response);
+    const lookup = service.refreshActiveGroupRoom('group');
+    (service as any).auth.session.set({ user: { id: 'other-account' }, device: { id: 'other-device' } });
+    response.next({ ...invitation, conversationId: 'group', isGroupRoom: true });
+    response.complete();
+    expect(await lookup).toBeNull();
+    expect(service.activeGroupRoomForConversation('group')).toBeNull();
+  });
+
+  it('does not restore a room from an HTTP snapshot after a newer ended event', async () => {
+    spyOn<any>(service, 'isGroupConversationId').and.returnValue(true);
+    const call = { ...invitation, conversationId: 'group', isGroupRoom: true };
+    (service as any).rememberGroupRoom(call);
+    const response = new Subject<CallSession>();
+    api.get.and.returnValue(response);
+    const lookup = service.refreshActiveGroupRoom('group');
+    (service as any).forgetGroupRoom(call);
+    response.next(call); response.complete();
+    expect(await lookup).toBeNull();
+    expect(service.activeGroupRoomForConversation('group')).toBeNull();
+  });
+
+  it('invalidates an initial room lookup when its end arrives before it was cached', async () => {
+    spyOn<any>(service, 'isGroupConversationId').and.returnValue(true);
+    const call = { ...invitation, conversationId: 'group', isGroupRoom: true };
+    const response = new Subject<CallSession>();
+    api.get.and.returnValue(response);
+    const lookup = service.refreshActiveGroupRoom('group');
+    (service as any).forgetGroupRoom({ ...call, status: 'Ended' });
+    response.next(call); response.complete();
+    expect(await lookup).toBeNull();
+    expect(service.activeGroupRoomForConversation('group')).toBeNull();
+  });
+
+  it('does not claim a group room that ended between displaying and tapping Join', async () => {
+    spyOn<any>(service, 'isGroupConversationId').and.returnValue(true);
+    api.get.and.returnValue(of(null));
+    const call = { ...invitation, conversationId: 'group', isGroupRoom: true };
+    await service.joinGroupRoom({ roomId: call.id, groupId: 'group', conversationId: 'group', call, participantUserIds: call.participantUserIds, startedAt: call.startedAt });
+    expect(api.post).not.toHaveBeenCalled();
+    expect(service.activeCall()).toBeNull();
   });
 
   it('ignores group camera publication results belonging to a call that already closed', async () => {

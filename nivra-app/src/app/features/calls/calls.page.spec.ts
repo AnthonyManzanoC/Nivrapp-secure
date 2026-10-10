@@ -29,6 +29,8 @@ describe('call video presentation', () => {
       error: signal(''), mediaUpgradeInFlight: signal(false), toggleCamera: jasmine.createSpy().and.resolveTo(),
       acceptVideoUpgrade: jasmine.createSpy().and.resolveTo(),
       declineVideoUpgrade: jasmine.createSpy(), clearInactiveCallUi: jasmine.createSpy(),
+      canEndGroupForEveryone: jasmine.createSpy().and.returnValue(false),
+      end: jasmine.createSpy().and.resolveTo(), endGroupForEveryone: jasmine.createSpy().and.resolveTo(),
     };
     TestBed.configureTestingModule({ providers: [
       { provide: CallsService, useValue: calls },
@@ -49,6 +51,39 @@ describe('call video presentation', () => {
     expect(page.mainVideoParticipantId()).toBe('peer');
     expect(page.pipVideoStream()).toBe(local);
     expect(page.pipVideoParticipantId()).toBe('me');
+  });
+
+  it('gives the room initiator distinct leave and end-for-everyone actions', async () => {
+    calls.isGroupCall.and.returnValue(true);
+    calls.canEndGroupForEveryone.and.returnValue(true);
+    await page.endActive();
+    expect(page.exitModalOpen).toBeTrue();
+    expect(calls.end).not.toHaveBeenCalled();
+    expect(calls.endGroupForEveryone).not.toHaveBeenCalled();
+    await page.leaveActive();
+    expect(calls.end).toHaveBeenCalledWith('call');
+    expect(calls.endGroupForEveryone).not.toHaveBeenCalled();
+    expect(page.exitModalOpen).toBeFalse();
+  });
+
+  it('ends a room for everyone only after choosing that explicit action', async () => {
+    calls.isGroupCall.and.returnValue(true);
+    calls.canEndGroupForEveryone.and.returnValue(true);
+    await page.endActive();
+    await page.endForEveryone();
+    expect(calls.endGroupForEveryone).toHaveBeenCalledTimes(1);
+    expect(calls.end).not.toHaveBeenCalled();
+  });
+
+  it('closes the exit choice when the call changes and does not terminate the next room', async () => {
+    calls.isGroupCall.and.returnValue(true);
+    calls.canEndGroupForEveryone.and.returnValue(true);
+    await page.endActive();
+    calls.activeCall.set({ id: 'next-call', type: 'Voice' });
+    TestBed.flushEffects();
+    expect(page.exitModalOpen).toBeFalse();
+    await page.endForEveryone();
+    expect(calls.endGroupForEveryone).not.toHaveBeenCalled();
   });
 
   it('refreshes a reused remote stream when its video track starts receiving', () => {

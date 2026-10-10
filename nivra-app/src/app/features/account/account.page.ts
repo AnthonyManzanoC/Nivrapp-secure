@@ -29,6 +29,7 @@ import { TranslateService } from '../../core/services/translate.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
 import { NativeDeviceService } from '../../core/services/native-device.service';
+import { AndroidUpdateService } from '../../core/services/android-update.service';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 import { formatNivraNumber } from '../../core/utils/nivra-number';
 import { RecoveryEmailComponent, RecoveryEmailState } from '../../shared/recovery-email.component';
@@ -55,6 +56,7 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly panicPin = inject(PanicPinService);
   readonly push = inject(PushService);
   readonly nativeDevice = inject(NativeDeviceService);
+  readonly androidUpdates = inject(AndroidUpdateService);
   private readonly router = inject(Router);
   private readonly loadingController = inject(LoadingController);
   private readonly ngZone = inject(NgZone);
