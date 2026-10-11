@@ -80,8 +80,6 @@ builder.Services.AddSingleton(infrastructure);
 if (infrastructure.Enabled)
 {
     var redisOptions = ConfigurationOptions.Parse(builder.Configuration.GetConnectionString("RealtimeRedis")!);
-    if (!builder.Environment.IsDevelopment() && !redisOptions.Ssl)
-        throw new InvalidOperationException("Multi-instance Redis must use TLS in production.");
     redisOptions.AbortOnConnectFail = false;
     redisOptions.ConnectTimeout = 3000;
     redisOptions.SyncTimeout = 3000;

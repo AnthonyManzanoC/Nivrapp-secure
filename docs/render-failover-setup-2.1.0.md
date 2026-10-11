@@ -6,7 +6,7 @@ Todavía no hay un Redis compartido configurado. La versión 2.1.0 puede funcion
 
 ## 1. Preparar un Redis accesible desde ambas cuentas
 
-Utilizar **un mismo Redis TCP con TLS** al que puedan conectarse los dos servicios. Una dirección privada accesible únicamente desde la primera cuenta no sirve al segundo servicio. El proveedor debe admitir conexiones persistentes, pub/sub para SignalR, comandos Redis normales, TTL y scripts Lua. Una API REST de almacenamiento no sustituye la conexión Redis usada aquí.
+Utilizar **un mismo Redis TCP** al que puedan conectarse los dos servicios, preferiblemente con TLS. Una dirección privada accesible únicamente desde la primera cuenta no sirve al segundo servicio. El proveedor debe admitir conexiones persistentes, pub/sub para SignalR, comandos Redis normales, TTL y scripts Lua. Una API REST de almacenamiento no sustituye la conexión Redis usada aquí.
 
 Obtener del panel del proveedor el host, puerto, contraseña y, si utiliza ACL, usuario. Guardarlos exclusivamente en las variables de los dos servicios. No compartirlos en un chat ni subirlos a Git. Revisar límites de conexiones, memoria y pub/sub del plan; Redis debe permanecer disponible para ambos nodos.
 
@@ -20,7 +20,21 @@ MultiInstance__Namespace=nivra
 ConnectionStrings__RealtimeRedis=<host>:<puerto>,password=<contraseña>,ssl=true,abortConnect=false,connectTimeout=10000,syncTimeout=5000
 ```
 
-Si el proveedor exige un usuario Redis, agregar `user=<usuario>` a la cadena. StackExchange.Redis utiliza el formato anterior; no pegar directamente una URL `rediss://`. No desactivar TLS ni la validación de certificados.
+Si el proveedor exige un usuario Redis, agregar `user=<usuario>` a la cadena. StackExchange.Redis utiliza el formato anterior; no pegar directamente una URL `rediss://`. Cuando TLS esté disponible, usar `ssl=true` y conservar la validación de certificados.
+
+### Redis Cloud Free sin TLS: corrección del 11 de octubre
+
+El plan Free de Redis Cloud Essentials [no ofrece TLS](https://redis.io/docs/latest/operate/rc/security/database-security/tls-ssl/). El hotfix posterior al tag 2.1.0 en `main` respeta `ssl=false` también en producción y elimina la excepción `Multi-instance Redis must use TLS in production`. No modifica las otras comprobaciones del cluster.
+
+Para ese plan, configurar en ambos Render:
+
+```text
+ConnectionStrings__RealtimeRedis=<host>:<puerto>,user=default,password=<contraseña-nueva>,ssl=false,abortConnect=false,connectTimeout=10000,syncTimeout=5000
+```
+
+La contraseña y el tráfico Redis viajan sin cifrado de transporte en este modo. Limitar el acceso de red a los servicios autorizados cuando el proveedor lo permita. Cambiar cualquier contraseña compartida fuera del panel; nunca guardarla en el repositorio. La web y el APK siguen conectándose a las APIs por HTTPS, pero eso no cifra el enlace de la API a Redis.
+
+En el Manual Deploy elegir el último commit de `main` que contiene este hotfix; volver a desplegar el tag original 2.1.0 conserva la excepción anterior.
 
 Conservar en ambos los valores que ya comparten: PostgreSQL/Supabase, clave de firma de sesiones, S3, LiveKit y claves Web Push. Comprobar además:
 
@@ -35,7 +49,7 @@ Para límites de autenticación por IP detrás de un proxy, usar exclusivamente 
 
 ## 3. Hacer Manual Deploy en los dos servicios
 
-Elegir el mismo commit publicado para la 2.1.0 en ambos. Esperar a que cada despliegue termine correctamente. No rotar la clave de firma ni crear otra base/bucket para el respaldo. Esta versión no necesita una migración nueva de base de datos para varias APIs.
+Elegir el mismo commit de `main` que incluye el hotfix sin bloqueo TLS en ambos. Esperar a que cada despliegue termine correctamente. No rotar la clave de firma ni crear otra base/bucket para el respaldo. Esta versión no necesita una migración nueva de base de datos para varias APIs.
 
 ## 4. Comprobar la activación
 
@@ -48,6 +62,8 @@ Desde la carpeta del proyecto:
 Sólo un resultado `Cluster compatible` con salida 0 confirma que ambos nodos publican la misma huella y tienen PostgreSQL, almacenamiento compartido, Redis, FCM y Web Push preparados. El diagnóstico no envía credenciales ni cambia variables. Si aparece `Cluster not ready`, corregir el campo que falta; un timeout también puede significar un arranque frío. No considerar el respaldo activado con salida 2.
 
 Abrir la web o APK 2.1.0 cuando la primaria esté lista permite guardar su huella pública de compatibilidad. Después, un fallo de red o infraestructura puede seleccionar automáticamente el otro nodo sano. Las operaciones de escritura cuya respuesta se perdió no se repiten a ciegas. Para permitir una instalación completamente nueva con la primaria ya caída, se puede compilar la huella pública verificada en `apiClusterFingerprint`; requiere volver a generar los clientes.
+
+Si la primaria agotó su cuota antes de que los clientes aprendieran la huella, desplegar este hotfix en la secundaria corrige el arranque del servidor pero no cambia por sí solo la confianza guardada del cliente. Hace falta recuperar la primaria para aprenderla o publicar clientes con la huella obtenida de una configuración compartida verificada. No usar una huella inventada ni interpretar el timeout de la primaria como confirmación de compatibilidad.
 
 ## Tráfico y servidores futuros
 

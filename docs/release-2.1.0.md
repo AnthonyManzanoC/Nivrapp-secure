@@ -43,3 +43,7 @@ La compilación web mantiene el aviso existente del presupuesto inicial: 3,01 MB
 El usuario confirmó que ambas APIs comparten las variables existentes y que todavía no tiene Redis compartido. El respaldo no se presenta como activo: requiere Redis TCP/TLS compartido, FCM operativo en la secundaria y Manual Deploy del mismo commit en ambos servicios. Seguir [configuración paso a paso](render-failover-setup-2.1.0.md) y obtener salida 0 en `tools/check-api-cluster.ps1`.
 
 No se simuló una caída en las cuentas reales ni se efectuó una prueba Redis real entre esos hosts. La comprobación visual por Computer Use se detuvo por URL no verificable; siguen pendientes la validación física de Safari/Mac y de Android dormido. Una API gratuita dormida puede tardar en iniciar; las dependencias compartidas y sus cuotas siguen existiendo.
+
+### Hotfix posterior al tag 2.1.0, 11 de octubre
+
+`main` elimina el bloqueo de arranque que exigía TLS a Redis en producción para admitir el `ssl=false` configurado por el operador. Redis Cloud Free no ofrece TLS; este modo deja sin cifrado de transporte el enlace de API a Redis. El tag original y los paquetes publicados conservan su contenido. Desplegar el commit del hotfix, no volver a desplegar el tag original. La [guía actualizada](render-failover-setup-2.1.0.md) describe la configuración y el caso de clientes sin huella cuando la primaria ya está caída.

@@ -13,7 +13,7 @@ Además configurar en ambos:
 | Variable | Valor/configuración |
 | --- | --- |
 | `MultiInstance__Enabled` | `true` |
-| `ConnectionStrings__RealtimeRedis` | El mismo Redis accesible a los dos servicios; formato StackExchange.Redis `host:puerto,password=…,ssl=true`. Usar TLS en producción. No es una URL `rediss://`. |
+| `ConnectionStrings__RealtimeRedis` | El mismo Redis accesible a los dos servicios; formato StackExchange.Redis `host:puerto,password=…,ssl=true`. Se recomienda TLS. El hotfix posterior a 2.1.0 permite `ssl=false` si el proveedor no ofrece TLS; ver riesgos y configuración en la guía. No es una URL `rediss://`. |
 | `MultiInstance__Namespace` | El mismo nombre de aplicación, por ejemplo `nivra`; permite separar despliegues que comparten Redis. |
 | `Security__TokenSigningKey` | La misma clave durable existente, con al menos 32 caracteres. Una rotación de esta clave necesita un plan: invalida sesiones y cambia la protección de tokens push. |
 | `Storage__Provider` | `S3` o `SupabaseS3`, con endpoint HTTPS, bucket y credenciales completos. Nunca almacenamiento local entre hosts. |
@@ -22,7 +22,7 @@ Además configurar en ambos:
 | `Push__Fcm__ServiceAccountPath` u otra fuente admitida | Credenciales válidas del mismo proyecto en cada host. |
 | `Push__WebPush__PublicKey` / `PrivateKey` | Las mismas claves VAPID válidas en ambos hosts. |
 
-`MultiInstance__Enabled=true` rechaza el arranque si falta Redis, almacenamiento compartido o una clave de firma durable. También rechaza Redis sin TLS en producción. No hace un fallback silencioso a archivos locales. No hay migraciones nuevas para esta arquitectura.
+`MultiInstance__Enabled=true` rechaza el arranque si falta Redis, almacenamiento compartido o una clave de firma durable. El tag original 2.1.0 también rechaza Redis sin TLS en producción; el hotfix del 11 de octubre en `main` elimina únicamente ese bloqueo y respeta la configuración `ssl`. No hace un fallback silencioso a archivos locales. No hay migraciones nuevas para esta arquitectura.
 
 ## Cómo se acepta una API de respaldo
 
