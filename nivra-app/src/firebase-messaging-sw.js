@@ -48,7 +48,7 @@ try {
   // The foreground app can still pass a service worker registration explicitly.
 }
 
-const FIREBASE_SDK_VERSION = self.NIVRA_FIREBASE_SDK_VERSION || '12.14.0';
+const FIREBASE_SDK_VERSION = self.NIVRA_FIREBASE_SDK_VERSION || '12.19.0';
 const FIREBASE_CONFIG = self.NIVRA_FIREBASE_CONFIG || {
   apiKey: 'AIzaSyC4TZyBBy6Hj_2vgAngbuN8QD6ND48GEyg',
   authDomain: 'nivra-af67e.firebaseapp.com',

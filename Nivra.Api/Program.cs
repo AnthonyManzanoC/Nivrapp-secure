@@ -9,6 +9,7 @@ using Nivra.Api.Infrastructure;
 using Nivra.Api.Realtime;
 using Nivra.Api.Security;
 using Nivra.Api.Services;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 const long maxEncryptedUploadBytes = 256L * 1024 * 1024 + 4096;
@@ -73,6 +74,30 @@ builder.Services.AddSingleton<EncryptedFileStorage>();
 builder.Services.AddSingleton<PhoneOtpService>();
 builder.Services.AddSingleton<QrLoginService>();
 builder.Services.AddSingleton<RealtimePresence>();
+var infrastructure = new InfrastructureReadiness(builder.Configuration);
+infrastructure.ValidateStartup(builder.Environment.IsDevelopment());
+builder.Services.AddSingleton(infrastructure);
+if (infrastructure.Enabled)
+{
+    var redisOptions = ConfigurationOptions.Parse(builder.Configuration.GetConnectionString("RealtimeRedis")!);
+    if (!builder.Environment.IsDevelopment() && !redisOptions.Ssl)
+        throw new InvalidOperationException("Multi-instance Redis must use TLS in production.");
+    redisOptions.AbortOnConnectFail = false;
+    redisOptions.ConnectTimeout = 3000;
+    redisOptions.SyncTimeout = 3000;
+    redisOptions.AsyncTimeout = 3000;
+    var redisPrefix = $"nivra:{infrastructure.ClusterFingerprint}";
+    redisOptions.ChannelPrefix = RedisChannel.Literal(redisPrefix);
+    builder.Services.AddSingleton<IConnectionMultiplexer>(_ => ConnectionMultiplexer.Connect(redisOptions));
+    builder.Services.AddSingleton(new SharedStateCipher(configuredTokenSigningKey!));
+    builder.Services.AddSingleton<ISharedEphemeralState, RedisEphemeralState>();
+    builder.Services.AddSingleton<SharedAuthRateLimiter>();
+    builder.Services.AddHostedService<DistributedPresenceHeartbeat>();
+    builder.Services.AddSignalR().AddStackExchangeRedis(options =>
+    {
+        options.Configuration = redisOptions;
+    });
+}
 builder.Services.AddSingleton<PushNotificationService>();
 builder.Services.AddSingleton<LiveKitTokenService>();
 builder.Services.AddHostedService<SessionCleanupService>();
@@ -156,6 +181,8 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+var trustedProxyOptions = TrustedProxyConfiguration.Read(builder.Configuration);
+if (trustedProxyOptions is not null) app.UseForwardedHeaders(trustedProxyOptions);
 
 if (!app.Environment.IsDevelopment())
 {
@@ -201,6 +228,37 @@ app.Use(async (context, next) =>
 
 app.UseCors("NivraClients");
 app.UseNivraAuth();
+if (infrastructure.Enabled)
+{
+    app.Use(async (context, next) =>
+    {
+        var policy = context.GetEndpoint()?.Metadata.GetMetadata<EnableRateLimitingAttribute>()?.PolicyName;
+        if (policy != "auth") { await next(); return; }
+        var current = context.GetCurrentUser();
+        try
+        {
+            var retryAfter = await context.RequestServices.GetRequiredService<SharedAuthRateLimiter>()
+                .RetryAfterAsync(current?.UserId, context.Connection.RemoteIpAddress?.ToString(), context.RequestAborted);
+            if (retryAfter > 0)
+            {
+                context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+                context.Response.Headers.RetryAfter = retryAfter.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                context.Response.Headers.CacheControl = "no-store";
+                await context.Response.WriteAsJsonAsync(new { code = "too_many_requests", message = "Espera antes de volver a intentarlo." }, context.RequestAborted);
+                return;
+            }
+        }
+        catch (RedisException)
+        {
+            // Another instance must never become a way to bypass the authentication limit.
+            context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+            context.Response.Headers.CacheControl = "no-store";
+            await context.Response.WriteAsJsonAsync(new { code = "authentication_temporarily_unavailable", message = "La verificación no está disponible. Intenta de nuevo en un momento." }, context.RequestAborted);
+            return;
+        }
+        await next();
+    });
+}
 app.UseRateLimiter();
 app.UseCallCompatibility();
 
@@ -213,10 +271,25 @@ app.MapGet("/client/android-release", (HttpContext context) =>
     var release = AndroidReleaseService.Read(app.Environment.ContentRootPath);
     return release is null ? Results.StatusCode(503) : Results.Ok(release);
 });
-app.MapGet("/health/ready", async (NivraDbContext db, PushNotificationService push, CancellationToken cancellationToken) =>
+app.MapGet("/health/ready", async (NivraDbContext db, PushNotificationService push, EncryptedFileStorage storage, HttpContext context, CancellationToken cancellationToken) =>
 {
+    context.Response.Headers.CacheControl = "no-store";
     var ready = await db.Database.CanConnectAsync(cancellationToken);
+    var redis = context.RequestServices.GetService<IConnectionMultiplexer>();
+    var redisHealthy = false;
+    if (redis?.IsConnected == true)
+    {
+        try { await redis.GetDatabase().PingAsync().WaitAsync(TimeSpan.FromSeconds(3), cancellationToken); redisHealthy = true; }
+        catch (Exception exception) when (exception is RedisException or TimeoutException) { }
+    }
+    var multiReady = infrastructure.IsReady(redis, push) && redisHealthy && storage.UsesSharedStorage;
     return Results.Json(new { status = ready ? "ok" : "unavailable", version = ClientCompatibility.Version, callProtocol = ClientCompatibility.CallProtocol,
+        minimumCallProtocol = ClientCompatibility.CallProtocol, failoverProtocol = 1,
+        multiInstanceReady = ready && multiReady, clusterFingerprint = infrastructure.ClusterFingerprint,
+        sharedStorageReady = storage.UsesSharedStorage, realtimeSharedReady = redisHealthy,
+        durableSigningKeyReady = infrastructure.DurableSigningKey,
+        pushProjectConfigured = infrastructure.PushProjectConfigured,
+        push = new { fcm = push.IsFcmConfigured, webPush = push.IsWebPushConfigured },
         pushFcmReady = push.IsFcmConfigured, pushWebReady = push.IsWebPushConfigured },
         statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 });

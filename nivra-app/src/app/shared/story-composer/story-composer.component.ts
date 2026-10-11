@@ -37,6 +37,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   @Output() published = new EventEmitter<string>();
   @ViewChild('cameraPreview') private cameraPreview?: ElementRef<HTMLVideoElement>;
   @ViewChild('captionInput') private captionInput?: ElementRef<HTMLTextAreaElement>;
+  @ViewChild('draftMedia') private draftMedia?: ElementRef<HTMLMediaElement>;
 
   mode: ComposerMode = 'choose';
   file: File | null = null;
@@ -74,6 +75,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   private captionFocusTimer: number | null = null;
   private recordingStartedAt = 0;
   private readonly onVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') this.draftMedia?.nativeElement.pause();
     if (document.visibilityState !== 'hidden' || !this.cameraStream) return;
     // Leaving the app must never leave a camera or microphone recording invisibly.
     this.zone.run(() => this.recording ? this.finishRecording() : this.leaveCamera());
@@ -442,7 +444,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
       await this.social.publishStory({
         text: this.text.trim(), file,
         visibility: group ? 'SelectedUsers' : this.visibility,
-        durationSeconds: Number(this.durationSeconds), viewOnce: this.viewOnce, allowReposts: this.allowReposts,
+        durationSeconds: Number(this.durationSeconds), viewOnce: this.viewOnce, allowReposts: !this.viewOnce && this.allowReposts,
         targetType: group ? 'group' : 'contacts', targetId: group?.id ?? null,
         allowedUserIds: group?.participants.filter((member) => !member.removedAt).map((member) => member.userId) ?? [],
       });
@@ -510,6 +512,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   }
 
   private resetDraft(): void {
+    this.draftMedia?.nativeElement.pause();
     this.releaseCapture();
     this.releasePreview();
     if (this.captionFocusTimer !== null) window.clearTimeout(this.captionFocusTimer);

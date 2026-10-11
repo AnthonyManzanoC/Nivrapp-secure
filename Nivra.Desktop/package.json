@@ -1,6 +1,6 @@
 {
   "name": "nivra-desktop",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Nivra desktop shell for Windows.",
   "main": "main.js",
@@ -9,7 +9,7 @@
     "build-exe": "electron-packager . Nivra --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=icon.ico --extra-resource=../nivra-app/dist/nivra-app/browser"
   },
   "devDependencies": {
-    "electron": "latest",
-    "electron-packager": "latest"
+    "electron": "42.11.12",
+    "@electron/packager": "20.3.0"
   }
 }

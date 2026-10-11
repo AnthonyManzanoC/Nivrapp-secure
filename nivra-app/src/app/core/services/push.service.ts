@@ -70,6 +70,9 @@ export class PushService {
   constructor() {
     effect(() => {
       const session = this.auth.session();
+      // Endpoint changes and the first verified cluster pin must reach the sleeping native worker.
+      this.api.baseUrl;
+      this.api.clusterFingerprint;
       if (!Capacitor.isNativePlatform()) return;
       if (session?.tokens.refreshToken) {
         this.observedNativeSession = true;
@@ -257,6 +260,7 @@ export class PushService {
     if (!session?.tokens.refreshToken || !Capacitor.isNativePlatform()) return;
     await this.nativeDevice.syncPushRegistration({
       apiBaseUrl: this.api.baseUrl, userId: session.user.id, deviceId: session.device.id,
+      clusterFingerprint: this.api.clusterFingerprint,
       accessToken: session.tokens.accessToken, refreshToken: session.tokens.refreshToken,
     });
   }
@@ -329,7 +333,7 @@ export class PushService {
     return {
       firebase: config,
       vapidKey: publicVapidKey,
-      sdkVersion: String(sdkVersion || '12.14.0').trim(),
+      sdkVersion: String(sdkVersion || '12.19.0').trim(),
       webPushPublicKey: String(webPushPublicKey || '').trim(),
     };
   }

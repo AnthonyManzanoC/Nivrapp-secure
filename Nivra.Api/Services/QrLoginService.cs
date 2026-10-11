@@ -1,10 +1,11 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Nivra.Api.Contracts;
 
 namespace Nivra.Api.Services;
 
-public sealed class QrLoginService(TimeProvider timeProvider)
+public sealed class QrLoginService(TimeProvider timeProvider, ISharedEphemeralState? shared = null)
 {
     private readonly ConcurrentDictionary<string, QrLoginChallenge> _challenges = new(StringComparer.Ordinal);
     private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(1);
@@ -26,14 +27,16 @@ public sealed class QrLoginService(TimeProvider timeProvider)
             timeProvider.GetUtcNow(),
             timeProvider.GetUtcNow().Add(Lifetime));
 
-        _challenges[id] = challenge;
+        if (shared is null) _challenges[id] = challenge;
+        else shared.Write(Key(id), Serialize(challenge), Lifetime);
         return challenge;
     }
 
     public bool IsValid(string qrId, string code)
     {
         PurgeExpired();
-        return _challenges.TryGetValue(qrId, out var challenge) &&
+        var challenge = Find(qrId);
+        return challenge is not null &&
             challenge.ExpiresAt > timeProvider.GetUtcNow() &&
             challenge.Authorization is null &&
             string.Equals(challenge.Code, code.Trim(), StringComparison.Ordinal);
@@ -41,15 +44,16 @@ public sealed class QrLoginService(TimeProvider timeProvider)
 
     public QrLoginChallenge? GetPending(string qrId, string code)
     {
-        return IsValid(qrId, code) && _challenges.TryGetValue(qrId, out var challenge)
-            ? challenge
-            : null;
+        var challenge = Get(qrId, code);
+        return challenge is not null && challenge.ExpiresAt > timeProvider.GetUtcNow() && challenge.Authorization is null ? challenge : null;
     }
 
     public QrLoginChallenge? Get(string qrId, string code)
     {
         PurgeExpired();
-        return _challenges.TryGetValue(qrId, out var challenge) &&
+        var challenge = Find(qrId);
+        return challenge is not null &&
+            (challenge.AuthorizedAt is { } authorizedAt ? authorizedAt.Add(DeliveryLifetime) : challenge.ExpiresAt) > timeProvider.GetUtcNow() &&
             string.Equals(challenge.Code, code.Trim(), StringComparison.Ordinal)
             ? challenge
             : null;
@@ -63,7 +67,9 @@ public sealed class QrLoginService(TimeProvider timeProvider)
             return;
         }
 
+        var previous = Serialize(challenge);
         challenge.ConnectionId = connectionId.Trim();
+        if (shared is not null) shared.CompareExchange(Key(qrId), previous, Serialize(challenge), challenge.ExpiresAt - timeProvider.GetUtcNow());
     }
 
     public bool TryAuthorize(string qrId, string code, QrLoginAuthorizedResponse authorization)
@@ -72,6 +78,15 @@ public sealed class QrLoginService(TimeProvider timeProvider)
         if (challenge is null)
         {
             return false;
+        }
+
+        if (shared is not null)
+        {
+            if (challenge.Authorization is not null || challenge.ExpiresAt <= timeProvider.GetUtcNow()) return false;
+            var previous = Serialize(challenge);
+            challenge.AuthorizedAt = timeProvider.GetUtcNow();
+            challenge.Authorization = authorization;
+            return shared.CompareExchange(Key(qrId), previous, Serialize(challenge), DeliveryLifetime);
         }
 
         lock (challenge)
@@ -95,6 +110,18 @@ public sealed class QrLoginService(TimeProvider timeProvider)
         {
             return null;
         }
+        if (shared is not null)
+        {
+            var lease = await shared.AcquireLeaseAsync(Key(qrId), Lifetime.Add(DeliveryLifetime), cancellationToken);
+            if (lease is null) return null;
+            try
+            {
+                if (GetPending(qrId, code) is not null) return lease;
+                lease.Dispose();
+                return null;
+            }
+            catch { lease.Dispose(); throw; }
+        }
         await challenge.AuthorizationGate.WaitAsync(cancellationToken);
         if (!IsValid(qrId, code))
         {
@@ -106,11 +133,22 @@ public sealed class QrLoginService(TimeProvider timeProvider)
 
     public void Consume(string qrId)
     {
-        _challenges.TryRemove(qrId, out _);
+        if (shared is null) _challenges.TryRemove(qrId, out _);
+        else shared.Remove(Key(qrId));
+    }
+
+    private static string Key(string qrId) => $"qr:{qrId}";
+    private static string Serialize(QrLoginChallenge challenge) => JsonSerializer.Serialize(challenge);
+    private QrLoginChallenge? Find(string qrId)
+    {
+        if (shared is null) return _challenges.TryGetValue(qrId, out var challenge) ? challenge : null;
+        var value = shared.Read(Key(qrId));
+        return value is null ? null : JsonSerializer.Deserialize<QrLoginChallenge>(value);
     }
 
     private void PurgeExpired()
     {
+        if (shared is not null) return; // Redis TTL removes abandoned challenges across hosts.
         var now = timeProvider.GetUtcNow();
         foreach (var item in _challenges)
         {

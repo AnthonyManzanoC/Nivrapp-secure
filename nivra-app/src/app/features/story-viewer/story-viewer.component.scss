@@ -13,9 +13,9 @@
   aspect-ratio: 9 / 16;
   margin: auto;
   border: 1px solid rgba(255, 255, 255, .16);
-  border-radius: 8px;
+  border-radius: 24px;
   display: grid;
-  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  grid-template-rows: auto auto minmax(0, 1fr);
   overflow: hidden;
   color: #fff;
   background: #000;
@@ -176,6 +176,27 @@
   --offset-top: 0px;
   --offset-bottom: 0px;
 }
+.story-viewer > .story-repost-badge,
+.story-viewer > .story-caption { position: absolute; bottom: calc(104px + env(safe-area-inset-bottom)); left: 0; right: 0; margin-inline: auto; }
+.story-viewer > .story-repost-badge { bottom: calc(176px + env(safe-area-inset-bottom)); }
+.story-top-actions { display: flex; gap: 6px; }
+.story-top-actions button { width: 34px; height: 34px; background: rgba(255, 255, 255, .1); box-shadow: none; }
+.story-top-actions ion-icon { font-size: 20px; }
+.story-viewer button:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 3px; }
+.tap-zone { touch-action: none; }
+.story-audio-card { z-index: 3; position: relative; width: calc(100% - 40px); padding: 30px 16px; border-radius: 24px; background: linear-gradient(135deg, #0d4038, #183840); display: grid; justify-items: center; gap: 24px; }
+.story-audio-card > ion-icon { font-size: 58px; }
+.story-audio-card audio { width: 100%; }
+.story-play-prompt { position: absolute; z-index: 4; border: 1px solid rgba(255,255,255,.28); border-radius: 999px; padding: 16px 22px; color: white; background: rgba(9, 20, 23, .85); display: flex; align-items: center; gap: 8px; }
+.story-owner-manage { border: 0; padding: 12px 16px; color: #effff9; border-radius: 999px; background: rgba(255,255,255,.09); }
+.story-dialog-backdrop { position: absolute; z-index: 9; inset: 0; background: rgba(0,0,0,.5); }
+.story-confirm-sheet { position: absolute; z-index: 10; left: 10px; right: 10px; bottom: calc(10px + env(safe-area-inset-bottom)); border: 1px solid #324c48; border-radius: 24px; background: #10201e; padding: 24px; display: grid; gap: 10px; box-shadow: 0 18px 48px #0007; }
+.story-confirm-sheet h2 { margin: 0; font-size: 22px; }
+.story-confirm-sheet p { margin: 4px 0 12px; color: #c1d6d0; line-height: 1.5; }
+.story-confirm-sheet button { border: 0; min-height: 48px; border-radius: 14px; font-weight: 700; color: #effff9; background: #233b35; }
+.story-confirm-sheet .story-confirm-primary { color: #072119; background: #76e4c3; }
+.story-confirm-sheet .destructive { color: #fff; background: #af3444; }
+.story-confirm-sheet .story-action-error { color: #ffbdc5; }
 
 .story-media-shell::part(scroll) {
   min-height: 0;
@@ -226,11 +247,12 @@
   padding: 18px;
   color: #fff;
   font-size: clamp(26px, 7vw, 54px);
-  line-height: 1.08;
+  line-height: 1.18;
   text-align: center;
   overflow-wrap: anywhere;
   text-shadow: 0 2px 16px rgba(0, 0, 0, .72);
 }
+.story-viewer-body.text-story { background: radial-gradient(ellipse at 10% 10%, #22554b, transparent 65%), linear-gradient(150deg, #0b201d, #102a32); }
 
 .tap-zone {
   position: absolute;
@@ -318,8 +340,9 @@
   overflow-wrap: anywhere;
 }
 
-ion-footer.story-action-bar {
-  position: relative;
+footer.story-action-bar {
+  position: absolute;
+  inset: auto 0 0;
   z-index: 6;
   display: block;
   background: linear-gradient(to top, rgba(0, 0, 0, .84), rgba(0, 0, 0, .46) 58%, transparent);
@@ -337,7 +360,8 @@ ion-footer.story-action-bar {
 }
 
 .story-action-shell.author {
-  grid-template-columns: 1fr;
+  grid-template-columns: auto auto;
+  justify-content: center;
   justify-items: center;
 }
 
@@ -503,7 +527,7 @@ ion-footer.story-action-bar {
 }
 
 @media (max-width: 430px) {
-  ion-footer.story-action-bar {
+  footer.story-action-bar {
     padding-inline: 9px;
   }
 

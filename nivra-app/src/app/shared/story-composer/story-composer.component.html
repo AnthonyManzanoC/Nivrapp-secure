@@ -92,10 +92,10 @@
                 @if (mediaKind === 'image') {
                   <img [src]="previewUrl" [attr.style]="imagePreviewTransform()" (load)="imageLoaded($event)" (error)="previewFailed()" [alt]="'STORY_COMPOSER.PREVIEW' | translate:'Vista previa de tu historia'">
                 } @else if (mediaKind === 'video') {
-                  <video [src]="previewUrl" controls playsinline preload="metadata" (error)="previewFailed()"></video>
+                  <video #draftMedia [src]="previewUrl" controls playsinline preload="metadata" (error)="previewFailed()"></video>
                 } @else if (mediaKind === 'audio') {
                   <div class="audio-art"><ion-icon name="musical-notes-outline"></ion-icon></div>
-                  <audio [src]="previewUrl" controls preload="metadata" (error)="previewFailed()"></audio>
+                  <audio #draftMedia [src]="previewUrl" controls preload="metadata" (error)="previewFailed()"></audio>
                 } @else {
                   <p class="text-story">{{ text || ('STORY_COMPOSER.TEXT_PREVIEW' | translate:'Tu historia empieza aquí…') }}</p>
                 }
@@ -147,7 +147,7 @@
                     </select>
                   </label>
                   <label class="check-option"><input type="checkbox" [(ngModel)]="viewOnce" [disabled]="busy"><span>{{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }}</span></label>
-                  <label class="check-option"><input type="checkbox" [(ngModel)]="allowReposts" [disabled]="busy"><span>{{ 'WORLD.ALLOW_REPOSTS' | translate:'Permitir que otros republiquen esta historia' }}</span></label>
+                  <label class="check-option"><input type="checkbox" [(ngModel)]="allowReposts" [disabled]="busy || viewOnce"><span>{{ 'WORLD.ALLOW_REPOSTS' | translate:'Permitir que otros republiquen esta historia' }}</span></label>
                 </div>
               }
               <p class="privacy-copy"><ion-icon name="shield-checkmark-outline"></ion-icon>{{ 'STORY_COMPOSER.PRIVACY_COPY' | translate:'Tú eliges quién puede verla antes de publicar.' }}</p>

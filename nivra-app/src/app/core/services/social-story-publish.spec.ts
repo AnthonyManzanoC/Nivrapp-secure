@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { of, Subject, throwError } from 'rxjs';
+import { firstValueFrom, of, Subject, throwError } from 'rxjs';
 import { AuthSession, Contact, PublicKeyDirectory, Story, StoryPayload } from '../models/nivra.models';
 import { AuthService } from './auth.service';
 import { CryptoService } from './crypto.service';
@@ -9,6 +9,7 @@ import { MediaOptimizerService } from './media-optimizer.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 import { SocialService } from './social.service';
+import { EncryptedDownloadService } from './encrypted-download.service';
 
 describe('confirmed story publication and feed recovery', () => {
   let service: SocialService;
@@ -80,6 +81,7 @@ describe('confirmed story publication and feed recovery', () => {
       })));
     TestBed.configureTestingModule({ providers: [
       SocialService,
+      { provide: EncryptedDownloadService, useValue: { download: (_access: string, fallback: string) => firstValueFrom(api.getArrayBuffer(fallback)) } },
       { provide: NivraApiService, useValue: api },
       { provide: AuthService, useValue: { session, isAuthenticated: () => Boolean(session()) } },
       { provide: LocalHistoryService, useValue: history },
@@ -517,6 +519,7 @@ describe('confirmed story publication and feed recovery', () => {
   });
 
   it('does not cache or repost a private payload whose decryption completes after changing accounts', async () => {
+    published.owner = user('friend');
     published.encryptedPayload = btoa(JSON.stringify({ v: 3, type: 'nivra-story-e2ee', recipients: [{
       userId: 'owner', deviceId: 'own-device', ciphertext: 'private-ciphertext', header: 'sealed-header',
     }] }));
@@ -611,4 +614,151 @@ describe('confirmed story publication and feed recovery', () => {
     expect(seal).toHaveBeenCalled();
     expect(service.storyDeliveryWarning()).toContain('1 miembro no fue incluido');
   });
+  it('downloads and decrypts a one-view story before committing its consumed view', async () => {
+    const incoming = { ...published, owner: user('friend'), viewOnce: true, viewedByMe: false };
+    service.decodedPayloads.set({ [incoming.id]: { type: 'media', media: {
+      fileId: 'single-view', fileName: 'moment.jpg', mime: 'image/jpeg', size: 1, fileKey: 'key', fileIv: 'iv',
+    } } });
+    const bytes = new Subject<ArrayBuffer>();
+    api.getArrayBuffer.and.returnValue(bytes);
+    api.post.calls.reset();
+    const opening = service.viewStory(incoming, 'chats');
+    await Promise.resolve(); await Promise.resolve();
+    expect(api.post).not.toHaveBeenCalled();
+    expect(service.storyReadyId()).toBe('');
+    bytes.next(new Uint8Array([1]).buffer); bytes.complete();
+    api.post.and.returnValue(of({ ...incoming, viewedByMe: true }) as never);
+    await opening;
+    expect(decryptAttachment).toHaveBeenCalled();
+    expect(api.post).toHaveBeenCalledOnceWith('/stories/published-story/view', {});
+    expect(service.storyReadyId()).toBe(incoming.id);
+    expect(service.storyViewerOwner()).toBe('chats');
+    expect(service.contactStories()).toEqual([]);
+  });
+
+  it('does not consume a one-view story when media fails, and closing preserves its retry', async () => {
+    const incoming = { ...published, owner: user('friend'), viewOnce: true, viewedByMe: false };
+    service.stories.set([incoming]);
+    service.decodedPayloads.set({ [incoming.id]: { type: 'media', media: {
+      fileId: 'one', fileName: 'one.jpg', mime: 'image/jpeg', size: 1, fileKey: 'key', fileIv: 'iv',
+    } } });
+    api.getArrayBuffer.and.returnValue(throwError(() => new Error('offline')));
+    api.post.calls.reset();
+    await expectAsync(service.viewStory(incoming)).toBeRejected();
+    expect(api.post).not.toHaveBeenCalled();
+    expect(service.storyReadyId()).toBe('');
+    service.closeStory();
+    expect(service.contactStories().length).toBe(1);
+  });
+
+  it('does not consume or reopen a story if the user closes it during download', async () => {
+    const incoming = { ...published, owner: user('friend'), viewOnce: true, viewedByMe: false };
+    service.decodedPayloads.set({ [incoming.id]: { type: 'media', media: {
+      fileId: 'one', fileName: 'one.jpg', mime: 'image/jpeg', size: 1, fileKey: 'key', fileIv: 'iv',
+    } } });
+    const bytes = new Subject<ArrayBuffer>(); api.getArrayBuffer.and.returnValue(bytes);
+    api.post.calls.reset();
+    const opening = service.viewStory(incoming, 'chats');
+    await Promise.resolve(); await Promise.resolve();
+    service.closeStory('chats');
+    bytes.next(new Uint8Array([1]).buffer); bytes.complete();
+    await opening;
+    expect(api.post).not.toHaveBeenCalled();
+    expect(service.activeStory()).toBeNull();
+    expect(service.storyReadyId()).toBe('');
+  });
+
+  it('keeps a late view response from replacing the more recent story', async () => {
+    const first = { ...published, id: 'first' };
+    const second = { ...published, id: 'second' };
+    service.decodedPayloads.set({ first: { type: 'text', text: 'First' }, second: { type: 'text', text: 'Second' } });
+    const old = new Subject<Story>();
+    api.post.and.callFake((path) => path.includes('/first/') ? old as never : of(second) as never);
+    const opening = service.viewStory(first, 'chats');
+    await Promise.resolve(); await Promise.resolve();
+    await service.viewStory(second, 'chat-detail');
+    old.next(first); old.complete(); await opening;
+    expect(service.activeStory()?.id).toBe('second');
+    expect(service.storyReadyId()).toBe('second');
+    service.closeStory('chats');
+    expect(service.activeStory()?.id).toBe('second');
+  });
+
+  it('coalesces concurrent requests for the same encrypted media into one download/decryption', async () => {
+    service.decodedPayloads.set({ [published.id]: { type: 'media', media: {
+      fileId: 'same', fileName: 'same.jpg', mime: 'image/jpeg', size: 1, fileKey: 'key', fileIv: 'iv',
+    } } });
+    const bytes = new Subject<ArrayBuffer>(); api.getArrayBuffer.and.returnValue(bytes);
+    const one = service.ensureStoryMedia(published);
+    const two = service.ensureStoryMedia(published);
+    expect(api.getArrayBuffer).toHaveBeenCalledTimes(1);
+    bytes.next(new Uint8Array([1]).buffer); bytes.complete();
+    const [first, second] = await Promise.all([one, two]);
+    expect(first?.url).toBe(second?.url);
+    expect(decryptAttachment).toHaveBeenCalledTimes(1);
+  });
+
+  it('clears consumed one-view plaintext on close but never preloads its media', async () => {
+    const incoming = { ...published, owner: user('friend'), viewOnce: true, viewedByMe: false };
+    service.decodedPayloads.set({ [incoming.id]: { type: 'text', text: 'Only once' } });
+    api.post.and.returnValue(of({ ...incoming, viewedByMe: true }) as never);
+    await service.preloadStory(incoming);
+    expect(api.getArrayBuffer).not.toHaveBeenCalled();
+    await service.viewStory(incoming);
+    service.closeStory();
+    expect(service.decodedPayloads()[incoming.id]).toBeUndefined();
+    expect(service.contactStories()).toEqual([]);
+  });
+
+  it('refreshes only the creator’s server statistics, without inventing viewer events', async () => {
+    api.post.calls.reset();
+    await service.refreshStoryActivity({ ...published, owner: user('friend') });
+    expect(api.post).not.toHaveBeenCalled();
+    service.activeStory.set(published);
+    api.post.and.returnValue(of({ ...published, viewCount: 7 }) as never);
+    await service.refreshStoryActivity(published);
+    expect(service.activeStory()?.viewCount).toBe(7);
+    expect(service.activeStory()?.views).toEqual([]);
+  });
+
+  it('rejects sharing one-view or author-disabled stories before decrypting or publishing', async () => {
+    api.post.calls.reset();
+    await expectAsync(service.repostStory({ ...published, owner: user('friend'), viewOnce: true })).toBeRejected();
+    await expectAsync(service.repostStory({ ...published, owner: user('friend'), allowReposts: false })).toBeRejected();
+    expect(api.post).not.toHaveBeenCalled();
+    expect(decryptEnvelope).not.toHaveBeenCalled();
+  });
+
+  it('does not inflate view counts for repeated legacy activity events', async () => {
+    service.stories.set([{ ...published, viewCount: 4 }]);
+    spyOn(service, 'load').and.resolveTo();
+    realtime.next({ type: 'story.viewed', payload: { storyId: published.id } });
+    realtime.next({ type: 'story.viewed', payload: { storyId: published.id } });
+    expect(service.stories()[0].viewCount).toBe(4);
+  });
+
+  it('bounds retained decrypted media while preserving the currently visible story', () => {
+    const revoke = spyOn(URL, 'revokeObjectURL');
+    service.activeStory.set({ ...published, id: 'visible' });
+    const large = new Blob([new Uint8Array([1])]);
+    Object.defineProperty(large, 'size', { value: 40 * 1024 * 1024 });
+    (service as any).rememberMediaPreview('visible', large, 'video/mp4', 'visible.mp4');
+    for (let i = 0; i < 12; i++) (service as any).rememberMediaPreview(`past-${i}`, large, 'video/mp4', 'past.mp4');
+    expect(service.storyMedia(service.activeStory())?.name).toBe('visible.mp4');
+    expect(Object.keys(service.mediaPreviews()).length).toBe(2);
+    expect(revoke).toHaveBeenCalledTimes(11);
+  });
+
+  it('does not prefetch adjacent large videos or consume their views', async () => {
+    service.decodedPayloads.set({ [published.id]: { type: 'media', media: {
+      fileId: 'large', fileName: 'large.mp4', mime: 'video/mp4', size: 9 * 1024 * 1024,
+      fileKey: 'key', fileIv: 'iv',
+    } } });
+    api.post.calls.reset();
+    await service.preloadStory(published);
+    expect(api.getArrayBuffer).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled();
+    expect(service.mediaPreviews()).toEqual({});
+  });
+
 });

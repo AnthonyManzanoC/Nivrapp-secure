@@ -245,6 +245,11 @@ export class CallsService implements OnDestroy {
       });
     });
     this.realtime.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe((event) => {
+      if (event.type === 'connected' || event.type === 'reconnected') {
+        void this.refreshActiveGroupRooms();
+        const callId = this.activeCall()?.id;
+        if (callId) void this.pollPersistedSignals(callId);
+      }
       if (event.type === 'call.started' || event.type === 'incomingCall') {
         void this.receiveIncoming(event.payload as CallSession);
       }

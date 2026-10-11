@@ -25,6 +25,7 @@ import { ChatService } from './chat.service';
 import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
+import { EncryptedDownloadService } from './encrypted-download.service';
 
 const VAULT_META_PREFIX = 'nivra.vault.';
 const MAX_VAULT_FILE_BYTES = 256 * 1024 * 1024;
@@ -41,6 +42,7 @@ type VaultVoicePhase = 'idle' | 'connecting' | 'connected' | 'failed';
 @Injectable({ providedIn: 'root' })
 export class VaultService {
   private readonly api = inject(NivraApiService);
+  private readonly downloads = inject(EncryptedDownloadService);
   private readonly auth = inject(AuthService);
   private readonly chat = inject(ChatService);
   private readonly crypto = inject(CryptoService);
@@ -92,7 +94,7 @@ export class VaultService {
       if (event.type === 'vault.left' || event.type === 'vault.closed') {
         this.handleRoomClosedOrLeft(event.payload);
       }
-      if (event.type === 'reconnected') {
+      if (event.type === 'connected' || event.type === 'reconnected') {
         void this.rejoinActiveRoom();
       }
     });
@@ -375,8 +377,11 @@ export class VaultService {
     if (cached) {
       return cached;
     }
-    const encrypted = await firstValueFrom(this.api.getArrayBuffer(`/files/${encodeURIComponent(fileId)}/blob`));
+    const session = this.auth.session();
+    const current = () => this.auth.session()?.user.id === session?.user.id && this.auth.session()?.device.id === session?.device.id && this.unlocked();
+    const encrypted = await this.downloads.file(fileId, current);
     const plain = await this.crypto.decryptAttachment(encrypted, file.fileKey, file.fileIv);
+    if (!current()) return null;
     return this.rememberMediaPreview(fileId, new Blob([plain], { type: this.fileMime(file) }), this.fileMime(file), this.fileName(file));
   }
 

@@ -1477,7 +1477,7 @@
     </ng-template>
   </ion-modal>
 
-  <ion-modal class="story-viewer-modal" [isOpen]="!!social.activeStory()" (didDismiss)="closeStoryViewer()">
+  <ion-modal class="story-viewer-modal" [isOpen]="!!social.activeStory() && social.storyViewerOwner() === 'chat-detail'" (didDismiss)="social.storyViewerOwner() === 'chat-detail' && closeStoryViewer()">
     <ng-template>
       @if (social.activeStory(); as story) {
         @if (social.storyPayload(story); as payload) {
@@ -1486,6 +1486,9 @@
             [payload]="payload"
             [queue]="storyViewerQueue"
             [progress]="storyProgressValues()"
+            [paused]="storyStatsOpen"
+            (previous)="previousStory()"
+            (next)="nextStory()"
             [reply]="storyReply"
             [busyId]="storyBusyId"
             [reactionsOpen]="storyReactionsOpen"
@@ -1516,60 +1519,10 @@
     </ng-template>
   </ion-modal>
 
-  <ion-modal class="story-stats-modal" [isOpen]="storyStatsOpen" [breakpoints]="[0, .55, .9]" [initialBreakpoint]=".55" (didDismiss)="closeStoryStats()">
+  <ion-modal class="story-stats-modal" [isOpen]="storyStatsOpen && social.storyViewerOwner() === 'chat-detail'" [breakpoints]="[0, .55, .9]" [initialBreakpoint]=".55" (didDismiss)="closeStoryStats()">
     <ng-template>
       @if (social.activeStory(); as story) {
-        <section class="story-stats-sheet">
-          <header>
-            <div>
-              <h2>{{ 'WORLD.ACTIVITY' | translate:'Actividad' }}</h2>
-              <span>{{ 'WORLD.STORY_ACTIVITY_COPY' | translate:'Personas que vieron e interactuaron con tu historia' }}</span>
-            </div>
-            <button type="button" (click)="closeStoryStats()" [attr.aria-label]="'WORLD.CLOSE_STATS' | translate:'Cerrar estadisticas'">
-              <ion-icon name="close-outline"></ion-icon>
-            </button>
-          </header>
-          <div class="stats-summary">
-            <span><strong>{{ storyViews(story) }}</strong><small>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</small></span>
-            <span><strong>{{ storyReactions(story) }}</strong><small>{{ 'CHAT.REACTIONS' | translate:'Reacciones' }}</small></span>
-            <span><strong>{{ storyComments(story) }}</strong><small>{{ 'WORLD.COMMENTS' | translate:'Comentarios' }}</small></span>
-          </div>
-          <div class="stats-columns">
-            <article>
-              <h3>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</h3>
-              @for (view of story.views || []; track view.user.id) {
-                <div class="stats-row">
-                  <span class="stats-avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span>
-                  <span><strong>{{ view.user.displayName || view.user.alias }}</strong><small>@{{ view.user.alias }} - {{ view.viewedAt | localizedDate:'shortTime' }}</small></span>
-                </div>
-              } @empty {
-                <p class="stats-empty">{{ 'WORLD.NO_VIEWS' | translate:'Sin vistas todavia.' }}</p>
-              }
-            </article>
-            <article>
-              <h3>{{ 'CHAT.REACTIONS' | translate:'Reacciones' }}</h3>
-              @for (reaction of story.reactions || []; track reaction.id) {
-                <div class="stats-row">
-                  <span class="stats-avatar">{{ reaction.emoji }}</span>
-                  <span><strong>{{ reaction.user.displayName || reaction.user.alias }}</strong><small>@{{ reaction.user.alias }} - {{ reaction.reactedAt | localizedDate:'shortTime' }}</small></span>
-                </div>
-              } @empty {
-                <p class="stats-empty">{{ 'WORLD.NO_REACTIONS_YET' | translate:'Sin reacciones aun.' }}</p>
-              }
-            </article>
-            <article>
-              <h3>{{ 'WORLD.COMMENTS' | translate:'Comentarios' }}</h3>
-              @for (comment of story.comments || []; track comment.id) {
-                <div class="stats-row">
-                  <span class="stats-avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span>
-                  <span><strong>{{ comment.user.displayName || comment.user.alias }}</strong><small>@{{ comment.user.alias }} - {{ comment.commentedAt | localizedDate:'shortTime' }}</small></span>
-                </div>
-              } @empty {
-                <p class="stats-empty">{{ 'WORLD.NO_COMMENTS_YET' | translate:'Sin comentarios aun.' }}</p>
-              }
-            </article>
-          </div>
-        </section>
+        <app-story-activity [story]="story" (closed)="closeStoryStats()" />
       }
     </ng-template>
   </ion-modal>

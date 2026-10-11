@@ -34,6 +34,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
+import { StoryActivityComponent } from '../story-viewer/story-activity.component';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 import { NativeDeviceService } from '../../core/services/native-device.service';
 import { LocalHistoryService } from '../../core/services/local-history.service';
@@ -57,7 +58,7 @@ type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'r
     FormsModule,
     RouterOutlet,
     TranslatePipe,
-    StoryViewerComponent,
+    StoryViewerComponent, StoryActivityComponent,
     StoryComposerComponent,
     HistorySyncNoticeComponent,
     ChatWelcomeComponent,
@@ -571,7 +572,7 @@ export class ChatsPage implements OnDestroy {
         return;
       }
       this.storyViewerQueue = this.storiesForPlayback(current.stories, current.isOwn);
-      this.storyViewerIndex = 0;
+      this.storyViewerIndex = Math.max(0, this.storyViewerQueue.findIndex((story) => !story.viewedByMe && !this.isMine(story)));
       await this.openQueuedStory();
     } finally {
       this.storyHighlightOpening = '';
@@ -670,7 +671,7 @@ export class ChatsPage implements OnDestroy {
       return;
     }
     this.storyViewerQueue = this.storiesForPlayback(stories, false);
-    this.storyViewerIndex = 0;
+    this.storyViewerIndex = Math.max(0, this.storyViewerQueue.findIndex((story) => !story.viewedByMe && !this.isMine(story)));
     await this.openQueuedStory();
   }
 
@@ -708,13 +709,12 @@ export class ChatsPage implements OnDestroy {
 
   private storiesForPlayback(stories: Story[], isOwn: boolean): Story[] {
     if (isOwn) return [...stories];
-    const unseen = stories.filter((story) => !story.viewedByMe && !this.isMine(story));
-    return unseen.length ? unseen : [...stories];
+    return [...stories].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 
   closeStoryViewer(): void {
     this.stopStoryProgress();
-    this.social.closeStory();
+    this.social.closeStory('chats');
     this.storyViewerQueue = [];
     this.storyViewerIndex = 0;
     this.storyReply = '';
@@ -783,6 +783,8 @@ export class ChatsPage implements OnDestroy {
   openStats(): void {
     this.pauseStoryProgress();
     this.statsOpen = true;
+    const story = this.social.activeStory();
+    if (story) void this.social.refreshStoryActivity(story).catch(() => undefined);
   }
 
   closeStats(): void {
@@ -827,7 +829,8 @@ export class ChatsPage implements OnDestroy {
       const message = await this.chat.sendText(conversation, text, {
         replyTo: this.storyReplyReference(story),
       });
-      await this.social.commentStory(story, message?.id ?? null);
+      // Sending committed before activity metadata; retrying must not duplicate the reply.
+      await this.social.commentStory(story, message?.id ?? null).catch(() => undefined);
       this.storyReply = '';
     });
   }
@@ -840,7 +843,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   statsViews(story: Story): number {
-    return story.views?.length || story.viewCount || 0;
+    return Math.max(story.views?.length || 0, story.viewCount || 0);
   }
 
   statsReactions(story: Story): number {
@@ -858,7 +861,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   canRepostStory(story: Story): boolean {
-    return !this.isMine(story) && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
+    return !this.isMine(story) && !story.viewOnce && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
   }
 
   onDetailDeactivate(): void {
@@ -1139,7 +1142,8 @@ export class ChatsPage implements OnDestroy {
       this.statsOpen = false;
       this.storyReply = '';
       this.storyError = '';
-      await this.social.viewStory(story);
+      await this.social.viewStory(story, 'chats');
+      if (this.social.activeStory()?.id !== story.id || this.social.storyReadyId() !== story.id) return;
       const active = this.social.activeStory();
       if (active) {
         this.storyViewerQueue = this.storyViewerQueue.map((item) => item.id === active.id ? active : item);
@@ -1147,7 +1151,7 @@ export class ChatsPage implements OnDestroy {
       this.restartStoryProgress();
       this.preloadAdjacentStories();
     } catch {
-      this.closeStoryViewer();
+      // The shared viewer exposes retry and retains its current place.
     }
   }
 
@@ -1178,7 +1182,7 @@ export class ChatsPage implements OnDestroy {
     this.storyPaused = false;
     this.storyProgressDurationMs = this.defaultStoryDurationMs;
     this.storyProgressStartedAt = Date.now();
-    this.storyProgressTimer = window.setInterval(() => this.tickStoryProgress(), 80);
+    // Playback is owned by StoryViewerComponent, including media readiness and pause.
   }
 
   private pauseStoryProgress(): void {

@@ -84,6 +84,7 @@ import { NativeDeviceService, type RaiseGestureEvent } from '../../core/services
 import { PerformanceModeService } from '../../core/services/performance-mode.service';
 import { PrivacyEnforcementService } from '../../core/services/privacy-enforcement.service';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
+import { StoryActivityComponent } from '../story-viewer/story-activity.component';
 import { GroupInviteShareComponent } from './group-invite-share.component';
 import { IdentityTrustService } from '../../core/services/identity-trust.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
@@ -154,7 +155,7 @@ interface MessageTextPart {
     IonToggle,
     IonToolbar,
     TranslatePipe,
-    StoryViewerComponent,
+    StoryViewerComponent, StoryActivityComponent,
     GroupInviteShareComponent,
     ChatMediaGalleryComponent,
     ImageCropperComponent,
@@ -2566,7 +2567,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   closeStoryViewer(): void {
     this.stopStoryProgress();
-    this.social.closeStory();
+    this.social.closeStory('chat-detail');
     this.storyViewerQueue = [];
     this.storyViewerIndex = 0;
     this.storyReply = '';
@@ -2632,6 +2633,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   openStoryStats(): void {
     this.pauseStoryProgress();
     this.storyStatsOpen = true;
+    const story = this.social.activeStory();
+    if (story) void this.social.refreshStoryActivity(story).catch(() => undefined);
   }
 
   closeStoryStats(): void {
@@ -2678,7 +2681,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       const message = await this.chat.sendText(conversation, text, {
         replyTo: this.storyReplyReference(story),
       });
-      await this.social.commentStory(story, message?.id ?? null);
+      // Sending committed before activity metadata; retrying must not duplicate the reply.
+      await this.social.commentStory(story, message?.id ?? null).catch(() => undefined);
       this.storyReply = '';
     });
   }
@@ -2688,7 +2692,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   canRepostStory(story: Story): boolean {
-    return !this.isOwnStory(story) && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
+    return !this.isOwnStory(story) && !story.viewOnce && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
   }
 
   storyViewerSubtitle(story: Story): string {
@@ -2701,7 +2705,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   storyViews(story: Story): number {
-    return story.views?.length || story.viewCount || 0;
+    return Math.max(story.views?.length || 0, story.viewCount || 0);
   }
 
   storyReactions(story: Story): number {
@@ -3495,7 +3499,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.storyReply = '';
     this.storyError = '';
     try {
-      await this.social.viewStory(story);
+      await this.social.viewStory(story, 'chat-detail');
+      if (this.social.activeStory()?.id !== story.id || this.social.storyReadyId() !== story.id) return;
       const active = this.social.activeStory();
       if (active) {
         this.storyViewerQueue = this.storyViewerQueue.map((item) => item.id === active.id ? active : item);
@@ -3506,13 +3511,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.storyError = error instanceof Error
         ? error.message
         : this.tr('STORY.NOT_AVAILABLE', 'Esta historia ya no esta disponible.');
-      this.storyViewerQueue = this.storyViewerQueue.filter((item) => item.id !== story.id);
-      if (!this.storyViewerQueue.length) {
-        this.closeStoryViewer();
-        return;
-      }
-      this.storyViewerIndex = Math.min(this.storyViewerIndex, this.storyViewerQueue.length - 1);
-      await this.openQueuedStory();
+      // Keep the viewer at this item so the user can retry safely.
     }
   }
 
@@ -3559,7 +3558,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.storyPaused = false;
     this.storyProgressDurationMs = this.defaultStoryDurationMs;
     this.storyProgressStartedAt = Date.now();
-    this.storyProgressTimer = window.setInterval(() => this.tickStoryProgress(), 80);
+    // Playback is owned by StoryViewerComponent, including media readiness and pause.
   }
 
   private pauseStoryProgress(): void {

@@ -1,5 +1,24 @@
 @use "../shared-page";
 
+.profile-hero { padding: 20px; border: 1px solid var(--nivra-line); border-radius: 22px; background: linear-gradient(120deg, color-mix(in srgb, var(--nivra-brand) 9%, transparent), transparent); }
+.profile-hero .profile-photo { width: 88px; height: 88px; flex: 0 0 88px; border-radius: 50%; }
+.profile-hero-copy { min-width: 0; margin-bottom: 10px; }
+.profile-hero-copy h2 { margin: 0; font-size: clamp(22px, 4vw, 30px); letter-spacing: -.025em; overflow-wrap: anywhere; }
+.profile-hero-copy p { margin: 4px 0 10px; color: var(--nivra-muted); overflow-wrap: anywhere; }
+.profile-draft-tag { display: inline-flex; align-items: center; gap: 6px; border-radius: 20px; padding: 5px 9px; color: var(--nivra-brand-2); background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); font-size: 12px; }
+.profile-draft-tag.pending { color: var(--nivra-text); background: color-mix(in srgb, var(--nivra-text) 8%, transparent); }
+.profile-field-count { text-align: end; color: var(--nivra-muted); font-size: 12px; }
+.profile-save-bar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; border-top: 1px solid var(--nivra-line); padding-top: 12px; }
+.profile-save-bar p { max-width: 36ch; margin: 0; color: var(--nivra-muted); font-size: 13px; }
+.profile-save-bar > div { display: flex; gap: 4px; flex-wrap: wrap; }
+.profile-inline-error { margin: 0; }
+.account-feedback { position: fixed; z-index: 20; bottom: calc(var(--nivra-bottom-nav-height) + 16px + env(safe-area-inset-bottom)); inset-inline: 20px; width: fit-content; max-width: min(560px, calc(100vw - 40px)); margin-inline: auto; padding: 12px 18px; border: 1px solid var(--nivra-line); border-radius: 16px; color: var(--nivra-text); background: var(--nivra-panel-solid); box-shadow: var(--nivra-shadow-soft); font-size: 14px; }
+.profile-text-action { border: 0; border-radius: 8px; padding: 7px 10px; color: var(--nivra-text); background: color-mix(in srgb, var(--nivra-text) 8%, transparent); cursor: pointer; font: inherit; }
+.profile-text-action:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 2px; }
+.profile-recovery-section { border-top: 1px solid var(--nivra-line); padding-top: 12px; }
+.profile-recovery-section > summary { padding: 10px 0; cursor: pointer; font-weight: 600; }
+@media (max-width: 640px) { .profile-hero { padding: 14px; gap: 14px; } .profile-hero .profile-photo { width: 72px; height: 72px; flex-basis: 72px; } .profile-hero .profile-photo-actions { flex-basis: calc(100% - 90px); } .profile-save-bar > div { width: 100%; justify-content: flex-end; } }
+
 :host .page {
   --padding-bottom: calc(var(--nivra-bottom-nav-height) + 32px + env(safe-area-inset-bottom));
 }

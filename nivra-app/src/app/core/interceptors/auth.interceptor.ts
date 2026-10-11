@@ -1,6 +1,6 @@
-import { HttpContextToken, HttpErrorResponse, HttpHandlerFn, HttpRequest } from '@angular/common/http';
+import { HttpContextToken, HttpErrorResponse, HttpEvent, HttpHandlerFn, HttpRequest } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { catchError, from, switchMap, throwError } from 'rxjs';
+import { Observable, catchError, from, switchMap, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 import { DeviceWipeService } from '../services/device-wipe.service';
 import { NivraApiService, SKIP_AUTH } from '../services/nivra-api.service';
@@ -14,21 +14,24 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
   const api = inject(NivraApiService);
   const wipe = inject(DeviceWipeService);
   const compatibility = inject(ClientCompatibilityService);
-  if (req.url.startsWith(api.baseUrl + '/')) {
+  const trustedApi = api.isTrustedUrl(req.url);
+  if (trustedApi) {
     req = req.clone({ setHeaders: { 'X-Nivra-Call-Protocol': String(NIVRA_CALL_PROTOCOL), 'X-Nivra-Client-Version': NIVRA_VERSION } });
   }
-  const shouldAuthenticate = !req.context.get(SKIP_AUTH) && req.url.startsWith(api.baseUrl);
+  const shouldAuthenticate = !req.context.get(SKIP_AUTH) && trustedApi;
   const token = auth.accessToken();
-  const deviceId = auth.session()?.device.id || '';
+  const requestSession = auth.session();
+  const deviceId = requestSession?.device.id || '';
+  const sameSession = () => auth.session()?.user?.id === requestSession?.user?.id && auth.session()?.device.id === requestSession?.device.id;
   const authHeaders = () => ({
     ...(auth.accessToken() ? { Authorization: `Bearer ${auth.accessToken()}` } : {}),
     ...(deviceId ? { 'X-Nivra-Device-Id': deviceId } : {}),
   });
-  const handleError = (error: unknown) => {
-    if (error instanceof HttpErrorResponse && error.status === 426 && req.url.startsWith(api.baseUrl + '/')) {
+  const handleError = (error: unknown): Observable<HttpEvent<unknown>> => {
+    if (trustedApi && sameSession() && error instanceof HttpErrorResponse && error.status === 426) {
       compatibility.requireUpdate();
     }
-    if (isForceWipeError(error)) {
+    if (trustedApi && sameSession() && isForceWipeError(error)) {
       void wipe.nukeDevice();
       return throwError(() => error);
     }
@@ -37,10 +40,12 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
       error instanceof HttpErrorResponse &&
       error.status === 401 &&
       shouldAuthenticate &&
+      sameSession() &&
       !req.context.get(AUTH_RETRIED)
     ) {
       return from(auth.refreshToken()).pipe(
         switchMap((refreshed) => {
+          if (!sameSession()) return throwError(() => error);
           if (!refreshed) {
             if (auth.lastRefreshFailedPermanently()) {
               void auth.logout(true);
@@ -51,7 +56,7 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
             context: req.context.set(AUTH_RETRIED, true),
             setHeaders: authHeaders(),
           });
-          return next(retry);
+          return next(retry).pipe(catchError(handleError));
         }),
       );
     }
@@ -61,6 +66,7 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
   if (shouldAuthenticate && token && !auth.hasFreshAccessToken()) {
     return from(auth.ensureFreshSession()).pipe(
       switchMap((refreshed) => {
+        if (!sameSession()) return throwError(() => new Error('Session changed'));
         if (!refreshed) {
           if (auth.lastRefreshFailedPermanently()) {
             void auth.logout(true);

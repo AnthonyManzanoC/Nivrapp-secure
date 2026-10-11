@@ -1,13 +1,21 @@
 import { HttpClient, HttpContext, HttpContextToken } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
-import { environment } from '../../../environments/environment';
+import { ApiEndpointPool } from './api-endpoint-pool.service';
 
 export const SKIP_AUTH = new HttpContextToken<boolean>(() => false);
 
 @Injectable({ providedIn: 'root' })
 export class NivraApiService {
   private readonly http = inject(HttpClient);
-  readonly baseUrl = this.resolveBaseUrl();
+  private readonly pool = inject(ApiEndpointPool);
+  get baseUrl(): string { return this.pool.current(); }
+  get clusterFingerprint(): string { return this.pool.clusterFingerprint(); }
+  isTrustedUrl(url: string): boolean { return this.pool.isTrustedUrl(url); }
+  prepareEndpoints(): Promise<void> { return this.pool.prepare(); }
+  recoverEndpoint(url: string): Promise<boolean> { return this.pool.recover(url); }
+  fetch(path: string, options: RequestInit = {}, replaySafe = false, isCurrent = () => true): Promise<Response> {
+    return this.pool.fetch(path, options, replaySafe, isCurrent);
+  }
 
   url(path: string): string {
     if (/^https?:\/\//i.test(path)) {
@@ -63,24 +71,4 @@ export class NivraApiService {
     return new HttpContext().set(SKIP_AUTH, skipAuth);
   }
 
-  private resolveBaseUrl(): string {
-    const configured = this.queryApiBaseUrl()
-      || this.windowApiBaseUrl()
-      || environment.apiBaseUrl;
-    return configured.replace(/\/+$/, '');
-  }
-
-  private queryApiBaseUrl(): string {
-    try {
-      const value = new URLSearchParams(window.location.search).get('apiBaseUrl') || '';
-      return /^https?:\/\//i.test(value) ? value : '';
-    } catch {
-      return '';
-    }
-  }
-
-  private windowApiBaseUrl(): string {
-    const value = (globalThis as { NIVRA_NATIVE_API_BASE_URL?: unknown }).NIVRA_NATIVE_API_BASE_URL;
-    return typeof value === 'string' && /^https?:\/\//i.test(value) ? value : '';
-  }
 }

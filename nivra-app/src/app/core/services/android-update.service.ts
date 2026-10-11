@@ -1,7 +1,7 @@
 import { Injectable, InjectionToken, NgZone, computed, effect, inject, signal } from '@angular/core';
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
-import { environment } from '../../../environments/environment';
+import { ApiEndpointPool } from './api-endpoint-pool.service';
 import { NativeDeviceService, type AndroidRelease, type NativeAppUpdateState } from './native-device.service';
 
 export interface AndroidUpdateRuntime {
@@ -12,19 +12,19 @@ export interface AndroidUpdateRuntime {
   now(): number;
 }
 export const ANDROID_UPDATE_RUNTIME = new InjectionToken<AndroidUpdateRuntime>('ANDROID_UPDATE_RUNTIME', {
-  providedIn: 'root', factory: () => ({
+  providedIn: 'root', factory: () => { const pool = inject(ApiEndpointPool); return ({
     supported: Capacitor.getPlatform() === 'android',
     installedBuild: async () => Number((await App.getInfo()).build),
     fetchRelease: async () => {
-      const response = await fetch(`${environment.apiBaseUrl.replace(/\/$/, '')}/client/android-release`, {
+      const response = await pool.fetch('/client/android-release', {
         cache: 'no-store', credentials: 'omit', signal: AbortSignal.timeout(10000),
-      });
+      }, true);
       if (!response.ok) throw new Error('Release unavailable');
       return response.json() as Promise<unknown>;
     },
     storage: { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) },
     now: () => Date.now(),
-  }),
+  }); },
 });
 
 export function validAndroidRelease(value: unknown, installedBuild: number): value is AndroidRelease {

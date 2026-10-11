@@ -284,7 +284,7 @@ public static partial class EndpointExtensions
         group.MapPost("/phone/verify-firebase", VerifyFirebasePhone);
         app.MapPost("/api/auth/phone/verify-firebase", VerifyFirebasePhone).RequireRateLimiting("auth");
 
-        group.MapPost("/phone/complete-alias", async Task<IResult> (CompletePhoneAliasRequest request, NivraDbContext db, PhoneOtpService otpService, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
+        group.MapPost("/phone/complete-alias", async Task<IResult> (CompletePhoneAliasRequest request, NivraDbContext db, PhoneOtpService otpService, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             if (string.IsNullOrWhiteSpace(request.PhoneSetupToken) ||
                 string.IsNullOrWhiteSpace(request.Alias) ||
@@ -302,6 +302,13 @@ public static partial class EndpointExtensions
             {
                 return Error("invalid_phone_setup", "La verificacion del telefono vencio. Pide otro codigo.", StatusCodes.Status401Unauthorized);
             }
+
+            // Tokens may be read concurrently on different hosts. Read the account only after
+            // a shared database lock, so completing its alias can issue exactly one session.
+            await using var transaction = await CallCoordination.LockAsync(db, $"phone-alias:{setup.UserId}", cancellationToken);
+            if (!otpService.TryGetAliasSetup(request.PhoneSetupToken, out var currentSetup) ||
+                currentSetup.UserId != setup.UserId || currentSetup.Phone != setup.Phone)
+                return Error("invalid_phone_setup", "La verificacion del telefono vencio. Pide otro codigo.", StatusCodes.Status401Unauthorized);
 
             var user = await db.Users.FirstOrDefaultAsync(candidate =>
                 candidate.Id == setup.UserId &&
@@ -358,11 +365,12 @@ public static partial class EndpointExtensions
                 return Error("alias_or_phone_taken", "Ese alias o telefono ya esta vinculado a otra cuenta.", StatusCodes.Status409Conflict);
             }
 
+            var tokens = await tokenService.CreateSessionAsync(new PgSqlNivraStore(db), user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             otpService.ConsumeAliasSetup(request.PhoneSetupToken);
             await NotifyContactJoinedWatchersAsync(db, pushNotifications, user.Id, user.PhoneHash, cancellationToken);
-            var tokens = await tokenService.CreateSessionAsync(new PgSqlNivraStore(db), user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
             return Results.Ok(new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens));
-        });
+        }));
 
         group.MapPost("/qr/start", (QrLoginStartRequest request, QrLoginService qrLogin) =>
         {
@@ -493,13 +501,18 @@ public static partial class EndpointExtensions
         group.MapPost("/authorize-qr", AuthorizeQrLink);
         app.MapPost("/api/auth/authorize-qr", AuthorizeQrLink).RequireRateLimiting("auth");
 
-        group.MapPost("/refresh", async Task<IResult> (RefreshTokenRequest request, INivraStore store, TokenService tokenService, CancellationToken cancellationToken) =>
+        group.MapPost("/refresh", async Task<IResult> (RefreshTokenRequest request, INivraStore store, NivraDbContext db, TokenService tokenService, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
+            if (string.IsNullOrWhiteSpace(request.RefreshToken) || request.RefreshToken.Length > 4096)
+                return Error("invalid_refresh_token", "Refresh token invalido o vencido.", StatusCodes.Status401Unauthorized);
+            await using var transaction = await CallCoordination.LockAsync(db, $"session-refresh:{tokenService.HashOpaqueToken(request.RefreshToken)}", cancellationToken);
             var tokens = await tokenService.RefreshSessionAsync(store, request.RefreshToken, cancellationToken);
-            return tokens is null
+            var result = tokens is null
                 ? Error("invalid_refresh_token", "Refresh token invalido o vencido.", StatusCodes.Status401Unauthorized)
                 : Results.Ok(tokens);
-        });
+            await transaction.CommitAsync(cancellationToken);
+            return result;
+        }));
 
         group.MapPost("/logout", async Task<IResult> (HttpContext http, INivraStore store, TokenService tokenService, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
@@ -554,6 +567,11 @@ public static partial class EndpointExtensions
             {
                 return Results.Unauthorized();
             }
+
+            if (request.DisplayName is not null && (string.IsNullOrWhiteSpace(request.DisplayName) || request.DisplayName.Trim().Length > 160))
+                return Error("invalid_display_name", "El nombre debe tener entre 1 y 160 caracteres.");
+            if (request.Bio is not null && request.Bio.Trim().Length > 500)
+                return Error("invalid_bio", "La descripción puede tener hasta 500 caracteres.");
 
             var user = await store.GetUserAsync(current.UserId, cancellationToken);
             if (user is null)
@@ -2487,7 +2505,7 @@ public static partial class EndpointExtensions
             return Results.Created($"/stories/{story.Id}", response);
         });
 
-        group.MapPost("/{storyId}/view", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/{storyId}/view", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2495,6 +2513,7 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            await using var transaction = await CallCoordination.LockAsync(db, $"story:{storyId}", cancellationToken);
             var story = await db.Stories.FirstOrDefaultAsync(candidate => candidate.Id == storyId, cancellationToken);
             if (story is null ||
                 story.DeletedAt is not null ||
@@ -2505,6 +2524,7 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
+            var changed = false;
             if (story.OwnerUserId != current.UserId)
             {
                 var added = story.ViewedByUserIds.Add(current.UserId);
@@ -2521,17 +2541,18 @@ public static partial class EndpointExtensions
                 if (added)
                 {
                     await db.SaveChangesAsync(cancellationToken);
-                    await hub.Clients.Group(GroupsFor.User(story.OwnerUserId)).SendAsync(
-                        "story.viewed",
-                        await ToStoryResponseAsync(story, story.OwnerUserId, db, cancellationToken),
-                        cancellationToken);
+                    changed = true;
                 }
             }
 
+            await transaction.CommitAsync(cancellationToken);
+            if (changed)
+                await hub.Clients.Group(GroupsFor.User(story.OwnerUserId)).SendAsync("story.viewed",
+                    await ToStoryResponseAsync(story, story.OwnerUserId, db, cancellationToken), cancellationToken);
             return Results.Ok(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
-        });
+        }));
 
-        group.MapPost("/{storyId}/react", async Task<IResult> (string storyId, StoryReactRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/{storyId}/react", async Task<IResult> (string storyId, StoryReactRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2545,6 +2566,7 @@ public static partial class EndpointExtensions
                 return Error("invalid_story_reaction", "Selecciona una reaccion valida.");
             }
 
+            await using var transaction = await CallCoordination.LockAsync(db, $"story:{storyId}", cancellationToken);
             var story = await db.Stories.FirstOrDefaultAsync(candidate => candidate.Id == storyId, cancellationToken);
             if (story is null ||
                 story.DeletedAt is not null ||
@@ -2585,12 +2607,13 @@ public static partial class EndpointExtensions
             }
 
             await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             var ownerResponse = await ToStoryResponseAsync(story, story.OwnerUserId, db, cancellationToken);
             await hub.Clients.Group(GroupsFor.User(story.OwnerUserId)).SendAsync("story.reacted", ownerResponse, cancellationToken);
             return Results.Ok(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
-        });
+        }));
 
-        group.MapPost("/{storyId}/comment", async Task<IResult> (string storyId, StoryCommentRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/{storyId}/comment", async Task<IResult> (string storyId, StoryCommentRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2598,6 +2621,7 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            await using var transaction = await CallCoordination.LockAsync(db, $"story:{storyId}", cancellationToken);
             var story = await db.Stories.FirstOrDefaultAsync(candidate => candidate.Id == storyId, cancellationToken);
             if (story is null ||
                 story.DeletedAt is not null ||
@@ -2632,9 +2656,10 @@ public static partial class EndpointExtensions
 
             await db.SaveChangesAsync(cancellationToken);
             var ownerResponse = await ToStoryResponseAsync(story, story.OwnerUserId, db, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             await hub.Clients.Group(GroupsFor.User(story.OwnerUserId)).SendAsync("story.commented", ownerResponse, cancellationToken);
             return Results.Ok(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
-        });
+        }));
 
         group.MapPost("/{storyId}/repost", async Task<IResult> (string storyId, StoryRepostRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
@@ -2735,6 +2760,23 @@ public static partial class EndpointExtensions
             }
 
             return Results.Created($"/stories/{repost.Id}", response);
+        });
+
+        group.MapGet("/{storyId}/media-access", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            var current = http.GetCurrentUser();
+            if (current is null) return Results.Unauthorized();
+            var now = timeProvider.GetUtcNow();
+            var story = await db.Stories.FirstOrDefaultAsync(candidate => candidate.Id == storyId, cancellationToken);
+            if (story is null || story.DeletedAt is not null || story.ExpiresAt <= now || story.MediaFileObjectId is null ||
+                !await CanViewStoryAsync(db, story, current.UserId, cancellationToken)) return Results.NotFound();
+            var file = await db.Files.FirstOrDefaultAsync(candidate => candidate.Id == story.MediaFileObjectId, cancellationToken);
+            if (file is null || file.State != FileState.Uploaded || file.ExpiresAt <= now) return Results.NotFound();
+            // Read-once stories keep the revocable API path rather than a reusable capability URL.
+            if (story.ViewOnce) return Results.NoContent();
+            var access = storage.CreateDownloadAccess(file, now);
+            return access is null ? Results.NoContent() : Results.Ok(access);
         });
 
         group.MapGet("/{storyId}/media", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
@@ -2924,6 +2966,23 @@ public static partial class EndpointExtensions
             return file is null || !await UserCanAccessFileAsync(current.UserId, file, store, db, timeProvider.GetUtcNow(), cancellationToken)
                 ? Results.NotFound()
                 : Results.Ok(ToFileResponse(file));
+        });
+
+        group.MapGet("/{fileId}/download-access", async Task<IResult> (string fileId, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            var current = http.GetCurrentUser();
+            if (current is null) return Results.Unauthorized();
+            var file = await store.GetFileAsync(fileId, cancellationToken);
+            var now = timeProvider.GetUtcNow();
+            if (file is null || file.State != FileState.Uploaded || file.ExpiresAt <= now ||
+                !await UserCanAccessFileAsync(current.UserId, file, store, db, now, cancellationToken)) return Results.NotFound();
+            // Vault burn-on-exit, read-once stories and delete-after-read messages remain proxied.
+            if (file.VaultRoomId is not null ||
+                await db.Messages.AnyAsync(message => message.DeleteAfterRead && message.Recipients.Any(recipient => recipient.FileObjectId == file.Id), cancellationToken) ||
+                await db.Stories.AnyAsync(story => story.MediaFileObjectId == file.Id && story.ViewOnce, cancellationToken)) return Results.NoContent();
+            var access = storage.CreateDownloadAccess(file, now);
+            return access is null ? Results.NoContent() : Results.Ok(access);
         });
 
         group.MapGet("/{fileId}/blob", async Task<IResult> (string fileId, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>

@@ -1,0 +1,35 @@
+@if (authorized) {
+<section class="story-activity-sheet">
+  <header><div><span class="eyebrow">{{ 'STORY_PLAYER.YOUR_STORY' | translate:'Tu historia' }}</span><h2>{{ 'WORLD.ACTIVITY' | translate:'Actividad' }}</h2></div><div class="header-actions">
+    <button type="button" (click)="refresh()" [disabled]="social.storyActivityLoading()" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">@if (social.storyActivityLoading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }</button>
+    <button type="button" (click)="closed.emit()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline"></ion-icon></button>
+  </div></header>
+  <p class="activity-copy">{{ 'STORY_PLAYER.ACTIVITY_COPY' | translate:'Vistas e interacciones reales. Se actualizan mientras estás aquí.' }}</p>
+  <nav class="activity-tabs" [attr.aria-label]="'WORLD.ACTIVITY' | translate">
+    <button type="button" [class.selected]="tab === 'views'" (click)="tab = 'views'" [attr.aria-pressed]="tab === 'views'"><ion-icon name="eye-outline"></ion-icon><strong>{{ views }}</strong><span>{{ 'WORLD.VIEWS' | translate:'Vistas' }}</span></button>
+    <button type="button" [class.selected]="tab === 'reactions'" (click)="tab = 'reactions'" [attr.aria-pressed]="tab === 'reactions'"><ion-icon name="heart-outline"></ion-icon><strong>{{ reactions.length }}</strong><span>{{ 'CHAT.REACTIONS' | translate:'Reacciones' }}</span></button>
+    <button type="button" [class.selected]="tab === 'replies'" (click)="tab = 'replies'" [attr.aria-pressed]="tab === 'replies'"><ion-icon name="chatbubble-outline"></ion-icon><strong>{{ replies.length }}</strong><span>{{ 'STORY_PLAYER.REPLIES' | translate:'Respuestas' }}</span></button>
+  </nav>
+  @if (social.storyActivityError()) { <p class="activity-error" role="status">{{ social.storyActivityError() | translate:'No se pudo actualizar. Conservamos la última actividad.' }}</p> }
+  <div class="activity-list">
+    @if (tab === 'views') {
+      @for (view of people; track view.user.id) {
+        <div class="activity-row">
+          @if (view.user.profilePhotoDataUrl) { <img [src]="view.user.profilePhotoDataUrl" alt="" loading="lazy"> } @else { <span class="avatar">{{ (view.user.displayName || view.user.alias || 'N')[0] }}</span> }
+          <div><strong>{{ view.user.displayName || view.user.alias }}</strong><small>{{ view.viewedAt | localizedDate:'short' }}</small></div>
+          @if (reactionFor(view.user.id)) { <span class="emoji">{{ reactionFor(view.user.id) }}</span> }
+        </div>
+      } @empty { <div class="activity-empty"><ion-icon name="eye-outline"></ion-icon><strong>{{ 'WORLD.NO_VIEWS' | translate:'Sin vistas todavía.' }}</strong><span>{{ 'STORY_PLAYER.NO_VIEWS_COPY' | translate:'Cuando alguien vea tu historia, aparecerá aquí.' }}</span></div> }
+    } @else if (tab === 'reactions') {
+      @for (reaction of reactions; track reaction.id) {
+        <div class="activity-row"><span class="avatar emoji">{{ reaction.emoji }}</span><div><strong>{{ reaction.user.displayName || reaction.user.alias }}</strong><small>{{ reaction.reactedAt | localizedDate:'short' }}</small></div></div>
+      } @empty { <div class="activity-empty"><ion-icon name="heart-outline"></ion-icon><strong>{{ 'WORLD.NO_REACTIONS_YET' | translate:'Sin reacciones aún.' }}</strong></div> }
+    } @else {
+      @for (comment of replies; track comment.id) {
+        <button type="button" class="activity-row reply-row" (click)="openReply(comment)" [disabled]="!!openingReply"><span class="avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span><div><strong>{{ comment.user.displayName || comment.user.alias }}</strong><small>{{ comment.commentedAt | localizedDate:'short' }}</small><span>{{ 'STORY_PLAYER.OPEN_REPLY' | translate:'Ver en el chat' }}</span></div>@if (openingReply === comment.id) { <ion-spinner name="crescent"></ion-spinner> }</button>
+      } @empty { <div class="activity-empty"><ion-icon name="chatbubble-outline"></ion-icon><strong>{{ 'WORLD.NO_COMMENTS_YET' | translate:'Sin respuestas aún.' }}</strong></div> }
+    }
+  </div>
+  @if (replyError) { <p class="activity-error" role="alert">{{ 'COMMON.ACTION_ERROR' | translate:'No se pudo abrir el chat.' }}</p> }
+</section>
+}

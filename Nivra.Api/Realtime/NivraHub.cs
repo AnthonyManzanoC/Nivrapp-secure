@@ -6,6 +6,7 @@ using Nivra.Api.Domain;
 using Nivra.Api.Infrastructure;
 using Nivra.Api.Security;
 using Nivra.Api.Services;
+using StackExchange.Redis;
 
 namespace Nivra.Api.Realtime;
 
@@ -607,14 +608,18 @@ public static class GroupsFor
     public static string QrLogin(string qrId) => $"qr-login:{qrId}";
 }
 
-public sealed class RealtimePresence
+public sealed class RealtimePresence(IConnectionMultiplexer? redis = null, InfrastructureReadiness? infrastructure = null, TimeProvider? clock = null)
 {
     private readonly ConcurrentDictionary<string, ConcurrentDictionary<string, byte>> connectionsByUser = new(StringComparer.Ordinal);
+    private readonly TimeProvider time = clock ?? TimeProvider.System;
+    private string Key(string userId) => $"nivra:{infrastructure?.ClusterFingerprint}:presence:{userId}";
+    private const int LifetimeSeconds = 90;
 
     public void Connect(string userId, string connectionId)
     {
         var connections = connectionsByUser.GetOrAdd(userId, _ => new ConcurrentDictionary<string, byte>(StringComparer.Ordinal));
         connections[connectionId] = 1;
+        if (redis is not null) WriteConnection(userId, connectionId);
     }
 
     public void Disconnect(string userId, string connectionId)
@@ -625,6 +630,11 @@ public sealed class RealtimePresence
         }
 
         connections.TryRemove(connectionId, out _);
+        if (redis is not null)
+        {
+            try { redis.GetDatabase().SortedSetRemove(Key(userId), connectionId); }
+            catch (RedisException) { /* The heartbeat lease expires if this node cannot clean up. */ }
+        }
         if (connections.IsEmpty)
         {
             connectionsByUser.TryRemove(userId, out _);
@@ -633,7 +643,28 @@ public sealed class RealtimePresence
 
     public bool IsConnected(string userId)
     {
+        if (redis is not null)
+        {
+            try
+            {
+                return (long)redis.GetDatabase().ScriptEvaluate("redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1]); return redis.call('ZCARD', KEYS[1])", [Key(userId)], [time.GetUtcNow().ToUnixTimeSeconds()]) > 0;
+            }
+            catch (RedisException) { return false; }
+        }
         return connectionsByUser.TryGetValue(userId, out var connections) && !connections.IsEmpty;
+    }
+
+    public void RenewLocalConnections()
+    {
+        if (redis is null) return;
+        foreach (var user in connectionsByUser)
+            foreach (var connection in user.Value.Keys) WriteConnection(user.Key, connection);
+    }
+
+    private void WriteConnection(string userId, string connectionId)
+    {
+        redis!.GetDatabase().ScriptEvaluate("redis.call('ZADD', KEYS[1], ARGV[1], ARGV[2]); redis.call('EXPIRE', KEYS[1], ARGV[3]); return 1",
+            [Key(userId)], [time.GetUtcNow().ToUnixTimeSeconds() + LifetimeSeconds, connectionId, LifetimeSeconds * 2]);
     }
 }
 

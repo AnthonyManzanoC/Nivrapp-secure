@@ -530,11 +530,11 @@ export class AuthService implements OnDestroy {
       headers['X-Nivra-Device-Id'] = currentSession.device.id;
     }
 
-    this.authRefreshPromise ??= fetch(this.api.url('/auth/refresh'), {
+    this.authRefreshPromise ??= this.api.fetch('/auth/refresh', {
       method: 'POST',
       headers,
       body: JSON.stringify({ refreshToken }),
-    })
+    }, false, mayApplyRefresh)
       .then(async (response) => {
         if (!mayApplyRefresh()) return false;
         if (!response.ok) {
@@ -869,11 +869,11 @@ export class AuthService implements OnDestroy {
     if (!payload.keyMaterial?.privateJwk || !payload.keyMaterial.publicJwk || (payload.keyring !== undefined && !Array.isArray(payload.keyring))) throw new Error('El paquete QR no contiene un historial válido.');
     // The destination identity must have been generated on this device. The
     // sealed source payload supplies historical decryption keys only.
-    const response = await fetch(this.api.url('/keys/batch'), {
+    const response = await this.api.fetch('/keys/batch', {
       method: 'POST', credentials: 'omit',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.tokens.accessToken}`, 'X-Nivra-Device-Id': auth.device.id },
       body: JSON.stringify({ userIds: [auth.user.id], aliases: [] }),
-    });
+    }, true, isCurrent);
     if (!isCurrent()) return;
     if (!response.ok) throw new Error('Actualiza Nivra y renueva el QR de vinculación.');
     const directories = await response.json() as Array<{ userId: string; devices: Array<{ deviceId: string; keyBundle?: { identityKey?: string | null } }> }>;

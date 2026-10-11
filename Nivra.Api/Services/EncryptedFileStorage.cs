@@ -24,6 +24,7 @@ public sealed class EncryptedFileStorage
     private readonly NivraStorageOptions _options;
     private readonly ILogger<EncryptedFileStorage> _logger;
     private readonly IAmazonS3? _s3;
+    public bool UsesSharedStorage => _s3 is not null;
 
     public EncryptedFileStorage(
         IWebHostEnvironment environment,
@@ -108,19 +109,34 @@ public sealed class EncryptedFileStorage
     {
         if (_s3 is not null)
         {
-            using var response = await _s3.GetObjectAsync(new GetObjectRequest
+            var response = await _s3.GetObjectAsync(new GetObjectRequest
             {
                 BucketName = _options.Bucket,
                 Key = GetObjectKey(file.StorageKey)
             }, cancellationToken);
 
-            var buffer = new MemoryStream();
-            await response.ResponseStream.CopyToAsync(buffer, cancellationToken);
-            buffer.Position = 0;
-            return buffer;
+            return new OwnedReadStream(response.ResponseStream, response);
         }
 
         return File.OpenRead(GetPath(file.StorageKey));
+    }
+
+    public EncryptedDownloadAccess? CreateDownloadAccess(FileObject file, DateTimeOffset now)
+    {
+        if (_s3 is null || file.State != FileState.Uploaded || file.EncryptedSize is < 1 or > EncryptedDownloadPolicy.MaxEncryptedBytes) return null;
+        var deadline = EncryptedDownloadPolicy.Deadline(now, file.ExpiresAt);
+        if (deadline <= now) return null;
+        var url = _s3.GetPreSignedURL(new GetPreSignedUrlRequest
+        {
+            BucketName = _options.Bucket,
+            Key = GetObjectKey(file.StorageKey),
+            Verb = HttpVerb.GET,
+            Protocol = Protocol.HTTPS,
+            Expires = deadline.UtcDateTime
+        });
+        return EncryptedDownloadPolicy.IsValidUrl(url, _options.Endpoint)
+            ? new EncryptedDownloadAccess(url, deadline, file.EncryptedSize, "application/octet-stream")
+            : null;
     }
 
     public async Task DeleteIfExistsAsync(FileObject file, CancellationToken cancellationToken)
@@ -188,7 +204,9 @@ public sealed class EncryptedFileStorage
             string.Equals(options.Provider, "S3", StringComparison.OrdinalIgnoreCase);
     }
 
-    private static bool S3Configured(NivraStorageOptions options)
+    private static bool S3Configured(NivraStorageOptions options) => HasSharedConfiguration(options);
+
+    public static bool HasSharedConfiguration(NivraStorageOptions options)
     {
         return WantsS3(options) &&
             !string.IsNullOrWhiteSpace(options.Bucket) &&

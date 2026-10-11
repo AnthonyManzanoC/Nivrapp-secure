@@ -5,6 +5,8 @@
 export const environment = {
   production: false,
   apiBaseUrl: 'http://localhost:5055',
+  apiEndpoints: ['http://localhost:5055'],
+  apiClusterFingerprint: '',
   firebase: {
     apiKey: 'AIzaSyC4TZyBBy6Hj_2vgAngbuN8QD6ND48GEyg',
     authDomain: 'nivra-af67e.firebaseapp.com',

@@ -31,6 +31,7 @@ import { LocalHistoryService } from './local-history.service';
 import { ChatLaunchCacheService } from './chat-launch-cache.service';
 import { E2EE_UPLOAD_LIMIT_BYTES, EncryptedUploadMode, MediaOptimizerService } from './media-optimizer.service';
 import { NivraApiService } from './nivra-api.service';
+import { EncryptedDownloadService } from './encrypted-download.service';
 import { SignalrService } from './signalr.service';
 import { AppSettingsService } from './app-settings.service';
 import { NativeDeviceService } from './native-device.service';
@@ -111,6 +112,7 @@ const CHAT_PAYLOAD_TEXT_ENCODER = new TextEncoder();
 @Injectable({ providedIn: 'root' })
 export class ChatService implements OnDestroy {
   private readonly api = inject(NivraApiService);
+  private readonly downloads = inject(EncryptedDownloadService);
   private readonly auth = inject(AuthService);
   private readonly identityTrust = inject(IdentityTrustService);
   private readonly crypto = inject(CryptoService);
@@ -1197,8 +1199,10 @@ export class ChatService implements OnDestroy {
       return cached;
     }
 
-    const encrypted = await firstValueFrom(this.api.getArrayBuffer(`/files/${encodeURIComponent(fileId)}/blob`));
+    const context = this.captureSendContext();
+    const encrypted = await this.downloads.file(fileId, () => this.isSendContextCurrent(context));
     const plain = await this.crypto.decryptAttachment(encrypted, file.fileKey, file.fileIv);
+    if (!this.isSendContextCurrent(context)) return null;
     return this.rememberMediaPreview(fileId, new Blob([plain], { type: this.fileMime(file) }), this.fileMime(file), this.fileName(file));
   }
 
@@ -4081,8 +4085,10 @@ export class ChatService implements OnDestroy {
     if (!fileId || !payload.fileKey || !payload.fileIv) {
       throw new Error('El adjunto cifrado no tiene metadata completa.');
     }
-    const encrypted = await firstValueFrom(this.api.getArrayBuffer(`/files/${encodeURIComponent(fileId)}/blob`));
+    const context = this.captureSendContext();
+    const encrypted = await this.downloads.file(fileId, () => this.isSendContextCurrent(context));
     const plain = await this.crypto.decryptAttachment(encrypted, payload.fileKey, payload.fileIv);
+    this.assertSendContext(context);
     const mime = this.fileMime(payload);
     const name = this.fileName(payload);
     const blob = new Blob([plain], { type: mime });

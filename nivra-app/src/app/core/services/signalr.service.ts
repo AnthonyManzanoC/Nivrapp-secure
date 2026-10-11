@@ -1,6 +1,7 @@
 import { Injectable, OnDestroy, computed, inject, signal } from '@angular/core';
 import { HubConnection, HubConnectionBuilder, HubConnectionState, LogLevel } from '@microsoft/signalr';
 import { Subject } from 'rxjs';
+import { ApiEndpointPool } from './api-endpoint-pool.service';
 import { PresenceResponse, RealtimeEvent, RecipientCipherRequest } from '../models/nivra.models';
 import { AuthService } from './auth.service';
 import { NivraApiService } from './nivra-api.service';
@@ -9,6 +10,10 @@ import { NivraApiService } from './nivra-api.service';
 export class SignalrService implements OnDestroy {
   private readonly auth = inject(AuthService);
   private readonly api = inject(NivraApiService);
+  private readonly pool = inject(ApiEndpointPool);
+  private readonly endpointChanges = this.pool.changes$.subscribe(() => {
+    void this.disconnect().then(() => this.scheduleReconnect(0));
+  });
   private connection: HubConnection | null = null;
   private reconnectTimer: number | null = null;
   private startPromise: Promise<void> | null = null;
@@ -18,6 +23,7 @@ export class SignalrService implements OnDestroy {
   readonly events$ = new Subject<RealtimeEvent>();
 
   ngOnDestroy(): void {
+    this.endpointChanges.unsubscribe();
     void this.disconnect();
     this.events$.complete();
   }
@@ -141,9 +147,13 @@ export class SignalrService implements OnDestroy {
 
   private async openConnection(hasRefreshedToken: boolean): Promise<void> {
     await this.disconnect({ clearReconnect: false });
+    const session = this.auth.session();
+    const sameSession = () => this.auth.session()?.user.id === session?.user.id && this.auth.session()?.device.id === session?.device.id;
+    if (!session || !this.auth.accessToken()) return;
+    const endpoint = this.api.url('/hubs/realtime');
     const connection = new HubConnectionBuilder()
-      .withUrl(this.api.url('/hubs/realtime'), {
-        accessTokenFactory: () => this.auth.accessToken(),
+      .withUrl(endpoint, {
+        accessTokenFactory: () => sameSession() ? this.auth.accessToken() : '',
         withCredentials: false,
       })
       .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
@@ -156,17 +166,22 @@ export class SignalrService implements OnDestroy {
 
     try {
       await connection.start();
+      if (this.connection !== connection || !sameSession()) { await connection.stop().catch(() => undefined); return; }
       this.connectionState.set(connection.state);
       this.events$.next({ type: 'connected', payload: null });
-    } catch {
+    } catch (error) {
+      if (this.connection !== connection || !sameSession()) return;
       this.connection = null;
       this.connectionState.set(HubConnectionState.Disconnected);
       await connection.stop().catch(() => undefined);
-      if (!hasRefreshedToken && await this.auth.refreshToken()) {
+      const status = (error as { statusCode?: number })?.statusCode;
+      const unauthorized = status === 401;
+      const infrastructureFailure = status === undefined || [0, 502, 503, 504].includes(status);
+      if (!hasRefreshedToken && ((unauthorized && await this.auth.refreshToken()) || (infrastructureFailure && await this.pool.recover(endpoint))) && sameSession()) {
         await this.openConnection(true);
         return;
       }
-      this.scheduleReconnect();
+      this.scheduleReconnect(status === 429 ? 30000 : 2500);
     }
   }
 
@@ -178,7 +193,10 @@ export class SignalrService implements OnDestroy {
   }
 
   private bind(connection: HubConnection): void {
-    const forward = (type: string) => (payload: unknown) => this.events$.next({ type, payload });
+    const session = this.auth.session();
+    const endpoint = this.api.url('/hubs/realtime');
+    const current = () => this.connection === connection && this.auth.session()?.user.id === session?.user.id && this.auth.session()?.device.id === session?.device.id;
+    const forward = (type: string) => (payload: unknown) => { if (current()) this.events$.next({ type, payload }); };
     [
       'message.received',
       'message.receipt',
@@ -226,14 +244,23 @@ export class SignalrService implements OnDestroy {
       'history.available',
     ].forEach((eventName) => connection.on(eventName, forward(eventName)));
 
-    connection.onreconnecting(() => this.connectionState.set(HubConnectionState.Reconnecting));
+    connection.onreconnecting(error => {
+      if (!current()) return;
+      this.connectionState.set(HubConnectionState.Reconnecting);
+      const status = (error as { statusCode?: number })?.statusCode;
+      if (status === undefined || [0, 502, 503, 504].includes(status)) {
+        // Rebuild on a verified replacement instead of waiting through every old-host retry.
+        void this.pool.recover(endpoint).catch(() => undefined);
+      }
+    });
     connection.onreconnected(() => {
+      if (!current()) return;
       this.clearReconnectTimer();
       this.connectionState.set(HubConnectionState.Connected);
       this.events$.next({ type: 'reconnected', payload: null });
     });
     connection.onclose(() => {
-      if (this.connection === connection) {
+      if (current()) {
         this.connectionState.set(HubConnectionState.Disconnected);
         this.scheduleReconnect();
       }

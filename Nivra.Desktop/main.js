@@ -2,9 +2,17 @@ const { app, BrowserWindow, Menu, shell, session, ipcMain, safeStorage } = requi
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { pathToFileURL } = require('url');
+const { PINNED_API_ORIGINS, allowedApiOrigin } = require('./api-origins');
+const { isBundledEntry, isTrustedIpc } = require('./renderer-security');
 
 let mainWindow = null;
 let isQuitting = false;
+let trustedEntryUrl = '';
+
+function assertTrustedRenderer(event) {
+  if (!isTrustedIpc(event, mainWindow, trustedEntryUrl)) throw new Error('Untrusted IPC sender.');
+}
 
 const SECURE_SECRET_NAMES = new Set(["device-keys", "local-db", "auth-session"]);
 
@@ -65,7 +73,8 @@ function clearDesktopSecureSecret(name) {
 }
 
 function installSecureVaultHandlers() {
-  ipcMain.handle("nivra-secure-vault:get-or-create", (_event, rawName) => {
+  ipcMain.handle("nivra-secure-vault:get-or-create", (event, rawName) => {
+    assertTrustedRenderer(event);
     const name = normalizeSecretName(rawName);
     assertAllowedSecretName(name);
     const existing = readDesktopSecureSecret(name);
@@ -74,7 +83,8 @@ function installSecureVaultHandlers() {
     return { name, secret, created, available: Boolean(secret) };
   });
 
-  ipcMain.handle("nivra-secure-vault:clear", (_event, rawName) => {
+  ipcMain.handle("nivra-secure-vault:clear", (event, rawName) => {
+    assertTrustedRenderer(event);
     const name = normalizeSecretName(rawName);
     if (!name || name === "all") {
       SECURE_SECRET_NAMES.forEach(clearDesktopSecureSecret);
@@ -87,7 +97,8 @@ function installSecureVaultHandlers() {
 }
 
 function installContentProtectionHandlers() {
-  ipcMain.handle("nivra-content-protection:set-secure-screen", (_event, options) => {
+  ipcMain.handle("nivra-content-protection:set-secure-screen", (event, options) => {
+    assertTrustedRenderer(event);
     const enabled = Boolean(options && options.enabled);
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.setContentProtection(enabled);
@@ -127,7 +138,8 @@ function resolveWindowIcon() {
 }
 
 function resolveApiBaseUrl(webRoot) {
-  return (process.env.NIVRA_API_BASE_URL || readBundledApiBaseUrl(webRoot) || "https://nivra-webapp-secure.onrender.com").replace(/\/+$/, "");
+  return allowedApiOrigin(process.env.NIVRA_API_BASE_URL || readBundledApiBaseUrl(webRoot) || PINNED_API_ORIGINS[0], !app.isPackaged)
+    || PINNED_API_ORIGINS[0];
 }
 
 function createWindow(webRoot, apiBaseUrl) {
@@ -159,6 +171,13 @@ function createWindow(webRoot, apiBaseUrl) {
   });
 
   const indexPath = path.join(webRoot, "index.html");
+  trustedEntryUrl = pathToFileURL(indexPath).href;
+  const guardNavigation = (event, url, _isInPlace, isMainFrame) => {
+    if (event.isMainFrame === false || isMainFrame === false) return;
+    if (!isBundledEntry(event.url || url, trustedEntryUrl)) event.preventDefault();
+  };
+  mainWindow.webContents.on('will-navigate', guardNavigation);
+  mainWindow.webContents.on('will-redirect', guardNavigation);
 
   const query = apiBaseUrl
     ? { electron: "1", apiBaseUrl }
@@ -180,8 +199,10 @@ function createWindow(webRoot, apiBaseUrl) {
 
 function installApiCorsBridge(apiBaseUrl) {
   try {
-    const apiOrigin = new URL(apiBaseUrl).origin;
-    session.defaultSession.webRequest.onHeadersReceived({ urls: [`${apiOrigin}/*`] }, (details, callback) => {
+    const origins = [...PINNED_API_ORIGINS];
+    const selected = allowedApiOrigin(apiBaseUrl, !app.isPackaged);
+    if (selected && !origins.includes(selected)) origins.push(selected);
+    session.defaultSession.webRequest.onHeadersReceived({ urls: origins.map(origin => `${origin}/*`) }, (details, callback) => {
       callback({
         responseHeaders: {
           ...details.responseHeaders,
@@ -214,8 +235,12 @@ if (!hasSingleInstanceLock) {
     installSecureVaultHandlers();
     installContentProtectionHandlers();
     installApiCorsBridge(apiBaseUrl);
-    session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-      callback(["media", "notifications", "camera", "microphone"].includes(permission));
+    session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
+      const trusted = mainWindow && !mainWindow.isDestroyed() && contents === mainWindow.webContents
+        && isBundledEntry(contents.getURL(), trustedEntryUrl)
+        && details?.isMainFrame !== false
+        && (!details?.requestingUrl || isBundledEntry(details.requestingUrl, trustedEntryUrl));
+      callback(Boolean(trusted && ["media", "notifications", "camera", "microphone"].includes(permission)));
     });
 
     createWindow(webRoot, apiBaseUrl);

@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { firstValueFrom } from 'rxjs';
 import {
@@ -25,8 +25,14 @@ export class AccountService {
   readonly privacy = signal<PrivacySettings | null>(null);
   readonly entitlements = signal<Entitlements | null>(null);
   readonly loading = signal(false);
+  private loadInFlight: { scope: string; promise: Promise<void> } | null = null;
+  private scopeRevision = 0;
+  private observedScope = this.currentScope();
 
   constructor() {
+    effect(() => {
+      this.observeScope(this.currentScope());
+    });
     this.realtime.events$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
@@ -43,10 +49,21 @@ export class AccountService {
       });
   }
 
-  async load(): Promise<void> {
-    if (!this.auth.isAuthenticated()) {
-      return;
-    }
+  load(): Promise<void> {
+    const scope = this.currentScope();
+    this.observeScope(scope);
+    if (!scope || !this.auth.isAuthenticated()) return Promise.resolve();
+    if (this.loadInFlight?.scope === scope) return this.loadInFlight.promise;
+    const revision = this.scopeRevision;
+    const promise = this.loadForScope(scope, revision);
+    this.loadInFlight = { scope, promise };
+    void promise.finally(() => {
+      if (this.loadInFlight?.promise === promise) this.loadInFlight = null;
+    }).catch(() => undefined);
+    return promise;
+  }
+
+  private async loadForScope(scope: string, revision: number): Promise<void> {
     this.loading.set(true);
     try {
       const [me, devices, privacy, entitlements] = await Promise.all([
@@ -55,17 +72,22 @@ export class AccountService {
         firstValueFrom(this.api.get<PrivacySettings>('/privacy')),
         firstValueFrom(this.api.get<Entitlements>('/monetization/entitlements')).catch(() => null),
       ]);
+      if (!this.isCurrent(scope, revision) || me.id !== this.auth.session()?.user.id) return;
       this.auth.updateUser(me);
       this.devices.set(devices ?? []);
       this.privacy.set(privacy);
       this.entitlements.set(entitlements);
     } finally {
-      this.loading.set(false);
+      if (this.isCurrent(scope, revision)) this.loading.set(false);
     }
   }
 
   async updateProfile(patch: PatchProfileRequest): Promise<NivraUser> {
     const current = this.auth.session();
+    const scope = this.currentScope();
+    this.observeScope(scope);
+    const revision = this.scopeRevision;
+    this.requireCurrent(scope, revision);
     const requestedAlias = this.normalizeAlias(patch.alias);
     const shouldMoveLocalKeys = Boolean(
       current?.device?.id &&
@@ -76,7 +98,10 @@ export class AccountService {
       ? await this.crypto.currentKeyMaterial(current.user.alias, current.device.id)
       : null;
 
+    this.requireCurrent(scope, revision);
     const user = await firstValueFrom(this.api.patch<NivraUser>('/me', patch));
+    this.requireCurrent(scope, revision);
+    if (user.id !== current?.user.id) throw new Error('ACCOUNT_SESSION_CHANGED');
     if (currentKeys && current?.device?.id) {
       await this.crypto.saveDeviceKeys(
         user.alias,
@@ -85,6 +110,7 @@ export class AccountService {
         { userId: user.id },
       );
     }
+    this.requireCurrent(scope, revision);
     this.auth.updateUser(user);
     return user;
   }
@@ -98,7 +124,12 @@ export class AccountService {
   }
 
   async updatePrivacy(patch: PrivacySettings): Promise<PrivacySettings> {
+    const scope = this.currentScope();
+    this.observeScope(scope);
+    const revision = this.scopeRevision;
+    this.requireCurrent(scope, revision);
     const privacy = await firstValueFrom(this.api.patch<PrivacySettings>('/privacy', patch));
+    this.requireCurrent(scope, revision);
     this.privacy.set(privacy);
     const current = this.auth.session();
     if (current) {
@@ -108,7 +139,12 @@ export class AccountService {
   }
 
   async revokeDevice(deviceId: string): Promise<void> {
+    const scope = this.currentScope();
+    this.observeScope(scope);
+    const revision = this.scopeRevision;
+    this.requireCurrent(scope, revision);
     await firstValueFrom(this.api.post(`/devices/${encodeURIComponent(deviceId)}/revoke`, {}));
+    this.requireCurrent(scope, revision);
     this.devices.update((devices) => devices.filter((device) => device.id !== deviceId && device.hardwareId !== deviceId));
   }
 
@@ -118,5 +154,28 @@ export class AccountService {
 
   private normalizeAlias(value: string | null | undefined): string {
     return String(value || '').trim().replace(/^@/, '').toLowerCase();
+  }
+
+  private currentScope(): string {
+    const session = this.auth.session();
+    return session?.user.id ? `${session.user.id}:${session.device?.id ?? ''}` : '';
+  }
+
+  private observeScope(scope: string): void {
+    if (scope === this.observedScope) return;
+    this.observedScope = scope;
+    this.scopeRevision += 1;
+    this.devices.set([]);
+    this.privacy.set(null);
+    this.entitlements.set(null);
+    this.loading.set(false);
+  }
+
+  private isCurrent(scope: string, revision: number): boolean {
+    return !!scope && scope === this.currentScope() && revision === this.scopeRevision;
+  }
+
+  private requireCurrent(scope: string, revision: number): void {
+    if (!this.isCurrent(scope, revision)) throw new Error('ACCOUNT_SESSION_CHANGED');
   }
 }

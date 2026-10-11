@@ -3,10 +3,10 @@
     <header class="page-head">
       <div>
         <h1>{{ 'ACCOUNT.TITLE' | translate:'Cuenta' }}</h1>
-        <p>@{{ auth.session()?.user?.alias }}</p>
+        <p>{{ 'ACCOUNT.PROFILE_HEADER_COPY' | translate:'Tu perfil, tu privacidad y tus dispositivos.' }}</p>
       </div>
-      <ion-button mode="ios" fill="clear" (click)="reload()" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">
-        @if (account.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
+      <ion-button mode="ios" fill="clear" (click)="reload()" [disabled]="profileLoading || saving" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">
+        @if (profileLoading) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
       </ion-button>
     </header>
 
@@ -15,21 +15,7 @@
         <summary>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</summary>
         <div class="account-section-body">
 
-        <app-recovery-email (stateChange)="onRecoveryEmailState($event)"></app-recovery-email>
-        @if (nivraNumber()) {
-          <section class="nivra-number-card" [attr.aria-label]="'ACCOUNT.NIVRA_ID' | translate:'Tu ID Nivra'">
-            <div>
-              <span>{{ 'ACCOUNT.NIVRA_ID' | translate:'Tu ID Nivra' }}</span>
-              <strong dir="ltr">{{ nivraNumber() }}</strong>
-              <p>{{ 'ACCOUNT.NIVRA_ID_HELP' | translate:'Es tu identificador privado, no un teléfono. Compártelo para que te encuentren o úsalo para iniciar sesión.' }}</p>
-            </div>
-            <div class="nivra-number-actions">
-              <ion-button mode="ios" fill="outline" (click)="copyNivraNumber()"><ion-icon slot="start" name="copy-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.COPY_ID' | translate:'Copiar ID' }}</ion-button>
-              <ion-button mode="ios" fill="clear" (click)="shareAccount()"><ion-icon slot="start" name="share-social-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.SHARE_ID' | translate:'Compartir' }}</ion-button>
-            </div>
-          </section>
-        }
-        <div class="profile-photo-row">
+        <div class="profile-photo-row profile-hero">
           <input #profilePhotoInput type="file" accept="image/*" hidden (change)="pickProfilePhoto($event)">
           <button
             type="button"
@@ -52,6 +38,14 @@
             </small>
           </button>
           <div class="profile-photo-actions">
+            <div class="profile-hero-copy">
+              <h2>{{ displayName || auth.session()?.user?.displayName || auth.session()?.user?.alias || ('ACCOUNT.PROFILE' | translate:'Perfil') }}</h2>
+              <p dir="ltr">@{{ alias || auth.session()?.user?.alias }}</p>
+              <span class="profile-draft-tag" [class.pending]="hasProfileChanges()">
+                <ion-icon [name]="hasProfileChanges() ? 'create-outline' : 'checkmark-circle-outline'" aria-hidden="true"></ion-icon>
+                {{ hasProfileChanges() ? ('ACCOUNT.PROFILE_PENDING' | translate:'Cambios sin guardar') : ('ACCOUNT.PROFILE_SYNCED' | translate:'Perfil guardado') }}
+              </span>
+            </div>
             <div class="profile-photo-buttons">
               <ion-button mode="ios" fill="outline" (click)="profilePhotoInput.click()" [disabled]="saving">
                 <ion-icon slot="start" name="camera-outline"></ion-icon>
@@ -83,10 +77,23 @@
             }
           </div>
         </div>
-        <div class="form-grid">
+        @if (nivraNumber()) {
+          <section class="nivra-number-card" [attr.aria-label]="'ACCOUNT.NIVRA_ID' | translate:'Tu ID Nivra'">
+            <div>
+              <span>{{ 'ACCOUNT.NIVRA_ID' | translate:'Tu ID Nivra' }}</span>
+              <strong dir="ltr">{{ nivraNumber() }}</strong>
+              <p>{{ 'ACCOUNT.NIVRA_ID_HELP' | translate:'Es tu identificador privado, no un teléfono. Compártelo para que te encuentren o úsalo para iniciar sesión.' }}</p>
+            </div>
+            <div class="nivra-number-actions">
+              <ion-button mode="ios" fill="outline" (click)="copyNivraNumber()" [disabled]="saving"><ion-icon slot="start" name="copy-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.COPY_ID' | translate:'Copiar ID' }}</ion-button>
+              <ion-button mode="ios" fill="clear" (click)="openShareModal()" [disabled]="saving"><ion-icon slot="start" name="qr-code-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.SHARE_ID' | translate:'Compartir' }}</ion-button>
+            </div>
+          </section>
+        }
+        <div class="form-grid profile-form" [attr.aria-busy]="saving || profileLoading">
           <label class="alias-field">
             <span>{{ 'ACCOUNT.ALIAS' | translate:'Alias' }}</span>
-            <ion-input mode="ios" fill="outline" [ngModel]="alias" (ngModelChange)="aliasChanged($event)" maxlength="32" autocomplete="off"></ion-input>
+            <ion-input mode="ios" fill="outline" [ngModel]="alias" (ngModelChange)="aliasChanged($event)" maxlength="32" autocomplete="off" [disabled]="saving || profileLoading"></ion-input>
             @if (aliasStatus === 'checking') {
               <small class="alias-hint">{{ 'ACCOUNT.ALIAS_CHECKING' | translate:'Validando alias...' }}</small>
             } @else if (aliasStatus === 'taken') {
@@ -95,43 +102,58 @@
               <small class="alias-error">{{ 'ACCOUNT.ALIAS_INVALID' | translate:'Usa 3 a 32 caracteres: letras, numeros, punto, guion o _.' }}</small>
             } @else if (aliasStatus === 'available') {
               <small class="alias-ok">{{ 'ACCOUNT.ALIAS_AVAILABLE' | translate:'Alias disponible' }}</small>
+            } @else if (aliasStatus === 'error') {
+              <small class="alias-error" role="status">{{ 'ACCOUNT.ALIAS_NETWORK_ERROR' | translate:'No se pudo comprobar el alias.' }}</small>
+              <button type="button" class="profile-text-action" (click)="retryAliasCheck()" [disabled]="saving">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button>
             } @else {
               <small class="alias-hint">{{ 'ACCOUNT.ALIAS_HINT' | translate:'Tu alias es unico y puede compartirse como' }} @{{ alias || auth.session()?.user?.alias }}.</small>
             }
           </label>
           <label>
             <span>{{ 'ACCOUNT.NAME' | translate:'Nombre' }}</span>
-            <ion-input mode="ios" fill="outline" [(ngModel)]="displayName"></ion-input>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="displayName" maxlength="160" autocomplete="nickname" [disabled]="saving || profileLoading"></ion-input>
           </label>
           <label class="recovery-email-field">
             <span>{{ 'ACCOUNT.EMAIL' | translate:'Email' }}</span>
             <ion-input mode="ios" fill="outline" [ngModel]="email" type="email" readonly aria-readonly="true" autocomplete="email"></ion-input>
             @if (recoveryEmailVerified) {
-              <small class="alias-ok">Correo de recuperación verificado. Para cambiarlo, usa “Cambiar correo” arriba.</small>
+              <small class="alias-ok">{{ 'ACCOUNT.RECOVERY_VERIFIED_HINT' | translate:'Correo verificado. Puedes cambiarlo en Recuperación de cuenta.' }}</small>
             } @else {
-              <small class="alias-hint">Verifica un correo de recuperación arriba para mantenerlo protegido.</small>
+              <small class="alias-hint">{{ 'ACCOUNT.RECOVERY_PENDING_HINT' | translate:'Añade un correo de recuperación para proteger el acceso a tu cuenta.' }}</small>
             }
           </label>
           <label class="wide">
             <span>{{ 'ACCOUNT.BIO' | translate:'Bio' }}</span>
-            <ion-textarea mode="ios" fill="outline" [(ngModel)]="bio" rows="4"></ion-textarea>
+            <ion-textarea mode="ios" fill="outline" [(ngModel)]="bio" rows="3" autoGrow="true" maxlength="500" [disabled]="saving || profileLoading"></ion-textarea>
+            <small class="profile-field-count" dir="ltr">{{ bio.length }} / 500</small>
           </label>
           <label class="toggle-row wide">
             <span>{{ 'ACCOUNT.VISIBLE_DIRECTORY' | translate:'Visible en directorio' }}</span>
-            <ion-toggle mode="ios" [checked]="isDiscoverable" (ionChange)="isDiscoverable = $event.detail.checked"></ion-toggle>
+            <ion-toggle mode="ios" [checked]="isDiscoverable" (ionChange)="isDiscoverable = $event.detail.checked" [disabled]="saving || profileLoading"></ion-toggle>
           </label>
           <label class="toggle-row wide story-repost-toggle">
             <span>
               <strong>{{ 'ACCOUNT.ALLOW_STORY_REPOSTS' | translate:'Permitir repost de mis historias' }}</strong>
               <small>{{ 'ACCOUNT.ALLOW_STORY_REPOSTS_COPY' | translate:'Si lo desactivas, otros no veran el boton de repostear tus historias.' }}</small>
             </span>
-            <ion-toggle mode="ios" [checked]="allowStoryReposts" (ionChange)="allowStoryReposts = $event.detail.checked"></ion-toggle>
+            <ion-toggle mode="ios" [checked]="allowStoryReposts" (ionChange)="allowStoryReposts = $event.detail.checked" [disabled]="saving || profileLoading"></ion-toggle>
           </label>
         </div>
-        <ion-button mode="ios" (click)="saveProfile()" [disabled]="saving || !canSaveProfile()">
-          <ion-icon slot="start" name="shield-checkmark-outline"></ion-icon>
-          {{ 'ACCOUNT.SAVE_PROFILE' | translate:'Guardar perfil' }}
-        </ion-button>
+        <div class="profile-save-bar">
+          <p role="status">{{ saving ? ('ACCOUNT.PROFILE_SAVING' | translate:'Guardando tu perfil…') : hasProfileChanges() ? ('ACCOUNT.PROFILE_PENDING_HINT' | translate:'Publica tus cambios cuando estén listos.') : ('ACCOUNT.PROFILE_SAVED_HINT' | translate:'Tu perfil se sincroniza en tus dispositivos.') }}</p>
+          <div>
+            @if (hasProfileChanges()) { <ion-button mode="ios" fill="clear" (click)="discardProfileChanges()" [disabled]="saving">{{ 'ACCOUNT.PROFILE_DISCARD' | translate:'Descartar' }}</ion-button> }
+            <ion-button mode="ios" (click)="saveProfile()" [disabled]="!hasProfileChanges() || !canSaveProfile()">
+              @if (saving) { <ion-spinner slot="start" name="crescent"></ion-spinner> } @else { <ion-icon slot="start" name="checkmark-outline" aria-hidden="true"></ion-icon> }
+              {{ 'ACCOUNT.SAVE_PROFILE' | translate:'Guardar perfil' }}
+            </ion-button>
+          </div>
+        </div>
+        @if (profileError) { <p class="error profile-inline-error" role="alert">{{ profileError }} <button type="button" class="profile-text-action" (click)="reload()" [disabled]="profileLoading || saving">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button></p> }
+        <details class="profile-recovery-section">
+          <summary>{{ 'ACCOUNT.PROFILE_RECOVERY' | translate:'Recuperación de cuenta' }}</summary>
+          <app-recovery-email (stateChange)="onRecoveryEmailState($event)"></app-recovery-email>
+        </details>
       </div>
       </details>
 
@@ -824,7 +846,7 @@
       (cropped)="applyProfilePhotoCrop($event)">
     </app-image-cropper>
 
-    @if (notice) { <p class="notice">{{ notice }}</p> }
-    @if (error) { <p class="error">{{ error }}</p> }
+    @if (notice) { <p class="notice account-feedback" role="status">{{ notice }}</p> }
+    @if (error && error !== profileError) { <p class="error" role="alert">{{ error }}</p> }
   </main>
 </ion-content>

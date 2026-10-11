@@ -41,6 +41,7 @@ import { TranslateService } from '../../core/services/translate.service';
 import { SocialService } from '../../core/services/social.service';
 import { Router } from '@angular/router';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
+import { StoryActivityComponent } from '../story-viewer/story-activity.component';
 import { GroupHubComponent } from './group-hub.component';
 import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
 
@@ -60,7 +61,7 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryActivityComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })
@@ -244,7 +245,7 @@ export class WorldPage implements OnInit, OnDestroy {
     const activeBucket = this.viewerBuckets[this.viewerBucketIndex] ?? bucket;
     this.viewerQueue = this.storiesForPlayback(activeBucket);
     const explicitIndex = explicitStory ? this.viewerQueue.findIndex((item) => item.id === explicitStory.id) : -1;
-    this.viewerIndex = explicitIndex >= 0 ? explicitIndex : 0;
+    this.viewerIndex = explicitIndex >= 0 ? explicitIndex : Math.max(0, this.viewerQueue.findIndex((story) => !story.viewedByMe && !this.isMine(story)));
     await this.run(`story:${activeBucket.id}`, () => this.openQueuedStory());
   }
 
@@ -341,7 +342,7 @@ export class WorldPage implements OnInit, OnDestroy {
 
   closeStoryViewer(): void {
     this.stopStoryProgress();
-    this.social.closeStory();
+    this.social.closeStory('world');
     this.viewerQueue = [];
     this.viewerIndex = 0;
     this.viewerBuckets = [];
@@ -355,6 +356,8 @@ export class WorldPage implements OnInit, OnDestroy {
   openStats(): void {
     this.pauseStoryProgress();
     this.statsOpen = true;
+    const story = this.social.activeStory();
+    if (story) void this.social.refreshStoryActivity(story).catch(() => undefined);
   }
 
   closeStats(): void {
@@ -421,7 +424,8 @@ export class WorldPage implements OnInit, OnDestroy {
       const message = await this.chat.sendText(conversation, text, {
         replyTo: this.storyReplyReference(story),
       });
-      await this.social.commentStory(story, message?.id ?? null);
+      // Sending committed before activity metadata; retrying must not duplicate the reply.
+      await this.social.commentStory(story, message?.id ?? null).catch(() => undefined);
       this.storyReply = '';
       this.notice = this.tr('WORLD.NOTICE_REPLY_SENT', 'Respuesta enviada al chat.');
     });
@@ -439,7 +443,7 @@ export class WorldPage implements OnInit, OnDestroy {
   }
 
   canRepostStory(story: Story): boolean {
-    return !this.isMine(story) && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
+    return !this.isMine(story) && !story.viewOnce && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
   }
 
   viewerSubtitle(story: Story): string {
@@ -450,7 +454,7 @@ export class WorldPage implements OnInit, OnDestroy {
   }
 
   statsViews(story: Story): number {
-    return story.views?.length || story.viewCount || 0;
+    return Math.max(story.views?.length || 0, story.viewCount || 0);
   }
 
   statsReactions(story: Story): number {
@@ -595,7 +599,8 @@ export class WorldPage implements OnInit, OnDestroy {
     this.reactionsOpen = false;
     this.statsOpen = false;
     this.storyReply = '';
-    await this.social.viewStory(story);
+    await this.social.viewStory(story, 'world');
+    if (this.social.activeStory()?.id !== story.id || this.social.storyReadyId() !== story.id) return;
     this.viewerQueue = this.viewerQueue.map((item) => item.id === this.social.activeStory()?.id ? this.social.activeStory()! : item);
     if (this.viewerBuckets[this.viewerBucketIndex]) {
       this.viewerBuckets[this.viewerBucketIndex] = {
@@ -671,8 +676,7 @@ export class WorldPage implements OnInit, OnDestroy {
   }
 
   private storiesForPlayback(bucket: StoryBucket): Story[] {
-    const unseen = bucket.stories.filter((story) => !story.viewedByMe && !this.isMine(story));
-    return unseen.length ? unseen : [...bucket.stories];
+    return [...bucket.stories].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt));
   }
 
   private latestDate(left: string, right: string): string {
@@ -686,7 +690,7 @@ export class WorldPage implements OnInit, OnDestroy {
     this.storyPaused = false;
     this.currentStoryDurationMs = this.defaultStoryDurationMs;
     this.progressStartedAt = Date.now();
-    this.progressTimer = window.setInterval(() => this.tickStoryProgress(), 80);
+    // Playback is owned by StoryViewerComponent, including media readiness and pause.
   }
 
   private pauseStoryProgress(): void {

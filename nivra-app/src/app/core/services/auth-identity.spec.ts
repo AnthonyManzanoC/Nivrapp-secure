@@ -101,7 +101,7 @@ describe('hybrid login preserves device key identity', () => {
     spyOn(window, 'fetch').and.returnValue(response);
     const refreshing: any = Object.assign(Object.create(AuthService.prototype), {
       session: signal<any>(a), sessionWriteEpoch: 0, authRefreshPromise: null, refreshBackoffUntil: 0,
-      restoreProtectedSession: async () => undefined, api: { url: () => '/synthetic-refresh' },
+      restoreProtectedSession: async () => undefined, api: { fetch: (_path: string, init: RequestInit) => window.fetch('/synthetic-refresh', init) },
       persistSession: jasmine.createSpy('persist'),
     });
     const pending = refreshing.refreshToken(); await Promise.resolve();
@@ -132,7 +132,7 @@ describe('hybrid login preserves device key identity', () => {
     const source = { publicJwk: { kty: 'EC', crv: 'P-256', x: 'source-x', y: 'source-y' }, privateJwk: { d: 'source-private' } };
     const auth = { user: { id: 'alice', alias: 'alice' }, device: { id: 'target' }, tokens: { accessToken: 'target-token', refreshToken: 'target-refresh' } };
     const linked: any = Object.assign(Object.create(AuthService.prototype), {
-      api: { url: () => '/synthetic-keys' }, crypto: { parsePublicJwk: JSON.parse, samePublicKey: (a: any, b: any) => a.x === b?.x && a.y === b?.y },
+      api: { fetch: (_path: string, init: RequestInit) => window.fetch('/synthetic-keys', init) }, crypto: { parsePublicJwk: JSON.parse, samePublicKey: (a: any, b: any) => a.x === b?.x && a.y === b?.y },
       completeImportedAuth: jasmine.createSpy('complete').and.resolveTo(),
     });
     spyOn(window, 'fetch').and.resolveTo(new Response(JSON.stringify([{ userId: 'alice', devices: [{ deviceId: 'target', keyBundle: { identityKey: JSON.stringify(local.publicJwk) } }] }]), { status: 200 }));
@@ -146,7 +146,7 @@ describe('hybrid login preserves device key identity', () => {
     const source = { publicJwk: { x: 'source', y: 'source' }, privateJwk: { d: 'source-private' } };
     const auth = { user: { id: 'alice' }, device: { id: 'target' }, tokens: { accessToken: 'target-token', refreshToken: 'target-refresh' } };
     const linked: any = Object.assign(Object.create(AuthService.prototype), {
-      api: { url: () => '/synthetic-keys' }, crypto: { parsePublicJwk: (value: string) => value ? JSON.parse(value) : null, samePublicKey: (a: any, b: any) => a.x === b?.x && a.y === b?.y },
+      api: { fetch: (_path: string, init: RequestInit) => window.fetch('/synthetic-keys', init) }, crypto: { parsePublicJwk: (value: string) => value ? JSON.parse(value) : null, samePublicKey: (a: any, b: any) => a.x === b?.x && a.y === b?.y },
       completeImportedAuth: jasmine.createSpy('complete').and.resolveTo(),
     });
     let current = true;

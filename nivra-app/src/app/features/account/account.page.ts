@@ -1,9 +1,9 @@
 import { CommonModule } from '@angular/common';
-import { Component, NgZone, OnDestroy, OnInit, inject } from '@angular/core';
+import { Component, NgZone, OnDestroy, OnInit, effect, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Subject, Subscription, from, of } from 'rxjs';
-import { catchError, debounceTime, distinctUntilChanged, map, switchMap } from 'rxjs/operators';
+import { catchError, debounceTime, map, switchMap } from 'rxjs/operators';
 import {
   IonButton,
   IonContent,
@@ -16,7 +16,7 @@ import {
   IonToggle,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { backspaceOutline, cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline } from 'ionicons/icons';
+import { backspaceOutline, cameraOutline, checkmarkCircleOutline, checkmarkOutline, closeOutline, copyOutline, createOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline } from 'ionicons/icons';
 import { AccountService } from '../../core/services/account.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
@@ -33,11 +33,16 @@ import { AndroidUpdateService } from '../../core/services/android-update.service
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 import { formatNivraNumber } from '../../core/utils/nivra-number';
 import { RecoveryEmailComponent, RecoveryEmailState } from '../../shared/recovery-email.component';
+import { NIVRA_UPDATE_URL } from '../../core/release';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const PIN_LENGTH = 4;
 
-type AliasStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid';
+type AliasStatus = 'idle' | 'checking' | 'available' | 'taken' | 'invalid' | 'error';
+interface ProfileDraft {
+  alias: string; displayName: string; bio: string; profilePhotoDataUrl: string;
+  isDiscoverable: boolean; allowStoryReposts: boolean;
+}
 
 @Component({
   selector: 'app-account',
@@ -74,6 +79,14 @@ export class AccountPage implements OnInit, OnDestroy {
   isDiscoverable = true;
   allowStoryReposts = true;
   saving = false;
+  profileLoading = false;
+  profileError = '';
+  private profileBaseline: ProfileDraft | null = null;
+  private profileOwnerScope = '';
+  private photoCropScope = '';
+  private active = true;
+  private reloadInFlight: Promise<void> | null = null;
+  private aliasRevision = 0;
   private noticeValue = '';
   private noticeTimer: number | null = null;
   error = '';
@@ -173,25 +186,48 @@ export class AccountPage implements OnInit, OnDestroy {
   ];
   private qrScanner: import('html5-qrcode').Html5Qrcode | null = null;
   private contactScanner: import('html5-qrcode').Html5Qrcode | null = null;
+  private qrScannerEpoch = 0;
+  private contactScannerEpoch = 0;
   private qrScanInFlight = false;
-  private readonly aliasChecks = new Subject<string>();
+  private readonly aliasChecks = new Subject<{ alias: string; scope: string; revision: number }>();
   private aliasCheckSub?: Subscription;
   aliasStatus: AliasStatus = 'idle';
   readonly setupPinKeys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'backspace'];
   readonly pinSlots = [0, 1, 2, 3];
 
   constructor() {
-    addIcons({ backspaceOutline, cameraOutline, closeOutline, copyOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline });
+    addIcons({ backspaceOutline, cameraOutline, checkmarkCircleOutline, checkmarkOutline, closeOutline, copyOutline, createOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline });
+    effect(() => {
+      const scope = this.currentScope();
+      if (this.profileOwnerScope && scope !== this.profileOwnerScope) {
+        this.aliasRevision += 1;
+        this.profileBaseline = null;
+        this.profileOwnerScope = '';
+        this.photoCropScope = '';
+        this.alias = this.originalAlias = this.displayName = this.bio = this.email = this.phone = this.profilePhotoDataUrl = '';
+        this.profilePhotoDirty = this.recoveryEmailVerified = false;
+        this.aliasStatus = 'idle';
+        this.profilePhotoViewerOpen = this.shareModalOpen = this.pinSetupModalOpen = false;
+        this.profileCropFile = null;
+        this.shareQrDataUrl = '';
+        this.profileLoading = false;
+        this.saving = false;
+        this.reloadInFlight = null;
+        this.notice = this.error = this.profileError = '';
+        void this.stopQrScanner();
+        void this.stopContactScanner();
+      }
+    });
   }
 
   async ngOnInit(): Promise<void> {
     this.initializeTheme();
     this.listenForAliasChecks();
     await this.reload();
-    await this.refreshStorageEstimate();
   }
 
   ngOnDestroy(): void {
+    this.active = false;
     this.aliasCheckSub?.unsubscribe();
     if (this.noticeTimer !== null) {
       window.clearTimeout(this.noticeTimer);
@@ -219,27 +255,54 @@ export class AccountPage implements OnInit, OnDestroy {
     }
   }
 
-  async reload(): Promise<void> {
-    await this.account.load();
-    const user = this.auth.session()?.user;
-    if (user) {
-      this.alias = user.alias ?? '';
-      this.originalAlias = this.normalizeAlias(user.alias);
-      this.aliasStatus = 'idle';
-      this.displayName = user.displayName ?? '';
-      if (!this.recoveryEmailVerified) {
-        this.email = user.email ?? '';
+  reload(): Promise<void> {
+    if (this.reloadInFlight) return this.reloadInFlight;
+    const promise = this.reloadProfile();
+    this.reloadInFlight = promise;
+    void promise.finally(() => { if (this.reloadInFlight === promise) this.reloadInFlight = null; }).catch(() => undefined);
+    return promise;
+  }
+
+  private async reloadProfile(): Promise<void> {
+    const scope = this.currentScope();
+    if (!scope || !this.active) return;
+    this.profileLoading = true;
+    this.profileError = '';
+    const keepDraft = this.hasProfileChanges();
+    try {
+      await this.account.load();
+      if (!this.isCurrent(scope)) return;
+      const user = this.auth.session()?.user;
+      if (user && !keepDraft) {
+        const previousAlias = this.originalAlias;
+        this.alias = user.alias ?? '';
+        this.originalAlias = this.normalizeAlias(user.alias);
+        this.aliasStatus = 'idle';
+        this.displayName = user.displayName ?? '';
+        if (!this.recoveryEmailVerified) {
+          this.email = user.email ?? '';
+        }
+        this.phone = user.phone ?? '';
+        this.bio = user.bio ?? '';
+        this.profilePhotoDataUrl = user.profilePhotoDataUrl ?? '';
+        this.profilePhotoDirty = false;
+        this.isDiscoverable = user.isDiscoverable;
+        this.allowStoryReposts = user.allowStoryReposts !== false;
+        this.profileOwnerScope = scope;
+        this.profileBaseline = this.readProfileDraft();
+        if (previousAlias !== this.originalAlias) this.shareQrDataUrl = '';
       }
-      this.phone = user.phone ?? '';
-      this.bio = user.bio ?? '';
-      this.profilePhotoDataUrl = user.profilePhotoDataUrl ?? '';
-      this.profilePhotoDirty = false;
-      this.isDiscoverable = user.isDiscoverable;
-      this.allowStoryReposts = user.allowStoryReposts !== false;
-      this.appSettings.set(
-        'profilePhotoVisibility',
-        this.normalizeVisibility(user.privacySettings?.profilePhotoVisibility),
-      );
+      if (user) {
+        this.appSettings.set(
+          'profilePhotoVisibility',
+          this.normalizeVisibility(user.privacySettings?.profilePhotoVisibility),
+        );
+      }
+      if (keepDraft) this.notice = this.t('ACCOUNT.PROFILE_DRAFT_KEPT', 'Cuenta actualizada. Conservamos tus cambios pendientes.');
+    } catch {
+      if (this.isCurrent(scope)) this.profileError = this.t('ACCOUNT.PROFILE_LOAD_ERROR', 'No se pudo actualizar tu perfil. Revisa la conexión y reintenta.');
+    } finally {
+      if (this.isCurrent(scope)) this.profileLoading = false;
     }
     await this.refreshStorageEstimate();
   }
@@ -253,35 +316,43 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async saveProfile(): Promise<void> {
+    if (this.saving || this.profileLoading || !this.isCurrent(this.profileOwnerScope)) return;
     if (!this.canSaveProfile()) {
-      this.error = this.aliasStatus === 'taken'
+      this.profileError = this.aliasStatus === 'taken'
         ? this.t('ACCOUNT.ALIAS_TAKEN_DOT', 'Alias no disponible.')
         : this.aliasStatus === 'checking'
           ? this.t('ACCOUNT.WAIT_ALIAS_VALIDATION', 'Espera la validacion del alias.')
           : this.t('ACCOUNT.REVIEW_ALIAS', 'Revisa el alias antes de guardar.');
       return;
     }
-
+    const scope = this.currentScope();
+    const draft = this.readProfileDraft();
+    this.profileError = '';
     await this.run(async () => {
-      const alias = this.normalizeAlias(this.alias);
+      const alias = draft.alias;
       await this.account.updateProfile({
         alias,
-        displayName: this.displayName || null,
-        bio: this.bio || null,
-        ...(this.profilePhotoDirty ? { profilePhotoDataUrl: this.profilePhotoDataUrl } : {}),
-        isDiscoverable: this.isDiscoverable,
-        allowStoryReposts: this.allowStoryReposts,
+        displayName: draft.displayName.trim(),
+        bio: draft.bio.trim(),
+        ...(this.profilePhotoDirty ? { profilePhotoDataUrl: draft.profilePhotoDataUrl } : {}),
+        isDiscoverable: draft.isDiscoverable,
+        allowStoryReposts: draft.allowStoryReposts,
       });
+      if (!this.isCurrent(scope)) return;
       this.alias = this.auth.session()?.user?.alias ?? alias;
       this.originalAlias = this.normalizeAlias(this.alias);
       this.aliasStatus = 'idle';
       this.profilePhotoDirty = false;
+      this.shareQrDataUrl = '';
+      this.profileBaseline = this.readProfileDraft();
       this.notice = this.t('ACCOUNT.PROFILE_UPDATED', 'Perfil actualizado.');
     });
+    if (this.isCurrent(scope) && this.error) this.profileError = this.error;
   }
 
   aliasChanged(value: string | number | null | undefined): void {
     this.alias = this.normalizeAlias(String(value ?? ''));
+    this.aliasRevision += 1;
     const alias = this.normalizeAlias(this.alias);
     if (alias === this.originalAlias) {
       this.aliasStatus = 'idle';
@@ -292,10 +363,33 @@ export class AccountPage implements OnInit, OnDestroy {
       return;
     }
     this.aliasStatus = 'checking';
-    this.aliasChecks.next(alias);
+    this.aliasChecks.next({ alias, scope: this.currentScope(), revision: this.aliasRevision });
+  }
+
+  retryAliasCheck(): void { this.aliasChanged(this.alias); }
+
+  hasProfileChanges(): boolean {
+    const baseline = this.profileBaseline;
+    return !!baseline && (this.normalizeAlias(this.alias) !== baseline.alias
+      || this.displayName !== baseline.displayName || this.bio !== baseline.bio
+      || this.profilePhotoDataUrl !== baseline.profilePhotoDataUrl
+      || this.isDiscoverable !== baseline.isDiscoverable || this.allowStoryReposts !== baseline.allowStoryReposts);
+  }
+
+  discardProfileChanges(): void {
+    if (this.saving || !this.profileBaseline || !this.isCurrent(this.profileOwnerScope)) return;
+    Object.assign(this, this.profileBaseline);
+    this.originalAlias = this.profileBaseline.alias;
+    this.aliasStatus = 'idle';
+    this.aliasRevision += 1;
+    this.profilePhotoDirty = false;
+    this.profileError = this.error = '';
+    this.profileCropFile = null;
+    this.notice = this.t('ACCOUNT.PROFILE_DRAFT_DISCARDED', 'Cambios descartados.');
   }
 
   canSaveProfile(): boolean {
+    if (this.saving || this.profileLoading || this.displayName.trim().length > 160 || this.bio.trim().length > 500) return false;
     const alias = this.normalizeAlias(this.alias);
     if (!ALIAS_PATTERN.test(alias)) {
       return false;
@@ -310,26 +404,35 @@ export class AccountPage implements OnInit, OnDestroy {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0] ?? null;
     input.value = '';
-    if (!file) {
+    if (!file || this.saving || !this.isCurrent(this.profileOwnerScope)) {
       return;
     }
     if (!file.type.startsWith('image/')) {
-      this.error = this.t('ACCOUNT.SELECT_VALID_IMAGE', 'Selecciona una imagen valida.');
+      this.profileError = this.t('ACCOUNT.SELECT_VALID_IMAGE', 'Selecciona una imagen valida.');
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      this.profileError = this.t('ACCOUNT.PHOTO_SIZE_ERROR', 'Elige una foto de hasta 20 MB.');
       return;
     }
     this.error = '';
+    this.profileError = '';
+    this.photoCropScope = this.currentScope();
     this.profileCropFile = file;
   }
 
   applyProfilePhotoCrop(dataUrl: string): void {
+    if (!this.isCurrent(this.photoCropScope) || this.saving || !/^data:image\/(png|jpeg|webp);base64,/i.test(dataUrl)) return;
     this.profilePhotoDataUrl = dataUrl;
     this.profilePhotoDirty = true;
     this.profileCropFile = null;
+    this.photoCropScope = '';
     this.notice = this.t('ACCOUNT.PHOTO_READY', 'Foto lista. Guarda el perfil para publicarla.');
   }
 
   cancelProfilePhotoCrop(): void {
     this.profileCropFile = null;
+    this.photoCropScope = '';
   }
 
   openOwnProfilePhoto(): void {
@@ -713,8 +816,7 @@ export class AccountPage implements OnInit, OnDestroy {
 
   shareUrl(): string {
     const alias = this.auth.session()?.user?.alias || '';
-    const origin = window.location.origin || window.location.href.split('/').slice(0, 3).join('/');
-    return `${origin}/contact?alias=${encodeURIComponent(alias)}`;
+    return `${NIVRA_UPDATE_URL}/contact?alias=${encodeURIComponent(alias)}`;
   }
 
   shareMessage(): string {
@@ -732,7 +834,7 @@ export class AccountPage implements OnInit, OnDestroy {
 
   async copyShareMessage(): Promise<void> {
     await this.run(async () => {
-      await navigator.clipboard.writeText(this.shareMessage());
+      await this.nativeDevice.copyToClipboard(this.shareMessage(), 'Nivra');
       this.notice = this.t('ACCOUNT.INVITE_COPIED', 'Invitacion copiada.');
     });
   }
@@ -750,7 +852,7 @@ export class AccountPage implements OnInit, OnDestroy {
         this.notice = this.t('ACCOUNT.INVITE_READY', 'Invitacion lista para enviar.');
         return;
       }
-      await navigator.clipboard.writeText(this.shareMessage());
+      await this.nativeDevice.copyToClipboard(this.shareMessage(), 'Nivra');
       this.notice = this.t('ACCOUNT.SHARE_FALLBACK_COPIED', 'Tu navegador no comparte directo; copie la invitacion.');
     });
   }
@@ -758,7 +860,7 @@ export class AccountPage implements OnInit, OnDestroy {
   async openShareModal(): Promise<void> {
     await this.run(async () => {
       await this.ensureShareQr();
-      this.shareModalOpen = true;
+      if (this.isCurrent(this.profileOwnerScope) && this.shareQrDataUrl) this.shareModalOpen = true;
     });
   }
 
@@ -767,18 +869,22 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async startContactScanner(): Promise<void> {
-    if (this.contactScannerBusy) {
+    if (this.contactScannerBusy || !this.active || !this.currentScope()) {
       return;
     }
     this.contactScannerOpen = true;
     this.contactScannerBusy = true;
+    const epoch = ++this.contactScannerEpoch;
+    const scope = this.currentScope();
     this.contactScannerStatus = this.t('ACCOUNT.PREPARING_CAMERA', 'Preparando camara...');
     try {
       await new Promise((resolve) => setTimeout(resolve, 0));
       const { Html5Qrcode } = await import('html5-qrcode');
       await this.stopContactScanner({ keepOpen: true });
+      if (!this.isCurrent(scope) || epoch !== this.contactScannerEpoch) return;
       this.contactScanner = new Html5Qrcode('contactQrScannerRegion');
-      await this.contactScanner.start(
+      const scanner = this.contactScanner;
+      await scanner.start(
         { facingMode: 'environment' },
         {
           fps: 8,
@@ -787,11 +893,17 @@ export class AccountPage implements OnInit, OnDestroy {
             return { width: size, height: size };
           },
         },
-        (text) => this.ngZone.run(() => void this.handleContactQr(text)),
+        (text) => { if (this.isCurrent(scope) && epoch === this.contactScannerEpoch) this.ngZone.run(() => void this.handleContactQr(text)); },
         () => undefined,
       );
+      if (!this.isCurrent(scope) || epoch !== this.contactScannerEpoch) {
+        await this.disposeScanner(scanner);
+        if (this.contactScanner === scanner) this.contactScanner = null;
+        return;
+      }
       this.contactScannerStatus = this.t('ACCOUNT.POINT_CONTACT_QR', 'Apunta la camara al QR de contacto.');
     } catch (error) {
+      if (!this.isCurrent(scope) || epoch !== this.contactScannerEpoch) return;
       this.contactScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.CAMERA_OPEN_ERROR', 'No se pudo abrir la camara.');
       await this.stopContactScanner({ keepOpen: true });
     } finally {
@@ -800,6 +912,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async stopContactScanner(options: { keepOpen?: boolean } = {}): Promise<void> {
+    if (!options.keepOpen) this.contactScannerEpoch += 1;
     const scanner = this.contactScanner;
     this.contactScanner = null;
     if (scanner) {
@@ -819,22 +932,25 @@ export class AccountPage implements OnInit, OnDestroy {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0] ?? null;
     input.value = '';
-    if (!file || this.contactScannerBusy) {
+    if (!file || this.contactScannerBusy || !this.active || !this.currentScope()) {
       return;
     }
     this.contactScannerOpen = true;
     this.contactScannerBusy = true;
+    const epoch = ++this.contactScannerEpoch;
+    const scope = this.currentScope();
     this.contactScannerStatus = this.t('ACCOUNT.READING_IMAGE', 'Leyendo imagen...');
     let tempScanner: import('html5-qrcode').Html5Qrcode | null = null;
     try {
       await new Promise((resolve) => setTimeout(resolve, 0));
       await this.stopContactScanner({ keepOpen: true });
       const { Html5Qrcode } = await import('html5-qrcode');
+      if (!this.isCurrent(scope) || epoch !== this.contactScannerEpoch) return;
       tempScanner = new Html5Qrcode('contactQrScannerRegion');
       const text = await tempScanner.scanFile(file, true);
-      await this.ngZone.run(() => this.handleContactQr(text, { allowWhileBusy: true }));
+      if (this.isCurrent(scope) && epoch === this.contactScannerEpoch) await this.ngZone.run(() => this.handleContactQr(text, { allowWhileBusy: true }));
     } catch (error) {
-      this.contactScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.QR_READ_ERROR', 'No se pudo leer ese QR.');
+      if (this.isCurrent(scope) && epoch === this.contactScannerEpoch) this.contactScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.QR_READ_ERROR', 'No se pudo leer ese QR.');
     } finally {
       if (tempScanner && tempScanner !== this.contactScanner) {
         try {
@@ -883,6 +999,8 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async authorizeQr(): Promise<void> {
+    const scope = this.currentScope();
+    const qrText = this.qrText;
     await this.run(async () => {
       const loading = await this.loadingController.create({
         message: this.t('ACCOUNT.LINKING_SECURE_DEVICE', 'Vinculando dispositivo seguro...'),
@@ -891,11 +1009,13 @@ export class AccountPage implements OnInit, OnDestroy {
       });
       await loading.present();
       try {
-        await this.auth.authorizeQrLoginText(this.qrText);
+        if (!this.isCurrent(scope)) return;
+        await this.auth.authorizeQrLoginText(qrText);
+        if (!this.isCurrent(scope)) return;
         this.qrText = '';
         await this.stopQrScanner();
         await this.account.load();
-        this.notice = this.t('ACCOUNT.DEVICE_LINKED_QR', 'Dispositivo vinculado por QR.');
+        if (this.isCurrent(scope)) this.notice = this.t('ACCOUNT.DEVICE_LINKED_QR', 'Dispositivo vinculado por QR.');
       } finally {
         await loading.dismiss().catch(() => undefined);
       }
@@ -903,18 +1023,22 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async startQrScanner(): Promise<void> {
-    if (this.qrScannerBusy) {
+    if (this.qrScannerBusy || !this.active || !this.currentScope()) {
       return;
     }
     this.qrScannerOpen = true;
     this.qrScannerBusy = true;
+    const epoch = ++this.qrScannerEpoch;
+    const scope = this.currentScope();
     this.qrScannerStatus = this.t('ACCOUNT.PREPARING_SECURE_CAMERA', 'Preparando camara segura...');
     try {
       await new Promise((resolve) => setTimeout(resolve, 0));
       const { Html5Qrcode } = await import('html5-qrcode');
       await this.stopQrScanner({ keepOpen: true });
+      if (!this.isCurrent(scope) || epoch !== this.qrScannerEpoch) return;
       this.qrScanner = new Html5Qrcode('qrScannerRegion');
-      await this.qrScanner.start(
+      const scanner = this.qrScanner;
+      await scanner.start(
         { facingMode: 'environment' },
         {
           fps: 8,
@@ -923,11 +1047,17 @@ export class AccountPage implements OnInit, OnDestroy {
             return { width: size, height: size };
           },
         },
-        (text) => this.ngZone.run(() => void this.handleScannedQr(text)),
+        (text) => { if (this.isCurrent(scope) && epoch === this.qrScannerEpoch) this.ngZone.run(() => void this.handleScannedQr(text)); },
         () => undefined,
       );
+      if (!this.isCurrent(scope) || epoch !== this.qrScannerEpoch) {
+        await this.disposeScanner(scanner);
+        if (this.qrScanner === scanner) this.qrScanner = null;
+        return;
+      }
       this.qrScannerStatus = this.t('ACCOUNT.POINT_NIVRA_QR', 'Apunta la camara al QR de Nivra.');
     } catch (error) {
+      if (!this.isCurrent(scope) || epoch !== this.qrScannerEpoch) return;
       this.qrScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.CAMERA_OPEN_ERROR', 'No se pudo abrir la camara.');
       await this.stopQrScanner({ keepOpen: true });
     } finally {
@@ -936,6 +1066,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async stopQrScanner(options: { keepOpen?: boolean } = {}): Promise<void> {
+    if (!options.keepOpen) this.qrScannerEpoch += 1;
     const scanner = this.qrScanner;
     this.qrScanner = null;
     if (scanner) {
@@ -955,22 +1086,25 @@ export class AccountPage implements OnInit, OnDestroy {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0] ?? null;
     input.value = '';
-    if (!file || this.qrScannerBusy) {
+    if (!file || this.qrScannerBusy || !this.active || !this.currentScope()) {
       return;
     }
     this.qrScannerOpen = true;
     this.qrScannerBusy = true;
+    const epoch = ++this.qrScannerEpoch;
+    const scope = this.currentScope();
     this.qrScannerStatus = this.t('ACCOUNT.READING_IMAGE', 'Leyendo imagen...');
     let tempScanner: import('html5-qrcode').Html5Qrcode | null = null;
     try {
       await new Promise((resolve) => setTimeout(resolve, 0));
       await this.stopQrScanner({ keepOpen: true });
       const { Html5Qrcode } = await import('html5-qrcode');
+      if (!this.isCurrent(scope) || epoch !== this.qrScannerEpoch) return;
       tempScanner = new Html5Qrcode('qrScannerRegion');
       const text = await tempScanner.scanFile(file, true);
-      await this.ngZone.run(() => this.handleScannedQr(text, { allowWhileBusy: true }));
+      if (this.isCurrent(scope) && epoch === this.qrScannerEpoch) await this.ngZone.run(() => this.handleScannedQr(text, { allowWhileBusy: true }));
     } catch (error) {
-      this.qrScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.QR_READ_ERROR', 'No se pudo leer ese QR.');
+      if (this.isCurrent(scope) && epoch === this.qrScannerEpoch) this.qrScannerStatus = error instanceof Error ? error.message : this.t('ACCOUNT.QR_READ_ERROR', 'No se pudo leer ese QR.');
     } finally {
       if (tempScanner && tempScanner !== this.qrScanner) {
         try {
@@ -984,7 +1118,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   private async handleScannedQr(text: string, options: { allowWhileBusy?: boolean } = {}): Promise<void> {
-    if (!text || this.qrScanInFlight || (this.qrScannerBusy && !options.allowWhileBusy)) {
+    if (!this.active || !this.currentScope() || !text || this.qrScanInFlight || (this.qrScannerBusy && !options.allowWhileBusy)) {
       return;
     }
     this.qrScanInFlight = true;
@@ -1000,7 +1134,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   private async handleContactQr(text: string, options: { allowWhileBusy?: boolean } = {}): Promise<void> {
-    if (!text || (this.contactScannerBusy && !options.allowWhileBusy)) {
+    if (!this.active || !this.currentScope() || !text || (this.contactScannerBusy && !options.allowWhileBusy)) {
       return;
     }
     this.contactScannerBusy = true;
@@ -1023,40 +1157,45 @@ export class AccountPage implements OnInit, OnDestroy {
     if (this.deleteConfirmation !== 'DELETE' || !window.confirm(this.t('ACCOUNT.DELETE_CONFIRM', 'Esto desactiva la cuenta, revoca sesiones y minimiza datos. Continuar?'))) {
       return;
     }
+    const scope = this.currentScope();
     await this.run(async () => {
       await this.account.requestDataDelete(this.deleteConfirmation);
+      if (!this.isCurrent(scope)) return;
       await this.auth.logout();
       this.notice = this.t('ACCOUNT.ACCOUNT_DISABLED', 'Cuenta desactivada.');
     });
   }
 
   private async run(action: () => Promise<void>): Promise<void> {
+    if (this.saving || !this.active) return;
+    const scope = this.currentScope();
     this.saving = true;
     this.error = '';
     this.notice = '';
     try {
       await action();
     } catch (error) {
-      this.error = error instanceof Error ? error.message : this.t('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
+      if (this.isCurrent(scope) && !(error instanceof DOMException && error.name === 'AbortError')) {
+        this.error = error instanceof Error && error.message !== 'ACCOUNT_SESSION_CHANGED' ? error.message : this.t('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
+      }
     } finally {
-      this.saving = false;
+      if (this.isCurrent(scope) || !this.currentScope()) this.saving = false;
     }
   }
 
   private listenForAliasChecks(): void {
     this.aliasCheckSub = this.aliasChecks.pipe(
       debounceTime(500),
-      distinctUntilChanged(),
-      switchMap((alias) => from(this.account.checkAliasAvailable(alias)).pipe(
-        map((available) => ({ alias, available, failed: false })),
-        catchError(() => of({ alias, available: false, failed: true })),
+      switchMap(({ alias, scope, revision }) => from(this.account.checkAliasAvailable(alias)).pipe(
+        map((available) => ({ alias, scope, revision, available, failed: false })),
+        catchError(() => of({ alias, scope, revision, available: false, failed: true })),
       )),
-    ).subscribe(({ alias, available, failed }) => {
-      if (alias !== this.normalizeAlias(this.alias) || alias === this.originalAlias) {
+    ).subscribe(({ alias, scope, revision, available, failed }) => {
+      if (!this.isCurrent(scope) || revision !== this.aliasRevision || alias !== this.normalizeAlias(this.alias) || alias === this.originalAlias) {
         return;
       }
       this.aliasStatus = failed
-        ? 'idle'
+        ? 'error'
         : available ? 'available' : 'taken';
     });
   }
@@ -1066,9 +1205,11 @@ export class AccountPage implements OnInit, OnDestroy {
       return;
     }
     this.shareBusy = true;
+    const scope = this.currentScope();
+    const link = this.shareUrl();
     try {
       const QRCode = await import('qrcode');
-      this.shareQrDataUrl = await QRCode.toDataURL(this.shareUrl(), {
+      const qr = await QRCode.toDataURL(link, {
         margin: 1,
         width: 280,
         color: {
@@ -1076,6 +1217,7 @@ export class AccountPage implements OnInit, OnDestroy {
           light: '#ffffff',
         },
       });
+      if (this.isCurrent(scope) && link === this.shareUrl()) this.shareQrDataUrl = qr;
     } finally {
       this.shareBusy = false;
     }
@@ -1106,6 +1248,22 @@ export class AccountPage implements OnInit, OnDestroy {
 
   private normalizeAlias(value: string): string {
     return value.trim().replace(/^@+/, '').toLowerCase();
+  }
+
+  private readProfileDraft(): ProfileDraft {
+    return { alias: this.normalizeAlias(this.alias), displayName: this.displayName, bio: this.bio, profilePhotoDataUrl: this.profilePhotoDataUrl, isDiscoverable: this.isDiscoverable, allowStoryReposts: this.allowStoryReposts };
+  }
+
+  private currentScope(): string {
+    const session = this.auth.session();
+    return session?.user.id ? `${session.user.id}:${session.device?.id ?? ''}` : '';
+  }
+
+  private isCurrent(scope: string): boolean { return this.active && !!scope && scope === this.currentScope(); }
+
+  private async disposeScanner(scanner: import('html5-qrcode').Html5Qrcode): Promise<void> {
+    await scanner.stop().catch(() => undefined);
+    try { scanner.clear(); } catch { /* Already cleared while a permission prompt was open. */ }
   }
 
   private normalizeVisibility(value: unknown): NivraVisibility {

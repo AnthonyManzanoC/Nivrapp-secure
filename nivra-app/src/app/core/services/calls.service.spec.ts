@@ -57,6 +57,17 @@ describe('call session isolation', () => {
 
   afterEach(() => service.ngOnDestroy());
 
+  it('reloads active rooms and call state after reconnecting on a replacement API', () => {
+    const rooms = spyOn(service, 'refreshActiveGroupRooms').and.resolveTo();
+    const state = spyOn<any>(service, 'pollPersistedSignals').and.resolveTo();
+    service.activeCall.set(invitation);
+    const realtime = TestBed.inject(SignalrService).events$;
+    realtime.next({ type: 'connected', payload: null });
+    realtime.next({ type: 'reconnected', payload: null });
+    expect(rooms).toHaveBeenCalledTimes(2);
+    expect(state.calls.allArgs()).toEqual([[invitation.id], [invitation.id]]);
+  });
+
   it('ignores a native answer addressed to a different account before clearing or loading the call', async () => {
     const clear = spyOn(TestBed.inject(NativeDeviceService), 'clearIncomingCall').and.resolveTo();
     const answer = spyOn(service, 'accept').and.resolveTo();

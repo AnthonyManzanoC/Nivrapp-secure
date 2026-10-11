@@ -20,6 +20,7 @@ import { LocalHistoryService } from './local-history.service';
 import { E2EE_UPLOAD_LIMIT_BYTES, MediaOptimizerService } from './media-optimizer.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
+import { EncryptedDownloadService } from './encrypted-download.service';
 
 const MAX_STORY_MEDIA_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 
@@ -50,6 +51,7 @@ export class SocialService {
   private readonly history = inject(LocalHistoryService);
   private readonly mediaOptimizer = inject(MediaOptimizerService);
   private readonly realtime = inject(SignalrService);
+  private readonly downloads = inject(EncryptedDownloadService);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly people = signal<UserSummary[]>([]);
@@ -60,6 +62,12 @@ export class SocialService {
   readonly radarMatches = signal<UserSummary[]>([]);
   readonly radarNewCount = signal(0);
   readonly activeStory = signal<Story | null>(null);
+  readonly storyViewerOwner = signal('');
+  readonly storyReadyId = signal('');
+  readonly storyOpening = signal(false);
+  readonly storyOpenError = signal('');
+  readonly storyActivityLoading = signal(false);
+  readonly storyActivityError = signal('');
   readonly mediaPreviews = signal<Record<string, StoryMediaPreview>>({});
   readonly storyMediaErrors = signal<Record<string, string>>({});
   readonly loading = signal(false);
@@ -74,6 +82,10 @@ export class SocialService {
   private readonly deletedStoryIds = new Set<string>();
   private readonly unconfirmedPublishedStories = new Map<string, UnconfirmedPublishedStory>();
   private socialAccountDeviceKey = this.accountDeviceKey();
+  private storyOpenRevision = 0;
+  private storyActivityRevision = 0;
+  private readonly storyMediaInFlight = new Map<string, Promise<StoryMediaPreview | null>>();
+  private readonly storyMediaBytes = new Map<string, number>();
 
   constructor() {
     effect(() => {
@@ -105,8 +117,8 @@ export class SocialService {
           this.applyStoryUpdate(payload);
         } else if (payload?.storyId) {
           this.storyRealtimeVersion += 1;
-          this.stories.update((items) => items.map((story) =>
-            story.id === payload.storyId ? { ...story, viewCount: story.viewCount + 1 } : story));
+          // A repeated/legacy event is not evidence of another distinct viewer.
+          void this.load().catch(() => undefined);
         }
       }
       if (event.type === 'friend.requested' ||
@@ -464,7 +476,7 @@ export class SocialService {
       }));
       assertPublishingSession();
       if (preparedMediaFile && media) {
-        this.rememberMediaPreview(`story-file:${media.fileId}`, preparedMediaFile, media.mime, media.fileName);
+        this.rememberMediaPreview(story.id, preparedMediaFile, media.mime, media.fileName);
       }
       this.decodedPayloads.update((items) => ({ ...items, [story.id]: decodedPayload }));
       this.unconfirmedPublishedStories.set(story.id, {
@@ -491,20 +503,61 @@ export class SocialService {
     await this.publishStory({ text, visibility });
   }
 
-  async viewStory(story: Story): Promise<void> {
+  async viewStory(story: Story, viewerOwner = this.storyViewerOwner()): Promise<void> {
     const assertSession = this.captureSocialSessionGuard();
+    const revision = ++this.storyOpenRevision;
+    const isCurrent = () => revision === this.storyOpenRevision && this.activeStory()?.id === story.id;
+    const previous = this.activeStory();
+    if (previous?.id !== story.id && previous?.viewOnce && this.storyReadyId() === previous.id &&
+        previous.owner.id !== this.auth.session()?.user.id) this.removeStoryLocally(previous.id);
     const local = this.normalizeStory(story);
     this.activeStory.set(local);
-    const prepareLocal = this.prepareStory(local);
-    const freshRequest = firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/view`, {}));
-    const [fresh] = await Promise.all([freshRequest, prepareLocal]);
-    assertSession();
-    const normalized = this.normalizeStory(fresh);
-    await this.decodeStoryPayload(normalized);
-    assertSession();
-    this.applyStoryUpdate(normalized);
-    if (this.storyPayload(fresh).media) {
-      await this.ensureStoryMedia(fresh).catch(() => null);
+    this.storyViewerOwner.set(viewerOwner);
+    this.storyReadyId.set('');
+    this.storyOpening.set(true);
+    this.storyOpenError.set('');
+    try {
+      await this.decodeStoryPayload(local);
+      assertSession();
+      if (!isCurrent()) return;
+      // A one-view story loses media authorization after /view commits. Download
+      // and decrypt first; a failed download must never consume its only view.
+      if (this.storyPayload(local).media && !await this.ensureStoryMedia(local)) {
+        throw new Error('No se pudo descifrar el contenido de esta historia.');
+      }
+      assertSession();
+      if (!isCurrent()) return;
+      const fresh = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/view`, {}));
+      assertSession();
+      if (!isCurrent()) return;
+      this.applyStoryUpdate(fresh);
+      this.storyReadyId.set(story.id);
+    } catch (error) {
+      if (isCurrent()) {
+        this.storyOpenError.set(error instanceof Error ? error.message : 'No se pudo abrir esta historia.');
+      }
+      throw error;
+    } finally {
+      if (isCurrent()) this.storyOpening.set(false);
+    }
+  }
+
+  async refreshStoryActivity(story: Story): Promise<void> {
+    const assertSession = this.captureSocialSessionGuard();
+    if (story.owner.id !== this.auth.session()?.user.id || this.storyActivityLoading()) return;
+    const revision = ++this.storyActivityRevision;
+    this.storyActivityLoading.set(true);
+    this.storyActivityError.set('');
+    try {
+      // The owner's view endpoint returns current activity without adding a view.
+      const updated = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/view`, {}));
+      assertSession();
+      if (revision === this.storyActivityRevision) this.applyStoryUpdate(updated);
+    } catch {
+      assertSession();
+      if (revision === this.storyActivityRevision) this.storyActivityError.set('STORY_PLAYER.ACTIVITY_ERROR');
+    } finally {
+      if (revision === this.storyActivityRevision) this.storyActivityLoading.set(false);
     }
   }
 
@@ -513,7 +566,7 @@ export class SocialService {
     if (!story || story.viewOnce) {
       return;
     }
-    await this.prepareStory(this.normalizeStory(story));
+    await this.prepareStory(this.normalizeStory(story), true);
   }
 
   async reactStory(story: Story, emoji: string): Promise<Story> {
@@ -537,6 +590,10 @@ export class SocialService {
 
   async repostStory(story: Story, visibility = 'Contacts'): Promise<Story> {
     const assertSession = this.captureSocialSessionGuard();
+    if (story.viewOnce || story.allowReposts === false || story.owner.allowStoryReposts === false ||
+        story.owner.id === this.auth.session()?.user.id || Date.parse(story.expiresAt) <= Date.now()) {
+      throw new Error('Esta historia no permite compartir de nuevo.');
+    }
     this.storyDeliveryWarning.set('');
     const decodedPayload = await this.decodeStoryPayload(story);
     assertSession();
@@ -575,6 +632,17 @@ export class SocialService {
   }
 
   async ensureStoryMedia(story: Story): Promise<StoryMediaPreview | null> {
+    this.syncSocialAccountState();
+    const key = `${this.accountDeviceKey()}:${story.id}`;
+    const current = this.storyMediaInFlight.get(key);
+    if (current) return current;
+    const request = this.downloadStoryMedia(story);
+    this.storyMediaInFlight.set(key, request);
+    try { return await request; }
+    finally { if (this.storyMediaInFlight.get(key) === request) this.storyMediaInFlight.delete(key); }
+  }
+
+  private async downloadStoryMedia(story: Story): Promise<StoryMediaPreview | null> {
     const assertSession = this.captureSocialSessionGuard();
     const accountDeviceKeyAtRequest = this.accountDeviceKey();
     const payload = this.storyPayload(story);
@@ -588,7 +656,9 @@ export class SocialService {
     }
     this.setStoryMediaError(story.id, '');
     try {
-      const encrypted = await firstValueFrom(this.api.getArrayBuffer(`/stories/${encodeURIComponent(story.id)}/media`));
+      const path = `/stories/${encodeURIComponent(story.id)}`;
+      const encrypted = await this.downloads.download(`${path}/media-access`, `${path}/media`,
+        () => accountDeviceKeyAtRequest === this.accountDeviceKey());
       assertSession();
       const plain = await this.crypto.decryptAttachment(encrypted, payload.media.fileKey, payload.media.fileIv);
       assertSession();
@@ -608,8 +678,21 @@ export class SocialService {
     return story?.id ? this.storyMediaErrors()[story.id] ?? '' : '';
   }
 
-  closeStory(): void {
+  closeStory(viewerOwner?: string): void {
+    if (viewerOwner && viewerOwner !== this.storyViewerOwner()) return;
+    const closing = this.activeStory();
+    const consumed = this.storyReadyId() === closing?.id;
+    this.storyOpenRevision += 1;
     this.activeStory.set(null);
+    this.storyViewerOwner.set('');
+    this.storyReadyId.set('');
+    this.storyOpening.set(false);
+    this.storyOpenError.set('');
+    this.storyActivityError.set('');
+    this.storyActivityRevision += 1;
+    this.storyActivityLoading.set(false);
+    // One-view plaintext must not be available for a second local playback.
+    if (consumed && closing?.viewOnce && closing.owner.id !== this.auth.session()?.user.id) this.removeStoryLocally(closing.id);
   }
 
   storyPayload(story: Story | null | undefined): StoryPayload {
@@ -837,10 +920,13 @@ export class SocialService {
     return payload;
   }
 
-  private async prepareStory(story: Story): Promise<void> {
+  private async prepareStory(story: Story, prefetch = false): Promise<void> {
     const assertSession = this.captureSocialSessionGuard();
     const payload = await this.decodeStoryPayload(story);
     assertSession();
+    // Prefetch small media only. Opening a large video remains supported, while
+    // quick navigation never spends mobile data downloading adjacent large clips.
+    if (prefetch && payload.media && (!Number.isFinite(payload.media.size) || payload.media.size > 8 * 1024 * 1024)) return;
     if (payload.media) {
       await this.ensureStoryMedia(story).catch(() => null);
     }
@@ -991,6 +1077,7 @@ export class SocialService {
       return next;
     });
     const preview = this.mediaPreviews()[storyId];
+    this.storyMediaBytes.delete(storyId);
     if (preview?.url) {
       URL.revokeObjectURL(preview.url);
     }
@@ -1062,6 +1149,7 @@ export class SocialService {
     return stories
       .map((story) => this.normalizeStory(story))
       .filter((story) => !this.deletedStoryIds.has(story.id))
+      .filter((story) => !story.viewOnce || !story.viewedByMe || story.owner.id === this.auth.session()?.user.id)
       .filter((story) => !story.expiresAt || Date.parse(story.expiresAt) > now)
       .sort((left, right) => Date.parse(right.createdAt || '') - Date.parse(left.createdAt || ''));
   }
@@ -1103,6 +1191,8 @@ export class SocialService {
       return;
     }
     this.socialAccountDeviceKey = accountDeviceKey;
+    this.storyActivityRevision += 1;
+    this.storyViewerOwner.set('');
     for (const preview of Object.values(this.mediaPreviews())) {
       URL.revokeObjectURL(preview.url);
     }
@@ -1114,6 +1204,14 @@ export class SocialService {
     this.radarMatches.set([]);
     this.radarNewCount.set(0);
     this.activeStory.set(null);
+    this.storyOpenRevision += 1;
+    this.storyReadyId.set('');
+    this.storyOpening.set(false);
+    this.storyOpenError.set('');
+    this.storyActivityLoading.set(false);
+    this.storyActivityError.set('');
+    this.storyMediaInFlight.clear();
+    this.storyMediaBytes.clear();
     this.mediaPreviews.set({});
     this.storyMediaErrors.set({});
     this.decodedPayloads.set({});
@@ -1177,6 +1275,20 @@ export class SocialService {
       name,
     };
     this.mediaPreviews.update((items) => ({ ...items, [cacheKey]: preview }));
+    this.storyMediaBytes.delete(cacheKey);
+    this.storyMediaBytes.set(cacheKey, blob.size);
+    // Keep the visible item and newest prefetch, but bound decrypted in-memory
+    // blobs. Large videos remain viewable without retaining every past video.
+    let total = [...this.storyMediaBytes.values()].reduce((sum, size) => sum + size, 0);
+    for (const [id, size] of this.storyMediaBytes) {
+      if (this.storyMediaBytes.size <= 4 && total <= 64 * 1024 * 1024) break;
+      if (id === cacheKey || id === this.activeStory()?.id) continue;
+      const old = this.mediaPreviews()[id];
+      if (old) URL.revokeObjectURL(old.url);
+      this.mediaPreviews.update((items) => { const next = { ...items }; delete next[id]; return next; });
+      this.storyMediaBytes.delete(id);
+      total -= size;
+    }
     return preview;
   }
 }

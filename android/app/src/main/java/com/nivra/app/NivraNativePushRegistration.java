@@ -43,6 +43,11 @@ final class NivraNativePushRegistration {
         String api = options.optString("apiBaseUrl", "").replaceAll("/+$", "");
         if (!isAllowedApiOrigin(api))
             throw new IllegalArgumentException("A secure API origin is required.");
+        String fingerprint = options.optString("clusterFingerprint", "");
+        if (!fingerprint.isEmpty() && !fingerprint.matches("[a-f0-9]{64}"))
+            throw new IllegalArgumentException("Invalid infrastructure compatibility pin.");
+        if (!api.equals(NivraApiFailover.PRIMARY) && fingerprint.isEmpty())
+            throw new IllegalArgumentException("A verified shared infrastructure pin is required for backup registration.");
         String user = options.optString("userId", "");
         String device = options.optString("deviceId", "");
         String refresh = options.optString("refreshToken", "");
@@ -53,11 +58,11 @@ final class NivraNativePushRegistration {
             clearNotifications(context);
         boolean same = prior != null && api.equals(prior.optString("apiBaseUrl")) &&
             user.equals(prior.optString("userId")) && device.equals(prior.optString("deviceId")) &&
-            refresh.equals(prior.optString("refreshToken"));
+            refresh.equals(prior.optString("refreshToken")) && fingerprint.equals(prior.optString("clusterFingerprint"));
         if (!same) {
             JSONObject value = new JSONObject();
             value.put("apiBaseUrl", api).put("userId", user).put("deviceId", device)
-                .put("refreshToken", refresh).put("epoch", UUID.randomUUID().toString());
+                .put("refreshToken", refresh).put("clusterFingerprint", fingerprint).put("epoch", UUID.randomUUID().toString());
             write(context, value);
         }
         FirebaseMessaging.getInstance().getToken().addOnSuccessListener(token -> tokenChanged(context, token));
@@ -150,7 +155,7 @@ final class NivraNativePushRegistration {
         try {
             URI origin = URI.create(value);
             return "https".equalsIgnoreCase(origin.getScheme()) &&
-                "nivra-webapp-secure.onrender.com".equalsIgnoreCase(origin.getHost()) &&
+                ("nivra-webapp-secure.onrender.com".equalsIgnoreCase(origin.getHost()) || "nivrapp-secure.onrender.com".equalsIgnoreCase(origin.getHost())) &&
                 (origin.getPort() == -1 || origin.getPort() == 443) && origin.getUserInfo() == null &&
                 origin.getRawQuery() == null && origin.getRawFragment() == null &&
                 (origin.getRawPath() == null || origin.getRawPath().isEmpty());

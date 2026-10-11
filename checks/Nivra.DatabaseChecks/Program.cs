@@ -36,6 +36,53 @@ try
     await Task.WhenAll(checks);
     if (peak != 1) throw new InvalidOperationException("PostgreSQL coordination failed.");
     Console.WriteLine("PASS: eight real PostgreSQL transactions serialize under the call advisory lock.");
+    // Exercise a read/modify/write JSON snapshot with independent real DB sessions and
+    // the exact per-story scope used by view/react/comment. No story or user is written.
+    var storyKey = "story:regression:" + Guid.NewGuid().ToString("N");
+    var jsonSnapshot = JsonSerializer.Serialize(new Dictionary<string, List<string>> { ["views"] = [], ["reactions"] = [], ["comments"] = [] });
+    await Task.WhenAll(Enumerable.Range(0, 8).Select(async index =>
+    {
+        await using var participantDb = new NivraDbContext(options);
+        await CallCoordination.RunAsync(participantDb, async () =>
+        {
+            await using var transaction = await CallCoordination.LockAsync(participantDb, storyKey, CancellationToken.None);
+            var snapshot = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(jsonSnapshot)!;
+            await Task.Delay(10); // A concurrent JSON snapshot without the lock loses updates here.
+            snapshot["views"].Add("viewer-fixture-" + index);
+            snapshot[index % 2 == 0 ? "reactions" : "comments"].Add("activity-fixture-" + index);
+            jsonSnapshot = JsonSerializer.Serialize(snapshot);
+            await transaction.CommitAsync();
+            return true;
+        });
+    }));
+    var finalSnapshot = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(jsonSnapshot)!;
+    if (finalSnapshot["views"].Count != 8 || finalSnapshot["reactions"].Count != 4 || finalSnapshot["comments"].Count != 4)
+        throw new InvalidOperationException("Concurrent story activity snapshots lost updates.");
+    Console.WriteLine("PASS: eight real PostgreSQL locks preserve every local JSON activity snapshot (no production stories written).");
+    // Every contender can hold the same still-valid setup token before waiting. The
+    // account's RequiresAlias state must be read after the per-user PostgreSQL lock.
+    var aliasKey = "phone-alias:regression:" + Guid.NewGuid().ToString("N");
+    var requiresAlias = true;
+    var issuedAliasSessions = 0;
+    await Task.WhenAll(Enumerable.Range(0, 8).Select(async _ =>
+    {
+        await using var participantDb = new NivraDbContext(options);
+        await CallCoordination.RunAsync(participantDb, async () =>
+        {
+            await using var transaction = await CallCoordination.LockAsync(participantDb, aliasKey, CancellationToken.None);
+            var accountRequiresAlias = requiresAlias;
+            await Task.Delay(10);
+            if (accountRequiresAlias)
+            {
+                requiresAlias = false;
+                Interlocked.Increment(ref issuedAliasSessions);
+            }
+            await transaction.CommitAsync();
+            return true;
+        });
+    }));
+    if (requiresAlias || issuedAliasSessions != 1) throw new InvalidOperationException("Concurrent alias completion issued duplicate sessions.");
+    Console.WriteLine("PASS: eight real PostgreSQL locks recheck alias state and allow one fixture session (no production accounts written).");
     if (!(await db.Database.GetPendingMigrationsAsync()).Any())
     {
         var malformed = await db.Users.CountAsync(user => user.NivraNumber.Length != 9);
