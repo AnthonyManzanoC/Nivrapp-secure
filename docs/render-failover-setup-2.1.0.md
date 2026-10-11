@@ -2,7 +2,7 @@
 
 Primaria: `https://nivra-webapp-secure.onrender.com`. Respaldo: `https://nivrapp-secure.onrender.com`.
 
-Todavía no hay un Redis compartido configurado. La versión 2.1.0 puede funcionar en modo de una sola API durante la preparación. No activar `MultiInstance__Enabled=true` hasta completar las dependencias: la API rechaza una configuración incompleta para evitar pérdida de eventos o archivos.
+La versión 2.1.0 puede funcionar en modo de una sola API durante la preparación. No activar `MultiInstance__Enabled=true` hasta completar Redis, S3 y firma durable compartidos: la API rechaza una configuración incompleta para evitar pérdida de eventos o archivos. El hotfix de readiness agrega `apiFailoverReady` para recuperar mensajes aunque queden credenciales push pendientes, y conserva `multiInstanceReady` como estado completo incluyendo push.
 
 ## 1. Preparar un Redis accesible desde ambas cuentas
 
@@ -40,10 +40,13 @@ Conservar en ambos los valores que ya comparten: PostgreSQL/Supabase, clave de f
 
 ```text
 Push__Enabled=true
+Push__Provider=Fcm
 Push__Fcm__ProjectId=nivra-af67e
 ```
 
 Las credenciales FCM deben estar disponibles y ser válidas en **cada** servicio mediante una fuente admitida por la API, por ejemplo `Push__Fcm__ServiceAccountPath`. No alcanza con copiar el nombre de una ruta si el archivo no existe en el segundo host. En la comprobación previa, la secundaria informó FCM desactivado: revisar este punto aunque el resto de variables coincida.
+
+Si ya se añadieron credenciales pero `pushFcmReady` sigue en `false`, comprobar en Render que el despliegue recibió `Push__Enabled=true`, `Push__Provider=Fcm` y que el secret file existe y puede leerse en la ruta exacta configurada, por ejemplo `/etc/secrets/firebase-key.json`. Debe ser una cuenta de servicio de Firebase con `client_email`, `private_key` PEM válida y proyecto correcto; el JSON de configuración del cliente Android no sustituye esa cuenta. La API da prioridad a `ServiceAccountJson`, después `ServiceAccountJsonBase64` y finalmente `ServiceAccountPath`: eliminar una fuente inline/base64 antigua si se pretende usar el archivo. Revisar en los logs la causa de `FCM could not be configured`, sin compartir el JSON ni la clave privada. `pushWebReady=true` sólo confirma configuración Web Push y también indica que el switch general de push está activo.
 
 Para límites de autenticación por IP detrás de un proxy, usar exclusivamente saltos IP/CIDR verificados en `ReverseProxy__KnownProxies__0` o `ReverseProxy__KnownNetworks__0`, con `ReverseProxy__Enabled=true`. No usar redes universales ni valores inventados. Sin esos datos, conservar el modo sin confianza en cabeceras reenviadas; la IP anónima puede agrupar usuarios detrás del proxy. El límite por usuario autenticado sigue compartido.
 
@@ -59,11 +62,23 @@ Desde la carpeta del proyecto:
 ./tools/check-api-cluster.ps1
 ```
 
-Sólo un resultado `Cluster compatible` con salida 0 confirma que ambos nodos publican la misma huella y tienen PostgreSQL, almacenamiento compartido, Redis, FCM y Web Push preparados. El diagnóstico no envía credenciales ni cambia variables. Si aparece `Cluster not ready`, corregir el campo que falta; un timeout también puede significar un arranque frío. No considerar el respaldo activado con salida 2.
+Un resultado `Core cluster compatible` con salida 0 confirma que todos los nodos tienen core readiness, la misma huella, protocolos compatibles y PostgreSQL, configuración de almacenamiento compartido, Redis y firma durable preparados. Se acepta `apiFailoverReady=true`; una API 2.1 anterior sin ese campo sólo se acepta si informa `status=ok` y S3/Redis/firma explícitamente listos. Un campo presente `false`, `null` o de otro tipo nunca permite ese fallback. Los avisos de FCM/Web Push indican notificaciones pendientes; no impiden usar el servicio de mensajes, pero salida 0 no confirma entrega push. `multiInstanceReady` conserva la exigencia de proyecto FCM y ambos transportes configurados. Corregir las credenciales en cada servicio y probar notificaciones reales por separado.
 
-Abrir la web o APK 2.1.0 cuando la primaria esté lista permite guardar su huella pública de compatibilidad. Después, un fallo de red o infraestructura puede seleccionar automáticamente el otro nodo sano. Las operaciones de escritura cuya respuesta se perdió no se repiten a ciegas. Para permitir una instalación completamente nueva con la primaria ya caída, se puede compilar la huella pública verificada en `apiClusterFingerprint`; requiere volver a generar los clientes.
+El diagnóstico no envía credenciales ni cambia variables. Si aparece `Core cluster not ready`, corregir el campo que falta; un timeout también puede significar un arranque frío. Sin pin esperado, una primaria caída produce salida 2 porque no pudo verificarse el conjunto completo. Nunca aprender confianza del respaldo únicamente porque la primaria no responde.
+
+Para comprobar la recuperación operacional de los clientes 2.1.1 con el pin público ya publicado, usar:
+
+```powershell
+./tools/check-api-cluster.ps1 -ExpectedClusterFingerprint c761492c31e3e9346640c94da63c476eea907d2aad8a26b6d830c60cd5d7fc64
+```
+
+Este modo devuelve `Operational failover available` y salida 0 si al menos un origen configurado está core-ready, admite el protocolo y coincide exactamente con el pin esperado. Una primaria con 503 y una secundaria compatible pueden cumplirlo. Los demás orígenes se excluyen con advertencias; el resultado confirma disponibilidad operacional contra una referencia previa, sin confirmar salud de todos los nodos ni alta disponibilidad completa. Si ningún origen cumple, devuelve salida 2. El parámetro requiere 64 caracteres hexadecimales en minúsculas y no modifica el pin de ninguna aplicación. Usar únicamente una huella obtenida de una configuración verificada o del cliente publicado; nunca copiar una nueva desde el respaldo para hacer pasar el diagnóstico.
+
+Los clientes 2.1.1 ya incluyen la huella pública verificada en `apiClusterFingerprint` y en Android: pueden seleccionar el respaldo desde una instalación nueva aunque la primaria esté caída. Los clientes anteriores que exigen `multiInstanceReady` o carecen de esa referencia necesitan actualizarse. Las operaciones de escritura cuya respuesta se perdió no se repiten a ciegas. Ver [la corrección 2.1.1 y sus pruebas](release-2.1.1.md).
 
 Si la primaria agotó su cuota antes de que los clientes aprendieran la huella, desplegar este hotfix en la secundaria corrige el arranque del servidor pero no cambia por sí solo la confianza guardada del cliente. Hace falta recuperar la primaria para aprenderla o publicar clientes con la huella obtenida de una configuración compartida verificada. No usar una huella inventada ni interpretar el timeout de la primaria como confirmación de compatibilidad.
+
+Este hotfix conserva la huella de la configuración existente. Si se rotan proyecto FCM, claves Web Push, firma u otro alcance incluido en ella, verificar el nuevo pin común y coordinar despliegue de ambos servidores y publicación de clientes con pin compilado. Cambiar sólo el archivo de credenciales FCM del mismo proyecto no cambia el pin. No cambiar el alcance de la secundaria mientras clientes publicados siguen fijados al anterior.
 
 ## Tráfico y servidores futuros
 

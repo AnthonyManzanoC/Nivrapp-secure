@@ -12,11 +12,12 @@ export class SignalrService implements OnDestroy {
   private readonly api = inject(NivraApiService);
   private readonly pool = inject(ApiEndpointPool);
   private readonly endpointChanges = this.pool.changes$.subscribe(() => {
-    void this.disconnect().then(() => this.scheduleReconnect(0));
+    void this.reconnectForEndpointChange();
   });
   private connection: HubConnection | null = null;
   private reconnectTimer: number | null = null;
   private startPromise: Promise<void> | null = null;
+  private connectionGeneration = 0;
 
   readonly connectionState = signal<HubConnectionState>(HubConnectionState.Disconnected);
   readonly connected = computed(() => this.connectionState() === HubConnectionState.Connected);
@@ -32,6 +33,10 @@ export class SignalrService implements OnDestroy {
     if (!await this.auth.ensureFreshSession()) {
       return;
     }
+    const session = this.auth.session();
+    await this.pool.prepare();
+    if (!session || this.auth.session()?.user.id !== session.user.id
+      || this.auth.session()?.device.id !== session.device.id) return;
     const token = this.auth.accessToken();
     if (!token) {
       return;
@@ -54,6 +59,7 @@ export class SignalrService implements OnDestroy {
   }
 
   async disconnect(options: { clearReconnect?: boolean } = {}): Promise<void> {
+    const generation = ++this.connectionGeneration;
     if (options.clearReconnect !== false) {
       this.clearReconnectTimer();
     }
@@ -63,7 +69,23 @@ export class SignalrService implements OnDestroy {
       this.unbind(connection);
       await connection.stop().catch(() => undefined);
     }
-    this.connectionState.set(HubConnectionState.Disconnected);
+    if (generation === this.connectionGeneration && this.connection === null) {
+      this.connectionState.set(HubConnectionState.Disconnected);
+    }
+  }
+
+  private async reconnectForEndpointChange(): Promise<void> {
+    const session = this.auth.session();
+    const stopping = this.disconnect();
+    const generation = this.connectionGeneration;
+    await stopping;
+    // A reconnect timer that fires while an old handshake is pending only joins
+    // that old startPromise. Wait until it releases the connection slot first.
+    await this.startPromise?.catch(() => undefined);
+    if (generation !== this.connectionGeneration || !session
+      || this.auth.session()?.user.id !== session.user.id
+      || this.auth.session()?.device.id !== session.device.id) return;
+    this.scheduleReconnect(0);
   }
 
   async joinConversation(conversationId: string): Promise<void> {
@@ -155,6 +177,7 @@ export class SignalrService implements OnDestroy {
       .withUrl(endpoint, {
         accessTokenFactory: () => sameSession() ? this.auth.accessToken() : '',
         withCredentials: false,
+        timeout: 15000,
       })
       .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
       .configureLogging(LogLevel.None)

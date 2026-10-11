@@ -20,7 +20,7 @@ public sealed class InfrastructureReadiness
     {
         Enabled = configuration.GetValue<bool>("MultiInstance:Enabled");
         var secret = configuration["Security:TokenSigningKey"] ?? "";
-        DurableSigningKey = secret.Length >= 32;
+        DurableSigningKey = !string.IsNullOrWhiteSpace(secret) && secret.Length >= 32;
         var storage = configuration.GetSection("Storage").Get<NivraStorageOptions>() ?? new();
         SharedStorageConfigured = EncryptedFileStorage.HasSharedConfiguration(storage);
         RedisConfigured = !string.IsNullOrWhiteSpace(configuration.GetConnectionString("RealtimeRedis"));
@@ -29,9 +29,16 @@ public sealed class InfrastructureReadiness
         ClusterFingerprint = Fingerprint(configuration, secret);
     }
 
-    public bool IsReady(IConnectionMultiplexer? redis, PushNotificationService push) =>
-        Enabled && DurableSigningKey && SharedStorageConfigured && RedisConfigured &&
-        ClusterFingerprint is not null && redis?.IsConnected == true && PushProjectConfigured && push.IsFcmConfigured && push.IsWebPushConfigured;
+    // Core failover must not depend on an optional notification transport. The probe
+    // results are supplied by /health/ready after checking PostgreSQL and Redis.
+    public bool IsApiFailoverReady(bool databaseReady, bool redisHealthy, bool sharedStorageReady) =>
+        databaseReady && Enabled && DurableSigningKey && SharedStorageConfigured && RedisConfigured &&
+        ClusterFingerprint is not null && redisHealthy && sharedStorageReady;
+
+    // Preserve the full readiness contract for deployments that require every
+    // notification transport, while reporting their individual flags honestly.
+    public bool IsMultiInstanceReady(bool apiFailoverReady, bool fcmReady, bool webPushReady) =>
+        apiFailoverReady && PushProjectConfigured && fcmReady && webPushReady;
 
     // This is a compatibility pin, not a public hash of a weak secret or an identity proof.
     // It changes if hosts point at different databases, file stores, LiveKit, push or Redis namespaces.

@@ -23,12 +23,14 @@ export function apiFailoverInterceptor(req: HttpRequest<unknown>, next: HttpHand
     const response = next(req.clone({ url }));
     return limited ? response.pipe(timeout({ each: 15000 })) : response;
   };
-  const target = pool.rewrite(req.url);
-  return send(target).pipe(catchError(error => {
-    if (!sameSession() || !(error instanceof TimeoutError || (error instanceof HttpErrorResponse && [0, 502, 503, 504].includes(error.status)))) {
-      return throwError(() => error);
-    }
-    return from(pool.recover(target)).pipe(switchMap(changed =>
-      changed && safe && sameSession() ? send(pool.rewrite(req.url)) : throwError(() => error)));
+  return from(pool.prepare()).pipe(switchMap(() => {
+    const target = pool.rewrite(req.url);
+    return send(target).pipe(catchError(error => {
+      if (!sameSession() || !(error instanceof TimeoutError || (error instanceof HttpErrorResponse && [0, 502, 503, 504].includes(error.status)))) {
+        return throwError(() => error);
+      }
+      return from(pool.recover(target)).pipe(switchMap(changed =>
+        changed && safe && sameSession() ? send(pool.rewrite(req.url)) : throwError(() => error)));
+    }));
   }));
 }

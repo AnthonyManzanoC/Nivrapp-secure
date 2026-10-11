@@ -39,7 +39,18 @@ Check(infrastructure.ClusterFingerprint?.Length == 64, "configured cluster has a
 Check(SharedAuthRateLimiter.ScopeKey("user-fixture", "first-ip") == SharedAuthRateLimiter.ScopeKey("user-fixture", "second-ip"), "authenticated shared limits cannot reset by changing IP");
 Check(SharedAuthRateLimiter.ScopeKey(null, "first-ip") != SharedAuthRateLimiter.ScopeKey(null, "second-ip"), "anonymous shared limits separate client IP scopes");
 Check(!SharedAuthRateLimiter.ScopeKey("user-fixture", null).Contains("user-fixture") && SharedAuthRateLimiter.ScopeKey("user-fixture", null).Length == 64, "shared authentication keys do not store raw identities");
-Check(!infrastructure.IsReady(null, null!), "unconnected shared infrastructure cannot advertise ready");
+Check(infrastructure.IsApiFailoverReady(true, true, true), "healthy shared message infrastructure advertises core API failover ready");
+Check(!infrastructure.IsMultiInstanceReady(true, false, true), "missing FCM preserves incomplete full readiness without blocking core API failover");
+Check(!infrastructure.IsMultiInstanceReady(true, true, false), "missing Web Push preserves incomplete full readiness");
+Check(infrastructure.IsMultiInstanceReady(true, true, true), "full readiness still requires both configured push transports");
+Check(!infrastructure.IsMultiInstanceReady(false, true, true), "configured push cannot conceal unavailable core API dependencies");
+Check(!infrastructure.IsApiFailoverReady(false, true, true), "unavailable database cannot advertise core API failover ready");
+Check(!infrastructure.IsApiFailoverReady(true, false, true), "failed Redis PING cannot advertise core API failover ready");
+Check(!infrastructure.IsApiFailoverReady(true, true, false), "unshared file storage cannot advertise core API failover ready");
+var noPushProject = new InfrastructureReadiness(Config(new(settings) { ["Push:Fcm:ProjectId"] = "" }));
+Check(noPushProject.IsApiFailoverReady(true, true, true) && !noPushProject.IsMultiInstanceReady(true, true, true), "missing FCM project permits core recovery while full readiness remains false");
+var singleInstance = new InfrastructureReadiness(Config(new(settings) { ["MultiInstance:Enabled"] = "false" }));
+Check(!singleInstance.IsApiFailoverReady(true, true, true), "single-instance mode cannot advertise core API failover ready");
 Check(!infrastructure.ClusterFingerprint!.Contains("fixture"), "cluster pin exposes no credential or hostname");
 Check(new InfrastructureReadiness(Config(new(settings))).ClusterFingerprint == infrastructure.ClusterFingerprint, "identically configured hosts match");
 foreach (var pair in new Dictionary<string, string?>
@@ -56,9 +67,18 @@ foreach (var pair in new Dictionary<string, string?>
 foreach (var pair in new Dictionary<string, string?> { ["Security:TokenSigningKey"] = "weak", ["Storage:Provider"] = "Local", ["ConnectionStrings:RealtimeRedis"] = "" })
 {
     var altered = new Dictionary<string, string?>(settings) { [pair.Key] = pair.Value };
+    Check(!new InfrastructureReadiness(Config(altered)).IsApiFailoverReady(true, true, true), $"unsafe multi-instance {pair.Key} cannot advertise core API failover ready even with successful probes");
     var rejected = false;
     try { new InfrastructureReadiness(Config(altered)).ValidateStartup(false); } catch (InvalidOperationException) { rejected = true; }
     Check(rejected, $"unsafe multi-instance {pair.Key} fails at startup");
+}
+foreach (var pair in new Dictionary<string, string?>
+{
+    ["Security:TokenSigningKey"] = new string(' ', 48), ["Storage:Endpoint"] = "", ["Storage:SecretAccessKey"] = ""
+})
+{
+    var altered = new Dictionary<string, string?>(settings) { [pair.Key] = pair.Value };
+    Check(!new InfrastructureReadiness(Config(altered)).IsApiFailoverReady(true, true, true), $"incomplete {pair.Key} cannot advertise core API failover ready");
 }
 var cipher = new SharedStateCipher(settings["Security:TokenSigningKey"]!);
 var encrypted = cipher.Protect("session-credentials");

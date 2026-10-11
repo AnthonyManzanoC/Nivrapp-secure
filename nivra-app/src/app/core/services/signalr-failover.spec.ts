@@ -1,5 +1,5 @@
 import { signal } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
+import { TestBed, fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
 import { HubConnection, HubConnectionBuilder, HubConnectionState } from '@microsoft/signalr';
 import { Subject } from 'rxjs';
 import { ApiEndpointPool } from './api-endpoint-pool.service';
@@ -8,21 +8,23 @@ import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
 describe('realtime failover and authenticated event scope', () => {
-  let service: SignalrService, pool: { recover: jasmine.Spy; changes$: Subject<string> }, auth: any;
+  let service: SignalrService, pool: { prepare: jasmine.Spy; recover: jasmine.Spy; changes$: Subject<string> }, auth: any;
   let handlers: Map<string, (payload: unknown) => void>, session: ReturnType<typeof signal<any>>, connection: any;
+  let selected: string, build: jasmine.Spy;
   beforeEach(() => {
+    selected = 'https://primary.test';
     session = signal<any>({ user: { id: 'alice' }, device: { id: 'phone' } }); handlers = new Map();
-    pool = { recover: jasmine.createSpy('recover').and.resolveTo(false), changes$: new Subject() };
+    pool = { prepare: jasmine.createSpy('prepare').and.resolveTo(), recover: jasmine.createSpy('recover').and.resolveTo(false), changes$: new Subject() };
     auth = { session, accessToken: () => session() ? 'synthetic-token' : '', ensureFreshSession: async () => Boolean(session()), refreshToken: jasmine.createSpy('refresh').and.resolveTo(false) };
     connection = { state: HubConnectionState.Disconnected,
       on: (name: string, handler: (value: unknown) => void) => handlers.set(name, handler), off: (name: string) => handlers.delete(name),
       onreconnecting: jasmine.createSpy().and.callFake(handler => handlers.set('reconnecting', handler)), onreconnected: jasmine.createSpy(), onclose: jasmine.createSpy(),
       start: jasmine.createSpy('start').and.callFake(async () => { connection.state = HubConnectionState.Connected; }),
       stop: jasmine.createSpy('stop').and.resolveTo() };
-    spyOn(HubConnectionBuilder.prototype, 'build').and.returnValue(connection as HubConnection);
+    build = spyOn(HubConnectionBuilder.prototype, 'build').and.returnValue(connection as HubConnection);
     TestBed.configureTestingModule({ providers: [
       { provide: AuthService, useValue: auth }, { provide: ApiEndpointPool, useValue: pool },
-      { provide: NivraApiService, useValue: { url: (path: string) => 'https://primary.test' + path } },
+      { provide: NivraApiService, useValue: { url: (path: string) => selected + path } },
     ] });
     service = TestBed.inject(SignalrService);
   });
@@ -54,12 +56,77 @@ describe('realtime failover and authenticated event scope', () => {
     session.set({ user: { id: 'bob' }, device: { id: 'other' } }); reconnect({ statusCode: 503 });
     expect(pool.recover).not.toHaveBeenCalled();
   });
-  it('cannot publish connected state from a handshake that finishes after account switching', async () => {
+  it('cannot publish connected state from a handshake that finishes after account switching', fakeAsync(() => {
     let finish!: () => void;
     connection.start.and.returnValue(new Promise<void>(resolve => { finish = resolve; }));
     const listener = jasmine.createSpy('event'); service.events$.subscribe(listener);
-    const pending = service.connect(); await Promise.resolve(); await Promise.resolve(); await Promise.resolve();
-    session.set({ user: { id: 'bob' }, device: { id: 'other' } }); finish(); await pending;
+    void service.connect(); flushMicrotasks();
+    session.set({ user: { id: 'bob' }, device: { id: 'other' } }); finish(); flushMicrotasks();
     expect(listener).not.toHaveBeenCalled(); expect(connection.stop).toHaveBeenCalled();
+  }));
+  it('opens the replacement hub after an old pending handshake releases its start promise', fakeAsync(() => {
+    let rejectStart!: (error: unknown) => void;
+    connection.start.and.returnValue(new Promise<void>((_resolve, reject) => { rejectStart = reject; }));
+    const replacement: any = {
+      state: HubConnectionState.Disconnected, on: () => undefined, off: () => undefined,
+      onreconnecting: () => undefined, onreconnected: () => undefined, onclose: () => undefined,
+      start: jasmine.createSpy('replacement.start').and.callFake(async () => { replacement.state = HubConnectionState.Connected; }),
+      stop: jasmine.createSpy('replacement.stop').and.resolveTo(),
+    };
+    build.and.returnValues(connection as HubConnection, replacement as HubConnection);
+    const urls = spyOn(HubConnectionBuilder.prototype, 'withUrl').and.callThrough();
+    const listener = jasmine.createSpy('event'); service.events$.subscribe(listener);
+    void service.connect(); flushMicrotasks();
+    selected = 'https://backup.test'; pool.changes$.next(selected); flushMicrotasks();
+    tick(0); flushMicrotasks();
+    expect(build).toHaveBeenCalledTimes(1);
+    rejectStart({ statusCode: 503 }); flushMicrotasks(); tick(0); flushMicrotasks();
+    expect(build).toHaveBeenCalledTimes(2);
+    expect(urls.calls.mostRecent().args[0]).toBe('https://backup.test/hubs/realtime');
+    expect(replacement.start).toHaveBeenCalledTimes(1);
+    expect(service.connected()).toBeTrue();
+    expect(listener).toHaveBeenCalledOnceWith({ type: 'connected', payload: null });
+  }));
+  it('selects the prepared backup before opening its first hub', async () => {
+    pool.prepare.and.callFake(async () => { selected = 'https://backup.test'; });
+    const urls = spyOn(HubConnectionBuilder.prototype, 'withUrl').and.callThrough();
+    await service.connect();
+    expect(pool.prepare).toHaveBeenCalledTimes(1);
+    expect(urls).toHaveBeenCalledOnceWith('https://backup.test/hubs/realtime', jasmine.any(Object));
+    expect(urls.calls.first().args[1]).toEqual(jasmine.objectContaining({ timeout: 15000, withCredentials: false }));
+  });
+  it('does not open a hub for an owner that changed during endpoint preparation', async () => {
+    pool.prepare.and.callFake(async () => { session.set({ user: { id: 'bob' }, device: { id: 'other' } }); });
+    await service.connect();
+    expect(build).not.toHaveBeenCalled();
+  });
+  it('cancels a deferred endpoint restart when the user logs out during the old handshake', fakeAsync(() => {
+    let rejectStart!: (error: unknown) => void;
+    connection.start.and.returnValue(new Promise<void>((_resolve, reject) => { rejectStart = reject; }));
+    const listener = jasmine.createSpy('event'); service.events$.subscribe(listener);
+    void service.connect(); flushMicrotasks();
+    selected = 'https://backup.test'; pool.changes$.next(selected); flushMicrotasks();
+    session.set(null); void service.disconnect(); flushMicrotasks();
+    rejectStart({ statusCode: 503 }); flushMicrotasks(); tick(0); flushMicrotasks();
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(service.connectionState()).toBe(HubConnectionState.Disconnected);
+    expect(listener).not.toHaveBeenCalled();
+  }));
+  it('preserves a newer connected state when an old stop finishes late', async () => {
+    await service.connect();
+    let finishStop!: () => void;
+    connection.stop.and.returnValue(new Promise<void>(resolve => { finishStop = resolve; }));
+    const stopping = service.disconnect();
+    const replacement: any = {
+      state: HubConnectionState.Disconnected, on: () => undefined, off: () => undefined,
+      onreconnecting: () => undefined, onreconnected: () => undefined, onclose: () => undefined,
+      start: jasmine.createSpy('replacement.start').and.callFake(async () => { replacement.state = HubConnectionState.Connected; }),
+      stop: jasmine.createSpy('replacement.stop').and.resolveTo(),
+    };
+    build.and.returnValue(replacement as HubConnection);
+    await service.connect();
+    expect(service.connected()).toBeTrue();
+    finishStop(); await stopping;
+    expect(service.connected()).toBeTrue();
   });
 });

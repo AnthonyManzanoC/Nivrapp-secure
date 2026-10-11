@@ -280,15 +280,18 @@ app.MapGet("/health/ready", async (NivraDbContext db, PushNotificationService pu
         try { await redis.GetDatabase().PingAsync().WaitAsync(TimeSpan.FromSeconds(3), cancellationToken); redisHealthy = true; }
         catch (Exception exception) when (exception is RedisException or TimeoutException) { }
     }
-    var multiReady = infrastructure.IsReady(redis, push) && redisHealthy && storage.UsesSharedStorage;
+    var apiFailoverReady = infrastructure.IsApiFailoverReady(ready, redisHealthy, storage.UsesSharedStorage);
+    var fcmReady = push.IsFcmConfigured;
+    var webPushReady = push.IsWebPushConfigured;
+    var multiReady = infrastructure.IsMultiInstanceReady(apiFailoverReady, fcmReady, webPushReady);
     return Results.Json(new { status = ready ? "ok" : "unavailable", version = ClientCompatibility.Version, callProtocol = ClientCompatibility.CallProtocol,
         minimumCallProtocol = ClientCompatibility.CallProtocol, failoverProtocol = 1,
-        multiInstanceReady = ready && multiReady, clusterFingerprint = infrastructure.ClusterFingerprint,
+        apiFailoverReady, multiInstanceReady = multiReady, clusterFingerprint = infrastructure.ClusterFingerprint,
         sharedStorageReady = storage.UsesSharedStorage, realtimeSharedReady = redisHealthy,
         durableSigningKeyReady = infrastructure.DurableSigningKey,
         pushProjectConfigured = infrastructure.PushProjectConfigured,
-        push = new { fcm = push.IsFcmConfigured, webPush = push.IsWebPushConfigured },
-        pushFcmReady = push.IsFcmConfigured, pushWebReady = push.IsWebPushConfigured },
+        push = new { fcm = fcmReady, webPush = webPushReady },
+        pushFcmReady = fcmReady, pushWebReady = webPushReady },
         statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 });
 app.MapHub<NivraHub>("/hubs/realtime");

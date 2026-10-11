@@ -4,7 +4,9 @@ import { API_POOL_RUNTIME, ApiEndpointPool, ApiPoolRuntime, apiOrigin } from './
 describe('API endpoint pool isolation and failover', () => {
   const primary = 'https://primary.nivra.test', backup = 'https://backup.nivra.test', third = 'https://third.nivra.test';
   const pin = 'a'.repeat(64);
-  const ready = (overrides = {}) => ({ failoverProtocol: 1, callProtocol: 2, minimumCallProtocol: 2, multiInstanceReady: true, clusterFingerprint: pin, push: { fcm: true, webPush: true }, ...overrides });
+  const ready = (overrides = {}) => ({ status: 'ok', failoverProtocol: 1, callProtocol: 2, minimumCallProtocol: 2,
+    sharedStorageReady: true, realtimeSharedReady: true, durableSigningKeyReady: true,
+    multiInstanceReady: true, clusterFingerprint: pin, push: { fcm: true, webPush: true }, ...overrides });
   let pool: ApiEndpointPool;
   let fetcher: jasmine.Spy;
   let runtime: ApiPoolRuntime;
@@ -42,12 +44,50 @@ describe('API endpoint pool isolation and failover', () => {
     expect(await pool.recover(`${primary}/messages`)).toBeTrue(); expect(pool.current()).toBe(third);
     expect(pool.isTrustedUrl(`${backup}/me`)).toBeFalse();
   });
-  it('never accepts missing push, missing Redis readiness or old failover protocol', async () => {
-    for (const invalid of [{ push: { fcm: false, webPush: true } }, { multiInstanceReady: false }, { failoverProtocol: 0 }, { callProtocol: 1 }, { minimumCallProtocol: 3 }]) {
+  it('never accepts missing core infrastructure, failed health or incompatible protocols', async () => {
+    for (const invalid of [{ apiFailoverReady: false }, { realtimeSharedReady: false }, { sharedStorageReady: false }, { durableSigningKeyReady: false },
+      { status: 'error' }, { failoverProtocol: 0 }, { callProtocol: 1 }, { minimumCallProtocol: 3 }, { minimumCallProtocol: 0 }, { callProtocol: '2' }, { realtimeSharedReady: 'true' }]) {
       TestBed.resetTestingModule(); build(); await pool.prepare();
       fetcher.and.callFake(async () => new Response(JSON.stringify(ready(invalid))));
       expect(await pool.recover(`${primary}/me`)).toBeFalse(); expect(pool.current()).toBe(primary);
     }
+  });
+  it('opens an authorized ready backup before the first login when the primary is already suspended', async () => {
+    build('', pin);
+    fetcher.and.callFake(async (url: string) => url.startsWith(primary) ? new Response('', { status: 503 })
+      : new Response(JSON.stringify(url.endsWith('/health/ready') ? ready({ multiInstanceReady: false, push: { fcm: false, webPush: true } }) : { loggedIn: true })));
+    const response = await pool.fetch('/auth/login', { method: 'POST', body: 'synthetic' });
+    expect(await response.json()).toEqual({ loggedIn: true }); expect(pool.current()).toBe(backup);
+    const logins = fetcher.calls.allArgs().filter(([url]) => String(url).endsWith('/auth/login'));
+    expect(logins.length).toBe(1); expect(logins[0][0]).toBe(`${backup}/auth/login`);
+    expect(pool.clusterFingerprint()).toBe(pin);
+  });
+  it('prepares once for concurrent initial requests and sends every mutation only to the healthy node', async () => {
+    build('', pin);
+    fetcher.and.callFake(async (url: string) => url.startsWith(primary) ? new Response('', { status: 503 })
+      : new Response(JSON.stringify(url.endsWith('/health/ready') ? ready({ apiFailoverReady: true, multiInstanceReady: false }) : { ok: true })));
+    await Promise.all(Array.from({ length: 20 }, () => pool.fetch('/messages', { method: 'POST', body: 'synthetic' })));
+    expect(fetcher.calls.allArgs().filter(([url]) => String(url).endsWith('/health/ready')).length).toBe(2);
+    const writes = fetcher.calls.allArgs().filter(([url]) => String(url).endsWith('/messages'));
+    expect(writes.length).toBe(20); expect(writes.every(([url]) => url === `${backup}/messages`)).toBeTrue();
+  });
+  it('does not erase the compiled recovery pin because the primary has older or disabled infrastructure', async () => {
+    build('', pin);
+    fetcher.and.callFake(async (url: string) => new Response(JSON.stringify(url.startsWith(primary)
+      ? { status: 'ok', failoverProtocol: 1, multiInstanceReady: false, clusterFingerprint: null } : ready())));
+    await pool.prepare(); expect(pool.clusterFingerprint()).toBe(pin); expect(pool.current()).toBe(backup);
+  });
+  it('ignores cached readiness and moves on to another fresh compatible node', async () => {
+    build(pin); await pool.prepare();
+    fetcher.and.callFake(async (url: string) => new Response(JSON.stringify(ready()), { headers: url.startsWith(backup) ? { Age: '20' } : {} }));
+    expect(await pool.recover(`${primary}/me`)).toBeTrue(); expect(pool.current()).toBe(third);
+  });
+  it('keeps a healthy backup selected when background primary readiness fails', async () => {
+    build('', pin);
+    fetcher.and.callFake(async (url: string) => url.startsWith(primary) ? new Response('', { status: 503 }) : new Response(JSON.stringify(ready())));
+    await pool.prepare(); expect(pool.current()).toBe(backup); now += 61000;
+    await pool.prepare(); expect(pool.current()).toBe(backup);
+    expect(fetcher.calls.allArgs().filter(([url]) => String(url).startsWith(backup)).length).toBe(1);
   });
   it('cannot bootstrap trust from a backup when a new device never saw the primary', async () => {
     build(); fetcher.and.callFake(async (url: string) => { if (url.startsWith(primary)) throw new Error('offline'); return new Response(JSON.stringify(ready())); });
@@ -74,6 +114,7 @@ describe('API endpoint pool isolation and failover', () => {
   });
   it('does not switch servers on authorization errors or user rate limits', async () => {
     build(pin);
+    await pool.prepare();
     for (const status of [401, 403, 409, 426, 429]) {
       fetcher.calls.reset(); fetcher.and.resolveTo(new Response('', { status }));
       expect((await pool.fetch('/messages', {}, true)).status).toBe(status);
@@ -82,6 +123,7 @@ describe('API endpoint pool isolation and failover', () => {
   });
   it('does not replay a request after its authenticated scope changes during probing', async () => {
     build(pin); let current = true;
+    await pool.prepare();
     fetcher.and.callFake(async (url: string) => {
       if (url.includes('/health/')) { current = false; return new Response(JSON.stringify(ready())); }
       throw new Error('offline');

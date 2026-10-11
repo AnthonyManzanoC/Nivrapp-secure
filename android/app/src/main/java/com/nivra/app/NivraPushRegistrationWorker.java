@@ -34,6 +34,7 @@ public final class NivraPushRegistrationWorker extends Worker {
     }
 
     private int renew(Context context, JSONObject session, String token, String origin) {
+        if (!NivraNativePushRegistration.isAllowedApiOrigin(origin)) return 1;
         HttpURLConnection connection = null;
         try {
             JSONObject body = new JSONObject();
@@ -41,17 +42,20 @@ public final class NivraPushRegistrationWorker extends Worker {
                 .put("refreshToken", session.getString("refreshToken")).put("token", token);
             connection = (HttpURLConnection) new URL(origin + "/push-tokens/native-renew").openConnection();
             connection.setInstanceFollowRedirects(false);
+            connection.setUseCaches(false);
             connection.setConnectTimeout(10000);
             connection.setReadTimeout(10000);
             connection.setRequestMethod("POST");
             connection.setRequestProperty("Content-Type", "application/json");
+            connection.setRequestProperty("Cache-Control", "no-store");
             connection.setDoOutput(true);
             if (!NivraNativePushRegistration.isCurrent(context, session, token) || isStopped()) return 1;
             try (OutputStream output = connection.getOutputStream()) { output.write(body.toString().getBytes(StandardCharsets.UTF_8)); }
             int status = connection.getResponseCode();
             if (status >= 200 && status < 300) {
                 String response = NivraApiFailover.readBounded(connection, 4096);
-                NivraNativePushRegistration.registered(context, session, token, new JSONObject(response).optBoolean("fcmReady"));
+                NivraNativePushRegistration.registered(context, session, token,
+                    Boolean.TRUE.equals(new JSONObject(response).opt("fcmReady")));
                 return 1;
             }
             // A rotated/revoked credential is never used to restore a session. The

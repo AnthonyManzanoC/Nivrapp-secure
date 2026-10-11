@@ -43,11 +43,7 @@ final class NivraNativePushRegistration {
         String api = options.optString("apiBaseUrl", "").replaceAll("/+$", "");
         if (!isAllowedApiOrigin(api))
             throw new IllegalArgumentException("A secure API origin is required.");
-        String fingerprint = options.optString("clusterFingerprint", "");
-        if (!fingerprint.isEmpty() && !fingerprint.matches("[a-f0-9]{64}"))
-            throw new IllegalArgumentException("Invalid infrastructure compatibility pin.");
-        if (!api.equals(NivraApiFailover.PRIMARY) && fingerprint.isEmpty())
-            throw new IllegalArgumentException("A verified shared infrastructure pin is required for backup registration.");
+        String fingerprint = NivraApiFailover.canonicalFingerprint(options.optString("clusterFingerprint", ""));
         String user = options.optString("userId", "");
         String device = options.optString("deviceId", "");
         String refresh = options.optString("refreshToken", "");
@@ -64,6 +60,8 @@ final class NivraNativePushRegistration {
             value.put("apiBaseUrl", api).put("userId", user).put("deviceId", device)
                 .put("refreshToken", refresh).put("clusterFingerprint", fingerprint).put("epoch", UUID.randomUUID().toString());
             write(context, value);
+            // A newly queued session has not confirmed provider availability yet.
+            prefs(context).edit().remove("registeredAt").putBoolean("fcmReady", false).commit();
         }
         FirebaseMessaging.getInstance().getToken().addOnSuccessListener(token -> tokenChanged(context, token));
     }

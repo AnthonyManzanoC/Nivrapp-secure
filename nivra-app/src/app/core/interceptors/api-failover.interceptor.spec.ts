@@ -1,8 +1,13 @@
-import { HttpErrorResponse, HttpEventType, HttpHandlerFn, HttpRequest, HttpResponse } from '@angular/common/http';
+import { HttpErrorResponse, HttpEventType, HttpHandlerFn, HttpRequest, HttpResponse, provideHttpClient, withInterceptors } from '@angular/common/http';
+import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed, fakeAsync, tick, flushMicrotasks } from '@angular/core/testing';
 import { concat, firstValueFrom, lastValueFrom, NEVER, of, throwError } from 'rxjs';
-import { ApiEndpointPool } from '../services/api-endpoint-pool.service';
+import { API_POOL_RUNTIME, ApiEndpointPool } from '../services/api-endpoint-pool.service';
 import { AuthService } from '../services/auth.service';
+import { ClientCompatibilityService } from '../services/client-compatibility.service';
+import { DeviceWipeService } from '../services/device-wipe.service';
+import { NivraApiService } from '../services/nivra-api.service';
+import { authInterceptor } from './auth.interceptor';
 import { apiFailoverInterceptor } from './api-failover.interceptor';
 
 describe('transport failover request semantics', () => {
@@ -14,7 +19,7 @@ describe('transport failover request semantics', () => {
     selected = primary; session = { user: { id: 'alice' }, device: { id: 'phone' } };
     recover = jasmine.createSpy('recover').and.callFake(async () => { selected = backup; return true; });
     TestBed.configureTestingModule({ providers: [
-      { provide: ApiEndpointPool, useValue: { isConfiguredUrl: (url: string) => new URL(url).origin === primary,
+      { provide: ApiEndpointPool, useValue: { prepare: async () => undefined, isConfiguredUrl: (url: string) => new URL(url).origin === primary,
         rewrite: (url: string) => selected + new URL(url).pathname, recover } },
       { provide: AuthService, useValue: { session: () => session } },
     ] });
@@ -56,4 +61,54 @@ describe('transport failover request semantics', () => {
     tick(15001); flushMicrotasks();
     expect(failed).toBeTrue(); expect(recover).toHaveBeenCalledTimes(1); expect(next).toHaveBeenCalledTimes(1);
   }));
+});
+
+describe('authenticated HTTP chain with a real endpoint pool', () => {
+  const primary = 'https://primary.test', backup = 'https://backup.test', pin = 'a'.repeat(64);
+  const ready = { status: 'ok', failoverProtocol: 1, apiFailoverReady: true, multiInstanceReady: false, clusterFingerprint: pin,
+    callProtocol: 2, minimumCallProtocol: 2, sharedStorageReady: true, realtimeSharedReady: true,
+    durableSigningKeyReady: true, push: { fcm: false, webPush: true } };
+  let api: NivraApiService, pool: ApiEndpointPool, http: HttpTestingController, probes: jasmine.Spy;
+  beforeEach(() => {
+    probes = jasmine.createSpy('readiness fetch').and.callFake(async () => new Response(JSON.stringify(ready)));
+    TestBed.configureTestingModule({ providers: [
+      provideHttpClient(withInterceptors([authInterceptor, apiFailoverInterceptor])), provideHttpClientTesting(),
+      { provide: API_POOL_RUNTIME, useValue: { primary, origins: [primary, backup], expectedFingerprint: pin,
+        fetch: probes, now: () => 100000, storage: { getItem: () => '', setItem: () => undefined } } },
+      { provide: AuthService, useValue: { session: () => ({ user: { id: 'alice' }, device: { id: 'phone' } }),
+        accessToken: () => 'synthetic-access', hasFreshAccessToken: () => true,
+        refreshToken: jasmine.createSpy('refresh').and.resolveTo(false), lastRefreshFailedPermanently: () => false } },
+      { provide: DeviceWipeService, useValue: { nukeDevice: jasmine.createSpy('wipe') } },
+      { provide: ClientCompatibilityService, useValue: { requireUpdate: jasmine.createSpy('requireUpdate') } },
+    ] });
+    api = TestBed.inject(NivraApiService); pool = TestBed.inject(ApiEndpointPool); http = TestBed.inject(HttpTestingController);
+  });
+  afterEach(() => { http.verify(); TestBed.resetTestingModule(); });
+  it('sends the first mutation only to the prepared backup with authentication and protocol headers', async () => {
+    probes.and.callFake(async (url: string) => url.startsWith(primary)
+      ? new Response('', { status: 503 }) : new Response(JSON.stringify(ready)));
+    const result = firstValueFrom(api.post('/messages', { clientMessageId: 'synthetic-message' }));
+    await pool.prepare(); await Promise.resolve();
+    const sent = http.expectOne(backup + '/messages');
+    expect(sent.request.headers.get('Authorization')).toBe('Bearer synthetic-access');
+    expect(sent.request.headers.get('X-Nivra-Device-Id')).toBe('phone');
+    expect(sent.request.headers.get('X-Nivra-Call-Protocol')).toBe('2');
+    http.expectNone(primary + '/messages');
+    for (const [, options] of probes.calls.allArgs()) {
+      expect(options.credentials).toBe('omit'); expect(options.headers).toBeUndefined();
+    }
+    sent.flush({ ok: true }); expect(await result).toEqual({ ok: true });
+  });
+  it('retains the authenticated owner headers when a safe read is replayed on the verified backup', async () => {
+    const result = firstValueFrom(api.get('/messages?before=synthetic'));
+    await pool.prepare(); await Promise.resolve();
+    const first = http.expectOne(primary + '/messages?before=synthetic');
+    first.flush({}, { status: 503, statusText: 'Unavailable' });
+    await pool.recover(primary + '/messages'); await Promise.resolve();
+    const retried = http.expectOne(backup + '/messages?before=synthetic');
+    expect(retried.request.headers.get('Authorization')).toBe('Bearer synthetic-access');
+    expect(retried.request.headers.get('X-Nivra-Device-Id')).toBe('phone');
+    expect(retried.request.headers.get('X-Nivra-Call-Protocol')).toBe('2');
+    retried.flush({ ok: true }); expect(await result).toEqual({ ok: true });
+  });
 });

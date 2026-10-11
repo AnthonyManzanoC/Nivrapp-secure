@@ -6,7 +6,7 @@ La implementación nueva agrega el backplane oficial Redis de SignalR y estado t
 
 ## Configuración para los dos servicios
 
-En ambos servicios desplegar el mismo commit de la 2.1.0, la misma base PostgreSQL, configuración S3, clave de firma existente, LiveKit, proyecto FCM y claves Web Push. Los secretos se introducen en las variables/secret files de Render, nunca en Git. La segunda API respondía con FCM desactivado durante la comprobación de lectura del 9 de octubre de 2026, aunque ambos servicios tenían 2.0.0; `pushWebReady=true` no demuestra que Android pueda recibir FCM.
+En ambos servicios desplegar el mismo commit actual de `main` (corrección 2.1.1), la misma base PostgreSQL, configuración S3, clave de firma existente, LiveKit, proyecto FCM y claves Web Push. Los secretos se introducen en las variables/secret files de Render, nunca en Git. La comprobación pública del 11 de octubre encontró la secundaria con FCM desactivado aunque PostgreSQL, Redis, S3 y firma estaban preparados; `pushWebReady=true` no demuestra que Android pueda recibir FCM.
 
 Además configurar en ambos:
 
@@ -26,19 +26,35 @@ Además configurar en ambos:
 
 ## Cómo se acepta una API de respaldo
 
-`GET /health/ready` devuelve `version`, `callProtocol`, `minimumCallProtocol`, `failoverProtocol=1`, `clusterFingerprint` y `multiInstanceReady`. También conserva `pushFcmReady` / `pushWebReady` y agrega `push: { fcm, webPush }`, `sharedStorageReady`, `realtimeSharedReady`, `durableSigningKeyReady` y `pushProjectConfigured`.
+`GET /health/ready` devuelve `version`, `callProtocol`, `minimumCallProtocol`, `failoverProtocol=1`, `clusterFingerprint`, `apiFailoverReady` y `multiInstanceReady`. También conserva `pushFcmReady` / `pushWebReady`, `push: { fcm, webPush }`, `sharedStorageReady`, `realtimeSharedReady`, `durableSigningKeyReady` y `pushProjectConfigured`.
 
 La huella es un HMAC, ligado a la clave de firma, sobre el alcance de PostgreSQL, S3, Redis, LiveKit y push. No publica credenciales. Dos servidores de bases diferentes, buckets diferentes, proyectos FCM diferentes o claves de firma diferentes no se aceptan como el mismo cluster. Es un control de compatibilidad sobre configuración confiable, no reemplaza la validación TLS del origen ni la verificación de identidad de los contactos.
 
-`multiInstanceReady=true` exige conexión a PostgreSQL, un PING Redis reciente, S3 configurado, clave durable y FCM/Web Push configurados. El cliente compara la huella con la obtenida de la API primaria autorizada antes de enviar credenciales al respaldo; si aún no dispone de una referencia confiable, una secundaria diferente se mantiene bloqueada. El resultado se puede revisar con:
+`apiFailoverReady=true` exige modo de varias instancias activo, conexión a PostgreSQL, un PING Redis reciente, almacenamiento S3 compartido configurado, clave durable y huella disponible. `sharedStorageReady` verifica la configuración y el proveedor; no es una prueba de lectura/escritura de objetos S3. La ausencia de FCM o Web Push no bloquea el servicio de mensajes y por eso no bloquea este campo. `multiInstanceReady=true` conserva el contrato completo: además exige proyecto FCM explícito y FCM/Web Push configurados. Los indicadores push describen configuración, sin garantizar entrega a un dispositivo.
+
+Los clientes 2.1.1 que admiten core readiness pueden recuperar el servicio de mensajes con `multiInstanceReady=false`; los clientes antiguos que exigen el campo completo necesitan su actualización o completar push. Una API 2.1 sin `apiFailoverReady` permite un fallback estricto sólo si `status=ok` y S3/Redis/firma son explícitamente `true`, con protocolo y pin compatibles. Si el campo nuevo existe como `false`, `null` o de otro tipo, ese fallback no se aplica. Cada cliente compara la huella con una referencia confiable antes de enviar credenciales al respaldo; una secundaria no se convierte en fuente de confianza por ser el único host que responde. El resultado se puede revisar con:
 
 ```powershell
 ./tools/check-api-cluster.ps1
 ```
 
+Sin parámetros, el diagnóstico devuelve `Core cluster compatible` y salida 0 si todos los hosts tienen el servicio API preparado, protocolos compatibles y la misma huella. Emite advertencias por las configuraciones push pendientes y conserva visible `multiInstanceReady`; salida 0 no confirma notificaciones de fondo. Un host inaccesible o core readiness incompleta producen salida 2. Con la primaria caída, este modo no puede demostrar por sí solo la compatibilidad de ambos hosts, aunque la secundaria esté sana.
+
+Para disponibilidad operacional contra el pin público ya publicado en los clientes 2.1.1:
+
+```powershell
+./tools/check-api-cluster.ps1 -ExpectedClusterFingerprint c761492c31e3e9346640c94da63c476eea907d2aad8a26b6d830c60cd5d7fc64
+```
+
+`Operational failover available` y salida 0 requieren al menos un origen core-ready con protocolo compatible y coincidencia exacta con ese pin previo. Los hosts caídos o incompatibles se excluyen con advertencias; el resultado no confirma que todos estén sanos ni garantiza alta disponibilidad. No se establece una nueva referencia a partir del host que responde: el pin esperado debe proceder del alcance previamente verificado o del cliente publicado. El parámetro no cambia la configuración de los clientes.
+
 Este diagnóstico sólo consulta salud pública. No envía tokens, no cambia variables ni genera carga sobre las cuentas. Añadir más hosts requiere agregarlos al registro confiable del cliente, desplegar la misma versión y verificar la misma huella; no se aceptan URLs arbitrarias recibidas de un mensaje o parámetro de navegación.
 
 En un dispositivo que ya consultó la primaria, el cliente conserva la huella de compatibilidad para recuperar la API aunque la primaria esté caída al abrir de nuevo. Para una instalación completamente nueva con la primaria ya caída, el operador puede fijar `apiClusterFingerprint` en `nivra-app/src/environments/environment.prod.ts` con la huella de 64 caracteres obtenida y comparada previamente mediante este diagnóstico, y volver a compilar el cliente. No se debe copiar una huella de un respaldo sin verificar antes ambas configuraciones. El valor vacío mantiene la necesidad de consultar primero la primaria; la huella pública no contiene un secreto.
+
+Separar readiness de push no cambia el cálculo de la huella existente. Reparar el archivo de credenciales FCM manteniendo el mismo proyecto no cambia ese alcance, pero cambiar el proyecto FCM, las claves Web Push, la clave de firma o cualquier otra configuración incluida en la huella sí lo cambia. Una rotación requiere coordinar ambos servidores y actualizar los clientes con pin compilado; no basta con rotar la secundaria mientras la primaria está caída. Verificar previamente el nuevo alcance común y preparar la publicación de clientes antes del cambio. Nunca aceptar automáticamente un pin distinto recibido del respaldo.
+
+Si `pushFcmReady=false`, quedan pendientes las notificaciones Android en segundo plano por ese transporte; `pushWebReady=true` no corrige esa carencia. Revisar las credenciales/proyecto en cada host y probar recepción real en dispositivos después de corregirlo. La recuperación del API permite consultar el estado persistido y reconstruir SignalR al abrir o reconectar la aplicación, sin afirmar que se recibió una notificación de fondo.
 
 ## Estado compartido y seguridad
 
@@ -68,7 +84,7 @@ Las historias de una sola vista, archivos de mensajes que se eliminan al leer y 
 
 ## Validación y límites operativos
 
-`checks/Nivra.InfrastructureChecks` cubre pin de configuración, configuración incompleta, cifrado y manipulación de estado, QR entre dos instancias lógicas, exclusión de scans simultáneos, expiración, OTP/alias compartidos, URLs de descarga y liberación del stream. No usa cuentas reales ni modifica producción. La conexión y entrega real a través de Redis requieren una prueba adicional con un Redis local o un entorno de staging configurado; no se han usado credenciales de producción para simular fallos.
+`checks/Nivra.InfrastructureChecks` cubre readiness del API sin FCM, rechazo sin PostgreSQL/Redis/S3/firma durable, readiness completa de push, pin de configuración, configuración incompleta, cifrado y manipulación de estado, QR entre dos instancias lógicas, exclusión de scans simultáneos, expiración, OTP/alias compartidos, URLs de descarga y liberación del stream. `checks/check-api-cluster.tests.ps1` usa respuestas de salud simuladas para comprobar salida 0 con advertencias push, recuperación operacional con primaria 503 y pin esperado, fallback legacy estricto y salida 2 con dependencias, protocolos o huellas incompatibles. No usan cuentas reales ni modifican producción. La conexión y entrega real a través de Redis requieren una prueba adicional con un Redis local o un entorno de staging configurado; no se han usado credenciales de producción para simular fallos.
 
 Render Free suspende servicios al agotar el egreso sin un medio de pago y puede dormir una API inactiva; el arranque frío puede tardar aproximadamente un minuto. Una API de respaldo dormida no asegura un cambio instantáneo. Render también limita tráfico iniciado hacia bases y otros proveedores, y no ofrece escalado de varias instancias dentro de un servicio Free. El modo de respaldo mantiene la aplicación recuperable cuando existe otro origen sano, pero no promete capacidad infinita, llamadas sin ningún corte ni continuidad si todos los proveedores están fuera de servicio.
 

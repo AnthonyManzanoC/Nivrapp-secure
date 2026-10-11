@@ -29,7 +29,11 @@ export const API_POOL_RUNTIME = new InjectionToken<ApiPoolRuntime>('API_POOL_RUN
   },
 });
 
-interface Readiness { failoverProtocol: number; callProtocol: number; minimumCallProtocol: number; multiInstanceReady: boolean; clusterFingerprint: string; push?: { fcm?: boolean; webPush?: boolean } }
+interface Readiness {
+  status: string; failoverProtocol: number; callProtocol: number; minimumCallProtocol: number;
+  apiFailoverReady?: boolean; sharedStorageReady?: boolean; realtimeSharedReady?: boolean; durableSigningKeyReady?: boolean;
+  multiInstanceReady: boolean; clusterFingerprint: string; push?: { fcm?: boolean; webPush?: boolean };
+}
 const fingerprintPattern = /^[a-f0-9]{64}$/;
 export function apiOrigin(value: string): string | null {
   try {
@@ -91,6 +95,11 @@ export class ApiEndpointPool {
     if (preferred && preferred !== this.primary && this.origins.includes(preferred) && this.clusterFingerprint()) {
       if (this.compatible(await this.probe(preferred))) this.activate(preferred);
     }
+    // Select a usable node before login/refresh/write requests, including a first install
+    // while the primary is suspended. A compiled pin is independent of primary uptime.
+    if (this.current() === this.primary && !this.compatible(health) && this.clusterFingerprint()) {
+      await this.recover(`${this.primary}/health/ready`);
+    }
   }
 
   recover(failedUrl: string): Promise<boolean> {
@@ -126,6 +135,7 @@ export class ApiEndpointPool {
 
   private rememberPrimary(health: Readiness): void {
     if (health.failoverProtocol !== 1 || !fingerprintPattern.test(health.clusterFingerprint || '')) {
+      if (fingerprintPattern.test(this.runtime.expectedFingerprint || '')) return;
       // A reachable primary with disabled/old shared infrastructure invalidates historical backup approval.
       this.clusterFingerprint.set(''); this.verified.clear(); this.verified.add(this.primary);
       try { this.runtime.storage.setItem(this.pinKey, ''); } catch { /* Optional cache. */ }
@@ -135,6 +145,7 @@ export class ApiEndpointPool {
     if (!this.validReady(health)) return;
     const configured = this.runtime.expectedFingerprint || '';
     if (configured && configured !== health.clusterFingerprint) return;
+    this.failedUntil.delete(this.primary);
     // A changed configuration invalidates every previous backup before adopting the new primary pin.
     if (this.clusterFingerprint() !== health.clusterFingerprint) {
       this.verified.clear(); this.verified.add(this.primary);
@@ -144,9 +155,12 @@ export class ApiEndpointPool {
     try { this.runtime.storage.setItem(this.pinKey, health.clusterFingerprint); } catch { /* Non-secret compatibility cache. */ }
   }
   private validReady(value: Readiness | null): value is Readiness {
-    return Boolean(value && value.failoverProtocol === 1 && value.multiInstanceReady === true
-      && value.callProtocol >= NIVRA_CALL_PROTOCOL && value.minimumCallProtocol <= NIVRA_CALL_PROTOCOL
-      && fingerprintPattern.test(value.clusterFingerprint) && value.push?.fcm === true && value.push?.webPush === true);
+    return Boolean(value && value.status === 'ok' && value.failoverProtocol === 1
+      && Number.isInteger(value.callProtocol) && value.callProtocol >= NIVRA_CALL_PROTOCOL
+      && Number.isInteger(value.minimumCallProtocol) && value.minimumCallProtocol >= 1 && value.minimumCallProtocol <= NIVRA_CALL_PROTOCOL
+      && fingerprintPattern.test(value.clusterFingerprint)
+      && (value.apiFailoverReady === true || (value.apiFailoverReady === undefined
+        && value.sharedStorageReady === true && value.realtimeSharedReady === true && value.durableSigningKeyReady === true)));
   }
   private compatible(value: Readiness | null): boolean {
     return this.validReady(value) && value.clusterFingerprint === this.clusterFingerprint();
@@ -168,6 +182,7 @@ export class ApiEndpointPool {
         credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(deadline),
       });
       if (!response.ok) return null;
+      if (Number(response.headers.get('Age') || '0') > 0) return null;
       if (!response.body) return null;
       const length = response.headers.get('Content-Length');
       if (length && Number(length) > 16384) { await response.body.cancel(); return null; }
@@ -192,6 +207,7 @@ export class ApiEndpointPool {
 
   /** Mutations change the selected origin after a failure, but are never replayed ambiguously. */
   async fetch(path: string, options: RequestInit = {}, replaySafe = false, isCurrent = () => true): Promise<Response> {
+    await this.prepare();
     const url = `${this.current()}${path.startsWith('/') ? path : `/${path}`}`;
     const send = (target: string) => {
       if (!isCurrent()) throw new Error('Session changed');

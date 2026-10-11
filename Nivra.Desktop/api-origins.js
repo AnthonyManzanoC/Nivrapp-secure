@@ -4,6 +4,7 @@ const PINNED_API_ORIGINS = Object.freeze([
 ]);
 
 function allowedApiOrigin(value, development = false) {
+  if (typeof value !== 'string') return null;
   try {
     const url = new URL(value);
     if (url.username || url.password || url.search || url.hash || url.pathname !== '/') return null;
