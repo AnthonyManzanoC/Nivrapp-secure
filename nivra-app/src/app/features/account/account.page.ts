@@ -404,7 +404,7 @@ export class AccountPage implements OnInit, OnDestroy {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0] ?? null;
     input.value = '';
-    if (!file || this.saving || !this.isCurrent(this.profileOwnerScope)) {
+    if (!file || this.saving || this.profileLoading || !this.isCurrent(this.profileOwnerScope)) {
       return;
     }
     if (!file.type.startsWith('image/')) {
@@ -446,6 +446,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   removeProfilePhoto(): void {
+    if (this.saving || this.profileLoading || !this.isCurrent(this.profileOwnerScope)) return;
     this.profilePhotoViewerOpen = false;
     this.profilePhotoDataUrl = '';
     this.profilePhotoDirty = true;

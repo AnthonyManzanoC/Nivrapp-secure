@@ -37,6 +37,17 @@ describe('Account profile editing experience', () => {
   });
   afterEach(() => page.ngOnDestroy());
 
+  it('does not remove the photo while a profile save or load is in progress', () => {
+    page.profilePhotoDataUrl = 'data:image/jpeg;base64,b2xk';
+    page.saving = true;
+    page.removeProfilePhoto();
+    expect(page.profilePhotoDataUrl).toBe('data:image/jpeg;base64,b2xk');
+    page.saving = false;
+    page.profileLoading = true;
+    page.removeProfilePhoto();
+    expect(page.profilePhotoDataUrl).toBe('data:image/jpeg;base64,b2xk');
+  });
+
   it('retains a draft while refreshing devices and privacy, and restores all fields on discard', async () => {
     page.displayName = 'Mi edición';
     page.bio = 'Nuevo texto';

@@ -42,6 +42,23 @@ describe('story playback lifecycle', () => {
   });
   afterEach(() => player.ngOnDestroy());
 
+  it('keeps navigation inside an open confirmation and Escape dismisses only that sheet', () => {
+    const next = spyOn(player.next, 'emit');
+    const close = spyOn(player.closeViewer, 'emit');
+    player.repostConfirmOpen = true;
+    player.onKey({ key: 'ArrowRight', target: document.body } as any);
+    expect(next).not.toHaveBeenCalled();
+    player.onKey({ key: 'Escape', preventDefault: () => undefined } as any);
+    expect(player.repostConfirmOpen).toBeFalse();
+    expect(close).not.toHaveBeenCalled();
+  });
+
+  it('preserves keyboard activation of a focused story control', () => {
+    const pause = spyOn(player, 'togglePause');
+    player.onKey({ key: ' ', target: document.createElement('button'), preventDefault: () => undefined } as any);
+    expect(pause).not.toHaveBeenCalled();
+  });
+
   it('waits for authorization/decryption and image load instead of consuming a blank slide', () => {
     social.storyReadyId.set('');
     advance(90);

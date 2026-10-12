@@ -17,12 +17,13 @@
 
         <div class="profile-photo-row profile-hero">
           <input #profilePhotoInput type="file" accept="image/*" hidden (change)="pickProfilePhoto($event)">
+          <div class="profile-avatar-control">
           <button
             type="button"
             class="profile-photo"
             [class.has-photo]="!!profilePhotoDataUrl"
             (click)="profilePhotoDataUrl ? openOwnProfilePhoto() : profilePhotoInput.click()"
-            [disabled]="saving"
+            [disabled]="saving || profileLoading"
             [attr.aria-label]="profilePhotoDataUrl ? ('CHAT.VIEW_PHOTO' | translate:'Ver foto de perfil') : ('ACCOUNT.UPDATE_PROFILE_PHOTO' | translate:'Actualizar foto de perfil')">
             @if (profilePhotoDataUrl) {
               <img [src]="profilePhotoDataUrl" alt="">
@@ -33,10 +34,13 @@
             } @else {
               <span>{{ (displayName || auth.session()?.user?.alias || 'N').slice(0, 2).toUpperCase() }}</span>
             }
-            <small class="photo-edit-badge">
-              <ion-icon name="camera-outline"></ion-icon>
-            </small>
           </button>
+          <button type="button" class="photo-edit-badge" (click)="profilePhotoInput.click()"
+            [disabled]="saving || profileLoading"
+            [attr.aria-label]="'ACCOUNT.UPDATE_PROFILE_PHOTO' | translate:'Actualizar foto de perfil'">
+            <ion-icon name="camera-outline" aria-hidden="true"></ion-icon>
+          </button>
+          </div>
           <div class="profile-photo-actions">
             <div class="profile-hero-copy">
               <h2>{{ displayName || auth.session()?.user?.displayName || auth.session()?.user?.alias || ('ACCOUNT.PROFILE' | translate:'Perfil') }}</h2>
@@ -47,12 +51,12 @@
               </span>
             </div>
             <div class="profile-photo-buttons">
-              <ion-button mode="ios" fill="outline" (click)="profilePhotoInput.click()" [disabled]="saving">
+              <ion-button mode="ios" fill="outline" (click)="profilePhotoInput.click()" [disabled]="saving || profileLoading">
                 <ion-icon slot="start" name="camera-outline"></ion-icon>
                 {{ profilePhotoDataUrl ? ('ACCOUNT.CHANGE_PHOTO' | translate:'Cambiar foto') : ('ACCOUNT.UPLOAD_PHOTO' | translate:'Subir foto') }}
               </ion-button>
               @if (profilePhotoDataUrl) {
-                <ion-button mode="ios" fill="clear" color="danger" (click)="removeProfilePhoto()" [disabled]="saving">
+                <ion-button mode="ios" fill="clear" color="danger" (click)="removeProfilePhoto()" [disabled]="saving || profileLoading">
                   <ion-icon slot="start" name="trash-outline"></ion-icon>
                   {{ 'ACCOUNT.REMOVE' | translate:'Quitar' }}
                 </ion-button>

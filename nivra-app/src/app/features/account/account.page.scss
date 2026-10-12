@@ -971,12 +971,23 @@
   }
 }
 
+.profile-avatar-control {
+  position: relative;
+  flex: 0 0 104px;
+  width: 104px;
+  padding: 0 12px 12px 0;
+  align-self: flex-start;
+}
+
 .photo-edit-badge {
   position: absolute;
-  right: -6px;
-  bottom: -6px;
-  width: 28px;
-  height: 28px;
+  right: 0;
+  bottom: 0;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  cursor: pointer;
+  z-index: 3;
   border: 2px solid rgba(8, 13, 15, .94);
   border-radius: 999px;
   display: grid;
@@ -987,8 +998,22 @@
 }
 
 .photo-edit-badge ion-icon {
-  width: 15px;
-  height: 15px;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+}
+
+.photo-edit-badge:disabled { opacity: .55; cursor: wait; }
+.photo-edit-badge:focus-visible, .profile-photo:focus-visible {
+  outline: 3px solid var(--nivra-brand);
+  outline-offset: 4px;
+}
+
+@media (max-width: 480px) {
+  .profile-hero { padding: 16px; gap: 16px; }
+  .profile-avatar-control { width: 88px; flex-basis: 88px; }
+  .profile-hero .profile-photo-actions { flex-basis: 100%; }
+  .profile-photo-buttons { gap: 4px; }
 }
 
 ion-modal.account-photo-viewer-modal {

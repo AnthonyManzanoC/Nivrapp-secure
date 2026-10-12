@@ -153,7 +153,13 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
   }
   @HostListener('document:keydown', ['$event'])
   onKey(event: KeyboardEvent): void {
+    if (this.actionBusy) return;
+    if (this.repostConfirmOpen || this.deleteConfirmOpen) {
+      if (event.key === 'Escape') { event.preventDefault(); this.dismissActions(); }
+      return;
+    }
     if (this.inputFocused || /INPUT|TEXTAREA/.test((event.target as HTMLElement)?.tagName || '') || event.isComposing) return;
+    if (event.key !== 'Escape' && (event.target as HTMLElement)?.closest?.('button, a, select, [contenteditable="true"]')) return;
     if (event.key === 'Escape') this.closeViewer.emit();
     else if (!this.paused && !this.busyId && event.key === 'ArrowRight') { event.preventDefault(); this.next.emit(); }
     else if (!this.paused && !this.busyId && event.key === 'ArrowLeft') { event.preventDefault(); this.previous.emit(); }
