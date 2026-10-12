@@ -240,6 +240,19 @@ describe('Story composer draft, privacy and capture lifecycle', () => {
     expect(composer.busy).toBeFalse();
   });
 
+  it('shows the actionable encryption reason when a story audience has no active device keys', async () => {
+    social.publishStory.and.rejectWith(new Error('Ningun destinatario tiene un dispositivo cifrado activo. Pideles abrir Nivra e intenta de nuevo.'));
+    composer.chooseText();
+    composer.text = 'Conservar';
+
+    await composer.publish();
+
+    expect(composer.error).toContain('Ningún destinatario tiene un dispositivo cifrado activo');
+    expect(composer.error).toContain('Pídeles abrir Nivra');
+    expect(composer.text).toBe('Conservar');
+    expect(composer.busy).toBeFalse();
+  });
+
   it('encodes rotation and vertical crop into the actual published image', async () => {
     const canvas = document.createElement('canvas');
     canvas.width = 80;

@@ -451,9 +451,31 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
       if (!this.publicationStillCurrent(userId, deviceId, generation)) return;
       this.published.emit(this.social.storyDeliveryWarning() || this.tr('WORLD.NOTICE_STORY_PUBLISHED', 'Historia publicada.'));
       this.finishClose();
-    } catch {
+    } catch (error) {
       if (this.publicationStillCurrent(userId, deviceId, generation)) {
         this.error = this.tr('STORY_COMPOSER.PUBLISH_ERROR', 'No se pudo publicar. Conservamos tu historia para que puedas intentarlo otra vez.');
+        const safeErrors = new Map<string, string>([
+          ['La sesion no esta disponible para cifrar la historia.', this.tr('STORY_COMPOSER.SESSION_ERROR', 'Tu sesión cambió. Vuelve a iniciar sesión e inténtalo otra vez.')],
+          ['Ningun destinatario tiene un dispositivo cifrado activo. Pideles abrir Nivra e intenta de nuevo.', this.tr('STORY_COMPOSER.RECIPIENT_KEYS_ERROR', 'Ningún destinatario tiene un dispositivo cifrado activo. Pídeles abrir Nivra e inténtalo de nuevo.')],
+          ['No se pudo sincronizar el cifrado de la audiencia. Revisa la conexion e intenta de nuevo.', this.tr('STORY_COMPOSER.KEY_SYNC_ERROR', 'No se pudo sincronizar el cifrado de la audiencia. Revisa la conexión e inténtalo de nuevo.')],
+          ['No hay llaves publicas para cifrar la audiencia de la historia.', this.tr('STORY_COMPOSER.KEYS_UNAVAILABLE_ERROR', 'No hay llaves públicas disponibles para cifrar esta audiencia. Revisa los dispositivos e inténtalo de nuevo.')],
+          ['La sesion cambio. Vuelve a abrir este contenido desde tu cuenta actual.', this.tr('STORY_COMPOSER.SESSION_ERROR', 'Tu sesión cambió. Vuelve a iniciar sesión e inténtalo otra vez.')],
+        ]);
+        const safeMessage = error instanceof Error ? safeErrors.get(error.message) : undefined;
+        if (safeMessage) {
+          this.error = safeMessage;
+        }
+        const status = typeof error === 'object' && error !== null && 'status' in error
+          ? Number((error as { status: unknown }).status) : NaN;
+        if (status === 0 || [502, 503, 504].includes(status)) {
+          this.error += ' ' + this.tr('STORY_COMPOSER.CONNECTION_ERROR', 'Comprueba tu conexión y vuelve a intentarlo.');
+        } else if (status === 413) {
+          this.error += ' ' + this.tr('STORY_COMPOSER.FILE_TOO_LARGE', 'El archivo supera el tamaño permitido. Elige uno más pequeño.');
+        } else if (status === 401 || status === 403) {
+          this.error += ' ' + this.tr('STORY_COMPOSER.ACCESS_ERROR', 'No se pudo autorizar la publicación. Actualiza tu sesión y revisa la audiencia.');
+        } else if (Number.isInteger(status) && status >= 400 && status <= 599) {
+          this.error += ` (HTTP ${status})`;
+        }
       }
     } finally {
       this.busy = false;
