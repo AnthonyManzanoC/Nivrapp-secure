@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography;
 using Amazon.Runtime;
 using Amazon.S3;
 using Amazon.S3.Model;
@@ -29,7 +30,8 @@ public sealed class EncryptedFileStorage
     public EncryptedFileStorage(
         IWebHostEnvironment environment,
         IOptions<NivraStorageOptions> options,
-        ILogger<EncryptedFileStorage> logger)
+        ILogger<EncryptedFileStorage> logger,
+        HttpClientFactory? httpClientFactory = null)
     {
         _options = options.Value;
         _logger = logger;
@@ -45,8 +47,16 @@ public sealed class EncryptedFileStorage
             {
                 ServiceURL = _options.Endpoint.TrimEnd('/'),
                 ForcePathStyle = true,
-                AuthenticationRegion = _options.Region
+                AuthenticationRegion = _options.Region,
+                HttpClientFactory = httpClientFactory
             };
+            if (IsSupabase(_options))
+            {
+                // Supabase's S3 protocol does not support the SDK's optional checksum trailers.
+                // Keep SigV4 payload signing; a bounded, seekable ciphertext file supplies its hash.
+                config.RequestChecksumCalculation = RequestChecksumCalculation.WHEN_REQUIRED;
+                config.ResponseChecksumValidation = ResponseChecksumValidation.WHEN_REQUIRED;
+            }
 
             _s3 = new AmazonS3Client(
                 new BasicAWSCredentials(_options.AccessKeyId, _options.SecretAccessKey),
@@ -65,43 +75,53 @@ public sealed class EncryptedFileStorage
 
     public async Task<long> SaveAsync(FileObject file, Stream encryptedBody, long? expectedLength, CancellationToken cancellationToken)
     {
-        if (_s3 is not null)
-        {
-            var put = new PutObjectRequest
-            {
-                BucketName = _options.Bucket,
-                Key = GetObjectKey(file.StorageKey),
-                InputStream = encryptedBody,
-                AutoCloseStream = false,
-                ContentType = "application/octet-stream"
-            };
-            if (expectedLength.HasValue)
-            {
-                put.Headers.ContentLength = expectedLength.Value;
-            }
+        if (expectedLength is <= 0 || expectedLength > EncryptedDownloadPolicy.MaxEncryptedBytes)
+            throw new EncryptedUploadException("invalid_upload");
+        if (expectedLength.HasValue && file.EncryptedSize > 0 && expectedLength != file.EncryptedSize)
+            throw new EncryptedUploadException("upload_size_mismatch");
 
-            await _s3.PutObjectAsync(put, cancellationToken);
-            return expectedLength ?? file.EncryptedSize;
-        }
-
-        var path = GetPath(file.StorageKey);
-        Directory.CreateDirectory(Path.GetDirectoryName(path) ?? _rootPath);
-        var tempPath = $"{path}.{Guid.NewGuid():N}.tmp";
+        // Request.Body is not seekable. AWS signing/retries must never read a consumed HTTP body,
+        // and a 256 MB encrypted attachment must not be buffered in managed memory.
+        var directory = _s3 is null ? _rootPath : Path.GetTempPath();
+        Directory.CreateDirectory(directory);
+        var tempPath = Path.Combine(directory, $"nivra-upload-{Guid.NewGuid():N}.tmp");
         try
         {
-            await using var target = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 128 * 1024, useAsync: true);
-            var written = await CopyCountingAsync(encryptedBody, target, cancellationToken);
-            File.Move(tempPath, path, overwrite: true);
+            long written;
+            string digest;
+            await using (var staged = new FileStream(tempPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.None, 128 * 1024, FileOptions.Asynchronous))
+            {
+                (written, digest) = await CopyCountingAsync(encryptedBody, staged, expectedLength, cancellationToken);
+                if (written == 0 || (expectedLength.HasValue && written != expectedLength) || (file.EncryptedSize > 0 && written != file.EncryptedSize))
+                    throw new EncryptedUploadException("upload_size_mismatch");
+                if (file.ClientSha256 is { Length: > 0 } expectedHash && !string.Equals(expectedHash, digest, StringComparison.OrdinalIgnoreCase))
+                    throw new EncryptedUploadException("upload_integrity_mismatch");
+                staged.Position = 0;
+
+                if (_s3 is not null)
+                {
+                    var put = new PutObjectRequest
+                    {
+                        BucketName = _options.Bucket,
+                        Key = GetObjectKey(file.StorageKey),
+                        InputStream = staged,
+                        AutoCloseStream = false,
+                        ContentType = "application/octet-stream",
+                        UseChunkEncoding = !IsSupabase(_options),
+                        DisableDefaultChecksumValidation = IsSupabase(_options) ? true : null
+                    };
+                    put.Headers.ContentLength = written;
+                    await _s3.PutObjectAsync(put, cancellationToken);
+                }
+            }
+            // Close before moving: Windows will reject a move of a FileShare.None stream.
+            if (_s3 is null) File.Move(tempPath, GetPath(file.StorageKey), overwrite: true);
+            file.ClientSha256 = digest;
             return written;
         }
-        catch
+        finally
         {
-            if (File.Exists(tempPath))
-            {
-                File.Delete(tempPath);
-            }
-
-            throw;
+            if (File.Exists(tempPath)) File.Delete(tempPath);
         }
     }
 
@@ -206,6 +226,9 @@ public sealed class EncryptedFileStorage
 
     private static bool S3Configured(NivraStorageOptions options) => HasSharedConfiguration(options);
 
+    private static bool IsSupabase(NivraStorageOptions options) =>
+        string.Equals(options.Provider, "SupabaseS3", StringComparison.OrdinalIgnoreCase);
+
     public static bool HasSharedConfiguration(NivraStorageOptions options)
     {
         return WantsS3(options) &&
@@ -215,17 +238,21 @@ public sealed class EncryptedFileStorage
             !string.IsNullOrWhiteSpace(options.SecretAccessKey);
     }
 
-    private static async Task<long> CopyCountingAsync(Stream source, Stream target, CancellationToken cancellationToken)
+    private static async Task<(long Written, string Digest)> CopyCountingAsync(Stream source, Stream target, long? expectedLength, CancellationToken cancellationToken)
     {
         var buffer = new byte[128 * 1024];
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long written = 0;
         int read;
         while ((read = await source.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
         {
-            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
             written += read;
+            if (written > EncryptedDownloadPolicy.MaxEncryptedBytes || (expectedLength.HasValue && written > expectedLength))
+                throw new EncryptedUploadException("upload_size_mismatch");
+            hash.AppendData(buffer, 0, read);
+            await target.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
         }
 
-        return written;
+        return (written, Convert.ToHexString(hash.GetHashAndReset()).ToLowerInvariant());
     }
 }

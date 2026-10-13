@@ -1,5 +1,6 @@
 import { Injectable, effect, inject } from '@angular/core';
-import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
+import { NivraNative } from './native-plugin';
 import { AppSettingsService, type NivraAppSettings } from './app-settings.service';
 import { AuthService } from './auth.service';
 
@@ -107,7 +108,7 @@ interface BatteryOptimizationResponse {
   requested?: boolean;
 }
 
-interface NivraNativePlugin {
+export interface NivraNativePlugin {
   syncPushRegistration(options: NativePushRegistration): Promise<{ registered?: boolean; ready?: boolean }>;
   clearPushRegistration(): Promise<void>;
   openNotificationSettings(options: { section: 'app' | 'calls' | 'full-screen' }): Promise<void>;
@@ -146,7 +147,6 @@ interface NivraNativePlugin {
   addListener(eventName: 'nativeAppUpdateState', listener: (event: NativeAppUpdateState) => void): Promise<PluginListenerHandle>;
 }
 
-const NivraNative = registerPlugin<NivraNativePlugin>('NivraNative');
 const BATTERY_OPTIMIZATION_PROMPT_KEY = 'nivra.androidBatteryOptimizationPrompted';
 
 @Injectable({ providedIn: 'root' })

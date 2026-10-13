@@ -1,6 +1,6 @@
 {
   "name": "nivra-app",
-  "version": "3.0.1",
+  "version": "4.0.0",
   "author": "Ionic Framework",
   "homepage": "https://ionicframework.com/",
   "scripts": {
@@ -75,6 +75,7 @@
   },
   "description": "Nivra Angular/Ionic secure client",
   "overrides": {
-    "@grpc/grpc-js": "1.13.7"
+    "@grpc/grpc-js": "1.13.7",
+    "webpack-dev-middleware": "7.4.6"
   }
 }

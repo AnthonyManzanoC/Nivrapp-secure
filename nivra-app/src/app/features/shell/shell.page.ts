@@ -22,6 +22,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { ClientCompatibilityService } from '../../core/services/client-compatibility.service';
 import { NivraApiService } from '../../core/services/nivra-api.service';
+import { UnreadTabService } from '../../core/services/unread-tab.service';
 
 @Component({
   selector: 'app-shell',
@@ -35,6 +36,7 @@ export class ShellPage {
   readonly auth = inject(AuthService);
   readonly calls = inject(CallsService);
   readonly realtime = inject(SignalrService);
+  readonly unread = inject(UnreadTabService);
   readonly compatibility = inject(ClientCompatibilityService);
   private readonly api = inject(NivraApiService);
   private readonly router = inject(Router);

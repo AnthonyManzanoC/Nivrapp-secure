@@ -200,14 +200,17 @@ app.UseExceptionHandler(exceptionApp =>
     {
         var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
         var isBadRequest = exception is BadHttpRequestException;
-        context.Response.StatusCode = isBadRequest
+        var storeUnavailable = PostgresAvailability.IsUnavailable(exception);
+        context.Response.StatusCode = storeUnavailable ? StatusCodes.Status503ServiceUnavailable : isBadRequest
             ? StatusCodes.Status400BadRequest
             : StatusCodes.Status500InternalServerError;
+        if (storeUnavailable) context.Response.Headers.RetryAfter = "3";
         context.Response.ContentType = "application/json";
         await context.Response.WriteAsJsonAsync(new
         {
-            code = isBadRequest ? "invalid_request" : "server_error",
-            message = isBadRequest ? "Nivra could not read that request." : "Nivra could not complete the request.",
+            code = storeUnavailable ? "store_unavailable" : isBadRequest ? "invalid_request" : "server_error",
+            message = storeUnavailable ? "Nivra is reconnecting to its data store. Try again in a moment." :
+                isBadRequest ? "Nivra could not read that request." : "Nivra could not complete the request.",
             traceId = context.TraceIdentifier
         });
     });

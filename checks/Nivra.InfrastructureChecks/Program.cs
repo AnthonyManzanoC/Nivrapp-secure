@@ -3,11 +3,25 @@ using System.Security.Cryptography;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Nivra.Api.Contracts;
+using Nivra.Api.Infrastructure;
 using Nivra.Api.Services;
 using Nivra.Api.Security;
+using Npgsql;
 
 var passed = 0;
 void Check(bool value, string name) { if (!value) throw new InvalidOperationException(name); Console.WriteLine($"PASS {name}"); passed++; }
+var sessionPool = new NpgsqlConnectionStringBuilder(PostgresConnection.ToNpgsqlConnectionString("Host=aws-1-example.pooler.supabase.com;Port=5432;Database=postgres;Username=fixture;Password=fixture"));
+Check(sessionPool.MaxPoolSize == 3 && sessionPool.MinPoolSize == 0, "two session-pool APIs and rolling deployments use a bounded shared connection budget");
+Check(sessionPool.ConnectionIdleLifetime == 30 && sessionPool.ConnectionPruningInterval == 5, "idle session-pool connections are released promptly");
+var explicitPool = new NpgsqlConnectionStringBuilder(PostgresConnection.ToNpgsqlConnectionString("Host=aws-1-example.pooler.supabase.com;Port=5432;Database=postgres;Username=fixture;Password=fixture;Maximum Pool Size=2;Timeout=18;Include Error Detail=true;SSL Mode=VerifyFull"));
+Check(explicitPool.MaxPoolSize == 2 && explicitPool.Timeout == 18 && explicitPool.SslMode == SslMode.VerifyFull && !explicitPool.IncludeErrorDetail, "connection budgets and stricter TLS survive normalization without enabling sensitive database details");
+var uriPool = new NpgsqlConnectionStringBuilder(PostgresConnection.ToNpgsqlConnectionString("postgresql://fixture:p%40ss%3Aword@aws-1-example.pooler.supabase.com:5432/postgres?max_pool_size=2&connect_timeout=17"));
+Check(uriPool.MaxPoolSize == 2 && uriPool.Timeout == 17 && uriPool.Password == "p@ss:word", "URL pool budgets and encoded credentials survive normalization");
+var transactionPool = new NpgsqlConnectionStringBuilder(PostgresConnection.ToNpgsqlConnectionString("Host=aws-1-example.pooler.supabase.com;Port=6543;Database=postgres;Username=fixture;Password=fixture;Max Auto Prepare=10"));
+Check(transactionPool.MaxAutoPrepare == 0, "transaction-mode poolers disable session-scoped prepared statements");
+var exhaustedPool = new PostgresException("(EMAXCONNSESSION) max clients reached in session mode", "FATAL", "FATAL", "XX000");
+Check(PostgresAvailability.IsUnavailable(new InvalidOperationException("request failed", exhaustedPool)), "pool exhaustion is a temporary dependency outage instead of a generic HTTP 500");
+Check(!PostgresAvailability.IsUnavailable(new PostgresException("invalid syntax", "ERROR", "ERROR", "42601")), "database programming errors cannot masquerade as recoverable capacity failures");
 var settings = new Dictionary<string, string?>
 {
     ["MultiInstance:Enabled"] = "true", ["Security:TokenSigningKey"] = new string('x', 48),

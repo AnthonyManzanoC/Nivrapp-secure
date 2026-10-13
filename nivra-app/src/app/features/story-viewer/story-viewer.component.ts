@@ -55,6 +55,8 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
   needsPlay = false;
   mediaFailed = false;
   mediaReady = false;
+  buffering = false;
+  captionExpanded = false;
   repostConfirmOpen = false;
   deleteConfirmOpen = false;
   actionError = false;
@@ -119,19 +121,26 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     this.userPaused = false; this.needsPlay = false; this.mediaFailed = false;
     if (this.media) {
       const revision = ++this.playRevision;
-      try { await this.media.play(); }
+      const media = this.media;
+      try {
+        await media.play();
+        if (this.destroyed || this.media !== media || this.stopped()) media.pause();
+      }
       catch { if (!this.destroyed && revision === this.playRevision) this.needsPlay = true; }
     }
     this.syncPlayback();
   }
   loadedImage(): void { this.mediaReady = true; this.mediaFailed = false; this.lastTick = performance.now(); }
   loadedMedia(event: Event): void {
-    this.mediaReady = true; this.mediaFailed = false;
+    this.mediaReady = true; this.mediaFailed = false; this.buffering = false;
     this.syncDuration.emit(event); this.syncPlayback();
   }
-  failedMedia(): void { this.mediaFailed = true; this.mediaReady = false; this.media?.pause(); }
+  waitingMedia(): void { this.buffering = true; }
+  playingMedia(): void { this.buffering = false; }
+  toggleCaption(): void { this.captionExpanded = !this.captionExpanded; this.syncPlayback(); }
+  failedMedia(): void { this.mediaFailed = true; this.mediaReady = false; this.buffering = false; this.media?.pause(); }
   ended(): void {
-    if (this.completed || !this.ready() || this.destroyed || document.visibilityState === 'hidden') return;
+    if (this.stopped()) return;
     this.completed = true; this.localProgress = 100; this.mediaEnded.emit();
   }
   retryMedia(): void {
@@ -140,10 +149,13 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     else if (this.media) { this.media.load(); void this.playFromGesture(); }
     else { this.imageRevision += 1; void this.social.ensureStoryMedia(this.story).catch(() => undefined); }
   }
-  showRepost(): void { this.repostConfirmOpen = true; this.syncPlayback(); }
-  showManage(): void { this.deleteConfirmOpen = true; this.syncPlayback(); }
+  showRepost(): void { if (this.isMine || !this.canRepost || this.story.viewOnce) return; this.repostConfirmOpen = true; this.syncPlayback(); }
+  showManage(): void { if (!this.isMine) return; this.deleteConfirmOpen = true; this.syncPlayback(); }
   dismissActions(): void { this.repostConfirmOpen = false; this.deleteConfirmOpen = false; this.syncPlayback(); }
-  confirmRepost(): void { this.repostConfirmOpen = false; this.repost.emit(); this.syncPlayback(); }
+  confirmRepost(): void {
+    if (!this.repostConfirmOpen || this.isMine || !this.canRepost || this.story.viewOnce) return;
+    this.repostConfirmOpen = false; this.repost.emit(); this.syncPlayback();
+  }
   async deleteOwnStory(): Promise<void> {
     if (!this.isMine || this.actionBusy) return;
     this.actionBusy = true; this.actionError = false;
@@ -169,12 +181,14 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
   private stopped(): boolean {
     return this.destroyed || !this.ready() || document.visibilityState === 'hidden' || this.paused ||
       this.userPaused || this.inputFocused || this.held || this.uiHidden || this.reactionsOpen || Boolean(this.busyId) ||
-      this.needsPlay || this.mediaFailed || this.completed || this.repostConfirmOpen || this.deleteConfirmOpen || this.actionBusy;
+      this.needsPlay || this.mediaFailed || Boolean(this.social.storyOpenError()) || this.captionExpanded ||
+      this.completed || this.repostConfirmOpen || this.deleteConfirmOpen || this.actionBusy;
   }
   private resetPlayback(): void {
     this.playRevision += 1; this.media?.pause(); this.media = null;
     this.localProgress = 0; this.textElapsed = 0; this.completed = false; this.userPaused = false;
     this.held = false; this.inputFocused = false; this.mediaReady = false; this.mediaFailed = false; this.needsPlay = false;
+    this.buffering = false; this.captionExpanded = false;
     this.repostConfirmOpen = false; this.deleteConfirmOpen = false; this.actionError = false;
     this.lastTick = performance.now();
   }
@@ -185,13 +199,14 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     if (this.stopped()) { if (!media.paused) media.pause(); return; }
     if (!media.paused) return;
     const revision = ++this.playRevision;
-    void media.play().catch(async () => {
+    const finishPlay = () => { if (this.destroyed || this.media !== media || this.stopped()) media.pause(); };
+    void media.play().then(finishPlay).catch(async () => {
       if (this.destroyed || revision !== this.playRevision || this.media !== media || this.stopped()) return;
       // Autoplay with sound may be blocked. Video can begin silently; its visible
       // sound control lets the user intentionally enable audio.
       if (media instanceof HTMLVideoElement && !media.muted) {
         media.muted = true; this.zone.run(() => this.muted = true);
-        try { await media.play(); return; } catch { /* explicit gesture required */ }
+        try { await media.play(); finishPlay(); return; } catch { /* explicit gesture required */ }
       }
       if (!this.destroyed && revision === this.playRevision) this.zone.run(() => this.needsPlay = true);
     });

@@ -398,7 +398,7 @@ export class SocialService {
     assertPublishingSession();
 
     this.publishing.set(true);
-    this.publishingStatus.set(file ? 'Optimizando y sellando (E2EE)...' : '');
+    this.publishingStatus.set('Preparando tu historia…');
     this.storyDeliveryWarning.set('');
     try {
       assertPublishingSession();
@@ -425,6 +425,7 @@ export class SocialService {
       let preparedMediaFile: File | null = null;
 
       if (file) {
+        this.publishingStatus.set('Optimizando y protegiendo tu archivo…');
         const prepared = await this.mediaOptimizer.prepareForEncryptedUpload(file, {
           mode: 'media',
           maxBytes: MAX_STORY_MEDIA_BYTES,
@@ -435,17 +436,32 @@ export class SocialService {
         assertPublishingSession();
         const encrypted = await this.crypto.encryptAttachment(plainBytes);
         assertPublishingSession();
+        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encrypted.bytes));
+        const clientSha256 = Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
+        assertPublishingSession();
         const mime = uploadFile.type || 'application/octet-stream';
         const expiresAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
         const fileRecord = await firstValueFrom(this.api.post<FileResponse>('/files', {
           encryptedSize: encrypted.bytes.byteLength,
           mimeTypeCiphertext: this.crypto.b64(new TextEncoder().encode(mime)),
-          clientSha256: null,
+          clientSha256,
           allowedUserIds: securedAudienceUserIds,
           expiresAt,
         }));
         assertPublishingSession();
-        await firstValueFrom(this.api.putRaw<FileResponse>(`/files/${encodeURIComponent(fileRecord.id)}/blob`, encrypted.bytes));
+        this.publishingStatus.set('Subiendo tu archivo…');
+        const uploadPath = `/files/${encodeURIComponent(fileRecord.id)}/blob`;
+        try {
+          await firstValueFrom(this.api.putRaw<FileResponse>(uploadPath, encrypted.bytes));
+        } catch (error) {
+          assertPublishingSession();
+          const status = (error as { status?: number })?.status;
+          if (status === undefined || ![0, 502, 503, 504].includes(status)) throw error;
+          // This immutable reservation and ciphertext can be retried once after
+          // failover. Creation POSTs remain unreplayed when their commit is uncertain.
+          this.publishingStatus.set('Reconectando y retomando la subida…');
+          await firstValueFrom(this.api.putRaw<FileResponse>(uploadPath, encrypted.bytes));
+        }
         assertPublishingSession();
         mediaFileObjectId = fileRecord.id;
         media = {
@@ -462,6 +478,7 @@ export class SocialService {
       const decodedPayload: StoryPayload = { v: 2, type: media ? 'media' : 'text', text, media };
       const payload = await this.encodeStoryPayload(decodedPayload, recipientPlan, options.visibility, assertPublishingSession);
       assertPublishingSession();
+      this.publishingStatus.set('Publicando tu historia…');
       const story = await firstValueFrom(this.api.post<Story>('/stories', {
         visibility: options.visibility,
         targetType: options.targetType ?? 'contacts',

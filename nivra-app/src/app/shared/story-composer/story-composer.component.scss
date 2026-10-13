@@ -6,7 +6,7 @@
   --background: var(--nivra-panel-solid, #111f25);
   --box-shadow: 0 32px 100px #0006;
 }
-.composer { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--nivra-text); background: var(--nivra-panel-solid); }
+.composer { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--nivra-text); background: var(--nivra-panel-solid); container: story-composer / inline-size; }
 button { font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
 button:disabled { opacity: .45; cursor: default; }
 button:focus-visible, select:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid var(--nivra-brand); outline-offset: 3px; }
@@ -32,9 +32,12 @@ h2 { margin: 4px 0 0; font-size: 24px; letter-spacing: -.035em; }
 .source-text span { grid-column: 2; }
 .privacy-copy { display: flex; align-items: center; justify-content: center; gap: 9px; line-height: 1.5; font-size: 12px; color: var(--nivra-muted); margin: 24px 0 0; }
 .privacy-copy ion-icon { flex: 0 0 auto; color: var(--nivra-brand); font-size: 18px; }
-.editor-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, .9fr); gap: 26px; }
+.editor-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(260px, 1fr); gap: 24px; align-items: start; }
 .preview-column { min-width: 0; }
-.story-preview { position: relative; width: min(100%, 298px); aspect-ratio: 9 / 16; max-height: 530px; overflow: hidden; margin-inline: auto; border: 1px solid #ffffff20; border-radius: 22px; display: grid; place-items: center; background: #071715; color: #edf9f5; }
+.story-preview { position: relative; width: 100%; height: clamp(240px, 52dvh, 490px); overflow: hidden; margin-inline: auto; border: 1px solid #ffffff20; border-radius: 20px; display: grid; place-items: center; background: #071715; color: #edf9f5; box-shadow: inset 0 0 0 1px #0002; }
+.story-preview.crop-preview { width: min(100%, 260px); height: auto; aspect-ratio: 9 / 16; }
+.preview-label { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 10px 0 4px; font-size: 11px; line-height: 1.4; color: var(--nivra-muted); }
+.preview-label ion-icon { font-size: 14px; }
 .story-preview img { position: absolute; left: 50%; top: 50%; width: 100%; height: 100%; object-fit: fill; max-width: none; }
 .story-preview video { width: 100%; height: 100%; object-fit: contain; }
 .text-preview, .audio-preview { background: radial-gradient(ellipse at 20% 0%, #255d57, transparent 70%), linear-gradient(145deg, #14342f, #101c27); }
@@ -50,6 +53,9 @@ h2 { margin: 4px 0 0; font-size: 24px; letter-spacing: -.035em; }
 .media-edit-tools { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center; margin-top: 6px; }
 .text-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; padding: 6px 3px; border: 0; background: none; color: var(--nivra-brand); font-size: 13px; font-weight: 650; }
 .draft-options { min-width: 0; }
+.caption-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 9px; }
+.caption-heading .caption-label { margin: 0; }
+.caption-heading > span { font-size: 10px; color: var(--nivra-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .caption-label { display: block; margin-bottom: 9px; font-size: 14px; font-weight: 700; }
 textarea, select { width: 100%; min-width: 0; border: 1px solid var(--nivra-line); border-radius: 14px; color: var(--nivra-text); background: var(--nivra-panel-solid); font: inherit; }
 textarea { min-height: 120px; padding: 14px; resize: vertical; line-height: 1.6; }
@@ -67,7 +73,9 @@ select { min-height: 45px; padding: 8px 12px; }
 .publish-settings .check-option { grid-template-columns: 20px 1fr; align-items: start; gap: 10px; line-height: 1.45; cursor: pointer; }
 .check-option input { width: 17px; height: 17px; margin: 1px 0; accent-color: var(--nivra-brand); }
 .draft-options .privacy-copy { justify-content: start; }
-.composer-footer { display: flex; flex: 0 0 auto; gap: 16px; align-items: center; justify-content: flex-end; border-top: 1px solid var(--nivra-line); padding: 16px 26px; }
+.composer-footer { display: grid; grid-template-columns: minmax(0, 1fr) auto; flex: 0 0 auto; gap: 10px 16px; align-items: center; border-top: 1px solid var(--nivra-line); padding: 14px 26px; background: var(--nivra-panel-solid); }
+.composer-footer .composer-error { grid-column: 1 / -1; margin: 0; max-height: 120px; overflow: auto; }
+.composer-footer .publish-button { grid-column: 2; }
 .publish-button, .secondary-button, .discard-button { display: inline-flex; align-items: center; justify-content: center; gap: 9px; min-height: 48px; padding: 12px 24px; border: 0; border-radius: 16px; font-weight: 750; }
 .publish-button { color: #05291f; background: var(--nivra-brand, #89e9c6); min-width: 162px; }
 .publish-button ion-icon, .publish-button ion-spinner { width: 20px; height: 20px; }
@@ -105,12 +113,20 @@ select { min-height: 45px; padding: 8px 12px; }
   .source-button { border-radius: 18px; min-height: 136px; }
   .source-text { min-height: 90px; }
   .editor-grid { grid-template-columns: minmax(0, 1fr); gap: 22px; }
-  .story-preview { max-height: 42dvh; width: min(100%, calc(42dvh * .5625)); }
+  .story-preview { height: clamp(220px, 40dvh, 380px); width: 100%; }
+  .story-preview.crop-preview { width: min(100%, calc(40dvh * .5625)); height: auto; }
   .text-story { font-size: 20px; padding: 20px; }
   .caption-label { font-size: 13px; }
   textarea { min-height: 96px; }
-  .composer-footer { padding: 12px 20px; flex-direction: column; gap: 8px; }
+  .composer-footer { padding: 12px 20px; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .composer-footer .publish-button { grid-column: 1; }
   .publish-button { width: 100%; }
   .discard-confirmation { padding: 16px 20px; }
+}
+@container story-composer (max-width: 620px) {
+  .editor-grid { grid-template-columns: minmax(0, 1fr); gap: 20px; }
+  .story-preview { height: clamp(220px, 40dvh, 380px); }
+  .story-preview.crop-preview { width: min(100%, calc(40dvh * .5625)); height: auto; }
+  .draft-options .privacy-copy { margin-top: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }

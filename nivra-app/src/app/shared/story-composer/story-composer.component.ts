@@ -38,6 +38,18 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   @ViewChild('cameraPreview') private cameraPreview?: ElementRef<HTMLVideoElement>;
   @ViewChild('captionInput') private captionInput?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('draftMedia') private draftMedia?: ElementRef<HTMLMediaElement>;
+  @ViewChild('draftPreview') set draftPreview(ref: ElementRef<HTMLElement> | undefined) {
+    this.previewObserver?.disconnect();
+    this.previewObserver = null;
+    if (!ref) return;
+    const measure = () => {
+      const { width, height } = ref.nativeElement.getBoundingClientRect();
+      if (width && height) this.previewAspect = width / height;
+    };
+    measure();
+    this.previewObserver = new ResizeObserver(() => this.zone.run(measure));
+    this.previewObserver.observe(ref.nativeElement);
+  }
 
   mode: ComposerMode = 'choose';
   file: File | null = null;
@@ -62,10 +74,13 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   recordingSeconds = 0;
   busy = false;
   error = '';
+  publicationFailed = false;
   confirmingDiscard = false;
   readonly native = Capacitor.isNativePlatform();
   readonly recordingSupported = typeof MediaRecorder !== 'undefined';
   private generation = 0;
+  private previewAspect = 9 / 16;
+  private previewObserver: ResizeObserver | null = null;
   private closedEmitted = false;
   private dismissRequested = false;
   private recorder: MediaRecorder | null = null;
@@ -101,6 +116,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.previewObserver?.disconnect();
     this.resetDraft();
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
   }
@@ -143,6 +159,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
 
   chooseText(): void {
     this.error = '';
+    this.publicationFailed = false;
     this.mode = 'edit';
     this.focusCaption();
   }
@@ -184,6 +201,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
     this.imageHeight = 0;
     this.imageLoading = kind === 'image';
     this.error = '';
+    this.publicationFailed = false;
     this.mode = 'edit';
     return true;
   }
@@ -223,7 +241,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
     const width = oddTurn ? this.imageHeight : this.imageWidth;
     const height = oddTurn ? this.imageWidth : this.imageHeight;
     if (!width || !height) return '';
-    const targetAspect = 9 / 16;
+    const targetAspect = this.previewAspect;
     const sourceAspect = width / height;
     let fittedWidth = sourceAspect >= targetAspect ? 100 : sourceAspect / targetAspect * 100;
     let fittedHeight = sourceAspect >= targetAspect ? targetAspect / sourceAspect * 100 : 100;
@@ -433,6 +451,8 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
     }
     this.busy = true;
     this.error = '';
+    this.publicationFailed = false;
+    this.draftMedia?.nativeElement.pause();
     try {
       const file = await this.editedImageFile();
       if (!this.publicationStillCurrent(userId, deviceId, generation)) return;
@@ -453,6 +473,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
       this.finishClose();
     } catch (error) {
       if (this.publicationStillCurrent(userId, deviceId, generation)) {
+        this.publicationFailed = true;
         this.error = this.tr('STORY_COMPOSER.PUBLISH_ERROR', 'No se pudo publicar. Conservamos tu historia para que puedas intentarlo otra vez.');
         const safeErrors = new Map<string, string>([
           ['La sesion no esta disponible para cifrar la historia.', this.tr('STORY_COMPOSER.SESSION_ERROR', 'Tu sesión cambió. Vuelve a iniciar sesión e inténtalo otra vez.')],
@@ -467,14 +488,14 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
         }
         const status = typeof error === 'object' && error !== null && 'status' in error
           ? Number((error as { status: unknown }).status) : NaN;
-        if (status === 0 || [502, 503, 504].includes(status)) {
+        if (status === 0) {
           this.error += ' ' + this.tr('STORY_COMPOSER.CONNECTION_ERROR', 'Comprueba tu conexión y vuelve a intentarlo.');
+        } else if (status >= 500 || status === 429) {
+          this.error += ' ' + this.tr('STORY_COMPOSER.SERVICE_BUSY', 'El servicio no está disponible en este momento. Reintenta en unos instantes.');
         } else if (status === 413) {
           this.error += ' ' + this.tr('STORY_COMPOSER.FILE_TOO_LARGE', 'El archivo supera el tamaño permitido. Elige uno más pequeño.');
         } else if (status === 401 || status === 403) {
           this.error += ' ' + this.tr('STORY_COMPOSER.ACCESS_ERROR', 'No se pudo autorizar la publicación. Actualiza tu sesión y revisa la audiencia.');
-        } else if (Number.isInteger(status) && status >= 400 && status <= 599) {
-          this.error += ` (HTTP ${status})`;
         }
       }
     } finally {
@@ -555,6 +576,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
     this.imageHeight = 0;
     this.confirmingDiscard = false;
     this.error = '';
+    this.publicationFailed = false;
   }
 
   private releasePreview(): void {

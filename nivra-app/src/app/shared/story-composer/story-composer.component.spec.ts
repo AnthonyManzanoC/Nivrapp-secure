@@ -253,6 +253,33 @@ describe('Story composer draft, privacy and capture lifecycle', () => {
     expect(composer.busy).toBeFalse();
   });
 
+  it('keeps a failed upload recoverable without displaying server details or duplicate publication', async () => {
+    social.publishStory.and.rejectWith({ status: 500, error: { detail: 'storage password and internal exception' } });
+    composer.chooseText();
+    composer.text = 'Conservar el borrador';
+    await composer.publish();
+    expect(composer.publicationFailed).toBeTrue();
+    expect(composer.text).toBe('Conservar el borrador');
+    expect(composer.error).toContain('Reintenta');
+    expect(composer.error).not.toContain('HTTP');
+    expect(composer.error).not.toContain('password');
+    social.publishStory.and.resolveTo();
+    await composer.publish();
+    expect(social.publishStory).toHaveBeenCalledTimes(2);
+    expect(composer.publicationFailed).toBeFalse();
+  });
+
+  it('fits the original image to the measured editor stage rather than stretching a portrait assumption', () => {
+    composer.imageWidth = 1200;
+    composer.imageHeight = 600;
+    const element = document.createElement('div');
+    spyOn(element, 'getBoundingClientRect').and.returnValue({ width: 320, height: 320 } as DOMRect);
+    composer.draftPreview = { nativeElement: element };
+    expect(composer.imagePreviewTransform()).toContain('width: 100%; height: 50%');
+    composer.rotateImage();
+    expect(composer.imagePreviewTransform()).toContain('rotate(90deg)');
+  });
+
   it('encodes rotation and vertical crop into the actual published image', async () => {
     const canvas = document.createElement('canvas');
     canvas.width = 80;

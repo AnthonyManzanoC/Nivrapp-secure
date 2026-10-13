@@ -1,6 +1,6 @@
 <ion-modal class="story-composer-modal" [isOpen]="isOpen" [canDismiss]="canDismiss" [backdropDismiss]="false" (didDismiss)="onDismissed()">
   <ng-template>
-    <section class="composer" [class.camera-mode]="mode === 'camera'" [attr.aria-label]="'WORLD.NEW_STORY' | translate:'Nueva historia'">
+    <section class="composer" [class.camera-mode]="mode === 'camera'" [class.edit-mode]="mode === 'edit'" [attr.aria-busy]="busy" [attr.aria-label]="'WORLD.NEW_STORY' | translate:'Nueva historia'">
       <header class="composer-header">
         <div>
           <span class="eyebrow">{{ 'STORY_COMPOSER.EYEBROW' | translate:'Tu momento' }}</span>
@@ -88,7 +88,7 @@
         } @else {
           <div class="editor-grid">
             <div class="preview-column">
-              <div class="story-preview" [class.text-preview]="!file" [class.audio-preview]="mediaKind === 'audio'">
+              <div #draftPreview class="story-preview" [class.crop-preview]="imageCrop" [class.text-preview]="!file" [class.audio-preview]="mediaKind === 'audio'">
                 @if (mediaKind === 'image') {
                   <img [src]="previewUrl" [attr.style]="imagePreviewTransform()" (load)="imageLoaded($event)" (error)="previewFailed()" [alt]="'STORY_COMPOSER.PREVIEW' | translate:'Vista previa de tu historia'">
                 } @else if (mediaKind === 'video') {
@@ -101,6 +101,7 @@
                 }
                 @if (imageLoading) { <ion-spinner name="crescent" class="preview-loading"></ion-spinner> }
               </div>
+              <p class="preview-label"><ion-icon [name]="file ? 'image-outline' : 'text-outline'"></ion-icon>{{ 'STORY_COMPOSER.PREVIEW' | translate:'Vista previa de tu historia' }}</p>
               @if (mediaKind === 'image') {
                 <div class="image-edit-tools">
                   <button type="button" (click)="rotateImage()" [disabled]="busy || imageLoading"><ion-icon name="refresh-outline"></ion-icon>{{ 'STORY_COMPOSER.ROTATE' | translate:'Girar' }}</button>
@@ -114,15 +115,15 @@
               </div>
             </div>
             <div class="draft-options">
-              <label class="caption-label" for="story-caption">{{ 'STORY_COMPOSER.CAPTION' | translate:'Añade unas palabras' }}</label>
+              <div class="caption-heading"><label class="caption-label" for="story-caption">{{ 'STORY_COMPOSER.CAPTION' | translate:'Añade unas palabras' }}</label><span>{{ text.length }} / 4000</span></div>
               <textarea #captionInput id="story-caption" [(ngModel)]="text" [disabled]="busy" rows="3" maxlength="4000" [placeholder]="'WORLD.STORY_PLACEHOLDER' | translate:'Comparte una historia cifrada'"></textarea>
-              <button type="button" class="audience-summary" (click)="settingsOpen = !settingsOpen" [disabled]="busy" [attr.aria-expanded]="settingsOpen">
+              <button type="button" class="audience-summary" (click)="settingsOpen = !settingsOpen" [disabled]="busy" [attr.aria-expanded]="settingsOpen" aria-controls="story-audience-settings">
                 <ion-icon name="settings-outline"></ion-icon>
                 <span><small>{{ 'WORLD.AUDIENCE' | translate:'Audiencia' }}</small><strong>{{ audienceLabel() }}</strong></span>
                 <span class="duration-label">{{ durationSeconds === 3600 ? ('COMMON.1_HOUR' | translate:'1 hora') : durationSeconds === 604800 ? ('COMMON.7_DAYS' | translate:'7 días') : ('COMMON.24_HOURS' | translate:'24 horas') }}</span>
               </button>
               @if (settingsOpen) {
-                <div class="publish-settings">
+                <div class="publish-settings" id="story-audience-settings">
                   <label>{{ 'WORLD.AUDIENCE' | translate:'Audiencia' }}
                     <select [(ngModel)]="audience" [disabled]="busy">
                       <option value="contacts">{{ 'WORLD.MY_CONTACTS' | translate:'Mis contactos' }}</option>
@@ -154,14 +155,15 @@
             </div>
           </div>
         }
-        @if (error) { <p class="composer-error" role="alert">{{ error }}</p> }
+        @if (error && mode !== 'edit') { <p class="composer-error" role="alert">{{ error }}</p> }
       </div>
       @if (mode === 'edit') {
         <footer class="composer-footer">
+          @if (error) { <p class="composer-error" role="alert">{{ error }}</p> }
           @if (busy) { <span class="publish-status" role="status">{{ social.publishingStatus() || ('STORY_COMPOSER.PUBLISHING' | translate:'Publicando tu historia…') }}</span> }
           <button type="button" class="publish-button" (click)="publish()" [disabled]="busy || social.publishing() || !hasDraft() || imageLoading">
             @if (busy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
-            {{ 'COMMON.PUBLISH' | translate:'Publicar' }}
+            {{ publicationFailed ? ('COMMON.RETRY' | translate:'Reintentar') : ('COMMON.PUBLISH' | translate:'Publicar') }}
           </button>
         </footer>
       }

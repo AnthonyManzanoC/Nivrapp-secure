@@ -180,9 +180,13 @@
 .story-viewer > .story-caption { position: absolute; bottom: calc(104px + env(safe-area-inset-bottom)); left: 0; right: 0; margin-inline: auto; }
 .story-viewer > .story-repost-badge { bottom: calc(176px + env(safe-area-inset-bottom)); }
 .story-top-actions { display: flex; gap: 6px; }
-.story-top-actions button { width: 34px; height: 34px; background: rgba(255, 255, 255, .1); box-shadow: none; }
+.story-top-actions button { width: 42px; height: 42px; background: rgba(255, 255, 255, .1); box-shadow: none; }
 .story-top-actions ion-icon { font-size: 20px; }
 .story-viewer button:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 3px; }
+.story-viewer button { cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.story-viewer button:disabled { cursor: default; }
+.story-buffering { position: absolute; z-index: 3; left: 50%; top: 50%; transform: translate(-50%, -50%); display: grid; justify-items: center; gap: 9px; border-radius: 18px; padding: 16px 20px; background: #091514bf; color: #fff; font-size: 12px; pointer-events: none; }
+.story-paused-indicator { position: absolute; z-index: 3; top: 14px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; color: #fff; background: #0009; font-size: 12px; pointer-events: none; }
 .tap-zone { touch-action: none; }
 .story-audio-card { z-index: 3; position: relative; width: calc(100% - 40px); padding: 30px 16px; border-radius: 24px; background: linear-gradient(135deg, #0d4038, #183840); display: grid; justify-items: center; gap: 24px; }
 .story-audio-card > ion-icon { font-size: 58px; }
@@ -253,6 +257,8 @@
   text-shadow: 0 2px 16px rgba(0, 0, 0, .72);
 }
 .story-viewer-body.text-story { background: radial-gradient(ellipse at 10% 10%, #22554b, transparent 65%), linear-gradient(150deg, #0b201d, #102a32); }
+.story-viewer-body .story-text-content { z-index: 3; max-height: calc(100% - 112px); overflow-y: auto; white-space: pre-wrap; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-color: #93f3d440 transparent; }
+.story-text-content:focus-visible { outline: 2px solid #93f3d4; outline-offset: -2px; border-radius: 12px; }
 
 .tap-zone {
   position: absolute;
@@ -339,6 +345,11 @@
   text-align: center;
   overflow-wrap: anywhere;
 }
+.story-caption.expandable { width: calc(100% - 28px); border: 1px solid #ffffff14; font: inherit; max-height: none; }
+.story-caption.expandable > span { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; line-height: 1.45; white-space: pre-wrap; }
+.story-caption.expandable > small { display: block; color: #96efcd; font-size: 11px; font-weight: 700; margin-top: 4px; }
+.story-caption.expandable.expanded { max-height: min(44dvh, 350px); overflow: auto; background: #081614ef; }
+.story-caption.expandable.expanded > span { display: block; }
 
 footer.story-action-bar {
   position: absolute;
@@ -527,6 +538,9 @@ footer.story-action-bar {
 }
 
 @media (max-width: 430px) {
+  .story-viewer-top { gap: 6px; padding-inline: 10px; }
+  .story-top-actions { gap: 3px; }
+  .story-top-actions button { width: 40px; height: 40px; }
   footer.story-action-bar {
     padding-inline: 9px;
   }
@@ -550,6 +564,9 @@ footer.story-action-bar {
     width: 40px;
     height: 40px;
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .story-progress i, .story-progress, .story-viewer-top, .story-repost-badge, .story-caption, .story-action-bar, .story-reply button { transition: none; }
 }
 
 @media (max-width: 350px) {

@@ -2299,25 +2299,15 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var stories = await db.Stories
-                .Where(story =>
-                    story.Visibility == StoryVisibility.PublicWorld &&
-                    story.DeletedAt == null &&
-                    story.ExpiresAt > now)
+            var scope = await StoryVisibilityQuery.ReadScopeAsync(db, current.UserId, cancellationToken);
+            var stories = await StoryVisibilityQuery.Visible(db, scope, now)
+                .Where(story => story.Visibility == StoryVisibility.PublicWorld && story.TargetId == null && story.TargetType != StoryTargetGroup)
                 .OrderByDescending(story => story.CreatedAt)
+                .ThenByDescending(story => story.Id)
                 .Take(80)
                 .ToListAsync(cancellationToken);
 
-            var result = new List<StoryResponse>();
-            foreach (var story in stories)
-            {
-                if (await CanViewStoryAsync(db, story, current.UserId, cancellationToken))
-                {
-                    result.Add(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
-                }
-            }
-
-            return Results.Ok(result);
+            return Results.Ok(await ToStoryResponsesAsync(stories, current.UserId, db, cancellationToken));
         });
 
         group.MapGet("/feed", async Task<IResult> (HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
@@ -2329,25 +2319,15 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var stories = await db.Stories
-                .Where(story =>
-                    story.DeletedAt == null &&
-                    story.ExpiresAt > now &&
-                    (story.Visibility != StoryVisibility.PublicWorld || story.OwnerUserId == current.UserId))
+            var scope = await StoryVisibilityQuery.ReadScopeAsync(db, current.UserId, cancellationToken);
+            var stories = await StoryVisibilityQuery.Visible(db, scope, now)
+                .Where(story => story.Visibility != StoryVisibility.PublicWorld || story.OwnerUserId == current.UserId)
                 .OrderByDescending(story => story.CreatedAt)
-                .Take(320)
+                .ThenByDescending(story => story.Id)
+                .Take(160)
                 .ToListAsync(cancellationToken);
 
-            var result = new List<StoryResponse>();
-            foreach (var story in stories)
-            {
-                if (await CanViewStoryAsync(db, story, current.UserId, cancellationToken))
-                {
-                    result.Add(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
-                }
-            }
-
-            return Results.Ok(result.Take(160).ToList());
+            return Results.Ok(await ToStoryResponsesAsync(stories, current.UserId, db, cancellationToken));
         });
 
         group.MapGet("/group/{conversationId}", async Task<IResult> (string conversationId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
@@ -2364,25 +2344,15 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
-            var stories = await db.Stories
-                .Where(story =>
-                    story.TargetId == conversationId &&
-                    story.DeletedAt == null &&
-                    story.ExpiresAt > now)
+            var scope = await StoryVisibilityQuery.ReadScopeAsync(db, current.UserId, cancellationToken);
+            var stories = await StoryVisibilityQuery.Visible(db, scope, now)
+                .Where(story => story.TargetId == conversationId)
                 .OrderByDescending(story => story.CreatedAt)
+                .ThenByDescending(story => story.Id)
                 .Take(120)
                 .ToListAsync(cancellationToken);
 
-            var result = new List<StoryResponse>();
-            foreach (var story in stories)
-            {
-                if (await CanViewStoryAsync(db, story, current.UserId, cancellationToken))
-                {
-                    result.Add(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
-                }
-            }
-
-            return Results.Ok(result);
+            return Results.Ok(await ToStoryResponsesAsync(stories, current.UserId, db, cancellationToken));
         });
 
         group.MapPost("/", async Task<IResult> (CreateStoryRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
@@ -2393,9 +2363,9 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            if (string.IsNullOrWhiteSpace(request.EncryptedPayload))
+            if (!StoryMediaPolicy.ValidPayload(request.EncryptedPayload, request.Caption))
             {
-                return Error("invalid_story", "La historia necesita payload.");
+                return Error("invalid_story", "La historia necesita un payload valido y un texto de hasta 500 caracteres.");
             }
 
             var durationSeconds = Math.Clamp(request.DurationSeconds ?? 24 * 60 * 60, 30, 7 * 24 * 60 * 60);
@@ -2448,13 +2418,15 @@ public static partial class EndpointExtensions
                 return Error("invalid_story_acl", "Los usuarios permitidos deben existir.");
             }
 
+            DateTimeOffset? mediaExpiresAt = null;
             if (request.MediaFileObjectId is not null)
             {
                 var file = await db.Files.FirstOrDefaultAsync(candidate => candidate.Id == request.MediaFileObjectId, cancellationToken);
-                if (file is null || file.OwnerUserId != current.UserId)
+                if (!StoryMediaPolicy.CanAttach(file, current.UserId, timeProvider.GetUtcNow()))
                 {
-                    return Error("invalid_story_media", "El archivo de la historia no existe o no pertenece al usuario.");
+                    return Error("invalid_story_media", "La historia necesita un archivo subido, vigente y perteneciente al usuario.");
                 }
+                mediaExpiresAt = file!.ExpiresAt;
             }
 
             var now = timeProvider.GetUtcNow();
@@ -2476,21 +2448,20 @@ public static partial class EndpointExtensions
                 ViewOnce = request.ViewOnce,
                 AllowReposts = request.AllowReposts ?? true,
                 CreatedAt = now,
-                ExpiresAt = now.AddSeconds(durationSeconds)
+                ExpiresAt = StoryMediaPolicy.Deadline(now.AddSeconds(durationSeconds), mediaExpiresAt)
             };
-
-            db.Stories.Add(story);
-            await db.SaveChangesAsync(cancellationToken);
 
             var response = await ToStoryResponseAsync(story, current.UserId, db, cancellationToken);
             var realtimeResponse = await ToStoryResponseAsync(story, string.Empty, db, cancellationToken);
-            if (story.Visibility == StoryVisibility.PublicWorld)
+            var audience = story.Visibility == StoryVisibility.PublicWorld
+                ? [] : await StoryAudienceAsync(db, story, cancellationToken);
+            return await SaveStoryPublicationAsync(story, db, response, http, async notificationToken =>
             {
-                await hub.Clients.All.SendAsync("story.worldCreated", realtimeResponse, cancellationToken);
-            }
-            else
-            {
-                var audience = await StoryAudienceAsync(db, story, cancellationToken);
+                if (story.Visibility == StoryVisibility.PublicWorld)
+                {
+                    await hub.Clients.All.SendAsync("story.worldCreated", realtimeResponse, notificationToken);
+                    return;
+                }
                 await NotifyUsers(hub, audience, "story.created", realtimeResponse);
                 foreach (var userId in audience.Where(userId => userId != current.UserId).Distinct(StringComparer.Ordinal))
                 {
@@ -2498,11 +2469,9 @@ public static partial class EndpointExtensions
                     {
                         ["storyId"] = story.Id,
                         ["ownerUserId"] = current.UserId
-                    }, cancellationToken);
+                    }, notificationToken);
                 }
-            }
-
-            return Results.Created($"/stories/{story.Id}", response);
+            }, cancellationToken);
         });
 
         group.MapPost("/{storyId}/view", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
@@ -2689,12 +2658,15 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
-            if (!original.AllowReposts || !originalOwner.AllowStoryReposts)
+            if (!StoryMediaPolicy.CanRepost(original, originalOwner.AllowStoryReposts))
             {
                 return Error("story_reposts_disabled", "El autor no permite repostear esta historia.", StatusCodes.Status403Forbidden);
             }
 
             var now = timeProvider.GetUtcNow();
+            var repostPayload = NormalizeOptional(request.EncryptedPayload) ?? original.EncryptedPayload;
+            if (!StoryMediaPolicy.ValidPayload(repostPayload))
+                return Error("invalid_story", "El payload cifrado de la historia supera el limite permitido.");
             var durationSeconds = Math.Clamp(request.DurationSeconds ?? 24 * 60 * 60, 30, 7 * 24 * 60 * 60);
             var visibility = request.Visibility is StoryVisibility.PublicWorld or StoryVisibility.Contacts or StoryVisibility.MutualContacts
                 ? request.Visibility.Value
@@ -2720,7 +2692,7 @@ public static partial class EndpointExtensions
                 Visibility = visibility,
                 TargetType = StoryTargetContacts,
                 TargetId = null,
-                EncryptedPayload = NormalizeOptional(request.EncryptedPayload) ?? original.EncryptedPayload,
+                EncryptedPayload = repostPayload,
                 Caption = null,
                 MediaFileObjectId = original.MediaFileObjectId,
                 AllowedUserIds = allowed,
@@ -2733,21 +2705,20 @@ public static partial class EndpointExtensions
                 ViewOnce = false,
                 AllowReposts = request.AllowReposts ?? original.AllowReposts,
                 CreatedAt = now,
-                ExpiresAt = now.AddSeconds(durationSeconds)
+                ExpiresAt = original.ExpiresAt < now.AddSeconds(durationSeconds) ? original.ExpiresAt : now.AddSeconds(durationSeconds)
             };
-
-            db.Stories.Add(repost);
-            await db.SaveChangesAsync(cancellationToken);
 
             var response = await ToStoryResponseAsync(repost, current.UserId, db, cancellationToken);
             var realtimeResponse = await ToStoryResponseAsync(repost, string.Empty, db, cancellationToken);
-            if (repost.Visibility == StoryVisibility.PublicWorld)
+            var audience = repost.Visibility == StoryVisibility.PublicWorld
+                ? [] : await StoryAudienceAsync(db, repost, cancellationToken);
+            return await SaveStoryPublicationAsync(repost, db, response, http, async notificationToken =>
             {
-                await hub.Clients.All.SendAsync("story.worldCreated", realtimeResponse, cancellationToken);
-            }
-            else
-            {
-                var audience = await StoryAudienceAsync(db, repost, cancellationToken);
+                if (repost.Visibility == StoryVisibility.PublicWorld)
+                {
+                    await hub.Clients.All.SendAsync("story.worldCreated", realtimeResponse, notificationToken);
+                    return;
+                }
                 await NotifyUsers(hub, audience, "story.created", realtimeResponse);
                 foreach (var userId in audience.Where(userId => userId != current.UserId).Distinct(StringComparer.Ordinal))
                 {
@@ -2755,11 +2726,9 @@ public static partial class EndpointExtensions
                     {
                         ["storyId"] = repost.Id,
                         ["ownerUserId"] = current.UserId
-                    }, cancellationToken);
+                    }, notificationToken);
                 }
-            }
-
-            return Results.Created($"/stories/{repost.Id}", response);
+            }, cancellationToken);
         });
 
         group.MapGet("/{storyId}/media-access", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
@@ -2800,6 +2769,7 @@ public static partial class EndpointExtensions
             var file = await db.Files.FirstOrDefaultAsync(candidate => candidate.Id == story.MediaFileObjectId, cancellationToken);
             if (file is null ||
                 file.State != FileState.Uploaded ||
+                file.ExpiresAt <= timeProvider.GetUtcNow() ||
                 !await storage.ExistsAsync(file, cancellationToken))
             {
                 return Results.NotFound();
@@ -2862,6 +2832,9 @@ public static partial class EndpointExtensions
             {
                 return Error("invalid_file", "El tamano cifrado no puede ser negativo.");
             }
+            if (request.ClientSha256 is { Length: > 0 } digest &&
+                (digest.Length != 64 || !digest.All(char.IsAsciiHexDigit)))
+                return Error("invalid_file", "La huella del archivo cifrado debe ser SHA-256 hexadecimal.");
 
             if (request.EncryptedSize > MaxEncryptedUploadBytes)
             {
@@ -2916,43 +2889,7 @@ public static partial class EndpointExtensions
             return Results.Created($"/files/{file.Id}", ToFileResponse(file));
         });
 
-        group.MapPut("/{fileId}/blob", async Task<IResult> (string fileId, HttpContext http, INivraStore store, EncryptedFileStorage storage, TimeProvider timeProvider, CancellationToken cancellationToken) =>
-        {
-            var current = http.GetCurrentUser();
-            if (current is null)
-            {
-                return Results.Unauthorized();
-            }
-
-            var file = await store.GetFileAsync(fileId, cancellationToken);
-            if (file is null || file.OwnerUserId != current.UserId)
-            {
-                return Results.NotFound();
-            }
-
-            if (http.Request.ContentLength is null or <= 0)
-            {
-                return Error("invalid_upload", "La subida necesita un cuerpo cifrado valido.");
-            }
-
-            if (http.Request.ContentLength > MaxEncryptedUploadBytes)
-            {
-                return Error("file_too_large", $"El archivo cifrado supera el limite de {MaxUploadLabel}.", StatusCodes.Status413PayloadTooLarge);
-            }
-
-            var written = await storage.SaveAsync(file, http.Request.Body, http.Request.ContentLength, cancellationToken);
-            if (file.EncryptedSize > 0 && written != file.EncryptedSize)
-            {
-                await storage.DeleteIfExistsAsync(file, cancellationToken);
-                return Error("upload_size_mismatch", "El tamano subido no coincide con la reserva cifrada.");
-            }
-
-            file.EncryptedSize = written;
-            file.State = FileState.Uploaded;
-            file.UploadedAt = timeProvider.GetUtcNow();
-            await store.SaveChangesAsync(cancellationToken);
-            return Results.Ok(ToFileResponse(file));
-        });
+        group.MapPut("/{fileId}/blob", UploadEncryptedFileAsync);
 
         group.MapGet("/{fileId}", async Task<IResult> (string fileId, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
@@ -4549,18 +4486,12 @@ public static partial class EndpointExtensions
                 friendRequests.Add(await ToFriendRequestResponseAsync(friendRequest, current.UserId, db, cancellationToken));
             }
 
-            var visibleStories = new List<StoryResponse>();
-            foreach (var story in await db.Stories
-                .Where(story => story.DeletedAt == null && story.ExpiresAt > now)
+            var storyScope = await StoryVisibilityQuery.ReadScopeAsync(db, current.UserId, cancellationToken);
+            var visibleStoryRows = await StoryVisibilityQuery.Visible(db, storyScope, now)
                 .OrderByDescending(story => story.CreatedAt)
-                .Take(120)
-                .ToListAsync(cancellationToken))
-            {
-                if (await CanViewStoryAsync(db, story, current.UserId, cancellationToken))
-                {
-                    visibleStories.Add(await ToStoryResponseAsync(story, current.UserId, db, cancellationToken));
-                }
-            }
+                .ThenByDescending(story => story.Id)
+                .Take(80).ToListAsync(cancellationToken);
+            var visibleStories = await ToStoryResponsesAsync(visibleStoryRows, current.UserId, db, cancellationToken);
 
             var memberRoomIds = await db.VaultRoomMembers
                 .Where(member => member.UserId == current.UserId && member.Status != VaultMemberStatus.Left && member.Status != VaultMemberStatus.Rejected)
@@ -5547,26 +5478,25 @@ public static partial class EndpointExtensions
         DateTimeOffset now,
         CancellationToken cancellationToken)
     {
-        if (store.UserCanAccessFile(userId, file))
-        {
-            return true;
-        }
+        if (file.State == FileState.Deleted || file.ExpiresAt <= now) return false;
+        if (file.OwnerUserId == userId) return true;
 
+        // A file ACL describes encryption recipients; a linked story still owns revocation,
+        // one-time access and current group membership. Include inactive stories so their
+        // old ACL cannot regain access after deletion or expiry.
         var linkedStories = await db.Stories
-            .Where(story =>
-                story.MediaFileObjectId == file.Id &&
-                story.DeletedAt == null &&
-                story.ExpiresAt > now)
+            .Where(story => story.MediaFileObjectId == file.Id)
             .ToListAsync(cancellationToken);
         foreach (var story in linkedStories)
         {
-            if (await CanViewStoryAsync(db, story, userId, cancellationToken))
+            if (story.DeletedAt is null && story.ExpiresAt > now &&
+                await CanViewStoryAsync(db, story, userId, cancellationToken))
             {
                 return true;
             }
         }
 
-        return false;
+        return linkedStories.Count == 0 && store.UserCanAccessFile(userId, file);
     }
 
     private static string NormalizeStoryTargetType(string? targetType, string? targetId)

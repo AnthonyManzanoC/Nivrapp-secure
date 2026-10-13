@@ -10,13 +10,14 @@
   z-index: 40;
   display: flex;
   gap: 16px;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   padding: 16px;
   border-radius: 16px;
   background: #153c30;
   color: #fff;
-  box-shadow: 0 6px 24px #0004;
+  box-shadow: var(--nivra-shadow-soft);
   a { color: #99f3cb; font-weight: 700; white-space: nowrap; }
 }
 
@@ -44,6 +45,7 @@
     background: transparent;
     cursor: pointer;
     font: inherit;
+    min-height: 44px;
   }
 
   .ongoing-call-return { display: flex; align-items: center; gap: 12px; min-width: 0; text-align: start; }
@@ -58,10 +60,7 @@
   min-height: 0;
   display: grid;
   grid-template-columns: var(--nivra-rail-width) minmax(0, 1fr);
-  background:
-    linear-gradient(118deg, rgba(24, 214, 162, .095), transparent 32%),
-    linear-gradient(244deg, rgba(107, 168, 255, .085), transparent 34%),
-    linear-gradient(140deg, #06090c 0%, #10171a 46%, #06090c 100%);
+  background: var(--nivra-bg);
   color: var(--nivra-text);
   overflow: hidden;
 }
@@ -75,10 +74,7 @@
   flex-direction: column;
   align-items: center;
   gap: 12px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .068), transparent 38%),
-    linear-gradient(180deg, rgba(5, 9, 11, .94), rgba(9, 15, 17, .82));
-  backdrop-filter: var(--nivra-glass);
+  background: var(--nivra-panel-solid);
 }
 
 .rail-brand {
@@ -97,14 +93,14 @@
 .rail-logo {
   width: 44px;
   height: 44px;
-  filter: drop-shadow(0 10px 24px rgba(24, 214, 162, .22));
 }
 
 .nav-btn {
+  position: relative;
   width: 52px;
   min-height: 54px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: 14px;
   color: var(--nivra-muted);
   background: transparent;
   display: grid;
@@ -112,7 +108,7 @@
   gap: 3px;
   text-decoration: none;
   font-weight: 650;
-  transition: background .16s, border-color .16s, transform .16s, color .16s;
+  transition: background .16s, border-color .16s, color .16s;
 }
 
 .nav-btn ion-icon {
@@ -126,12 +122,11 @@
 }
 
 .nav-btn:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, .055);
+  background: color-mix(in srgb, var(--nivra-muted) 9%, transparent);
 }
 
 .nav-btn:active {
-  transform: scale(.96);
+  background: color-mix(in srgb, var(--nivra-brand) 13%, transparent);
 }
 
 .nav-btn:focus-visible {
@@ -141,11 +136,8 @@
 
 .nav-btn.active {
   color: var(--nivra-brand-2);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .09), rgba(255, 255, 255, .02)),
-    linear-gradient(135deg, rgba(24, 214, 162, .22), rgba(107, 168, 255, .11));
+  background: color-mix(in srgb, var(--nivra-brand) 12%, transparent);
   border-color: rgba(24, 214, 162, .34);
-  box-shadow: 0 12px 30px rgba(24, 214, 162, .14), inset 0 1px 0 rgba(255, 255, 255, .08);
 }
 
 .logout {
@@ -170,7 +162,7 @@
   bottom: 18px;
   min-width: 240px;
   border: 1px solid rgba(24, 214, 162, .28);
-  border-radius: 8px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -178,7 +170,7 @@
   background:
     linear-gradient(135deg, rgba(24, 214, 162, .22), rgba(107, 168, 255, .12)),
     rgba(8, 13, 15, .92);
-  box-shadow: 0 20px 52px rgba(0, 0, 0, .38);
+  box-shadow: var(--nivra-shadow-soft);
   backdrop-filter: var(--nivra-glass);
 }
 
@@ -201,9 +193,11 @@
 
 .incoming-call-card {
   width: min(430px, 100%);
-  min-height: 560px;
+  min-height: min(560px, calc(100dvh - 36px));
+  max-height: calc(100dvh - 36px);
+  overflow: auto;
   border: 1px solid rgba(114, 240, 202, .28);
-  border-radius: 8px;
+  border-radius: 28px;
   padding: 34px 24px 26px;
   display: grid;
   justify-items: center;
@@ -211,10 +205,8 @@
   gap: 14px;
   color: var(--nivra-text);
   text-align: center;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .035)),
-    rgba(8, 13, 15, .9);
-  box-shadow: 0 30px 90px rgba(0, 0, 0, .55), inset 0 1px 0 rgba(255, 255, 255, .1);
+  background: var(--nivra-panel-solid);
+  box-shadow: var(--nivra-shadow-soft);
 }
 
 .incoming-kind {
@@ -227,7 +219,7 @@
   gap: 8px;
   color: var(--nivra-brand-2);
   background: rgba(24, 214, 162, .075);
-  font-weight: 850;
+  font-weight: 700;
   font-size: 13px;
 }
 
@@ -297,8 +289,7 @@
   justify-content: center;
   gap: 8px;
   color: #03100d;
-  font-weight: 900;
-  box-shadow: 0 18px 44px rgba(0, 0, 0, .28);
+  font-weight: 750;
 }
 
 .incoming-action ion-icon {
@@ -311,7 +302,7 @@
 
 .incoming-action.reject {
   color: #fff3f3;
-  background: linear-gradient(135deg, #ff5c6c, #ff8c8c);
+  background: #cf3342;
 }
 
 .call-pill-main,
@@ -354,8 +345,8 @@
 }
 
 .pill-action {
-  width: 36px;
-  height: 36px;
+  width: 44px;
+  height: 44px;
   border-radius: 999px;
   display: grid;
   place-items: center;
@@ -369,7 +360,7 @@
 
 .pill-action.danger {
   background: rgba(255, 89, 89, .18);
-  color: #ffb4b4;
+  color: var(--nivra-danger);
 }
 
 @media (max-width: 768px) {
@@ -392,15 +383,12 @@
     margin: 0 auto;
     flex-direction: row;
     justify-content: space-around;
-    border: 1px solid rgba(255, 255, 255, .18);
-    border-bottom: 0;
-    border-radius: 26px;
+    border: 1px solid var(--nivra-line);
+    border-radius: 24px;
     padding: 7px 10px;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, .18), rgba(255, 255, 255, .07)),
-      rgba(8, 13, 15, .58);
-    box-shadow: 0 16px 48px rgba(0, 0, 0, .34), inset 0 1px 0 rgba(255, 255, 255, .18);
-    backdrop-filter: blur(28px) saturate(170%);
+    background: color-mix(in srgb, var(--nivra-panel-solid) 94%, transparent);
+    box-shadow: var(--nivra-shadow-soft);
+    backdrop-filter: blur(16px);
   }
 
   .rail-brand,
@@ -417,7 +405,7 @@
     width: 50px;
     height: 48px;
     min-height: 48px;
-    border-radius: 20px;
+    border-radius: 16px;
   }
 
   .nav-btn span {
@@ -425,11 +413,9 @@
   }
 
   .nav-btn.active {
-    color: #03100d;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, .55), rgba(255, 255, 255, .24)),
-      linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
-    border-color: rgba(255, 255, 255, .36);
+    color: var(--nivra-brand-2);
+    background: color-mix(in srgb, var(--nivra-brand) 14%, transparent);
+    border-color: color-mix(in srgb, var(--nivra-brand) 28%, transparent);
   }
 
   .call-pill {
@@ -468,3 +454,4 @@
 .nav-profile-avatar { width: 30px; height: 30px; flex: 0 0 30px; object-fit: cover; border-radius: 50%; border: 2px solid var(--nivra-panel-solid); box-shadow: 0 0 0 1px var(--nivra-line); }
 .nav-btn.active .nav-profile-avatar { box-shadow: 0 0 0 2px var(--nivra-brand-2); }
 .rail-logo { object-fit: contain; border-radius: 16px; }
+.nav-btn .nav-unread-badge { position: absolute; top: 4px; right: 3px; display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 4px; border: 2px solid var(--nivra-panel-solid); border-radius: 999px; color: #03271e; background: var(--nivra-brand); font-size: 10px; font-weight: 750; line-height: 16px; font-variant-numeric: tabular-nums; pointer-events: none; }

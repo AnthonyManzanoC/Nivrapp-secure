@@ -163,4 +163,56 @@ describe('story playback lifecycle', () => {
     await player.deleteOwnStory();
     expect(social.deleteStory).not.toHaveBeenCalled();
   });
+
+  it('does not advance an error screen or a caption being read and resumes at the same place', () => {
+    social.storyOpenError.set('temporary');
+    advance(100);
+    expect(player.localProgress).toBe(0);
+    social.storyOpenError.set('');
+    player.toggleCaption();
+    advance(100);
+    expect(player.localProgress).toBe(0);
+    player.toggleCaption();
+    advance(5);
+    expect(player.localProgress).toBeGreaterThan(0);
+  });
+
+  it('stops a late successful autoplay when the reader has paused or focused a reply', async () => {
+    const video = media();
+    await Promise.resolve();
+    let resolve!: () => void;
+    (video.play as jasmine.Spy).and.returnValue(new Promise<void>((done) => resolve = done));
+    video.pause();
+    player.ngOnChanges({});
+    player.focusReply(true);
+    const pauseCount = (video.pause as jasmine.Spy).calls.count();
+    resolve();
+    await Promise.resolve();
+    expect(video.pause).toHaveBeenCalledTimes(pauseCount + 1);
+  });
+
+  it('ignores an ended event while paused and resets reading state on the next story', () => {
+    const ended = spyOn(player.mediaEnded, 'emit');
+    player.toggleCaption();
+    player.ended();
+    expect(ended).not.toHaveBeenCalled();
+    const old = player.story;
+    player.story = { ...old, id: 'two' };
+    player.ngOnChanges({ story: new SimpleChange(old, player.story, false) });
+    expect(player.captionExpanded).toBeFalse();
+    expect(player.buffering).toBeFalse();
+  });
+
+  it('does not offer reposting or emit a share when privacy forbids it', () => {
+    const share = spyOn(player.repost, 'emit');
+    player.canRepost = false;
+    player.showRepost();
+    player.confirmRepost();
+    expect(player.repostConfirmOpen).toBeFalse();
+    expect(share).not.toHaveBeenCalled();
+    player.canRepost = true;
+    player.story.viewOnce = true;
+    player.showRepost();
+    expect(player.repostConfirmOpen).toBeFalse();
+  });
 });

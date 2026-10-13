@@ -11,9 +11,7 @@
     24px
     max(24px, env(safe-area-inset-left));
   color: var(--nivra-text);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .026), transparent 18%),
-    transparent;
+  background: transparent;
 }
 
 .page-head {
@@ -21,14 +19,15 @@
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  margin-bottom: 20px;
+  max-width: 1040px;
+  margin: 0 auto 24px;
 }
 
 .page-head h1 {
   margin: 0;
   font-size: 30px;
-  line-height: 1.05;
-  letter-spacing: 0;
+  line-height: 1.15;
+  letter-spacing: -.025em;
 }
 
 .page-head p,
@@ -44,19 +43,18 @@ label span,
 .grid {
   display: grid;
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  gap: 14px;
+  max-width: 1040px;
+  margin-inline: auto;
+  gap: 16px;
 }
 
 .panel {
   min-width: 0;
   border: 1px solid var(--nivra-line);
-  border-radius: 8px;
-  padding: 16px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .082), rgba(255, 255, 255, .03)),
-    var(--nivra-panel);
-  box-shadow: var(--nivra-shadow-tiny), inset 0 1px 0 rgba(255, 255, 255, .07);
-  backdrop-filter: var(--nivra-glass);
+  border-radius: var(--nivra-radius-panel, 20px);
+  padding: 20px;
+  background: var(--nivra-panel-solid);
+  box-shadow: var(--nivra-shadow-tiny);
 }
 
 .panel h2 {
@@ -92,27 +90,29 @@ ion-input,
 ion-textarea {
   --background: rgba(255, 255, 255, .062);
   --border-color: var(--nivra-line);
-  --border-radius: 8px;
+  --border-radius: var(--nivra-radius-control, 12px);
   --color: var(--nivra-text);
   --highlight-color-focused: var(--nivra-brand-2);
 }
 
 ion-button {
-  --border-radius: 8px;
-  font-weight: 800;
+  --border-radius: var(--nivra-radius-control, 12px);
+  --box-shadow: none;
+  min-height: 44px;
+  font-weight: 700;
 }
 
 .toggle-row {
-  min-height: 46px;
+  min-height: 54px;
   border: 1px solid var(--nivra-line);
-  border-radius: 8px;
-  padding: 10px 12px;
+  border-radius: var(--nivra-radius-control, 12px);
+  padding: 12px 14px;
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 12px;
   background: rgba(255, 255, 255, .042);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
+  line-height: 1.45;
 }
 
 .toggles,
@@ -141,15 +141,14 @@ ion-button {
 .call-row {
   min-width: 0;
   border: 1px solid var(--nivra-line);
-  border-radius: 8px;
-  padding: 12px;
+  border-radius: var(--nivra-radius-control, 12px);
+  padding: 14px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   background: rgba(255, 255, 255, .042);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .035);
-  transition: border-color .16s ease, background .16s ease, transform .16s ease;
+  transition: border-color .16s ease, background .16s ease;
 }
 
 .device-row:hover,
@@ -159,7 +158,6 @@ ion-button {
 .call-row:hover {
   border-color: var(--nivra-line-strong);
   background: rgba(255, 255, 255, .06);
-  transform: translateY(-1px);
 }
 
 .device-row strong,
@@ -181,15 +179,16 @@ ion-button {
   z-index: 40;
   max-width: min(420px, calc(100vw - 36px));
   border: 1px solid var(--nivra-line);
-  border-radius: 8px;
+  border-radius: var(--nivra-radius-control, 12px);
   padding: 12px 14px;
-  background: rgba(8, 13, 15, .94);
+  color: var(--nivra-text);
+  background: var(--nivra-panel-solid);
   box-shadow: var(--nivra-shadow-soft);
 }
 
 .error {
-  color: #ffd5d5;
-  border-color: rgba(255, 107, 107, .3);
+  color: var(--nivra-danger);
+  border-color: color-mix(in srgb, var(--nivra-danger) 35%, var(--nivra-line));
 }
 
 .empty-copy {
@@ -198,7 +197,7 @@ ion-button {
   min-height: 120px;
   text-align: center;
   border: 1px dashed var(--nivra-line);
-  border-radius: 8px;
+  border-radius: var(--nivra-radius-control, 12px);
 }
 
 @media (max-width: 860px) {

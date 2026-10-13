@@ -12,7 +12,10 @@ describe('chat profile continuity during recovery', () => {
     service.profilesByUserId = signal({ peer: { ...rich } });
     service.contacts = signal([{ ...rich }]);
     service.directoryResults = signal([]);
-    service.profileFetchInFlight = new Set();
+    service.profileFetchInFlight = new Map();
+    service.profileRetryAfter = new Map();
+    service.profileRequestsActive = 0;
+    service.profileRequestWaiters = [];
     service.profileSources = new Map();
     service.launchCacheEpoch = 0;
     service.auth = { session: signal({ user: { id: 'self', alias: 'self' }, device: { id: 'browser' } }) };
@@ -117,13 +120,33 @@ describe('chat profile continuity during recovery', () => {
   }));
 
   it('keeps the current photo after a transient directory failure, but clears it when the user is no longer accessible', async () => {
+    let now = Date.now();
+    spyOn(Date, 'now').and.callFake(() => now);
     const service = harness();
     service.api.get.and.returnValue(throwError(() => ({ status: 0 })));
     await service.refreshProfile('peer');
     expect(service.profilesByUserId().peer.profilePhotoDataUrl).toBe(rich.profilePhotoDataUrl);
+    await service.refreshProfile('peer');
+    expect(service.api.get).toHaveBeenCalledTimes(1);
+    now += 30_001;
     service.api.get.and.returnValue(throwError(() => ({ status: 404 })));
     await service.refreshProfile('peer');
     expect(service.participantPhoto('peer', rich)).toBe('');
+  });
+
+  it('limits profile recovery to three simultaneous requests and cancels queued readers after logout', async () => {
+    const service = harness();
+    const responses = [new Subject(), new Subject(), new Subject()];
+    service.api.get.and.returnValues(...responses);
+    const pending = ['first', 'second', 'third', 'queued'].map((id) => service.refreshProfile(id));
+    expect(service.api.get).toHaveBeenCalledTimes(3);
+    service.auth.session.set(null);
+    service.launchCacheEpoch += 1;
+    responses.forEach((response) => response.next({ id: 'fixture', alias: 'fixture' }));
+    await Promise.all(pending);
+    expect(service.api.get).toHaveBeenCalledTimes(3);
+    expect(service.history.putProfiles).not.toHaveBeenCalled();
+    expect(service.profileRequestsActive).toBe(0);
   });
 
   it('ignores a directory response from a previous account', async () => {

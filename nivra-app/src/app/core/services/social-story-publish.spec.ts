@@ -119,6 +119,25 @@ describe('confirmed story publication and feed recovery', () => {
     expect(service.publishingStatus()).toBe('');
   });
 
+  it('resumes one interrupted media upload with the same reservation and ciphertext, without duplicate creation', async () => {
+    api.putRaw.and.returnValues(throwError(() => ({ status: 503 })) as never, of({ id: 'encrypted-file' }) as never);
+    const file = new File(['image-fixture'], 'photo.png', { type: 'image/png' });
+    await service.publishStory({ text: 'Ready', visibility: 'PublicWorld', file });
+    expect(api.putRaw).toHaveBeenCalledTimes(2);
+    expect(api.putRaw.calls.argsFor(1)).toEqual(api.putRaw.calls.argsFor(0));
+    const reservations = api.post.calls.allArgs().filter(([path]) => path === '/files');
+    expect(reservations.length).toBe(1);
+    expect((reservations[0][1] as { clientSha256: string }).clientSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(api.post.calls.allArgs().filter(([path]) => path === '/stories').length).toBe(1);
+  });
+
+  it('does not replay media after an integrity refusal or an ambiguous story POST failure', async () => {
+    api.putRaw.and.returnValue(throwError(() => ({ status: 400 })) as never);
+    await expectAsync(service.publishStory({ text: 'Ready', visibility: 'PublicWorld', file: new File(['fixture'], 'photo.png', { type: 'image/png' }) })).toBeRejected();
+    expect(api.putRaw).toHaveBeenCalledTimes(1);
+    expect(api.post.calls.allArgs().filter(([path]) => path === '/stories')).toEqual([]);
+  });
+
   it('keeps a rejected creation rejected and does not insert or persist a story', async () => {
     api.post.and.callFake((path: string) => path === '/stories'
       ? throwError(() => new Error('creation refused')) as never : of(keys) as never);

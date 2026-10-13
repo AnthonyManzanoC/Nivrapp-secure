@@ -6,11 +6,14 @@
         <span>Nivra</span>
       </a>
       @for (item of nav; track item.path) {
-        <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active" ariaCurrentWhenActive="page" [attr.aria-label]="item.labelKey | translate:item.label">
+        <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active" ariaCurrentWhenActive="page" [attr.aria-label]="(item.labelKey | translate:item.label) + (item.path === '/app/chats' && unread.unreadChats() ? ' · ' + unread.unreadChats() + ' ' + ('CHATS.UNREAD_CONVERSATIONS' | translate:'chats sin leer') : '')">
           @if (item.path === '/app/account' && auth.session()?.user?.profilePhotoDataUrl && failedAvatar() !== auth.session()?.user?.profilePhotoDataUrl) {
 <img class="nav-profile-avatar" [src]="auth.session()?.user?.profilePhotoDataUrl" alt="" (error)="failedAvatar.set(auth.session()?.user?.profilePhotoDataUrl ?? '')">
 } @else { <ion-icon [name]="item.icon"></ion-icon> }
           <span>{{ item.labelKey | translate:item.label }}</span>
+          @if (item.path === '/app/chats' && unread.unreadChats()) {
+            <span class="nav-unread-badge" aria-hidden="true">{{ unread.unreadChats() > 99 ? '99+' : unread.unreadChats() }}</span>
+          }
         </a>
       }
       <span class="nav-spacer"></span>

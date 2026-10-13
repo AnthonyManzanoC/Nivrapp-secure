@@ -45,9 +45,10 @@
             <div class="profile-hero-copy">
               <h2>{{ displayName || auth.session()?.user?.displayName || auth.session()?.user?.alias || ('ACCOUNT.PROFILE' | translate:'Perfil') }}</h2>
               <p dir="ltr">@{{ alias || auth.session()?.user?.alias }}</p>
-              <span class="profile-draft-tag" [class.pending]="hasProfileChanges()">
-                <ion-icon [name]="hasProfileChanges() ? 'create-outline' : 'checkmark-circle-outline'" aria-hidden="true"></ion-icon>
-                {{ hasProfileChanges() ? ('ACCOUNT.PROFILE_PENDING' | translate:'Cambios sin guardar') : ('ACCOUNT.PROFILE_SYNCED' | translate:'Perfil guardado') }}
+              <span class="profile-draft-tag" [class.pending]="hasProfileChanges() || !!profileError" role="status">
+                @if (saving || profileLoading) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
+                @else { <ion-icon [name]="hasProfileChanges() || profileError ? 'create-outline' : 'checkmark-circle-outline'" aria-hidden="true"></ion-icon> }
+                {{ profileLoading ? ('COMMON.LOADING' | translate:'Cargando') : saving ? ('ACCOUNT.PROFILE_SAVING' | translate:'Guardando tu perfil…') : profileError ? ('COMMON.ACTION_ERROR' | translate:'No se pudo actualizar el perfil.') : hasProfileChanges() ? ('ACCOUNT.PROFILE_PENDING' | translate:'Cambios sin guardar') : ('ACCOUNT.PROFILE_SYNCED' | translate:'Perfil guardado') }}
               </span>
             </div>
             <div class="profile-photo-buttons">
@@ -66,7 +67,7 @@
               <label class="profile-photo-visibility">
                 <span>
                   <strong>{{ 'ACCOUNT.WHO_SEES_PHOTO' | translate:'Quien puede ver tu foto' }}</strong>
-                  <small>{{ 'ACCOUNT.PHOTO_VISIBILITY_SERVER' | translate:'Regla sincronizada y aplicada por el servidor.' }}</small>
+                  <small>{{ 'ACCOUNT.PHOTO_VISIBILITY_HELP' | translate:'Elige con quién compartir tu foto de perfil.' }}</small>
                 </span>
                 <select
                   class="native-select compact"
@@ -144,7 +145,7 @@
           </label>
         </div>
         <div class="profile-save-bar">
-          <p role="status">{{ saving ? ('ACCOUNT.PROFILE_SAVING' | translate:'Guardando tu perfil…') : hasProfileChanges() ? ('ACCOUNT.PROFILE_PENDING_HINT' | translate:'Publica tus cambios cuando estén listos.') : ('ACCOUNT.PROFILE_SAVED_HINT' | translate:'Tu perfil se sincroniza en tus dispositivos.') }}</p>
+          <p role="status">{{ profileLoading ? ('COMMON.LOADING' | translate:'Cargando') : saving ? ('ACCOUNT.PROFILE_SAVING' | translate:'Guardando tu perfil…') : hasProfileChanges() ? ('ACCOUNT.PROFILE_PENDING_HINT' | translate:'Publica tus cambios cuando estén listos.') : ('ACCOUNT.PROFILE_SAVED_HINT' | translate:'Tu perfil se sincroniza en tus dispositivos.') }}</p>
           <div>
             @if (hasProfileChanges()) { <ion-button mode="ios" fill="clear" (click)="discardProfileChanges()" [disabled]="saving">{{ 'ACCOUNT.PROFILE_DISCARD' | translate:'Descartar' }}</ion-button> }
             <ion-button mode="ios" (click)="saveProfile()" [disabled]="!hasProfileChanges() || !canSaveProfile()">

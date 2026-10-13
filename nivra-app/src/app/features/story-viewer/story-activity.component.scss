@@ -4,12 +4,17 @@ header { display: flex; justify-content: space-between; align-items: center; gap
 .eyebrow { color: var(--nivra-muted); font-size: 12px; font-weight: 650; }
 h2 { margin: 3px 0 0; font-size: 24px; letter-spacing: -.5px; }
 .header-actions { display: flex; gap: 8px; }
-.header-actions button { width: 38px; height: 38px; border: 0; border-radius: 50%; display: grid; place-items: center; color: var(--nivra-text); background: var(--nivra-surface-2, #eef4f2); }
+.header-actions button { width: 44px; height: 44px; border: 1px solid var(--nivra-line); border-radius: 50%; display: grid; place-items: center; color: var(--nivra-text); background: color-mix(in srgb, var(--nivra-muted) 6%, transparent); }
 ion-icon { font-size: 20px; } ion-spinner { width: 20px; height: 20px; }
 .activity-copy { color: var(--nivra-muted); font-size: 13px; line-height: 1.5; margin: 14px 0 20px; }
 .activity-tabs { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 8px; }
 .activity-tabs button { min-width: 0; display: grid; justify-items: center; gap: 7px; padding: 13px 5px; border: 1px solid var(--nivra-border, #e0e8e5); border-radius: 16px; color: var(--nivra-muted); background: transparent; }
 .activity-tabs .selected { color: var(--nivra-text); border-color: var(--nivra-brand); background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); }
+.activity-tabs .selected ion-icon { color: var(--nivra-brand); }
+.story-activity-sheet button { font: inherit; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.story-activity-sheet button:disabled { opacity: .5; cursor: default; }
+.header-actions button:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 3px; }
+.activity-loading ion-spinner { color: var(--nivra-brand); width: 28px; height: 28px; }
 .activity-tabs strong { font-size: 22px; color: var(--nivra-text); } .activity-tabs span { font-size: 12px; }
 .activity-list { margin-top: 14px; } .activity-row { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 72px; padding: 12px 2px; border: 0; border-bottom: 1px solid var(--nivra-border, #e0e8e5); color: var(--nivra-text); text-align: start; background: transparent; }
 .activity-row div { min-width: 0; flex: 1; display: grid; gap: 5px; } .activity-row strong { overflow-wrap: anywhere; font-size: 14px; }.activity-row small { color: var(--nivra-muted); font-size: 12px; }

@@ -1102,5 +1102,18 @@
   "STORY_PLAYER.ACTIVITY_ERROR": "No se pudo actualizar. Conservamos la última actividad.",
   "STORY_PLAYER.NO_VIEWS_COPY": "Cuando alguien vea tu historia, aparecerá aquí.",
   "STORY_PLAYER.REPLIES": "Respuestas",
-  "STORY_PLAYER.OPEN_REPLY": "Ver en el chat"
+  "STORY_PLAYER.OPEN_REPLY": "Ver en el chat",
+  "STORY_PLAYER.PAUSED": "En pausa",
+  "COMMON.SHOW_MORE": "Leer más",
+  "COMMON.SHOW_LESS": "Ver menos",
+  "ACCOUNT.PHOTO_VISIBILITY_HELP": "Elige con quién compartir tu foto de perfil.",
+  "CHATS.UNREAD_CONVERSATIONS": "chats sin leer",
+  "STORY_COMPOSER.SESSION_ERROR": "Tu sesión cambió. Vuelve a iniciar sesión e inténtalo otra vez.",
+  "STORY_COMPOSER.RECIPIENT_KEYS_ERROR": "Ningún destinatario tiene un dispositivo cifrado activo. Pídeles abrir Nivra e inténtalo de nuevo.",
+  "STORY_COMPOSER.KEY_SYNC_ERROR": "No se pudo sincronizar el cifrado de la audiencia. Revisa la conexión e inténtalo de nuevo.",
+  "STORY_COMPOSER.KEYS_UNAVAILABLE_ERROR": "No hay llaves públicas disponibles para cifrar esta audiencia. Revisa los dispositivos e inténtalo de nuevo.",
+  "STORY_COMPOSER.CONNECTION_ERROR": "Comprueba tu conexión y vuelve a intentarlo.",
+  "STORY_COMPOSER.SERVICE_BUSY": "El servicio no está disponible en este momento. Reintenta en unos instantes.",
+  "STORY_COMPOSER.FILE_TOO_LARGE": "El archivo supera el tamaño permitido. Elige uno más pequeño.",
+  "STORY_COMPOSER.ACCESS_ERROR": "No se pudo autorizar la publicación. Actualiza tu sesión y revisa la audiencia."
 }

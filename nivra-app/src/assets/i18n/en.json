@@ -1102,5 +1102,18 @@
   "STORY_PLAYER.ACTIVITY_ERROR": "Could not refresh. The last activity is still available.",
   "STORY_PLAYER.NO_VIEWS_COPY": "People who view your story will appear here.",
   "STORY_PLAYER.REPLIES": "Replies",
-  "STORY_PLAYER.OPEN_REPLY": "View in chat"
+  "STORY_PLAYER.OPEN_REPLY": "View in chat",
+  "STORY_PLAYER.PAUSED": "Paused",
+  "COMMON.SHOW_MORE": "Read more",
+  "COMMON.SHOW_LESS": "Show less",
+  "ACCOUNT.PHOTO_VISIBILITY_HELP": "Choose who can see your profile photo.",
+  "CHATS.UNREAD_CONVERSATIONS": "unread chats",
+  "STORY_COMPOSER.SESSION_ERROR": "Your session changed. Sign in again and retry.",
+  "STORY_COMPOSER.RECIPIENT_KEYS_ERROR": "No recipient has an active encrypted device. Ask them to open Nivra and retry.",
+  "STORY_COMPOSER.KEY_SYNC_ERROR": "Could not synchronize encryption for this audience. Check your connection and retry.",
+  "STORY_COMPOSER.KEYS_UNAVAILABLE_ERROR": "No public keys are available to encrypt this audience. Check the devices and retry.",
+  "STORY_COMPOSER.CONNECTION_ERROR": "Check your connection and retry.",
+  "STORY_COMPOSER.SERVICE_BUSY": "The service is temporarily unavailable. Please retry in a moment.",
+  "STORY_COMPOSER.FILE_TOO_LARGE": "This file exceeds the size limit. Choose a smaller one.",
+  "STORY_COMPOSER.ACCESS_ERROR": "Could not authorize publication. Refresh your session and check the audience."
 }

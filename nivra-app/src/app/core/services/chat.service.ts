@@ -131,7 +131,10 @@ export class ChatService implements OnDestroy {
   private readonly missingReceiptMessageIds = new Set<string>();
   private readonly pendingReactionSends = new Set<string>();
   private readonly pendingReactionsByMessageId = new Map<string, MessageReaction[]>();
-  private readonly profileFetchInFlight = new Set<string>();
+  private readonly profileFetchInFlight = new Map<string, number>();
+  private readonly profileRetryAfter = new Map<string, number>();
+  private profileRequestsActive = 0;
+  private readonly profileRequestWaiters: (() => void)[] = [];
   private readonly profileSources = new Map<string, 'authoritative' | 'summary' | 'cache'>();
   private readonly directConversationInFlight = new Map<string, Promise<Conversation>>();
   private readonly typingTimers = new Map<string, number>();
@@ -3559,15 +3562,24 @@ export class ChatService implements OnDestroy {
   }
 
   private async refreshProfile(userId: string): Promise<void> {
-    if (!userId || this.profileFetchInFlight.has(userId)) {
+    if (!userId || this.profileFetchInFlight.has(userId) || (this.profileRetryAfter.get(userId) || 0) > Date.now()) {
       return;
     }
-    this.profileFetchInFlight.add(userId);
     const accountUserId = this.auth.session()?.user.id;
     const epoch = this.launchCacheEpoch;
+    this.profileFetchInFlight.set(userId, epoch);
+    // A large group must not open a directory request per member at once and
+    // exhaust the shared database pool. Pass completed slots to queued readers.
+    if (this.profileRequestsActive >= 3) {
+      await new Promise<void>((resolve) => this.profileRequestWaiters.push(resolve));
+    } else {
+      this.profileRequestsActive += 1;
+    }
     try {
+      if (this.auth.session()?.user.id !== accountUserId || this.launchCacheEpoch !== epoch) return;
       const person = await firstValueFrom(this.api.get<UserSummary>(`/directory/users/${encodeURIComponent(userId)}`));
       if (this.auth.session()?.user.id !== accountUserId || this.launchCacheEpoch !== epoch) return;
+      this.profileRetryAfter.delete(userId);
       this.rememberProfiles([person], true);
     } catch (error) {
       // A timeout/offline response must not erase a verified local photo.
@@ -3575,9 +3587,14 @@ export class ChatService implements OnDestroy {
       if ((status === 404 || status === 403) && this.auth.session()?.user.id === accountUserId
         && this.launchCacheEpoch === epoch) {
         this.rememberProfiles([{ userId, profilePhotoDataUrl: null }], true);
+      } else if (this.auth.session()?.user.id === accountUserId && this.launchCacheEpoch === epoch) {
+        this.profileRetryAfter.set(userId, Date.now() + 30_000);
       }
     } finally {
-      this.profileFetchInFlight.delete(userId);
+      if (this.profileFetchInFlight.get(userId) === epoch) this.profileFetchInFlight.delete(userId);
+      const nextReader = this.profileRequestWaiters.shift();
+      if (nextReader) nextReader();
+      else this.profileRequestsActive -= 1;
     }
   }
 
@@ -3825,6 +3842,7 @@ export class ChatService implements OnDestroy {
     this.typingTimers.clear();
     this.typingEventAt.clear();
     this.profileFetchInFlight.clear();
+    this.profileRetryAfter.clear();
     this.expiryTimers.forEach((timer) => window.clearTimeout(timer));
     this.expiryTimers.clear();
     this.directoryCachedAt.clear();
@@ -3851,6 +3869,7 @@ export class ChatService implements OnDestroy {
     this.typingTimers.clear();
     this.typingEventAt.clear();
     this.profileFetchInFlight.clear();
+    this.profileRetryAfter.clear();
     this.expiryTimers.forEach((timer) => window.clearTimeout(timer));
     this.expiryTimers.clear();
   }

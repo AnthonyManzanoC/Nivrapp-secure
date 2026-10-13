@@ -34,6 +34,7 @@ public static class AuthExtensions
                 {
                     logger.LogWarning(exception, "Authentication store is unavailable.");
                     context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                    context.Response.Headers.RetryAfter = "3";
                     context.Response.ContentType = "application/json";
                     await context.Response.WriteAsJsonAsync(new
                     {
@@ -66,6 +67,15 @@ public static class AuthExtensions
                     catch (Exception exception) when (IsTransientAuthStoreFailure(exception))
                     {
                         logger.LogWarning(exception, "Could not validate device state for {DeviceId}.", currentUser.DeviceId);
+                        context.Response.StatusCode = StatusCodes.Status503ServiceUnavailable;
+                        context.Response.Headers.RetryAfter = "3";
+                        await context.Response.WriteAsJsonAsync(new
+                        {
+                            code = "store_unavailable",
+                            message = "Nivra is reconnecting to its data store. Try again in a moment.",
+                            traceId = context.TraceIdentifier
+                        });
+                        return;
                     }
                 }
                 else if (await TryWriteForceWipeForRevokedDeviceAsync(context, store, logger))

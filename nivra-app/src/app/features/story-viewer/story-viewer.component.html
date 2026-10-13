@@ -14,7 +14,7 @@
           <ion-icon [name]="muted ? 'volume-mute-outline' : 'volume-high-outline'"></ion-icon>
         </button>
       }
-      <button type="button" (click)="togglePause()" [attr.aria-label]="(userPaused ? 'STORY_PLAYER.PLAY' : 'STORY_PLAYER.PAUSE') | translate">
+      <button type="button" (click)="togglePause()" [attr.aria-pressed]="userPaused" [attr.aria-label]="(userPaused ? 'STORY_PLAYER.PLAY' : 'STORY_PLAYER.PAUSE') | translate">
         <ion-icon [name]="userPaused ? 'play-outline' : 'pause-outline'"></ion-icon>
       </button>
       <button type="button" (click)="closeViewer.emit()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline"></ion-icon></button>
@@ -41,23 +41,33 @@
                   <img [src]="media.url" [alt]="media.name" (load)="loadedImage()" (error)="failedMedia()">
                 }
               } @else if (social.isVideo(media.mime)) {
-                <video #storyMedia [src]="media.url" playsinline preload="auto" (loadedmetadata)="syncDuration.emit($event)" (canplay)="loadedMedia($event)" (error)="failedMedia()" (ended)="ended()"></video>
+                <video #storyMedia [src]="media.url" playsinline preload="auto" (loadedmetadata)="syncDuration.emit($event)" (canplay)="loadedMedia($event)" (waiting)="waitingMedia()" (stalled)="waitingMedia()" (playing)="playingMedia()" (error)="failedMedia()" (ended)="ended()"></video>
               } @else {
-                <div class="story-audio-card"><ion-icon name="volume-high-outline"></ion-icon><audio #storyMedia [src]="media.url" controls playsinline preload="auto" (loadedmetadata)="syncDuration.emit($event)" (canplay)="loadedMedia($event)" (error)="failedMedia()" (ended)="ended()"></audio></div>
+                <div class="story-audio-card"><ion-icon name="volume-high-outline"></ion-icon><audio #storyMedia [src]="media.url" controls playsinline preload="auto" (loadedmetadata)="syncDuration.emit($event)" (canplay)="loadedMedia($event)" (waiting)="waitingMedia()" (stalled)="waitingMedia()" (playing)="playingMedia()" (error)="failedMedia()" (ended)="ended()"></audio></div>
               }
             } @else { <div class="story-loading"><ion-spinner name="crescent"></ion-spinner><span>{{ 'COMMON.DECRYPTING' | translate:'Descifrando' }}</span></div> }
-          } @else { <p>{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantánea') }}</p> }
+          } @else { <p class="story-text-content" tabindex="0" (focus)="focusReply(true)" (blur)="focusReply(false)">{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantánea') }}</p> }
         }
       }
       @if (needsPlay && !mediaFailed) {
         <button type="button" class="story-play-prompt" (click)="playFromGesture()"><ion-icon name="play-outline"></ion-icon>{{ 'STORY_PLAYER.TAP_PLAY' | translate:'Toca para reproducir' }}</button>
       }
+      @if (payload.media && (!mediaReady || buffering) && social.storyMedia(story) && social.storyReadyId() === story.id && !needsPlay && !mediaFailed && !social.storyOpenError() && !social.storyMediaError(story)) {
+        <div class="story-buffering" role="status"><ion-spinner name="crescent"></ion-spinner><span>{{ 'COMMON.LOADING' | translate:'Cargando' }}</span></div>
+      }
+      @if (userPaused && !needsPlay && !mediaFailed) { <span class="story-paused-indicator"><ion-icon name="pause-outline"></ion-icon>{{ 'STORY_PLAYER.PAUSED' | translate:'En pausa' }}</span> }
     </div>
   </div>
   @if (story.originalAuthor?.alias) {
     <div class="story-repost-badge"><ion-icon name="repeat-outline"></ion-icon>{{ 'WORLD.REPOSTED_FROM' | translate:'Compartido de' }} @{{ story.originalAuthor?.alias }}</div>
   }
-  @if (payload.text && payload.media) { <div class="story-caption">{{ payload.text }}</div> }
+  @if (payload.text && payload.media) {
+    @if (payload.text.length > 120) {
+      <button type="button" class="story-caption expandable" [class.expanded]="captionExpanded" (click)="toggleCaption()" [attr.aria-expanded]="captionExpanded">
+        <span>{{ payload.text }}</span><small>{{ captionExpanded ? ('COMMON.SHOW_LESS' | translate:'Ver menos') : ('COMMON.SHOW_MORE' | translate:'Leer más') }}</small>
+      </button>
+    } @else { <div class="story-caption">{{ payload.text }}</div> }
+  }
   <footer class="story-action-bar">
     <div class="story-action-shell" [class.author]="isMine">
       @if (isMine) {

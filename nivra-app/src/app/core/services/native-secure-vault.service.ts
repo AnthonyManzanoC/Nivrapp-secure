@@ -1,5 +1,6 @@
 import { Injectable } from '@angular/core';
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor } from '@capacitor/core';
+import { NivraNative } from './native-plugin';
 
 export type NativeSecureSecretName = 'local-db' | 'device-keys' | 'auth-session';
 
@@ -10,7 +11,7 @@ interface SecureSecretResponse {
   available?: boolean;
 }
 
-interface NivraNativeSecurePlugin {
+export interface NivraNativeSecurePlugin {
   getOrCreateSecureSecret(options: { name: NativeSecureSecretName }): Promise<SecureSecretResponse>;
   clearSecureSecret(options: { name?: NativeSecureSecretName | 'all' }): Promise<void>;
 }
@@ -25,8 +26,6 @@ declare global {
     nivraSecureVault?: DesktopSecureVaultBridge;
   }
 }
-
-const NivraNative = registerPlugin<NivraNativeSecurePlugin>('NivraNative');
 
 @Injectable({ providedIn: 'root' })
 export class NativeSecureVaultService {

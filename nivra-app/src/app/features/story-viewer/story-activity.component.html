@@ -11,7 +11,10 @@
     <button type="button" [class.selected]="tab === 'replies'" (click)="tab = 'replies'" [attr.aria-pressed]="tab === 'replies'"><ion-icon name="chatbubble-outline"></ion-icon><strong>{{ replies.length }}</strong><span>{{ 'STORY_PLAYER.REPLIES' | translate:'Respuestas' }}</span></button>
   </nav>
   @if (social.storyActivityError()) { <p class="activity-error" role="status">{{ social.storyActivityError() | translate:'No se pudo actualizar. Conservamos la última actividad.' }}</p> }
-  <div class="activity-list">
+  <div class="activity-list" [attr.aria-busy]="social.storyActivityLoading()">
+    @if (social.storyActivityLoading() && !(tab === 'views' ? people.length : tab === 'reactions' ? reactions.length : replies.length)) {
+      <div class="activity-empty activity-loading" role="status"><ion-spinner name="crescent"></ion-spinner><span>{{ 'COMMON.LOADING' | translate:'Cargando' }}</span></div>
+    } @else {
     @if (tab === 'views') {
       @for (view of people; track view.user.id) {
         <div class="activity-row">
@@ -28,6 +31,7 @@
       @for (comment of replies; track comment.id) {
         <button type="button" class="activity-row reply-row" (click)="openReply(comment)" [disabled]="!!openingReply"><span class="avatar">{{ (comment.user.displayName || comment.user.alias || 'N')[0] }}</span><div><strong>{{ comment.user.displayName || comment.user.alias }}</strong><small>{{ comment.commentedAt | localizedDate:'short' }}</small><span>{{ 'STORY_PLAYER.OPEN_REPLY' | translate:'Ver en el chat' }}</span></div>@if (openingReply === comment.id) { <ion-spinner name="crescent"></ion-spinner> }</button>
       } @empty { <div class="activity-empty"><ion-icon name="chatbubble-outline"></ion-icon><strong>{{ 'WORLD.NO_COMMENTS_YET' | translate:'Sin respuestas aún.' }}</strong></div> }
+    }
     }
   </div>
   @if (replyError) { <p class="activity-error" role="alert">{{ 'COMMON.ACTION_ERROR' | translate:'No se pudo abrir el chat.' }}</p> }
