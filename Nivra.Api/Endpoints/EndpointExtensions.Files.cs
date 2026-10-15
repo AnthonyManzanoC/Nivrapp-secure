@@ -48,6 +48,8 @@ public static partial class EndpointExtensions
             http.RequestServices.GetRequiredService<ILogger<EncryptedFileStorage>>().LogWarning(
                 "Encrypted upload storage failure. ProviderCode={ProviderCode}, ProviderStatus={ProviderStatus}, TraceId={TraceId}",
                 safeCode, (int)exception.StatusCode, http.TraceIdentifier);
+            if (exception.StatusCode == HttpStatusCode.PaymentRequired)
+                return Error("storage_payment_required", "El almacenamiento no acepta archivos. El administrador debe revisar la cuota o facturacion del proveedor.", StatusCodes.Status402PaymentRequired);
             http.Response.Headers.RetryAfter = "3";
             var transient = exception.StatusCode is HttpStatusCode.TooManyRequests or HttpStatusCode.RequestTimeout || (int)exception.StatusCode >= 500;
             return Error(transient ? "storage_unavailable" : "storage_upload_failed",

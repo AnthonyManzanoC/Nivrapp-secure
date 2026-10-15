@@ -1,4 +1,5 @@
 {
+  "STORY_COMPOSER.STORAGE_BLOCKED": "The file cannot be saved: storage needs attention from the administrator. Your draft is preserved.",
   "ACCOUNT.ACCOUNT_DISABLED": "Account deactivated.",
   "ACCOUNT.ACTIVE": "Active",
   "ACCOUNT.ADJUST_PROFILE_PHOTO": "Adjust profile photo",

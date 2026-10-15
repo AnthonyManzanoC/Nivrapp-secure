@@ -1,4 +1,5 @@
 {
+  "STORY_COMPOSER.STORAGE_BLOCKED": "No se puede guardar el archivo: el almacenamiento necesita atención del administrador. Conservamos tu borrador.",
   "ACCOUNT.ACCOUNT_DISABLED": "Cuenta desactivada.",
   "ACCOUNT.ACTIVE": "Activo",
   "ACCOUNT.ADJUST_PROFILE_PHOTO": "Ajustar foto de perfil",

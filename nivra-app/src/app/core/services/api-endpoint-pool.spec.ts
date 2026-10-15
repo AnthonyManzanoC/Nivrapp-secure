@@ -87,7 +87,18 @@ describe('API endpoint pool isolation and failover', () => {
     fetcher.and.callFake(async (url: string) => url.startsWith(primary) ? new Response('', { status: 503 }) : new Response(JSON.stringify(ready())));
     await pool.prepare(); expect(pool.current()).toBe(backup); now += 61000;
     await pool.prepare(); expect(pool.current()).toBe(backup);
-    expect(fetcher.calls.allArgs().filter(([url]) => String(url).startsWith(backup)).length).toBe(1);
+    expect(fetcher.calls.allArgs().filter(([url]) => String(url).startsWith(backup)).length).toBe(2);
+    expect(fetcher.calls.allArgs().filter(([url]) => String(url).startsWith(primary)).length).toBe(1);
+  });
+  it('continues to a third verified node when the serving backup becomes unavailable', async () => {
+    build('', pin);
+    fetcher.and.callFake(async (url: string) => url.startsWith(primary)
+      ? Promise.reject(new TypeError('Failed to fetch')) : new Response(JSON.stringify(ready())));
+    await pool.prepare(); expect(pool.current()).toBe(backup);
+    now += 61000; fetcher.calls.reset();
+    fetcher.and.callFake(async (url: string) => url.startsWith(third)
+      ? new Response(JSON.stringify(ready())) : Promise.reject(new TypeError('Failed to fetch')));
+    await pool.prepare(); expect(pool.current()).toBe(third);
   });
   it('cannot bootstrap trust from a backup when a new device never saw the primary', async () => {
     build(); fetcher.and.callFake(async (url: string) => { if (url.startsWith(primary)) throw new Error('offline'); return new Response(JSON.stringify(ready())); });

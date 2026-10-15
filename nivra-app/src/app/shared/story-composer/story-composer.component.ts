@@ -488,7 +488,9 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
         }
         const status = typeof error === 'object' && error !== null && 'status' in error
           ? Number((error as { status: unknown }).status) : NaN;
-        if (status === 0) {
+        if (status === 402) {
+          this.error = this.tr('STORY_COMPOSER.STORAGE_BLOCKED', 'No se puede guardar el archivo: el almacenamiento necesita atención del administrador. Conservamos tu borrador.');
+        } else if (status === 0) {
           this.error += ' ' + this.tr('STORY_COMPOSER.CONNECTION_ERROR', 'Comprueba tu conexión y vuelve a intentarlo.');
         } else if (status >= 500 || status === 429) {
           this.error += ' ' + this.tr('STORY_COMPOSER.SERVICE_BUSY', 'El servicio no está disponible en este momento. Reintenta en unos instantes.');

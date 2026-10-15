@@ -88,6 +88,14 @@ export class ApiEndpointPool {
   }
 
   private async prepareOnce(): Promise<void> {
+    // Once recovered, validate the serving node instead of repeatedly contacting a
+    // suspended primary. Keep the same cluster verification for every health check.
+    const active = this.current();
+    if (active !== this.primary) {
+      if (this.compatible(await this.probe(active, 5000))) return;
+      await this.recover(`${active}/health/ready`);
+      return;
+    }
     const health = await this.probe(this.primary, 5000);
     if (health) this.rememberPrimary(health);
     // Never interrupt a healthy node just because a background readiness check failed.

@@ -130,6 +130,9 @@ try
     fixture.FailureStatus = HttpStatusCode.Forbidden;
     var storageFailure = await Upload(NewFile());
     Check(Status(storageFailure) == 502 && ((ApiError)((IValueHttpResult)storageFailure).Value!).Code == "storage_upload_failed" && proxy.File!.State == FileState.Reserved && proxy.Saves == 0, "provider credential/bucket denial returns a safe storage code and keeps the reservation uncommitted");
+    fixture.FailureStatus = HttpStatusCode.PaymentRequired;
+    var paymentFailure = await Upload(NewFile());
+    Check(Status(paymentFailure) == 402 && ((ApiError)((IValueHttpResult)paymentFailure).Value!).Code == "storage_payment_required" && proxy.Saves == 0, "provider payment refusal is not disguised as a temporary API outage");
     fixture.FailureStatus = null;
     var completed = NewFile();
     Check(Status(await Upload(completed)) == 200 && proxy.Saves == 1 && completed.State == FileState.Uploaded && completed.ClientSha256 == expectedHash, "HTTP upload marks uploaded only after the complete encrypted object is saved");
