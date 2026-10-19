@@ -1,0 +1,106 @@
+<div class="landing" lang="es">
+  <a class="skip-link" href="#contenido" (click)="scrollTo('contenido', $event)">Ir al contenido</a>
+  <header class="site-header">
+    <a class="brand" routerLink="/" aria-label="Nivra, inicio">
+      <img src="assets/brand/nivra-mark.svg" width="43" height="43" alt="">
+      <span>nivra<small>PRIVATE MESSENGER</small></span>
+    </a>
+    <nav class="desktop-nav" aria-label="Navegación principal">
+      <a href="#privacidad" (click)="scrollTo('privacidad', $event)">Por qué Nivra</a>
+      <a href="#empezar" (click)="scrollTo('empezar', $event)">Cómo empezar</a>
+      <a href="#descargas" (click)="scrollTo('descargas', $event)">Descargas <ion-icon name="arrow-down-outline" aria-hidden="true" /></a>
+    </nav>
+    <a class="button header-cta" routerLink="/auth">Entrar <ion-icon name="arrow-forward-outline" aria-hidden="true" /></a>
+  </header>
+
+  <main id="contenido" tabindex="-1">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <span class="eyebrow"><span class="status-dot"></span> TU ESPACIO. TUS REGLAS.</span>
+        <h1 id="hero-title">Tu mundo.<br>Tus palabras.<br><em>Tu privacidad.</em></h1>
+        <p>Hay conversaciones que solo les pertenecen a ustedes. Dales su propio espacio con Nivra.</p>
+        <div class="hero-actions">
+          <a class="button primary" routerLink="/auth">Abrir Nivra Web <ion-icon name="arrow-forward-outline" aria-hidden="true" /></a>
+          <a class="download-link" href="#descargas" (click)="scrollTo('descargas', $event)">Descargar la app <ion-icon name="arrow-down-outline" aria-hidden="true" /></a>
+        </div>
+        <div class="hero-note"><ion-icon name="lock-closed-outline" aria-hidden="true" /> Sin número de teléfono obligatorio.</div>
+      </div>
+
+      <div class="hero-art" role="img" aria-label="Vista ilustrativa de Nivra en computadora y móvil: una conversación entre amigos. Los mensajes son de ejemplo.">
+        <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+        <div class="little-spark spark-one">✳</div><div class="little-spark spark-two">✳</div>
+        <div class="desktop-preview" aria-hidden="true">
+          <div class="window-bar"><div class="window-dots"><i></i><i></i><i></i></div><span><ion-icon name="lock-closed-outline" /> Nivra Web</span><ion-icon name="ellipsis-horizontal" /></div>
+          <div class="preview-app">
+            <aside class="preview-rail"><img src="assets/brand/nivra-mark.svg" alt=""><span class="rail-selected"><ion-icon name="chatbubble-ellipses-outline" /></span><ion-icon name="call-outline" /><ion-icon name="globe-outline" /><ion-icon name="shield-checkmark-outline" /><span class="rail-avatar">T</span></aside>
+            <div class="preview-sidebar">
+              <div class="sidebar-heading">Conversaciones <span>+</span></div>
+              <div class="preview-search"><ion-icon name="search-outline" /> Buscar un chat</div>
+              <div class="chat-entry selected"><span class="avatar avatar-sage">V</span><div><strong>Valentina <small>12:42</small></strong><p>Qué bueno tener este espacio 💚</p></div></div>
+              <div class="chat-entry"><span class="avatar avatar-peach">M</span><div><strong>Mateo <small>11:30</small></strong><p><ion-icon name="checkmark-done-outline" /> Nos vemos por allá</p></div></div>
+              <div class="chat-entry"><span class="avatar avatar-lilac"><ion-icon name="musical-notes-outline" /></span><div><strong>Los de siempre <small>Ayer</small></strong><p>Ana: ¡Ese es el plan!</p></div></div>
+              <div class="sidebar-bottom"><ion-icon name="lock-closed-outline" /> Un espacio para los tuyos.</div>
+            </div>
+            <div class="preview-conversation">
+              <div class="conversation-top"><span class="avatar avatar-sage">V</span><div><strong>Valentina</strong><small>Tu conversación privada</small></div><ion-icon name="videocam-outline" /><ion-icon name="call-outline" /></div>
+              <div class="messages">
+                <span class="day-label">HOY</span>
+                <div class="message incoming">¿Un café y una buena charla? ☕<small>12:40</small></div>
+                <div class="message outgoing">Contigo, siempre.<small>12:41 <ion-icon name="checkmark-done-outline" /></small></div>
+                <div class="message incoming last-message">Qué bueno tener<br>este espacio 💚<small>12:42</small></div>
+              </div>
+              <div class="preview-composer"><ion-icon name="happy-outline" /><span>Escribe algo bonito…</span><ion-icon name="mic-outline" /></div>
+            </div>
+          </div>
+        </div>
+        <div class="phone-preview" aria-hidden="true">
+          <div class="phone-camera"></div><div class="phone-status">9:41 <span>••• ▰</span></div>
+          <div class="phone-top"><img src="assets/brand/nivra-mark.svg" alt=""><strong>nivra</strong><ion-icon name="shield-checkmark-outline" /></div>
+          <div class="phone-art"><span class="avatar avatar-sage">V</span><span class="call-ripple"></span></div>
+          <strong class="caller-name">Valentina</strong><small class="caller-state">Un momento para conectar.</small>
+          <div class="phone-call-actions"><span><ion-icon name="mic-outline" /></span><span><ion-icon name="videocam-outline" /></span><span class="answer-call"><ion-icon name="call-outline" /></span></div>
+          <div class="phone-home"></div>
+        </div>
+        <div class="privacy-sticker"><span><ion-icon name="lock-closed-outline" /></span><div>Entre tú y los tuyos.<small>Así de personal.</small></div></div>
+        <span class="preview-caption">UN VISTAZO A TU PRÓXIMO ESPACIO · VISTA ILUSTRATIVA</span>
+      </div>
+    </section>
+
+    <div class="benefits-line" aria-label="Lo que puedes hacer con Nivra">
+      <span><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true" /> Mensajes con los tuyos</span><i></i>
+      <span><ion-icon name="videocam-outline" aria-hidden="true" /> Llamadas y videollamadas</span><i></i>
+      <span><ion-icon name="shield-checkmark-outline" aria-hidden="true" /> Tu bóveda personal</span><i></i>
+      <span><ion-icon name="desktop-outline" aria-hidden="true" /> Web, Android y Windows</span>
+    </div>
+
+    <section class="privacy-section" id="privacidad" tabindex="-1" aria-labelledby="privacy-title">
+      <div class="privacy-illustration" aria-hidden="true"><div class="shield-orbit"></div><div class="shield-orbit inner"></div><img src="assets/brand/nivra-mark.svg" alt=""><span class="tiny-lock lock-one"><ion-icon name="key-outline" /></span><span class="tiny-lock lock-two"><ion-icon name="lock-closed-outline" /></span><span class="privacy-label">PRIVADO DESDE EL PRIMER HOLA.</span></div>
+      <div class="privacy-copy"><span class="eyebrow">MÁS CERCA. MÁS TUYO.</span><h2 id="privacy-title">Comparte tu día.<br>Conserva tu privacidad.</h2><p>Tu voz, tus ideas y esos pequeños momentos. Nivra reúne tus conversaciones, llamadas y archivos en un espacio pensado para ti.</p>
+        <div class="privacy-detail"><ion-icon name="lock-closed-outline" aria-hidden="true" /><div><h3>El cifrado empieza en tu dispositivo.</h3><p>Los mensajes se cifran antes de enviarse.</p></div></div>
+        <div class="privacy-detail"><ion-icon name="key-outline" aria-hidden="true" /><div><h3>Tu identidad, a tu manera.</h3><p>Entra con tu ID Nivra o alias, sin necesitar un número de teléfono.</p></div></div>
+        <a class="text-link" routerLink="/auth">Encuentra tu espacio <ion-icon name="arrow-forward-outline" aria-hidden="true" /></a>
+      </div>
+    </section>
+
+    <section class="start-section" id="empezar" tabindex="-1" aria-labelledby="start-title">
+      <div class="section-intro"><span class="eyebrow">LO BUENO EMPIEZA CON UN HOLA.</span><h2 id="start-title">Entra. Conecta. Sé tú.</h2><p>Tu próxima conversación está a unos pasos.</p></div>
+      <div class="steps">
+        <article><span class="step-number">01</span><h3>Abre tu espacio</h3><p>Usa Nivra desde el navegador o descarga la app para tu dispositivo.</p></article>
+        <article><span class="step-number">02</span><h3>Hazlo tuyo</h3><p>Crea una cuenta privada o entra con tu ID Nivra o alias y contraseña.</p></article>
+        <article><span class="step-number">03</span><h3>Acércate a los tuyos</h3><p>Comparte tu contacto e inicia una conversación, una llamada o un nuevo grupo.</p></article>
+      </div>
+    </section>
+
+    <section class="download-section" id="descargas" tabindex="-1" aria-labelledby="download-title">
+      <div><span class="eyebrow">DONDE ESTÉS, CONTIGO.</span><h2 id="download-title">Un espacio privado.<br>En tu pantalla favorita.</h2><p>Abre Nivra Web sin instalar nada, o lleva la app contigo.</p><div class="download-actions"><a class="button primary" routerLink="/auth">Abrir Nivra Web <ion-icon name="arrow-forward-outline" aria-hidden="true" /></a><a class="button outline" [href]="releasesUrl" target="_blank" rel="noopener noreferrer">Ver descargas oficiales <ion-icon name="arrow-down-outline" aria-hidden="true" /></a></div><span class="release-note">Las descargas se abren en las versiones oficiales de GitHub.</span></div>
+      <div class="platform-stack" aria-label="Disponible en navegador, Android y Windows"><span class="platform-icon web"><ion-icon name="globe-outline" /></span><span class="platform-icon android"><ion-icon name="logo-android" /></span><span class="platform-icon windows"><ion-icon name="logo-windows" /></span><span class="platform-caption">Navegador · Android · Windows</span></div>
+    </section>
+
+    <section class="faq-section" aria-labelledby="faq-title"><h2 id="faq-title">Antes del primer hola.</h2><div class="faq-list">
+      <details><summary>¿Necesito un número de teléfono?<span>+</span></summary><p>No. Puedes crear una cuenta privada y usar tu ID Nivra o alias junto con tu contraseña.</p></details>
+      <details><summary>¿Puedo usar Nivra sin instalar la app?<span>+</span></summary><p>Sí. Selecciona «Abrir Nivra Web» para entrar desde tu navegador. También puedes descargar las versiones para Android y Windows.</p></details>
+      <details><summary>¿Cómo entro si ya tengo una cuenta?<span>+</span></summary><p>Selecciona «Entrar» e inicia sesión con tu ID Nivra o alias. En la pantalla de acceso también encontrarás la opción de vinculación por QR.</p></details>
+    </div></section>
+  </main>
+  <footer class="site-footer"><a class="brand footer-brand" routerLink="/"><img src="assets/brand/nivra-mark.svg" width="34" height="34" alt=""><span>nivra<small>PRIVATE MESSENGER</small></span></a><span>Un espacio para lo que importa.</span><small>© 2026 Nivra</small><a href="#contenido" (click)="scrollTo('contenido', $event)">Volver arriba ↑</a></footer>
+</div>

@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 import { inject } from '@angular/core';
 import { Router } from '@angular/router';
+import { Capacitor } from '@capacitor/core';
 import { AuthService } from './core/services/auth.service';
 
 const authenticated = async () => {
@@ -11,6 +12,16 @@ const authenticated = async () => {
 const guest = async () => {
   const auth = inject(AuthService);
   const router = inject(Router);
+  return await auth.ensureSessionRestored() ? router.parseUrl('/app/chats') : true;
+};
+
+export const landingGuest = async () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  // Packaged apps keep their direct entry; the app guard restores their session.
+  if (Capacitor.isNativePlatform() || 'nivraSecureVault' in window) {
+    return router.parseUrl('/app/chats');
+  }
   return await auth.ensureSessionRestored() ? router.parseUrl('/app/chats') : true;
 };
 
@@ -69,6 +80,11 @@ export const routes: Routes = [
       { path: '', redirectTo: 'chats', pathMatch: 'full' },
     ],
   },
-  { path: '', redirectTo: 'app/chats', pathMatch: 'full' },
+  {
+    path: '',
+    pathMatch: 'full',
+    canMatch: [landingGuest],
+    loadComponent: () => import('./features/landing/landing.page').then((m) => m.LandingPage),
+  },
   { path: '**', redirectTo: 'app/chats' },
 ];
