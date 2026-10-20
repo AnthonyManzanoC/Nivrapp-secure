@@ -13,8 +13,14 @@ if ($metadata.version -ne $Version -or $metadata.url -ne "https://github.com/Ant
 $apk = Get-Item -LiteralPath $apkPath
 if ($apk.Length -ne $metadata.size -or (Get-FileHash -LiteralPath $apkPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $metadata.sha256) { throw 'Release APK differs from the verified metadata.' }
 $notes = Get-Content -LiteralPath (Join-Path $artifactDirectory "Nivra-$Version-release-notes.md") -Raw
-$assetPaths = @($apkPath, (Join-Path $artifactDirectory "Nivra-$Version-win32-x64.zip"), (Join-Path $artifactDirectory "Nivra-$Version-SHA256.txt"), $metadataPath)
+$assetPaths = @($apkPath, (Join-Path $artifactDirectory "Nivra-$Version-Setup.exe"), (Join-Path $artifactDirectory "Nivra-$Version-win32-x64.zip"), (Join-Path $artifactDirectory "Nivra-$Version-SHA256.txt"), $metadataPath)
 foreach ($asset in $assetPaths) { if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw 'A required release artifact is missing.' } }
+$checksumLines = @(Get-Content -LiteralPath (Join-Path $artifactDirectory "Nivra-$Version-SHA256.txt"))
+foreach ($binaryPath in $assetPaths[0..2]) {
+  $binaryName = [IO.Path]::GetFileName($binaryPath)
+  $binaryHash = (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
+  if ($checksumLines -notcontains "$binaryHash  $binaryName") { throw 'The checksum manifest differs from the release binaries. Run verify-release.ps1 first.' }
+}
 $credentialMap = @{}
 $headers = @{}
 try {
@@ -43,6 +49,7 @@ try {
     $expectedDigest = 'sha256:' + (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
     $uploaded = $assets | Where-Object { $_.name -eq $assetFile.Name } | Select-Object -First 1
     if (-not $uploaded) {
+      Write-Output "Uploading GitHub asset: $($assetFile.Name)"
       $uploadUri = $release.upload_url.Split('{')[0] + '?name=' + [Uri]::EscapeDataString($assetFile.Name)
       $uploaded = Invoke-RestMethod -Method Post -Uri $uploadUri -Headers $headers -ContentType 'application/octet-stream' -InFile $assetPath -TimeoutSec 1800
     }

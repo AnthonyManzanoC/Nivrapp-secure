@@ -1,4 +1,10 @@
 {
+  "WELCOME.EYEBROW": "あなたの空間。あなたのルール。",
+  "WELCOME.TITLE": "Nivra へようこそ",
+  "WELCOME.COPY": "大切な人とつながる場所。言語を選んで、会話を始めましょう。",
+  "WELCOME.LANGUAGE": "言語",
+  "WELCOME.NEXT": "次へ",
+  "WELCOME.FOOTER": "あなたから始まる会話。",
   "ACCOUNT.ACCOUNT_DISABLED": "アカウントが無効化されました。",
   "ACCOUNT.ACTIVE": "アクティブ",
   "ACCOUNT.ADVANCED_VISIBILITY": "ビジビリダード アヴァンザダ ローカル",

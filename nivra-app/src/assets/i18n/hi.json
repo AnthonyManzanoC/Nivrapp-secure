@@ -1,4 +1,10 @@
 {
+  "WELCOME.EYEBROW": "आपकी जगह। आपके नियम।",
+  "WELCOME.TITLE": "Nivra में आपका स्वागत है",
+  "WELCOME.COPY": "अपनों से जुड़ने की एक जगह। अपनी भाषा चुनें और बातचीत शुरू करें।",
+  "WELCOME.LANGUAGE": "आपकी भाषा",
+  "WELCOME.NEXT": "अगला",
+  "WELCOME.FOOTER": "आपकी बातचीत आपसे शुरू होती है।",
   "ACCOUNT.ACCOUNT_DISABLED": "खाता निष्क्रिय कर दिया गया.",
   "ACCOUNT.ACTIVE": "सक्रिय",
   "ACCOUNT.ADVANCED_VISIBILITY": "स्थानीय स्तर पर दृश्यता",

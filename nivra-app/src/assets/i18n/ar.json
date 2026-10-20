@@ -1,4 +1,10 @@
 {
+  "WELCOME.EYEBROW": "مساحتك. قواعدك.",
+  "WELCOME.TITLE": "مرحبًا بك في Nivra",
+  "WELCOME.COPY": "مساحة للتواصل مع من تحب. اختر لغتك وابدأ المحادثة.",
+  "WELCOME.LANGUAGE": "لغتك",
+  "WELCOME.NEXT": "التالي",
+  "WELCOME.FOOTER": "محادثاتك تبدأ معك.",
   "ACCOUNT.ACCOUNT_DISABLED": "تم تعطيل الحساب.",
   "ACCOUNT.ACTIVE": "نشط",
   "ACCOUNT.ADVANCED_VISIBILITY": "Visibilidad avanzada المحلية",

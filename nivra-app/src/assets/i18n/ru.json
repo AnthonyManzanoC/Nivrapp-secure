@@ -1,4 +1,10 @@
 {
+  "WELCOME.EYEBROW": "Ваше пространство. Ваши правила.",
+  "WELCOME.TITLE": "Добро пожаловать в Nivra",
+  "WELCOME.COPY": "Место для общения с близкими. Выберите язык и начните разговор.",
+  "WELCOME.LANGUAGE": "Ваш язык",
+  "WELCOME.NEXT": "Далее",
+  "WELCOME.FOOTER": "Ваши разговоры начинаются с вас.",
   "ACCOUNT.ACCOUNT_DISABLED": "Аккаунт деактивирован.",
   "ACCOUNT.ACTIVE": "Активный",
   "ACCOUNT.ADVANCED_VISIBILITY": "Местная видимость",

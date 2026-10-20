@@ -2,6 +2,7 @@ import { Component } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { IonIcon } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
+import { NIVRA_ANDROID_DOWNLOAD_URL, NIVRA_VERSION, NIVRA_WINDOWS_DOWNLOAD_URL } from '../../core/release';
 import {
   arrowDownOutline, arrowForwardOutline, callOutline, chatbubbleEllipsesOutline,
   checkmarkDoneOutline, desktopOutline,
@@ -18,7 +19,9 @@ import {
   styleUrls: ['./landing.page.scss'],
 })
 export class LandingPage {
-  readonly releasesUrl = 'https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/latest';
+  readonly androidDownloadUrl = NIVRA_ANDROID_DOWNLOAD_URL;
+  readonly windowsDownloadUrl = NIVRA_WINDOWS_DOWNLOAD_URL;
+  readonly version = NIVRA_VERSION;
 
   constructor() {
     addIcons({

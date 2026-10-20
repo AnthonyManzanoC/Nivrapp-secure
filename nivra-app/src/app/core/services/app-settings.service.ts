@@ -281,8 +281,14 @@ export class AppSettingsService {
   private loadSettings(key: string): NivraAppSettings {
     try {
       const stored = JSON.parse(localStorage.getItem(key) || 'null') as Partial<NivraAppSettings> | null;
+      // A new account starts in the language selected before sign-in. Existing
+      // account preferences remain authoritative; other guest settings stay local.
+      const guest = !stored && key !== SETTINGS_STORAGE_PREFIX
+        ? JSON.parse(localStorage.getItem(SETTINGS_STORAGE_PREFIX) || 'null') as Partial<NivraAppSettings> | null
+        : null;
       return this.normalizeSettings({
         ...DEFAULT_SETTINGS,
+        language: guest?.language ?? DEFAULT_SETTINGS.language,
         themeMode: this.readLegacyThemeMode() ?? DEFAULT_SETTINGS.themeMode,
         ...(stored ?? {}),
       });

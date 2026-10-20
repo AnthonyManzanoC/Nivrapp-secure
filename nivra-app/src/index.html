@@ -7,6 +7,10 @@
   <meta name="description" content="Tu mundo, tus palabras, tu privacidad. Abre Nivra Private Messenger en la web o descarga la app para Android y Windows." />
 
   <base href="/" />
+  <script>
+    // Electron loads this same build from disk; resolve its assets beside index.html.
+    if (location.protocol === 'file:') document.querySelector('base').setAttribute('href', './');
+  </script>
 
   <meta name="color-scheme" content="light dark" />
   <meta name="theme-color" content="#061014" />
@@ -38,7 +42,7 @@
 </head>
 
 <body>
-  <script src="/native-config.js"></script>
+  <script src="native-config.js"></script>
   <app-root></app-root>
 </body>
 

@@ -1,12 +1,13 @@
 {
   "name": "nivra-desktop",
-  "version": "4.0.0",
+  "version": "4.0.1",
   "private": true,
   "description": "Nivra desktop shell for Windows.",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "build-exe": "electron-packager . Nivra --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=icon.ico --extra-resource=../nivra-app/dist/nivra-app/browser"
+    "build-exe": "electron-packager . Nivra --platform=win32 --arch=x64 --out=dist --overwrite --asar --icon=icon.ico --extra-resource=../nivra-app/dist/nivra-app/browser",
+    "build-installer": "powershell -NoProfile -ExecutionPolicy Bypass -File ./installer/build-installer.ps1"
   },
   "devDependencies": {
     "electron": "42.11.12",

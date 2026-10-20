@@ -1,28 +1,39 @@
 import { Routes } from '@angular/router';
 import { inject } from '@angular/core';
 import { Router } from '@angular/router';
-import { Capacitor } from '@capacitor/core';
 import { AuthService } from './core/services/auth.service';
+import { NativeOnboardingService } from './core/services/native-onboarding.service';
 
 const authenticated = async () => {
   const auth = inject(AuthService);
   const router = inject(Router);
   return await auth.ensureSessionRestored() ? true : router.parseUrl('/auth');
 };
-const guest = async () => {
+export const guest = async () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  return await auth.ensureSessionRestored() ? router.parseUrl('/app/chats') : true;
+  const onboarding = inject(NativeOnboardingService);
+  if (await auth.ensureSessionRestored()) return router.parseUrl('/app/chats');
+  return onboarding.isPackagedApp() && !onboarding.isComplete() ? router.parseUrl('/welcome') : true;
+};
+
+export const welcomeGuest = async () => {
+  const auth = inject(AuthService);
+  const router = inject(Router);
+  const onboarding = inject(NativeOnboardingService);
+  if (await auth.ensureSessionRestored()) return router.parseUrl('/app/chats');
+  return onboarding.isPackagedApp() && !onboarding.isComplete() ? true : router.parseUrl('/auth');
 };
 
 export const landingGuest = async () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  // Packaged apps keep their direct entry; the app guard restores their session.
-  if (Capacitor.isNativePlatform() || 'nivraSecureVault' in window) {
-    return router.parseUrl('/app/chats');
+  const onboarding = inject(NativeOnboardingService);
+  if (await auth.ensureSessionRestored()) return router.parseUrl('/app/chats');
+  if (onboarding.isPackagedApp()) {
+    return router.parseUrl(onboarding.isComplete() ? '/auth' : '/welcome');
   }
-  return await auth.ensureSessionRestored() ? router.parseUrl('/app/chats') : true;
+  return true;
 };
 
 export const routes: Routes = [
@@ -35,6 +46,11 @@ export const routes: Routes = [
   {
     path: 'contact',
     loadComponent: () => import('./features/contact-invite/contact-invite.page').then((m) => m.ContactInvitePage),
+  },
+  {
+    path: 'welcome',
+    canMatch: [welcomeGuest],
+    loadComponent: () => import('./features/welcome/welcome.page').then((m) => m.WelcomePage),
   },
   {
     path: 'auth',

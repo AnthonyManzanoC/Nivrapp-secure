@@ -1,4 +1,4 @@
-import { RouteReuseStrategy, PreloadAllModules, provideRouter, withPreloading } from '@angular/router';
+import { RouteReuseStrategy, PreloadAllModules, provideRouter, withHashLocation, withPreloading } from '@angular/router';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { provideAnimations } from '@angular/platform-browser/animations';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
@@ -15,7 +15,7 @@ bootstrapApplication(AppComponent, {
   providers: [
     { provide: RouteReuseStrategy, useClass: IonicRouteStrategy },
     provideIonicAngular({ mode: 'ios', animated: true }),
-    provideRouter(routes, withPreloading(PreloadAllModules)),
+    provideRouter(routes, withPreloading(PreloadAllModules), ...(location.protocol === 'file:' ? [withHashLocation()] : [])),
     provideHttpClient(withInterceptors([authInterceptor, apiFailoverInterceptor])),
     provideAppInitializer(() => { void inject(ApiEndpointPool).prepare(); }),
     provideAnimations(),

@@ -1,4 +1,10 @@
 {
+  "WELCOME.EYEBROW": "Seu espaço. Suas regras.",
+  "WELCOME.TITLE": "Boas-vindas ao Nivra",
+  "WELCOME.COPY": "Um espaço para se conectar com quem importa. Escolha seu idioma e comece a conversar.",
+  "WELCOME.LANGUAGE": "Seu idioma",
+  "WELCOME.NEXT": "Próximo",
+  "WELCOME.FOOTER": "Suas conversas começam com você.",
   "ACCOUNT.ACCOUNT_DISABLED": "Conta desativada.",
   "ACCOUNT.ACTIVE": "Ativo",
   "ACCOUNT.ADVANCED_VISIBILITY": "Visibilidade local avançada",

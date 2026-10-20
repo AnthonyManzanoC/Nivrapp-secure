@@ -25,7 +25,7 @@ npm --prefix .\nivra-app run start -- --host 127.0.0.1 --port 8100
 
 El script del frontend usa `ng serve --force-esbuild` para que el servidor local soporte rutas profundas como `/auth` y `/app/chats`.
 
-La ruta `/` presenta Nivra Private Messenger a visitantes web, con acceso a la aplicación, instrucciones y descargas oficiales. Las sesiones abiertas y los clientes Android/Windows conservan la entrada directa a la aplicación.
+La ruta `/` presenta Nivra Private Messenger a visitantes web, con acceso a la aplicación, instrucciones y descargas directas del APK Android y del instalador EXE Windows. Android/Windows muestran una bienvenida con idioma y «Siguiente» antes del primer inicio de sesión; las sesiones abiertas conservan la entrada directa a sus chats.
 
 Para esta etapa, la presentación y el mensajero se despliegan juntos en el proyecto Vercel existente: comparten dominio y sesiones, y `nivra-app/vercel.json` conserva las rutas `/auth` y `/app/*`. Separar la presentación en otro proyecto tendría sentido si se requiere un sitio comercial con contenido, posicionamiento y despliegues independientes.
 

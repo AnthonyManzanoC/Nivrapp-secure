@@ -92,8 +92,31 @@
     </section>
 
     <section class="download-section" id="descargas" tabindex="-1" aria-labelledby="download-title">
-      <div><span class="eyebrow">DONDE ESTÉS, CONTIGO.</span><h2 id="download-title">Un espacio privado.<br>En tu pantalla favorita.</h2><p>Abre Nivra Web sin instalar nada, o lleva la app contigo.</p><div class="download-actions"><a class="button primary" routerLink="/auth">Abrir Nivra Web <ion-icon name="arrow-forward-outline" aria-hidden="true" /></a><a class="button outline" [href]="releasesUrl" target="_blank" rel="noopener noreferrer">Ver descargas oficiales <ion-icon name="arrow-down-outline" aria-hidden="true" /></a></div><span class="release-note">Las descargas se abren en las versiones oficiales de GitHub.</span></div>
-      <div class="platform-stack" aria-label="Disponible en navegador, Android y Windows"><span class="platform-icon web"><ion-icon name="globe-outline" /></span><span class="platform-icon android"><ion-icon name="logo-android" /></span><span class="platform-icon windows"><ion-icon name="logo-windows" /></span><span class="platform-caption">Navegador · Android · Windows</span></div>
+      <div class="download-copy">
+        <span class="eyebrow">DONDE ESTÉS, CONTIGO.</span>
+        <h2 id="download-title">Un espacio privado.<br>En tu pantalla favorita.</h2>
+        <p>Descarga Nivra para tu teléfono o computadora. Tus conversaciones, siempre cerca.</p>
+        <div class="download-actions"><a class="button primary" routerLink="/auth">Abrir Nivra Web <ion-icon name="arrow-forward-outline" aria-hidden="true" /></a></div>
+        <span class="release-note">¿Prefieres el navegador? Entra sin instalar nada.</span>
+      </div>
+      <div class="download-installers" aria-label="Descargas oficiales de Nivra">
+        <article class="installer-card installer-android" aria-labelledby="android-download-title">
+          <span class="installer-icon"><ion-icon name="logo-android" aria-hidden="true" /></span>
+          <span class="installer-version">v{{ version }}</span>
+          <h3 id="android-download-title">Android</h3>
+          <span class="installer-format">Aplicación · APK</span>
+          <p>Tu espacio privado, listo para llevar.</p>
+          <a class="button installer-download" [href]="androidDownloadUrl" [attr.download]="'Nivra-' + version + '-debug.apk'" aria-label="Descargar Nivra para Android, archivo APK">Descargar APK <ion-icon name="arrow-down-outline" aria-hidden="true" /></a>
+        </article>
+        <article class="installer-card installer-windows" aria-labelledby="windows-download-title">
+          <span class="installer-icon"><ion-icon name="logo-windows" aria-hidden="true" /></span>
+          <span class="installer-version">v{{ version }}</span>
+          <h3 id="windows-download-title">Windows</h3>
+          <span class="installer-format">Instalador · EXE</span>
+          <p>Más espacio para estar cerca de los tuyos.</p>
+          <a class="button installer-download" [href]="windowsDownloadUrl" [attr.download]="'Nivra-' + version + '-Setup.exe'" aria-label="Descargar Nivra para Windows, instalador EXE">Descargar EXE <ion-icon name="arrow-down-outline" aria-hidden="true" /></a>
+        </article>
+      </div>
     </section>
 
     <section class="faq-section" aria-labelledby="faq-title"><h2 id="faq-title">Antes del primer hola.</h2><div class="faq-list">

@@ -1,4 +1,10 @@
 {
+  "WELCOME.EYEBROW": "你的空间，你的规则。",
+  "WELCOME.TITLE": "欢迎使用 Nivra",
+  "WELCOME.COPY": "在这里，与重要的人保持联系。选择你的语言，开始畅聊。",
+  "WELCOME.LANGUAGE": "你的语言",
+  "WELCOME.NEXT": "下一步",
+  "WELCOME.FOOTER": "你的对话，由你开启。",
   "ACCOUNT.ACCOUNT_DISABLED": "帐户已停用。",
   "ACCOUNT.ACTIVE": "活跃",
   "ACCOUNT.ADVANCED_VISIBILITY": "本地可见性",

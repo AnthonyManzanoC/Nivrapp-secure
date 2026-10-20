@@ -230,6 +230,10 @@ export class AppComponent {
     const darkSurface = (color = '#070b0d'): NativeStatusBarSurface => ({ color, style: Style.Dark });
     const lightSurface = (color = '#f8fafc'): NativeStatusBarSurface => ({ color, style: Style.Light });
 
+    if (path.startsWith('/welcome')) {
+      return lightSurface('#f7f8f2');
+    }
+
     if (activeCall && path.startsWith('/app/calls')) {
       return darkSurface('#030607');
     }

@@ -3,9 +3,19 @@
     { "source": "/assets/release.json", "headers": [{ "key": "Cache-Control", "value": "no-store, max-age=0" }] },
     { "source": "/index.html", "headers": [{ "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }] },
     { "source": "/", "headers": [{ "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }] },
-    { "source": "/app/:path*", "headers": [{ "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }] }
+    { "source": "/app/:path*", "headers": [{ "key": "Cache-Control", "value": "no-cache, max-age=0, must-revalidate" }] },
+    { "source": "/downloads/Nivra-4.0.1-debug.apk", "headers": [{ "key": "Content-Disposition", "value": "attachment; filename=\"Nivra-4.0.1-debug.apk\"" }, { "key": "Cache-Control", "value": "no-store" }] },
+    { "source": "/downloads/Nivra-4.0.1-Setup.exe", "headers": [{ "key": "Content-Disposition", "value": "attachment; filename=\"Nivra-4.0.1-Setup.exe\"" }, { "key": "Cache-Control", "value": "no-store" }] }
   ],
   "rewrites": [
+    {
+      "source": "/downloads/Nivra-4.0.1-debug.apk",
+      "destination": "https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v4.0.1/Nivra-4.0.1-debug.apk"
+    },
+    {
+      "source": "/downloads/Nivra-4.0.1-Setup.exe",
+      "destination": "https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v4.0.1/Nivra-4.0.1-Setup.exe"
+    },
     {
       "source": "/(.*)",
       "destination": "/index.html"

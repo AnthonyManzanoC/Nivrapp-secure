@@ -1,4 +1,10 @@
 {
+  "WELCOME.EYEBROW": "Tu espacio. Tus reglas.",
+  "WELCOME.TITLE": "Te damos la bienvenida a Nivra",
+  "WELCOME.COPY": "Un espacio para conectar con los tuyos. Elige tu idioma y empieza a conversar.",
+  "WELCOME.LANGUAGE": "Tu idioma",
+  "WELCOME.NEXT": "Siguiente",
+  "WELCOME.FOOTER": "Tus conversaciones empiezan contigo.",
   "STORY_COMPOSER.STORAGE_BLOCKED": "No se puede guardar el archivo: el almacenamiento necesita atención del administrador. Conservamos tu borrador.",
   "ACCOUNT.ACCOUNT_DISABLED": "Cuenta desactivada.",
   "ACCOUNT.ACTIVE": "Activo",
