@@ -60,7 +60,8 @@ function Invoke-RestMethod {
   $testState.networkCalls++
   if ($Uri -match '/commits/') { return [pscustomobject]@{ sha=$testCommit } }
   if ($Uri -match '/releases/tags/') { return [pscustomobject]@{ id=123; draft=$true; target_commitish=$testCommit; upload_url='https://offline.invalid/upload{?name,label}' } }
-  if ($Uri.EndsWith('/assets')) { return @() }
+  # Match Invoke-RestMethod's non-enumerated JSON-array output, including [].
+  if ($Uri.EndsWith('/assets')) { Write-Output -NoEnumerate ([object[]]@()); return }
   if ($Method -eq 'Post' -and $Uri.StartsWith('https://offline.invalid/upload?name=')) {
     $name = [Uri]::UnescapeDataString($Uri.Substring($Uri.IndexOf('?name=') + 6))
     $digest = 'sha256:' + (Get-FileHash -LiteralPath $InFile -Algorithm SHA256).Hash.ToLowerInvariant()

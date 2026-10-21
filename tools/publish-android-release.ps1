@@ -110,7 +110,9 @@ try {
     $release = Invoke-RestMethod -Method Post -Uri "$apiBase/releases" -Headers $headers -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($body))
   }
   if ($release.target_commitish -ne $Commit) { throw 'The draft release targets a different commit.' }
-  $assets = @(Invoke-RestMethod -Uri "$apiBase/releases/$($release.id)/assets" -Headers $headers)
+  # The cmdlet returns a JSON array as one object. Preserve it for the pipeline;
+  # wrapping it in @() nests an empty array and breaks strict-mode name lookup.
+  $assets = Invoke-RestMethod -Uri "$apiBase/releases/$($release.id)/assets" -Headers $headers
   $publishedAssets = @()
   foreach ($assetPlan in $assetPlans) {
     $assetFile = Get-Item -LiteralPath $assetPlan.path
