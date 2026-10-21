@@ -35,6 +35,12 @@ describe('Chats actions and scoped search', () => {
       conversationTitle: (item: any) => item.title,
       searchPeople: jasmine.createSpy().and.resolveTo([]),
       createDirectConversation: jasmine.createSpy().and.resolveTo({ id: 'new-direct' }),
+      isConversationPinned: () => false,
+      isConversationMuted: () => false,
+      isConversationArchived: () => false,
+      setConversationPinned: jasmine.createSpy().and.resolveTo(),
+      setConversationMuted: jasmine.createSpy().and.resolveTo(),
+      setConversationArchived: jasmine.createSpy().and.resolveTo(),
       profileSummary: (item: any) => item,
     };
     TestBed.configureTestingModule({ providers: [
@@ -180,5 +186,63 @@ describe('Chats actions and scoped search', () => {
     await page.enableCallAlerts();
     expect(push.requestPermissionAndRegister).toHaveBeenCalledTimes(1);
     expect(page.callAlertsNotice).toContain('activados');
+  });
+
+  it('offers the same conversation preferences through the explicit menu without opening a chat', async () => {
+    const conversation = chat.conversations()[0];
+    const event = { preventDefault: jasmine.createSpy(), stopPropagation: jasmine.createSpy() } as unknown as Event;
+    page.openConversationMenu(conversation, event);
+    expect(event.preventDefault).toHaveBeenCalled();
+    expect(event.stopPropagation).toHaveBeenCalled();
+    expect(page.conversationMenuOpen).toBeTrue();
+    await page.chooseConversationAction('pin');
+    expect(chat.setConversationPinned).toHaveBeenCalledOnceWith(conversation, true);
+    expect(page.conversationMenuOpen).toBeFalse();
+    expect(page.conversationActionNotice).toContain('guardada');
+    expect(router.navigate).not.toHaveBeenCalled();
+  });
+
+  it('coalesces repeated preference actions while persistence is pending', async () => {
+    const pending = deferred<void>();
+    chat.setConversationMuted.and.returnValue(pending.promise);
+    const conversation = chat.conversations()[0];
+    const task = page.toggleMuted(conversation);
+    await page.toggleMuted(conversation);
+    await page.toggleArchived(conversation);
+    expect(chat.setConversationMuted).toHaveBeenCalledTimes(1);
+    expect(chat.setConversationArchived).not.toHaveBeenCalled();
+    expect(page.conversationActionBusy).toBe(conversation.id);
+    pending.resolve();
+    await task;
+    expect(page.conversationActionBusy).toBe('');
+  });
+
+  it('recovers from a preference save failure and lets the user try again', async () => {
+    const conversation = chat.conversations()[0];
+    chat.setConversationArchived.and.rejectWith(new Error('storage unavailable'));
+    await page.toggleArchived(conversation);
+    expect(page.conversationActionError).toContain('No se pudo');
+    expect(page.conversationActionBusy).toBe('');
+    chat.setConversationArchived.and.resolveTo();
+    await page.toggleArchived(conversation);
+    expect(page.conversationActionError).toBe('');
+    expect(page.conversationActionNotice).toContain('guardada');
+  });
+
+  it('drops an open conversation menu and a pending preference notice when the account changes', async () => {
+    const pending = deferred<void>();
+    chat.setConversationPinned.and.returnValue(pending.promise);
+    const conversation = chat.conversations()[0];
+    page.openConversationMenu(conversation, new Event('click'));
+    const task = page.chooseConversationAction('pin');
+    auth.session.set({ user: { id: 'ux-other', alias: 'other' }, device: { id: 'other-device' } });
+    TestBed.flushEffects();
+    pending.resolve();
+    await task;
+    expect(page.conversationMenuTarget).toBeNull();
+    expect(page.conversationActionNotice).toBe('');
+    expect(page.conversationActionBusy).toBe('');
+    await page.chooseConversationAction('archive');
+    expect(chat.setConversationArchived).not.toHaveBeenCalled();
   });
 });

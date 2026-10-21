@@ -1,0 +1,35 @@
+.security-overview { padding: 24px; background: linear-gradient(115deg, color-mix(in srgb, var(--nivra-brand) 7%, transparent), transparent 70%), var(--nivra-panel-solid); }
+.security-overview-heading { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+.security-overview-heading h2 { margin: 0 0 5px; font-size: 21px; letter-spacing: -.025em; }
+.security-overview-heading p, .device-access-copy { margin: 0; color: var(--nivra-muted); line-height: 1.55; font-size: 14px; }
+.security-overview-mark { width: 48px; height: 48px; flex: 0 0 48px; display: grid; place-items: center; color: var(--nivra-brand-2); border: 1px solid var(--nivra-line); border-radius: 16px; background: var(--nivra-panel-solid); font-size: 25px; }
+.security-shortcuts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.security-shortcuts button { min-width: 0; padding: 15px; border: 1px solid var(--nivra-line); border-radius: 14px; display: flex; align-items: center; gap: 12px; text-align: start; color: var(--nivra-text); background: var(--nivra-panel-solid); transition: border-color .18s ease, background .18s ease; }
+.security-shortcuts button:hover { border-color: var(--nivra-brand-2); background: color-mix(in srgb, var(--nivra-brand) 5%, var(--nivra-panel-solid)); }
+.security-shortcuts button > ion-icon:first-child { flex: 0 0 22px; color: var(--nivra-brand-2); font-size: 22px; }
+.security-shortcuts button > ion-icon:last-child { margin-inline-start: auto; color: var(--nivra-muted); flex-shrink: 0; }
+.security-shortcuts button span { min-width: 0; display: grid; gap: 5px; }
+.security-shortcuts strong { font-size: 14px; font-weight: 650; }
+.security-shortcuts small { color: var(--nivra-muted); font-size: 12px; overflow-wrap: anywhere; }
+:host-context([dir="rtl"]) .security-shortcuts button > ion-icon:last-child { transform: rotate(180deg); }
+.account-section { scroll-margin-block-start: 18px; }
+.devices-panel .device-row { display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; }
+.device-access-icon { width: 42px; height: 42px; display: grid; place-items: center; border-radius: 13px; color: var(--nivra-soft); background: var(--nivra-panel-2); font-size: 23px; }
+.device-access-info { display: grid; gap: 5px; }
+.device-access-info span { font-size: 12px; }
+.current-device { border-color: color-mix(in srgb, var(--nivra-brand-2) 28%, var(--nivra-line)); }
+.current-device-label { display: inline-flex; gap: 6px; align-items: center; color: var(--nivra-brand-2); font-size: 12px; }
+.device-revoke-modal { --width: min(440px, calc(100vw - 28px)); --height: auto; --border-radius: 22px; }
+.device-revoke-sheet { padding: 28px; background: var(--nivra-panel-solid); color: var(--nivra-text); }
+.device-revoke-mark { display: grid; place-items: center; width: 48px; height: 48px; margin-bottom: 18px; border-radius: 16px; background: color-mix(in srgb, var(--nivra-danger) 10%, transparent); color: var(--nivra-danger); font-size: 24px; }
+.device-revoke-sheet h2 { font-size: 24px; letter-spacing: -.04em; line-height: 1.2; margin: 0 0 12px; }
+.device-revoke-name { display: block; overflow-wrap: anywhere; font-size: 14px; }
+.device-revoke-sheet p { color: var(--nivra-muted); line-height: 1.6; font-size: 14px; margin: 12px 0 24px; }
+.device-revoke-actions { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 680px) {
+  .security-overview { padding: 18px; }
+  .security-shortcuts { grid-template-columns: 1fr; gap: 8px; }
+  .security-shortcuts button { min-height: 72px; }
+  .devices-panel .device-row { grid-template-columns: 42px minmax(0, 1fr); }
+  .devices-panel .device-row > ion-button, .current-device-label { grid-column: 2; justify-self: start; margin: 0; }
+}

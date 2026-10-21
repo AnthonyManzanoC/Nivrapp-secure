@@ -32,6 +32,9 @@
           }
         </div>
         <div class="side-actions">
+          <button class="new-chat-button" type="button" (click)="startNewChat()" [attr.aria-label]="'CHATS.NEW_CHAT' | translate:'Nuevo chat'" [title]="'CHATS.NEW_CHAT' | translate:'Nuevo chat'">
+            <ion-icon name="add-outline" aria-hidden="true"></ion-icon>
+          </button>
           <ion-button class="chat-more-button" mode="ios" fill="clear" (click)="openChatMenu($event)" [attr.aria-label]="'CHATS.MORE_ACTIONS' | translate:'Más opciones de chats'" aria-haspopup="menu" [attr.aria-expanded]="chatMenuOpen">
             <ion-icon name="ellipsis-vertical-outline" aria-hidden="true"></ion-icon>
           </ion-button>
@@ -105,6 +108,8 @@
           @if (callAlertsNotice) { <p class="search-hint" role="status">{{ callAlertsNotice }}</p> }
         }
         @if (syncNotice) { <p class="sync-notice" role="status">{{ syncNotice }}</p> }
+        @if (conversationActionNotice) { <p class="sync-notice" role="status"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>{{ conversationActionNotice }}</p> }
+        @if (conversationActionError) { <p class="search-hint search-error" role="alert">{{ conversationActionError }}</p> }
         @if (searchError && !query.trim()) { <p class="search-hint search-error" role="alert">{{ searchError }}</p> }
       </div>
 
@@ -186,6 +191,7 @@
             mode="ios"
             scrollable="true"
             class="chat-folders"
+            [attr.aria-label]="'CHATS.SEARCH_SCOPE' | translate:'Dónde buscar'"
             [value]="selectedFolder"
             (ionChange)="setFolder($event.detail.value)">
             <ion-segment-button value="all">{{ 'CHATS.ALL' | translate:'Todos' }}</ion-segment-button>
@@ -205,11 +211,11 @@
 
           <app-history-sync-notice [showApprovals]="false" />
 
-          <ion-list #conversationList class="list" lines="none" (scroll)="onChatListScroll($event)">
+          <ion-list #conversationList class="list" lines="none" [attr.aria-busy]="chat.loading() || refreshing" (scroll)="onChatListScroll($event)">
             @for (conversation of conversationsForFolder(); track conversation.id) {
               <ion-item-sliding>
                 <ion-item-options side="start">
-                  <ion-item-option color="primary" (click)="togglePinned(conversation, $event)">
+                  <ion-item-option color="primary" [disabled]="!!conversationActionBusy" (click)="togglePinned(conversation, $event)">
                     <ion-icon slot="start" name="pin-outline"></ion-icon>
                     {{ chat.isConversationPinned(conversation.id) ? ('CHATS.UNPIN' | translate:'Desfijar') : ('CHATS.PIN' | translate:'Fijar') }}
                   </ion-item-option>
@@ -221,7 +227,10 @@
                   [class.active]="chat.selectedConversationId() === conversation.id"
                   [class.pinned]="chat.isConversationPinned(conversation.id)"
                   [class.muted]="chat.isConversationMuted(conversation.id)"
+                  [class.unread]="chat.hasUnreadConversation(conversation)"
                   [class.has-flags]="chat.isConversationPinned(conversation.id) || chat.isConversationMuted(conversation.id) || chat.hasUnreadConversation(conversation)"
+                  [attr.aria-current]="chat.selectedConversationId() === conversation.id ? 'page' : null"
+                  (contextmenu)="openConversationMenu(conversation, $event)"
                   (click)="openConversation(conversation.id)">
                   <span
                     slot="start"
@@ -260,15 +269,21 @@
                       <em>{{ chat.presenceLabel(conversation) }}</em>
                     }
                   </ion-label>
-                  <ion-note slot="end">{{ (conversation.lastMessageAt || conversation.updatedAt) | localizedDate:'shortTime' }}</ion-note>
+                  <div class="conversation-tail" slot="end">
+                    <ion-note>{{ (conversation.lastMessageAt || conversation.updatedAt) | localizedDate:'shortTime' }}</ion-note>
+                    <button class="conversation-more" type="button" (click)="openConversationMenu(conversation, $event)" (keydown.enter)="$event.stopPropagation()" (keydown.space)="$event.stopPropagation()" [disabled]="!!conversationActionBusy" aria-haspopup="menu" [attr.aria-expanded]="conversationMenuOpen && conversationMenuTarget?.id === conversation.id" [attr.aria-label]="('CHATS.MORE_ACTIONS' | translate:'Más opciones de chats') + ' · ' + chat.conversationTitle(conversation)" [title]="'CHATS.MORE_ACTIONS' | translate:'Más opciones de chats'">
+                      @if (conversationActionBusy === conversation.id) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
+                      @else { <ion-icon name="ellipsis-vertical-outline" aria-hidden="true"></ion-icon> }
+                    </button>
+                  </div>
                 </ion-item>
 
                 <ion-item-options side="end">
-                  <ion-item-option color="medium" (click)="toggleMuted(conversation, $event)">
+                  <ion-item-option color="medium" [disabled]="!!conversationActionBusy" (click)="toggleMuted(conversation, $event)">
                     <ion-icon slot="start" [name]="chat.isConversationMuted(conversation.id) ? 'notifications-outline' : 'notifications-off-outline'"></ion-icon>
                     {{ chat.isConversationMuted(conversation.id) ? ('CHATS.UNMUTE' | translate:'Activar') : ('CHATS.MUTE' | translate:'Silenciar') }}
                   </ion-item-option>
-                  <ion-item-option color="tertiary" (click)="toggleArchived(conversation, $event)">
+                  <ion-item-option color="tertiary" [disabled]="!!conversationActionBusy" (click)="toggleArchived(conversation, $event)">
                     <ion-icon slot="start" name="archive-outline"></ion-icon>
                     {{ chat.isConversationArchived(conversation.id) ? ('CHATS.UNARCHIVE' | translate:'Desarchivar') : ('CHATS.ARCHIVE' | translate:'Archivar') }}
                   </ion-item-option>
@@ -326,6 +341,19 @@
     </ng-template>
   </ion-popover>
 
+  <ion-popover class="chats-actions-popover" [isOpen]="conversationMenuOpen" [event]="conversationMenuEvent" side="bottom" alignment="end" (didDismiss)="closeConversationMenu()">
+    <ng-template>
+      @if (conversationMenuTarget; as conversation) {
+        <div class="chats-actions-menu" role="menu" (keydown)="onChatMenuKeydown($event)" [attr.aria-label]="chat.conversationTitle(conversation)">
+          <p class="conversation-menu-title">{{ chat.conversationTitle(conversation) }}</p>
+          <button type="button" role="menuitem" (click)="chooseConversationAction('pin')"><ion-icon name="pin-outline" aria-hidden="true"></ion-icon>{{ chat.isConversationPinned(conversation.id) ? ('CHATS.UNPIN' | translate:'Desfijar') : ('CHATS.PIN' | translate:'Fijar') }}</button>
+          <button type="button" role="menuitem" (click)="chooseConversationAction('mute')"><ion-icon [name]="chat.isConversationMuted(conversation.id) ? 'notifications-outline' : 'notifications-off-outline'" aria-hidden="true"></ion-icon>{{ chat.isConversationMuted(conversation.id) ? ('CHATS.UNMUTE' | translate:'Activar') : ('CHATS.MUTE' | translate:'Silenciar') }}</button>
+          <button type="button" role="menuitem" (click)="chooseConversationAction('archive')"><ion-icon name="archive-outline" aria-hidden="true"></ion-icon>{{ chat.isConversationArchived(conversation.id) ? ('CHATS.UNARCHIVE' | translate:'Desarchivar') : ('CHATS.ARCHIVE' | translate:'Archivar') }}</button>
+        </div>
+      }
+    </ng-template>
+  </ion-popover>
+
   @if (sharePassOpen) { <app-chat-pass (closed)="sharePassOpen = false" /> }
 
   <ion-modal class="group-modal" [isOpen]="groupModalOpen" (didDismiss)="closeGroupModal()">
@@ -363,7 +391,7 @@
 
         <div class="group-contact-list">
           @for (contact of chat.contacts(); track contact.userId) {
-            <button type="button" class="group-contact" [class.selected]="isGroupSelected(contact)" (click)="toggleGroupContact(contact, $event)">
+            <button type="button" class="group-contact" [class.selected]="isGroupSelected(contact)" [attr.aria-pressed]="isGroupSelected(contact)" (click)="toggleGroupContact(contact, $event)">
               @if (contact.profilePhotoDataUrl) {
                 <img class="avatar avatar-img" [src]="contact.profilePhotoDataUrl" alt="">
               } @else {

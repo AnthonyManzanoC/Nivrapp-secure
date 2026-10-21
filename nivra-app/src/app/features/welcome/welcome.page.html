@@ -24,16 +24,17 @@
         <label class="language-picker" for="welcome-language">
           <ion-icon name="globe-outline" aria-hidden="true"></ion-icon>
           <span class="language-label">{{ 'WELCOME.LANGUAGE' | translate:'Tu idioma' }}</span>
-          <select id="welcome-language" name="welcomeLanguage" [ngModel]="translate.currentLanguage()" (ngModelChange)="setLanguage($event)">
+          <select id="welcome-language" name="welcomeLanguage" [disabled]="continuing" [ngModel]="translate.currentLanguage()" (ngModelChange)="setLanguage($event)">
             @for (option of languageOptions; track option.value) {
               <option [value]="option.value">{{ option.native }} · {{ option.labelKey | translate:option.label }}</option>
             }
           </select>
         </label>
-        <button type="button" class="next-button" [disabled]="continuing" (click)="next()">
-          <span>{{ 'WELCOME.NEXT' | translate:'Siguiente' }}</span>
+        <button type="button" class="next-button" [disabled]="continuing" [attr.aria-busy]="continuing" (click)="next()">
+          <span>{{ continuing ? ('WELCOME.CONTINUING' | translate:'Abriendo tu espacio…') : ('WELCOME.NEXT' | translate:'Siguiente') }}</span>
           <ion-icon name="arrow-forward-outline" aria-hidden="true"></ion-icon>
         </button>
+        @if (error) { <p class="welcome-error" role="alert">{{ error }}</p> }
       </div>
     </section>
 

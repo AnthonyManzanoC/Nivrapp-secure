@@ -28,6 +28,10 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
     ...(deviceId ? { 'X-Nivra-Device-Id': deviceId } : {}),
   });
   const handleError = (error: unknown): Observable<HttpEvent<unknown>> => {
+    // A redirect does not transfer API authority to its final response origin.
+    if (error instanceof HttpErrorResponse && error.url && !api.isTrustedUrl(error.url)) {
+      return throwError(() => error);
+    }
     if (trustedApi && sameSession() && error instanceof HttpErrorResponse && error.status === 426) {
       compatibility.requireUpdate();
     }
@@ -70,12 +74,18 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
         if (!refreshed) {
           if (auth.lastRefreshFailedPermanently()) {
             void auth.logout(true);
+            return throwError(() => new HttpErrorResponse({
+              status: 401,
+              statusText: 'Unauthorized',
+              url: req.url,
+              error: { code: 'SESSION_EXPIRED' },
+            }));
           }
-          return next(req.clone({ setHeaders: authHeaders() }));
         }
-        return next(req.clone({ setHeaders: authHeaders() }));
+        // Only transport failures may enter the refresh-on-401 handler. A rejected
+        // local session must not send the pending body or start another renewal.
+        return next(req.clone({ setHeaders: authHeaders() })).pipe(catchError(handleError));
       }),
-      catchError(handleError),
     );
   }
 

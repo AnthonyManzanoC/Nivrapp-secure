@@ -6,13 +6,6 @@
   --nivra-shadow-soft: 0 8px 24px rgb(0 0 0 / 16%);
   --nivra-shadow-tiny: 0 2px 8px rgb(0 0 0 / 8%);
 }
-:root .nivra-light-theme {
-  --nivra-bg: #f5f7f8;
-  --nivra-muted: #52616b;
-  --nivra-line: rgb(26 45 51 / 10%);
-  --nivra-shadow-soft: 0 8px 28px rgb(26 45 51 / 6%);
-  --nivra-shadow-tiny: 0 2px 8px rgb(26 45 51 / 4%);
-}
 :root {
 body :is(button, a, input, textarea, select):focus-visible {
   outline: 3px solid var(--nivra-brand-2);
@@ -22,21 +15,6 @@ body ion-button::part(native):focus-visible {
   outline: 3px solid var(--nivra-brand-2);
   outline-offset: -3px;
 }
-body app-shell .workspace { background: var(--nivra-bg); }
-body app-shell .rail { background: var(--nivra-panel-solid); box-shadow: none; }
-body app-shell .nav-btn { border-radius: var(--nivra-radius-control); }
-body app-shell .nav-btn.active { color: var(--nivra-brand-2); background: color-mix(in srgb, var(--nivra-brand) 12%, transparent); box-shadow: none; }
-body app-shell .nav-btn:hover { transform: none; background: color-mix(in srgb, var(--nivra-muted) 8%, transparent); }
-body app-chats .sidebar { background: var(--nivra-panel-solid); backdrop-filter: none; box-shadow: none; }
-body app-chats .side-head h1 { font-size: 28px; letter-spacing: -.8px; font-weight: 700; }
-body app-chats .search-box { border-radius: var(--nivra-radius-control); box-shadow: none; }
-body app-chats .conversation-item::part(native) { border-radius: 14px; box-shadow: none; }
-body app-chats .list-item.active::part(native) { background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); box-shadow: inset 3px 0 0 var(--nivra-brand); }
-body app-chats .chat-folders { scrollbar-width: none; }
-body app-chats .chat-folders::-webkit-scrollbar { display: none; }
-body app-chats .story-strip { scrollbar-width: none; }
-body app-chats .story-strip::-webkit-scrollbar { display: none; }
-body app-chats .empty-detail { background: var(--nivra-bg); }
 body app-world .panel, app-account .panel, app-vault .panel,
 body app-calls .surface:not(.call-mode) .panel {
   border-radius: var(--nivra-radius-panel);
@@ -53,32 +31,11 @@ body app-world .page-head p, app-account .page-head p, app-calls .page-head p {
 body app-world .page-head p, app-account .page-head p, app-vault .page-head p { margin: 8px 0 0; }
 body app-world ion-button, app-account ion-button, app-vault ion-button { --box-shadow: none; --border-radius: var(--nivra-radius-control); }
 body app-world .panel h2, app-account .panel h2, app-vault .panel h2 { font-weight: 650; line-height: 1.3; }
-body app-auth .auth-shell {
-  background: var(--nivra-bg);
-  grid-template-columns: minmax(360px, 540px) minmax(0, 1fr);
-}
-body app-auth .auth-panel { background: var(--nivra-panel-solid); backdrop-filter: none; }
-body app-auth .auth-panel h1 { font-size: clamp(32px, 3.8vw, 48px); line-height: 1.08; letter-spacing: -1.5px; max-width: 15ch; }
-body app-auth .auth-copy { color: var(--nivra-muted); line-height: 1.65; max-width: 44ch; }
-body app-auth .auth-visual { flex-direction: column; gap: 36px; background: radial-gradient(ellipse at center, rgb(24 214 162 / 10%), transparent 70%); }
-body app-auth .editorial-intro { max-width: 440px; padding: 0 24px; }
-body app-auth .editorial-intro small { color: var(--nivra-brand-2); font-weight: 700; letter-spacing: .14em; text-transform: uppercase; }
-body app-auth .editorial-intro h2 { font-size: clamp(36px, 4vw, 58px); font-weight: 650; letter-spacing: -2px; line-height: 1.08; margin: 16px 0; }
-body app-auth .editorial-intro p { color: var(--nivra-muted); line-height: 1.7; }
-body app-auth .phone-preview { transform: none; border-radius: 28px; box-shadow: var(--nivra-shadow-soft); max-width: 360px; }
-body app-auth ion-button { --border-radius: 14px; min-height: 48px; --box-shadow: none; }
-body app-auth .mini-bubble.mine { color: #062b23; }
-body app-auth ion-segment-button { min-width: 0; --padding-start: 12px; --padding-end: 12px; }
-body app-auth ion-segment-button ion-label { font-size: 13px; overflow: visible; white-space: nowrap; }
 }
 @media (max-width: 760px) {
-  :root app-auth .auth-shell { grid-template-columns: minmax(0, 1fr); }
-  :root app-auth .auth-panel { padding-inline: 24px; }
-  :root app-auth .auth-visual { display: none; }
   :root app-world .surface, :root app-account .surface { padding-inline: 16px; }
 }
 @media (max-width: 360px) {
-  :root app-auth .auth-panel { padding-inline: 16px; }
   :root app-world .surface, :root app-account .surface { padding-inline: 12px; }
 }
 @media (prefers-reduced-motion: reduce) {

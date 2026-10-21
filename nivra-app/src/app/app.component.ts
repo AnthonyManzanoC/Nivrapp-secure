@@ -31,6 +31,8 @@ import { UnreadTabService } from './core/services/unread-tab.service';
 import { HistoryApprovalDialogComponent } from './shared/history-approval-dialog.component';
 import { AndroidUpdateService } from './core/services/android-update.service';
 import { AndroidUpdateDialogComponent } from './shared/android-update-dialog.component';
+import { DesktopUpdateService } from './core/services/desktop-update.service';
+import { DesktopUpdateDialogComponent } from './shared/desktop-update-dialog.component';
 
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 interface NativeStatusBarSurface {
@@ -43,7 +45,7 @@ interface NativeStatusBarSurface {
   templateUrl: 'app.component.html',
   styleUrls: ['app.component.scss'],
   standalone: true,
-  imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent, HistoryApprovalDialogComponent, AndroidUpdateDialogComponent],
+  imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent, HistoryApprovalDialogComponent, AndroidUpdateDialogComponent, DesktopUpdateDialogComponent],
 })
 export class AppComponent {
   private readonly zone = inject(NgZone);
@@ -68,6 +70,7 @@ export class AppComponent {
   readonly webLaunch = inject(WebLaunchService);
   private readonly unreadTab = inject(UnreadTabService);
   private readonly androidUpdates = inject(AndroidUpdateService);
+  private readonly desktopUpdates = inject(DesktopUpdateService);
   private readonly now = signal(Date.now());
   private readonly currentUrl = signal(this.router.url);
   private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
@@ -100,6 +103,8 @@ export class AppComponent {
     void this.webLaunch.start(() => this.canApplyWebUpdate());
     this.androidUpdates.start();
     effect(() => this.androidUpdates.safe.set(!this.appLock.isLocked() && this.canApplyWebUpdate()));
+    this.desktopUpdates.start();
+    effect(() => this.desktopUpdates.safe.set(!this.appLock.isLocked() && this.canApplyWebUpdate()));
     if (Capacitor.getPlatform() === 'android') {
       // Ionic overlays and router navigation retain their higher priorities.
       // At the root, background the existing activity instead of finishing it.

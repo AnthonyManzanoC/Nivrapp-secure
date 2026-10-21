@@ -48,6 +48,7 @@ import { Capacitor } from '@capacitor/core';
 
 type ChatSearchScope = 'all' | 'chats' | 'people';
 type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'refresh' | 'settings';
+type ConversationMenuAction = 'pin' | 'mute' | 'archive';
 
 @Component({
   selector: 'app-chats',
@@ -138,6 +139,13 @@ export class ChatsPage implements OnDestroy {
   syncNotice = '';
   chatMenuOpen = false;
   chatMenuEvent: Event | null = null;
+  conversationMenuOpen = false;
+  conversationMenuEvent: Event | null = null;
+  conversationMenuTarget: Conversation | null = null;
+  conversationActionBusy = '';
+  conversationActionNotice = '';
+  conversationActionError = '';
+  private conversationMenuScope = '';
   sharePassOpen = false;
   enablingCallAlerts = false;
   callAlertsNotice = '';
@@ -219,6 +227,10 @@ export class ChatsPage implements OnDestroy {
         this.callAlertsNotice = '';
         this.chatMenuOpen = false;
         this.pendingMenuAction = null;
+        this.closeConversationMenu();
+        this.conversationActionBusy = '';
+        this.conversationActionNotice = '';
+        this.conversationActionError = '';
         this.groupModalOpen = false;
         this.groupName = '';
         this.groupAvatar = null;
@@ -380,6 +392,34 @@ export class ChatsPage implements OnDestroy {
     void this.chatSearchInput?.setFocus();
   }
 
+  openConversationMenu(conversation: Conversation, event: Event): void {
+    event.preventDefault();
+    event.stopPropagation();
+    if (this.conversationActionBusy) return;
+    this.conversationMenuTarget = conversation;
+    this.conversationMenuEvent = event;
+    this.conversationMenuScope = this.searchContext();
+    this.conversationMenuOpen = true;
+  }
+
+  closeConversationMenu(): void {
+    this.conversationMenuOpen = false;
+    this.conversationMenuEvent = null;
+    this.conversationMenuTarget = null;
+    this.conversationMenuScope = '';
+  }
+
+  async chooseConversationAction(action: ConversationMenuAction): Promise<void> {
+    const conversation = this.conversationMenuTarget;
+    const scope = this.conversationMenuScope;
+    if (!conversation || !this.isCurrentScope(scope)) {
+      this.closeConversationMenu();
+      return;
+    }
+    this.closeConversationMenu();
+    await this.runConversationAction(conversation, action);
+  }
+
   closeSearch(): void {
     this.clearSearch();
     this.hideRecent();
@@ -391,6 +431,7 @@ export class ChatsPage implements OnDestroy {
     this.recentCollapsed = true;
     this.chatMenuOpen = false;
     this.pendingMenuAction = null;
+    this.closeConversationMenu();
     this.invalidateSearch();
   }
 
@@ -882,17 +923,42 @@ export class ChatsPage implements OnDestroy {
 
   async togglePinned(conversation: Conversation, event?: Event): Promise<void> {
     event?.stopPropagation();
-    await this.chat.setConversationPinned(conversation, !this.chat.isConversationPinned(conversation.id));
+    await this.runConversationAction(conversation, 'pin');
   }
 
   async toggleMuted(conversation: Conversation, event?: Event): Promise<void> {
     event?.stopPropagation();
-    await this.chat.setConversationMuted(conversation, !this.chat.isConversationMuted(conversation.id));
+    await this.runConversationAction(conversation, 'mute');
   }
 
   async toggleArchived(conversation: Conversation, event?: Event): Promise<void> {
     event?.stopPropagation();
-    await this.chat.setConversationArchived(conversation, !this.chat.isConversationArchived(conversation.id));
+    await this.runConversationAction(conversation, 'archive');
+  }
+
+  private async runConversationAction(conversation: Conversation, action: ConversationMenuAction): Promise<void> {
+    if (this.conversationActionBusy) return;
+    const scope = this.searchContext();
+    if (!this.chat.conversations().some((item) => item.id === conversation.id)) return;
+    this.conversationActionBusy = conversation.id;
+    this.conversationActionNotice = '';
+    this.conversationActionError = '';
+    try {
+      switch (action) {
+        case 'pin': await this.chat.setConversationPinned(conversation, !this.chat.isConversationPinned(conversation.id)); break;
+        case 'mute': await this.chat.setConversationMuted(conversation, !this.chat.isConversationMuted(conversation.id)); break;
+        case 'archive': await this.chat.setConversationArchived(conversation, !this.chat.isConversationArchived(conversation.id)); break;
+      }
+      if (this.isCurrentScope(scope)) {
+        this.conversationActionNotice = this.tr('CHATS.ACTION_SAVED', 'Preferencia de conversación guardada.');
+      }
+    } catch {
+      if (this.isCurrentScope(scope)) {
+        this.conversationActionError = this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la acción.');
+      }
+    } finally {
+      if (this.isCurrentScope(scope)) this.conversationActionBusy = '';
+    }
   }
 
   async startConversation(person: UserSummary): Promise<void> {

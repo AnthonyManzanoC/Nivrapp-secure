@@ -96,6 +96,75 @@ function Assert-ArchiveWebAssets {
   return $checkedCount
 }
 
+function Resolve-AndroidVerificationTools {
+  $buildToolCandidates = @()
+  $sdkRoots = @($env:ANDROID_HOME, $env:ANDROID_SDK_ROOT, (Join-Path $env:LOCALAPPDATA 'Android\Sdk')) | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique
+  foreach ($sdkRoot in $sdkRoots) {
+    $buildToolsRoot = Join-Path $sdkRoot 'build-tools'
+    if (-not (Test-Path -LiteralPath $buildToolsRoot -PathType Container)) { continue }
+    foreach ($directory in Get-ChildItem -LiteralPath $buildToolsRoot -Directory) {
+      $toolVersion = [version]::new()
+      if (-not [version]::TryParse($directory.Name, [ref]$toolVersion)) { continue }
+      $aapt = Join-Path $directory.FullName 'aapt.exe'
+      $signerJar = Join-Path $directory.FullName 'lib\apksigner.jar'
+      if ((Test-Path -LiteralPath $aapt -PathType Leaf) -and (Test-Path -LiteralPath $signerJar -PathType Leaf)) {
+        $buildToolCandidates += [pscustomobject]@{ version=$toolVersion; aapt=$aapt; signerJar=$signerJar }
+      }
+    }
+  }
+  $buildTools = $buildToolCandidates | Sort-Object version -Descending | Select-Object -First 1
+  if (-not $buildTools) { throw 'Android APK verification requires SDK build-tools with aapt.exe and lib/apksigner.jar. Set ANDROID_HOME or ANDROID_SDK_ROOT, or install build-tools in LOCALAPPDATA/Android/Sdk.' }
+  $javaCandidates = @()
+  if (-not [string]::IsNullOrWhiteSpace($env:JAVA_HOME)) { $javaCandidates += Join-Path $env:JAVA_HOME 'bin\java.exe' }
+  $portableJdk = Join-Path $workspacePath 'tools\jdk'
+  $javaCandidates += Join-Path $portableJdk 'bin\java.exe'
+  if (Test-Path -LiteralPath $portableJdk -PathType Container) {
+    foreach ($directory in Get-ChildItem -LiteralPath $portableJdk -Directory) { $javaCandidates += Join-Path $directory.FullName 'bin\java.exe' }
+  }
+  $pathJava = Get-Command java.exe -ErrorAction SilentlyContinue
+  if ($pathJava) { $javaCandidates += $pathJava.Source }
+  $java = $javaCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+  if (-not $java) { throw 'Android signature verification requires Java. Set JAVA_HOME or provide tools/jdk/bin/java.exe.' }
+  return [pscustomobject]@{ aapt=$buildTools.aapt; signerJar=$buildTools.signerJar; java=$java }
+}
+
+function Assert-AndroidApkIdentity {
+  param([string]$Badging, [string]$SignerOutput, [int]$SignerExitCode, [string]$ExpectedVersion, [long]$ExpectedVersionCode, $AssetLinks)
+  $packageLines = [regex]::Matches($Badging, '(?m)^package:\s+(.+)$')
+  if ($packageLines.Count -ne 1) { throw 'Android APK does not contain exactly one readable package manifest.' }
+  $fields = @{}
+  foreach ($field in @('name', 'versionCode', 'versionName')) {
+    $matches = [regex]::Matches($packageLines[0].Groups[1].Value, '(?:^|\s)' + $field + '=[''"]([^''"]+)[''"]')
+    if ($matches.Count -ne 1) { throw "Android APK manifest lacks a unique $field." }
+    $fields[$field] = $matches[0].Groups[1].Value
+  }
+  if ($fields.name -cne 'com.nivra.app' -or $fields.versionName -cne $ExpectedVersion -or
+      $fields.versionCode -notmatch '^[1-9][0-9]*$' -or [long]$fields.versionCode -ne $ExpectedVersionCode) {
+    throw 'Android APK package, versionName or versionCode differs from this verified release.'
+  }
+  if ($SignerExitCode -ne 0) { throw 'Android APK signature verification failed. Build and sign the release APK with the pinned Nivra certificate.' }
+  $targets = @($AssetLinks | Where-Object { $_.target.namespace -ceq 'android_app' -and $_.target.package_name -ceq 'com.nivra.app' })
+  if ($targets.Count -eq 0) { throw 'assetlinks.json must pin the com.nivra.app signing certificate.' }
+  $pins = @()
+  foreach ($target in $targets) {
+    foreach ($fingerprint in $target.target.sha256_cert_fingerprints) {
+      if ($fingerprint -isnot [string] -or $fingerprint -notmatch '^(?:[A-Fa-f0-9]{2}:){31}[A-Fa-f0-9]{2}$') { throw 'assetlinks.json contains an invalid Android certificate SHA256 fingerprint.' }
+      $pins += $fingerprint.Replace(':', '').ToLowerInvariant()
+    }
+  }
+  $certificates = [regex]::Matches($SignerOutput, '(?im)^Signer #[0-9]+ certificate SHA-256 digest:\s*([a-f0-9:]+)\s*$')
+  if ($certificates.Count -eq 0) { throw 'apksigner did not report the APK signer certificate SHA256 digest.' }
+  $verifiedCertificates = @()
+  foreach ($certificate in $certificates) {
+    $fingerprint = $certificate.Groups[1].Value.Replace(':', '').ToLowerInvariant()
+    if ($fingerprint -notmatch '^[a-f0-9]{64}$' -or $pins -notcontains $fingerprint) {
+      throw 'Android APK signer differs from the certificate pinned in assetlinks.json. Publishing would break updates for existing installations.'
+    }
+    $verifiedCertificates += $fingerprint
+  }
+  return $verifiedCertificates
+}
+
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 $artifactPath = Resolve-RequiredDirectory -Path $ArtifactDirectory -Label 'Artifacts'
 $desktopPath = Resolve-RequiredDirectory -Path $DesktopDirectory -Label 'Desktop'
@@ -120,6 +189,17 @@ if ($codeMatches.Count -ne 1 -or $nameMatches.Count -ne 1) { throw 'Android Grad
 $versionCode = [long]$codeMatches[0].Groups[1].Value
 if ($versionCode -le 0 -or $versionCode -gt [int]::MaxValue) { throw 'Android versionCode must be a positive 32-bit integer.' }
 if ($nameMatches[0].Groups[1].Value -ne $Version) { throw "Android Gradle versionName does not match $Version." }
+
+# Inspect the APK's compiled manifest and real signature, not just Gradle source
+# or a ZIP hash. The pinned signer preserves upgrade compatibility for users.
+$androidTools = Resolve-AndroidVerificationTools
+$badgingOutput = @(& $androidTools.aapt dump badging $apkPath 2>&1)
+if ($LASTEXITCODE -ne 0) { throw 'aapt could not inspect the release APK manifest.' }
+$signerOutput = @(& $androidTools.java -jar $androidTools.signerJar verify --verbose --print-certs $apkPath 2>&1)
+$signerExitCode = $LASTEXITCODE
+$assetLinksPath = Resolve-RequiredFile -Path (Join-Path $workspacePath 'nivra-app\src\.well-known\assetlinks.json')
+$assetLinks = Get-Content -LiteralPath $assetLinksPath -Raw | ConvertFrom-Json
+$apkCertificates = @(Assert-AndroidApkIdentity -Badging ($badgingOutput -join "`n") -SignerOutput ($signerOutput -join "`n") -SignerExitCode $signerExitCode -ExpectedVersion $Version -ExpectedVersionCode $versionCode -AssetLinks $assetLinks)
 
 $compatibleVersionPattern = '^' + [regex]::Escape($Version) + '(?:\.0)?(?:\+[0-9A-Za-z][0-9A-Za-z.-]*)?$'
 foreach ($executablePath in @($desktopExePath, $setupPath)) {
@@ -174,7 +254,7 @@ try {
 }
 finally { $desktopArchive.Dispose() }
 
-# No checksum manifest or API metadata is written until every verification above passes.
+# No release feed, checksum manifest or API metadata is written until every verification above passes.
 $packageHashes = [ordered]@{}
 foreach ($packagePath in @($apkPath, $setupPath, $zipPath)) {
   $packageHashes[[System.IO.Path]::GetFileName($packagePath)] = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -182,6 +262,7 @@ foreach ($packagePath in @($apkPath, $setupPath, $zipPath)) {
 $hashLines = foreach ($packageName in $packageHashes.Keys) { "$($packageHashes[$packageName])  $packageName" }
 $checksumPath = Join-Path $artifactPath "Nivra-$Version-SHA256.txt"
 $metadataPath = Join-Path $workspacePath 'Nivra.Api\android-release.json'
+$updateManifestPath = Join-Path $artifactPath "Nivra-$Version-update-manifest.json"
 $metadata = [ordered]@{
   version = $Version
   versionCode = [int]$versionCode
@@ -189,9 +270,30 @@ $metadata = [ordered]@{
   sha256 = $packageHashes[$apkName]
   size = (Get-Item -LiteralPath $apkPath).Length
 }
+$updateManifest = [ordered]@{
+  schemaVersion = 1
+  version = $Version
+  publishedAt = [DateTime]::UtcNow.ToString('o', [Globalization.CultureInfo]::InvariantCulture)
+  android = [ordered]@{
+    version = $Version
+    versionCode = [int]$versionCode
+    url = "https://nivrapp-secure.vercel.app/downloads/$apkName"
+    sha256 = $packageHashes[$apkName]
+    size = (Get-Item -LiteralPath $apkPath).Length
+  }
+  windows = [ordered]@{
+    version = $Version
+    url = "https://nivrapp-secure.vercel.app/downloads/$setupName"
+    sha256 = $packageHashes[$setupName]
+    size = (Get-Item -LiteralPath $setupPath).Length
+  }
+}
 $utf8 = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($checksumPath, ($hashLines -join [Environment]::NewLine) + [Environment]::NewLine, $utf8)
 [System.IO.File]::WriteAllText($metadataPath, ($metadata | ConvertTo-Json) + [Environment]::NewLine, $utf8)
+[System.IO.File]::WriteAllText($updateManifestPath, ($updateManifest | ConvertTo-Json -Depth 4) + [Environment]::NewLine, $utf8)
 Write-Output "Verified Nivra ${Version}: $($webHashes.Count) desktop web files, $androidCount Android web files, $zipCount ZIP web files."
+Write-Output "Verified Android package com.nivra.app version $Version build $versionCode; pinned signer SHA256: $($apkCertificates -join ', ')"
 Write-Output "SHA256 manifest: $checksumPath"
 Write-Output "Updated Android release metadata: $metadataPath"
+Write-Output "Verified app update feed (publish as latest.json): $updateManifestPath"

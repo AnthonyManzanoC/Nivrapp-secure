@@ -16,11 +16,11 @@ import {
   IonToggle,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { backspaceOutline, cameraOutline, checkmarkCircleOutline, checkmarkOutline, closeOutline, copyOutline, createOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline } from 'ionicons/icons';
+import { backspaceOutline, cameraOutline, checkmarkCircleOutline, checkmarkOutline, chevronForwardOutline, closeOutline, copyOutline, createOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline } from 'ionicons/icons';
 import { AccountService } from '../../core/services/account.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
-import { PrivacySettings } from '../../core/models/nivra.models';
+import { NivraDevice, PrivacySettings } from '../../core/models/nivra.models';
 import { AppLockService } from '../../core/services/app-lock.service';
 import { AppSettingsService, NivraAppSettings, NivraChatWallpaper, NivraThemeMode, NivraVisibility } from '../../core/services/app-settings.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
@@ -30,6 +30,7 @@ import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
 import { NativeDeviceService } from '../../core/services/native-device.service';
 import { AndroidUpdateService } from '../../core/services/android-update.service';
+import { DesktopUpdateService } from '../../core/services/desktop-update.service';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 import { formatNivraNumber } from '../../core/utils/nivra-number';
 import { RecoveryEmailComponent, RecoveryEmailState } from '../../shared/recovery-email.component';
@@ -49,7 +50,7 @@ interface ProfileDraft {
   standalone: true,
   imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent],
   templateUrl: './account.page.html',
-  styleUrls: ['./account.page.scss'],
+  styleUrls: ['./account.page.scss', './account-security.scss'],
 })
 export class AccountPage implements OnInit, OnDestroy {
   readonly auth = inject(AuthService);
@@ -62,6 +63,7 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly push = inject(PushService);
   readonly nativeDevice = inject(NativeDeviceService);
   readonly androidUpdates = inject(AndroidUpdateService);
+  readonly desktopUpdates = inject(DesktopUpdateService);
   private readonly router = inject(Router);
   private readonly loadingController = inject(LoadingController);
   private readonly ngZone = inject(NgZone);
@@ -91,6 +93,7 @@ export class AccountPage implements OnInit, OnDestroy {
   private noticeTimer: number | null = null;
   error = '';
   deleteConfirmation = '';
+  pendingDeviceRevocation: { deviceId: string; scope: string } | null = null;
   qrText = '';
   qrScannerOpen = false;
   qrScannerBusy = false;
@@ -196,7 +199,7 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly pinSlots = [0, 1, 2, 3];
 
   constructor() {
-    addIcons({ backspaceOutline, cameraOutline, checkmarkCircleOutline, checkmarkOutline, closeOutline, copyOutline, createOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline });
+    addIcons({ backspaceOutline, cameraOutline, checkmarkCircleOutline, checkmarkOutline, chevronForwardOutline, closeOutline, copyOutline, createOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline });
     effect(() => {
       const scope = this.currentScope();
       if (this.profileOwnerScope && scope !== this.profileOwnerScope) {
@@ -208,6 +211,7 @@ export class AccountPage implements OnInit, OnDestroy {
         this.profilePhotoDirty = this.recoveryEmailVerified = false;
         this.aliasStatus = 'idle';
         this.profilePhotoViewerOpen = this.shareModalOpen = this.pinSetupModalOpen = false;
+        this.pendingDeviceRevocation = null;
         this.profileCropFile = null;
         this.shareQrDataUrl = '';
         this.profileLoading = false;
@@ -964,10 +968,43 @@ export class AccountPage implements OnInit, OnDestroy {
     }
   }
 
-  async revoke(deviceId: string): Promise<void> {
+  accountDevices(): NivraDevice[] {
+    const userId = this.auth.session()?.user.id;
+    return this.account.devices().filter((device) => device.userId === userId && !device.revokedAt)
+      .sort((a, b) => Number(this.isCurrentDevice(b)) - Number(this.isCurrentDevice(a)));
+  }
+
+  isCurrentDevice(device: NivraDevice): boolean {
+    const current = this.auth.session();
+    return !!current && device.userId === current.user.id && (device.id === current.device.id
+      || (!!device.hardwareId && device.hardwareId === current.device.hardwareId));
+  }
+
+  openAccountSection(section: HTMLDetailsElement): void {
+    section.open = true;
+    section.querySelector('summary')?.focus({ preventScroll: true });
+    section.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  }
+
+  requestDeviceRevocation(device: NivraDevice): void {
+    if (this.saving || !this.active || this.isCurrentDevice(device)
+      || !this.accountDevices().some((entry) => entry.id === device.id)) return;
+    this.pendingDeviceRevocation = { deviceId: device.id, scope: this.currentScope() };
+  }
+
+  pendingDeviceName(): string {
+    return this.accountDevices().find((device) => device.id === this.pendingDeviceRevocation?.deviceId)?.name ?? '';
+  }
+
+  async confirmDeviceRevocation(): Promise<void> {
+    const pending = this.pendingDeviceRevocation;
+    if (!pending || this.saving) return;
+    this.pendingDeviceRevocation = null;
+    const device = this.accountDevices().find((entry) => entry.id === pending.deviceId);
+    if (!device || !this.isCurrent(pending.scope) || this.isCurrentDevice(device)) return;
     await this.run(async () => {
-      await this.account.revokeDevice(deviceId);
-      this.notice = this.t('ACCOUNT.DEVICE_REVOKED', 'Dispositivo revocado.');
+      await this.account.revokeDevice(device.id);
+      if (this.isCurrent(pending.scope)) this.notice = this.t('ACCOUNT.DEVICE_REVOKED', 'Dispositivo revocado.');
     });
   }
 

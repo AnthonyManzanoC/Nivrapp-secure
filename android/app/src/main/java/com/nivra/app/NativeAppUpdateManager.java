@@ -23,7 +23,7 @@ import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Downloads only a release from our repository. Android remains the installer. */
+/** Downloads a versioned Nivra release through our public site. Android remains the installer. */
 final class NativeAppUpdateManager {
     interface UpdateListener { void onState(JSONObject state); }
     private final Activity activity;
@@ -36,6 +36,7 @@ final class NativeAppUpdateManager {
     private volatile JSObject state = state("idle", 0, "");
     private volatile File readyFile;
     private volatile int targetBuild;
+    private volatile String targetVersion = "";
     private volatile String targetHash = "";
     private volatile long targetSize;
     private volatile boolean installing;
@@ -68,20 +69,20 @@ final class NativeAppUpdateManager {
         } catch (Exception error) { call.reject("UPDATE_INVALID"); return; }
         cancelled = false;
         readyFile = null;
-        targetBuild = build; targetHash = hash; targetSize = size;
+        targetBuild = build; targetVersion = version; targetHash = hash; targetSize = size;
         publish("downloading", 0, "");
         call.resolve(state);
-        worker.execute(() -> download(url, build, hash, size));
+        worker.execute(() -> download(url, version, build, hash, size));
     }
 
     static boolean validDescriptor(String version, int build, String hash, long size, String url) {
-        if (!version.matches("[0-9]+\\.[0-9]+\\.[0-9]+") || build <= 0 || !hash.matches("[a-f0-9]{64}")
+        if (version == null || hash == null || url == null
+            || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+") || build <= 0 || !hash.matches("[a-f0-9]{64}")
             || size <= 0 || size > 256L * 1024 * 1024) return false;
-        return url.equals("https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v" + version
-            + "/Nivra-" + version + "-debug.apk");
+        return url.equals("https://nivrapp-secure.vercel.app/downloads/Nivra-" + version + "-debug.apk");
     }
 
-    private void download(String url, int build, String hash, long size) {
+    private void download(String url, String version, int build, String hash, long size) {
         File part = null;
         try {
             File directory = new File(context.getCacheDir(), "nivra-updates");
@@ -90,7 +91,7 @@ final class NativeAppUpdateManager {
             File[] previous = directory.listFiles();
             if (previous != null) for (File file : previous) if (file.isFile()) file.delete();
             part = new File(directory, "release-" + build + ".part");
-            connection = openDownload(new URL(url));
+            connection = openDownload(new URL(url), version);
             long advertised = connection.getContentLengthLong();
             if (advertised > 0 && advertised != size) throw new Exception("UPDATE_INVALID");
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -108,7 +109,7 @@ final class NativeAppUpdateManager {
                 output.getFD().sync();
             }
             if (bytes != size || !hex(digest.digest()).equals(hash)) throw new Exception("UPDATE_INVALID");
-            verifyArchive(part, build);
+            verifyArchive(part, version, build);
             synchronized (this) {
                 if (cancelled || destroyed) throw new Exception("UPDATE_CANCELLED");
                 File apk = new File(directory, "release-" + build + ".apk");
@@ -126,18 +127,32 @@ final class NativeAppUpdateManager {
         }
     }
 
-    private HttpURLConnection openDownload(URL next) throws Exception {
+    static boolean validDownloadUrl(URL next, String version) {
+        if (next == null || version == null || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+")
+            || !"https".equals(next.getProtocol()) || next.getUserInfo() != null || next.getRef() != null
+            || (next.getPort() != -1 && next.getPort() != 443)) return false;
+        String host = next.getHost();
+        if (host.equals("nivrapp-secure.vercel.app")) {
+            return next.toExternalForm().equals("https://nivrapp-secure.vercel.app/downloads/Nivra-" + version + "-debug.apk");
+        }
+        if (host.equals("github.com")) {
+            return next.toExternalForm().equals("https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v" + version
+                + "/Nivra-" + version + "-debug.apk");
+        }
+        // GitHub issues expiring signed URLs on these exact asset hosts. Final
+        // bytes still need the declared digest and the installed app's signer.
+        return host.equals("release-assets.githubusercontent.com") || host.equals("objects.githubusercontent.com");
+    }
+
+    private HttpURLConnection openDownload(URL next, String version) throws Exception {
         for (int redirects = 0; redirects < 6; redirects++) {
-            String host = next.getHost();
-            if (!"https".equals(next.getProtocol()) || next.getUserInfo() != null
-                || (next.getPort() != -1 && next.getPort() != 443)
-                || !(host.equals("github.com") || host.equals("release-assets.githubusercontent.com")
-                    || host.equals("objects.githubusercontent.com"))) throw new Exception("UPDATE_INVALID");
+            if (!validDownloadUrl(next, version)) throw new Exception("UPDATE_INVALID");
             HttpURLConnection request = (HttpURLConnection) next.openConnection();
             connection = request;
             request.setInstanceFollowRedirects(false);
             request.setConnectTimeout(15000); request.setReadTimeout(20000);
             request.setRequestProperty("Accept", "application/octet-stream");
+            request.setRequestProperty("Accept-Encoding", "identity");
             request.setRequestProperty("User-Agent", "Nivra-Android-Updater");
             int status = request.getResponseCode();
             if (status == 200) return request;
@@ -154,6 +169,7 @@ final class NativeAppUpdateManager {
         installing = true;
         final File apk = readyFile;
         final int build = targetBuild;
+        final String version = targetVersion;
         final String hash = targetHash;
         final long size = targetSize;
         final long generation = ++installGeneration;
@@ -166,7 +182,7 @@ final class NativeAppUpdateManager {
                     while ((count = input.read(buffer)) != -1) digest.update(buffer, 0, count);
                 }
                 if (apk.length() != size || !hex(digest.digest()).equals(hash)) throw new Exception("UPDATE_INVALID");
-                verifyArchive(apk, build);
+                verifyArchive(apk, version, build);
                 activity.runOnUiThread(() -> {
                     synchronized (this) { try {
                         if (destroyed || generation != installGeneration || !allowed || readyFile != apk || !apk.isFile()
@@ -196,17 +212,24 @@ final class NativeAppUpdateManager {
     }
 
     @SuppressWarnings("deprecation")
-    private void verifyArchive(File apk, int build) throws Exception {
+    private void verifyArchive(File apk, String version, int build) throws Exception {
         PackageManager manager = context.getPackageManager();
         int flags = Build.VERSION.SDK_INT >= 28 ? PackageManager.GET_SIGNING_CERTIFICATES : PackageManager.GET_SIGNATURES;
         PackageInfo installed = manager.getPackageInfo(context.getPackageName(), flags);
         PackageInfo archive = manager.getPackageArchiveInfo(apk.getAbsolutePath(), flags);
-        if (archive == null || !context.getPackageName().equals(archive.packageName)
-            || versionCode(archive) != build || build <= versionCode(installed)) throw new Exception("UPDATE_INVALID");
+        if (archive == null || !validArchiveMetadata(context.getPackageName(), version, build, archive.packageName,
+            archive.versionName, versionCode(archive), versionCode(installed))) throw new Exception("UPDATE_INVALID");
+        if (Build.VERSION.SDK_INT >= 28 && (installed.signingInfo == null || archive.signingInfo == null)) throw new Exception("UPDATE_SIGNATURE");
         Signature[] ours = Build.VERSION.SDK_INT >= 28 ? installed.signingInfo.getApkContentsSigners() : installed.signatures;
         Signature[] theirs = Build.VERSION.SDK_INT >= 28 ? archive.signingInfo.getApkContentsSigners() : archive.signatures;
         if (ours == null || theirs == null || ours.length != 1 || theirs.length != 1
             || !Arrays.equals(ours[0].toByteArray(), theirs[0].toByteArray())) throw new Exception("UPDATE_SIGNATURE");
+    }
+
+    static boolean validArchiveMetadata(String expectedPackage, String expectedVersion, long expectedBuild,
+        String archivePackage, String archiveVersion, long archiveBuild, long installedBuild) {
+        return expectedPackage != null && expectedVersion != null && expectedPackage.equals(archivePackage)
+            && expectedVersion.equals(archiveVersion) && expectedBuild == archiveBuild && archiveBuild > installedBuild;
     }
 
     @SuppressWarnings("deprecation")

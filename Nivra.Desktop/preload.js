@@ -35,3 +35,23 @@ contextBridge.exposeInMainWorld("nivraContentProtection", {
     });
   }
 });
+
+contextBridge.exposeInMainWorld('nivraDesktopUpdates', {
+  checkForUpdate: () => ipcRenderer.invoke('nivra-updates:check'),
+  downloadUpdate: () => ipcRenderer.invoke('nivra-updates:download'),
+  installUpdate: () => ipcRenderer.invoke('nivra-updates:install'),
+  getUpdateState: () => ipcRenderer.invoke('nivra-updates:get-state'),
+  onUpdateState(listener) {
+    if (typeof listener !== 'function') throw new TypeError('Update listener must be a function.');
+    const phases = new Set(['idle', 'downloading', 'ready', 'error', 'installing']);
+    const handler = (_event, state) => {
+      if (!state || !phases.has(state.phase) || !Number.isFinite(state.progress)) return;
+      listener({
+        phase: state.phase, progress: Math.max(0, Math.min(100, Math.floor(state.progress))),
+        ...(typeof state.error === 'string' && /^UPDATE_[A-Z_]+$/.test(state.error) ? { error: state.error } : {}),
+      });
+    };
+    ipcRenderer.on('nivra-updates:state', handler);
+    return () => ipcRenderer.removeListener('nivra-updates:state', handler);
+  },
+});

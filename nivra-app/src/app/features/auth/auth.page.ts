@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnDestroy, inject, signal } from '@angular/core';
+import { Component, HostListener, OnDestroy, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { RouterLink } from '@angular/router';
 import {
@@ -12,7 +12,7 @@ import {
   IonText,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { callOutline, eyeOutline, eyeOffOutline, globeOutline, keyOutline, logInOutline, qrCodeOutline, shieldCheckmarkOutline } from 'ionicons/icons';
+import { callOutline, checkmarkCircleOutline, eyeOutline, eyeOffOutline, globeOutline, keyOutline, logInOutline, qrCodeOutline, shieldCheckmarkOutline } from 'ionicons/icons';
 import * as QRCode from 'qrcode';
 import { AuthService, QrLoginChallenge } from '../../core/services/auth.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
@@ -61,6 +61,7 @@ export class AuthPage implements OnDestroy {
   alias = '';
   password = '';
   passwordVisible = false;
+  capsLockOn = false;
   displayName = '';
   qrDataUrl = '';
   qrChallenge: QrLoginChallenge | null = null;
@@ -72,11 +73,13 @@ export class AuthPage implements OnDestroy {
   private readonly countdownTimer = window.setInterval(() => this.now.set(Date.now()), 1000);
 
   constructor() {
-    addIcons({ callOutline, eyeOutline, eyeOffOutline, globeOutline, keyOutline, logInOutline, qrCodeOutline, shieldCheckmarkOutline });
+    addIcons({ callOutline, checkmarkCircleOutline, eyeOutline, eyeOffOutline, globeOutline, keyOutline, logInOutline, qrCodeOutline, shieldCheckmarkOutline });
   }
 
   ngOnDestroy(): void {
     this.destroyed = true;
+    this.password = '';
+    this.concealPassword();
     window.clearInterval(this.countdownTimer);
     void this.auth.stopQrLogin();
   }
@@ -157,13 +160,17 @@ export class AuthPage implements OnDestroy {
   }
 
   setAliasMode(mode: 'login' | 'register' | 'private'): void {
+    if (this.submitting || this.auth.busy()) return;
     this.aliasMode = mode;
+    this.concealPassword();
     this.error = '';
     this.notice = '';
   }
 
   setMode(mode: 'phone' | 'alias' | 'qr'): void {
+    if (this.submitting || this.auth.busy()) return;
     this.mode = mode;
+    this.concealPassword();
     this.error = '';
     this.notice = '';
     if (mode !== 'qr') {
@@ -187,6 +194,20 @@ export class AuthPage implements OnDestroy {
 
   validIdentifier(): boolean {
     return this.aliasMode === 'private' || (this.aliasMode === 'login' ? isLoginIdentifier(this.alias) : this.isAliasValid(this.alias));
+  }
+
+  updateCapsLock(event: KeyboardEvent): void {
+    this.capsLockOn = event.getModifierState('CapsLock');
+  }
+
+  @HostListener('document:visibilitychange')
+  onVisibilityChange(): void {
+    if (document.hidden) this.concealPassword();
+  }
+
+  private concealPassword(): void {
+    this.passwordVisible = false;
+    this.capsLockOn = false;
   }
 
   private async run(action: () => Promise<void>): Promise<void> {

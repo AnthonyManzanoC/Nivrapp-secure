@@ -11,6 +11,32 @@
     </header>
 
     <section class="grid">
+      <section class="security-overview panel span-12" aria-labelledby="security-overview-title">
+        <div class="security-overview-heading">
+          <span class="security-overview-mark" aria-hidden="true"><ion-icon name="shield-checkmark-outline"></ion-icon></span>
+          <div>
+            <h2 id="security-overview-title">{{ 'ACCOUNT.SECURITY_OVERVIEW' | translate:'Tu seguridad, a la vista' }}</h2>
+            <p>{{ 'ACCOUNT.SECURITY_OVERVIEW_COPY' | translate:'Revisa quién puede encontrarte y desde dónde accedes.' }}</p>
+          </div>
+        </div>
+        <div class="security-shortcuts">
+          <button type="button" (click)="openAccountSection(lockSection)">
+            <ion-icon name="lock-closed-outline" aria-hidden="true"></ion-icon>
+            <span><strong>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</strong><small>{{ (appLock.isEnabled() ? 'ACCOUNT.ACTIVE' : 'ACCOUNT.DISABLED') | translate:(appLock.isEnabled() ? 'Activo' : 'Desactivado') }}</small></span>
+            <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
+          </button>
+          <button type="button" (click)="openAccountSection(privacySection)">
+            <ion-icon name="finger-print-outline" aria-hidden="true"></ion-icon>
+            <span><strong>{{ 'ACCOUNT.PRIVACY' | translate:'Privacidad' }}</strong><small>{{ 'ACCOUNT.REVIEW_SETTINGS' | translate:'Revisar ajustes' }}</small></span>
+            <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
+          </button>
+          <button type="button" (click)="openAccountSection(devicesSection)">
+            <ion-icon name="phone-portrait-outline" aria-hidden="true"></ion-icon>
+            <span><strong>{{ 'ACCOUNT.DEVICES' | translate:'Dispositivos' }}</strong><small>{{ account.loading() ? ('COMMON.LOADING' | translate:'Cargando') : accountDevices().length + ' · ' + ('ACCOUNT.REVIEW_ACCESS' | translate:'Revisar accesos') }}</small></span>
+            <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
+          </button>
+        </div>
+      </section>
       <details class="account-section panel span-7" open>
         <summary>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</summary>
         <div class="account-section-body">
@@ -334,7 +360,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-5 app-lock-panel" [class.enabled]="appLock.isEnabled()">
+      <details #lockSection class="account-section panel span-5 app-lock-panel" [class.enabled]="appLock.isEnabled()">
         <summary>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</summary>
         <div class="account-section-body">
         <div class="app-lock-heading">
@@ -407,7 +433,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-6">
+      <details #privacySection class="account-section panel span-6">
         <summary>{{ 'ACCOUNT.PRIVACY' | translate:'Privacidad' }}</summary>
         <div class="account-section-body">
 
@@ -596,26 +622,29 @@
       </div>
       </details>
 
-      <details class="account-section panel span-6">
+      <details #devicesSection class="account-section panel span-6 devices-panel">
         <summary>{{ 'ACCOUNT.DEVICES' | translate:'Dispositivos' }}</summary>
         <div class="account-section-body">
-
+        <p class="device-access-copy">{{ 'ACCOUNT.DEVICES_HELP' | translate:'Reconoce tus equipos. Revoca el acceso de los que ya no uses.' }}</p>
         <div class="device-list">
-          @for (device of account.devices(); track device.id) {
-            <div class="device-row">
-              <div>
+          @for (device of accountDevices(); track device.id) {
+            <div class="device-row" [class.current-device]="isCurrentDevice(device)">
+              <span class="device-access-icon" aria-hidden="true"><ion-icon name="phone-portrait-outline"></ion-icon></span>
+              <div class="device-access-info">
                 <strong>{{ device.name }}</strong>
-                <span>{{ device.lastSeenAt | localizedDate:'short' }}</span>
+                <span>{{ 'ACCOUNT.LAST_ACTIVE' | translate:'Última actividad' }} · {{ (device.lastSeenAt || device.createdAt) | localizedDate:'short' }}</span>
               </div>
-              @if (device.id !== auth.session()?.device?.id) {
-                <ion-button mode="ios" fill="outline" color="danger" (click)="revoke(device.hardwareId || device.id)" [disabled]="saving" [attr.aria-label]="'ACCOUNT.REVOKE_DESTROY' | translate:'Revocar y destruir'">
-                  <ion-icon slot="start" name="trash-outline"></ion-icon>
-                  {{ 'ACCOUNT.REVOKE_DESTROY' | translate:'Revocar y Destruir' }}
+              @if (!isCurrentDevice(device)) {
+                <ion-button mode="ios" fill="outline" color="danger" (click)="requestDeviceRevocation(device)" [disabled]="saving" [attr.aria-label]="('ACCOUNT.REVOKE_ACCESS' | translate:'Revocar acceso') + ': ' + device.name">
+                  <ion-icon slot="start" name="log-out-outline" aria-hidden="true"></ion-icon>
+                  {{ 'ACCOUNT.REVOKE_ACCESS' | translate:'Revocar acceso' }}
                 </ion-button>
               } @else {
-                <small>{{ 'ACCOUNT.THIS_DEVICE' | translate:'Este equipo' }}</small>
+                <small class="current-device-label"><ion-icon name="checkmark-circle-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.THIS_DEVICE' | translate:'Este equipo' }}</small>
               }
-            </div>
+          </div>
+          } @empty {
+            <p class="device-access-copy" role="status">{{ (account.loading() ? 'COMMON.LOADING' : 'ACCOUNT.NO_DEVICES') | translate:(account.loading() ? 'Cargando' : 'No hay otros dispositivos disponibles.') }}</p>
           }
         </div>
       </div>
@@ -674,6 +703,18 @@
       </div>
       </details>
 
+      @if (desktopUpdates.supported) {
+        <section class="panel span-12" aria-labelledby="desktop-updates-heading">
+          <h2 id="desktop-updates-heading">{{ 'UPDATE.ACCOUNT_TITLE' | translate:'Actualizaciones de Nivra' }}</h2>
+          <p class="device-access-copy">{{ 'UPDATE.WINDOWS_HINT' | translate:'Nivra busca nuevas versiones al abrir y mientras la usas. También puedes comprobarlas aquí.' }}</p>
+          <ion-button fill="outline" [disabled]="desktopUpdates.checking()" (click)="desktopUpdates.check(true)">
+            @if (desktopUpdates.checking()) { <ion-spinner name="crescent" slot="start" /> } @else { <ion-icon name="refresh-outline" slot="start" /> }
+            {{ 'UPDATE.CHECK' | translate:'Buscar actualización' }}
+          </ion-button>
+          @if (desktopUpdates.checkResult() === 'current') { <p role="status">{{ 'UPDATE.CURRENT' | translate:'Tienes la versión más reciente.' }}</p> }
+          @if (desktopUpdates.checkResult() === 'error') { <p role="status">{{ 'UPDATE.CHECK_ERROR' | translate:'No se pudo comprobar. Revisa tu conexión y reintenta.' }}</p> }
+        </section>
+      }
       @if (androidUpdates.supported) {
         <section class="panel" aria-labelledby="android-updates-heading">
           <h2 id="android-updates-heading">{{ 'UPDATE.ACCOUNT_TITLE' | translate:'Actualizaciones de Nivra' }}</h2>
@@ -699,6 +740,21 @@
         </ion-button>
       </section>
     </section>
+
+    <ion-modal class="device-revoke-modal" [isOpen]="!!pendingDeviceRevocation" (didDismiss)="pendingDeviceRevocation = null" [attr.aria-label]="'ACCOUNT.REVOKE_ACCESS' | translate:'Revocar acceso'">
+      <ng-template>
+        <section class="device-revoke-sheet" aria-labelledby="device-revoke-title">
+          <span class="device-revoke-mark" aria-hidden="true"><ion-icon name="log-out-outline"></ion-icon></span>
+          <h2 id="device-revoke-title">{{ 'ACCOUNT.REVOKE_CONFIRM_TITLE' | translate:'¿Revocar el acceso de este equipo?' }}</h2>
+          <strong class="device-revoke-name">{{ pendingDeviceName() }}</strong>
+          <p>{{ 'ACCOUNT.REVOKE_CONFIRM_COPY' | translate:'Se cerrará su sesión y se solicitará borrar sus datos locales de Nivra. Esta acción no se puede deshacer.' }}</p>
+          <div class="device-revoke-actions">
+            <ion-button fill="clear" (click)="pendingDeviceRevocation = null">{{ 'COMMON.CANCEL' | translate:'Cancelar' }}</ion-button>
+            <ion-button color="danger" (click)="confirmDeviceRevocation()" [disabled]="saving">{{ 'ACCOUNT.REVOKE_ACCESS' | translate:'Revocar acceso' }}</ion-button>
+          </div>
+        </section>
+      </ng-template>
+    </ion-modal>
 
     <ion-modal class="pin-setup-modal" [isOpen]="pinSetupModalOpen" (didDismiss)="closePinSetupModal()">
       <ng-template>

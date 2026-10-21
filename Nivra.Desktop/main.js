@@ -1,10 +1,12 @@
-const { app, BrowserWindow, Menu, shell, session, ipcMain, safeStorage } = require("electron");
+const { app, BrowserWindow, Menu, shell, session, ipcMain, safeStorage, net } = require("electron");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
+const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('url');
 const { PINNED_API_ORIGINS, allowedApiOrigin } = require('./api-origins');
 const { isBundledEntry, isTrustedIpc } = require('./renderer-security');
+const { createElectronRequest, createUpdateManager, updateErrorCode } = require('./update-manager');
 
 let mainWindow = null;
 let isQuitting = false;
@@ -105,6 +107,47 @@ function installContentProtectionHandlers() {
     }
     return { enabled };
   });
+}
+
+function installDesktopUpdateHandlers() {
+  const updates = createUpdateManager({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    currentVersion: app.getVersion(),
+    cacheDirectory: path.join(app.getPath('userData'), 'updates'),
+    request: createElectronRequest(net),
+    onState: state => {
+      if (mainWindow && !mainWindow.isDestroyed() && isBundledEntry(mainWindow.webContents.getURL(), trustedEntryUrl)) {
+        mainWindow.webContents.send('nivra-updates:state', state);
+      }
+    },
+    launchInstaller: file => new Promise((resolve, reject) => {
+      // The installer path comes only from the main-process verifier. No shell,
+      // elevated privileges or renderer-supplied command-line arguments.
+      const child = spawn(file, [], { detached: true, stdio: 'ignore', windowsHide: true, shell: false });
+      child.once('error', reject);
+      child.once('spawn', () => { child.unref(); resolve(); });
+    }),
+  });
+  for (const [channel, method] of [
+    ['nivra-updates:check', 'checkForUpdate'],
+    ['nivra-updates:download', 'downloadUpdate'],
+    ['nivra-updates:install', 'installUpdate'],
+    ['nivra-updates:get-state', 'getUpdateState'],
+  ]) {
+    ipcMain.handle(channel, async (event, ...args) => {
+      assertTrustedRenderer(event);
+      if (args.length) throw new Error('UPDATE_INVALID_MANIFEST');
+      try {
+        const result = await updates[method]();
+        if (method === 'installUpdate') {
+          // Let IPC settle, then close normally so pending application writes can finish.
+          setTimeout(() => { isQuitting = true; app.quit(); }, 250);
+        }
+        return result;
+      } catch (error) { throw new Error(updateErrorCode(error)); }
+    });
+  }
 }
 
 function readBundledApiBaseUrl(webRoot) {
@@ -234,6 +277,7 @@ if (!hasSingleInstanceLock) {
 
     installSecureVaultHandlers();
     installContentProtectionHandlers();
+    installDesktopUpdateHandlers();
     installApiCorsBridge(apiBaseUrl);
     session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
       const trusted = mainWindow && !mainWindow.isDestroyed() && contents === mainWindow.webContents

@@ -5,6 +5,8 @@ Backend MVP para Nivra: una app de mensajería privada, gratuita primero, con ba
 La capa de datos ya usa PostgreSQL/Supabase con Entity Framework Core y migraciones automáticas al arrancar.
 El backend funciona como API pura + SignalR. El SPA vanilla original se conserva en `Nivra.Api/wwwroot_legacy` como historial y guia de migracion; el nuevo frontend vive en `nivra-app` con Angular + Ionic.
 
+La versión 4.1.0 mejora acceso, chats y control de dispositivos, e incorpora actualizaciones integradas de Android y Windows desde un canal permanente del dominio de Nivra. Véanse [los cambios y validación](docs/release-4.1.0.md) y [el procedimiento de publicación de futuras actualizaciones](docs/release-update-feed.md).
+
 La versión 2.0.0 incorpora verificación QR rápida, bienvenida y búsqueda de chats, salas con salida/reingreso, avisos Android nativos y actualización verificada del APK. Véase [la guía de versión y despliegue](docs/release-2.0.0.md).
 
 ## Principios

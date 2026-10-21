@@ -32,6 +32,7 @@ export class WelcomePage {
     { native: 'Deutsch', label: 'German', labelKey: 'LANGUAGE.DE', value: 'de' },
   ];
   continuing = false;
+  error = '';
 
   constructor() {
     addIcons({ arrowForwardOutline, chatbubbleOutline, globeOutline, lockClosedOutline });
@@ -44,11 +45,19 @@ export class WelcomePage {
   async next(): Promise<void> {
     if (this.continuing) return;
     this.continuing = true;
+    this.error = '';
     this.onboarding.complete();
     try {
-      await this.router.navigateByUrl('/auth', { replaceUrl: true });
+      const navigated = await this.router.navigateByUrl('/auth', { replaceUrl: true });
+      if (!navigated) this.showNavigationError();
+    } catch {
+      this.showNavigationError();
     } finally {
       this.continuing = false;
     }
+  }
+
+  private showNavigationError(): void {
+    this.error = this.translate.instant('WELCOME.NAVIGATION_ERROR', 'No pudimos abrir el acceso. Vuelve a intentarlo.');
   }
 }
