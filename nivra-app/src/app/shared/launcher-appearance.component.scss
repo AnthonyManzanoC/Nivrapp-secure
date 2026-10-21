@@ -1,0 +1,38 @@
+:host { display: contents; }
+.launcher-appearance { margin-top: 22px; padding-top: 21px; border-top: 1px solid var(--nivra-line); }
+.launcher-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+h3 { margin: 0; color: var(--nivra-text); font-size: 15px; font-weight: 650; line-height: 1.4; }
+.launcher-heading p { max-width: 32ch; margin: 6px 0 0; color: var(--nivra-muted); font-size: 12px; line-height: 1.65; }
+.device-chip { display: inline-flex; align-items: center; justify-content: center; gap: 4px; flex-shrink: 0; max-width: 100px; padding: 5px 7px; border: 1px solid var(--nivra-line); border-radius: 99px; color: var(--nivra-muted); font-size: 9px; line-height: 1.4; text-align: center; }
+.device-chip ion-icon { flex-shrink: 0; font-size: 12px; }
+.launcher-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 9px; margin-top: 19px; }
+.launcher-option { display: grid; justify-items: center; align-content: start; gap: 9px; min-width: 0; min-height: 142px; padding: 16px 6px 10px; border: 1px solid var(--nivra-line); border-radius: 19px; background: var(--nivra-panel-2); color: var(--nivra-text); font: inherit; cursor: pointer; touch-action: manipulation; transition: border-color .15s, background .15s; }
+.launcher-option.selected { border-color: var(--nivra-brand-2); background: #72f0ca0d; }
+.icon-preview { position: relative; display: block; width: 64px; height: 64px; }
+.icon-preview img { display: block; width: 100%; height: 100%; border: 1px solid #ffffff16; border-radius: 18px; box-shadow: 0 6px 10px -7px #00000080; }
+.selected-mark { position: absolute; bottom: -4px; inset-inline-end: -5px; display: grid; place-items: center; width: 22px; height: 22px; border: 3px solid var(--nivra-panel-solid); border-radius: 50%; background: transparent; color: #193e2a; }
+.selected .selected-mark { background: #c1e9b6; }
+.selected-mark:empty { display: none; }
+.selected-mark ion-icon { font-size: 12px; }
+.selected-mark ion-spinner { width: 14px; height: 14px; color: var(--nivra-brand-2); }
+.launcher-option strong { max-width: 100%; color: inherit; font-size: 11px; line-height: 1.45; font-weight: 600; overflow-wrap: anywhere; }
+.launcher-option small { min-height: 13px; margin-top: -5px; color: var(--nivra-muted); font-size: 9px; line-height: 1.4; }
+.launcher-option.selected small { color: var(--nivra-brand-2); }
+.launcher-option:disabled { cursor: wait; }
+.launcher-option:disabled:not(.selected) { opacity: .6; }
+.launcher-option:focus-visible, .launcher-error button:focus-visible { outline: 3px solid var(--nivra-brand-2); outline-offset: 3px; }
+.launcher-hint { margin: 13px 0 0; color: var(--nivra-muted); font-size: 10px; line-height: 1.7; }
+.launcher-feedback { min-height: 22px; margin-top: 8px; }
+.launcher-feedback p { margin: 0; font-size: 11px; line-height: 1.65; }
+.launcher-status, .launcher-success { display: flex; align-items: center; gap: 6px; color: var(--nivra-brand-2); }
+.launcher-status ion-spinner { width: 14px; height: 14px; flex-shrink: 0; color: inherit; }
+.launcher-success ion-icon { font-size: 15px; }
+.launcher-error { color: var(--nivra-danger); }
+.launcher-error button { min-height: 36px; margin-inline-start: 5px; padding: 4px 5px; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+:host-context(.nivra-light-theme) .launcher-option { background: #fffefa; }
+:host-context(.nivra-light-theme) .launcher-option.selected { border-color: #58805d; background: #e9f2e3; }
+:host-context(.nivra-light-theme) .icon-preview img { border-color: #1d42201a; }
+:host-context(.nivra-light-theme) .selected-mark { border-color: #e9f2e3; }
+@media (hover: hover) { .launcher-option:hover:not(:disabled) { border-color: var(--nivra-brand-2); background: var(--nivra-panel-2); } }
+@media (max-width: 360px) { .launcher-heading { flex-wrap: wrap; } .launcher-options { gap: 7px; } .icon-preview { width: 53px; height: 53px; } .launcher-option { min-height: 130px; } .icon-preview img { border-radius: 15px; } }
+@media (prefers-reduced-motion: reduce) { .launcher-option { transition: none; } }

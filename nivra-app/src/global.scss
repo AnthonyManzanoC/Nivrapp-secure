@@ -12,6 +12,14 @@
 /* Core CSS required for Ionic components to work properly */
 @import "@ionic/angular/css/core.css";
 
+// Ionic places alerts and action sheets directly inside ion-app. The separate
+// lock dialog stays visible while the entire application, including overlays,
+// is hidden and inert without discarding drafts or navigation state.
+ion-app.nivra-access-locked,
+ion-app.nivra-access-locked * {
+  visibility: hidden !important;
+}
+
 /* Basic CSS for apps built with Ionic */
 @import "@ionic/angular/css/normalize.css";
 @import "@ionic/angular/css/structure.css";

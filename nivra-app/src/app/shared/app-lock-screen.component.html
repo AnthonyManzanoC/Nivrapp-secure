@@ -1,63 +1,67 @@
 @if (appLock.isLocked()) {
-  <section class="app-lock-screen" [class.native]="appLock.unlockMode() === 'biometric'" aria-modal="true" role="dialog">
-    <div class="lock-shell">
+  <section #lockDialog class="app-lock-screen" role="dialog" aria-modal="true" aria-labelledby="nivra-lock-title" aria-describedby="nivra-lock-description" [attr.aria-busy]="appLock.busy()" tabindex="-1">
+    <header class="lock-brand" aria-label="Nivra Private Messenger">
+      <img src="assets/brand/nivra-mark.svg" width="37" height="37" alt="">
+      <span>nivra<small>PRIVATE MESSENGER</small></span>
+    </header>
+
+    <div class="lock-shell" [class.biometric-shell]="appLock.unlockMode() === 'biometric'">
       <div class="brand-orbit" aria-hidden="true">
-        <img src="assets/brand/nivra-mark.svg" alt="">
+        <span class="orbit-ring"></span>
+        <div class="brand-tile"><img src="assets/brand/nivra-mark.svg" alt=""></div>
+        <span class="orbit-seal"><ion-icon name="lock-closed-outline"></ion-icon></span>
       </div>
 
       <div class="lock-copy">
-        <span class="lock-chip">
-          <ion-icon name="lock-closed-outline"></ion-icon>
-          {{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}
-        </span>
-        <h1>Nivra</h1>
-        @if (appLock.unlockMode() === 'biometric') {
-          <p>{{ 'APP_LOCK.BIOMETRIC_COPY' | translate:'Nivra esta bloqueado. Toca para desbloquear.' }}</p>
-        } @else {
-          <p>{{ 'APP_LOCK.PIN_COPY' | translate:'Nivra esta bloqueado. Ingresa tu PIN.' }}</p>
-        }
+        <span class="lock-chip"><span aria-hidden="true"></span>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</span>
+        <h1 id="nivra-lock-title">{{ 'APP_LOCK.PROTECTED_TITLE' | translate:'Tu espacio, protegido.' }}</h1>
+        <p id="nivra-lock-description">{{ (appLock.unlockMode() === 'biometric' ? 'APP_LOCK.BIOMETRIC_COPY' : 'APP_LOCK.PIN_COPY') | translate:(appLock.unlockMode() === 'biometric' ? 'Confirma tu identidad para volver a Nivra.' : 'Ingresa tu PIN para volver a tus conversaciones.') }}</p>
       </div>
 
       @if (appLock.unlockMode() === 'biometric') {
-        <button type="button" class="biometric-unlock" (click)="unlockMobile()" [disabled]="appLock.busy()" [attr.aria-label]="'APP_LOCK.UNLOCK' | translate:'Desbloquear Nivra'">
-          @if (appLock.busy()) {
-            <ion-spinner name="crescent"></ion-spinner>
-          } @else {
-            <ion-icon [name]="appLock.biometryLabel().includes('rostro') || appLock.biometryLabel().includes('facial') ? 'scan-outline' : 'finger-print-outline'"></ion-icon>
-          }
-        </button>
-        <small class="lock-hint">{{ appLock.biometryLabel() }}</small>
-      } @else {
-        <div class="pin-entry" [attr.aria-label]="'APP_LOCK.PIN_LABEL' | translate:'PIN de Modo Seguro'">
-          <div class="pin-dots" aria-hidden="true">
-            @for (filled of pinDots(); track $index) {
-              <span [class.filled]="filled"></span>
+        <div class="biometric-entry">
+          <button type="button" class="biometric-unlock" (click)="unlockMobile()" [disabled]="appLock.busy()">
+            @if (appLock.busy()) {
+              <ion-spinner name="crescent" aria-hidden="true"></ion-spinner>
+            } @else {
+              <ion-icon [name]="appLock.biometryLabel().includes('rostro') || appLock.biometryLabel().includes('facial') ? 'scan-outline' : 'finger-print-outline'" aria-hidden="true"></ion-icon>
             }
+            <span>{{ 'APP_LOCK.UNLOCK' | translate:'Desbloquear Nivra' }}</span>
+            <ion-icon class="unlock-arrow" name="arrow-forward-outline" aria-hidden="true"></ion-icon>
+          </button>
+          <small class="lock-hint">{{ 'APP_LOCK.DEVICE_IDENTITY' | translate:'Usa la verificación de identidad de tu dispositivo.' }}</small>
+        </div>
+      } @else {
+        <div class="pin-entry" role="group" [attr.aria-label]="'APP_LOCK.PIN_LABEL' | translate:'PIN de Modo Seguro'">
+          <div class="pin-dots" [class.has-error]="appLock.unlockError() && !appLock.busy()" aria-hidden="true">
+            @for (filled of pinDots(); track $index) { <span [class.filled]="filled"></span> }
           </div>
-          <div class="keypad">
+          <span class="sr-only" aria-live="polite">{{ pin().length }} {{ 'APP_LOCK.DIGITS_ENTERED' | translate:'de 4 dígitos ingresados' }}</span>
+          <div class="keypad" dir="ltr">
             @for (key of keys; track $index) {
               @if (key) {
-                <button type="button" class="key" [class.icon-key]="key === 'backspace'" (click)="pressKey(key)" [disabled]="appLock.busy()">
-                  @if (key === 'backspace') {
-                    <ion-icon name="backspace-outline"></ion-icon>
-                  } @else {
-                    {{ key }}
-                  }
+                <button type="button" class="key" [class.icon-key]="key === 'backspace'" (click)="pressKey(key)" [disabled]="inputDisabled()" [attr.aria-label]="key === 'backspace' ? ('APP_LOCK.DELETE_DIGIT' | translate:'Borrar último dígito') : key">
+                  @if (key === 'backspace') { <ion-icon name="backspace-outline" aria-hidden="true"></ion-icon> } @else { {{ key }} }
                 </button>
-              } @else {
-                <span aria-hidden="true"></span>
-              }
+              } @else { <span aria-hidden="true"></span> }
             }
           </div>
         </div>
       }
 
-      @if (appLock.statusMessage()) {
-        <span class="status">{{ appLock.statusMessage() }}</span>
-      }
-      @if (appLock.unlockError()) {
-        <span class="unlock-error">{{ appLock.unlockError() }}</span>
-      }
+      <div class="lock-feedback" aria-live="polite" aria-atomic="true">
+        @if (appLock.busy()) {
+          <span class="status"><ion-spinner name="crescent" aria-hidden="true"></ion-spinner>{{ 'APP_LOCK.VERIFYING' | translate:'Verificando tu identidad…' }}</span>
+        } @else if (appLock.pinRetrySeconds() > 0) {
+          <span class="unlock-error">{{ 'APP_LOCK.RETRY_WAIT' | translate:'Por tu seguridad, espera antes de volver a intentar.' }} <strong>{{ appLock.pinRetrySeconds() }} s</strong></span>
+        } @else if (appLock.unlockError()) {
+          <span class="unlock-error">{{ appLock.unlockError() }}</span>
+        } @else if (appLock.unlockMode() === 'pin') {
+          <span class="status">{{ 'APP_LOCK.KEYBOARD_HINT' | translate:'También puedes usar tu teclado.' }}</span>
+        }
+      </div>
     </div>
+
+    <footer class="lock-footer"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon><span>{{ 'APP_LOCK.LOCAL_PROTECTION' | translate:'Acceso protegido en este dispositivo.' }}</span></footer>
   </section>
 }

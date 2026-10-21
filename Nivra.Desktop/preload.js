@@ -55,3 +55,12 @@ contextBridge.exposeInMainWorld('nivraDesktopUpdates', {
     return () => ipcRenderer.removeListener('nivra-updates:state', handler);
   },
 });
+
+const launcherIcons = new Set(['original', 'emerald', 'ivory']);
+contextBridge.exposeInMainWorld('nivraLauncherAppearance', {
+  getState: () => ipcRenderer.invoke('nivra-launcher:get-state'),
+  setIcon(icon) {
+    if (typeof icon !== 'string' || !launcherIcons.has(icon)) throw new TypeError('LAUNCHER_INVALID_ICON');
+    return ipcRenderer.invoke('nivra-launcher:set-icon', icon);
+  },
+});

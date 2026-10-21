@@ -48,4 +48,54 @@ describe('AppComponent', () => {
     expect(app).toBeTruthy();
   });
 
+  it('keeps daily presentation away from calls, vaults, sharing and access links', () => {
+    const app = TestBed.createComponent(AppComponent).componentInstance as any;
+    for (const url of ['/app/chats', '/app/chats/chat_123', '/app/account?theme=light', '/app/world']) {
+      expect(app.canPresentDailyLaunch(url)).withContext(url).toBeTrue();
+    }
+    for (const url of ['/', '/auth', '/recover#token=secret', '/app/calls', '/app/share?share=1', '/app/vault', '/invite/abc', '/app/chats/123/edit']) {
+      expect(app.canPresentDailyLaunch(url)).withContext(url).toBeFalse();
+    }
+  });
+
+  it('makes routed content inert while locked and restores it after unlocking', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    fixture.detectChanges();
+    fixture.componentInstance.appLock.isLocked.set(true);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('ion-router-outlet').hasAttribute('inert')).toBeTrue();
+    const shell = fixture.nativeElement.querySelector('ion-app');
+    expect(shell.hasAttribute('inert')).toBeTrue();
+    expect(shell.getAttribute('aria-hidden')).toBe('true');
+    expect(shell.contains(fixture.nativeElement.querySelector('app-lock-screen'))).toBeFalse();
+    fixture.componentInstance.appLock.isLocked.set(false);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('ion-router-outlet').hasAttribute('inert')).toBeFalse();
+    expect(shell.hasAttribute('inert')).toBeFalse();
+  });
+
+  it('does not cover the public web with the version check', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    fixture.componentInstance.webLaunch.checking.set(true);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.daily-launch')).toBeNull();
+    expect(fixture.nativeElement.querySelector('ion-router-outlet').hasAttribute('inert')).toBeFalse();
+  });
+
+  it('locks a configured web or desktop session when hidden and requests daily presentation on return', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const lock = spyOn(fixture.componentInstance.appLock, 'lock');
+    const request = spyOn(fixture.componentInstance.dailyLaunch, 'requestPresentation');
+    const visibility = spyOnProperty(document, 'visibilityState', 'get').and.returnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(lock).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
+    visibility.and.returnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(request).toHaveBeenCalledTimes(1);
+    fixture.destroy();
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(request).toHaveBeenCalledTimes(1);
+  });
+
 });

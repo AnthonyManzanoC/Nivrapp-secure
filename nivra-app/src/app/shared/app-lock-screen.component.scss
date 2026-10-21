@@ -1,304 +1,84 @@
-:host {
-  display: contents;
-}
+:host { display: contents; }
 
 .app-lock-screen {
+  --lock-bg: #0b1412;
+  --lock-panel: #14221d;
+  --lock-ink: #f0f6ee;
+  --lock-muted: #afc1b4;
+  --lock-line: #30473b;
+  --lock-soft: #1b3026;
+  --lock-mint: #c1e9b6;
+  --lock-green: #b5dbad;
+  --lock-error: #ffc3b7;
   position: fixed;
-  z-index: 9999;
+  z-index: 2147483000;
   inset: 0;
-  width: 100vw;
-  height: 100vh;
-  min-height: 100dvh;
-  display: grid;
-  place-items: center;
-  padding:
-    max(22px, env(safe-area-inset-top))
-    max(18px, env(safe-area-inset-right))
-    max(22px, env(safe-area-inset-bottom))
-    max(18px, env(safe-area-inset-left));
-  color: var(--nivra-text);
-  background:
-    linear-gradient(180deg, rgba(114, 240, 202, .055), transparent 26%),
-    linear-gradient(180deg, #071012 0%, var(--nivra-bg) 42%, #020405 100%);
-  overflow: hidden;
-}
-
-.app-lock-screen::before {
-  content: "";
-  position: absolute;
-  pointer-events: none;
-  inset: 0;
-  background:
-    linear-gradient(90deg, rgba(255, 255, 255, .035) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(255, 255, 255, .028) 1px, transparent 1px);
-  background-size: 64px 64px;
-  mask-image: linear-gradient(180deg, transparent, #000 18%, #000 76%, transparent);
-  opacity: .28;
-}
-
-.lock-shell {
-  position: relative;
-  z-index: 1;
-  width: min(100%, 430px);
-  min-height: min(720px, calc(100dvh - 44px));
-  display: grid;
-  grid-template-rows: 1fr auto auto auto;
-  align-items: center;
-  justify-items: center;
-  gap: 18px;
-  text-align: center;
-}
-
-.brand-orbit {
-  width: clamp(136px, 28vw, 190px);
-  aspect-ratio: 1;
-  border: 1px solid rgba(255, 255, 255, .12);
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .12), rgba(255, 255, 255, .035)),
-    rgba(13, 22, 26, .78);
-  box-shadow:
-    0 24px 80px rgba(0, 0, 0, .48),
-    0 0 0 1px rgba(114, 240, 202, .08),
-    inset 0 1px 0 rgba(255, 255, 255, .12);
-  animation: nivraBreath 2.8s ease-in-out infinite;
-}
-
-.brand-orbit img {
-  width: 58%;
-  height: 58%;
-  object-fit: contain;
-  filter: drop-shadow(0 16px 34px rgba(114, 240, 202, .22));
-}
-
-.lock-copy {
-  display: grid;
-  justify-items: center;
-  gap: 8px;
-}
-
-.lock-chip {
-  min-height: 30px;
-  border: 1px solid rgba(114, 240, 202, .22);
-  border-radius: 999px;
-  padding: 6px 11px;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  color: var(--nivra-brand-2);
-  background: rgba(114, 240, 202, .08);
-  font-size: 12px;
-  font-weight: 850;
-}
-
-.lock-chip ion-icon {
-  width: 15px;
-  height: 15px;
-}
-
-h1 {
-  margin: 0;
-  color: var(--nivra-text);
-  font-size: 42px;
-  line-height: 1;
-  letter-spacing: 0;
-}
-
-p {
-  max-width: 310px;
-  margin: 0;
-  color: var(--nivra-muted);
-  font-size: 14px;
-  line-height: 1.45;
-  font-weight: 700;
-}
-
-.biometric-unlock {
-  width: 92px;
-  height: 92px;
-  border: 1px solid rgba(114, 240, 202, .36);
-  border-radius: 50%;
-  display: grid;
-  place-items: center;
-  color: #03100d;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .48), rgba(255, 255, 255, .1)),
-    linear-gradient(135deg, var(--nivra-brand), var(--nivra-brand-2));
-  box-shadow:
-    0 22px 54px rgba(24, 214, 162, .2),
-    0 0 0 12px rgba(114, 240, 202, .055);
-  transition: transform .18s ease, box-shadow .18s ease, opacity .18s ease;
-}
-
-.biometric-unlock:active {
-  transform: scale(.97);
-}
-
-.biometric-unlock:disabled {
-  opacity: .72;
-}
-
-.biometric-unlock ion-icon {
-  width: 44px;
-  height: 44px;
-}
-
-.lock-hint,
-.status,
-.unlock-error {
-  display: block;
-  min-height: 18px;
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.lock-hint,
-.status {
-  color: var(--nivra-muted);
-}
-
-.unlock-error {
-  max-width: 320px;
-  color: #ffb7b7;
-}
-
-.pin-entry {
-  display: grid;
-  justify-items: center;
-  gap: 18px;
-}
-
-.pin-dots {
-  min-height: 20px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
+  min-width: 0;
+  min-height: 100%;
+  padding: max(22px, env(safe-area-inset-top)) max(24px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: radial-gradient(ellipse at 50% 25%, #25412d45, transparent 60%), var(--lock-bg);
+  color: var(--lock-ink);
+  font-family: 'Segoe UI', ui-sans-serif, system-ui, sans-serif;
+  outline: none;
 }
+.lock-brand { display: flex; align-items: center; gap: 9px; align-self: flex-start; flex-shrink: 0; }
+.lock-brand img { border-radius: 10px; }
+.lock-brand > span { font-size: 28px; line-height: .94; font-weight: 650; letter-spacing: -1.1px; }
+.lock-brand small { display: block; margin-top: 6px; color: var(--lock-muted); font-size: 6px; font-weight: 600; letter-spacing: 1.7px; }
+.lock-shell { width: min(100%, 390px); flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 18px; margin-block: auto; padding: 20px 0 8px; text-align: center; }
+.brand-orbit { position: relative; display: grid; place-items: center; width: 120px; height: 120px; flex-shrink: 0; border: 1px solid var(--lock-line); border-radius: 50%; background: var(--lock-soft); }
+.orbit-ring { position: absolute; inset: -15px; border: 1px solid var(--lock-line); border-radius: 50%; opacity: .6; }
+.brand-tile { width: 78px; height: 78px; overflow: hidden; border-radius: 22px; box-shadow: 0 14px 28px -12px #00000055; transform: rotate(-6deg); }
+.brand-tile img { display: block; width: 100%; height: 100%; }
+.orbit-seal { position: absolute; bottom: -1px; inset-inline-end: 0; display: grid; place-items: center; width: 38px; height: 38px; border: 4px solid var(--lock-bg); border-radius: 50%; background: var(--lock-mint); color: #234d34; }
+.orbit-seal ion-icon { font-size: 16px; }
+.lock-copy { display: grid; justify-items: center; gap: 13px; width: 100%; }
+.lock-chip { display: inline-flex; align-items: center; gap: 7px; min-height: 25px; padding: 4px 10px; border: 1px solid var(--lock-line); border-radius: 99px; color: var(--lock-green); font-size: 10px; font-weight: 650; line-height: 1.4; letter-spacing: .7px; text-transform: uppercase; }
+.lock-chip > span { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+h1 { margin: 0; color: var(--lock-ink); font-size: clamp(27px, 5.5vw, 33px); line-height: 1.15; font-weight: 450; letter-spacing: -.9px; text-wrap: balance; }
+p { max-width: 31ch; margin: 0; color: var(--lock-muted); font-size: 13px; line-height: 1.65; text-wrap: pretty; }
+.pin-entry { display: grid; justify-items: center; gap: 20px; }
+.pin-dots { display: flex; align-items: center; gap: 16px; height: 18px; }
+.pin-dots > span { width: 12px; height: 12px; border: 1.5px solid var(--lock-muted); border-radius: 50%; background: transparent; transition: background .14s ease, border-color .14s ease; }
+.pin-dots > span.filled { border-color: var(--lock-mint); background: var(--lock-mint); }
+.pin-dots.has-error > span { border-color: var(--lock-error); }
+.keypad { display: grid; grid-template-columns: repeat(3, 76px); gap: 8px 18px; }
+.key { display: grid; place-items: center; width: 76px; height: 48px; padding: 0; border: 1px solid var(--lock-line); border-radius: 18px; color: var(--lock-ink); background: var(--lock-panel); font: inherit; font-size: 23px; font-weight: 500; cursor: pointer; touch-action: manipulation; transition: background .15s, border-color .15s, transform .15s; }
+.key:active { transform: scale(.96); }
+.key:disabled { opacity: .4; cursor: default; }
+.icon-key { border-color: transparent; background: transparent; }
+.icon-key ion-icon { width: 24px; height: 24px; }
+.biometric-entry { display: grid; gap: 18px; width: min(100%, 320px); padding-block: 10px 2px; }
+.biometric-unlock { display: flex; align-items: center; justify-content: center; gap: 12px; width: 100%; min-height: 62px; padding: 16px 21px; border: 1px solid #45694e; border-radius: 99px; background: var(--lock-mint); color: #193e2a; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; touch-action: manipulation; transition: background .15s, transform .15s; }
+.biometric-unlock > ion-icon { flex-shrink: 0; font-size: 27px; }
+.biometric-unlock .unlock-arrow { margin-inline-start: auto; font-size: 20px; }
+.biometric-unlock > ion-spinner { width: 24px; height: 24px; color: #234d34; }
+.biometric-unlock:active { transform: scale(.98); }
+.biometric-unlock:disabled { opacity: .65; cursor: wait; }
+.lock-hint { max-width: 31ch; margin-inline: auto; color: var(--lock-muted); font-size: 12px; line-height: 1.6; }
+.lock-feedback { min-height: 36px; max-width: 310px; color: var(--lock-muted); font-size: 11px; line-height: 1.6; }
+.status { display: flex; align-items: center; justify-content: center; gap: 7px; }
+.status ion-spinner { width: 15px; height: 15px; color: var(--lock-green); }
+.unlock-error { color: var(--lock-error); }
+.unlock-error strong { display: inline-block; min-width: 4ch; margin-inline-start: 4px; font-weight: 650; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lock-footer { display: flex; align-items: center; justify-content: center; gap: 7px; max-width: 100%; flex-shrink: 0; margin-top: 16px; color: var(--lock-muted); font-size: 10px; line-height: 1.6; text-align: center; }
+.lock-footer ion-icon { flex-shrink: 0; font-size: 14px; }
+button:focus-visible { outline: 3px solid var(--lock-green); outline-offset: 4px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
-.pin-dots span {
-  width: 12px;
-  height: 12px;
-  border: 1px solid rgba(255, 255, 255, .24);
-  border-radius: 50%;
-  background: rgba(255, 255, 255, .08);
-  transition: background .16s ease, border-color .16s ease, transform .16s ease;
-}
-
-.pin-dots span.filled {
-  border-color: var(--nivra-brand-2);
-  background: var(--nivra-brand-2);
-  transform: scale(1.08);
-}
-
-.keypad {
-  width: min(100%, 310px);
-  display: grid;
-  grid-template-columns: repeat(3, 74px);
-  justify-content: center;
-  gap: 12px;
-}
-
-.key {
-  width: 74px;
-  height: 62px;
-  border: 1px solid rgba(255, 255, 255, .11);
-  border-radius: 8px;
-  display: grid;
-  place-items: center;
-  color: var(--nivra-text);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .035)),
-    rgba(255, 255, 255, .055);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .08);
-  font-size: 24px;
-  font-weight: 850;
-  transition: border-color .16s ease, background .16s ease, transform .16s ease;
-}
-
-.key:hover {
-  border-color: rgba(114, 240, 202, .34);
-  background:
-    linear-gradient(180deg, rgba(114, 240, 202, .14), rgba(255, 255, 255, .04)),
-    rgba(255, 255, 255, .06);
-}
-
-.key:active {
-  transform: scale(.97);
-}
-
-.key:disabled {
-  opacity: .58;
-}
-
-.icon-key ion-icon {
-  width: 23px;
-  height: 23px;
-}
-
-:host-context(.nivra-light-theme) .app-lock-screen {
-  color: var(--nivra-text);
-  background:
-    linear-gradient(180deg, rgba(24, 214, 162, .065), transparent 28%),
-    linear-gradient(180deg, #ffffff 0%, #f2f2f7 58%, #e8ecf3 100%);
-}
-
-:host-context(.nivra-light-theme) .app-lock-screen::before {
-  background:
-    linear-gradient(90deg, rgba(17, 24, 39, .045) 1px, transparent 1px),
-    linear-gradient(180deg, rgba(17, 24, 39, .04) 1px, transparent 1px);
-  opacity: .42;
-}
-
-:host-context(.nivra-light-theme) .brand-orbit {
-  border-color: rgba(17, 24, 39, .08);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .98), rgba(247, 248, 251, .84)),
-    #ffffff;
-  box-shadow:
-    0 20px 54px rgba(15, 23, 42, .12),
-    0 0 0 1px rgba(24, 214, 162, .12),
-    inset 0 1px 0 rgba(255, 255, 255, .9);
-}
-
-:host-context(.nivra-light-theme) .key {
-  border-color: rgba(17, 24, 39, .1);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(247, 248, 251, .78)),
-    #ffffff;
-  box-shadow: var(--nivra-shadow-tiny);
-}
-
-:host-context(.nivra-light-theme) .unlock-error {
-  color: #b42318;
-}
-
-@media (max-width: 430px) {
-  .lock-shell {
-    min-height: calc(100dvh - 36px);
-  }
-
-  .keypad {
-    grid-template-columns: repeat(3, 68px);
-    gap: 10px;
-  }
-
-  .key {
-    width: 68px;
-    height: 58px;
-  }
-
-  h1 {
-    font-size: 36px;
-  }
-}
-
-@keyframes nivraBreath {
-  0%, 100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.045);
-  }
-}
+:host-context(.nivra-light-theme) .app-lock-screen { --lock-bg: #f7f8f2; --lock-panel: #fffefa; --lock-ink: #1a382e; --lock-muted: #5b6d60; --lock-line: #d5dfce; --lock-soft: #e5eedc; --lock-mint: #c1e9b6; --lock-green: #28714f; --lock-error: #9b3e31; background: radial-gradient(ellipse at 50% 25%, #e7efdd80, transparent 60%), var(--lock-bg); color-scheme: light; }
+:host-context(.nivra-light-theme) .pin-dots > span.filled { border-color: #35734f; background: #35734f; }
+:host-context(.nivra-light-theme) .brand-tile { box-shadow: 0 14px 28px -14px #214d3b60; }
+:host-context([dir='rtl']) .unlock-arrow { transform: rotate(180deg); }
+@media (hover: hover) { .key:hover:not(:disabled) { background: var(--lock-soft); border-color: var(--lock-green); } .biometric-unlock:hover:not(:disabled) { background: #b1dda4; } }
+@media (min-width: 700px) { .app-lock-screen { padding: max(30px, env(safe-area-inset-top)) max(40px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(40px, env(safe-area-inset-left)); } .lock-shell { width: min(100%, 440px); padding: 24px 35px 10px; } .biometric-shell { gap: 30px; } }
+@media (max-height: 850px) { .lock-shell { gap: 17px; padding-top: 18px; } .brand-orbit { width: 96px; height: 96px; } .orbit-ring { inset: -10px; } .brand-tile { width: 61px; height: 61px; border-radius: 17px; } .orbit-seal { width: 33px; height: 33px; } .lock-copy { gap: 10px; } h1 { font-size: 28px; } .pin-entry { gap: 17px; } .keypad { gap: 8px 17px; } .lock-feedback { min-height: 31px; } .lock-footer { margin-top: 10px; } }
+@media (max-height: 730px) { .app-lock-screen { padding-top: max(18px, env(safe-area-inset-top)); padding-bottom: max(14px, env(safe-area-inset-bottom)); } .lock-shell { gap: 12px; padding-block: 16px 8px; } .brand-orbit { width: 72px; height: 72px; } .brand-tile { width: 48px; height: 48px; border-radius: 13px; } .orbit-seal { width: 28px; height: 28px; border-width: 3px; } .orbit-seal ion-icon { font-size: 12px; } .lock-copy { gap: 8px; } .lock-chip { min-height: 23px; } h1 { font-size: 26px; } .pin-entry { gap: 12px; } .pin-dots { height: 14px; } .keypad { row-gap: 6px; } .key { height: 44px; border-radius: 15px; } }
+@media (max-width: 340px) { .app-lock-screen { padding-inline: max(16px, env(safe-area-inset-left)) max(16px, env(safe-area-inset-right)); } .keypad { grid-template-columns: repeat(3, 68px); column-gap: 14px; } .key { width: 68px; } }
+@media (prefers-reduced-motion: reduce) { .key, .pin-dots > span, .biometric-unlock { transition: none; } .key:active, .biometric-unlock:active { transform: none; } }

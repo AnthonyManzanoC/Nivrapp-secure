@@ -34,6 +34,7 @@ import { DesktopUpdateService } from '../../core/services/desktop-update.service
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 import { formatNivraNumber } from '../../core/utils/nivra-number';
 import { RecoveryEmailComponent, RecoveryEmailState } from '../../shared/recovery-email.component';
+import { LauncherAppearanceComponent } from '../../shared/launcher-appearance.component';
 import { NIVRA_UPDATE_URL } from '../../core/release';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
@@ -48,7 +49,7 @@ interface ProfileDraft {
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss', './account-security.scss'],
 })

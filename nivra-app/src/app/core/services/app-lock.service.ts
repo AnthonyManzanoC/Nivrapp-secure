@@ -1,4 +1,4 @@
-import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import {
   AndroidBiometryStrength,
@@ -15,6 +15,13 @@ const textDecoder = new TextDecoder();
 const APP_LOCK_STORAGE_PREFIX = 'nivra.appLock.v1';
 const PIN_ITERATIONS = 240000;
 const PIN_LENGTH = 4;
+const PIN_ATTEMPTS_PREFIX = 'nivra.appLock.attempts.v1';
+const MAX_PIN_RETRY_MS = 5 * 60 * 1000;
+
+interface PinAttempts {
+  failures: number;
+  retryAt: number;
+}
 
 type AppLockMode = 'biometric' | 'pin';
 
@@ -43,11 +50,18 @@ interface PinVerifierPayload {
 }
 
 @Injectable({ providedIn: 'root' })
-export class AppLockService {
+export class AppLockService implements OnDestroy {
   private readonly auth = inject(AuthService);
   private readonly settings = signal<AppLockSettings | null>(null);
   private bootLockAccountKey = '';
   private pinFailureCount = 0;
+  private loadedAccountKey = '';
+  private stateVersion = 0;
+  private operationSequence = 0;
+  private activeOperation = 0;
+  private pinRetryAt = 0;
+  private pinRetryTimer?: ReturnType<typeof setTimeout>;
+  private readonly accountAttempts = new Map<string, PinAttempts>();
 
   readonly isNativePlatform = signal(Boolean(Capacitor.isNativePlatform?.()));
   readonly isLocked = signal(false);
@@ -55,6 +69,8 @@ export class AppLockService {
   readonly unlockError = signal('');
   readonly statusMessage = signal('');
   readonly biometryLabel = signal('biometria');
+  readonly lockCycle = signal(0);
+  readonly pinRetrySeconds = signal(0);
   readonly unlockMode = computed<AppLockMode>(() => this.settings()?.mode ?? (this.isNativePlatform() ? 'biometric' : 'pin'));
   readonly isEnabled = computed(() => Boolean(this.auth.isAuthenticated() && this.settings()?.enabled));
 
@@ -66,25 +82,37 @@ export class AppLockService {
   }
 
   lock(): void {
-    if (!this.isEnabled()) {
+    if (!this.isEnabled() || this.isLocked()) {
       return;
     }
+    this.invalidateVerification();
     this.unlockError.set('');
     this.statusMessage.set(this.unlockMode() === 'biometric'
       ? 'Nivra esta bloqueado. Toca para desbloquear.'
       : 'Nivra esta bloqueado. Ingresa tu PIN.');
     this.isLocked.set(true);
+    this.refreshPinRetry();
   }
 
   unlock(): void {
+    this.invalidateVerification();
     this.pinFailureCount = 0;
+    this.pinRetryAt = 0;
+    this.persistPinAttempts(this.currentAccountKey());
+    this.refreshPinRetry();
     this.unlockError.set('');
     this.statusMessage.set('');
     this.isLocked.set(false);
   }
 
+  ngOnDestroy(): void {
+    this.invalidateVerification();
+    if (this.pinRetryTimer) clearTimeout(this.pinRetryTimer);
+  }
+
   async enableMobileBiometrics(): Promise<void> {
     const accountKey = this.requireAccountKey();
+    const version = this.stateVersion;
     if (!this.isNativePlatform()) {
       throw new Error('La biometria solo se activa dentro de la APK movil.');
     }
@@ -94,7 +122,9 @@ export class AppLockService {
       throw new Error(info.reason || 'Este telefono no tiene huella o reconocimiento facial configurado.');
     }
 
+    this.requireUnchangedAccount(accountKey, version);
     await this.authenticateBiometrics('Confirma tu identidad para activar Modo Seguro.');
+    this.requireUnchangedAccount(accountKey, version);
     this.saveSettings(accountKey, {
       enabled: true,
       mode: 'biometric',
@@ -107,12 +137,14 @@ export class AppLockService {
 
   async enableWebPin(pin: string): Promise<void> {
     const accountKey = this.requireAccountKey();
+    const version = this.stateVersion;
     const normalized = this.normalizePin(pin);
     if (!this.isValidPin(normalized)) {
       throw new Error('El PIN debe tener exactamente 4 digitos.');
     }
 
     const envelope = await this.createPinEnvelope(normalized, accountKey);
+    this.requireUnchangedAccount(accountKey, version);
     this.saveSettings(accountKey, {
       enabled: true,
       mode: 'pin',
@@ -138,24 +170,29 @@ export class AppLockService {
     if (!this.isLocked()) {
       return true;
     }
-    if (!this.isNativePlatform()) {
+    if (this.busy()) return false;
+    if (!this.isNativePlatform() || this.unlockMode() !== 'biometric') {
       this.unlockError.set('Esta sesion usa PIN, no biometria.');
       return false;
     }
 
-    this.busy.set(true);
+    const accountKey = this.currentAccountKey();
+    const version = this.stateVersion;
+    const operation = this.beginVerification();
     this.unlockError.set('');
     this.statusMessage.set('Verificando identidad...');
     try {
       await this.authenticateBiometrics('Desbloquear Nivra');
+      if (!this.isCurrentVerification(accountKey, version, operation)) return false;
       this.unlock();
       return true;
     } catch (error) {
+      if (!this.isCurrentVerification(accountKey, version, operation)) return false;
       this.statusMessage.set('Nivra esta bloqueado. Toca para desbloquear.');
       this.unlockError.set(this.biometricErrorMessage(error, 'No se pudo desbloquear con biometria.'));
       return false;
     } finally {
-      this.busy.set(false);
+      this.finishVerification(operation);
     }
   }
 
@@ -166,18 +203,30 @@ export class AppLockService {
     if (!this.isLocked()) {
       return true;
     }
+    if (this.busy()) return false;
+    this.refreshPinRetry();
+    if (this.pinRetrySeconds() > 0) return false;
     if (!accountKey || !pinEnvelope) {
       this.unlockError.set('Configura de nuevo el PIN de Modo Seguro.');
       return false;
     }
 
-    this.busy.set(true);
+    if (!this.isValidPin(normalized)) return false;
+    const version = this.stateVersion;
+    const operation = this.beginVerification();
     this.unlockError.set('');
     this.statusMessage.set('Verificando PIN...');
     try {
       const valid = await this.verifyPinEnvelope(normalized, pinEnvelope, accountKey);
+      if (!this.isCurrentVerification(accountKey, version, operation)) return false;
       if (!valid) {
-        this.pinFailureCount += 1;
+        this.pinFailureCount = Math.min(1000, this.pinFailureCount + 1);
+        if (this.pinFailureCount >= 5) {
+          this.pinRetryAt = Date.now() + Math.min(MAX_PIN_RETRY_MS,
+            30000 * 2 ** Math.floor((this.pinFailureCount - 5) / 5));
+        }
+        this.persistPinAttempts(accountKey);
+        this.refreshPinRetry();
         this.statusMessage.set('Nivra esta bloqueado. Ingresa tu PIN.');
         this.unlockError.set(this.pinFailureCount >= 3 ? 'PIN incorrecto. Revisa y vuelve a intentar.' : 'PIN incorrecto.');
         return false;
@@ -185,7 +234,7 @@ export class AppLockService {
       this.unlock();
       return true;
     } finally {
-      this.busy.set(false);
+      this.finishVerification(operation);
     }
   }
 
@@ -228,6 +277,16 @@ export class AppLockService {
   }
 
   private loadForAccount(accountKey: string): void {
+    if (accountKey !== this.loadedAccountKey) {
+      this.invalidateVerification();
+      this.loadedAccountKey = accountKey;
+      const attempts = this.readPinAttempts(accountKey);
+      this.pinFailureCount = attempts.failures;
+      this.pinRetryAt = attempts.retryAt;
+      this.refreshPinRetry();
+      // A previous account's locked state must not skip this account's boot lock.
+      this.isLocked.set(false);
+    }
     if (!accountKey) {
       this.settings.set(null);
       this.bootLockAccountKey = '';
@@ -282,6 +341,70 @@ export class AppLockService {
       throw new Error('Inicia sesion antes de activar Modo Seguro.');
     }
     return accountKey;
+  }
+
+  private requireUnchangedAccount(accountKey: string, version: number): void {
+    if (this.currentAccountKey() !== accountKey || this.stateVersion !== version) {
+      throw new Error('La cuenta cambio. Vuelve a configurar Modo Seguro.');
+    }
+  }
+
+  private invalidateVerification(): void {
+    this.stateVersion += 1;
+    this.activeOperation = 0;
+    this.busy.set(false);
+    this.lockCycle.update(value => value + 1);
+  }
+
+  private beginVerification(): number {
+    this.activeOperation = ++this.operationSequence;
+    this.busy.set(true);
+    return this.activeOperation;
+  }
+
+  private isCurrentVerification(accountKey: string, version: number, operation: number): boolean {
+    return this.isLocked() && this.currentAccountKey() === accountKey
+      && this.stateVersion === version && this.activeOperation === operation;
+  }
+
+  private finishVerification(operation: number): void {
+    if (this.activeOperation !== operation) return;
+    this.activeOperation = 0;
+    this.busy.set(false);
+  }
+
+  private readPinAttempts(accountKey: string): PinAttempts {
+    const fallback = this.accountAttempts.get(accountKey) ?? { failures: 0, retryAt: 0 };
+    if (!accountKey) return fallback;
+    try {
+      const parsed = JSON.parse(localStorage.getItem(`${PIN_ATTEMPTS_PREFIX}.${accountKey}`) || 'null');
+      if (!parsed || !Number.isSafeInteger(parsed.failures) || parsed.failures < 0
+        || parsed.failures > 1000 || !Number.isFinite(parsed.retryAt) || parsed.retryAt < 0) return fallback;
+      return { failures: parsed.failures, retryAt: Math.min(parsed.retryAt, Date.now() + MAX_PIN_RETRY_MS) };
+    } catch {
+      return fallback;
+    }
+  }
+
+  private persistPinAttempts(accountKey: string): void {
+    if (!accountKey) return;
+    const attempts = { failures: this.pinFailureCount, retryAt: this.pinRetryAt };
+    this.accountAttempts.set(accountKey, attempts);
+    try {
+      const key = `${PIN_ATTEMPTS_PREFIX}.${accountKey}`;
+      if (attempts.failures === 0) localStorage.removeItem(key);
+      else localStorage.setItem(key, JSON.stringify(attempts));
+    } catch {
+      // Still rate-limit in memory when browser storage is unavailable.
+    }
+  }
+
+  private refreshPinRetry(): void {
+    if (this.pinRetryTimer) clearTimeout(this.pinRetryTimer);
+    this.pinRetryTimer = undefined;
+    const seconds = Math.max(0, Math.ceil((this.pinRetryAt - Date.now()) / 1000));
+    this.pinRetrySeconds.set(seconds);
+    if (seconds > 0) this.pinRetryTimer = setTimeout(() => this.refreshPinRetry(), 1000);
   }
 
   private currentAccountKey(): string {
@@ -384,7 +507,7 @@ export class AppLockService {
     const raw = error instanceof Error ? error.message : String(error ?? '');
     const message = raw.toLowerCase();
     if (message.includes('not implemented') || message.includes('plugin') || message.includes('unimplemented')) {
-      return 'La biometria nativa aun no esta instalada en esta APK. Instala @aparajita/capacitor-biometric-auth y ejecuta cap sync.';
+      return 'La verificacion biometrica no esta disponible. Actualiza Nivra y vuelve a intentarlo.';
     }
     if (message.includes('not enrolled') || message.includes('not_enrolled') || message.includes('enrolled')) {
       return 'Primero configura huella o reconocimiento facial en el telefono.';

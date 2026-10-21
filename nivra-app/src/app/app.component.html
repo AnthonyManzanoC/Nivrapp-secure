@@ -1,5 +1,5 @@
-<ion-app>
-  <ion-router-outlet [attr.inert]="webLaunch.checking() ? '' : null"></ion-router-outlet>
+<ion-app [class.nivra-access-locked]="appLock.isLocked()" [attr.inert]="appLock.isLocked() ? '' : null" [attr.aria-hidden]="appLock.isLocked() ? 'true' : null">
+  <ion-router-outlet [attr.inert]="appLock.isLocked() || dailyLaunch.visible() ? '' : null"></ion-router-outlet>
   @if (showCallBanner()) {
     @if (calls.activeCall(); as call) {
       <button type="button" class="global-call-banner" (click)="openActiveCall()" [attr.aria-label]="'CALLS.RETURN_TO_CALL' | translate:'Volver a la llamada'">
@@ -14,19 +14,20 @@
       </button>
     }
   }
-  <app-lock-screen></app-lock-screen>
   <app-history-approval-dialog />
   <app-android-update-dialog />
   <app-desktop-update-dialog />
-  @if (webLaunch.checking()) {
-    <div class="web-launch" role="status" aria-live="polite">
-      <div class="web-launch-brand">
-        <img src="assets/brand/nivra-mark.svg" alt="" width="68" height="68">
+  @if (dailyLaunch.visible()) {
+    <div class="daily-launch" role="status" aria-live="polite" aria-atomic="true">
+      <div class="daily-launch-brand">
+        <div class="daily-launch-mark"><img src="assets/brand/nivra-mark.svg" alt="" width="76" height="76"></div>
         <h1>Nivra</h1>
-        <p>{{ 'LAUNCH.CHECKING' | translate:'Preparando tu espacio privado' }}</p>
-        <span class="web-launch-progress" aria-hidden="true"></span>
-        <small><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'LAUNCH.ENCRYPTED' | translate:'Tus mensajes permanecen cifrados' }}</small>
+        <span class="daily-launch-tagline">{{ 'LAUNCH.PRIVATE_SPACE' | translate:'Tu espacio privado' }}</span>
+        <span class="daily-launch-progress" aria-hidden="true"></span>
+        <p>{{ 'LAUNCH.PREPARING' | translate:'Preparando tus conversaciones' }}</p>
       </div>
+      <small class="daily-launch-footer"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'LAUNCH.PROTECTED' | translate:'Tu privacidad, siempre presente' }}</small>
     </div>
   }
 </ion-app>
+<app-lock-screen></app-lock-screen>

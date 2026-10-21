@@ -1,7 +1,7 @@
 export const environment = {
   production: true,
-  apiBaseUrl: 'https://nivra-webapp-secure.onrender.com',
-  apiEndpoints: ['https://nivra-webapp-secure.onrender.com', 'https://nivrapp-secure.onrender.com'],
+  apiBaseUrl: 'https://nivrapp-secure.onrender.com',
+  apiEndpoints: ['https://nivrapp-secure.onrender.com', 'https://nivra-webapp-secure.onrender.com'],
   apiClusterFingerprint: 'c761492c31e3e9346640c94da63c476eea907d2aad8a26b6d830c60cd5d7fc64',
   firebase: {
     apiKey: 'AIzaSyC4TZyBBy6Hj_2vgAngbuN8QD6ND48GEyg',

@@ -5,25 +5,29 @@
   overflow: hidden;
 }
 
-.web-launch {
+.daily-launch {
   position: fixed;
   inset: 0;
-  z-index: 10000;
+  z-index: 9998;
   display: grid;
   place-items: center;
-  padding: 28px;
-  background: var(--nivra-bg, #061014);
-  color: var(--nivra-text, #eef7f4);
+  padding: max(28px, env(safe-area-inset-top)) 28px max(28px, env(safe-area-inset-bottom));
+  background: var(--nivra-bg, #0b1412);
+  color: var(--nivra-text, #f4fbf7);
 }
-.web-launch-brand { width: min(320px, 100%); text-align: center; }
-.web-launch-brand img { display: block; margin: 0 auto 16px; border-radius: 20px; }
-.web-launch-brand h1 { margin: 0; font-size: 25px; font-weight: 650; letter-spacing: -.5px; }
-.web-launch-brand p { margin: 9px 0 28px; font-size: 13px; color: var(--nivra-muted); }
-.web-launch-brand small { margin-top: 26px; display: flex; justify-content: center; align-items: center; gap: 6px; font-size: 11px; color: var(--nivra-muted); }
-.web-launch-progress { display: block; position: relative; overflow: hidden; height: 3px; border-radius: 99px; background: var(--nivra-line); }
-.web-launch-progress::after { content: ''; position: absolute; inset: 0; width: 40%; background: var(--nivra-brand); border-radius: inherit; animation: launchProgress 1s ease-in-out infinite; }
-@keyframes launchProgress { from { transform: translateX(-100%); } to { transform: translateX(350%); } }
-@media(prefers-reduced-motion: reduce) { .web-launch-progress::after { animation: none; width: 100%; opacity: .5; } }
+.daily-launch-brand { width: min(280px, 100%); text-align: center; margin-block: 0 44px; }
+.daily-launch-mark { display: grid; place-items: center; width: 108px; height: 108px; margin: 0 auto 24px; border: 1px solid var(--nivra-line); border-radius: 36px; background: var(--nivra-panel-2); }
+.daily-launch-mark img { display: block; border-radius: 23px; }
+.daily-launch-brand h1 { margin: 0; font-size: 34px; line-height: 1.2; font-weight: 600; letter-spacing: -1.4px; }
+.daily-launch-tagline { display: block; margin-top: 9px; color: var(--nivra-soft); font-size: 13px; letter-spacing: .2px; }
+.daily-launch-brand p { margin: 16px 0 0; font-size: 12px; line-height: 1.6; color: var(--nivra-muted); }
+.daily-launch-footer { position: absolute; bottom: max(38px, calc(env(safe-area-inset-bottom) + 20px)); inset-inline: 20px; display: flex; justify-content: center; align-items: center; gap: 8px; font-size: 11px; line-height: 1.5; color: var(--nivra-muted); text-align: center; }
+.daily-launch-footer ion-icon { flex: none; font-size: 15px; color: var(--nivra-brand-2); }
+.daily-launch-progress { display: block; position: relative; overflow: hidden; height: 3px; margin-top: 38px; border-radius: 99px; background: var(--nivra-line); }
+.daily-launch-progress::after { content: ''; position: absolute; inset: 0; width: 42%; background: var(--nivra-brand-2); border-radius: inherit; animation: launchProgress 1.25s ease-in-out infinite; }
+@keyframes launchProgress { from { transform: translateX(-110%); } to { transform: translateX(350%); } }
+@media (prefers-reduced-motion: reduce) { .daily-launch-progress::after { animation: none; width: 100%; opacity: .65; } }
+@media (max-height: 440px) { .daily-launch-brand { margin-block: 0 30px; } .daily-launch-mark { width: 70px; height: 70px; margin-bottom: 12px; border-radius: 24px; } .daily-launch-mark img { width: 54px; height: 54px; border-radius: 17px; } .daily-launch-progress { margin-top: 20px; } .daily-launch-footer { bottom: 12px; } }
 
 .global-call-banner {
   position: fixed;

@@ -1,4 +1,4 @@
-window.NIVRA_NATIVE_API_BASE_URL = window.NIVRA_NATIVE_API_BASE_URL || "https://nivra-webapp-secure.onrender.com";
+window.NIVRA_NATIVE_API_BASE_URL = window.NIVRA_NATIVE_API_BASE_URL || "https://nivrapp-secure.onrender.com";
 window.NIVRA_PUSH_TOKEN = window.NIVRA_PUSH_TOKEN || "";
 window.NIVRA_FIREBASE_SDK_VERSION = window.NIVRA_FIREBASE_SDK_VERSION || "12.19.0";
 

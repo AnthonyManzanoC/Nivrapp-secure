@@ -27,6 +27,7 @@ import { PerformanceModeService } from './core/services/performance-mode.service
 import { PrivacyEnforcementService } from './core/services/privacy-enforcement.service';
 import { AppLockScreenComponent } from './shared/app-lock-screen.component';
 import { WebLaunchService } from './core/services/web-launch.service';
+import { DailyAppLaunchService } from './core/services/daily-app-launch.service';
 import { UnreadTabService } from './core/services/unread-tab.service';
 import { HistoryApprovalDialogComponent } from './shared/history-approval-dialog.component';
 import { AndroidUpdateService } from './core/services/android-update.service';
@@ -52,7 +53,7 @@ export class AppComponent {
   private lastPushResume = 0;
   private resumePromise: Promise<void> | null = null;
   private readonly auth = inject(AuthService);
-  private readonly appLock = inject(AppLockService);
+  readonly appLock = inject(AppLockService);
   private readonly appSettings = inject(AppSettingsService);
   private readonly chat = inject(ChatService);
   private readonly localHistory = inject(LocalHistoryService);
@@ -68,11 +69,13 @@ export class AppComponent {
   private readonly destroyRef = inject(DestroyRef);
   readonly calls = inject(CallsService);
   readonly webLaunch = inject(WebLaunchService);
+  readonly dailyLaunch = inject(DailyAppLaunchService);
   private readonly unreadTab = inject(UnreadTabService);
   private readonly androidUpdates = inject(AndroidUpdateService);
   private readonly desktopUpdates = inject(DesktopUpdateService);
   private readonly now = signal(Date.now());
   private readonly currentUrl = signal(this.router.url);
+  private readonly foreground = signal(document.visibilityState !== 'hidden');
   private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
   private startServicesPromise: Promise<void> | null = null;
   private lastPushRouteKey = '';
@@ -81,6 +84,7 @@ export class AppComponent {
   readonly showCallBanner = computed(() => {
     const phase = this.calls.phase();
     return this.auth.isAuthenticated()
+      && !this.appLock.isLocked()
       && Boolean(this.calls.activeCall())
       && phase !== 'idle'
       && phase !== 'ringing'
@@ -101,10 +105,18 @@ export class AppComponent {
     void this.privacyEnforcement;
     void this.unreadTab;
     void this.webLaunch.start(() => this.canApplyWebUpdate());
+    effect(() => {
+      const url = this.currentUrl();
+      const accountId = this.auth.isAuthenticated() ? this.auth.session()?.user.id ?? null : null;
+      const canShow = this.foreground() && this.canPresentDailyLaunch(url)
+        && !this.appLock.isLocked() && this.canApplyWebUpdate();
+      const ready = !this.chat.loading();
+      untracked(() => this.dailyLaunch.update({ accountId, canShow, ready }));
+    });
     this.androidUpdates.start();
-    effect(() => this.androidUpdates.safe.set(!this.appLock.isLocked() && this.canApplyWebUpdate()));
+    effect(() => this.androidUpdates.safe.set(!this.appLock.isLocked() && !this.dailyLaunch.visible() && this.canApplyWebUpdate()));
     this.desktopUpdates.start();
-    effect(() => this.desktopUpdates.safe.set(!this.appLock.isLocked() && this.canApplyWebUpdate()));
+    effect(() => this.desktopUpdates.safe.set(!this.appLock.isLocked() && !this.dailyLaunch.visible() && this.canApplyWebUpdate()));
     if (Capacitor.getPlatform() === 'android') {
       // Ionic overlays and router navigation retain their higher priorities.
       // At the root, background the existing activity instead of finishing it.
@@ -211,6 +223,11 @@ export class AppComponent {
       && history.state() !== 'syncing' && history.pendingRequests().length === 0;
   }
 
+  private canPresentDailyLaunch(url: string): boolean {
+    // Deep links, composing/sharing and call screens must stay immediately usable.
+    return /^\/app\/(?:chats(?:\/[A-Za-z0-9_-]+)?|world|account)(?:[?#].*)?$/.test(url);
+  }
+
   private async configureNativeKeyboard(): Promise<void> {
     try {
       await Keyboard.setResizeMode({ mode: KeyboardResize.Body });
@@ -312,7 +329,15 @@ export class AppComponent {
   }
 
   private bindAppLifecycleLock(): void {
+    const foreground = () => {
+      this.foreground.set(document.visibilityState !== 'hidden');
+      if (document.visibilityState === 'hidden') this.appLock.lock();
+      else if (document.visibilityState === 'visible') this.dailyLaunch.requestPresentation();
+    };
+    document.addEventListener('visibilitychange', foreground);
+    this.destroyRef.onDestroy(() => document.removeEventListener('visibilitychange', foreground));
     void App.addListener('appStateChange', (state) => {
+      this.foreground.set(state.isActive);
       if (!state.isActive) {
         this.appLock.lock();
         return;
@@ -327,6 +352,7 @@ export class AppComponent {
   }
 
   private handleAppResume(): Promise<void> {
+    this.dailyLaunch.requestPresentation();
     this.resumePromise ??= this.resumeExistingSession().finally(() => { this.resumePromise = null; });
     return this.resumePromise;
   }

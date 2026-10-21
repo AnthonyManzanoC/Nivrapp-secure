@@ -6,8 +6,8 @@ import java.net.URL;
 
 /** Public readiness probes never include refresh/session credentials or follow redirects. */
 final class NivraApiFailover {
-    static final String PRIMARY = "https://nivra-webapp-secure.onrender.com";
-    static final String BACKUP = "https://nivrapp-secure.onrender.com";
+    static final String PRIMARY = "https://nivrapp-secure.onrender.com";
+    static final String BACKUP = "https://nivra-webapp-secure.onrender.com";
     static final String CLUSTER_FINGERPRINT = "c761492c31e3e9346640c94da63c476eea907d2aad8a26b6d830c60cd5d7fc64";
     private NivraApiFailover() { }
 

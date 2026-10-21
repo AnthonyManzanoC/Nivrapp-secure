@@ -1,0 +1,33 @@
+@if (launcher.platform() !== 'unsupported') {
+  <section class="launcher-appearance" aria-labelledby="launcher-appearance-title" [attr.aria-busy]="launcher.busy() || !!pendingIcon()">
+    <div class="launcher-heading">
+      <div><h3 id="launcher-appearance-title">{{ 'LAUNCHER.TITLE' | translate:'Icono de la app' }}</h3><p>{{ 'LAUNCHER.COPY' | translate:'Elige cómo se ve Nivra en este dispositivo.' }}</p></div>
+      <span class="device-chip"><ion-icon [name]="launcher.platform() === 'windows' ? 'desktop-outline' : 'phone-portrait-outline'" aria-hidden="true"></ion-icon>{{ 'LAUNCHER.LOCAL' | translate:'Solo aquí' }}</span>
+    </div>
+
+    @if (launcher.supported()) {
+      <div class="launcher-options" role="group" [attr.aria-label]="'LAUNCHER.TITLE' | translate:'Icono de la app'">
+        @for (option of options; track option.id) {
+          <button type="button" class="launcher-option" [class.selected]="launcher.current() === option.id" [attr.aria-pressed]="launcher.current() === option.id" [disabled]="launcher.busy() || !!pendingIcon()" (click)="selectIcon(option.id)">
+            <span class="icon-preview"><img [src]="'assets/brand/launcher-' + option.id + '.svg'" width="64" height="64" alt="" loading="lazy"><span class="selected-mark" aria-hidden="true">@if (pendingIcon() === option.id) { <ion-spinner name="crescent"></ion-spinner> } @else if (launcher.current() === option.id) { <ion-icon name="checkmark-outline"></ion-icon> }</span></span>
+            <strong>{{ option.key | translate:option.fallback }}</strong>
+            <small>{{ launcher.current() === option.id ? ('LAUNCHER.SELECTED' | translate:'Actual') : ' ' }}</small>
+          </button>
+        }
+      </div>
+      <p class="launcher-hint">{{ (launcher.platform() === 'windows' ? 'LAUNCHER.WINDOWS_HINT' : 'LAUNCHER.ANDROID_HINT') | translate:(launcher.platform() === 'windows' ? 'Cambia el icono del acceso directo y de la ventana en este equipo.' : 'El nuevo icono puede tardar unos instantes en aparecer en la pantalla de inicio.') }}</p>
+    }
+
+    <div class="launcher-feedback" aria-live="polite" aria-atomic="true">
+      @if (launcher.busy() || pendingIcon()) {
+        <p class="launcher-status"><ion-spinner name="crescent" aria-hidden="true"></ion-spinner>{{ 'LAUNCHER.APPLYING' | translate:'Actualizando el icono…' }}</p>
+      } @else if (launcher.error() === 'unavailable' || !launcher.supported()) {
+        <p class="launcher-error">{{ 'LAUNCHER.UNAVAILABLE' | translate:'Actualiza Nivra para personalizar el icono en este dispositivo.' }} <button type="button" (click)="refresh()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button></p>
+      } @else if (launcher.error() || localError()) {
+        <p class="launcher-error">{{ 'LAUNCHER.ERROR' | translate:'No pudimos confirmar el cambio. Reintenta para comprobar el icono actual.' }} <button type="button" (click)="refresh()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button></p>
+      } @else if (saved()) {
+        <p class="launcher-success"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>{{ 'LAUNCHER.SAVED' | translate:'Icono actualizado.' }}</p>
+      }
+    </div>
+  </section>
+}

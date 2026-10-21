@@ -7,10 +7,12 @@ const { pathToFileURL } = require('url');
 const { PINNED_API_ORIGINS, allowedApiOrigin } = require('./api-origins');
 const { isBundledEntry, isTrustedIpc } = require('./renderer-security');
 const { createElectronRequest, createUpdateManager, updateErrorCode } = require('./update-manager');
+const { createLauncherAppearanceManager, installLauncherAppearanceHandlers } = require('./launcher-appearance');
 
 let mainWindow = null;
 let isQuitting = false;
 let trustedEntryUrl = '';
+let launcherAppearance = null;
 
 function assertTrustedRenderer(event) {
   if (!isTrustedIpc(event, mainWindow, trustedEntryUrl)) throw new Error('Untrusted IPC sender.');
@@ -177,7 +179,7 @@ function resolveWebRoot() {
 }
 
 function resolveWindowIcon() {
-  return path.join(__dirname, "icon.ico");
+  return launcherAppearance?.getIconPath() || path.join(__dirname, "icon.ico");
 }
 
 function resolveApiBaseUrl(webRoot) {
@@ -278,6 +280,21 @@ if (!hasSingleInstanceLock) {
     installSecureVaultHandlers();
     installContentProtectionHandlers();
     installDesktopUpdateHandlers();
+    launcherAppearance = createLauncherAppearanceManager({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      userDataDirectory: app.getPath('userData'),
+      bundleDirectory: path.join(__dirname, 'icons'),
+      executablePath: process.execPath || app.getPath('exe'),
+      desktopDirectory: app.getPath('desktop'),
+      startMenuDirectory: path.join(app.getPath('appData'), 'Microsoft', 'Windows', 'Start Menu', 'Programs'),
+      shell,
+      setWindowIcon: icon => {
+        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.setIcon(icon);
+      },
+    });
+    launcherAppearance.restore();
+    installLauncherAppearanceHandlers({ ipcMain, assertTrustedRenderer, manager: launcherAppearance });
     installApiCorsBridge(apiBaseUrl);
     session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => {
       const trusted = mainWindow && !mainWindow.isDestroyed() && contents === mainWindow.webContents

@@ -16,7 +16,11 @@ public class MainActivity extends BridgeActivity {
     protected void onCreate(Bundle savedInstanceState) {
         registerPlugin(NivraNativePlugin.class);
         registerPlugin(NivraScreenSharePlugin.class);
+        registerPlugin(LauncherAppearancePlugin.class);
         super.onCreate(savedInstanceState);
+        // Stable aliases keep the installation's selection through APK upgrades.
+        // Appearance must never block auth, app links, notifications or sharing.
+        try { LauncherAppearanceManager.reconcile(this); } catch (RuntimeException ignored) { }
         createNotificationChannels();
         NivraNativePlugin.handleCallIntent(getIntent());
         NivraNativePlugin.handleShareIntent(this, getIntent());
