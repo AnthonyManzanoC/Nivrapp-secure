@@ -1166,5 +1166,21 @@
   "LAUNCHER.ANDROID_HINT": "Your home screen may take a moment to show the new icon.",
   "LAUNCHER.WINDOWS_HINT": "Changes the shortcut and window icon on this computer.",
   "LAUNCHER.ERROR": "We could not confirm the change. Retry to check the current icon.",
-  "LAUNCHER.UNAVAILABLE": "Update Nivra to customize the icon on this device."
+  "LAUNCHER.UNAVAILABLE": "Update Nivra to customize the icon on this device.",
+  "HISTORY_LOADING.CHATS": "Preparing your conversations",
+  "HISTORY_LOADING.MESSAGES": "Preparing your messages",
+  "HISTORY_LOADING.UPDATING_CHATS": "Updating your chats",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "Updating messages",
+  "HISTORY_LOADING.RETRYING": "Retrying…",
+  "HISTORY_LOADING.LOCAL_PENDING": "Connection refreshed. Local history is still pending.",
+  "HISTORY_LOADING.PENDING_MESSAGES": "Your earlier messages will appear once your history is linked.",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "History is still pending",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "Recovery could not be completed. Check your connection and authorize the code from your other device.",
+  "HISTORY_DEVICE.SYNCING_COPY": "Checking keys and preparing your available messages.",
+  "HISTORY_DEVICE.WAITING_COPY": "Open the current version of Nivra on your other device and authorize this code to recover your history.",
+  "HISTORY_DEVICE.CODE_LABEL": "Linking code",
+  "HISTORY_DEVICE.CHECKING": "Checking…",
+  "HISTORY_DEVICE.SHARING": "Sharing securely…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "Device linking",
+  "HISTORY_LOADING.OPENING_LOCAL": "Opening your encrypted history…"
 }

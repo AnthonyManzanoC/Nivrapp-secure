@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EffectRef, ElementRef, NgZone, OnDestroy, ViewChild, computed, effect, inject, signal } from '@angular/core';
+import { Component, EffectRef, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import {
@@ -41,6 +41,7 @@ import { LocalHistoryService } from '../../core/services/local-history.service';
 import { ChatStoryHighlight, chatStoryRingColor, groupChatStoryHighlights, withOwnChatStoryHighlight } from './chat-story-highlights';
 import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
 import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.component';
+import { ChatLoadingComponent } from '../../shared/chat-loading.component';
 import { ChatWelcomeComponent } from './chat-welcome.component';
 import { ChatPassComponent } from './chat-pass.component';
 import { PushService } from '../../core/services/push.service';
@@ -62,6 +63,7 @@ type ConversationMenuAction = 'pin' | 'mute' | 'archive';
     StoryViewerComponent, StoryActivityComponent,
     StoryComposerComponent,
     HistorySyncNoticeComponent,
+    ChatLoadingComponent,
     ChatWelcomeComponent,
     ChatPassComponent,
     ImageCropperComponent,
@@ -91,9 +93,8 @@ export class ChatsPage implements OnDestroy {
   readonly social = inject(SocialService);
   readonly appSettings = inject(AppSettingsService);
   readonly localHistory = inject(LocalHistoryService);
-  readonly visibleStorageError = signal('');
+  readonly visibleStorageError = computed(() => this.localHistory.storageError());
   private readonly translate = inject(TranslateService);
-  private readonly ngZone = inject(NgZone);
   private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly actionSheetController = inject(ActionSheetController);
@@ -194,8 +195,6 @@ export class ChatsPage implements OnDestroy {
   private avatarPressTimer: number | null = null;
   private suppressAvatarClickUntil = 0;
   private storyStripTimer: number | null = null;
-  private storageWarningTimer: number | null = null;
-  private readonly storageWarningEffect: EffectRef;
   private readonly accountScopeEffect: EffectRef;
   private accountScope = this.searchContext();
   private alive = true;
@@ -241,25 +240,6 @@ export class ChatsPage implements OnDestroy {
         this.stopStoryProgress();
       }
     });
-    this.storageWarningEffect = effect((onCleanup) => {
-      const warning = this.localHistory.storageError();
-      const loading = this.chat.loading();
-      this.visibleStorageError.set('');
-      if (warning && !loading) {
-        // Brief native vault errors can recover during foreground sync. Avoid
-        // flashing a warning for an episode that resolves by itself.
-        this.storageWarningTimer = window.setTimeout(() => {
-          this.storageWarningTimer = null;
-          if (this.localHistory.storageError() === warning && !this.chat.loading()) {
-            this.ngZone.run(() => this.visibleStorageError.set(warning));
-          }
-        }, 900);
-        onCleanup(() => {
-          if (this.storageWarningTimer !== null) window.clearTimeout(this.storageWarningTimer);
-          this.storageWarningTimer = null;
-        });
-      }
-    });
     addIcons({
       addOutline,
       archiveOutline,
@@ -295,7 +275,6 @@ export class ChatsPage implements OnDestroy {
     this.alive = false;
     this.searchSeq += 1;
     this.accountScopeEffect.destroy();
-    this.storageWarningEffect.destroy();
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
     }
@@ -303,9 +282,6 @@ export class ChatsPage implements OnDestroy {
     this.cancelAvatarPress();
     if (this.storyStripTimer !== null) {
       window.clearInterval(this.storyStripTimer);
-    }
-    if (this.storageWarningTimer !== null) {
-      window.clearTimeout(this.storageWarningTimer);
     }
     this.routeSub?.unsubscribe();
   }
@@ -315,16 +291,16 @@ export class ChatsPage implements OnDestroy {
     const scope = this.searchContext();
     this.refreshing = true;
     this.syncNotice = '';
-    this.localHistory.retryNativeStorage();
     void this.social.load().catch(() => undefined);
     try {
+      const localReady = await this.localHistory.retryNativeStorage();
+      if (!this.isCurrentScope(scope)) return;
       await this.chat.bootstrap();
       if (!this.isCurrentScope(scope)) return;
-      // Capacitor's SQLite promise may resolve outside Angular's zone.  The
-      // explicit zone entry makes the encrypted-history warning disappear as
-      // soon as a manual reload succeeds.
-      this.ngZone.run(() => this.localHistory.clearStorageError());
-      this.syncNotice = this.tr('CHATS.SYNCED', 'Tus chats están al día.');
+      // A successful remote refresh never proves that local encrypted storage opened.
+      this.syncNotice = localReady && !this.localHistory.storageError()
+        ? this.tr('CHATS.SYNCED', 'Tus chats están al día.')
+        : this.tr('HISTORY_LOADING.LOCAL_PENDING', 'Conexión actualizada. El historial local sigue pendiente.');
     } catch {
       // Keep the warning visible when either local storage or the remote
       // reload failed.  It contains the action the user can take next.
@@ -332,6 +308,10 @@ export class ChatsPage implements OnDestroy {
     } finally {
       if (this.isCurrentScope(scope)) this.refreshing = false;
     }
+  }
+
+  conversationIndexLoading(): boolean {
+    return this.chat.loading() || this.refreshing || this.localHistory.storageBusy();
   }
 
   ionViewDidEnter(): void {

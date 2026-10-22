@@ -1,4 +1,4 @@
-import { Injectable, NgZone, inject, signal } from '@angular/core';
+import { Injectable, NgZone, computed, inject, signal } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import type { SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { IDBPDatabase, openDB } from 'idb';
@@ -20,6 +20,11 @@ const LOCAL_STORY_STORE = 'stories';
 const VIEW_ONCE_DELETE_DELAY_MS = 0;
 const LOCAL_PURGE_LIMIT = 500;
 const LOCAL_PAYLOAD_VERSION = 2;
+const NATIVE_STORAGE_ERROR = 'No se pudo abrir el historial cifrado. Desbloquea el dispositivo y vuelve a intentar. Tus datos locales se han conservado.';
+
+export type LocalHistoryStorageState = 'idle' | 'opening' | 'retrying' | 'ready' | 'error';
+
+class LocalHistoryKeyMismatchError extends Error {}
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -99,18 +104,35 @@ interface ConversationMessagesPageOptions {
 @Injectable({ providedIn: 'root' })
 export class LocalHistoryService {
   readonly storageError = signal('');
+  readonly storageState = signal<LocalHistoryStorageState>('idle');
+  readonly storageBusy = computed(() => this.storageState() === 'opening' || this.storageState() === 'retrying');
   private readonly ngZone = inject(NgZone);
   private readonly secureVault = inject(NativeSecureVaultService);
   private dbPromise?: Promise<IDBPDatabase | null>;
   private sqlitePromise?: Promise<SQLiteDBConnection>;
   private sqliteConnection?: SQLiteConnection;
   private sqliteOpenFailed = false;
+  private sqliteNeedsReconciliation = true;
+  private nativeRecoveryPromise?: Promise<boolean>;
+  private secureSecretInFlight?: Promise<string | null>;
+  private readonly vaultKeyInFlight = new Map<string, Promise<CryptoKey>>();
+  private storageGeneration = 0;
+  private wiping = false;
 
-  retryNativeStorage(): void {
+  retryNativeStorage(): Promise<boolean> {
+    if (!this.shouldUseNativeSqlite()) return Promise.resolve(true);
+    if (this.wiping) return Promise.resolve(false);
+    if (this.nativeRecoveryPromise) return this.nativeRecoveryPromise;
     if (this.sqliteOpenFailed) {
       this.sqlitePromise = undefined;
       this.sqliteOpenFailed = false;
     }
+    const recovery = this.openNativeSqlite().then(db => Boolean(db), () => false);
+    this.nativeRecoveryPromise = recovery;
+    void recovery.finally(() => {
+      if (this.nativeRecoveryPromise === recovery) this.nativeRecoveryPromise = undefined;
+    });
+    return recovery;
   }
 
   /**
@@ -119,11 +141,19 @@ export class LocalHistoryService {
    * immediately on Android.
    */
   clearStorageError(): void {
-    this.ngZone.run(() => this.storageError.set(''));
+    // Remote sync is not proof that the encrypted local database opened.
+    if (this.sqliteOpenFailed || this.storageBusy()) return;
+    this.ngZone.run(() => {
+      this.storageError.set('');
+      if (this.storageState() === 'error') this.storageState.set('ready');
+    });
   }
 
   private setStorageError(message: string): void {
-    this.ngZone.run(() => this.storageError.set(message));
+    this.ngZone.run(() => {
+      this.storageError.set(message);
+      this.storageState.set('error');
+    });
   }
 
   async conversationMessagesPage(
@@ -278,11 +308,7 @@ export class LocalHistoryService {
     if (!db) {
       return;
     }
-    const store = db.transaction(LOCAL_MESSAGE_STORE, 'readwrite').objectStore(LOCAL_MESSAGE_STORE);
-    await Promise.all(messages.map(async (message) => {
-      if (!message?.conversationId || !message.id) {
-        return;
-      }
+    const records = await Promise.all(messages.filter(message => message?.conversationId && message.id).map(async (message) => {
       const { payload, ...rest } = message;
       const record: StoredChatMessage = {
         ...rest,
@@ -292,8 +318,12 @@ export class LocalHistoryService {
         expiresAtMs: message.expiresAt ? Date.parse(message.expiresAt) || null : null,
         openedAtMs: null,
       };
-      await store.put(record);
+      return record;
     }));
+    const transaction = db.transaction(LOCAL_MESSAGE_STORE, 'readwrite');
+    const store = transaction.objectStore(LOCAL_MESSAGE_STORE);
+    await Promise.all(records.map(record => store.put(record)));
+    await transaction.done;
   }
 
   async conversations(accountKey: string): Promise<Conversation[]> {
@@ -733,26 +763,41 @@ export class LocalHistoryService {
   }
 
   async wipeAllLocalData(): Promise<void> {
-    const db = await this.dbPromise?.catch(() => null);
-    db?.close();
-    this.dbPromise = undefined;
+    this.wiping = true;
+    this.storageGeneration += 1;
+    this.vaultKeyInFlight.clear();
+    this.secureSecretInFlight = undefined;
+    try {
+      const db = await this.dbPromise?.catch(() => null);
+      db?.close();
+      this.dbPromise = undefined;
 
-    const sqlite = await this.sqlitePromise?.catch(() => null);
-    if (sqlite) {
-      await sqlite.close().catch(() => undefined);
+      const sqlite = await this.sqlitePromise?.catch(() => null);
+      if (sqlite) {
+        await sqlite.close().catch(() => undefined);
+      }
+      this.sqlitePromise = undefined;
+      this.sqliteConnection = undefined;
+      this.sqliteOpenFailed = false;
+      this.sqliteNeedsReconciliation = true;
+      this.nativeRecoveryPromise = undefined;
+
+      await Promise.all([
+        this.deleteIndexedDatabases(),
+        this.deleteNativeSqliteDatabase(),
+      ]);
+      await this.secureVault.clearSecret('local-db').catch(() => undefined);
+      this.ngZone.run(() => {
+        this.storageError.set('');
+        this.storageState.set('idle');
+      });
+    } finally {
+      this.wiping = false;
     }
-    this.sqlitePromise = undefined;
-    this.sqliteConnection = undefined;
-    this.sqliteOpenFailed = false;
-
-    await Promise.all([
-      this.deleteIndexedDatabases(),
-      this.deleteNativeSqliteDatabase(),
-    ]);
-    await this.secureVault.clearSecret('local-db').catch(() => undefined);
   }
 
   private async open(): Promise<IDBPDatabase | null> {
+    if (this.wiping) throw new Error('El almacenamiento local se esta cerrando.');
     if (typeof window === 'undefined' || !('indexedDB' in window)) {
       return null;
     }
@@ -871,13 +916,19 @@ export class LocalHistoryService {
     if (!this.shouldUseNativeSqlite()) {
       return null;
     }
-    const opening = this.sqlitePromise ??= this.openNativeSqliteWithRetry();
+    if (this.wiping) throw new Error('El almacenamiento local se esta cerrando.');
+    const generation = this.storageGeneration;
+    if (!this.sqlitePromise) {
+      this.ngZone.run(() => this.storageState.set(this.storageState() === 'error' ? 'retrying' : 'opening'));
+      this.sqlitePromise = this.openNativeSqliteWithRetry(generation);
+    }
+    const opening = this.sqlitePromise;
     try {
       return await opening;
     } catch (error) {
       // Reusing the failed attempt prevents every background read/navigation
       // from recreating an already-dismissed warning. Explicit Retry reopens it.
-      if (this.sqlitePromise === opening) this.sqliteOpenFailed = true;
+      if (this.sqlitePromise === opening && this.storageGeneration === generation && !this.wiping) this.sqliteOpenFailed = true;
       // A locked/unavailable native vault must not silently create a second history in IndexedDB.
       throw error;
     }
@@ -937,16 +988,29 @@ export class LocalHistoryService {
     return typeof window !== 'undefined' && Capacitor.isNativePlatform();
   }
 
-  private async openNativeSqliteWithRetry(): Promise<SQLiteDBConnection> {
+  private async openNativeSqliteWithRetry(generation: number): Promise<SQLiteDBConnection> {
     // Share a bounded retry while the native bridge/Keystore resumes.
     // Never replace the existing encrypted database after an opening failure.
-    for (const delay of [0, 200, 600]) {
+    for (const delay of [0, 300, 900]) {
       if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
+      this.assertStorageGeneration(generation);
       try {
-        return await this.createNativeSqliteConnection();
+        const db = await this.createNativeSqliteConnection(generation);
+        if (this.storageGeneration !== generation || this.wiping) {
+          await db.close().catch(() => undefined);
+          throw new Error('El almacenamiento local cambio durante la apertura.');
+        }
+        this.sqliteOpenFailed = false;
+        this.ngZone.run(() => {
+          this.storageError.set('');
+          this.storageState.set('ready');
+        });
+        return db;
       } catch (error) {
-        if (delay === 600) {
-          this.setStorageError('No se pudo abrir el historial cifrado. Desbloquea el dispositivo y vuelve a intentar. Tus datos locales se han conservado.');
+        this.assertStorageGeneration(generation);
+        if (delay === 900 || error instanceof LocalHistoryKeyMismatchError) {
+          this.sqliteOpenFailed = true;
+          this.setStorageError(NATIVE_STORAGE_ERROR);
           throw error;
         }
       }
@@ -954,21 +1018,31 @@ export class LocalHistoryService {
     throw new Error('No se pudo abrir el historial local.');
   }
 
-  private async createNativeSqliteConnection(): Promise<SQLiteDBConnection> {
+  private async createNativeSqliteConnection(generation: number): Promise<SQLiteDBConnection> {
     let sqlite: SQLiteConnection | undefined;
     try {
       const { CapacitorSQLite, SQLiteConnection } = await import('@capacitor-community/sqlite');
       if (!this.sqliteConnection) {
         this.sqliteConnection = new SQLiteConnection(CapacitorSQLite);
-        // Reconcile handles left by a WebView restart; this does not delete data.
-        await this.sqliteConnection.checkConnectionsConsistency();
+        this.sqliteNeedsReconciliation = true;
       }
       sqlite = this.sqliteConnection;
+      if (this.sqliteNeedsReconciliation) {
+        // Retry reconciliation after a transient bridge failure too. The SQLite
+        // wrapper resets its handle map when this check rejects.
+        await this.sqliteConnection.checkConnectionsConsistency();
+        this.sqliteNeedsReconciliation = false;
+      }
+      this.assertStorageGeneration(generation);
+      await this.prepareNativeSqliteSecret(sqlite);
+      this.assertStorageGeneration(generation);
       const existing = await sqlite.isConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => ({ result: false }));
       const db = existing.result
         ? await sqlite.retrieveConnection(NATIVE_SQLITE_DB_NAME, false)
-        : await this.createEncryptedNativeConnection(sqlite);
-      await this.withNativeSqliteSecret(sqlite, () => db.open());
+        : await sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
+      this.assertStorageGeneration(generation);
+      if (!(await db.isDBOpen()).result) await db.open();
+      this.assertStorageGeneration(generation);
       await db.execute(`
         CREATE TABLE IF NOT EXISTS local_messages (
           key TEXT PRIMARY KEY NOT NULL,
@@ -1024,38 +1098,43 @@ export class LocalHistoryService {
           created_at TEXT NOT NULL
         );
       `);
-      this.clearStorageError();
       return db;
-    } catch {
+    } catch (error) {
+      this.sqliteNeedsReconciliation = true;
       await sqlite?.closeConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
-      const message = 'No se pudo abrir el historial cifrado. Desbloquea el dispositivo y vuelve a intentar. Tus datos locales se han conservado.';
-      throw new Error(message);
+      if (error instanceof LocalHistoryKeyMismatchError) throw error;
+      throw new Error(NATIVE_STORAGE_ERROR);
     }
   }
 
-  private async createEncryptedNativeConnection(sqlite: SQLiteConnection): Promise<SQLiteDBConnection> {
-    await this.prepareNativeSqliteSecret(sqlite);
-    // An opening failure must never trigger conversion or replacement of the vault.
-    return sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
-  }
-
-  private async withNativeSqliteSecret<T>(sqlite: SQLiteConnection, action: () => Promise<T>): Promise<T> {
-    await this.prepareNativeSqliteSecret(sqlite);
-    return action();
-  }
-
   private async prepareNativeSqliteSecret(sqlite: SQLiteConnection): Promise<void> {
-    const secret = await this.secureVault.getOrCreateSecret('local-db');
+    const secret = await this.localDatabaseSecret();
     if (!secret) throw new Error('No se pudo abrir el secreto local de SQLite.');
     // The plugin stores this in the OS protected vault. Repeated clear/set scans
     // databases unnecessarily and complicates reconnection after navigation.
     if ((await sqlite.isSecretStored()).result) {
       if (!(await sqlite.checkEncryptionSecret(secret)).result) {
-        throw new Error('La clave guardada no coincide con el historial local.');
+        throw new LocalHistoryKeyMismatchError(NATIVE_STORAGE_ERROR);
       }
     } else {
       await sqlite.setEncryptionSecret(secret);
     }
+  }
+
+  private assertStorageGeneration(generation: number): void {
+    if (generation !== this.storageGeneration || this.wiping) {
+      throw new Error('El almacenamiento local cambio. Vuelve a abrir tus chats.');
+    }
+  }
+
+  private localDatabaseSecret(): Promise<string | null> {
+    if (this.secureSecretInFlight) return this.secureSecretInFlight;
+    const pending = this.secureVault.getOrCreateSecret('local-db');
+    this.secureSecretInFlight = pending;
+    void pending.finally(() => {
+      if (this.secureSecretInFlight === pending) this.secureSecretInFlight = undefined;
+    }).catch(() => undefined);
+    return pending;
   }
 
   private async sqliteConversationMessagesPage(
@@ -1288,8 +1367,24 @@ export class LocalHistoryService {
     return JSON.parse(textDecoder.decode(plain)) as ChatPayload;
   }
 
-  private async localVaultKey(accountKey: string): Promise<CryptoKey> {
-    const nativeKey = await this.nativeLocalVaultKey(accountKey);
+  private localVaultKey(accountKey: string): Promise<CryptoKey> {
+    if (this.wiping) return Promise.reject(new Error('El almacenamiento local se esta cerrando.'));
+    const existing = this.vaultKeyInFlight.get(accountKey);
+    if (existing) return existing;
+    const generation = this.storageGeneration;
+    const pending = this.loadLocalVaultKey(accountKey, generation).then(key => {
+      this.assertStorageGeneration(generation);
+      return key;
+    });
+    this.vaultKeyInFlight.set(accountKey, pending);
+    void pending.finally(() => {
+      if (this.vaultKeyInFlight.get(accountKey) === pending) this.vaultKeyInFlight.delete(accountKey);
+    }).catch(() => undefined);
+    return pending;
+  }
+
+  private async loadLocalVaultKey(accountKey: string, generation: number): Promise<CryptoKey> {
+    const nativeKey = await this.nativeLocalVaultKey(accountKey, generation);
     if (nativeKey) {
       return nativeKey;
     }
@@ -1297,10 +1392,12 @@ export class LocalHistoryService {
     if (!db) {
       throw new Error('IndexedDB no esta disponible.');
     }
-    const store = db.transaction(LOCAL_VAULT_KEY_STORE, 'readwrite').objectStore(LOCAL_VAULT_KEY_STORE);
+    this.assertStorageGeneration(generation);
+    const store = db.transaction(LOCAL_VAULT_KEY_STORE, 'readonly').objectStore(LOCAL_VAULT_KEY_STORE);
     const existing = await store.get(accountKey) as LocalVaultKeyRecord | undefined;
     const protectedKey = await this.unprotectLocalVaultKey(existing);
     if (protectedKey) {
+      this.assertStorageGeneration(generation);
       this.clearStorageError();
       return protectedKey;
     }
@@ -1316,16 +1413,29 @@ export class LocalHistoryService {
     const raw = crypto.getRandomValues(new Uint8Array(32));
     const keyEnvelope = await this.protectLocalVaultRawKey(raw);
     const key = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
-    await store.put({
+    this.assertStorageGeneration(generation);
+    // Crypto/native awaits close IndexedDB transactions. Start the write only
+    // after protection, and honour a key another tab may have committed first.
+    const writeStore = db.transaction(LOCAL_VAULT_KEY_STORE, 'readwrite').objectStore(LOCAL_VAULT_KEY_STORE);
+    const committed = await writeStore.get(accountKey) as LocalVaultKeyRecord | undefined;
+    if (committed) {
+      const winner = await this.unprotectLocalVaultKey(committed);
+      if (winner) return winner;
+      if (committed.key) return committed.key;
+      const message = 'No se pudo desbloquear la clave del historial local. La clave guardada se ha conservado.';
+      this.setStorageError(message);
+      throw new Error(message);
+    }
+    await writeStore.put({
       accountKey,
       key: keyEnvelope ? undefined : key,
       keyEnvelope,
       createdAt: new Date().toISOString(),
     } satisfies LocalVaultKeyRecord);
-    return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    return key;
   }
 
-  private async nativeLocalVaultKey(accountKey: string): Promise<CryptoKey | null> {
+  private async nativeLocalVaultKey(accountKey: string, generation = this.storageGeneration): Promise<CryptoKey | null> {
     const sqlite = await this.openNativeSqlite();
     if (!sqlite) {
       return null;
@@ -1340,15 +1450,20 @@ export class LocalHistoryService {
     }
     const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
     const raw = new Uint8Array(await crypto.subtle.exportKey('raw', key));
+    this.assertStorageGeneration(generation);
     await sqlite.run(
-      'INSERT OR REPLACE INTO local_vault_keys (account_key, raw_key, created_at) VALUES (?, ?, ?)',
+      'INSERT OR IGNORE INTO local_vault_keys (account_key, raw_key, created_at) VALUES (?, ?, ?)',
       [accountKey, this.b64(raw), new Date().toISOString()],
     );
-    return crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+    const committed = await sqlite.query('SELECT raw_key, created_at FROM local_vault_keys WHERE account_key = ? LIMIT 1', [accountKey]);
+    this.assertStorageGeneration(generation);
+    const winner = committed.values?.[0] as NativeVaultKeyRecord | undefined;
+    if (!winner?.raw_key) throw new Error('No se pudo guardar la clave del historial local.');
+    return crypto.subtle.importKey('raw', this.ub64Buffer(winner.raw_key), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
   }
 
   private async protectLocalVaultRawKey(raw: Uint8Array): Promise<EncryptedLocalVaultKeyEnvelope | null> {
-    const secret = await this.secureVault.getOrCreateSecret('local-db').catch(() => null);
+    const secret = await this.localDatabaseSecret().catch(() => null);
     if (!secret) {
       if (this.secureVault.requiresProtection()) {
         throw new Error('No se pudo abrir el protector seguro del historial local.');
@@ -1370,7 +1485,7 @@ export class LocalHistoryService {
     if (!record?.keyEnvelope) {
       return null;
     }
-    const secret = await this.secureVault.getOrCreateSecret('local-db').catch(() => null);
+    const secret = await this.localDatabaseSecret().catch(() => null);
     if (!secret) {
       return null;
     }

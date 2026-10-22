@@ -1152,5 +1152,21 @@
   "LAUNCHER.ANDROID_HINT": "新图标可能需要片刻才会显示在主屏幕上。",
   "LAUNCHER.WINDOWS_HINT": "更改此电脑上快捷方式和窗口的图标。",
   "LAUNCHER.ERROR": "无法确认更改，请重试以检查当前图标。",
-  "LAUNCHER.UNAVAILABLE": "请更新 Nivra，以便在此设备上自定义图标。"
+  "LAUNCHER.UNAVAILABLE": "请更新 Nivra，以便在此设备上自定义图标。",
+  "HISTORY_LOADING.CHATS": "正在准备会话",
+  "HISTORY_LOADING.MESSAGES": "正在准备消息",
+  "HISTORY_LOADING.UPDATING_CHATS": "正在更新聊天",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "正在更新消息",
+  "HISTORY_LOADING.RETRYING": "正在重试…",
+  "HISTORY_LOADING.LOCAL_PENDING": "连接已刷新，本地聊天记录仍待恢复。",
+  "HISTORY_LOADING.PENDING_MESSAGES": "关联聊天记录后，你之前的消息就会显示。",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "聊天记录仍待恢复",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "无法完成恢复。请检查连接，并在另一台设备上批准此验证码。",
+  "HISTORY_DEVICE.SYNCING_COPY": "正在验证密钥并准备可用的消息。",
+  "HISTORY_DEVICE.WAITING_COPY": "在另一台设备上打开最新版 Nivra，并批准此验证码以恢复聊天记录。",
+  "HISTORY_DEVICE.CODE_LABEL": "关联验证码",
+  "HISTORY_DEVICE.CHECKING": "正在检查…",
+  "HISTORY_DEVICE.SHARING": "正在安全共享…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "关联设备",
+  "HISTORY_LOADING.OPENING_LOCAL": "正在打开加密聊天记录…"
 }

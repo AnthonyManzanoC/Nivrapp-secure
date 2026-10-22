@@ -1152,5 +1152,21 @@
   "LAUNCHER.ANDROID_HINT": "Es kann einen Moment dauern, bis das neue Symbol auf dem Startbildschirm erscheint.",
   "LAUNCHER.WINDOWS_HINT": "Ändert das Symbol der Verknüpfung und des Fensters auf diesem Computer.",
   "LAUNCHER.ERROR": "Die Änderung konnte nicht bestätigt werden. Versuche es erneut, um das aktuelle Symbol zu prüfen.",
-  "LAUNCHER.UNAVAILABLE": "Aktualisiere Nivra, um das Symbol auf diesem Gerät anzupassen."
+  "LAUNCHER.UNAVAILABLE": "Aktualisiere Nivra, um das Symbol auf diesem Gerät anzupassen.",
+  "HISTORY_LOADING.CHATS": "Deine Unterhaltungen werden vorbereitet",
+  "HISTORY_LOADING.MESSAGES": "Deine Nachrichten werden vorbereitet",
+  "HISTORY_LOADING.UPDATING_CHATS": "Deine Chats werden aktualisiert",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "Nachrichten werden aktualisiert",
+  "HISTORY_LOADING.RETRYING": "Erneuter Versuch…",
+  "HISTORY_LOADING.LOCAL_PENDING": "Verbindung aktualisiert. Der lokale Verlauf steht noch aus.",
+  "HISTORY_LOADING.PENDING_MESSAGES": "Deine früheren Nachrichten erscheinen, sobald der Verlauf verknüpft ist.",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "Der Verlauf steht noch aus",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "Die Wiederherstellung konnte nicht abgeschlossen werden. Prüfe die Verbindung und bestätige den Code auf deinem anderen Gerät.",
+  "HISTORY_DEVICE.SYNCING_COPY": "Schlüssel werden geprüft und verfügbare Nachrichten vorbereitet.",
+  "HISTORY_DEVICE.WAITING_COPY": "Öffne die aktuelle Nivra-Version auf deinem anderen Gerät und bestätige diesen Code, um deinen Verlauf wiederherzustellen.",
+  "HISTORY_DEVICE.CODE_LABEL": "Verknüpfungscode",
+  "HISTORY_DEVICE.CHECKING": "Wird geprüft…",
+  "HISTORY_DEVICE.SHARING": "Wird sicher geteilt…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "Gerät verknüpfen",
+  "HISTORY_LOADING.OPENING_LOCAL": "Dein verschlüsselter Verlauf wird geöffnet…"
 }

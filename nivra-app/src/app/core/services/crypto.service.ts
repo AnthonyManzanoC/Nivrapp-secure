@@ -241,7 +241,30 @@ export class CryptoService {
       const digest = this.b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', textEncoder.encode(fingerprint))));
       const id = `history:${userId}:${digest}`;
       if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación del historial.');
-      if (await db.get(LOCAL_KEY_STORE, id)) continue;
+      const existing = await db.get(LOCAL_KEY_STORE, id) as StoredDeviceKeysRecord | undefined;
+      if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación del historial.');
+      if (existing) {
+        const readable = await this.unprotectDeviceKeysRecord(existing);
+        if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación del historial.');
+        // A fingerprint proves the public identity, not that the local private
+        // key can still be opened. A newly approved, validated transfer may repair
+        // a lost native protector or a damaged record without replacing usable keys.
+        if (readable?.userId === userId && this.samePublicKey(readable.publicJwk, material.publicJwk)
+          && this.samePublicKey(readable.privateJwk, material.privateJwk)
+          && readable.privateJwk?.d === material.privateJwk.d) {
+          try {
+            // The coordinates are already proved by the incoming pair. Only a
+            // cheap import is needed to verify that stored usage metadata still
+            // permits the deriveKey operation used by decryptEnvelope.
+            await crypto.subtle.importKey('jwk', readable.privateJwk,
+              { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey']);
+            if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación del historial.');
+            continue;
+          } catch {
+            if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación del historial.');
+          }
+        }
+      }
       const now = new Date().toISOString();
       const record: StoredDeviceKeys = { ...this.materialToDeviceKeys(material), id, userId, alias, aliasLower: this.normalizeAlias(alias), deviceId: id, createdAt: material.createdAt && Number.isFinite(Date.parse(material.createdAt)) ? material.createdAt : now, updatedAt: now };
       const protectedRecord = await this.protectDeviceKeysRecord(record);

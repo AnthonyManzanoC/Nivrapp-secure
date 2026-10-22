@@ -1,0 +1,35 @@
+:host { display: block; flex: none; min-width: 0; }
+.history-notice { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: start; gap: 10px; margin: 10px 12px; padding: 14px; border: 1px solid var(--nivra-line, #d9e4d6); border-radius: 16px; background: var(--nivra-panel-solid, #f6f8ef); color: var(--nivra-text, #193c2c); }
+.history-notice-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: color-mix(in srgb, var(--nivra-brand-2, #a6cc98) 13%, transparent); color: var(--nivra-brand-2, #376b49); }
+.history-notice-icon ion-icon, .history-notice-icon ion-spinner { width: 19px; height: 19px; }
+.history-copy { min-width: 0; }
+strong { display: block; font-size: 12px; font-weight: 650; line-height: 1.5; }
+p { margin: 5px 0 0; font-size: 11px; line-height: 1.65; color: var(--nivra-muted, #667b69); overflow-wrap: anywhere; }
+.history-code { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--nivra-line, #d9e4d6); border-radius: 10px; background: color-mix(in srgb, var(--nivra-bg, #eef3e7) 70%, transparent); }
+.history-code > span { display: block; margin-bottom: 4px; font-size: 10px; color: var(--nivra-muted, #667b69); }
+code { display: block; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 11px; line-height: 1.8; letter-spacing: .06em; font-weight: 600; color: var(--nivra-text, #193c2c); overflow-wrap: anywhere; unicode-bidi: isolate; text-align: start; }
+button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 8px 11px; border: 1px solid var(--nivra-line, #d9e4d6); border-radius: 10px; background: transparent; color: var(--nivra-text, #193c2c); font: inherit; font-size: 11px; line-height: 1.5; font-weight: 600; cursor: pointer; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--nivra-brand-2, #376b49); outline-offset: 3px; }
+button:disabled { opacity: .55; cursor: default; }
+.history-retry { border-color: transparent; color: var(--nivra-brand-2, #376b49); }
+.history-unavailable { border-color: color-mix(in srgb, var(--nivra-amber, #c5965b) 35%, var(--nivra-line, #d9e4d6)); }
+.history-unavailable .history-notice-icon { background: color-mix(in srgb, var(--nivra-amber, #c5965b) 12%, transparent); color: var(--nivra-muted, #667b69); }
+.history-approval { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 20px; }
+.history-approval-head { display: flex; align-items: center; gap: 12px; }
+.history-approval-head .history-notice-icon { flex: 0 0 40px; width: 40px; height: 40px; border-radius: 13px; }
+.history-approval-head > div { min-width: 0; }
+.history-eyebrow { display: block; margin-bottom: 3px; font-size: 9px; letter-spacing: .08em; text-transform: uppercase; color: var(--nivra-muted, #667b69); }
+.history-approval strong { font-size: 15px; font-weight: 600; letter-spacing: -.25px; }
+.history-device-name { margin-top: 2px; color: var(--nivra-text, #193c2c); }
+.history-approval .history-code { padding: 13px 14px; margin-top: 14px; }
+.history-approval code { font-size: 13px; line-height: 1.8; letter-spacing: .07em; }
+.history-comparison { display: flex; align-items: flex-start; gap: 10px; margin-top: 14px; padding: 10px 0; font-size: 12px; line-height: 1.65; cursor: pointer; }
+.history-comparison input { width: 18px; height: 18px; margin: 2px 0 0; flex: 0 0 18px; accent-color: var(--nivra-brand-2, #376b49); }
+.history-comparison:has(input:disabled) { cursor: default; opacity: .7; }
+.history-approval-actions { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 8px; }
+.history-approval-actions button { min-height: 43px; }
+.history-approval-actions .history-share { flex: 1; background: #c1e9b6; color: #173421; border-color: transparent; }
+.history-share ion-spinner { width: 16px; height: 16px; flex: none; }
+.history-error { margin-top: 12px; color: var(--nivra-danger, #bc5a50); }
+@media (max-width: 420px) { .history-notice { grid-template-columns: 30px minmax(0, 1fr); gap: 9px; padding: 12px; margin-inline: 10px; }.history-notice-icon { width: 30px; height: 30px; }.history-retry { grid-column: 2; justify-self: start; padding-inline: 0; min-height: 32px; }.history-approval { grid-template-columns: minmax(0, 1fr); padding: 16px; }.history-approval code { font-size: 12px; letter-spacing: .04em; } }
+@media (prefers-reduced-motion: reduce) { ion-spinner { --duration: 0s; } }

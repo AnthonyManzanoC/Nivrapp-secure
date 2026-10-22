@@ -24,6 +24,10 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private scopeId = '';
   private timer: number | null = null;
   private pumping: number | null = null;
+  private pumpPromise: Promise<void> | null = null;
+  private pumpAgain = false;
+  private replayRequested = false;
+  private recoveryIncomplete = false;
   private requested = false;
   private requestId: string | null = null;
   private requestExpiresAt = 0;
@@ -36,6 +40,8 @@ export class HistoryDeviceSyncService implements OnDestroy {
   readonly approvalError = signal('');
   readonly approvalEpoch = signal(0);
   readonly state = signal<'idle' | 'waiting' | 'syncing' | 'unavailable'>('idle');
+  private readonly checkingState = signal(false);
+  readonly checking = this.checkingState.asReadonly();
   readonly recovered$ = new Subject<void>();
 
   constructor() {
@@ -51,16 +57,37 @@ export class HistoryDeviceSyncService implements OnDestroy {
 
   ngOnDestroy(): void { this.reset(''); this.recovered$.complete(); }
 
-  requestHistory(): void {
-    if (!this.auth.session()) return;
+  requestHistory(): void { this.beginRequest(false); }
+
+  private beginRequest(force: boolean): void {
+    if (!this.auth.session() || (this.requested && !force)) return;
     this.requested = true;
     this.requestedAt ||= Date.now();
-    this.state.set('waiting');
+    if (this.state() !== 'syncing') this.state.set('waiting');
     void this.pump();
   }
 
-  retry(): void { this.requestedAt = Date.now(); this.requestHistory(); }
-  markHistoryReadable(): void { this.requested = false; this.state.set('idle'); }
+  retry(): void {
+    this.requestedAt = Date.now(); this.replayRequested = true; this.beginRequest(true);
+    const scope = this.scope();
+    if (scope && this.scopeId === `${scope.userId}:${scope.deviceId}` && this.requested && this.importedResponses.size) {
+      // The keys were already approved and imported for this exact session scope.
+      // An expired/offline transfer endpoint must not prevent a local message retry.
+      this.replayRequested = false;
+      this.state.set('syncing'); this.recovered$.next();
+    }
+  }
+  markHistoryReadable(): void {
+    this.requested = false; this.replayRequested = this.recoveryIncomplete = false; this.state.set('idle');
+  }
+  markHistoryRecoveryIncomplete(): void {
+    if (!this.scope()) return;
+    this.requested = true; this.requestedAt ||= Date.now();
+    // The consumer acknowledges actual readable messages after its recovery queue.
+    // Do not replace an active import's state with a stale consumer result.
+    this.recoveryIncomplete = true;
+    if (!this.checking()) { this.state.set('waiting'); this.recoveryIncomplete = false; }
+  }
 
   dismissRequest(id: string): void { this.dismissedRequests.add(id); this.pendingRequests.update(items => items.filter(item => item.id !== id)); }
 
@@ -98,12 +125,14 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.approvalEpoch.set(this.epoch);
     this.scopeId = scopeId;
     this.requested = false;
+    this.pumpAgain = this.replayRequested = this.recoveryIncomplete = false;
     this.requestId = null;
     this.requestExpiresAt = this.requestedAt = 0;
     this.importedResponses.clear();
     this.dismissedRequests.clear();
     this.pendingRequests.set([]); this.targetFingerprint.set(''); this.approvingRequestId.set(null); this.approvalError.set('');
     this.state.set('idle');
+    this.checkingState.set(false);
     if (this.timer !== null) window.clearTimeout(this.timer);
     this.timer = null;
   }
@@ -118,52 +147,114 @@ export class HistoryDeviceSyncService implements OnDestroy {
   }
   private assertCurrent(scope: SessionScope): void { if (!this.isCurrent(scope)) throw new Error('La sesión cambió durante la recuperación del historial.'); }
 
-  private async pump(): Promise<void> {
+  private pump(): Promise<void> {
     const scope = this.scope();
-    if (!scope || this.pumping === scope.epoch) return;
+    if (!scope) return Promise.resolve();
+    if (this.pumping === scope.epoch) {
+      this.pumpAgain = true;
+      return this.pumpPromise ?? Promise.resolve();
+    }
     this.pumping = scope.epoch;
+    this.pumpAgain = false;
+    this.checkingState.set(true);
     if (this.timer !== null) window.clearTimeout(this.timer);
     this.timer = null;
-    try {
-      const pending = await firstValueFrom(this.api.get<TransferRequest[]>('/devices/history-transfer/pending'));
-      this.assertCurrent(scope);
-      const approvals: PendingHistoryApproval[] = [];
-      for (const request of pending ?? []) {
-        if (this.dismissedRequests.has(request.id) || request.userId !== scope.userId || request.targetDeviceId === scope.deviceId || !Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) continue;
-        const key = this.crypto.parsePublicJwk(request.targetIdentityKey);
-        if (!key) continue;
-        approvals.push({ ...request, fingerprint: await this.publicFingerprint(key) });
-        this.assertCurrent(scope);
+    const operation = this.runPump(scope).finally(() => {
+      if (this.pumping === scope.epoch) {
+        this.pumping = null; this.pumpPromise = null;
+        this.checkingState.set(false);
       }
-      this.pendingRequests.set(approvals);
+      if (this.isCurrent(scope)) {
+        if (this.recoveryIncomplete && this.requested) {
+          this.state.set('waiting'); this.recoveryIncomplete = false;
+        }
+        const delay = this.pumpAgain ? 0 : this.requested
+          ? (Date.now() - this.requestedAt < 60_000 ? 2500 : 15_000) : 30_000;
+        this.pumpAgain = false;
+        this.timer = window.setTimeout(() => { this.timer = null; void this.pump(); }, delay);
+      }
+    });
+    this.pumpPromise = operation;
+    return operation;
+  }
+
+  private async runPump(scope: SessionScope): Promise<void> {
+    try {
+      try {
+        const pending = await firstValueFrom(this.api.get<TransferRequest[]>('/devices/history-transfer/pending'));
+        this.assertCurrent(scope);
+        const approvals: PendingHistoryApproval[] = [];
+        for (const request of pending ?? []) {
+          if (this.dismissedRequests.has(request.id) || request.userId !== scope.userId || request.targetDeviceId === scope.deviceId || !Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) continue;
+          const key = this.crypto.parsePublicJwk(request.targetIdentityKey);
+          if (!key) continue;
+          approvals.push({ ...request, fingerprint: await this.publicFingerprint(key) });
+          this.assertCurrent(scope);
+        }
+        this.pendingRequests.set(approvals);
+      } catch {
+        this.assertCurrent(scope);
+        // Listing other devices' requests is independent of retrieving our own
+        // approved package. A transient failure here must not block its delivery.
+        if (!this.requested) return;
+      }
       this.assertCurrent(scope);
       if (this.requested) {
         const own = await this.crypto.currentKeyMaterial(scope.alias, scope.deviceId);
         this.assertCurrent(scope);
         const fingerprint = await this.publicFingerprint(own.publicJwk);
         this.assertCurrent(scope); this.targetFingerprint.set(fingerprint);
-        if (!this.requestId || this.requestExpiresAt <= Date.now()) {
-          const request = await firstValueFrom(this.api.post<TransferRequest>('/devices/history-transfer/', {}));
-          this.assertCurrent(scope);
-          if (!request.id || request.userId !== scope.userId || request.targetDeviceId !== scope.deviceId || !Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) throw new Error('Solicitud de historial inválida.');
-          this.requestId = request.id; this.requestExpiresAt = Date.parse(request.expiresAt);
-        }
-        const status = await firstValueFrom(this.api.get<TransferStatus>(`/devices/history-transfer/${encodeURIComponent(this.requestId)}`));
+        const status = await this.requestStatus(scope);
         this.assertCurrent(scope);
+        const target = this.crypto.parsePublicJwk(status.targetIdentityKey);
+        if (status.id !== this.requestId || status.userId !== scope.userId || status.targetDeviceId !== scope.deviceId
+          || !Number.isFinite(Date.parse(status.expiresAt)) || Date.parse(status.expiresAt) <= Date.now()
+          || !this.crypto.samePublicKey(own.publicJwk, target)) throw new Error('Solicitud de historial inválida.');
+        let failed = false;
+        let imported = false;
         for (const response of status.responses ?? []) {
-          try { await this.importResponse(status, response, scope); }
-          catch { this.assertCurrent(scope); this.state.set('unavailable'); }
+          try {
+            const previous = this.importedResponses.size;
+            await this.importResponse(status, response, scope);
+            imported ||= this.importedResponses.size > previous;
+          } catch { this.assertCurrent(scope); failed = true; }
         }
+        if (this.replayRequested && this.requested) {
+          const hasApprovedKeys = (status.responses ?? []).some(response => this.importedResponses.has(`${status.id}:${response.sourceDeviceId}`));
+          if (imported || hasApprovedKeys) {
+            this.replayRequested = false;
+            // An explicit retry may follow a failed message refresh after key import.
+            // Reuse that approval once; ordinary polling never starts replay loops.
+            if (!imported) { this.state.set('syncing'); this.recovered$.next(); }
+          }
+        }
+        if (failed && !imported && this.requested && this.state() !== 'syncing') this.state.set('unavailable');
+        else if (!failed && this.requested && this.state() === 'unavailable') this.state.set('waiting');
       }
     } catch {
       if (this.isCurrent(scope) && this.requested) this.state.set('unavailable');
-    } finally {
-      if (this.pumping === scope.epoch) this.pumping = null;
-      if (this.isCurrent(scope)) {
-        const delay = this.requested ? (Date.now() - this.requestedAt < 60_000 ? 2500 : 15_000) : 30_000;
-        this.timer = window.setTimeout(() => { this.timer = null; void this.pump(); }, delay);
+    }
+  }
+
+  private async requestStatus(scope: SessionScope): Promise<TransferStatus> {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!this.requestId || this.requestExpiresAt <= Date.now()) {
+        const request = await firstValueFrom(this.api.post<TransferRequest>('/devices/history-transfer/', {}));
+        this.assertCurrent(scope);
+        if (!request.id || request.userId !== scope.userId || request.targetDeviceId !== scope.deviceId
+          || !Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) throw new Error('Solicitud de historial inválida.');
+        this.requestId = request.id; this.requestExpiresAt = Date.parse(request.expiresAt);
+      }
+      try {
+        return await firstValueFrom(this.api.get<TransferStatus>(`/devices/history-transfer/${encodeURIComponent(this.requestId)}`));
+      } catch (error) {
+        this.assertCurrent(scope);
+        const status = (error as { status?: unknown } | null)?.status;
+        if (attempt || (status !== 404 && status !== 410)) throw error;
+        this.requestId = null; this.requestExpiresAt = 0;
       }
     }
+    throw new Error('La solicitud de historial ya no está disponible.');
   }
 
   private async respond(request: TransferRequest, scope: SessionScope): Promise<void> {
@@ -185,21 +276,25 @@ export class HistoryDeviceSyncService implements OnDestroy {
 
   private async importResponse(request: TransferStatus, response: TransferResponse, scope: SessionScope): Promise<void> {
     const responseId = `${request.id}:${response.sourceDeviceId}`;
-    if (this.importedResponses.has(responseId)) return;
     this.assertCurrent(scope);
+    if (this.importedResponses.has(responseId)) return;
     if (request.id !== this.requestId || request.userId !== scope.userId || request.targetDeviceId !== scope.deviceId || response.sourceDeviceId === scope.deviceId || !Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) throw new Error('El paquete de historial no corresponde a esta sesión.');
     const own = await this.crypto.currentKeyMaterial(scope.alias, scope.deviceId);
     this.assertCurrent(scope);
     const target = this.crypto.parsePublicJwk(request.targetIdentityKey);
     const source = this.crypto.parsePublicJwk(response.sourceIdentityKey);
-    const header = JSON.parse(response.header) as { alg?: string; senderPublicKey?: JsonWebKey };
-    if (header.alg !== 'ECDH-P256-A256GCM' || source?.d || target?.d || !this.crypto.samePublicKey(own.publicJwk, target) || !this.crypto.samePublicKey(source, header.senderPublicKey)) throw new Error('No se pudo comprobar el dispositivo de origen del historial.');
+    if (typeof response.header !== 'string' || response.header.length > 4096 || typeof response.ciphertext !== 'string'
+      || response.ciphertext.length > 512 * 1024) throw new Error('El paquete de historial no es válido.');
+    const header = JSON.parse(response.header) as { v?: number; alg?: string; senderPublicKey?: JsonWebKey };
+    if (header.v !== 1 || header.alg !== 'ECDH-P256-A256GCM' || source?.d || target?.d
+      || !this.crypto.parsePublicJwk(header.senderPublicKey) || !this.crypto.samePublicKey(own.publicJwk, target)
+      || !this.crypto.samePublicKey(source, header.senderPublicKey)) throw new Error('No se pudo comprobar el dispositivo de origen del historial.');
     const payload = await this.crypto.decryptEnvelope<KeyringPayload>(own, response.header, response.ciphertext);
     this.assertCurrent(scope);
     if (payload.v !== 1 || payload.purpose !== 'history-keyring' || payload.requestId !== request.id || payload.userId !== scope.userId || payload.targetDeviceId !== scope.deviceId || payload.sourceDeviceId !== response.sourceDeviceId || payload.expiresAt !== request.expiresAt || !this.crypto.samePublicKey(payload.targetPublicJwk, own.publicJwk) || !Array.isArray(payload.keys) || !payload.keys.length) throw new Error('El historial cifrado no corresponde a esta solicitud.');
-    this.state.set('syncing');
     await this.crypto.importHistoricalDeviceKeys(scope.userId, scope.alias, payload.keys, () => this.isCurrent(scope));
     this.assertCurrent(scope);
+    this.state.set('syncing');
     this.importedResponses.add(responseId);
     this.recovered$.next();
   }

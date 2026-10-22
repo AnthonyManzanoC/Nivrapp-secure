@@ -1152,5 +1152,21 @@
   "LAUNCHER.ANDROID_HINT": "होम स्क्रीन पर नया आइकन दिखने में कुछ समय लग सकता है।",
   "LAUNCHER.WINDOWS_HINT": "इस कंप्यूटर पर शॉर्टकट और विंडो का आइकन बदलता है।",
   "LAUNCHER.ERROR": "बदलाव की पुष्टि नहीं हो सकी। वर्तमान आइकन जाँचने के लिए फिर से कोशिश करें।",
-  "LAUNCHER.UNAVAILABLE": "इस डिवाइस पर आइकन बदलने के लिए Nivra अपडेट करें।"
+  "LAUNCHER.UNAVAILABLE": "इस डिवाइस पर आइकन बदलने के लिए Nivra अपडेट करें।",
+  "HISTORY_LOADING.CHATS": "आपकी बातचीत तैयार हो रही है",
+  "HISTORY_LOADING.MESSAGES": "आपके संदेश तैयार हो रहे हैं",
+  "HISTORY_LOADING.UPDATING_CHATS": "आपकी चैट अपडेट हो रही हैं",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "संदेश अपडेट हो रहे हैं",
+  "HISTORY_LOADING.RETRYING": "फिर कोशिश की जा रही है…",
+  "HISTORY_LOADING.LOCAL_PENDING": "कनेक्शन अपडेट हो गया। स्थानीय इतिहास अभी लंबित है।",
+  "HISTORY_LOADING.PENDING_MESSAGES": "इतिहास लिंक होने के बाद आपके पुराने संदेश दिखाई देंगे।",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "इतिहास अभी लंबित है",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "पुनर्प्राप्ति पूरी नहीं हो सकी। कनेक्शन जाँचें और अपने दूसरे डिवाइस से कोड की अनुमति दें।",
+  "HISTORY_DEVICE.SYNCING_COPY": "कुंजियाँ जाँची जा रही हैं और उपलब्ध संदेश तैयार हो रहे हैं।",
+  "HISTORY_DEVICE.WAITING_COPY": "अपने दूसरे डिवाइस पर Nivra का वर्तमान संस्करण खोलें और इतिहास वापस पाने के लिए इस कोड की अनुमति दें।",
+  "HISTORY_DEVICE.CODE_LABEL": "लिंक करने का कोड",
+  "HISTORY_DEVICE.CHECKING": "जाँच हो रही है…",
+  "HISTORY_DEVICE.SHARING": "सुरक्षित रूप से साझा हो रहा है…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "डिवाइस लिंक करना",
+  "HISTORY_LOADING.OPENING_LOCAL": "आपका एन्क्रिप्ट किया गया इतिहास खुल रहा है…"
 }

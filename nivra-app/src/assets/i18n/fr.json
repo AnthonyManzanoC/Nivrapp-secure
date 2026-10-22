@@ -1152,5 +1152,21 @@
   "LAUNCHER.ANDROID_HINT": "La nouvelle icône peut prendre quelques instants à apparaître sur l’écran d’accueil.",
   "LAUNCHER.WINDOWS_HINT": "Modifie l’icône du raccourci et de la fenêtre sur cet ordinateur.",
   "LAUNCHER.ERROR": "Impossible de confirmer le changement. Réessayez pour vérifier l’icône actuelle.",
-  "LAUNCHER.UNAVAILABLE": "Mettez Nivra à jour pour personnaliser l’icône sur cet appareil."
+  "LAUNCHER.UNAVAILABLE": "Mettez Nivra à jour pour personnaliser l’icône sur cet appareil.",
+  "HISTORY_LOADING.CHATS": "Préparation de vos conversations",
+  "HISTORY_LOADING.MESSAGES": "Préparation de vos messages",
+  "HISTORY_LOADING.UPDATING_CHATS": "Mise à jour de vos discussions",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "Mise à jour des messages",
+  "HISTORY_LOADING.RETRYING": "Nouvelle tentative…",
+  "HISTORY_LOADING.LOCAL_PENDING": "Connexion actualisée. L’historique local reste en attente.",
+  "HISTORY_LOADING.PENDING_MESSAGES": "Vos anciens messages apparaîtront lorsque votre historique sera associé.",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "L’historique reste en attente",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "La récupération n’a pas pu aboutir. Vérifiez la connexion et autorisez le code depuis votre autre appareil.",
+  "HISTORY_DEVICE.SYNCING_COPY": "Vérification des clés et préparation de vos messages disponibles.",
+  "HISTORY_DEVICE.WAITING_COPY": "Ouvrez la version actuelle de Nivra sur votre autre appareil et autorisez ce code pour récupérer votre historique.",
+  "HISTORY_DEVICE.CODE_LABEL": "Code d’association",
+  "HISTORY_DEVICE.CHECKING": "Vérification…",
+  "HISTORY_DEVICE.SHARING": "Partage sécurisé…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "Association d’un appareil",
+  "HISTORY_LOADING.OPENING_LOCAL": "Ouverture de votre historique chiffré…"
 }

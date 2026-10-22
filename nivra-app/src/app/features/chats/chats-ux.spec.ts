@@ -49,7 +49,7 @@ describe('Chats actions and scoped search', () => {
       { provide: AppSettingsService, useValue: {} },
       { provide: ChatService, useValue: chat },
       { provide: SocialService, useValue: { stories: signal([]), worldStories: signal([]), load: async () => undefined } },
-      { provide: LocalHistoryService, useValue: { storageError: signal(''), retryNativeStorage: () => undefined, clearStorageError: () => undefined } },
+      { provide: LocalHistoryService, useValue: { storageError: signal(''), storageState: signal('ready'), storageBusy: () => false, retryNativeStorage: async () => true, clearStorageError: () => undefined } },
       { provide: NativeDeviceService, useValue: {} },
       { provide: PushService, useValue: { permission: signal('unsupported'), registering: signal(false), requestPermissionAndRegister: jasmine.createSpy().and.resolveTo(true) } },
       { provide: ActionSheetController, useValue: {} },

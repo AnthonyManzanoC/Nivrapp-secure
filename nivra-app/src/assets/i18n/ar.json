@@ -1152,5 +1152,21 @@
   "LAUNCHER.ANDROID_HINT": "قد يستغرق ظهور الأيقونة الجديدة على الشاشة الرئيسية بضع لحظات.",
   "LAUNCHER.WINDOWS_HINT": "يغيّر أيقونة الاختصار والنافذة على هذا الكمبيوتر.",
   "LAUNCHER.ERROR": "تعذّر تأكيد التغيير. أعد المحاولة للتحقق من الأيقونة الحالية.",
-  "LAUNCHER.UNAVAILABLE": "حدّث Nivra لتخصيص الأيقونة على هذا الجهاز."
+  "LAUNCHER.UNAVAILABLE": "حدّث Nivra لتخصيص الأيقونة على هذا الجهاز.",
+  "HISTORY_LOADING.CHATS": "جارٍ تحضير محادثاتك",
+  "HISTORY_LOADING.MESSAGES": "جارٍ تحضير رسائلك",
+  "HISTORY_LOADING.UPDATING_CHATS": "جارٍ تحديث محادثاتك",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "جارٍ تحديث الرسائل",
+  "HISTORY_LOADING.RETRYING": "جارٍ إعادة المحاولة…",
+  "HISTORY_LOADING.LOCAL_PENDING": "تم تحديث الاتصال. ما زال السجل المحلي قيد الانتظار.",
+  "HISTORY_LOADING.PENDING_MESSAGES": "ستظهر رسائلك السابقة بعد ربط سجل المحادثات.",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "ما زال السجل قيد الانتظار",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "تعذّر إكمال الاستعادة. تحقّق من الاتصال ووافق على الرمز من جهازك الآخر.",
+  "HISTORY_DEVICE.SYNCING_COPY": "نتحقق من المفاتيح ونحضّر رسائلك المتاحة.",
+  "HISTORY_DEVICE.WAITING_COPY": "افتح الإصدار الحالي من Nivra على جهازك الآخر ووافق على هذا الرمز لاستعادة سجل محادثاتك.",
+  "HISTORY_DEVICE.CODE_LABEL": "رمز الربط",
+  "HISTORY_DEVICE.CHECKING": "جارٍ التحقق…",
+  "HISTORY_DEVICE.SHARING": "جارٍ المشاركة بأمان…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "ربط جهاز",
+  "HISTORY_LOADING.OPENING_LOCAL": "جارٍ فتح سجلّك المشفّر…"
 }

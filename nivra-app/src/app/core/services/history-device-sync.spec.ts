@@ -1,9 +1,10 @@
 import { signal } from '@angular/core';
-import { of } from 'rxjs';
+import { fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
+import { of, Subject, throwError } from 'rxjs';
 import { CryptoService } from './crypto.service';
 import { HistoryDeviceSyncService } from './history-device-sync.service';
 
-function cryptoHarness(): { service: any; records: Map<string, any> } {
+function cryptoHarness(protector?: () => string | null): { service: any; records: Map<string, any> } {
   const records = new Map<string, any>();
   const db = {
     get: async (_store: string, id: string) => records.get(id),
@@ -12,7 +13,7 @@ function cryptoHarness(): { service: any; records: Map<string, any> } {
     getAllFromIndex: async (_store: string, _index: string, alias: string) => [...records.values()].filter(record => record.aliasLower === alias),
   };
   const service: any = Object.assign(Object.create(CryptoService.prototype), {
-    secureVault: { requiresProtection: () => false, getOrCreateSecret: async () => null },
+    secureVault: { requiresProtection: () => Boolean(protector), getOrCreateSecret: async () => protector?.() ?? null },
     open: async () => db,
     yieldToMainThread: async () => undefined,
   });
@@ -25,11 +26,14 @@ describe('approved encrypted history recovery', () => {
   function syncHarness(crypto: any, id = 'source') {
     const auth = { session: signal<any>(session(id)) };
     const api = { get: jasmine.createSpy('get').and.returnValue(of([])), post: jasmine.createSpy('post').and.returnValue(of({})) };
+    const checking = signal(false);
     const service: any = Object.assign(Object.create(HistoryDeviceSyncService.prototype), {
       auth, crypto, api, epoch: 1, scopeId: `alice:${id}`, timer: null, pumping: null, requested: false,
       requestId: null, requestExpiresAt: 0, requestedAt: 0, importedResponses: new Set(), dismissedRequests: new Set(),
       pendingRequests: signal([]), targetFingerprint: signal(''), approvingRequestId: signal(null),
       approvalError: signal(''), approvalEpoch: signal(1), state: signal('idle'),
+      pumpPromise: null, pumpAgain: false, replayRequested: false, recoveryIncomplete: false,
+      checkingState: checking, checking: checking.asReadonly(),
       recovered$: { next: jasmine.createSpy('recovered'), complete: () => undefined },
     });
     running.push(service);
@@ -37,6 +41,24 @@ describe('approved encrypted history recovery', () => {
   }
   afterEach(() => { running.splice(0).forEach(service => service.ngOnDestroy()); });
   const request = (key: JsonWebKey) => ({ id: 'request', userId: 'alice', targetDeviceId: 'target', targetIdentityKey: JSON.stringify(key), targetDeviceName: 'New browser', expiresAt: new Date(Date.now() + 60_000).toISOString() });
+  async function approvedTarget() {
+    const source = cryptoHarness(); const target = cryptoHarness();
+    const sourceKey = await source.service.createDeviceKeys(); const targetKey = await target.service.createDeviceKeys();
+    await source.service.saveDeviceKeys('alice', 'source', sourceKey, { userId: 'alice' });
+    await target.service.saveDeviceKeys('alice', 'target', targetKey, { userId: 'alice' });
+    const sourceSync = syncHarness(source.service); const targetSync = syncHarness(target.service, 'target');
+    const transfer = request(targetKey.publicJwk);
+    sourceSync.service.pendingRequests.set([{ ...transfer, fingerprint: await sourceSync.service.publicFingerprint(targetKey.publicJwk) }]);
+    sourceSync.api.get.and.returnValue(of([transfer]));
+    await sourceSync.service.approveRequest(transfer.id);
+    const sealed = sourceSync.api.post.calls.first().args[1];
+    const response = { ...sealed, sourceDeviceId: 'source', sourceIdentityKey: JSON.stringify(sourceKey.publicJwk) };
+    const status = { ...transfer, responses: [response] };
+    targetSync.service.requested = true; targetSync.service.requestedAt = Date.now();
+    targetSync.service.requestId = transfer.id; targetSync.service.requestExpiresAt = Date.parse(transfer.expiresAt);
+    targetSync.api.get.and.callFake((url: string) => of(url.endsWith('/pending') ? [] : status));
+    return { source, target, sourceSync, targetSync, status, response, transfer };
+  }
 
   it('never exports private keys merely because the server lists a trusted request', async () => {
     const { service: crypto } = cryptoHarness(); const target = await crypto.createDeviceKeys();
@@ -114,7 +136,7 @@ describe('approved encrypted history recovery', () => {
     const { service, auth } = syncHarness(crypto, 'target'); const transfer = request(own.publicJwk); service.requestId = transfer.id;
     const imported = spyOn(crypto, 'importHistoricalDeviceKeys').and.callThrough();
     spyOn(crypto, 'decryptEnvelope').and.callFake(async () => { auth.session.set(session('other', 'mallory')); return {}; });
-    const response = { sourceDeviceId: 'source', sourceIdentityKey: JSON.stringify(source.publicJwk), header: JSON.stringify({ alg: 'ECDH-P256-A256GCM', senderPublicKey: source.publicJwk }), ciphertext: 'cipher' };
+    const response = { sourceDeviceId: 'source', sourceIdentityKey: JSON.stringify(source.publicJwk), header: JSON.stringify({ v: 1, alg: 'ECDH-P256-A256GCM', senderPublicKey: source.publicJwk }), ciphertext: 'cipher' };
     await expectAsync(service.importResponse(transfer, response, service.scope())).toBeRejected();
     expect(imported).not.toHaveBeenCalled(); expect(service.recovered$.next).not.toHaveBeenCalled();
   });
@@ -171,5 +193,231 @@ describe('approved encrypted history recovery', () => {
     expect(records.size).toBe(0);
     await expectAsync(crypto.importHistoricalDeviceKeys('alice', 'alice', [a], () => false)).toBeRejected();
     expect(records.size).toBe(0);
+  });
+
+  it('recovers Web history by polling after an Android approval even when every realtime event is lost', async () => {
+    const secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const source = cryptoHarness(() => secret); const target = cryptoHarness();
+    const old = await source.service.createDeviceKeys(); const current = await source.service.createDeviceKeys();
+    const fresh = await target.service.createDeviceKeys();
+    await source.service.saveDeviceKeys('alice', 'previous-device', old, { userId: 'alice' });
+    await source.service.saveDeviceKeys('alice', 'source', current, { userId: 'alice' });
+    await target.service.saveDeviceKeys('alice', 'target', fresh, { userId: 'alice' });
+    expect(JSON.stringify([...source.records.values()])).not.toContain(old.privateJwk.d);
+    const sourceSync = syncHarness(source.service); const targetSync = syncHarness(target.service, 'target');
+    const transfer = request(fresh.publicJwk); const responses: any[] = []; let created = false;
+    targetSync.api.post.and.callFake((url: string) => {
+      expect(url).toBe('/devices/history-transfer/'); created = true;
+      // The production create response intentionally omits targetIdentityKey.
+      return of({ id: transfer.id, userId: transfer.userId, targetDeviceId: transfer.targetDeviceId, expiresAt: transfer.expiresAt });
+    });
+    targetSync.api.get.and.callFake((url: string) => of(url.endsWith('/pending') ? [] : { ...transfer, responses: [...responses] }));
+    sourceSync.api.get.and.callFake((url: string) => {
+      expect(url).toBe('/devices/history-transfer/pending');
+      return of(created && !responses.length ? [transfer] : []);
+    });
+    sourceSync.api.post.and.callFake((url: string, sealed: any) => {
+      expect(url).toBe(`/devices/history-transfer/${transfer.id}/response`);
+      expect(source.service.samePublicKey(JSON.parse(sealed.header).senderPublicKey, current.publicJwk)).toBeTrue();
+      responses.push({ ...sealed, sourceDeviceId: 'source', sourceIdentityKey: JSON.stringify(current.publicJwk) });
+      return of(undefined);
+    });
+    targetSync.service.requested = true; targetSync.service.requestedAt = Date.now();
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).not.toHaveBeenCalled();
+    await sourceSync.service.pump();
+    expect(sourceSync.service.pendingRequests().length).toBe(1);
+    expect(sourceSync.api.post).not.toHaveBeenCalled();
+    await sourceSync.service.approveRequest(transfer.id);
+    // No SignalR callback is emitted. The next regular poll must import the response.
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    const oldMessage = await source.service.encryptForPublicKey(
+      await source.service.currentKeyMaterial('alice', 'source'), old.publicJwk, { text: 'Recovered privately on Web' });
+    const materials = await target.service.exportDeviceKeyMaterialsForUser('alice', 'alice');
+    const historical = materials.find((key: any) => target.service.samePublicKey(key.publicJwk, old.publicJwk));
+    expect((await target.service.decryptEnvelope(historical, oldMessage.header, oldMessage.ciphertext)).text).toBe('Recovered privately on Web');
+    expect(targetSync.service.state()).toBe('syncing');
+    targetSync.service.markHistoryReadable();
+    expect(targetSync.service.state()).toBe('idle');
+    expect(target.service.samePublicKey((await target.service.currentKeyMaterial('alice', 'target')).publicJwk, fresh.publicJwk)).toBeTrue();
+  });
+
+  it('recreates an orphaned request after a missing status instead of polling the same ID until expiry', async () => {
+    const target = cryptoHarness(); const fresh = await target.service.createDeviceKeys();
+    await target.service.saveDeviceKeys('alice', 'target', fresh, { userId: 'alice' });
+    const targetSync = syncHarness(target.service, 'target'); const replacement = { ...request(fresh.publicJwk), id: 'replacement' };
+    targetSync.service.requested = true; targetSync.service.requestedAt = Date.now();
+    targetSync.service.requestId = 'orphaned'; targetSync.service.requestExpiresAt = Date.now() + 60_000;
+    targetSync.api.post.and.returnValue(of(replacement));
+    targetSync.api.get.and.callFake((url: string) => url.endsWith('/pending') ? of([])
+      : url.endsWith('/orphaned') ? throwError(() => ({ status: 404 })) : of({ ...replacement, responses: [] }));
+    await targetSync.service.pump();
+    expect(targetSync.api.post).toHaveBeenCalledTimes(1);
+    expect(targetSync.service.requestId).toBe('replacement');
+    expect(targetSync.service.state()).not.toBe('unavailable');
+  });
+
+  it('repairs an unreadable imported key after its native protector changed, using newly approved valid material', async () => {
+    let secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const local = cryptoHarness(() => secret); const historical = await local.service.createDeviceKeys();
+    expect(await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical])).toBe(1);
+    secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    expect(await local.service.exportDeviceKeyMaterialsForUser('alice', 'alice')).toEqual([]);
+    expect(await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical])).toBe(1);
+    const restored = await local.service.exportDeviceKeyMaterialsForUser('alice', 'alice');
+    expect(restored.length).toBe(1);
+    const peer = await local.service.createDeviceKeys();
+    const sealed = await local.service.encryptForPublicKey(peer, historical.publicJwk, { text: 'Readable again' });
+    expect((await local.service.decryptEnvelope(restored[0], sealed.header, sealed.ciphertext)).text).toBe('Readable again');
+  });
+
+  it('repairs a corrupted private key instead of treating the public fingerprint alone as a usable import', async () => {
+    const local = cryptoHarness(); const historical = await local.service.createDeviceKeys(); const different = await local.service.createDeviceKeys();
+    await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical]);
+    const stored = [...local.records.values()][0]; stored.privateJwk = { ...stored.privateJwk, d: different.privateJwk.d };
+    expect(await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical])).toBe(1);
+    const restored = (await local.service.exportDeviceKeyMaterialsForUser('alice', 'alice'))[0];
+    expect(restored.privateJwk.d).toBe(historical.privateJwk.d);
+    expect(await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical])).toBe(0);
+  });
+
+  it('repairs private coordinates and unusable key operations even when the private scalar is unchanged', async () => {
+    const local = cryptoHarness(); const historical = await local.service.createDeviceKeys(); const other = await local.service.createDeviceKeys();
+    await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical]);
+    const id = [...local.records.keys()][0];
+    local.records.get(id).privateJwk = { ...historical.privateJwk, y: other.privateJwk.y };
+    expect(await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical])).toBe(1);
+    local.records.get(id).privateJwk = { ...historical.privateJwk, key_ops: ['sign'] };
+    expect(await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical])).toBe(1);
+    const restored = (await local.service.exportDeviceKeyMaterialsForUser('alice', 'alice'))[0];
+    const sealed = await local.service.encryptForPublicKey(other, historical.publicJwk, { text: 'Usable historical key' });
+    expect((await local.service.decryptEnvelope(restored, sealed.header, sealed.ciphertext)).text).toBe('Usable historical key');
+    expect(await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical])).toBe(0);
+  });
+
+  it('replays already approved keys once on explicit retry after a transient message-refresh failure', async () => {
+    const { targetSync } = await approvedTarget();
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    targetSync.service.markHistoryRecoveryIncomplete();
+    expect(targetSync.service.state()).toBe('waiting');
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    targetSync.service.retry();
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(2);
+    expect(targetSync.service.state()).toBe('syncing');
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(2);
+    targetSync.service.markHistoryReadable();
+    expect(targetSync.service.state()).toBe('idle');
+  });
+
+  it('retrieves its own approved package when listing other devices requests temporarily fails', async () => {
+    const { targetSync, status } = await approvedTarget();
+    targetSync.api.get.and.callFake((url: string) => url.endsWith('/pending')
+      ? throwError(() => ({ status: 503 })) : of(status));
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    expect(targetSync.service.state()).toBe('syncing');
+  });
+
+  it('retries already imported keys during an offline poll and creates no request after readable acknowledgement', async () => {
+    const { targetSync } = await approvedTarget();
+    await targetSync.service.pump();
+    targetSync.service.markHistoryRecoveryIncomplete();
+    const pending = new Subject<any[]>();
+    targetSync.api.get.and.returnValue(pending);
+    const poll = targetSync.service.pump();
+    expect(targetSync.service.checking()).toBeTrue();
+    targetSync.service.recovered$.next.and.callFake(() => targetSync.service.markHistoryReadable());
+    targetSync.service.retry();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(2);
+    expect(targetSync.service.state()).toBe('idle');
+    pending.error({ status: 503 }); await poll;
+    expect(targetSync.api.post).not.toHaveBeenCalled();
+    expect(targetSync.service.requested).toBeFalse();
+    expect(targetSync.service.state()).toBe('idle');
+    expect(targetSync.service.checking()).toBeFalse();
+  });
+
+  for (const badFirst of [true, false]) {
+    it(`keeps a valid response usable when an invalid response is ${badFirst ? 'first' : 'last'} in the same poll`, async () => {
+      const { targetSync, status, response } = await approvedTarget();
+      const bad = { ...response, sourceDeviceId: 'invalid-source', header: '{invalid-json' };
+      status.responses = badFirst ? [bad, response] : [response, bad];
+      await targetSync.service.pump();
+      expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+      expect(targetSync.service.state()).toBe('syncing');
+      expect(targetSync.service.importedResponses.size).toBe(1);
+    });
+  }
+
+  it('coalesces triggers during a poll into one immediate follow-up and exposes actual checking state', fakeAsync(() => {
+    const { service, api } = syncHarness(cryptoHarness().service);
+    const pending = new Subject<any[]>();
+    api.get.and.returnValues(pending, of([]));
+    const first = service.pump();
+    expect(service.checking()).toBeTrue();
+    expect(service.pump()).toBe(first);
+    expect(service.pump()).toBe(first);
+    expect(api.get).toHaveBeenCalledTimes(1);
+    pending.next([]); pending.complete(); flushMicrotasks();
+    expect(service.checking()).toBeFalse();
+    tick(0); flushMicrotasks();
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(service.checking()).toBeFalse();
+    service.ngOnDestroy();
+  }));
+
+  it('does not turn a batch of 100 protected messages into additional HTTP polls', async () => {
+    const target = cryptoHarness(); const key = await target.service.createDeviceKeys();
+    await target.service.saveDeviceKeys('alice', 'target', key, { userId: 'alice' });
+    const { service, api } = syncHarness(target.service, 'target');
+    const transfer = request(key.publicJwk); const pending = new Subject<any[]>();
+    api.post.and.returnValue(of(transfer));
+    api.get.and.callFake((url: string) => url.endsWith('/pending') ? pending : of({ ...transfer, responses: [] }));
+    service.requestHistory();
+    const poll = service.pumpPromise;
+    for (let index = 0; index < 100; index++) service.requestHistory();
+    expect(api.get).toHaveBeenCalledTimes(1);
+    pending.next([]); pending.complete(); await poll;
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(api.get).toHaveBeenCalledTimes(2); // List pending approvals, then read our own status.
+    // A duplicate-trigger follow-up would already be queued before this turn.
+    await new Promise<void>(resolve => window.setTimeout(resolve, 0));
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(service.checking()).toBeFalse();
+    expect(service.state()).toBe('waiting');
+  });
+
+  it('does not let a late poll from another account hide a new accounts checking state', async () => {
+    const { service, api, auth } = syncHarness(cryptoHarness().service);
+    const previous = new Subject<any[]>(); const current = new Subject<any[]>();
+    api.get.and.returnValues(previous, current);
+    const oldPoll = service.pump();
+    auth.session.set(session('other', 'bob')); service.reset('bob:other');
+    const newPoll = service.pump();
+    previous.next([]); previous.complete(); await oldPoll;
+    expect(service.checking()).toBeTrue();
+    current.next([]); current.complete(); await newPoll;
+    expect(service.checking()).toBeFalse();
+    expect(service.pendingRequests()).toEqual([]);
+  });
+
+  it('defers an incomplete acknowledgement while another poll is still importing', async () => {
+    const { targetSync, status } = await approvedTarget();
+    const pending = new Subject<any[]>();
+    targetSync.api.get.and.callFake((url: string) => url.endsWith('/pending') ? pending : of(status));
+    targetSync.service.state.set('syncing');
+    const poll = targetSync.service.pump();
+    targetSync.service.markHistoryRecoveryIncomplete();
+    expect(targetSync.service.state()).toBe('syncing');
+    pending.next([]); pending.complete(); await poll;
+    expect(targetSync.service.state()).toBe('waiting');
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    targetSync.service.markHistoryReadable();
+    expect(targetSync.service.state()).toBe('idle');
   });
 });

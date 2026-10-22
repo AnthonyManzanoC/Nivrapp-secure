@@ -1,5 +1,5 @@
-import { NgZone, signal } from '@angular/core';
-import { TestBed, fakeAsync, tick } from '@angular/core/testing';
+import { signal } from '@angular/core';
+import { TestBed } from '@angular/core/testing';
 import { Router } from '@angular/router';
 import { ActionSheetController } from '@ionic/angular/standalone';
 import { EMPTY } from 'rxjs';
@@ -29,7 +29,9 @@ describe('Chats story creation entry', () => {
     };
     history = {
       storageError: signal(''),
-      retryNativeStorage: jasmine.createSpy('retryNativeStorage'),
+      storageState: signal('ready'),
+      storageBusy: () => ['opening', 'retrying'].includes(history.storageState()),
+      retryNativeStorage: jasmine.createSpy('retryNativeStorage').and.resolveTo(true),
       clearStorageError: jasmine.createSpy('clearStorageError').and.callFake(() => history.storageError.set('')),
     };
     TestBed.configureTestingModule({ providers: [
@@ -88,15 +90,15 @@ describe('Chats story creation entry', () => {
     expect(page.storiesCollapsed).toBeFalse();
   });
 
-  it('clears the encrypted-history warning inside Angular after a successful retry', async () => {
+  it('waits for a proven local recovery before refreshing the remote index', async () => {
     history.storageError.set('No se pudo abrir el historial cifrado.');
-    const zoneRun = spyOn(TestBed.inject(NgZone), 'run').and.callThrough();
-
+    const order: string[] = [];
+    history.retryNativeStorage.and.callFake(async () => { order.push('sqlite'); history.storageError.set(''); return true; });
+    chat.bootstrap.and.callFake(async () => { order.push('remote'); });
     await page.refresh();
-
     expect(chat.bootstrap).toHaveBeenCalledTimes(1);
-    expect(zoneRun).toHaveBeenCalled();
-    expect(history.clearStorageError).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['sqlite', 'remote']);
+    expect(history.clearStorageError).not.toHaveBeenCalled();
     expect(history.storageError()).toBe('');
   });
 
@@ -110,37 +112,49 @@ describe('Chats story creation entry', () => {
     expect(history.storageError()).toContain('historial cifrado');
   });
 
-  it('does not flash a warning that recovers during a foreground transition', fakeAsync(() => {
-    history.storageError.set('Historial temporalmente bloqueado');
-    TestBed.flushEffects();
-    tick(100);
-    history.storageError.set('');
-    TestBed.flushEffects();
-    tick(1000);
+  it('shows loading without inventing an error while encrypted storage is opening', () => {
+    history.storageState.set('opening');
+    expect(page.conversationIndexLoading()).toBeTrue();
     expect(page.visibleStorageError()).toBe('');
-  }));
+    history.storageState.set('ready');
+    expect(page.conversationIndexLoading()).toBeFalse();
+  });
 
-  it('shows a persistent history failure after recovery has had time to finish', fakeAsync(() => {
+  it('does not erase a local failure when only the cloud refresh succeeded', async () => {
     history.storageError.set('No se pudo abrir el historial cifrado.');
-    TestBed.flushEffects();
-    tick(899);
-    expect(page.visibleStorageError()).toBe('');
-    tick(1);
+    history.storageState.set('error');
+    history.retryNativeStorage.and.resolveTo(false);
+    await page.refresh();
+    expect(chat.bootstrap).toHaveBeenCalledTimes(1);
+    expect(history.clearStorageError).not.toHaveBeenCalled();
     expect(page.visibleStorageError()).toContain('historial cifrado');
-    history.storageError.set('');
-    TestBed.flushEffects();
-    expect(page.visibleStorageError()).toBe('');
-  }));
+    expect(page.syncNotice).toContain('historial local sigue pendiente');
+  });
 
-  it('starts the warning delay after initial chat loading finishes', fakeAsync(() => {
+  it('keeps a known failure visible during retry until the local service confirms recovery', () => {
+    history.storageError.set('No se pudo abrir el historial cifrado.');
+    history.storageState.set('retrying');
     chat.loading.set(true);
-    history.storageError.set('No se pudo abrir el historial cifrado.');
-    TestBed.flushEffects();
-    tick(1000);
-    expect(page.visibleStorageError()).toBe('');
-    chat.loading.set(false);
-    TestBed.flushEffects();
-    tick(900);
+    expect(page.conversationIndexLoading()).toBeTrue();
     expect(page.visibleStorageError()).toContain('historial cifrado');
-  }));
+    history.storageError.set('');
+    history.storageState.set('ready');
+    chat.loading.set(false);
+    expect(page.visibleStorageError()).toBe('');
+    expect(page.conversationIndexLoading()).toBeFalse();
+  });
+
+  it('keeps an explicit refresh busy until its real work settles and coalesces repeated clicks', async () => {
+    let finish!: (ready: boolean) => void;
+    history.retryNativeStorage.and.returnValue(new Promise<boolean>(resolve => { finish = resolve; }));
+    const first = page.refresh();
+    expect(page.refreshing).toBeTrue();
+    expect(page.conversationIndexLoading()).toBeTrue();
+    await page.refresh();
+    expect(history.retryNativeStorage).toHaveBeenCalledTimes(1);
+    expect(chat.bootstrap).not.toHaveBeenCalled();
+    finish(true); await first;
+    expect(page.refreshing).toBeFalse();
+    expect(chat.bootstrap).toHaveBeenCalledTimes(1);
+  });
 });

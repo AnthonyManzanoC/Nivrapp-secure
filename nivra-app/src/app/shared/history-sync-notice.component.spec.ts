@@ -13,6 +13,7 @@ describe('history device fingerprint comparison controls', () => {
     approvingRequestId: ReturnType<typeof signal<string | null>>;
     approvalError: ReturnType<typeof signal<string>>;
     approvalEpoch: ReturnType<typeof signal<number>>;
+    checking: ReturnType<typeof signal<boolean>>;
     approveRequest: jasmine.Spy; dismissRequest: jasmine.Spy; retry: jasmine.Spy;
   };
   const request = (id: string, fingerprint = '1234 5678 90ab cdef 1234 5678'): PendingHistoryApproval => ({
@@ -29,7 +30,7 @@ describe('history device fingerprint comparison controls', () => {
     history = {
       pendingRequests: signal([request('first')]), state: signal<'idle' | 'waiting' | 'syncing' | 'unavailable'>('idle'),
       targetFingerprint: signal(''), approvingRequestId: signal<string | null>(null),
-      approvalError: signal(''), approvalEpoch: signal(1),
+      approvalError: signal(''), approvalEpoch: signal(1), checking: signal(false),
       approveRequest: jasmine.createSpy('approveRequest').and.resolveTo(),
       dismissRequest: jasmine.createSpy('dismissRequest'), retry: jasmine.createSpy('retry'),
     };
@@ -119,5 +120,51 @@ describe('history device fingerprint comparison controls', () => {
       'abcd ef01 2345 6789 abcd ef01', '1234 5678 90ab cdef 1234 5678',
     ]);
     expect(codes.every(code => code.getAttribute('dir') === 'ltr')).toBeTrue();
+  });
+
+  it('retains the pending fingerprint notice throughout an actual retry without sharing anything', async () => {
+    history.state.set('waiting');
+    history.targetFingerprint.set('abcd ef01 2345 6789 abcd ef01');
+    await settle();
+    const notice = root().querySelector('.history-notice:not(.history-approval)');
+    const retry = root().querySelector<HTMLButtonElement>('.history-retry')!;
+    retry.click();
+    expect(history.retry).toHaveBeenCalledTimes(1);
+    history.checking.set(true);
+    await settle();
+    expect(root().querySelector('.history-notice:not(.history-approval)')).toBe(notice);
+    expect(root().textContent).toContain('abcd ef01 2345 6789 abcd ef01');
+    expect(retry.disabled).toBeTrue();
+    expect(retry.textContent).toContain('Comprobando');
+    retry.click();
+    expect(history.retry).toHaveBeenCalledTimes(1);
+    expect(history.approveRequest).not.toHaveBeenCalled();
+    history.checking.set(false);
+    await settle();
+    expect(retry.disabled).toBeFalse();
+    expect(notice?.textContent).toContain('pendiente');
+  });
+
+  it('keeps an unsuccessful recovery honest and hides the notice only after real readiness', async () => {
+    history.state.set('unavailable');
+    await settle();
+    expect(root().querySelector('.history-unavailable')?.textContent).toContain('No pudimos completar');
+    history.state.set('syncing');
+    await settle();
+    expect(root().querySelector('.history-syncing')).not.toBeNull();
+    expect(root().querySelector<HTMLButtonElement>('.history-retry')!.disabled).toBeTrue();
+    history.state.set('idle');
+    await settle();
+    expect(root().querySelector('.history-notice:not(.history-approval)')).toBeNull();
+    expect(history.approveRequest).not.toHaveBeenCalled();
+  });
+
+  it('guards the approval handler against stale or unconfirmed fingerprints', async () => {
+    fixture.componentInstance.approve(request('first'));
+    expect(history.approveRequest).not.toHaveBeenCalled();
+    await confirmCode();
+    history.pendingRequests.set([request('first', 'aaaa bbbb cccc dddd eeee ffff')]);
+    fixture.componentInstance.approve(request('first'));
+    expect(history.approveRequest).not.toHaveBeenCalled();
   });
 });

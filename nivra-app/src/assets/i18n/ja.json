@@ -1152,5 +1152,21 @@
   "LAUNCHER.ANDROID_HINT": "新しいアイコンがホーム画面に表示されるまで少し時間がかかる場合があります。",
   "LAUNCHER.WINDOWS_HINT": "このパソコンのショートカットとウィンドウのアイコンを変更します。",
   "LAUNCHER.ERROR": "変更を確認できませんでした。再試行して現在のアイコンを確認してください。",
-  "LAUNCHER.UNAVAILABLE": "この端末でアイコンを変更するには Nivra を更新してください。"
+  "LAUNCHER.UNAVAILABLE": "この端末でアイコンを変更するには Nivra を更新してください。",
+  "HISTORY_LOADING.CHATS": "会話を準備しています",
+  "HISTORY_LOADING.MESSAGES": "メッセージを準備しています",
+  "HISTORY_LOADING.UPDATING_CHATS": "チャットを更新しています",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "メッセージを更新しています",
+  "HISTORY_LOADING.RETRYING": "再試行しています…",
+  "HISTORY_LOADING.LOCAL_PENDING": "接続を更新しました。ローカル履歴の復元はまだ保留中です。",
+  "HISTORY_LOADING.PENDING_MESSAGES": "履歴をリンクすると、以前のメッセージが表示されます。",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "履歴の復元はまだ保留中です",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "復元を完了できませんでした。接続を確認し、別のデバイスからコードを承認してください。",
+  "HISTORY_DEVICE.SYNCING_COPY": "鍵を確認し、利用可能なメッセージを準備しています。",
+  "HISTORY_DEVICE.WAITING_COPY": "別のデバイスで最新版のNivraを開き、このコードを承認して履歴を復元してください。",
+  "HISTORY_DEVICE.CODE_LABEL": "リンクコード",
+  "HISTORY_DEVICE.CHECKING": "確認しています…",
+  "HISTORY_DEVICE.SHARING": "安全に共有しています…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "デバイスのリンク",
+  "HISTORY_LOADING.OPENING_LOCAL": "暗号化された履歴を開いています…"
 }

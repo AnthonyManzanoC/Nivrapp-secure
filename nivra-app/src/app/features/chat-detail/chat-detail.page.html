@@ -91,8 +91,12 @@
       (ionInfinite)="loadOlderMessages($event)">
       <ion-infinite-scroll-content loadingSpinner="crescent"></ion-infinite-scroll-content>
     </ion-infinite-scroll>
-    <div class="messages">
+    <div class="messages" [attr.aria-busy]="chat.selectedMessagesLoading()">
+      @if (chat.selectedMessagesLoading()) { <app-chat-loading mode="messages" [compact]="hasReadableMessages()" /> }
       @for (message of messages(); track message.id; let messageIndex = $index) {
+        @if (message.decryptError && chat.selectedMessagesLoading()) {
+          @if (hasReadableMessages()) { <app-chat-loading mode="messages" [single]="true" /> }
+        } @else {
         @if (showMessageDay(messageIndex)) {
           <div class="message-day" role="separator"><span>{{ message.at | localizedDate:'mediumDate' }}</span></div>
         }
@@ -389,16 +393,19 @@
             </footer>
           </article>
         }
+        }
       } @empty {
-        <div class="empty-thread">
+        @if (!chat.selectedMessagesLoading()) {
+          <div class="empty-thread">
           @if (conversationPhoto()) {
             <img class="avatar large avatar-img" [src]="conversationPhoto()" alt="">
           } @else {
             <span class="avatar large">{{ conversation() ? chat.avatarLabel(conversation()!) : 'N' }}</span>
           }
           <h2>{{ conversation() ? chat.conversationTitle(conversation()!) : 'Nivra' }}</h2>
-          <p>{{ 'CHAT.ENCRYPTED_READY' | translate:'Chat cifrado listo.' }}</p>
-        </div>
+          <p>{{ (chat.deviceHistory.state() !== 'idle' ? 'HISTORY_LOADING.PENDING_MESSAGES' : 'CHAT.ENCRYPTED_READY') | translate:(chat.deviceHistory.state() !== 'idle' ? 'Tus mensajes anteriores aparecerán cuando se vincule el historial.' : 'Chat cifrado listo.') }}</p>
+          </div>
+        }
       }
     </div>
     @if (showScrollToLatest) {

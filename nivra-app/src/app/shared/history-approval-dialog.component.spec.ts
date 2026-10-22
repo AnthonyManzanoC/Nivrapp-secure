@@ -7,7 +7,7 @@ import { HistoryApprovalDialogComponent } from './history-approval-dialog.compon
 
 describe('history approval dialog interruption and queue', () => {
   let dialog: HistoryApprovalDialogComponent;
-  let history: { pendingRequests: ReturnType<typeof signal<PendingHistoryApproval[]>>; dismissRequest: jasmine.Spy };
+  let history: { pendingRequests: ReturnType<typeof signal<PendingHistoryApproval[]>>; approvingRequestId: ReturnType<typeof signal<string | null>>; dismissRequest: jasmine.Spy };
   let locked: ReturnType<typeof signal<boolean>>;
   let activeCall: ReturnType<typeof signal<{ id: string } | null>>;
   const request = (id: string): PendingHistoryApproval => ({
@@ -19,7 +19,7 @@ describe('history approval dialog interruption and queue', () => {
   beforeEach(() => {
     locked = signal(false);
     activeCall = signal<{ id: string } | null>(null);
-    history = { pendingRequests: signal([request('first'), request('second')]), dismissRequest: jasmine.createSpy('dismissRequest') };
+    history = { pendingRequests: signal([request('first'), request('second')]), approvingRequestId: signal<string | null>(null), dismissRequest: jasmine.createSpy('dismissRequest') };
     history.dismissRequest.and.callFake((id: string) => history.pendingRequests.update(items => items.filter(item => item.id !== id)));
     TestBed.configureTestingModule({ providers: [
       { provide: HistoryDeviceSyncService, useValue: history },
@@ -76,5 +76,33 @@ describe('history approval dialog interruption and queue', () => {
     dialog.onDismiss(dismissal('confirm'));
     expect(history.dismissRequest).not.toHaveBeenCalled();
     expect(history.pendingRequests()[0].id).toBe('second');
+  });
+
+  it('does not let header close or an interruption decline a request while secure sharing is in flight', async () => {
+    history.approvingRequestId.set('first');
+    dialog.dismiss();
+    expect(history.dismissRequest).not.toHaveBeenCalled();
+    expect(await dialog.canDismiss()).toBeFalse();
+    locked.set(true);
+    expect(await dialog.canDismiss()).toBeTrue();
+    dialog.onDismiss(dismissal());
+    expect(history.pendingRequests().map(item => item.id)).toEqual(['first', 'second']);
+    locked.set(false);
+    expect(dialog.show()).toBeTrue();
+    expect(history.dismissRequest).not.toHaveBeenCalled();
+  });
+
+  it('preserves the next queued device after an in-flight approval completes and allows a later deliberate close', () => {
+    history.approvingRequestId.set('first');
+    dialog.dismiss();
+    history.pendingRequests.update(items => items.filter(item => item.id !== 'first'));
+    history.approvingRequestId.set(null);
+    dialog.onDismiss(dismissal('confirm'));
+    expect(history.dismissRequest).not.toHaveBeenCalled();
+    expect(dialog.show()).toBeTrue();
+    expect(history.pendingRequests().map(item => item.id)).toEqual(['second']);
+    dialog.dismiss();
+    expect(history.dismissRequest).toHaveBeenCalledOnceWith('second');
+    expect(dialog.show()).toBeFalse();
   });
 });

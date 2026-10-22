@@ -1152,5 +1152,21 @@
   "LAUNCHER.ANDROID_HINT": "O novo ícone pode levar alguns instantes para aparecer na tela inicial.",
   "LAUNCHER.WINDOWS_HINT": "Altera o ícone do atalho e da janela neste computador.",
   "LAUNCHER.ERROR": "Não foi possível confirmar a alteração. Tente novamente para verificar o ícone atual.",
-  "LAUNCHER.UNAVAILABLE": "Atualize o Nivra para personalizar o ícone neste dispositivo."
+  "LAUNCHER.UNAVAILABLE": "Atualize o Nivra para personalizar o ícone neste dispositivo.",
+  "HISTORY_LOADING.CHATS": "Preparando suas conversas",
+  "HISTORY_LOADING.MESSAGES": "Preparando suas mensagens",
+  "HISTORY_LOADING.UPDATING_CHATS": "Atualizando suas conversas",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "Atualizando mensagens",
+  "HISTORY_LOADING.RETRYING": "Tentando novamente…",
+  "HISTORY_LOADING.LOCAL_PENDING": "Conexão atualizada. O histórico local continua pendente.",
+  "HISTORY_LOADING.PENDING_MESSAGES": "Suas mensagens anteriores aparecerão quando o histórico for vinculado.",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "O histórico continua pendente",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "Não foi possível concluir a recuperação. Verifique a conexão e autorize o código no outro dispositivo.",
+  "HISTORY_DEVICE.SYNCING_COPY": "Verificando as chaves e preparando suas mensagens disponíveis.",
+  "HISTORY_DEVICE.WAITING_COPY": "Abra a versão atual do Nivra no outro dispositivo e autorize este código para recuperar seu histórico.",
+  "HISTORY_DEVICE.CODE_LABEL": "Código de vinculação",
+  "HISTORY_DEVICE.CHECKING": "Verificando…",
+  "HISTORY_DEVICE.SHARING": "Compartilhando com segurança…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "Vinculação de dispositivo",
+  "HISTORY_LOADING.OPENING_LOCAL": "Abrindo seu histórico criptografado…"
 }

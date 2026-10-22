@@ -92,6 +92,7 @@ import { ImageCropperComponent } from '../image-cropper/image-cropper.component'
 import { canQuoteMessage, insertComposerEmoji, isReplySwipe, localMessageDay, messageDeliveryState, searchThreadMessages } from './chat-thread.helpers';
 import { ChatExpressionPickerComponent } from '../../shared/chat-expression-picker/chat-expression-picker.component';
 import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.component';
+import { ChatLoadingComponent } from '../../shared/chat-loading.component';
 import { ChatVerificationDraftService } from './chat-verification-draft.service';
 import { ChatIdentityChangeNoticeComponent } from './chat-identity-change-notice.component';
 
@@ -161,6 +162,7 @@ interface MessageTextPart {
     ImageCropperComponent,
     ChatExpressionPickerComponent,
     HistorySyncNoticeComponent,
+    ChatLoadingComponent,
     ChatIdentityChangeNoticeComponent,
   ],
   templateUrl: './chat-detail.page.html',
@@ -323,6 +325,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   ];
   readonly conversation = computed(() => this.chat.selectedConversation());
   readonly messages = computed(() => this.chat.selectedMessages());
+  readonly hasReadableMessages = computed(() => this.messages().some(message => !message.decryptError));
   private voiceRecorder: MediaRecorder | null = null;
   private voiceStream: MediaStream | null = null;
   private voiceChunks: Blob[] = [];

@@ -30,7 +30,8 @@ describe('local history vault recovery', () => {
 
   it('preserves the native database on open failure and retries after the device unlocks', async () => {
     spyOn(Capacitor, 'isNativePlatform').and.returnValue(true);
-    const db = jasmine.createSpyObj<SQLiteDBConnection>('db', ['open', 'execute', 'query']);
+    const db = jasmine.createSpyObj<SQLiteDBConnection>('db', ['open', 'isDBOpen', 'execute', 'query']);
+    db.isDBOpen.and.resolveTo({ result: false });
     db.open.and.rejectWith(new Error('temporarily locked'));
     db.execute.and.resolveTo({ changes: { changes: 0 } });
     db.query.and.resolveTo({ values: [] });
@@ -51,19 +52,22 @@ describe('local history vault recovery', () => {
     expect(service.storageError()).toContain('historial cifrado');
 
     const zoneRun = spyOn(TestBed.inject(NgZone), 'run').and.callThrough();
-    // A successful cloud reload can dismiss this episode. Navigation must not
-    // re-run the failed native open until the user explicitly retries.
+    // A cloud reload cannot prove the encrypted local database recovered.
+    // Navigation shares the final failure until a foreground/user retry.
     service.clearStorageError();
     await expectAsync(service.conversationMessagesPage('account', 'conversation')).toBeRejected();
-    expect(service.storageError()).toBe('');
+    expect(service.storageError()).toContain('historial cifrado');
+    expect(service.storageState()).toBe('error');
     expect(db.open).toHaveBeenCalledTimes(3);
-    service.retryNativeStorage();
+    const recovering = service.retryNativeStorage();
     db.open.and.resolveTo();
+    expect(await recovering).toBeTrue();
     await expectAsync(service.conversationMessagesPage('account', 'conversation')).toBeResolvedTo([]);
     expect(db.open).toHaveBeenCalledTimes(4);
     expect(fallback).not.toHaveBeenCalled();
     expect(zoneRun).toHaveBeenCalled();
     expect(service.storageError()).toBe('');
+    expect(service.storageState()).toBe('ready');
     await service.conversationMessagesPage('account', 'conversation');
     expect(db.open).toHaveBeenCalledTimes(4);
     expect(SQLiteConnection.prototype.clearEncryptionSecret).not.toHaveBeenCalled();

@@ -152,6 +152,11 @@ export class ChatService implements OnDestroy {
   private readonly launchPreviewAt = signal<Record<string, string | null>>({});
   private syncInFlight = false;
   private selectedConversationLoadId = 0;
+  private messageLoadGeneration = 0;
+  private readonly messageLoadCounts = signal<Record<string, number>>({});
+  private historyRecoveryInFlight: Promise<void> | null = null;
+  private historyRecoveryScope: ChatSendContext | null = null;
+  private historyRecoveryRevision = 0;
   private fileSendSequence = 0;
 
   readonly quickReactions = QUICK_REACTIONS;
@@ -178,6 +183,8 @@ export class ChatService implements OnDestroy {
     const id = this.selectedConversationId();
     return id ? uniqueCallSummaries(this.messagesByConversation()[id] ?? []) : [];
   });
+  readonly selectedMessagesLoading = computed(() => this.loading()
+    || Boolean(this.messageLoadCounts()[this.selectedConversationId() ?? '']));
 
   constructor() {
     this.deviceHistory.recovered$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
@@ -356,9 +363,6 @@ export class ChatService implements OnDestroy {
       this.rememberConversationParticipants(conversations);
       this.conversations.set(conversations.sort(this.compareConversations));
       this.ensureSelectedConversation();
-      // A successful remote bootstrap has restored the current chat index, so a
-      // failed local cache open is no longer a blocking condition for this session.
-      this.history.clearStorageError();
       await this.persistChatIndex(conversations, contacts);
       if (!this.isSendContextCurrent(context)) return;
       void this.hydrateConversationProfiles(conversations);
@@ -369,7 +373,7 @@ export class ChatService implements OnDestroy {
       if (decodedCleanly) {
         await this.rememberSyncWatermark(messages);
       }
-      await this.refreshPresenceForConversations();
+      void this.refreshPresenceForConversations().catch(() => undefined);
       this.hasBootstrappedSession = true;
     } finally {
       this.loading.set(false);
@@ -401,11 +405,10 @@ export class ChatService implements OnDestroy {
       const hadDecryptError = !(await this.ingestMessageBatch(sync.messages ?? [], false, context));
       if (!this.isSendContextCurrent(context)) return;
       await this.ackDelivered(sync.messages ?? []);
-      this.history.clearStorageError();
       if (accountKey && sync.syncedAt && !hadDecryptError) {
         await this.history.setSyncWatermark(accountKey, sync.syncedAt).catch(() => undefined);
       }
-      await this.refreshPresenceForConversations();
+      void this.refreshPresenceForConversations().catch(() => undefined);
     } catch {
       // Best-effort foreground sync; realtime/bootstrap remain authoritative.
     } finally {
@@ -429,22 +432,18 @@ export class ChatService implements OnDestroy {
     const loadId = ++this.selectedConversationLoadId;
     this.selectedConversationId.set(conversationId);
     this.persistSelectedConversationId(conversationId);
-    await this.signalr.joinConversation(conversationId);
-    if (loadId !== this.selectedConversationLoadId || this.selectedConversationId() !== conversationId) {
-      return;
-    }
-    await this.loadCachedMessages(conversationId);
-    if (loadId !== this.selectedConversationLoadId || this.selectedConversationId() !== conversationId) {
-      return;
-    }
-    void this.markConversationRead(conversationId);
-    await this.loadMessages(conversationId).catch(() => undefined);
-    if (loadId !== this.selectedConversationLoadId || this.selectedConversationId() !== conversationId) {
-      return;
-    }
-    this.rememberOpenScrollAnchor(conversationId);
-    void this.markConversationRead(conversationId);
-    await this.refreshPresenceForConversations();
+    // HTTP and the local vault remain usable while realtime reconnects.
+    void this.signalr.joinConversation(conversationId).catch(() => undefined);
+    await this.withMessageLoading(conversationId, async () => {
+      await this.loadCachedMessages(conversationId);
+      if (loadId !== this.selectedConversationLoadId || this.selectedConversationId() !== conversationId) return;
+      void this.markConversationRead(conversationId);
+      await this.loadMessages(conversationId).catch(() => undefined);
+      if (loadId !== this.selectedConversationLoadId || this.selectedConversationId() !== conversationId) return;
+      this.rememberOpenScrollAnchor(conversationId);
+      void this.markConversationRead(conversationId);
+    });
+    void this.refreshPresenceForConversations().catch(() => undefined);
   }
 
   initialScrollMessageId(conversationId: string | null | undefined): string | null {
@@ -461,7 +460,23 @@ export class ChatService implements OnDestroy {
   }
 
   async loadMessages(conversationId: string): Promise<void> {
-    await this.loadRemoteMessagesPage(conversationId);
+    await this.withMessageLoading(conversationId, () => this.loadRemoteMessagesPage(conversationId));
+  }
+
+  private async withMessageLoading<T>(conversationId: string, task: () => Promise<T>): Promise<T> {
+    const generation = this.messageLoadGeneration;
+    this.messageLoadCounts.update(counts => ({ ...counts, [conversationId]: (counts[conversationId] ?? 0) + 1 }));
+    try { return await task(); }
+    finally {
+      if (generation === this.messageLoadGeneration) {
+        this.messageLoadCounts.update(counts => {
+          const next = { ...counts };
+          if ((next[conversationId] ?? 0) > 1) next[conversationId] -= 1;
+          else delete next[conversationId];
+          return next;
+        });
+      }
+    }
   }
 
   async loadOlderMessages(conversationId: string): Promise<boolean> {
@@ -1782,16 +1797,60 @@ export class ChatService implements OnDestroy {
     return !decryptError;
   }
 
-  private async retryRecoveredHistory(): Promise<void> {
+  private retryRecoveredHistory(): Promise<void> {
+    if (!this.auth.session()) return Promise.resolve();
     const context = this.captureSendContext();
-    const pending = [...this.pendingHistoryEnvelopes.values()];
-    await this.ingestMessageBatch(pending, false, context);
-    if (!this.isSendContextCurrent(context)) return;
-    await this.bootstrap();
-    if (!this.isSendContextCurrent(context)) return;
-    const selectedId = this.selectedConversationId();
-    if (selectedId) await this.loadMessages(selectedId).catch(() => undefined);
-    if (this.isSendContextCurrent(context) && !this.pendingHistoryEnvelopes.size) this.deviceHistory.markHistoryReadable();
+    this.historyRecoveryRevision += 1;
+    if (this.historyRecoveryInFlight && this.historyRecoveryScope?.userId === context.userId
+      && this.historyRecoveryScope.deviceId === context.deviceId) return this.historyRecoveryInFlight;
+    this.historyRecoveryScope = context;
+    const generation = this.messageLoadGeneration;
+    const current = () => generation === this.messageLoadGeneration && this.isSendContextCurrent(context);
+    const recovery = (async () => {
+      let revision: number;
+      do {
+        revision = this.historyRecoveryRevision;
+        try {
+          // An older bootstrap may still be decoding with its original keys.
+          // Let it settle before replaying every envelope with the imported keyring.
+          await this.bootstrapInFlight?.catch(() => undefined);
+          if (!current()) return;
+          const pending = [...this.pendingHistoryEnvelopes.values()];
+          const affected = new Set(pending.map(message => message.conversationId));
+          for (const [id, messages] of Object.entries(this.messagesByConversation())) {
+            if (messages.some(message => message.decryptError)) affected.add(id);
+          }
+          const selected = this.selectedConversationId();
+          if (selected) affected.add(selected);
+          await this.ingestMessageBatch(pending, false, context);
+          if (!current()) return;
+          await this.bootstrap();
+          if (!current()) return;
+          // Refresh affected pages with bounded concurrency; a key transfer is
+          // not complete merely because the small global bootstrap was readable.
+          const ids = [...affected];
+          for (let index = 0; index < ids.length; index += 2) {
+            await Promise.all(ids.slice(index, index + 2).map(id => this.loadMessages(id)));
+            if (!current()) return;
+          }
+          const unreadable = this.pendingHistoryEnvelopes.size > 0
+            || Object.values(this.messagesByConversation()).some(messages => messages.some(message => message.decryptError));
+          if (revision === this.historyRecoveryRevision) {
+            if (!unreadable) this.deviceHistory.markHistoryReadable();
+            else this.deviceHistory.markHistoryRecoveryIncomplete();
+          }
+        } catch {
+          if (current()) this.deviceHistory.markHistoryRecoveryIncomplete();
+        }
+      } while (current() && revision !== this.historyRecoveryRevision);
+    })().finally(() => {
+      if (this.historyRecoveryInFlight === recovery) {
+        this.historyRecoveryInFlight = null;
+        this.historyRecoveryScope = null;
+      }
+    });
+    this.historyRecoveryInFlight = recovery;
+    return recovery;
   }
 
   private async ingestMessageBatch(messages: MessageResponse[], markDelivered: boolean, context = this.captureSendContext()): Promise<boolean> {
@@ -1951,6 +2010,14 @@ export class ChatService implements OnDestroy {
   }
 
   private upsertMessage(message: ChatMessageVm, options: { persist?: boolean } = {}): void {
+    const existing = this.messagesByConversation()[message.conversationId]?.find(item => item.id === message.id);
+    if (message.decryptError && existing?.payload && !existing.decryptError) {
+      this.pendingHistoryEnvelopes.delete(message.id);
+      return;
+    }
+    // A delayed cache read must not undo a message already supplied by the
+    // network or recovered from an approved key transfer in this session.
+    if (options.persist === false && existing && (!existing.decryptError || message.decryptError)) return;
     const messageWithPendingReactions = this.applyPendingReactions(message);
     this.messagesByConversation.update((state) => {
       const current = state[messageWithPendingReactions.conversationId] ?? [];
@@ -1973,6 +2040,7 @@ export class ChatService implements OnDestroy {
     const unread = (this.messagesByConversation()[conversationId] ?? []).filter((message) => {
       if (
         message.mine ||
+        message.decryptError ||
         this.readReceiptSentIds.has(message.id) ||
         (message.deleteAfterRead && !this.isViewOnceOpened(message))
       ) {
@@ -3813,6 +3881,10 @@ export class ChatService implements OnDestroy {
   }
 
   private resetInMemoryState(): void {
+    this.messageLoadGeneration += 1;
+    this.messageLoadCounts.set({});
+    this.historyRecoveryInFlight = null;
+    this.historyRecoveryScope = null;
     this.pendingHistoryEnvelopes.clear();
     this.launchCacheEpoch += 1;
     if (this.launchCacheSaveTimer !== null) window.clearTimeout(this.launchCacheSaveTimer);
@@ -3849,6 +3921,10 @@ export class ChatService implements OnDestroy {
   }
 
   private pauseForLoggedOutSession(): void {
+    this.messageLoadGeneration += 1;
+    this.messageLoadCounts.set({});
+    this.historyRecoveryInFlight = null;
+    this.historyRecoveryScope = null;
     this.pendingHistoryEnvelopes.clear();
     this.launchCacheEpoch += 1;
     if (this.launchCacheSaveTimer !== null) window.clearTimeout(this.launchCacheSaveTimer);

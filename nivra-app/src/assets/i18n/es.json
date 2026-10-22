@@ -1166,5 +1166,21 @@
   "LAUNCHER.ANDROID_HINT": "El nuevo icono puede tardar unos instantes en aparecer en la pantalla de inicio.",
   "LAUNCHER.WINDOWS_HINT": "Cambia el icono del acceso directo y de la ventana en este equipo.",
   "LAUNCHER.ERROR": "No pudimos confirmar el cambio. Reintenta para comprobar el icono actual.",
-  "LAUNCHER.UNAVAILABLE": "Actualiza Nivra para personalizar el icono en este dispositivo."
+  "LAUNCHER.UNAVAILABLE": "Actualiza Nivra para personalizar el icono en este dispositivo.",
+  "HISTORY_LOADING.CHATS": "Preparando tus conversaciones",
+  "HISTORY_LOADING.MESSAGES": "Preparando tus mensajes",
+  "HISTORY_LOADING.UPDATING_CHATS": "Actualizando tus chats",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "Actualizando mensajes",
+  "HISTORY_LOADING.RETRYING": "Reintentando…",
+  "HISTORY_LOADING.LOCAL_PENDING": "Conexión actualizada. El historial local sigue pendiente.",
+  "HISTORY_LOADING.PENDING_MESSAGES": "Tus mensajes anteriores aparecerán cuando se vincule el historial.",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "El historial sigue pendiente",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "No pudimos completar la recuperación. Revisa la conexión y autoriza el código desde tu otro dispositivo.",
+  "HISTORY_DEVICE.SYNCING_COPY": "Estamos comprobando las llaves y preparando tus mensajes disponibles.",
+  "HISTORY_DEVICE.WAITING_COPY": "Abre la versión actual de Nivra en tu otro dispositivo y autoriza este código para recuperar tu historial.",
+  "HISTORY_DEVICE.CODE_LABEL": "Código de vinculación",
+  "HISTORY_DEVICE.CHECKING": "Comprobando…",
+  "HISTORY_DEVICE.SHARING": "Compartiendo de forma segura…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "Vinculación de dispositivo",
+  "HISTORY_LOADING.OPENING_LOCAL": "Abriendo tu historial cifrado…"
 }

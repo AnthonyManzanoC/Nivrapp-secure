@@ -1152,5 +1152,21 @@
   "LAUNCHER.ANDROID_HINT": "Новый значок может появиться на главном экране через несколько секунд.",
   "LAUNCHER.WINDOWS_HINT": "Меняет значок ярлыка и окна на этом компьютере.",
   "LAUNCHER.ERROR": "Не удалось подтвердить изменение. Повторите попытку, чтобы проверить текущий значок.",
-  "LAUNCHER.UNAVAILABLE": "Обновите Nivra, чтобы настроить значок на этом устройстве."
+  "LAUNCHER.UNAVAILABLE": "Обновите Nivra, чтобы настроить значок на этом устройстве.",
+  "HISTORY_LOADING.CHATS": "Подготавливаем ваши беседы",
+  "HISTORY_LOADING.MESSAGES": "Подготавливаем ваши сообщения",
+  "HISTORY_LOADING.UPDATING_CHATS": "Обновляем ваши чаты",
+  "HISTORY_LOADING.UPDATING_MESSAGES": "Обновляем сообщения",
+  "HISTORY_LOADING.RETRYING": "Повторяем попытку…",
+  "HISTORY_LOADING.LOCAL_PENDING": "Соединение обновлено. Локальная история ещё ожидает восстановления.",
+  "HISTORY_LOADING.PENDING_MESSAGES": "Предыдущие сообщения появятся после привязки истории.",
+  "HISTORY_DEVICE.UNAVAILABLE_TITLE": "История ещё ожидает восстановления",
+  "HISTORY_DEVICE.UNAVAILABLE_COPY": "Не удалось завершить восстановление. Проверьте соединение и подтвердите код на другом устройстве.",
+  "HISTORY_DEVICE.SYNCING_COPY": "Проверяем ключи и подготавливаем доступные сообщения.",
+  "HISTORY_DEVICE.WAITING_COPY": "Откройте актуальную версию Nivra на другом устройстве и подтвердите этот код для восстановления истории.",
+  "HISTORY_DEVICE.CODE_LABEL": "Код привязки",
+  "HISTORY_DEVICE.CHECKING": "Проверяем…",
+  "HISTORY_DEVICE.SHARING": "Передаём безопасно…",
+  "HISTORY_DEVICE.APPROVAL_TAG": "Привязка устройства",
+  "HISTORY_LOADING.OPENING_LOCAL": "Открываем зашифрованную историю…"
 }
