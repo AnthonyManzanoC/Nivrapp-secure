@@ -2,7 +2,13 @@
 Unicode true
 RequestExecutionLevel user
 ManifestDPIAware true
-SetCompressor /SOLID lzma
+; Per-file compression keeps the compiler's temporary data block small on
+; constrained build machines. Both modes install the same verified files.
+!ifdef LOW_DISK_USAGE
+  SetCompressor lzma
+!else
+  SetCompressor /SOLID lzma
+!endif
 SetCompressorDictSize 32
 
 !include "MUI2.nsh"

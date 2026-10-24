@@ -2,6 +2,7 @@ param(
   [string]$PackageDirectory,
   [string]$OutputDirectory,
   [string]$MakensisPath,
+  [switch]$LowDiskUsage,
   [switch]$ValidateOnly
 )
 
@@ -73,6 +74,7 @@ $arguments = @(
   "/DINSTALLED_SIZE_KB=$installedSizeKb",
   (Join-Path $PSScriptRoot 'Nivra.nsi')
 )
+if ($LowDiskUsage) { $arguments = @('/DLOW_DISK_USAGE') + $arguments }
 & $MakensisPath @arguments
 if ($LASTEXITCODE -ne 0) { throw "NSIS failed with exit code $LASTEXITCODE." }
 if (-not (Test-Path -LiteralPath $setupPath -PathType Leaf)) { throw 'NSIS did not produce the expected installer.' }

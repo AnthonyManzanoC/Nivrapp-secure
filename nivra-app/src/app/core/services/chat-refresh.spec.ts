@@ -68,7 +68,7 @@ describe('live chat list refresh', () => {
     for (let index = 0; index < 8; index++) await Promise.resolve();
     expect(service.api.get).toHaveBeenCalledOnceWith('/conversations');
     expect(service.signalr.joinConversation).toHaveBeenCalledWith('chat');
-    expect(service.listUpdating()).toBeTrue();
+    expect(service.listUpdating()).toBeFalse();
     response.next([conversation('new-chat'), conversation()]); response.complete();
     await refresh;
     expect(service.conversations().map((item: any) => item.id)).toContain('new-chat');
@@ -77,7 +77,7 @@ describe('live chat list refresh', () => {
     expect(service.syncError()).toBe('');
   });
 
-  it('releases silhouettes and leaves a retryable status after an actual message update failure', async () => {
+  it('keeps readable chats visible and leaves a retryable status after an actual background failure', async () => {
     const service = harness(); service.syncMissedMessages.and.resolveTo(false);
     await expectAsync(service.resumeSoftSync()).toBeRejected();
     expect(service.listUpdating()).toBeFalse();

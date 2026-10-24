@@ -97,4 +97,16 @@ describe('continuous HTTP message synchronization', () => {
     expect(h.service.ingestMessageBatch).not.toHaveBeenCalled();
     expect(h.service.history.setSyncWatermark).not.toHaveBeenCalled();
   });
+
+  it('continues the network scan in memory when local storage is temporarily unavailable', async () => {
+    const h = harness({ at, id: 'a' });
+    h.service.history.setSyncWatermark.and.rejectWith(new Error('Legacy database is being migrated'));
+    h.service.api.get.and.returnValues(of(page('b', true)), of(page('c')));
+    expect(await h.service.syncMissedMessagesCore(1)).toBeTrue();
+    expect(h.query(1).get('sinceId')).toBe('b');
+    h.service.api.get.and.returnValue(of(page('d')));
+    expect(await h.service.syncMissedMessagesCore(1)).toBeTrue();
+    expect(h.query(2).get('since')).toBe('2026-10-23T11:55:00.000Z');
+    expect(h.service.history.getSyncWatermark).toHaveBeenCalledTimes(1);
+  });
 });

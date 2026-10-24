@@ -207,7 +207,21 @@ export class ChatsPage implements OnDestroy {
   private alive = true;
   storyHighlightOpening = '';
   storiesCollapsed = true;
-  @ViewChild('conversationList', { read: ElementRef }) private conversationList?: ElementRef<HTMLElement>;
+  private conversationList?: ElementRef<HTMLElement>;
+  private nativeStoryTouch: { id: number; x: number; y: number; atTop: boolean; pull: boolean } | null = null;
+  private nativeStoryScrollTop = 0;
+  private nativeStoryReturnArmed = false;
+  private nativeStoryGestureUntil = 0;
+  @ViewChild('conversationList', { read: ElementRef }) private set conversationListRef(ref: ElementRef<HTMLElement> | undefined) {
+    this.detachNativeStoryGesture();
+    this.conversationList = ref;
+    if (!ref || !this.androidStoryGesturesEnabled()) return;
+    const list = ref.nativeElement;
+    list.addEventListener('touchstart', this.onNativeStoryTouchStart, { passive: true, capture: true });
+    list.addEventListener('touchmove', this.onNativeStoryTouchMove, { passive: true, capture: true });
+    list.addEventListener('touchend', this.onNativeStoryTouchEnd, { passive: true, capture: true });
+    list.addEventListener('touchcancel', this.onNativeStoryTouchCancel, { passive: true, capture: true });
+  }
   @ViewChild('chatSearchInput') private chatSearchInput?: IonInput;
 
   constructor() {
@@ -229,6 +243,7 @@ export class ChatsPage implements OnDestroy {
         this.historyPanelOpen = false;
         this.forgetConversationFocus();
         this.storiesCollapsed = true;
+        this.resetNativeStoryGesture();
         this.showRecentSearches = false;
         this.recentSearches = this.loadRecent();
         this.selectedFolder = 'all';
@@ -288,6 +303,7 @@ export class ChatsPage implements OnDestroy {
 
   ngOnDestroy(): void {
     this.alive = false;
+    this.detachNativeStoryGesture();
     this.searchSeq += 1;
     this.accountScopeEffect.destroy();
     this.listLoadingFocusEffect.destroy();
@@ -339,7 +355,8 @@ export class ChatsPage implements OnDestroy {
   }
 
   showConversationSkeleton(): boolean {
-    return this.refreshing || this.chat.loading() || this.chat.listUpdating() || this.localHistory.storageBusy();
+    return this.refreshing || this.chat.listUpdating()
+      || (!this.chat.conversations().length && (this.chat.loading() || this.localHistory.storageBusy()));
   }
 
   showHistoryStatus(): boolean {
@@ -366,6 +383,10 @@ export class ChatsPage implements OnDestroy {
 
   async onPullRefresh(event: CustomEvent<{ complete: () => Promise<void> | void }>): Promise<void> {
     try {
+      if (this.androidStoryGesturesEnabled()) {
+        this.expandStories();
+        return;
+      }
       await this.refresh();
     } finally {
       await event.detail.complete();
@@ -557,6 +578,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   ionViewWillLeave(): void {
+    this.resetNativeStoryGesture();
     this.showRecentSearches = false;
     this.recentCollapsed = true;
     this.chatMenuOpen = false;
@@ -711,13 +733,92 @@ export class ChatsPage implements OnDestroy {
 
   onChatListScroll(event: Event): void {
     const list = event.target as HTMLElement;
+    if (this.androidStoryGesturesEnabled()) {
+      const previousTop = this.nativeStoryScrollTop;
+      this.nativeStoryScrollTop = list.scrollTop;
+      if (this.showConversationSkeleton()) {
+        this.resetNativeStoryGesture();
+      } else if (Date.now() <= this.nativeStoryGestureUntil) {
+        // Keep the same user gesture armed while native momentum is still
+        // emitting scroll events; a later programmatic return stays inert.
+        this.nativeStoryGestureUntil = Date.now() + 1_600;
+        if (list.scrollTop > 8) this.nativeStoryReturnArmed = true;
+        if (list.scrollTop <= 8 && previousTop > 8 && this.nativeStoryReturnArmed) {
+          this.resetNativeStoryGesture();
+          this.expandStories();
+          return;
+        }
+      }
+    }
     if (list.scrollTop > 80 && list.scrollHeight - list.clientHeight > 180) {
-      // Returning to the top must not expand stories and push the list away.
+      // Keep long lists compact while reading rows away from their beginning.
       this.storiesCollapsed = true;
     }
   }
 
+  androidStoryGesturesEnabled(): boolean { return this.nativeAndroid; }
+
+  readonly onNativeStoryTouchStart = (event: TouchEvent): void => {
+    this.resetNativeStoryGesture();
+    if (!this.androidStoryGesturesEnabled() || this.showConversationSkeleton() || event.touches.length !== 1) return;
+    const list = event.currentTarget as HTMLElement;
+    if (!list || this.nativeStorySlideIsActive(event)) return;
+    const touch = event.touches[0];
+    this.nativeStoryScrollTop = list.scrollTop;
+    if (list.scrollTop > 8) this.nativeStoryGestureUntil = Date.now() + 1_600;
+    this.nativeStoryTouch = { id: touch.identifier, x: touch.clientX, y: touch.clientY, atTop: list.scrollTop <= 8, pull: false };
+  };
+
+  readonly onNativeStoryTouchMove = (event: TouchEvent): void => {
+    const gesture = this.nativeStoryTouch;
+    if (!gesture) return;
+    if (event.touches.length !== 1 || this.showConversationSkeleton() || this.nativeStorySlideIsActive(event)) { this.resetNativeStoryGesture(); return; }
+    const touch = Array.from(event.touches).find(item => item.identifier === gesture.id);
+    const list = event.currentTarget as HTMLElement;
+    if (!touch || !list) { this.resetNativeStoryGesture(); return; }
+    const dx = Math.abs(touch.clientX - gesture.x);
+    const dy = touch.clientY - gesture.y;
+    // Passive listeners observe a vertical gesture without claiming Ionic's
+    // horizontal sliding gesture or preventing normal native scrolling.
+    if (dx > 20 && dx > Math.abs(dy) * .8) { this.resetNativeStoryGesture(); return; }
+    if (Math.abs(dy) > 12 && Math.abs(dy) > dx * 1.4) this.nativeStoryGestureUntil = Date.now() + 1_600;
+    gesture.pull = gesture.atTop && dy >= 56 && dx <= 20 && list.scrollTop <= 8;
+  };
+
+  readonly onNativeStoryTouchEnd = (event: TouchEvent): void => {
+    const gesture = this.nativeStoryTouch;
+    const list = event.currentTarget as HTMLElement;
+    this.nativeStoryTouch = null;
+    if (gesture?.pull && list?.scrollTop <= 8 && !this.showConversationSkeleton() && !this.nativeStorySlideIsActive(event)) {
+      this.resetNativeStoryGesture();
+      this.expandStories();
+    }
+  };
+
+  readonly onNativeStoryTouchCancel = (): void => { this.resetNativeStoryGesture(); };
+
+  private nativeStorySlideIsActive(event: TouchEvent): boolean {
+    const sliding = event.target instanceof Element ? event.target.closest('ion-item-sliding') : null;
+    return Boolean(sliding?.classList.contains('item-sliding-active-slide'));
+  }
+
+  private resetNativeStoryGesture(): void {
+    this.nativeStoryTouch = null;
+    this.nativeStoryReturnArmed = false;
+    this.nativeStoryGestureUntil = 0;
+  }
+
+  private detachNativeStoryGesture(): void {
+    const list = this.conversationList?.nativeElement;
+    list?.removeEventListener('touchstart', this.onNativeStoryTouchStart, true);
+    list?.removeEventListener('touchmove', this.onNativeStoryTouchMove, true);
+    list?.removeEventListener('touchend', this.onNativeStoryTouchEnd, true);
+    list?.removeEventListener('touchcancel', this.onNativeStoryTouchCancel, true);
+    this.resetNativeStoryGesture();
+  }
+
   expandStories(): void {
+    this.resetNativeStoryGesture();
     this.storiesCollapsed = false;
     this.conversationList?.nativeElement.scrollTo({ top: 0, behavior: 'instant' });
   }
@@ -1044,6 +1145,7 @@ export class ChatsPage implements OnDestroy {
   setFolder(value: string | number | undefined): void {
     if (value === 'all' || value === 'pinned' || value === 'unread' || value === 'archived') {
       this.selectedFolder = value;
+      this.resetNativeStoryGesture();
       this.conversationList?.nativeElement.scrollTo({ top: 0, behavior: 'instant' });
     }
   }

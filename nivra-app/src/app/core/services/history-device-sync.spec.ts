@@ -2,7 +2,7 @@ import { signal } from '@angular/core';
 import { fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
 import { of, Subject, throwError } from 'rxjs';
 import { CryptoService } from './crypto.service';
-import { HistoryDeviceSyncService } from './history-device-sync.service';
+import { HistoryDeviceSyncService, HistoryRecoveryEvidence } from './history-device-sync.service';
 
 function cryptoHarness(protector?: () => string | null): { service: any; records: Map<string, any> } {
   const records = new Map<string, any>();
@@ -34,6 +34,7 @@ describe('approved encrypted history recovery', () => {
       approvalError: signal(''), approvalEpoch: signal(1), state: signal('idle'),
       pumpPromise: null, pumpAgain: false, replayRequested: false, recoveryIncomplete: false,
       recoveryRetryAt: 0, recoveryRetryAttempts: 0,
+      requestEvidence: null, evidenceCheck: null,
       checkingState: checking, checking: checking.asReadonly(),
       recovered$: { next: jasmine.createSpy('recovered'), complete: () => undefined },
     });
@@ -42,6 +43,10 @@ describe('approved encrypted history recovery', () => {
   }
   afterEach(() => { running.splice(0).forEach(service => service.ngOnDestroy()); });
   const request = (key: JsonWebKey) => ({ id: 'request', userId: 'alice', targetDeviceId: 'target', targetIdentityKey: JSON.stringify(key), targetDeviceName: 'New browser', expiresAt: new Date(Date.now() + 60_000).toISOString() });
+  const evidence = (publicKey: JsonWebKey, deviceId = 'target'): HistoryRecoveryEvidence => ({ userId: 'alice', deviceId, reason: 'undecryptable-ciphertext' as const,
+    message: { id: 'old-message', conversationId: 'chat', recipients: [{ userId: 'alice', deviceId: 'old-device',
+      header: JSON.stringify({ v: 1, alg: 'ECDH-P256-A256GCM', senderPublicKey: publicKey, iv: btoa(String.fromCharCode(...new Uint8Array(12))) }),
+      ciphertext: btoa(String.fromCharCode(...new Uint8Array(16))) }] } });
   async function approvedTarget() {
     const source = cryptoHarness(); const target = cryptoHarness();
     const sourceKey = await source.service.createDeviceKeys(); const targetKey = await target.service.createDeviceKeys();
@@ -56,6 +61,7 @@ describe('approved encrypted history recovery', () => {
     const response = { ...sealed, sourceDeviceId: 'source', sourceIdentityKey: JSON.stringify(sourceKey.publicJwk) };
     const status = { ...transfer, responses: [response] };
     targetSync.service.requested = true; targetSync.service.requestedAt = Date.now();
+    targetSync.service.requestEvidence = evidence(sourceKey.publicJwk);
     targetSync.service.requestId = transfer.id; targetSync.service.requestExpiresAt = Date.parse(transfer.expiresAt);
     targetSync.api.get.and.callFake((url: string) => of(url.endsWith('/pending') ? [] : status));
     return { source, target, sourceSync, targetSync, status, response, transfer };
@@ -70,6 +76,128 @@ describe('approved encrypted history recovery', () => {
     expect(service.pendingRequests().length).toBe(1);
     expect(service.pendingRequests()[0].fingerprint.replaceAll(' ', '').length).toBe(24);
     expect(exported).not.toHaveBeenCalled(); expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('keeps an empty first account idle on connection, retry and an unrelated local-storage failure', async () => {
+    const { service, api, auth } = syncHarness(cryptoHarness().service, 'target');
+    const identity = spyOn(auth, 'ensureDeviceIdentity').and.rejectWith(new Error('Local provider unavailable'));
+    await service.requestHistory(undefined);
+    service.retry(); service.markHistoryRecoveryIncomplete({ retryable: true });
+    await service.pump();
+    expect(api.post).not.toHaveBeenCalled(); expect(identity).not.toHaveBeenCalled();
+    expect(service.requested).toBeFalse(); expect(service.state()).toBe('idle');
+    expect(service.targetFingerprint()).toBe('');
+  });
+
+  it('rejects absent, foreign, expired, system and malformed ciphertext as recovery evidence', async () => {
+    const local = cryptoHarness(); const keys = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', keys, { userId: 'alice' });
+    const { service, api } = syncHarness(local.service, 'target');
+    const valid = evidence(keys.publicJwk);
+    const variants = [
+      { ...valid, userId: 'other-account' }, { ...valid, deviceId: 'other-device' },
+      { ...valid, message: { ...valid.message, recipients: [] } },
+      { ...valid, message: { ...valid.message, expiresAt: new Date(0).toISOString() } },
+      { ...valid, message: { ...valid.message, encryptedPolicy: 'system:call' } },
+      { ...valid, message: { ...valid.message, recipients: [{ ...valid.message.recipients[0], userId: 'other-account' }] } },
+      { ...valid, message: { ...valid.message, recipients: [{ ...valid.message.recipients[0], ciphertext: '' }] } },
+      { ...valid, message: { ...valid.message, recipients: [{ ...valid.message.recipients[0], header: '{}' }] } },
+    ];
+    for (const invalid of variants) await service.requestHistory(invalid);
+    expect(api.post).not.toHaveBeenCalled(); expect(service.state()).toBe('idle');
+  });
+
+  it('does not generate a key or request history when the account has no persisted device identity', async () => {
+    const local = cryptoHarness(); const sender = await local.service.createDeviceKeys();
+    const { service, api, auth } = syncHarness(local.service, 'target');
+    const created = spyOn(local.service, 'createDeviceKeys').and.callThrough();
+    const identity = spyOn(auth, 'ensureDeviceIdentity').and.callThrough();
+    await service.requestHistory(evidence(sender.publicJwk));
+    expect(created).not.toHaveBeenCalled(); expect(identity).not.toHaveBeenCalled();
+    expect(api.post).not.toHaveBeenCalled(); expect(service.state()).toBe('idle');
+  });
+
+  it('does not request another device history because the habitual native key store cannot open', async () => {
+    let secret: string | null = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const local = cryptoHarness(() => secret); const keys = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'source', keys, { userId: 'alice' });
+    const before = JSON.stringify([...local.records.values()]); secret = null;
+    const { service, api } = syncHarness(local.service);
+    const created = spyOn(local.service, 'createDeviceKeys').and.callThrough();
+    await service.requestHistory(evidence(keys.publicJwk, 'source'));
+    service.retry();
+    expect(api.post).not.toHaveBeenCalled(); expect(created).not.toHaveBeenCalled();
+    expect(service.state()).toBe('idle'); expect(JSON.stringify([...local.records.values()])).toBe(before);
+  });
+
+  it('keeps an unreadable persisted historical key separate from a genuinely absent historical key', async () => {
+    let secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const local = cryptoHarness(() => secret); const historical = await local.service.createDeviceKeys();
+    await local.service.importHistoricalDeviceKeys('alice', 'alice', [historical]);
+    secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const current = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'source', current, { userId: 'alice' });
+    expect((await local.service.deviceKeyMaterialsForUser('alice', 'alice')).length).toBe(1);
+    await expectAsync(local.service.deviceKeyMaterialsForUser('alice', 'alice', { requireReadable: true })).toBeRejectedWithError(/llaves guardadas/);
+    const { service, api } = syncHarness(local.service);
+    await service.requestHistory(evidence(historical.publicJwk, 'source'));
+    expect(api.post).not.toHaveBeenCalled(); expect(service.state()).toBe('idle');
+  });
+
+  it('does not let an unreadable key belonging to another account block this account or start a transfer', async () => {
+    let secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const local = cryptoHarness(() => secret); const other = await local.service.createDeviceKeys();
+    await local.service.importHistoricalDeviceKeys('other-account', 'old.alias', [other]);
+    secret = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+    const current = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'source', current, { userId: 'alice' });
+    const own = await local.service.deviceKeyMaterialsForUser('alice', 'alice', { requireReadable: true });
+    expect(own.length).toBe(1); expect(own[0].userId).toBe('alice');
+    const { service, api } = syncHarness(local.service); await service.pump();
+    expect(api.post).not.toHaveBeenCalled(); expect(service.state()).toBe('idle');
+  });
+
+  it('automatically requests history for a real unreadable own-account message after a fresh device saved its identity', async () => {
+    const local = cryptoHarness(); const source = cryptoHarness();
+    const fresh = await local.service.createDeviceKeys(); const old = await source.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', fresh, { userId: 'alice' });
+    await source.service.saveDeviceKeys('alice', 'source', old, { userId: 'alice' });
+    const sealed = await source.service.encryptForPublicKey(await source.service.currentKeyMaterial('alice', 'source'), old.publicJwk, { text: 'Private existing history' });
+    const { service, api } = syncHarness(local.service, 'target');
+    const proof = evidence(old.publicJwk); proof.message.recipients[0] = { ...proof.message.recipients[0], ...sealed };
+    const transfer = request(fresh.publicJwk);
+    api.post.and.returnValue(of(transfer)); api.get.and.callFake((url: string) => of(url.endsWith('/pending') ? [] : { ...transfer, responses: [] }));
+    await expectAsync(local.service.decryptEnvelope(await local.service.currentKeyMaterial('alice', 'target'), sealed.header, sealed.ciphertext)).toBeRejected();
+    await service.requestHistory(proof); await service.pumpPromise;
+    expect(api.post).toHaveBeenCalledOnceWith('/devices/history-transfer/', {});
+    expect(service.state()).toBe('waiting'); expect(service.targetFingerprint()).toBeTruthy();
+  });
+
+  it('accepts supported group ciphertext evidence and keeps the primary Web account able to authorize an APK', async () => {
+    const source = cryptoHarness(); const destination = cryptoHarness();
+    const web = await source.service.createDeviceKeys(); const apk = await destination.service.createDeviceKeys();
+    await source.service.saveDeviceKeys('alice', 'source', web, { userId: 'alice' });
+    await destination.service.saveDeviceKeys('alice', 'target', apk, { userId: 'alice' });
+    const sourceSync = syncHarness(source.service); const targetSync = syncHarness(destination.service, 'target');
+    const grouped = (await source.service.encryptGroupPayloadForRecipients(await source.service.currentKeyMaterial('alice', 'source'),
+      [{ userId: 'alice', deviceId: 'source', publicJwk: web.publicJwk }], { type: 'text', text: 'Created first on Web' }))[0];
+    const proof = evidence(web.publicJwk); proof.message.recipients[0] = grouped;
+    const transfer = request(apk.publicJwk); let response: any;
+    targetSync.api.post.and.returnValue(of(transfer));
+    targetSync.api.get.and.callFake((url: string) => of(url.endsWith('/pending') ? [] : { ...transfer, responses: response ? [response] : [] }));
+    sourceSync.api.get.and.returnValue(of([transfer]));
+    sourceSync.api.post.and.callFake((_url: string, sealed: any) => {
+      response = { ...sealed, sourceDeviceId: 'source', sourceIdentityKey: JSON.stringify(web.publicJwk) }; return of(undefined);
+    });
+    await targetSync.service.requestHistory(proof); await targetSync.service.pumpPromise;
+    await sourceSync.service.pump();
+    expect(sourceSync.service.state()).toBe('idle'); expect(sourceSync.service.pendingRequests().length).toBe(1);
+    expect(sourceSync.api.post).not.toHaveBeenCalled();
+    await sourceSync.service.approveRequest(transfer.id); await targetSync.service.pump();
+    expect(sourceSync.api.post).toHaveBeenCalledTimes(1); expect(sourceSync.service.state()).toBe('idle');
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    const imported = (await destination.service.exportDeviceKeyMaterialsForUser('alice', 'alice')).find((key: any) => destination.service.samePublicKey(key.publicJwk, web.publicJwk));
+    expect((await destination.service.decryptEnvelope(imported, grouped.header, grouped.ciphertext)).text).toBe('Created first on Web');
   });
 
   it('rejects a target public key substituted after local approval was displayed', async () => {
@@ -377,6 +505,7 @@ describe('approved encrypted history recovery', () => {
   it('automatically retries transient refresh failure with approved keys only three times', fakeAsync(() => {
     const { service } = syncHarness(cryptoHarness().service, 'target');
     service.requested = true; service.requestedAt = Date.now();
+    service.requestEvidence = evidence({});
     service.importedResponses.add('request:source');
     service.crypto.currentKeyMaterial = async () => { throw new Error('Transport unavailable'); };
     service.recovered$.next.and.callFake(() => service.markHistoryRecoveryIncomplete({ retryable: true }));
@@ -393,6 +522,7 @@ describe('approved encrypted history recovery', () => {
   it('does not automatically repeat recovery when approved sources still lack a historical key', fakeAsync(() => {
     const { service } = syncHarness(cryptoHarness().service, 'target');
     service.requested = true; service.requestedAt = Date.now();
+    service.requestEvidence = evidence({});
     service.importedResponses.add('request:source');
     service.crypto.currentKeyMaterial = async () => { throw new Error('Transport unavailable'); };
     service.markHistoryRecoveryIncomplete();
@@ -457,9 +587,10 @@ describe('approved encrypted history recovery', () => {
     const transfer = request(key.publicJwk); const pending = new Subject<any[]>();
     api.post.and.returnValue(of(transfer));
     api.get.and.callFake((url: string) => url.endsWith('/pending') ? pending : of({ ...transfer, responses: [] }));
-    service.requestHistory();
+    const proof = evidence(key.publicJwk);
+    await service.requestHistory(proof);
     const poll = service.pumpPromise;
-    for (let index = 0; index < 100; index++) service.requestHistory();
+    for (let index = 0; index < 100; index++) void service.requestHistory(proof);
     expect(api.get).toHaveBeenCalledTimes(1);
     pending.next([]); pending.complete(); await poll;
     expect(api.post).toHaveBeenCalledTimes(1);

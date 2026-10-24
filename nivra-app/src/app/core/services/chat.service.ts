@@ -164,6 +164,7 @@ export class ChatService implements OnDestroy {
   private messageSyncInFlight: Promise<boolean> | null = null;
   private messageSyncScope = '';
   private syncCatchupPending = false;
+  private messageSyncCursors = new Map<string, MessageSyncCursor>();
   private hasBootstrappedSession = false;
   private launchCacheSaveTimer: number | null = null;
   private launchCacheSaveTask: Promise<void> = Promise.resolve();
@@ -426,7 +427,7 @@ export class ChatService implements OnDestroy {
       return;
     }
     const userId = this.auth.session()?.user.id;
-    await this.withListUpdating(async () => {
+    try {
       await this.auth.ensureDeviceIdentity();
       if (this.auth.session()?.user.id !== userId) return;
       const context = this.captureSendContext();
@@ -440,10 +441,10 @@ export class ChatService implements OnDestroy {
       this.syncError.set('');
       this.lastSyncedAt.set(Date.now());
       void this.refreshPresenceForConversations().catch(() => undefined);
-    }).catch(error => {
+    } catch (error) {
       if (this.auth.session()?.user.id === userId) this.syncError.set('refresh');
       throw error;
-    });
+    }
   }
 
   private async refreshRemoteConversationIndex(context: ChatSendContext): Promise<void> {
@@ -477,7 +478,8 @@ export class ChatService implements OnDestroy {
     if (!this.auth.isAuthenticated()) {
       return;
     }
-    this.loading.set(true);
+    // A background reconciliation must not cover already available chats.
+    this.loading.set(!this.hasLoadedChatState());
     const generation = this.messageLoadGeneration;
     let context: ChatSendContext | null = null;
     const current = () => generation === this.messageLoadGeneration && (!context || this.isSendContextCurrent(context));
@@ -559,7 +561,10 @@ export class ChatService implements OnDestroy {
       // This cursor tracks only a contiguous HTTP scan. A newer realtime event
       // or a latest-page bootstrap must never skip the offline gap before it.
       const cursorKey = JSON.stringify(['message-sync-v2', accountKey, context.deviceId]);
-      const saved = accountKey ? await this.history.getSyncWatermark(cursorKey).catch(() => null) : null;
+      const memoryCursors = this.messageSyncCursors ??= new Map<string, MessageSyncCursor>();
+      const memoryCursor = memoryCursors.get(cursorKey);
+      const saved = memoryCursor ? JSON.stringify(memoryCursor)
+        : accountKey ? await this.history.getSyncWatermark(cursorKey).catch(() => null) : null;
       if (!this.isSendContextCurrent(context)) return false;
       let cursor: MessageSyncCursor = { at: '1970-01-01T00:00:00.000Z', id: '' };
       let completedCursor: MessageSyncCursor | null = null;
@@ -600,7 +605,11 @@ export class ChatService implements OnDestroy {
           cursor = Date.parse(cursor.at) < Date.parse(completedCursor.at) || cursor.id < completedCursor.id
             ? completedCursor : cursor;
         }
-        if (accountKey) await this.history.setSyncWatermark(cursorKey, JSON.stringify(cursor));
+        memoryCursors.set(cursorKey, cursor);
+        // Local recovery and network delivery are separate operations. Keep
+        // an in-memory checkpoint while a retained native database is being
+        // migrated; a local write failure is not a failed HTTP update.
+        if (accountKey) await this.history.setSyncWatermark(cursorKey, JSON.stringify(cursor)).catch(() => undefined);
         if (!this.isSendContextCurrent(context)) return false;
         this.syncCatchupPending = sync.hasMore;
         if (!sync.hasMore) break;
@@ -1933,7 +1942,8 @@ export class ChatService implements OnDestroy {
     if (this.discardHistoryEnvelope(message, historyGeneration)) return true;
     if (decryptError) {
       this.pendingHistoryEnvelopes.set(message.id, message);
-      this.deviceHistory.requestHistory();
+      void Promise.resolve(this.deviceHistory.requestHistory({ userId: current.user.id, deviceId: current.device.id,
+        message, reason: 'undecryptable-ciphertext' })).catch(() => undefined);
     } else {
       this.pendingHistoryEnvelopes.delete(message.id);
     }
@@ -2167,7 +2177,17 @@ export class ChatService implements OnDestroy {
     deviceId: string,
     recipients: RecipientCipherRequest[],
   ): Promise<ChatPayload | null> {
-    const keys = await this.localDecryptKeyCandidates(userId, alias, deviceId);
+    const own = await this.crypto.currentKeyMaterial(alias, deviceId);
+    // The habitual device can read its current envelopes immediately. Do not
+    // scan every historical key, or depend on that scan, for normal delivery.
+    if (own) {
+      for (const recipient of recipients) {
+        if (!recipient?.ciphertext) continue;
+        try { return await this.crypto.decryptEnvelope<ChatPayload>(own, recipient.header, recipient.ciphertext); }
+        catch { /* Historical ciphertext may need an older retained key. */ }
+      }
+    }
+    const keys = await this.localDecryptKeyCandidates(userId, alias, deviceId, own);
     for (const recipient of recipients) {
       if (!recipient?.ciphertext) {
         continue;
@@ -2183,13 +2203,13 @@ export class ChatService implements OnDestroy {
     return null;
   }
 
-  private async localDecryptKeyCandidates(userId: string, alias: string, deviceId: string): Promise<StoredDeviceKeys[]> {
+  private async localDecryptKeyCandidates(userId: string, alias: string, deviceId: string, own?: StoredDeviceKeys): Promise<StoredDeviceKeys[]> {
     const candidates: StoredDeviceKeys[] = [];
-    const current = await this.crypto.currentKeyMaterial(alias, deviceId).catch(() => null);
+    const current = own ?? await this.crypto.currentKeyMaterial(alias, deviceId);
     if (current) {
       candidates.push(current);
     }
-    candidates.push(...await this.crypto.deviceKeyMaterialsForUser(userId, alias).catch(() => []));
+    candidates.push(...await this.crypto.deviceKeyMaterialsForUser(userId, alias, { requireReadable: true }));
 
     const seen = new Set<string>();
     return candidates.filter((key) => {
@@ -4260,6 +4280,7 @@ export class ChatService implements OnDestroy {
     this.resumeSyncInFlight = null;
     this.messageSyncInFlight = null;
     this.syncCatchupPending = false;
+    this.messageSyncCursors?.clear();
     this.bootstrapInFlight = null;
     this.listUpdateCount = 0;
     this.listUpdating.set(false);

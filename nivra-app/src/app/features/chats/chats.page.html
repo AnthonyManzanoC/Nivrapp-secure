@@ -207,7 +207,7 @@
           }
 
           <div class="conversation-list-stage" [class.is-loading]="showConversationSkeleton()" [attr.aria-busy]="conversationIndexLoading()">
-          @if (!detailActive && !showRecentSearches) {
+          @if (!androidStoryGesturesEnabled() && !detailActive && !showRecentSearches) {
             <ion-refresher slot="fixed" mode="ios" [disabled]="refreshing" (ionRefresh)="onPullRefresh($event)">
               <ion-refresher-content pullingIcon="chevron-down-outline" refreshingSpinner="crescent"></ion-refresher-content>
             </ion-refresher>

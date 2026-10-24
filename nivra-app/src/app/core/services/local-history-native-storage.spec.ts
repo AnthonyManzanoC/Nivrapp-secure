@@ -20,7 +20,7 @@ describe('native encrypted history startup recovery', () => {
   let service: LocalHistoryService;
   let internals: NativeHistoryInternals;
   let db: jasmine.SpyObj<SQLiteDBConnection>;
-  let vault: { getOrCreateSecret: jasmine.Spy; requiresProtection: () => boolean; clearSecret: jasmine.Spy; retryLocalHistoryInitialization: jasmine.Spy; inspectLocalHistoryStorage: jasmine.Spy };
+  let vault: { getOrCreateSecret: jasmine.Spy; requiresProtection: () => boolean; clearSecret: jasmine.Spy; retryLocalHistoryInitialization: jasmine.Spy; inspectLocalHistoryStorage: jasmine.Spy; migrateLegacyHistoryStorage: jasmine.Spy };
   let reconcile: jasmine.Spy;
   let checkSecret: jasmine.Spy;
   let create: jasmine.Spy;
@@ -33,7 +33,8 @@ describe('native encrypted history startup recovery', () => {
     vault = { getOrCreateSecret: jasmine.createSpy().and.resolveTo('retained-native-secret'),
       requiresProtection: () => true, clearSecret: jasmine.createSpy().and.resolveTo(),
       retryLocalHistoryInitialization: jasmine.createSpy().and.resolveTo(true),
-      inspectLocalHistoryStorage: jasmine.createSpy().and.resolveTo(null) };
+      inspectLocalHistoryStorage: jasmine.createSpy().and.resolveTo(null),
+      migrateLegacyHistoryStorage: jasmine.createSpy().and.resolveTo() };
     TestBed.configureTestingModule({ providers: [
       LocalHistoryService, { provide: NativeSecureVaultService, useValue: vault },
     ] });
@@ -55,6 +56,7 @@ describe('native encrypted history startup recovery', () => {
     spyOn(SQLiteConnection.prototype, 'setEncryptionSecret').and.resolveTo();
     clearSecret = spyOn(SQLiteConnection.prototype, 'clearEncryptionSecret').and.resolveTo();
     spyOn(SQLiteConnection.prototype, 'closeConnection').and.resolveTo();
+    spyOn(SQLiteConnection.prototype, 'closeAllConnections').and.resolveTo();
     create = spyOn(SQLiteConnection.prototype, 'createConnection').and.resolveTo(db);
   });
 
@@ -226,15 +228,70 @@ describe('native encrypted history startup recovery', () => {
     expect(service.storageDiagnostic()?.code).toBe('NIVRA_SECURE_SECRET_MISSING');
   });
 
-  it('distinguishes legacy plaintext history without attempting conversion or replacing the database', async () => {
+  it('automatically migrates legacy plaintext with the retained key and reopens it without replacing any secrets', async () => {
     checkSecret.and.resolveTo({ result: false });
+    let migrated = false;
+    db.open.and.callFake(async () => { if (!migrated) throw new Error('file is not a database'); });
+    db.query.and.callFake(async (sql: string) => ({ values: sql.startsWith('SELECT name')
+      ? ['local_messages', 'local_conversations', 'local_vault_keys'].map(name => ({ name })) : [] }));
+    vault.inspectLocalHistoryStorage.and.callFake(async () => ({ databaseExists: true,
+      databaseFormat: migrated ? 'encrypted-or-unknown' : 'sqlite' }));
+    vault.migrateLegacyHistoryStorage.and.callFake(async () => { migrated = true; });
+    expect(await service.retryNativeStorage()).toBeTrue();
+    expect(vault.migrateLegacyHistoryStorage).toHaveBeenCalledTimes(1);
+    expect(SQLiteConnection.prototype.closeAllConnections).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(2); // Both are RO validation, including the retained key after migration.
+    expect(db.execute).toHaveBeenCalledTimes(1);
+    expect(service.storageState()).toBe('ready');
+    expect(service.storageDiagnostic()).toBeNull();
+    expect(vault.getOrCreateSecret.calls.allArgs().every(args => args[1]?.create === false)).toBeTrue();
+    expect(clearSecret).not.toHaveBeenCalled();
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when safe migration cannot verify contents, without leaking native details or looping', async () => {
     db.open.and.rejectWith(new Error('file is not a database'));
     vault.inspectLocalHistoryStorage.and.resolveTo({ databaseExists: true, databaseFormat: 'sqlite' });
+    vault.migrateLegacyHistoryStorage.and.rejectWith({ code: 'NIVRA_HISTORY_MIGRATION_CONTENT_MISMATCH', message: 'PRIVATE_ROWS_AND_KEY' });
     expect(await service.retryNativeStorage()).toBeFalse();
-    expect(service.storageDiagnostic()).toEqual({ backend: 'sqlite', stage: 'retained-key', code: 'LEGACY_UNENCRYPTED_HISTORY', attempt: 1, retryable: false });
-    expect(create).toHaveBeenCalledOnceWith('nivra_local_vault', true, 'secret', 1, true);
-    expect(db.execute).not.toHaveBeenCalled();
+    expect(service.storageDiagnostic()).toEqual({ backend: 'sqlite', stage: 'legacy-migration',
+      code: 'NIVRA_HISTORY_MIGRATION_CONTENT_MISMATCH', attempt: 1, retryable: false });
+    expect(vault.migrateLegacyHistoryStorage).toHaveBeenCalledTimes(1);
+    expect(service.storageError()).not.toContain('PRIVATE_ROWS_AND_KEY');
     expect(clearSecret).not.toHaveBeenCalled();
+    expect(vault.clearSecret).not.toHaveBeenCalled();
+    expect(db.execute).not.toHaveBeenCalled();
+  });
+
+  it('finishes a previously published migration before opening the database for normal writes', async () => {
+    const order: string[] = [];
+    vault.inspectLocalHistoryStorage.and.resolveTo({ databaseExists: true,
+      databaseFormat: 'encrypted-or-unknown', migrationPending: true });
+    vault.migrateLegacyHistoryStorage.and.callFake(async () => { order.push('verified-cleanup'); });
+    db.open.and.callFake(async () => { order.push('open'); });
+    db.execute.and.callFake(async () => { order.push('schema'); return { changes: { changes: 0 } }; });
+    expect(await service.retryNativeStorage()).toBeTrue();
+    expect(order).toEqual(['verified-cleanup', 'open', 'schema']);
+    expect(vault.migrateLegacyHistoryStorage).toHaveBeenCalledTimes(1);
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+  });
+
+  it('does not attempt conversion when a retained key cannot read an encrypted database', async () => {
+    db.open.and.rejectWith(new Error('file is not a database'));
+    vault.inspectLocalHistoryStorage.and.resolveTo({ databaseExists: true, databaseFormat: 'encrypted-or-unknown' });
+    expect(await service.retryNativeStorage()).toBeFalse();
+    expect(vault.migrateLegacyHistoryStorage).not.toHaveBeenCalled();
+    expect(service.storageDiagnostic()?.code).toBe('DATABASE_KEY_UNREADABLE');
+  });
+
+  it('preserves the pending migration copies when the existing retained secret is unavailable', async () => {
+    vault.inspectLocalHistoryStorage.and.resolveTo({ databaseExists: true,
+      databaseFormat: 'encrypted-or-unknown', migrationPending: true });
+    vault.migrateLegacyHistoryStorage.and.rejectWith({ code: 'NIVRA_HISTORY_MIGRATION_SECRET_UNAVAILABLE' });
+    expect(await service.retryNativeStorage()).toBeFalse();
+    expect(service.storageDiagnostic()?.code).toBe('NIVRA_HISTORY_MIGRATION_SECRET_UNAVAILABLE');
+    expect(db.open).not.toHaveBeenCalled();
+    expect(vault.clearSecret).not.toHaveBeenCalled();
     expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
   });
 

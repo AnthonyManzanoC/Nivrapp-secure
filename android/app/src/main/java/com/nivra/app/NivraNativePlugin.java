@@ -112,6 +112,7 @@ public class NivraNativePlugin extends Plugin {
     private static final Set<String> knownSharedUris = new HashSet<>();
     private final Map<String, SaveSession> saveSessions = new HashMap<>();
     private final ExecutorService contactsExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService historyExecutor = Executors.newSingleThreadExecutor();
     private AudioManager audioManager;
     private AudioFocusRequest audioFocusRequest;
     private SensorManager sensorManager;
@@ -200,6 +201,7 @@ public class NivraNativePlugin extends Plugin {
     protected void handleOnDestroy() {
         activityResumed = false;
         if (appUpdateManager != null) appUpdateManager.destroy();
+        historyExecutor.shutdown();
         super.handleOnDestroy();
     }
 
@@ -470,7 +472,24 @@ public class NivraNativePlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("databaseExists", exists);
         result.put("databaseFormat", format);
+        result.put("migrationPending", LegacyHistoryMigration.pending(database));
         call.resolve(result);
+    }
+
+    @PluginMethod
+    public void migrateLegacyHistoryStorage(PluginCall call) {
+        // Paths and passphrases are deliberately not JS options. The caller
+        // closes its SQLite connections before this serialized operation.
+        historyExecutor.execute(() -> {
+            try {
+                synchronized (SECURE_SECRET_LOCK) {
+                    LegacyHistoryMigration.migrate(getContext());
+                }
+                call.resolve();
+            } catch (LegacyHistoryMigration.Failure failure) {
+                call.reject("No se pudo completar la recuperación segura del historial anterior.", failure.code);
+            }
+        });
     }
 
     static String localHistoryHeaderFormat(byte[] header, int count) {
@@ -1253,6 +1272,9 @@ public class NivraNativePlugin extends Plugin {
 
     static void clearSecureSecretName(Context context, String name) throws Exception {
         synchronized (SECURE_SECRET_LOCK) {
+            // Explicitly forgetting the local vault also removes any rollback
+            // copy left by an interrupted migration, never the main database.
+            if ("local-db".equals(name)) LegacyHistoryMigration.clearTemporaryFiles(context);
             context.getSharedPreferences(SECURE_VAULT_PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .remove(staticSecretPrefKey(name, "iv"))

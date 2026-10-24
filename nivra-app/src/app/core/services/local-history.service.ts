@@ -24,7 +24,7 @@ const NATIVE_STORAGE_ERROR = 'No se pudo abrir el historial cifrado. Desbloquea 
 
 export type LocalHistoryStorageState = 'idle' | 'opening' | 'retrying' | 'ready' | 'error';
 export type LocalHistoryStorageStage = 'bridge' | 'database-check' | 'secure-secret' | 'secret-status' | 'secret-check'
-  | 'secret-install' | 'retained-key' | 'reconcile' | 'connection' | 'database-open' | 'schema';
+  | 'secret-install' | 'retained-key' | 'reconcile' | 'connection' | 'database-open' | 'schema' | 'legacy-migration';
 export interface LocalHistoryStorageDiagnostic {
   backend: 'sqlite';
   stage: LocalHistoryStorageStage;
@@ -1037,14 +1037,7 @@ export class LocalHistoryService {
         return db;
       } catch (error) {
         this.assertStorageGeneration(generation);
-        let failure = this.nativeStorageFailure('bridge', error);
-        if (failure.code === 'DATABASE_KEY_UNREADABLE') {
-          const inspection = await this.secureVault.inspectLocalHistoryStorage?.();
-          this.assertStorageGeneration(generation);
-          if (inspection?.databaseFormat === 'sqlite') {
-            failure = new NativeHistoryStorageError(failure.stage, 'LEGACY_UNENCRYPTED_HISTORY', false);
-          }
-        }
+        const failure = this.nativeStorageFailure('bridge', error);
         if (delay === 900 || !failure.retryable) {
           this.sqliteOpenFailed = true;
           this.ngZone.run(() => this.storageDiagnostic.set({
@@ -1066,7 +1059,7 @@ export class LocalHistoryService {
     throw new Error('No se pudo abrir el historial local.');
   }
 
-  private async createNativeSqliteConnection(generation: number): Promise<SQLiteDBConnection> {
+  private async createNativeSqliteConnection(generation: number, migrationAttempted = false): Promise<SQLiteDBConnection> {
     let sqlite: SQLiteConnection | undefined;
     try {
       const { CapacitorSQLite, SQLiteConnection } = await import('@capacitor-community/sqlite');
@@ -1076,6 +1069,14 @@ export class LocalHistoryService {
       sqlite = this.sqliteConnection;
       await this.prepareNativeSqliteSecret(sqlite);
       this.assertStorageGeneration(generation);
+      // Finish cleanup after an interrupted atomic migration BEFORE admitting
+      // any new writes. The native verifier never restores an older snapshot.
+      const inspection = await this.secureVault.inspectLocalHistoryStorage?.();
+      this.assertStorageGeneration(generation);
+      if (inspection?.migrationPending) {
+        await this.migrateLegacyNativeSqlite(sqlite, generation);
+        migrationAttempted = true;
+      }
       // Android checkEncryptionSecret/setEncryptionSecret close every native
       // connection, while the JS wrapper still retains its previous handles.
       // Reconcile AFTER preparing the secret so retrieval cannot reuse a stale
@@ -1152,8 +1153,27 @@ export class LocalHistoryService {
       return db;
     } catch (error) {
       await sqlite?.closeConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
-      throw error;
+      const failure = this.nativeStorageFailure('bridge', error);
+      if (!migrationAttempted && sqlite && failure.code === 'DATABASE_KEY_UNREADABLE') {
+        const inspection = await this.secureVault.inspectLocalHistoryStorage?.();
+        this.assertStorageGeneration(generation);
+        if (inspection?.databaseFormat === 'sqlite') {
+          await this.migrateLegacyNativeSqlite(sqlite, generation);
+          // Rebuild JS handles after the native atomic replacement. The same
+          // retained key must open and validate the new encrypted database.
+          this.sqliteConnection = undefined;
+          return this.createNativeSqliteConnection(generation, true);
+        }
+      }
+      throw failure;
     }
+  }
+
+  private async migrateLegacyNativeSqlite(sqlite: SQLiteConnection, generation: number): Promise<void> {
+    await this.nativeStorageStep('legacy-migration', () => sqlite.closeAllConnections());
+    this.assertStorageGeneration(generation);
+    await this.nativeStorageStep('legacy-migration', () => this.secureVault.migrateLegacyHistoryStorage());
+    this.assertStorageGeneration(generation);
   }
 
   private async prepareNativeSqliteSecret(sqlite: SQLiteConnection): Promise<void> {
@@ -1223,6 +1243,14 @@ export class LocalHistoryService {
     if (secureCodes.includes(code)) {
       return new NativeHistoryStorageError(stage, code, ['NIVRA_KEYSTORE_LOCKED', 'NIVRA_SECURE_UNAVAILABLE'].includes(code));
     }
+    const migrationCodes = ['NIVRA_HISTORY_MIGRATION_SECRET_UNAVAILABLE', 'NIVRA_HISTORY_MIGRATION_DATABASE_MISSING',
+      'NIVRA_HISTORY_MIGRATION_PREPARE_FAILED', 'NIVRA_HISTORY_MIGRATION_SNAPSHOT_FAILED',
+      'NIVRA_HISTORY_MIGRATION_DATABASE_BUSY', 'NIVRA_HISTORY_MIGRATION_EXPORT_FAILED',
+      'NIVRA_HISTORY_MIGRATION_VERIFY_FAILED', 'NIVRA_HISTORY_MIGRATION_INTEGRITY_FAILED',
+      'NIVRA_HISTORY_MIGRATION_CONTENT_MISMATCH', 'NIVRA_HISTORY_MIGRATION_PUBLISH_FAILED',
+      'NIVRA_HISTORY_MIGRATION_CLEANUP_FAILED', 'NIVRA_HISTORY_MIGRATION_PERMISSION_FAILED',
+      'NIVRA_HISTORY_MIGRATION_UNSUPPORTED'];
+    if (migrationCodes.includes(code)) return new NativeHistoryStorageError('legacy-migration', code, code === 'NIVRA_HISTORY_MIGRATION_DATABASE_BUSY');
     const message = typeof error === 'string' ? error : String(native?.message || '');
     if (message.startsWith('CapacitorSQLitePlugin:')) return new NativeHistoryStorageError('bridge', 'NATIVE_INITIALIZATION_FAILED', true, true);
     if (/no encryption|cannot be encrypted/i.test(message)) return new NativeHistoryStorageError(stage, 'ENCRYPTION_DISABLED', false);
@@ -1237,8 +1265,8 @@ export class LocalHistoryService {
   }
 
   private nativeStorageErrorMessage(failure: NativeHistoryStorageError): string {
-    const message = failure.code === 'LEGACY_UNENCRYPTED_HISTORY'
-      ? 'Esta instalación conserva un historial de un formato anterior que requiere recuperación. La base y sus claves se han conservado.'
+    const message = failure.stage === 'legacy-migration'
+      ? 'No se pudo completar la recuperación segura del historial anterior. La base y sus claves se han conservado.'
       : failure.stage === 'schema' ? 'El historial cifrado se abrió, pero no se pudo preparar su estructura. Tus datos locales se han conservado.'
       : failure.code === 'DATABASE_KEY_UNREADABLE' || failure.code === 'RETAINED_KEY_SCHEMA_INVALID'
         ? 'La clave conservada no permite validar el historial cifrado de esta instalación. La base y sus claves se han conservado.'

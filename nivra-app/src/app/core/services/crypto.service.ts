@@ -192,7 +192,7 @@ export class CryptoService {
     return this.getDeviceKeys(alias, deviceId);
   }
 
-  async deviceKeyMaterialsForUser(userId?: string | null, alias?: string | null): Promise<StoredDeviceKeys[]> {
+  async deviceKeyMaterialsForUser(userId?: string | null, alias?: string | null, options: { requireReadable?: boolean } = {}): Promise<StoredDeviceKeys[]> {
     const normalizedUserId = String(userId || '').trim();
     const normalizedAlias = alias ? this.normalizeAlias(alias) : '';
     if (!normalizedUserId && !normalizedAlias) {
@@ -201,7 +201,13 @@ export class CryptoService {
 
     await this.hardenPlaintextDeviceKeyRecords();
     const db = await this.open();
-    const records = await this.unprotectDeviceKeysRecords(await db.getAll(LOCAL_KEY_STORE) as StoredDeviceKeysRecord[]);
+    const stored = (await db.getAll(LOCAL_KEY_STORE) as StoredDeviceKeysRecord[]).filter(record =>
+      record.userId ? record.userId === normalizedUserId : Boolean(normalizedAlias && record.aliasLower === normalizedAlias));
+    const materials = await Promise.all(stored.map(record => this.unprotectDeviceKeysRecord(record)));
+    if (options.requireReadable && stored.some((record, index) => record.userId === normalizedUserId && record.publicJwk && !materials[index])) {
+      throw new Error('No se pudieron abrir las llaves guardadas de esta cuenta. Desbloquea el dispositivo y vuelve a intentar; el historial local se ha conservado.');
+    }
+    const records = materials.filter((record): record is StoredDeviceKeys => Boolean(record));
     const seen = new Set<string>();
     return records
       .filter((record) => record.privateJwk && record.publicJwk)

@@ -250,6 +250,15 @@ describe('Chats actions and scoped search', () => {
     expect(page.showHistoryStatus()).toBeTrue();
   });
 
+  it('keeps existing conversations visible while local storage or initial bootstrap recovers', () => {
+    spyOn(TestBed.inject(LocalHistoryService), 'storageBusy').and.returnValue(true);
+    chat.loading.set(true);
+    expect(page.conversationIndexLoading()).toBeTrue();
+    expect(page.showConversationSkeleton()).toBeFalse();
+    chat.conversations.set([]);
+    expect(page.showConversationSkeleton()).toBeTrue();
+  });
+
   it('completes pull-to-refresh only after the real refresh operation settles', async () => {
     const pending = deferred<boolean>();
     chat.refreshChats.and.returnValue(pending.promise);
@@ -261,6 +270,108 @@ describe('Chats actions and scoped search', () => {
     await task;
     expect(complete).toHaveBeenCalledTimes(1);
     expect(page.showConversationSkeleton()).toBeFalse();
+  });
+
+  describe('Android list gesture for stories', () => {
+    let list: { scrollTop: number; scrollHeight: number; clientHeight: number };
+    const touch = (x: number, y: number, count = 1, target: EventTarget | null = null): TouchEvent => ({
+      currentTarget: list, target: target ?? list,
+      touches: Array.from({ length: count }, (_, identifier) => ({ identifier, clientX: x + identifier, clientY: y })),
+    } as unknown as TouchEvent);
+    const scroll = (top: number) => {
+      list.scrollTop = top;
+      page.onChatListScroll({ target: list } as unknown as Event);
+    };
+
+    beforeEach(() => {
+      list = { scrollTop: 0, scrollHeight: 1_400, clientHeight: 500 };
+      spyOn(page, 'androidStoryGesturesEnabled').and.returnValue(true);
+    });
+
+    it('reveals stories after a downward pull that starts at the top, without refreshing chats', () => {
+      page.onNativeStoryTouchStart(touch(120, 120));
+      page.onNativeStoryTouchMove(touch(125, 190));
+      expect(page.storiesCollapsed).toBeTrue();
+      page.onNativeStoryTouchEnd(touch(125, 190, 0));
+      expect(page.storiesCollapsed).toBeFalse();
+      expect(chat.refreshChats).not.toHaveBeenCalled();
+      expect(page.showConversationSkeleton()).toBeFalse();
+    });
+
+    it('does not reveal stories while scrolling in the middle and reveals them on a real return to the top', () => {
+      list.scrollTop = 250;
+      page.onNativeStoryTouchStart(touch(120, 120));
+      page.onNativeStoryTouchMove(touch(123, 190));
+      scroll(120);
+      expect(page.storiesCollapsed).toBeTrue();
+      page.onNativeStoryTouchEnd(touch(123, 190, 0));
+      scroll(0);
+      expect(page.storiesCollapsed).toBeFalse();
+      expect(chat.refreshChats).not.toHaveBeenCalled();
+    });
+
+    it('ignores programmatic returns to the top without an active user scroll gesture', () => {
+      scroll(250);
+      scroll(0);
+      expect(page.storiesCollapsed).toBeTrue();
+    });
+
+    it('does not turn a horizontal chat swipe into a story pull', () => {
+      page.onNativeStoryTouchStart(touch(120, 120));
+      page.onNativeStoryTouchMove(touch(190, 133));
+      page.onNativeStoryTouchMove(touch(190, 210));
+      page.onNativeStoryTouchEnd(touch(190, 210, 0));
+      expect(page.storiesCollapsed).toBeTrue();
+      expect(chat.refreshChats).not.toHaveBeenCalled();
+    });
+
+    it('yields to an Ionic swipe claimed after a small initial horizontal movement', () => {
+      const sliding = document.createElement('ion-item-sliding');
+      page.onNativeStoryTouchStart(touch(120, 120, 1, sliding));
+      page.onNativeStoryTouchMove(touch(130, 123, 1, sliding));
+      sliding.classList.add('item-sliding-active-slide');
+      page.onNativeStoryTouchMove(touch(130, 200, 1, sliding));
+      page.onNativeStoryTouchEnd(touch(130, 200, 0, sliding));
+      expect(page.storiesCollapsed).toBeTrue();
+      expect(chat.refreshChats).not.toHaveBeenCalled();
+    });
+
+    it('ignores an open sliding row, multi-touch and cancelled pulls', () => {
+      const sliding = document.createElement('ion-item-sliding');
+      sliding.classList.add('item-sliding-active-slide');
+      page.onNativeStoryTouchStart(touch(120, 120, 1, sliding));
+      page.onNativeStoryTouchMove(touch(120, 200));
+      page.onNativeStoryTouchEnd(touch(120, 200, 0));
+      expect(page.storiesCollapsed).toBeTrue();
+      page.onNativeStoryTouchStart(touch(120, 120, 2));
+      page.onNativeStoryTouchMove(touch(120, 200));
+      page.onNativeStoryTouchEnd(touch(120, 200, 0));
+      expect(page.storiesCollapsed).toBeTrue();
+      page.onNativeStoryTouchStart(touch(120, 120));
+      page.onNativeStoryTouchMove(touch(120, 200));
+      page.onNativeStoryTouchCancel();
+      page.onNativeStoryTouchEnd(touch(120, 200, 0));
+      expect(page.storiesCollapsed).toBeTrue();
+    });
+
+    it('expires a completed touch gesture instead of expanding after an unrelated later scroll', fakeAsync(() => {
+      list.scrollTop = 250;
+      page.onNativeStoryTouchStart(touch(120, 120));
+      page.onNativeStoryTouchMove(touch(120, 190));
+      scroll(120);
+      page.onNativeStoryTouchEnd(touch(120, 190, 0));
+      tick(1_700);
+      scroll(0);
+      expect(page.storiesCollapsed).toBeTrue();
+    }));
+
+    it('never calls refresh from a stray Android refresher event', async () => {
+      const complete = jasmine.createSpy('complete').and.resolveTo();
+      await page.onPullRefresh({ detail: { complete } } as unknown as CustomEvent<{ complete: () => Promise<void> }>);
+      expect(page.storiesCollapsed).toBeFalse();
+      expect(chat.refreshChats).not.toHaveBeenCalled();
+      expect(complete).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('offers explicit relinking for an unsafe device identity without attempting another history transfer', async () => {

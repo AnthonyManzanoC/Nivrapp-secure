@@ -14,6 +14,7 @@ interface SecureSecretResponse {
 export interface NativeLocalHistoryInspection {
   databaseExists: boolean;
   databaseFormat: 'missing' | 'sqlite' | 'encrypted-or-unknown' | 'unavailable';
+  migrationPending?: boolean;
 }
 
 export interface NivraNativeSecurePlugin {
@@ -21,6 +22,7 @@ export interface NivraNativeSecurePlugin {
   clearSecureSecret(options: { name?: NativeSecureSecretName | 'all' }): Promise<void>;
   retryLocalHistoryInitialization(): Promise<void>;
   inspectLocalHistoryStorage(): Promise<NativeLocalHistoryInspection>;
+  migrateLegacyHistoryStorage(): Promise<void>;
 }
 
 interface DesktopSecureVaultBridge {
@@ -83,8 +85,16 @@ export class NativeSecureVaultService {
       const result = await NivraNative.inspectLocalHistoryStorage();
       const format = ['missing', 'sqlite', 'encrypted-or-unknown', 'unavailable'].includes(result.databaseFormat)
         ? result.databaseFormat : 'unavailable';
-      return { databaseExists: result.databaseExists === true, databaseFormat: format };
+      return { databaseExists: result.databaseExists === true, databaseFormat: format,
+        migrationPending: result.migrationPending === true };
     } catch { return null; }
+  }
+
+  async migrateLegacyHistoryStorage(): Promise<void> {
+    if (!this.native || Capacitor.getPlatform() !== 'android') {
+      throw { code: 'NIVRA_HISTORY_MIGRATION_UNSUPPORTED' };
+    }
+    await NivraNative.migrateLegacyHistoryStorage();
   }
 
   private resolveDesktopVault(): DesktopSecureVaultBridge | null {

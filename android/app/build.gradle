@@ -7,8 +7,8 @@ android {
         applicationId "com.nivra.app"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 32
-        versionName "5.0.0"
+        versionCode 33
+        versionName "5.0.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -43,6 +43,9 @@ dependencies {
     implementation project(':capacitor-android')
     implementation "com.google.firebase:firebase-messaging:$firebaseMessagingVersion"
     implementation "androidx.work:work-runtime:2.10.1"
+    // Native history migration uses the same SQLCipher engine as CapacitorSQLite.
+    implementation 'net.zetetic:sqlcipher-android:4.10.0@aar'
+    implementation 'androidx.sqlite:sqlite:2.4.0'
     implementation "io.github.webrtc-sdk:android:144.7559.09"
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"

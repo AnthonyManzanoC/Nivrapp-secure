@@ -5,6 +5,7 @@ import { AuthService } from './auth.service';
 import { CryptoService, HistoricalDeviceKeyMaterial } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
+import { MessageResponse } from '../models/nivra.models';
 
 interface TransferRequest { id: string; userId: string; targetDeviceId: string; targetIdentityKey: string; targetDeviceName?: string; expiresAt: string; }
 export interface PendingHistoryApproval extends TransferRequest { fingerprint: string; }
@@ -12,6 +13,12 @@ interface TransferResponse { sourceDeviceId: string; sourceIdentityKey: string; 
 interface TransferStatus extends TransferRequest { responses: TransferResponse[]; }
 interface KeyringPayload { v: 1; purpose: 'history-keyring'; requestId: string; userId: string; targetDeviceId: string; sourceDeviceId: string; targetPublicJwk: JsonWebKey; expiresAt: string; keys: HistoricalDeviceKeyMaterial[]; }
 interface SessionScope { userId: string; deviceId: string; alias: string; epoch: number; }
+export interface HistoryRecoveryEvidence {
+  userId: string;
+  deviceId: string;
+  reason: 'undecryptable-ciphertext';
+  message: Pick<MessageResponse, 'id' | 'conversationId' | 'recipients' | 'expiresAt' | 'encryptedPolicy'>;
+}
 const TRANSFER_HTTP_TIMEOUT_MS = 15_000;
 const RECOVERY_RETRY_DELAYS_MS = [2500, 5000, 10_000];
 
@@ -33,6 +40,8 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private recoveryRetryAt = 0;
   private recoveryRetryAttempts = 0;
   private requested = false;
+  private requestEvidence: HistoryRecoveryEvidence | null = null;
+  private evidenceCheck: { epoch: number; promise: Promise<void>; evidence: HistoryRecoveryEvidence } | null = null;
   private requestId: string | null = null;
   private requestExpiresAt = 0;
   private requestedAt = 0;
@@ -53,9 +62,10 @@ export class HistoryDeviceSyncService implements OnDestroy {
       const session = this.auth.session();
       const next = session ? `${session.user.id}:${session.device.id}` : '';
       if (next !== this.scopeId) untracked(() => {
-        const continueRecovery = this.requested && Boolean(session && this.scopeId.startsWith(`${session.user.id}:`));
+        const continueEvidence = this.requested && this.requestEvidence && session && this.scopeId.startsWith(`${session.user.id}:`)
+          ? { ...this.requestEvidence, deviceId: session.device.id } : null;
         this.reset(next);
-        if (next) { if (continueRecovery) this.beginRequest(false); else void this.pump(); }
+        if (next) { if (continueEvidence) void this.requestHistory(continueEvidence); else void this.pump(); }
       });
     });
     this.realtime.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(event => {
@@ -69,10 +79,37 @@ export class HistoryDeviceSyncService implements OnDestroy {
 
   ngOnDestroy(): void { this.reset(''); this.recovered$.complete(); }
 
-  requestHistory(): void { this.beginRequest(false); }
+  requestHistory(evidence: HistoryRecoveryEvidence): Promise<void> {
+    const scope = this.scope();
+    if (!scope || !this.validEvidence(evidence, scope)) return Promise.resolve();
+    if (this.requested) { this.requestEvidence = evidence; return Promise.resolve(); }
+    if (this.evidenceCheck?.epoch === scope.epoch) { this.evidenceCheck.evidence = evidence; return this.evidenceCheck.promise; }
+    const promise = (async () => {
+      // Failure to open the local key store is not evidence that another device
+      // must send history. Never generate or rotate an identity from this path.
+      const own = await this.crypto.recoverDeviceIdentity(scope.userId, scope.alias, scope.deviceId, null, () => this.isCurrent(scope));
+      await this.crypto.deviceKeyMaterialsForUser(scope.userId, scope.alias, { requireReadable: true });
+      this.assertCurrent(scope);
+      const candidate = this.evidenceCheck?.epoch === scope.epoch ? this.evidenceCheck.evidence : evidence;
+      if (!own || own.userId !== scope.userId || own.deviceId !== scope.deviceId || !this.validEvidence(candidate, scope)) return;
+      const recipient = candidate.message.recipients.find(item => item.userId === scope.userId && this.evidenceSenderKey(item.header, item.ciphertext));
+      const sender = recipient ? this.evidenceSenderKey(recipient.header, recipient.ciphertext) : null;
+      if (!sender) return;
+      await crypto.subtle.importKey('jwk', sender, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+      this.assertCurrent(scope);
+      if (!this.validEvidence(candidate, scope)) return;
+      this.requestEvidence = candidate;
+      this.beginRequest(false);
+    })().catch(() => { /* The caller keeps local storage/key errors separate. */ }).finally(() => {
+      if (this.evidenceCheck?.promise === promise) this.evidenceCheck = null;
+    });
+    this.evidenceCheck = { epoch: scope.epoch, promise, evidence };
+    return promise;
+  }
 
   private beginRequest(force: boolean): void {
-    if (!this.auth.session() || (this.requested && !force)) return;
+    const scope = this.scope();
+    if (!scope || !this.requestEvidence || !this.validEvidence(this.requestEvidence, scope) || (this.requested && !force)) return;
     this.requested = true;
     this.requestedAt ||= Date.now();
     if (this.state() !== 'syncing') this.state.set('waiting');
@@ -80,6 +117,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
   }
 
   retry(): void {
+    if (!this.requested || !this.requestEvidence) return;
     this.recoveryRetryAt = this.recoveryRetryAttempts = 0;
     this.requestedAt = Date.now(); this.replayRequested = true; this.beginRequest(true);
     const scope = this.scope();
@@ -93,9 +131,10 @@ export class HistoryDeviceSyncService implements OnDestroy {
   markHistoryReadable(): void {
     this.recoveryRetryAt = this.recoveryRetryAttempts = 0;
     this.requested = false; this.replayRequested = this.recoveryIncomplete = false; this.state.set('idle');
+    this.requestEvidence = null;
   }
   markHistoryRecoveryIncomplete(options: { retryable?: boolean } = {}): void {
-    if (!this.scope()) return;
+    if (!this.scope() || !this.requested || !this.requestEvidence) return;
     this.requested = true; this.requestedAt ||= Date.now();
     // The consumer acknowledges actual readable messages after its recovery queue.
     // Do not replace an active import's state with a stale consumer result.
@@ -144,6 +183,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.approvalEpoch.set(this.epoch);
     this.scopeId = scopeId;
     this.requested = false;
+    this.requestEvidence = null; this.evidenceCheck = null;
     this.pumpAgain = this.replayRequested = this.recoveryIncomplete = false;
     this.requestId = null;
     this.requestExpiresAt = this.requestedAt = 0;
@@ -166,6 +206,36 @@ export class HistoryDeviceSyncService implements OnDestroy {
     return now?.userId === scope.userId && now.deviceId === scope.deviceId && now.epoch === scope.epoch;
   }
   private assertCurrent(scope: SessionScope): void { if (!this.isCurrent(scope)) throw new Error('La sesión cambió durante la recuperación del historial.'); }
+
+  private async persistedIdentity(scope: SessionScope) {
+    const own = await this.crypto.recoverDeviceIdentity(scope.userId, scope.alias, scope.deviceId, null, () => this.isCurrent(scope));
+    this.assertCurrent(scope);
+    if (!own || own.userId !== scope.userId || own.deviceId !== scope.deviceId) throw new Error('No se pudo abrir la identidad guardada de este dispositivo.');
+    return own;
+  }
+
+  private validEvidence(evidence: HistoryRecoveryEvidence | null | undefined, scope: SessionScope): boolean {
+    const message = evidence?.message;
+    if (evidence?.reason !== 'undecryptable-ciphertext' || evidence.userId !== scope.userId || evidence.deviceId !== scope.deviceId
+      || !message || typeof message.id !== 'string' || !message.id.trim() || typeof message.conversationId !== 'string' || !message.conversationId.trim()
+      || message.encryptedPolicy?.startsWith('system:') || !Array.isArray(message.recipients)) return false;
+    if (message.expiresAt && (!Number.isFinite(Date.parse(message.expiresAt)) || Date.parse(message.expiresAt) <= Date.now())) return false;
+    return message.recipients.some(recipient => recipient.userId === scope.userId && Boolean(this.evidenceSenderKey(recipient.header, recipient.ciphertext)));
+  }
+
+  private evidenceSenderKey(header: string | null | undefined, ciphertext: string | null | undefined): JsonWebKey | null {
+    try {
+      const bytes = (value: unknown) => typeof value === 'string' && value.length % 4 === 0 && /^[A-Za-z0-9+/]+={0,2}$/.test(value) ? atob(value).length : 0;
+      if (typeof header !== 'string' || header.length > 2 * 1024 * 1024 || bytes(ciphertext) < 16) return null;
+      let value = JSON.parse(header) as { v?: number; alg?: string; senderPublicKey?: JsonWebKey; iv?: string; keyHeader?: string; payloadIv?: string; payloadCiphertext?: string };
+      if (value.v === 2 && value.alg === 'NIVRA-GROUP-A256GCM') {
+        if (bytes(value.payloadIv) !== 12 || bytes(value.payloadCiphertext) < 16 || typeof value.keyHeader !== 'string') return null;
+        value = JSON.parse(value.keyHeader);
+      }
+      return value.v === 1 && value.alg === 'ECDH-P256-A256GCM' && bytes(value.iv) === 12
+        ? this.crypto.parsePublicJwk(value.senderPublicKey) : null;
+    } catch { return null; }
+  }
 
   private pump(): Promise<void> {
     const scope = this.scope();
@@ -210,7 +280,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
       }
       this.assertCurrent(scope);
       if (this.requested) {
-        const own = await this.auth.ensureDeviceIdentity();
+        const own = await this.persistedIdentity(scope);
         this.assertCurrent(scope);
         const fingerprint = await this.publicFingerprint(own.publicJwk);
         this.assertCurrent(scope); this.targetFingerprint.set(fingerprint);
@@ -291,7 +361,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private async respond(request: TransferRequest, scope: SessionScope): Promise<void> {
     const target = this.crypto.parsePublicJwk(request.targetIdentityKey);
     if (!target || target.d || target.kty !== 'EC' || target.crv !== 'P-256') throw new Error('Identidad de dispositivo inválida.');
-    const own = await this.auth.ensureDeviceIdentity();
+    const own = await this.persistedIdentity(scope);
     this.assertCurrent(scope);
     const materials = await this.crypto.exportDeviceKeyMaterialsForUser(scope.userId, scope.alias);
     this.assertCurrent(scope);
@@ -310,7 +380,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.assertCurrent(scope);
     if (this.importedResponses.has(responseId)) return;
     if (request.id !== this.requestId || request.userId !== scope.userId || request.targetDeviceId !== scope.deviceId || response.sourceDeviceId === scope.deviceId || !Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) throw new Error('El paquete de historial no corresponde a esta sesión.');
-    const own = await this.auth.ensureDeviceIdentity();
+    const own = await this.persistedIdentity(scope);
     this.assertCurrent(scope);
     const target = this.crypto.parsePublicJwk(request.targetIdentityKey);
     const source = this.crypto.parsePublicJwk(response.sourceIdentityKey);
