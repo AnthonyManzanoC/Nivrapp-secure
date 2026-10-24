@@ -36,6 +36,7 @@ describe('local history vault recovery', () => {
     db.execute.and.resolveTo({ changes: { changes: 0 } });
     db.query.and.resolveTo({ values: [] });
     spyOn(SQLiteConnection.prototype, 'checkConnectionsConsistency').and.resolveTo({ result: true });
+    spyOn(SQLiteConnection.prototype, 'isDatabase').and.resolveTo({ result: true });
     spyOn(SQLiteConnection.prototype, 'isSecretStored').and.resolveTo({ result: true });
     spyOn(SQLiteConnection.prototype, 'checkEncryptionSecret').and.resolveTo({ result: true });
     spyOn(SQLiteConnection.prototype, 'isConnection').and.resolveTo({ result: true });

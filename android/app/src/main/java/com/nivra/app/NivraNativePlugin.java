@@ -46,12 +46,16 @@ import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
+import com.getcapacitor.PluginHandle;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import com.getcapacitor.community.database.sqlite.CapacitorSQLitePlugin;
+import com.getcapacitor.community.database.sqlite.NotificationCenter;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -100,6 +104,7 @@ public class NivraNativePlugin extends Plugin {
     private static final String KEYSTORE_PROVIDER = "AndroidKeyStore";
     private static final String SECURE_VAULT_PREFS = "nivra_secure_vault";
     private static final int GCM_TAG_LENGTH_BITS = 128;
+    private static final Object SECURE_SECRET_LOCK = new Object();
     private static final int MAX_DEVICE_CONTACTS = 5000;
     private static WeakReference<NivraNativePlugin> activePlugin = new WeakReference<>(null);
     private static final List<JSObject> pendingCallActions = new ArrayList<>();
@@ -446,6 +451,80 @@ public class NivraNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void inspectLocalHistoryStorage(PluginCall call) {
+        File database = getContext().getDatabasePath("nivra_local_vaultSQLite.db");
+        boolean exists = database.isFile();
+        String format = "missing";
+        if (exists) {
+            try (InputStream input = new FileInputStream(database)) {
+                byte[] header = new byte[16];
+                int count = 0;
+                while (count < header.length) {
+                    int read = input.read(header, count, header.length - count);
+                    if (read < 0) break;
+                    count += read;
+                }
+                format = localHistoryHeaderFormat(header, count);
+            } catch (Exception ignored) { format = "unavailable"; }
+        }
+        JSObject result = new JSObject();
+        result.put("databaseExists", exists);
+        result.put("databaseFormat", format);
+        call.resolve(result);
+    }
+
+    static String localHistoryHeaderFormat(byte[] header, int count) {
+        byte[] sqliteHeader = "SQLite format 3\u0000".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+        if (header == null || count != sqliteHeader.length || header.length < count) return "encrypted-or-unknown";
+        for (int index = 0; index < count; index++) {
+            if (header[index] != sqliteHeader[index]) return "encrypted-or-unknown";
+        }
+        return "sqlite";
+    }
+
+    @PluginMethod
+    public void retryLocalHistoryInitialization(PluginCall call) {
+        // CapacitorSQLite keeps implementation=null when Keystore was
+        // temporarily unavailable during load(). Retrying JS cannot replace
+        // that failed native initialization. The caller only uses this after
+        // its specific startup error; load reads the existing encrypted prefs
+        // and keys and never clears/replaces the database or its secrets.
+        try {
+            PluginHandle handle = getBridge().getPlugin("CapacitorSQLite");
+            Plugin plugin = handle == null ? null : handle.getInstance();
+            if (!(plugin instanceof CapacitorSQLitePlugin)) {
+                call.reject("El almacenamiento local todavia no esta disponible.");
+                return;
+            }
+            // Probe native state too: a delayed retry must never reset a
+            // healthy plugin or discard its active database connections.
+            ((CapacitorSQLitePlugin) plugin).echo(new PluginCall(null, "CapacitorSQLite", "-1", "echo", new JSObject()) {
+                @Override public void resolve(JSObject result) {
+                    call.resolve();
+                }
+
+                @Override public void reject(String message, String code, Exception error, JSObject data) {
+                    if (message == null || !message.startsWith("CapacitorSQLitePlugin:")) {
+                        call.reject("No se pudo comprobar el almacenamiento local.");
+                        return;
+                    }
+                    try {
+                        // The failed load registered SQLite observers before
+                        // initializing Keystore. Remove those before retrying.
+                        NotificationCenter.defaultCenter().removeAllNotifications();
+                        plugin.load();
+                        call.resolve();
+                    } catch (Exception retryError) {
+                        call.reject("No se pudo reiniciar la apertura del historial local.", "NIVRA_SQLITE_REINITIALIZATION_FAILED");
+                    }
+                }
+            });
+        } catch (Exception error) {
+            call.reject("No se pudo reiniciar la apertura del historial local.", "NIVRA_SQLITE_REINITIALIZATION_FAILED");
+        }
+    }
+
+    @PluginMethod
     public void getOrCreateSecureSecret(PluginCall call) {
         String name = secureSecretName(call.getString("name", ""));
         if (!isAllowedSecureSecretName(name)) {
@@ -454,19 +533,37 @@ public class NivraNativePlugin extends Plugin {
         }
 
         try {
-            String secret = readSecureSecret(name);
-            boolean created = false;
-            if (secret == null || secret.isEmpty()) {
-                secret = createSecureSecret(name);
-                created = true;
+            synchronized (SECURE_SECRET_LOCK) {
+                String secret = readSecureSecret(name);
+                boolean created = false;
+                if (secret == null || secret.isEmpty()) {
+                    if (Boolean.FALSE.equals(call.getBoolean("create", true))) {
+                        JSObject result = new JSObject();
+                        result.put("name", name);
+                        result.put("available", true);
+                        result.put("created", false);
+                        call.resolve(result);
+                        return;
+                    }
+                    // A missing protector is not a fresh installation when
+                    // SQLCipher history still exists. Keep that history and
+                    // let its retained SQLCipher secret be validated read-only.
+                    if ("local-db".equals(name) && getContext().getDatabasePath("nivra_local_vaultSQLite.db").exists()) {
+                        throw new SecureSecretException("NIVRA_SECURE_SECRET_MISSING");
+                    }
+                    secret = createSecureSecret(name);
+                    created = true;
+                }
+                JSObject result = new JSObject();
+                result.put("name", name);
+                result.put("secret", secret);
+                result.put("created", created);
+                call.resolve(result);
             }
-            JSObject result = new JSObject();
-            result.put("name", name);
-            result.put("secret", secret);
-            result.put("created", created);
-            call.resolve(result);
         } catch (Exception error) {
-            call.reject("No se pudo abrir el secreto local seguro.", error);
+            // Native exception messages can contain file paths or provider
+            // details. Only stable, allowlisted cause codes cross the bridge.
+            call.reject("No se pudo abrir el secreto local seguro.", secureSecretErrorCode(error));
         }
     }
 
@@ -1083,10 +1180,11 @@ public class NivraNativePlugin extends Plugin {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key);
         byte[] ciphertext = cipher.doFinal(secret.getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        securePrefs().edit()
+        boolean saved = securePrefs().edit()
             .putString(secretPrefKey(name, "iv"), Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
             .putString(secretPrefKey(name, "ciphertext"), Base64.encodeToString(ciphertext, Base64.NO_WRAP))
-            .apply();
+            .commit();
+        if (!saved) throw new SecureSecretException("NIVRA_SECURE_WRITE_FAILED");
         return secret;
     }
 
@@ -1094,14 +1192,52 @@ public class NivraNativePlugin extends Plugin {
         SharedPreferences prefs = securePrefs();
         String iv = prefs.getString(secretPrefKey(name, "iv"), "");
         String ciphertext = prefs.getString(secretPrefKey(name, "ciphertext"), "");
-        if (iv == null || iv.isEmpty() || ciphertext == null || ciphertext.isEmpty()) {
-            return "";
+        boolean hasIv = iv != null && !iv.isEmpty();
+        boolean hasCiphertext = ciphertext != null && !ciphertext.isEmpty();
+        if (!hasIv && !hasCiphertext) return "";
+        if (!hasIv || !hasCiphertext) throw new SecureSecretException("NIVRA_SECURE_ENVELOPE_INCOMPLETE");
+        // Reading an existing envelope must never generate a replacement
+        // AndroidKeyStore key if its original alias has become unavailable.
+        SecretKey key = existingKeystoreKey(name);
+        byte[] ivBytes;
+        byte[] ciphertextBytes;
+        try {
+            ivBytes = Base64.decode(iv, Base64.NO_WRAP);
+            ciphertextBytes = Base64.decode(ciphertext, Base64.NO_WRAP);
+        } catch (IllegalArgumentException error) {
+            throw new SecureSecretException("NIVRA_SECURE_ENVELOPE_INVALID");
         }
-        SecretKey key = getOrCreateKeystoreKey(name);
+        if (ivBytes.length != 12 || ciphertextBytes.length < 16) throw new SecureSecretException("NIVRA_SECURE_ENVELOPE_INVALID");
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-        cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, Base64.decode(iv, Base64.NO_WRAP)));
-        byte[] plain = cipher.doFinal(Base64.decode(ciphertext, Base64.NO_WRAP));
+        cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, ivBytes));
+        byte[] plain = cipher.doFinal(ciphertextBytes);
         return new String(plain, java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private SecretKey existingKeystoreKey(String name) throws Exception {
+        KeyStore keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER);
+        keyStore.load(null);
+        String alias = secureKeystoreAlias(name);
+        if (!keyStore.containsAlias(alias)) throw new SecureSecretException("NIVRA_KEYSTORE_KEY_MISSING");
+        java.security.Key key = keyStore.getKey(alias, null);
+        if (!(key instanceof SecretKey)) throw new SecureSecretException("NIVRA_KEYSTORE_KEY_MISSING");
+        return (SecretKey) key;
+    }
+
+    private static class SecureSecretException extends Exception {
+        final String code;
+        SecureSecretException(String code) { super(code); this.code = code; }
+    }
+
+    static String secureSecretErrorCode(Throwable error) {
+        for (int depth = 0; error != null && depth < 8; depth++, error = error.getCause()) {
+            if (error instanceof SecureSecretException) return ((SecureSecretException) error).code;
+            String type = error.getClass().getSimpleName();
+            if ("UserNotAuthenticatedException".equals(type) || "LockedException".equals(type)) return "NIVRA_KEYSTORE_LOCKED";
+            if ("KeyPermanentlyInvalidatedException".equals(type)) return "NIVRA_KEYSTORE_KEY_INVALIDATED";
+            if ("AEADBadTagException".equals(type) || "BadPaddingException".equals(type)) return "NIVRA_SECURE_DECRYPT_FAILED";
+        }
+        return "NIVRA_SECURE_UNAVAILABLE";
     }
 
     private void clearSecureSecretName(String name) throws Exception {
@@ -1116,16 +1252,18 @@ public class NivraNativePlugin extends Plugin {
     }
 
     static void clearSecureSecretName(Context context, String name) throws Exception {
-        context.getSharedPreferences(SECURE_VAULT_PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .remove(staticSecretPrefKey(name, "iv"))
-            .remove(staticSecretPrefKey(name, "ciphertext"))
-            .commit();
-        KeyStore keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER);
-        keyStore.load(null);
-        String alias = staticSecureKeystoreAlias(name);
-        if (keyStore.containsAlias(alias)) {
-            keyStore.deleteEntry(alias);
+        synchronized (SECURE_SECRET_LOCK) {
+            context.getSharedPreferences(SECURE_VAULT_PREFS, Context.MODE_PRIVATE)
+                .edit()
+                .remove(staticSecretPrefKey(name, "iv"))
+                .remove(staticSecretPrefKey(name, "ciphertext"))
+                .commit();
+            KeyStore keyStore = KeyStore.getInstance(KEYSTORE_PROVIDER);
+            keyStore.load(null);
+            String alias = staticSecureKeystoreAlias(name);
+            if (keyStore.containsAlias(alias)) {
+                keyStore.deleteEntry(alias);
+            }
         }
     }
 

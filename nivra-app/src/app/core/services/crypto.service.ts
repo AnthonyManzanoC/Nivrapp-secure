@@ -305,6 +305,45 @@ export class CryptoService {
     return keys;
   }
 
+  async recoverDeviceIdentity(userId: string, alias: string, deviceId: string, publishedKey: JsonWebKey | null, isCurrent: () => boolean = () => true): Promise<StoredDeviceKeys | null> {
+    if (!userId || !alias || !deviceId) throw new Error('No se pudo comprobar la identidad local.');
+    // Import an exact legacy localStorage record before looking through IDB.
+    // Its ownership still has to be proved below, never inferred from the alias.
+    await this.getDeviceKeys(alias, deviceId);
+    const db = await this.open();
+    const records = await db.getAll(LOCAL_KEY_STORE) as StoredDeviceKeysRecord[];
+    if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación de la identidad.');
+    const currentId = this.deviceKeyStorageId(alias, deviceId);
+    const current = records.find(record => record.id === currentId);
+    if (current?.userId && current.userId !== userId) throw new Error('La identidad local pertenece a otra cuenta.');
+    // A renamed alias or an approved historical import may retain the exact
+    // registered identity under a different storage ID. Public-key equality
+    // with the authenticated directory proves ownership of unassigned legacy keys.
+    const candidates = records.filter(record => (!record.userId || record.userId === userId)
+      && this.samePublicKey(record.publicJwk, publishedKey));
+    if (current?.userId === userId && !candidates.includes(current)) candidates.push(current);
+    let unreadable = false;
+    for (const record of candidates) {
+      const material = await this.unprotectDeviceKeysRecord(record);
+      if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación de la identidad.');
+      if (!material) { unreadable = true; continue; }
+      try {
+        await this.validateHistoricalDeviceKey(material);
+        await crypto.subtle.importKey('jwk', material.privateJwk, { name: 'ECDH', namedCurve: 'P-256' }, false, ['deriveKey']);
+      }
+      catch { unreadable = true; continue; }
+      if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación de la identidad.');
+      if (record.id !== currentId || record.userId !== userId) {
+        await this.saveDeviceKeys(alias, deviceId, this.materialToDeviceKeys(material), { userId }, isCurrent);
+        if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación de la identidad.');
+      }
+      return { ...material, id: currentId, alias, aliasLower: this.normalizeAlias(alias), deviceId, userId };
+    }
+    if (current && !candidates.includes(current) && !await this.unprotectDeviceKeysRecord(current)) unreadable = true;
+    if (unreadable) throw new Error('No se pudo abrir la llave privada de este dispositivo. Desbloquéalo y vuelve a intentar; tus claves e historial se han conservado.');
+    return null;
+  }
+
   parsePublicJwk(value: unknown): JsonWebKey | null {
     if (!value) {
       return null;
@@ -727,7 +766,7 @@ export class CryptoService {
     if (!record.privateJwkEnvelope) {
       return null;
     }
-    const secret = await this.secureVault.getOrCreateSecret('device-keys').catch(() => null);
+    const secret = await this.secureVault.getOrCreateSecret('device-keys', { create: false }).catch(() => null);
     if (!secret) {
       return null;
     }

@@ -29,6 +29,7 @@ export class ChatLoadingComponent {
   @Input() mode: 'conversations' | 'messages' = 'conversations';
   @Input() compact = false;
   @Input() single = false;
-  readonly rows = [0, 1, 2, 3, 4];
+  @Input() rowCount = 5;
+  get rows(): number[] { return Array.from({ length: Math.max(1, Math.min(12, this.rowCount)) }, (_, index) => index); }
   readonly singleRow = [0];
 }

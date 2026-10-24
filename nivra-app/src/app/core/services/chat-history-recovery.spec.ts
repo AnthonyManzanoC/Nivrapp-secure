@@ -1,4 +1,5 @@
 import { signal } from '@angular/core';
+import { of, Subject } from 'rxjs';
 import { ChatService } from './chat.service';
 
 describe('chat history recovery and loading continuity', () => {
@@ -16,9 +17,12 @@ describe('chat history recovery and loading continuity', () => {
       messageLoadGeneration: 0, messageLoadCounts: signal({}), historyRecoveryRevision: 0,
       historyRecoveryInFlight: null, historyRecoveryScope: null, bootstrapInFlight: null,
       selectedConversationId: signal<string | null>('chat'), selectedConversationLoadId: 0,
-      messagesByConversation: signal<any>({}), pendingHistoryEnvelopes: new Map(),
+      messagesByConversation: signal<any>({}), pendingHistoryEnvelopes: new Map(), removedHistoryMessageIds: new Set(),
+      conversationHistoryGenerations: new Map(),
+      conversations: signal<any[]>([]), conversationPaging: signal({}),
       deviceHistory: { markHistoryReadable: jasmine.createSpy('readable'),
-        markHistoryRecoveryIncomplete: jasmine.createSpy('incomplete') },
+        markHistoryRecoveryIncomplete: jasmine.createSpy('incomplete'), requestHistory: jasmine.createSpy('requestHistory') },
+      api: { post: jasmine.createSpy('post').and.returnValue(of({ messages: [], deletedMessages: [] })) },
       bootstrap: jasmine.createSpy('bootstrap').and.resolveTo(),
       loadMessages: jasmine.createSpy('loadMessages').and.resolveTo(),
       ingestMessageBatch: jasmine.createSpy('ingest').and.callFake(async () => service.pendingHistoryEnvelopes.clear()),
@@ -27,6 +31,17 @@ describe('chat history recovery and loading continuity', () => {
       scheduleMessageExpiry: jasmine.createSpy('expiry'),
     });
     return service;
+  }
+  const envelope = (id: string, conversationId = 'chat', header = 'approved') => ({ id, conversationId,
+    senderUserId: 'peer', senderDeviceId: 'peer-phone', serverReceivedAt: '2026-09-01T12:00:00Z', receipts: [],
+    recipients: [{ userId: 'alice', deviceId: 'alice-browser', header, ciphertext: `Recovered ${id}` }] });
+  function useRealIngestion(service: any) {
+    service.ingestMessageBatch = (ChatService.prototype as any).ingestMessageBatch.bind(service);
+    service.decryptOwnRecipientPayload = async (_user: string, _alias: string, _device: string, recipients: any[]) => ({ type: 'text', text: recipients[0].ciphertext });
+    service.cachedReadableMessage = async () => null;
+    service.stripMessagePadding = (payload: unknown) => payload;
+    service.viewOnceOpenedReceipt = () => null;
+    service.yieldToMainThread = async () => undefined;
   }
 
   it('never replaces a readable message with a delayed failed decryption', () => {
@@ -75,6 +90,7 @@ describe('chat history recovery and loading continuity', () => {
     await expectAsync(service.retryRecoveredHistory()).toBeResolved();
     expect(service.deviceHistory.markHistoryReadable).not.toHaveBeenCalled();
     expect(service.deviceHistory.markHistoryRecoveryIncomplete).toHaveBeenCalledTimes(1);
+    expect(service.deviceHistory.markHistoryRecoveryIncomplete).toHaveBeenCalledWith({ retryable: true });
   });
 
   it('does not acknowledge a readable global bootstrap while another cached conversation is still protected', async () => {
@@ -86,6 +102,87 @@ describe('chat history recovery and loading continuity', () => {
     expect(service.deviceHistory.markHistoryRecoveryIncomplete).toHaveBeenCalled();
   });
 
+  it('recovers an old cache-only placeholder by its exact ID after recent pages no longer contain its envelope', async () => {
+    const service = harness(); useRealIngestion(service);
+    const recent = message('recent');
+    service.messagesByConversation.set({ chat: [{ ...message('old-cache'), decryptError: true }, recent] });
+    service.api.post.and.returnValue(of({ messages: [envelope('old-cache'), envelope('not-requested')], deletedMessages: [] }));
+    await service.retryRecoveredHistory();
+    expect(service.api.post).toHaveBeenCalledOnceWith('/messages/history-recovery', { messageIds: ['old-cache'] });
+    const recovered = service.messagesByConversation().chat.find((item: any) => item.id === 'old-cache');
+    expect(recovered.decryptError).toBeFalse(); expect(recovered.payload.text).toBe('Recovered old-cache');
+    expect(service.messagesByConversation().chat).toContain(recent);
+    expect(service.messagesByConversation().chat.some((item: any) => item.id === 'not-requested')).toBeFalse();
+    expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers cached placeholders in chunks of at most 100 without losing any requested ID', async () => {
+    const service = harness(); useRealIngestion(service);
+    service.messagesByConversation.set({ chat: Array.from({ length: 201 }, (_value, index) => ({ ...message(`old-${index}`), decryptError: true })) });
+    service.api.post.and.callFake((_url: string, body: { messageIds: string[] }) => of({ messages: body.messageIds.map(id => envelope(id)), deletedMessages: [] }));
+    await service.retryRecoveredHistory();
+    const requests = service.api.post.calls.allArgs().map((args: any[]) => args[1].messageIds as string[]);
+    expect(requests.map((ids: string[]) => ids.length)).toEqual([100, 100, 1]);
+    expect(new Set(requests.flat()).size).toBe(201);
+    expect(service.messagesByConversation().chat.every((item: any) => !item.decryptError)).toBeTrue();
+    expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes unresolved live envelopes and cache-only IDs after replaying the newly approved keyring', async () => {
+    const service = harness(); useRealIngestion(service);
+    service.decryptOwnRecipientPayload = async (_user: string, _alias: string, _device: string, recipients: any[]) => recipients[0].header === 'approved'
+      ? { type: 'text', text: recipients[0].ciphertext } : null;
+    service.pendingHistoryEnvelopes.set('live-pending', envelope('live-pending', 'chat', 'old-envelope'));
+    service.messagesByConversation.set({ chat: [{ ...message('cache-only'), decryptError: true }] });
+    service.api.post.and.callFake((_url: string, body: { messageIds: string[] }) => of({ messages: body.messageIds.map(id => envelope(id)), deletedMessages: [] }));
+    await service.retryRecoveredHistory();
+    expect(service.api.post.calls.first().args[1].messageIds.sort()).toEqual(['cache-only', 'live-pending']);
+    expect(service.pendingHistoryEnvelopes.size).toBe(0);
+    expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies confirmed deletion tombstones but keeps unknown or omitted history IDs pending', async () => {
+    const service = harness(); useRealIngestion(service); service.localAccountKey = () => null;
+    service.messagesByConversation.set({ chat: [{ ...message('deleted'), decryptError: true }, { ...message('unknown'), decryptError: true }] });
+    service.api.post.and.returnValue(of({ messages: [], deletedMessages: [
+      { messageId: 'deleted', conversationId: 'chat' },
+      { messageId: 'unknown', conversationId: 'foreign-conversation' },
+      { messageId: 'not-requested', conversationId: 'chat' },
+    ] }));
+    await service.retryRecoveredHistory();
+    expect(service.messagesByConversation().chat.map((item: any) => item.id)).toEqual(['unknown']);
+    expect(service.removedHistoryMessageIds.has('unknown')).toBeFalse();
+    expect(service.removedHistoryMessageIds.has('not-requested')).toBeFalse();
+    expect(service.deviceHistory.markHistoryReadable).not.toHaveBeenCalled();
+    expect(service.deviceHistory.markHistoryRecoveryIncomplete).toHaveBeenCalled();
+  });
+
+  it('discards a targeted recovery response after the authenticated account changes', async () => {
+    const service = harness(); useRealIngestion(service);
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }] });
+    const response = new Subject<any>(); service.api.post.and.returnValue(response);
+    const recovery = service.retryRecoveredHistory();
+    for (let index = 0; index < 20 && !service.api.post.calls.count(); index++) await Promise.resolve();
+    expect(service.api.post).toHaveBeenCalledTimes(1);
+    service.auth.session.set(session('bob'));
+    response.next({ messages: [envelope('old')], deletedMessages: [] }); response.complete(); await recovery;
+    expect(service.messagesByConversation().chat[0].decryptError).toBeTrue();
+    expect(service.deviceHistory.markHistoryReadable).not.toHaveBeenCalled();
+    expect(service.deviceHistory.markHistoryRecoveryIncomplete).not.toHaveBeenCalled();
+  });
+
+  it('cannot reinsert targeted envelopes when a conversation was cleared while the request was in flight', async () => {
+    const service = harness(); useRealIngestion(service); service.localAccountKey = () => null;
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }] });
+    const response = new Subject<any>(); service.api.post.and.returnValue(response);
+    const recovery = service.retryRecoveredHistory();
+    for (let index = 0; index < 20 && !service.api.post.calls.count(); index++) await Promise.resolve();
+    service.applyChatCleared({ conversationId: 'chat' });
+    response.next({ messages: [envelope('old')], deletedMessages: [] }); response.complete(); await recovery;
+    expect(service.messagesByConversation().chat).toEqual([]);
+    expect(service.pendingHistoryEnvelopes.size).toBe(0);
+  });
+
   it('queues another imported keyring during recovery and acknowledges only the final pass', async () => {
     const service = harness(); const first = deferred();
     service.bootstrap.and.returnValues(first.promise, Promise.resolve());
@@ -95,6 +192,131 @@ describe('chat history recovery and loading continuity', () => {
     first.resolve(); await recovery;
     expect(service.bootstrap).toHaveBeenCalledTimes(2);
     expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not let an older failed refresh override the next approved keyring recovery', async () => {
+    const service = harness();
+    let reject!: (reason?: unknown) => void;
+    service.bootstrap.and.returnValues(new Promise<void>((_resolve, fail) => reject = fail), Promise.resolve());
+    const recovery = service.retryRecoveredHistory();
+    for (let index = 0; index < 5; index++) await Promise.resolve();
+    service.retryRecoveredHistory();
+    reject(new Error('An older refresh failed')); await recovery;
+    expect(service.bootstrap).toHaveBeenCalledTimes(2);
+    expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
+    expect(service.deviceHistory.markHistoryRecoveryIncomplete).not.toHaveBeenCalled();
+  });
+
+  it('forgets a deleted protected message and rejects a recovery snapshot taken before deletion', async () => {
+    const service = harness(); const protectedMessage = { ...message(), decryptError: true };
+    service.messagesByConversation.set({ chat: [protectedMessage] });
+    const envelope = { id: protectedMessage.id, conversationId: 'chat' };
+    service.pendingHistoryEnvelopes.set(protectedMessage.id, envelope);
+    service.localAccountKey = () => null;
+    service.applyMessageDeleted({ messageId: protectedMessage.id, conversationId: 'chat' });
+    expect(service.pendingHistoryEnvelopes.size).toBe(0);
+    expect(service.messagesByConversation().chat).toEqual([]);
+    expect(await service.ingestMessage(envelope, false)).toBeTrue();
+    service.upsertMessage(protectedMessage, { persist: false });
+    expect(service.messagesByConversation().chat).toEqual([]);
+    await service.retryRecoveredHistory();
+    expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalled();
+  });
+
+  it('discards a protected message that expires while its decryption is in progress', async () => {
+    const service = harness(); const decrypting = deferred<any>();
+    const envelope = { id: 'expiring', conversationId: 'chat', expiresAt: new Date(Date.now() + 30_000).toISOString(),
+      senderUserId: 'peer', recipients: [{ userId: 'alice', deviceId: 'alice-browser', ciphertext: 'opaque' }] };
+    service.decryptOwnRecipientPayload = () => decrypting.promise;
+    service.pendingHistoryEnvelopes.set(envelope.id, envelope);
+    const ingest = service.ingestMessage(envelope, false);
+    envelope.expiresAt = new Date(0).toISOString();
+    decrypting.resolve({ type: 'text', text: 'Expired while decrypting' });
+    expect(await ingest).toBeTrue();
+    expect(service.pendingHistoryEnvelopes.size).toBe(0);
+    expect(service.messagesByConversation()).toEqual({});
+  });
+
+  it('forgets pending envelopes when a conversation is cleared without affecting another conversation', () => {
+    const service = harness(); service.localAccountKey = () => null;
+    const first = { id: 'one', conversationId: 'chat' }; const other = { id: 'two', conversationId: 'other' };
+    service.pendingHistoryEnvelopes.set(first.id, first); service.pendingHistoryEnvelopes.set(other.id, other);
+    service.messagesByConversation.set({ chat: [{ ...message(first.id), decryptError: true }] });
+    service.applyChatCleared({ conversationId: 'chat' });
+    expect([...service.pendingHistoryEnvelopes.keys()]).toEqual(['two']);
+    expect(service.discardHistoryEnvelope(first)).toBeTrue();
+    expect(service.discardHistoryEnvelope(other)).toBeFalse();
+  });
+
+  for (const action of ['clearConversation', 'deleteConversation']) {
+    it(`forgets protected envelopes after ${action} succeeds over HTTP without any realtime event`, async () => {
+      const service = harness(); service.localAccountKey = () => null;
+      service.selectedConversationId.set(null);
+      service.api = { post: () => of(null), delete: () => of(null) };
+      service.conversations.set([{ id: 'chat' }, { id: 'other' }]);
+      service.pendingHistoryEnvelopes.set('one', { id: 'one', conversationId: 'chat' });
+      service.pendingHistoryEnvelopes.set('two', { id: 'two', conversationId: 'other' });
+      await service[action]({ id: 'chat' }, 'me');
+      expect([...service.pendingHistoryEnvelopes.keys()]).toEqual(['two']);
+      expect(service.historyGeneration('chat')).toBe(1);
+    });
+  }
+
+  it('does not return or persist a tombstoned message from a late cache read', async () => {
+    const service = harness(); const deleted = message('deleted'); const readable = message('current');
+    const cache = deferred<any[]>();
+    service.localAccountKeys = async () => ['alice']; service.localAccountKey = () => 'alice';
+    service.history = { conversationMessagesPage: () => cache.promise, putMessages: jasmine.createSpy('putMessages').and.resolveTo() };
+    service.purgeExpiredLocalMessages = async () => undefined;
+    const loading = service.loadCachedMessages('chat');
+    for (let index = 0; index < 3; index++) await Promise.resolve();
+    service.forgetHistoryMessage(deleted.id);
+    cache.resolve([deleted, readable]);
+    expect(await loading).toEqual([readable]);
+    expect(service.history.putMessages).toHaveBeenCalledWith('alice', [readable]);
+    expect(service.messagesByConversation().chat).toEqual([readable]);
+  });
+
+  for (const action of ['applyChatCleared', 'removeConversationLocally']) {
+    it(`rejects unknown IDs from a decrypting batch when ${action} removes its conversation`, async () => {
+      const service = harness(); const decrypting = deferred<any>();
+      const envelope = (id: string) => ({ id, conversationId: 'chat', senderUserId: 'peer',
+        recipients: [{ userId: 'alice', deviceId: 'alice-browser', ciphertext: 'opaque' }] });
+      service.localAccountKey = () => null; service.selectedConversationId.set(null);
+      service.decryptOwnRecipientPayload = jasmine.createSpy('decrypt').and.returnValue(decrypting.promise);
+      service.ingestMessageBatch = ChatService.prototype['ingestMessageBatch'].bind(service);
+      const batch = service.ingestMessageBatch([envelope('one'), envelope('two')], false);
+      expect(service.pendingHistoryEnvelopes.size).toBe(0);
+      if (action === 'applyChatCleared') service.applyChatCleared({ conversationId: 'chat' });
+      else await service.removeConversationLocally('chat');
+      decrypting.resolve({ type: 'text', text: 'Obsolete payload' });
+      expect(await batch).toBeTrue();
+      expect(service.decryptOwnRecipientPayload).toHaveBeenCalledTimes(1);
+      expect(service.pendingHistoryEnvelopes.size).toBe(0);
+      expect(service.messagesByConversation().chat ?? []).toEqual([]);
+    });
+  }
+
+  it('does not persist a conversation cache page that completes after that conversation was cleared', async () => {
+    const service = harness(); const cache = deferred<any[]>();
+    service.localAccountKeys = async () => ['alice']; service.localAccountKey = () => 'alice';
+    service.history = { conversationMessagesPage: () => cache.promise, putMessages: jasmine.createSpy('putMessages').and.resolveTo(),
+      removeConversationMessages: async () => undefined };
+    const loading = service.loadCachedMessages('chat');
+    for (let index = 0; index < 3; index++) await Promise.resolve();
+    service.applyChatCleared({ conversationId: 'chat' });
+    cache.resolve([message('previously-unknown')]);
+    expect(await loading).toEqual([]);
+    expect(service.history.putMessages).not.toHaveBeenCalled();
+    expect(service.messagesByConversation().chat).toEqual([]);
+  });
+
+  it('does not keep an expired protected cache placeholder pending after the active history is readable', async () => {
+    const service = harness();
+    service.messagesByConversation.set({ older: [{ ...message(), decryptError: true, expiresAt: new Date(0).toISOString() }] });
+    await service.retryRecoveredHistory();
+    expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalled();
+    expect(service.deviceHistory.markHistoryRecoveryIncomplete).not.toHaveBeenCalled();
   });
 
   it('cannot acknowledge or load pages for an account switched during recovery', async () => {

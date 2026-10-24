@@ -19,6 +19,11 @@ describe('chat profile continuity during recovery', () => {
     service.profileSources = new Map();
     service.launchCacheEpoch = 0;
     service.auth = { session: signal({ user: { id: 'self', alias: 'self' }, device: { id: 'browser' } }) };
+    service.auth.ensureDeviceIdentity = async () => ({});
+    service.syncError = signal('');
+    service.lastSyncedAt = signal(null);
+    service.messagesByConversation = signal({});
+    service.messageLoadGeneration = 0;
     service.history = { putProfiles: jasmine.createSpy('putProfiles').and.resolveTo() };
     service.api = { get: jasmine.createSpy('get').and.returnValue(of({ id: 'peer', alias: 'alias', displayName: 'Nombre completo', profilePhotoDataUrl: null })) };
     return service;

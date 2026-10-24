@@ -1182,5 +1182,10 @@
   "HISTORY_DEVICE.CHECKING": "Comprobando…",
   "HISTORY_DEVICE.SHARING": "Compartiendo de forma segura…",
   "HISTORY_DEVICE.APPROVAL_TAG": "Vinculación de dispositivo",
-  "HISTORY_LOADING.OPENING_LOCAL": "Abriendo tu historial cifrado…"
+  "HISTORY_LOADING.OPENING_LOCAL": "Abriendo tu historial cifrado…",
+  "HISTORY_DEVICE.RELINK_REQUIRED": "Vuelve a vincular este equipo",
+  "HISTORY_DEVICE.RELINK_COPY": "Vuelve a vincular este equipo desde tu teléfono para recuperar los chats. El historial guardado se conserva.",
+  "HISTORY_DEVICE.RELINK": "Volver a vincular",
+  "HISTORY_DEVICE.IDENTITY_ERROR_COPY": "No se pudo abrir la identidad de este equipo. Comprueba la conexión, desbloquea el dispositivo y vuelve a intentar.",
+  "HISTORY_LOADING.SUPPORT_CODE": "Código de soporte"
 }

@@ -261,7 +261,7 @@ public sealed record MessageResponse(
 
 public sealed record ReceiptRequest(ReceiptKind Kind, bool? Opened);
 
-public sealed record MessageSyncResponse(List<MessageResponse> Messages, DateTimeOffset SyncedAt);
+public sealed record MessageSyncResponse(List<MessageResponse> Messages, DateTimeOffset SyncedAt, string? CursorId = null, bool? HasMore = null);
 
 public sealed record MessageSyncAckRequest(List<string> MessageIds);
 

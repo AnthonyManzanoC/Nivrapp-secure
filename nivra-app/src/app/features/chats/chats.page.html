@@ -5,7 +5,7 @@
         <div class="side-heading">
           <h1>{{ 'CHATS.TITLE' | translate:'Chats' }}</h1>
           @if (storiesCollapsed && !query.trim() && !showRecentSearches) {
-            <button type="button" class="compact-stories" (click)="expandStories()" [attr.aria-label]="'CHATS.EXPAND_STORIES' | translate:'Mostrar historias'">
+            <button type="button" class="compact-stories" (click)="expandStories()" [attr.aria-label]="'CHATS.EXPAND_STORIES' | translate:'Mostrar historias'" aria-expanded="false">
               @for (highlight of storyHighlights().slice(0, 3); track highlight.id) {
                 <span class="compact-story-avatar" [style.border-color]="highlight.ringColor">
                   @if (highlight.photo) {
@@ -15,6 +15,7 @@
                   }
                 </span>
               }
+              <span class="compact-stories-label">{{ 'WORLD.STORIES' | translate:'Historias' }}</span>
               <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
             </button>
           } @else {
@@ -32,6 +33,10 @@
           }
         </div>
         <div class="side-actions">
+          <button class="header-refresh" type="button" [disabled]="showConversationSkeleton()" (click)="refresh()" [attr.aria-label]="'CHATS.SYNC' | translate:'Sincronizar'" [title]="'CHATS.SYNC' | translate:'Sincronizar'">
+            @if (showConversationSkeleton()) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
+            @else { <ion-icon name="sync-outline" aria-hidden="true"></ion-icon> }
+          </button>
           <button class="new-chat-button" type="button" (click)="startNewChat()" [attr.aria-label]="'CHATS.NEW_CHAT' | translate:'Nuevo chat'" [title]="'CHATS.NEW_CHAT' | translate:'Nuevo chat'">
             <ion-icon name="add-outline" aria-hidden="true"></ion-icon>
           </button>
@@ -43,6 +48,7 @@
 
       @if (storyHighlights().length && !query.trim() && !showRecentSearches) {
         <nav class="story-strip" [class.is-collapsed]="storiesCollapsed" [attr.inert]="storiesCollapsed ? '' : null" [attr.aria-hidden]="storiesCollapsed" [attr.aria-label]="'WORLD.STORIES' | translate:'Historias'">
+          <button class="story-collapse" type="button" (click)="storiesCollapsed = true" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
           @for (highlight of storyHighlights(); track highlight.id) {
             <div class="story-highlight-item">
               <button
@@ -103,10 +109,7 @@
             <p class="search-hint">{{ 'CHATS.SEARCH_HINT' | translate:'Busca un chat por su nombre o encuentra a alguien por su alias o ID.' }}</p>
           }
         }
-        @if (showCallAlertsSetup() && !firstConversation() && !query.trim() && !showRecentSearches) {
-          <aside class="call-alerts-banner"><ion-icon name="notifications-outline" aria-hidden="true"></ion-icon><strong>{{ 'CHATS.CALL_ALERTS_TITLE' | translate:'Entérate cuando te llamen' }}</strong><button type="button" [disabled]="callAlertsBusy()" (click)="enableCallAlerts()">{{ (callAlertsBusy() ? 'CHATS.CALL_ALERTS_ENABLING' : 'CHATS.CALL_ALERTS_ACTION') | translate:(callAlertsBusy() ? 'Activando…' : 'Activar avisos') }}</button></aside>
-          @if (callAlertsNotice) { <p class="search-hint" role="status">{{ callAlertsNotice }}</p> }
-        }
+        @if (callAlertsNotice) { <p class="search-hint" role="status">{{ callAlertsNotice }}</p> }
         @if (syncNotice) { <p class="sync-notice" role="status">{{ syncNotice }}</p> }
         @if (conversationActionNotice) { <p class="sync-notice" role="status"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>{{ conversationActionNotice }}</p> }
         @if (conversationActionError) { <p class="search-hint search-error" role="alert">{{ conversationActionError }}</p> }
@@ -187,32 +190,30 @@
         </div>
       } @else {
         <section class="chat-list-shell" [class.has-history-warning]="!!visibleStorageError()">
-          <ion-segment
-            mode="ios"
-            scrollable="true"
-            class="chat-folders"
-            [attr.aria-label]="'CHATS.SEARCH_SCOPE' | translate:'Dónde buscar'"
-            [value]="selectedFolder"
-            (ionChange)="setFolder($event.detail.value)">
-            <ion-segment-button value="all">{{ 'CHATS.ALL' | translate:'Todos' }}</ion-segment-button>
-            <ion-segment-button value="pinned">{{ 'CHATS.PINNED' | translate:'Fijados' }}</ion-segment-button>
-            <ion-segment-button value="unread">{{ 'CHATS.UNREAD' | translate:'No leidos' }}</ion-segment-button>
-            <ion-segment-button value="archived">{{ 'CHATS.ARCHIVED' | translate:'Archivados' }}</ion-segment-button>
-          </ion-segment>
+          <nav class="chat-folders" [attr.aria-label]="'CHATS.SEARCH_SCOPE' | translate:'Dónde buscar'">
+            <button type="button" [class.selected]="selectedFolder === 'all'" [attr.aria-pressed]="selectedFolder === 'all'" (click)="setFolder('all')">{{ 'CHATS.ALL' | translate:'Todos' }}</button>
+            <button type="button" [class.selected]="selectedFolder === 'pinned'" [attr.aria-pressed]="selectedFolder === 'pinned'" (click)="setFolder('pinned')">{{ 'CHATS.PINNED' | translate:'Fijados' }}</button>
+            <button type="button" [class.selected]="selectedFolder === 'unread'" [attr.aria-pressed]="selectedFolder === 'unread'" (click)="setFolder('unread')">{{ 'CHATS.UNREAD' | translate:'No leidos' }}</button>
+            <button type="button" [class.selected]="selectedFolder === 'archived'" [attr.aria-pressed]="selectedFolder === 'archived'" (click)="setFolder('archived')">{{ 'CHATS.ARCHIVED' | translate:'Archivados' }}</button>
+          </nav>
 
-          @if (visibleStorageError(); as storageError) {
-            <div class="local-history-warning" [class.is-recovering]="localHistory.storageBusy()" role="status" aria-live="polite" [attr.aria-busy]="refreshing || localHistory.storageBusy()">
-              @if (localHistory.storageBusy()) { <span class="local-history-opening"><ion-spinner name="crescent" aria-hidden="true"></ion-spinner>{{ 'HISTORY_LOADING.OPENING_LOCAL' | translate:'Abriendo tu historial cifrado…' }}</span> } @else { <span>{{ storageError }}</span> }
-              <button type="button" [disabled]="refreshing || localHistory.storageBusy()" (click)="refresh()">@if (refreshing && !localHistory.storageBusy()) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }{{ (refreshing || localHistory.storageBusy() ? 'HISTORY_LOADING.RETRYING' : 'COMMON.RETRY') | translate:(refreshing || localHistory.storageBusy() ? 'Reintentando…' : 'Reintentar') }}</button>
-            </div>
+          @if (showHistoryStatus()) {
+            <button class="history-status-trigger" type="button" (click)="historyPanelOpen = true" aria-haspopup="dialog" [attr.aria-label]="historyStatusTitle()">
+              @if (localHistory.storageBusy() || chat.deviceHistory.state() === 'syncing') { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
+              @else { <span class="history-status-dot" aria-hidden="true"></span> }
+              <span>{{ historyStatusTitle() }}</span>
+              <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
+            </button>
           }
 
-          <app-history-sync-notice [showApprovals]="false" />
-          @if (conversationIndexLoading() && conversationsForFolder().length && !visibleStorageError()) {
-            <app-chat-loading [compact]="true" />
+          <div class="conversation-list-stage" [class.is-loading]="showConversationSkeleton()" [attr.aria-busy]="conversationIndexLoading()">
+          @if (!detailActive && !showRecentSearches) {
+            <ion-refresher slot="fixed" mode="ios" [disabled]="refreshing" (ionRefresh)="onPullRefresh($event)">
+              <ion-refresher-content pullingIcon="chevron-down-outline" refreshingSpinner="crescent"></ion-refresher-content>
+            </ion-refresher>
           }
-
-          <ion-list #conversationList class="list" lines="none" [attr.aria-busy]="conversationIndexLoading()" (scroll)="onChatListScroll($event)">
+          @if (showConversationSkeleton()) { <app-chat-loading class="full-list-loading" [rowCount]="9" /> }
+          <ion-list #conversationList class="list ion-content-scroll-host" lines="none" [attr.inert]="showConversationSkeleton() ? '' : null" [attr.aria-hidden]="showConversationSkeleton() ? 'true' : null" (scroll)="onChatListScroll($event)">
             @for (conversation of conversationsForFolder(); track conversation.id) {
               <ion-item-sliding>
                 <ion-item-options side="start">
@@ -224,12 +225,12 @@
 
                 <ion-item
                   button
+                  [detail]="false"
                   class="list-item conversation-item"
                   [class.active]="chat.selectedConversationId() === conversation.id"
                   [class.pinned]="chat.isConversationPinned(conversation.id)"
                   [class.muted]="chat.isConversationMuted(conversation.id)"
                   [class.unread]="chat.hasUnreadConversation(conversation)"
-                  [class.has-flags]="chat.isConversationPinned(conversation.id) || chat.isConversationMuted(conversation.id) || chat.hasUnreadConversation(conversation)"
                   [attr.aria-current]="chat.selectedConversationId() === conversation.id ? 'page' : null"
                   (contextmenu)="openConversationMenu(conversation, $event)"
                   (click)="openConversation(conversation.id)">
@@ -257,14 +258,13 @@
                     }
                   </span>
                   <ion-label class="item-copy">
-                    <strong>{{ chat.conversationTitle(conversation) }}</strong>
-                    <small>{{ chat.conversationSubtitle(conversation) }}</small>
-                    @if (chat.isConversationPinned(conversation.id) || chat.isConversationMuted(conversation.id) || chat.hasUnreadConversation(conversation)) {
-                      <span class="chat-meta">
-                        @if (chat.isConversationPinned(conversation.id)) { <b>{{ 'CHATS.PINNED_TAG' | translate:'Fijado' }}</b> }
-                        @if (chat.isConversationMuted(conversation.id)) { <b>{{ 'CHATS.MUTED_TAG' | translate:'Silenciado' }}</b> }
-                        @if (chat.hasUnreadConversation(conversation)) { <b>{{ 'CHATS.UNREAD_TAG' | translate:'No leido' }}</b> }
-                      </span>
+                    <strong class="conversation-title"><span>{{ chat.conversationTitle(conversation) }}</span>@if (chat.isConversationPinned(conversation.id)) { <ion-icon name="pin-outline" [attr.aria-label]="'CHATS.PINNED_TAG' | translate:'Fijado'"></ion-icon> }@if (chat.isConversationMuted(conversation.id)) { <ion-icon name="notifications-off-outline" [attr.aria-label]="'CHATS.MUTED_TAG' | translate:'Silenciado'"></ion-icon> }</strong>
+                    @if (conversationPreviewLoading(conversation)) {
+                      <span class="conversation-preview-loading" aria-hidden="true"></span>
+                    } @else if (conversationHistoryPending(conversation)) {
+                      <small class="conversation-history-pending">{{ 'HISTORY_DEVICE.PENDING' | translate:'Historial cifrado pendiente' }}</small>
+                    } @else {
+                      <small>{{ chat.conversationSubtitle(conversation) }}</small>
                     }
                     @if (appSettings.settings().chatListDensity === 'three-line') {
                       <em>{{ chat.presenceLabel(conversation) }}</em>
@@ -272,10 +272,13 @@
                   </ion-label>
                   <div class="conversation-tail" slot="end">
                     <ion-note>{{ (conversation.lastMessageAt || conversation.updatedAt) | localizedDate:'shortTime' }}</ion-note>
+                    <div class="conversation-tail-actions">
+                    @if (chat.hasUnreadConversation(conversation)) { <span class="conversation-unread-dot" role="img" [attr.aria-label]="'CHATS.UNREAD_TAG' | translate:'No leido'"></span> }
                     <button class="conversation-more" type="button" (click)="openConversationMenu(conversation, $event)" (keydown.enter)="$event.stopPropagation()" (keydown.space)="$event.stopPropagation()" [disabled]="!!conversationActionBusy" aria-haspopup="menu" [attr.aria-expanded]="conversationMenuOpen && conversationMenuTarget?.id === conversation.id" [attr.aria-label]="('CHATS.MORE_ACTIONS' | translate:'Más opciones de chats') + ' · ' + chat.conversationTitle(conversation)" [title]="'CHATS.MORE_ACTIONS' | translate:'Más opciones de chats'">
                       @if (conversationActionBusy === conversation.id) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
                       @else { <ion-icon name="ellipsis-vertical-outline" aria-hidden="true"></ion-icon> }
                     </button>
+                    </div>
                   </div>
                 </ion-item>
 
@@ -307,6 +310,7 @@
               }
             }
           </ion-list>
+          </div>
         </section>
       }
     </aside>
@@ -321,6 +325,31 @@
     </section>
   </section>
 
+  <ion-modal class="history-storage-modal" [isOpen]="historyPanelOpen" (didDismiss)="historyPanelOpen = false">
+    <ng-template>
+      <section class="history-panel">
+        <header><h2>{{ 'CHATS.SYNC' | translate:'Sincronizar' }}</h2><button type="button" (click)="historyPanelOpen = false" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button></header>
+        @if (auth.deviceIdentityError()) {
+          <div class="history-connection-error" role="status"><p>{{ (auth.deviceIdentityNeedsRelink() ? 'HISTORY_DEVICE.RELINK_COPY' : 'HISTORY_DEVICE.IDENTITY_ERROR_COPY') | translate:(auth.deviceIdentityNeedsRelink() ? 'Vuelve a vincular este equipo desde tu teléfono para recuperar los chats. El historial guardado se conserva.' : 'No se pudo abrir la identidad de este equipo. Comprueba la conexión, desbloquea el dispositivo y vuelve a intentar.') }}</p>
+            @if (auth.deviceIdentityNeedsRelink()) { <button type="button" [disabled]="refreshing" (click)="relinkDevice()">{{ 'HISTORY_DEVICE.RELINK' | translate:'Volver a vincular' }}</button> }
+            @else { <button type="button" [disabled]="showConversationSkeleton()" (click)="refresh()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button> }
+          </div>
+        }
+        @if (visibleStorageError(); as storageError) {
+          <div class="local-history-warning" [class.is-recovering]="localHistory.storageBusy()" role="status" aria-live="polite" [attr.aria-busy]="refreshing || localHistory.storageBusy()">
+            @if (localHistory.storageBusy()) { <span class="local-history-opening"><ion-spinner name="crescent" aria-hidden="true"></ion-spinner>{{ 'HISTORY_LOADING.OPENING_LOCAL' | translate:'Abriendo tu historial cifrado…' }}</span> } @else { <span>{{ storageError }}</span> }
+            @if (!localHistory.storageBusy() && localHistory.storageDiagnostic()?.retryable !== false) { <button type="button" [disabled]="refreshing" (click)="refresh()">{{ (refreshing ? 'HISTORY_LOADING.RETRYING' : 'COMMON.RETRY') | translate:(refreshing ? 'Reintentando…' : 'Reintentar') }}</button> }
+            @if (localHistory.storageDiagnostic(); as diagnostic) { <div class="storage-support"><span>{{ 'HISTORY_LOADING.SUPPORT_CODE' | translate:'Código de soporte' }}</span><code dir="ltr">{{ diagnostic.stage }}/{{ diagnostic.code }}</code></div> }
+          </div>
+        }
+        @if (chat.syncError() && !auth.deviceIdentityError()) { <div class="history-connection-error" role="status"><p>{{ 'CHATS.SYNC_ERROR' | translate:'No se pudo actualizar. Inténtalo cuando tengas conexión.' }}</p><button type="button" [disabled]="showConversationSkeleton()" (click)="refresh()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button></div> }
+        <app-history-sync-notice [showApprovals]="false" [showWaiting]="!auth.deviceIdentityError()" />
+        @if (showConversationSkeleton()) { <app-chat-loading [compact]="true" /> }
+        @else if (!showHistoryStatus()) { <p class="history-ready" role="status"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.SYNCED' | translate:'Tus chats están al día.' }}</p> }
+      </section>
+    </ng-template>
+  </ion-modal>
+
   <ion-popover class="chats-actions-popover" [isOpen]="chatMenuOpen" [event]="chatMenuEvent" side="bottom" alignment="end" (didDismiss)="onChatMenuDismiss()">
     <ng-template>
       <div class="chats-actions-menu" role="menu" (keydown)="onChatMenuKeydown($event)" [attr.aria-label]="'CHATS.MORE_ACTIONS' | translate:'Más opciones de chats'">
@@ -331,6 +360,7 @@
         <span class="menu-divider" role="separator"></span>
         <button type="button" role="menuitem" [disabled]="refreshing || chat.loading()" (click)="chooseChatMenuAction('refresh')"><ion-icon name="sync-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.SYNC' | translate:'Sincronizar' }}</button>
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('settings')"><ion-icon name="settings-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNT.TITLE' | translate:'Cuenta' }}</button>
+        @if (showCallAlertsSetup()) { <button type="button" role="menuitem" [disabled]="callAlertsBusy()" (click)="chooseChatMenuAction('enable-alerts')"><ion-icon name="notifications-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.CALL_ALERTS_ACTION' | translate:'Activar avisos' }}</button> }
       </div>
     </ng-template>
   </ion-popover>

@@ -131,12 +131,17 @@ export class AppComponent {
 
     const timer = window.setInterval(() => this.now.set(Date.now()), 1000);
     this.destroyRef.onDestroy(() => window.clearInterval(timer));
+    const updateTimer = window.setInterval(() => {
+      if (document.visibilityState !== 'hidden') void this.webLaunch.checkForUpdate(() => this.canApplyWebUpdate());
+    }, 60_000);
+    this.destroyRef.onDestroy(() => window.clearInterval(updateTimer));
 
     this.router.events
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
         if (event instanceof NavigationEnd) {
           void this.webLaunch.start(() => this.canApplyWebUpdate());
+          void this.webLaunch.checkForUpdate(() => this.canApplyWebUpdate());
           const url = event.urlAfterRedirects || event.url;
           this.currentUrl.set(url);
           this.onCallsRoute.set(url.startsWith('/app/calls'));
@@ -218,9 +223,16 @@ export class AppComponent {
 
   private canApplyWebUpdate(): boolean {
     const history = this.chat.deviceHistory;
+    const hasDraft = Array.from(document.querySelectorAll('ion-textarea,textarea,input.ng-dirty,[contenteditable="true"]'))
+      .some(element => {
+        if (element instanceof HTMLInputElement && !['text', 'search', 'email', 'password', 'url', 'tel', 'number'].includes(element.type)) return false;
+        return ('value' in element ? String(element.value ?? '') : element.textContent ?? '').trim().length > 0;
+      });
+    const hasOverlay = Array.from(document.querySelectorAll('ion-modal,ion-alert,ion-action-sheet,ion-popover'))
+      .some(element => 'isOpen' in element && Boolean(element.isOpen));
     return !this.auth.busy() && !this.calls.activeCall() && !this.calls.resumableCall()
       && !this.chat.uploading() && !history.approvingRequestId()
-      && history.state() !== 'syncing' && history.pendingRequests().length === 0;
+      && history.state() !== 'syncing' && history.pendingRequests().length === 0 && !hasDraft && !hasOverlay;
   }
 
   private canPresentDailyLaunch(url: string): boolean {
@@ -352,6 +364,7 @@ export class AppComponent {
   }
 
   private handleAppResume(): Promise<void> {
+    void this.webLaunch.checkForUpdate(() => this.canApplyWebUpdate());
     this.dailyLaunch.requestPresentation();
     this.resumePromise ??= this.resumeExistingSession().finally(() => { this.resumePromise = null; });
     return this.resumePromise;
@@ -370,7 +383,7 @@ export class AppComponent {
       this.lastPushResume = Date.now();
       void this.push.initialize().catch(() => undefined);
     }
-    await this.realtime.connect().catch(() => undefined);
+    void this.realtime.connect().catch(() => undefined);
     await this.chat.resumeSoftSync().catch(() => undefined);
   }
 
@@ -486,7 +499,7 @@ export class AppComponent {
       if (!await this.auth.ensureFreshSession()) {
         return;
       }
-      await this.realtime.connect();
+      void this.realtime.connect().catch(() => undefined);
       await this.push.initialize();
       void this.nativeDevice.ensureBatteryOptimizationExemption();
       void this.contactSync.syncCachedContactsInBackground();

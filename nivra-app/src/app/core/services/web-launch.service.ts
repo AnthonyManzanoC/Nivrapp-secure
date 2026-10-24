@@ -3,6 +3,8 @@ import { Capacitor } from '@capacitor/core';
 import { NIVRA_VERSION } from '../release';
 
 const DAILY_CHECK_KEY = 'nivra.web.dailyCheck.v1';
+const BACKGROUND_CHECK_INTERVAL_MS = 5 * 60_000;
+const APPLIED_VERSION_KEY = `nivra.web.appliedVersion.v2.${NIVRA_VERSION}`;
 export const WEB_LAUNCH_TIMEOUT_MS = 1200;
 
 export interface WebLaunchRuntime {
@@ -52,7 +54,51 @@ export class WebLaunchService {
   private readonly runtime = inject(WEB_LAUNCH_RUNTIME);
   private inFlight: Promise<void> | null = null;
   private attempted = false;
+  private lastBackgroundCheckAt: number | null = null;
+  private pendingVersion: string | null = null;
   readonly checking = signal(false);
+
+  /** Check an already open web app without covering the conversation with a splash. */
+  checkForUpdate(canReload: () => boolean = () => true): Promise<void> {
+    if (!this.runtime.isWeb || this.runtime.sensitiveRoute()) return Promise.resolve();
+    if (this.inFlight) return this.inFlight;
+    const operation = (async () => {
+      if (this.applyPendingVersion(canReload)) return;
+      const now = this.runtime.now().getTime();
+      if (this.lastBackgroundCheckAt !== null && now - this.lastBackgroundCheckAt < BACKGROUND_CHECK_INTERVAL_MS) return;
+      this.lastBackgroundCheckAt = now;
+      const controller = new AbortController();
+      let timeoutId = 0;
+      try {
+        const result = await Promise.race([
+          this.runtime.fetchVersion(controller.signal),
+          new Promise<null>(resolve => { timeoutId = window.setTimeout(() => resolve(null), 5_000); }),
+        ]);
+        const version = result && typeof result === 'object' ? (result as { version?: unknown }).version : null;
+        if (!isNewerWebVersion(version)) return;
+        this.pendingVersion = version;
+        this.applyPendingVersion(canReload);
+      } catch {
+        // Offline checks leave the current application and unsent content intact.
+      } finally {
+        window.clearTimeout(timeoutId);
+        controller.abort();
+      }
+    })().finally(() => { if (this.inFlight === operation) this.inFlight = null; });
+    this.inFlight = operation;
+    return operation;
+  }
+
+  private applyPendingVersion(canReload: () => boolean): boolean {
+    if (!this.pendingVersion || this.runtime.sensitiveRoute() || !canReload()) return false;
+    try {
+      if (!this.runtime.storage || this.runtime.storage.getItem(APPLIED_VERSION_KEY) === this.pendingVersion) return false;
+      this.runtime.storage.setItem(APPLIED_VERSION_KEY, this.pendingVersion);
+      if (this.runtime.storage.getItem(APPLIED_VERSION_KEY) !== this.pendingVersion) return false;
+      this.runtime.reload();
+      return true;
+    } catch { return false; }
+  }
 
   start(canReload: () => boolean = () => true): Promise<void> {
     if (this.inFlight) return this.inFlight;

@@ -1182,5 +1182,10 @@
   "HISTORY_DEVICE.CHECKING": "Checking…",
   "HISTORY_DEVICE.SHARING": "Sharing securely…",
   "HISTORY_DEVICE.APPROVAL_TAG": "Device linking",
-  "HISTORY_LOADING.OPENING_LOCAL": "Opening your encrypted history…"
+  "HISTORY_LOADING.OPENING_LOCAL": "Opening your encrypted history…",
+  "HISTORY_DEVICE.RELINK_REQUIRED": "Link this device again",
+  "HISTORY_DEVICE.RELINK_COPY": "Link this device again from your phone to recover your chats. Your saved history is preserved.",
+  "HISTORY_DEVICE.RELINK": "Link again",
+  "HISTORY_DEVICE.IDENTITY_ERROR_COPY": "This device's identity could not be opened. Check your connection, unlock the device and try again.",
+  "HISTORY_LOADING.SUPPORT_CODE": "Support code"
 }

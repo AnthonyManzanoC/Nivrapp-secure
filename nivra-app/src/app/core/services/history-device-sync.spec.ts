@@ -24,7 +24,7 @@ describe('approved encrypted history recovery', () => {
   const running: any[] = [];
   const session = (id = 'source', userId = 'alice') => ({ user: { id: userId, alias: 'alice' }, device: { id, isTrusted: true } });
   function syncHarness(crypto: any, id = 'source') {
-    const auth = { session: signal<any>(session(id)) };
+    const auth = { session: signal<any>(session(id)), ensureDeviceIdentity: () => crypto.currentKeyMaterial('alice', auth.session().device.id) };
     const api = { get: jasmine.createSpy('get').and.returnValue(of([])), post: jasmine.createSpy('post').and.returnValue(of({})) };
     const checking = signal(false);
     const service: any = Object.assign(Object.create(HistoryDeviceSyncService.prototype), {
@@ -33,6 +33,7 @@ describe('approved encrypted history recovery', () => {
       pendingRequests: signal([]), targetFingerprint: signal(''), approvingRequestId: signal(null),
       approvalError: signal(''), approvalEpoch: signal(1), state: signal('idle'),
       pumpPromise: null, pumpAgain: false, replayRequested: false, recoveryIncomplete: false,
+      recoveryRetryAt: 0, recoveryRetryAttempts: 0,
       checkingState: checking, checking: checking.asReadonly(),
       recovered$: { next: jasmine.createSpy('recovered'), complete: () => undefined },
     });
@@ -323,6 +324,84 @@ describe('approved encrypted history recovery', () => {
     expect(targetSync.service.state()).toBe('syncing');
   });
 
+  it('delivers an approved response while the independent approval listing is still stalled', async () => {
+    const { targetSync, status } = await approvedTarget();
+    const pending = new Subject<any[]>();
+    let recovered!: () => void;
+    const delivered = new Promise<void>(resolve => recovered = resolve);
+    targetSync.service.recovered$.next.and.callFake(recovered);
+    targetSync.api.get.and.callFake((url: string) => url.endsWith('/pending') ? pending : of(status));
+    const poll = targetSync.service.pump();
+    await delivered;
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    expect(targetSync.service.checking()).toBeTrue();
+    expect(targetSync.service.state()).toBe('syncing');
+    pending.next([]); pending.complete(); await poll;
+  });
+
+  it('imports every source in an approval batch before notifying the message recovery consumer', async () => {
+    const { targetSync, target, sourceSync, transfer, status } = await approvedTarget();
+    const secondSource = cryptoHarness(); const secondKey = await secondSource.service.createDeviceKeys();
+    await secondSource.service.saveDeviceKeys('alice', 'second-source', secondKey, { userId: 'alice' });
+    const secondSync = syncHarness(secondSource.service, 'second-source');
+    secondSync.api.get.and.returnValue(of([transfer]));
+    secondSync.service.pendingRequests.set([{ ...transfer, fingerprint: await sourceSync.service.publicFingerprint(JSON.parse(transfer.targetIdentityKey)) }]);
+    await secondSync.service.approveRequest(transfer.id);
+    const sealed = secondSync.api.post.calls.first().args[1];
+    status.responses.push({ ...sealed, sourceDeviceId: 'second-source', sourceIdentityKey: JSON.stringify(secondKey.publicJwk) });
+    let completeAtNotification = false;
+    targetSync.service.recovered$.next.and.callFake(() => completeAtNotification = targetSync.service.importedResponses.size === 2);
+    await targetSync.service.pump();
+    expect(completeAtNotification).toBeTrue();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    expect((await target.service.exportDeviceKeyMaterialsForUser('alice', 'alice')).length).toBe(3);
+  });
+
+  it('releases a stalled HTTP status and permits another poll after the bounded timeout', fakeAsync(() => {
+    const { service, api } = syncHarness(cryptoHarness().service, 'target');
+    const response = new Subject<any>();
+    service.requestId = 'request'; service.requestExpiresAt = Date.now() + 60_000;
+    let failed = false;
+    api.get.and.returnValue(response);
+    const status = service.requestStatus(service.scope()).catch(() => failed = true);
+    tick(14_999); flushMicrotasks(); expect(failed).toBeFalse();
+    tick(1); flushMicrotasks(); expect(failed).toBeTrue();
+    expect(response.observers.length).toBe(0);
+    api.get.and.returnValue(of({ id: 'request' }));
+    let completed = false;
+    service.requestStatus(service.scope()).then(() => completed = true);
+    flushMicrotasks(); expect(completed).toBeTrue();
+    void status;
+  }));
+
+  it('automatically retries transient refresh failure with approved keys only three times', fakeAsync(() => {
+    const { service } = syncHarness(cryptoHarness().service, 'target');
+    service.requested = true; service.requestedAt = Date.now();
+    service.importedResponses.add('request:source');
+    service.crypto.currentKeyMaterial = async () => { throw new Error('Transport unavailable'); };
+    service.recovered$.next.and.callFake(() => service.markHistoryRecoveryIncomplete({ retryable: true }));
+    service.markHistoryRecoveryIncomplete({ retryable: true });
+    void service.pump(); flushMicrotasks();
+    tick(30_000); flushMicrotasks();
+    expect(service.recovered$.next).toHaveBeenCalledTimes(3);
+    expect(service.recoveryRetryAttempts).toBe(3);
+    expect(service.recoveryRetryAt).toBe(0);
+    expect(service.state()).not.toBe('idle');
+    service.ngOnDestroy();
+  }));
+
+  it('does not automatically repeat recovery when approved sources still lack a historical key', fakeAsync(() => {
+    const { service } = syncHarness(cryptoHarness().service, 'target');
+    service.requested = true; service.requestedAt = Date.now();
+    service.importedResponses.add('request:source');
+    service.crypto.currentKeyMaterial = async () => { throw new Error('Transport unavailable'); };
+    service.markHistoryRecoveryIncomplete();
+    void service.pump(); flushMicrotasks(); tick(30_000); flushMicrotasks();
+    expect(service.recovered$.next).not.toHaveBeenCalled();
+    expect(service.recoveryRetryAt).toBe(0);
+    service.ngOnDestroy();
+  }));
+
   it('retries already imported keys during an offline poll and creates no request after readable acknowledgement', async () => {
     const { targetSync } = await approvedTarget();
     await targetSync.service.pump();
@@ -384,7 +463,7 @@ describe('approved encrypted history recovery', () => {
     expect(api.get).toHaveBeenCalledTimes(1);
     pending.next([]); pending.complete(); await poll;
     expect(api.post).toHaveBeenCalledTimes(1);
-    expect(api.get).toHaveBeenCalledTimes(2); // List pending approvals, then read our own status.
+    expect(api.get).toHaveBeenCalledTimes(2); // Independent approval listing and our own status.
     // A duplicate-trigger follow-up would already be queued before this turn.
     await new Promise<void>(resolve => window.setTimeout(resolve, 0));
     expect(api.get).toHaveBeenCalledTimes(2);
@@ -406,7 +485,7 @@ describe('approved encrypted history recovery', () => {
     expect(service.pendingRequests()).toEqual([]);
   });
 
-  it('defers an incomplete acknowledgement while another poll is still importing', async () => {
+  it('does not let an incomplete acknowledgement override a newer approved import', async () => {
     const { targetSync, status } = await approvedTarget();
     const pending = new Subject<any[]>();
     targetSync.api.get.and.callFake((url: string) => url.endsWith('/pending') ? pending : of(status));
@@ -415,7 +494,7 @@ describe('approved encrypted history recovery', () => {
     targetSync.service.markHistoryRecoveryIncomplete();
     expect(targetSync.service.state()).toBe('syncing');
     pending.next([]); pending.complete(); await poll;
-    expect(targetSync.service.state()).toBe('waiting');
+    expect(targetSync.service.state()).toBe('syncing');
     expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
     targetSync.service.markHistoryReadable();
     expect(targetSync.service.state()).toBe('idle');

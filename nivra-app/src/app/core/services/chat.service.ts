@@ -1,7 +1,7 @@
 import { DestroyRef, Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { firstValueFrom, fromEvent } from 'rxjs';
+import { firstValueFrom, fromEvent, timeout } from 'rxjs';
 import {
   ChatMessageVm,
   ChatPayload,
@@ -15,6 +15,7 @@ import {
   LocalProfile,
   MediaPreview,
   MessageReaction,
+  MessageHistoryRecoveryResponse,
   MessageResponse,
   MessageSyncResponse,
   PresenceResponse,
@@ -78,6 +79,12 @@ interface ChatSendContext {
   deviceId: string;
 }
 
+interface MessageSyncCursor {
+  at: string;
+  id: string;
+  caughtUp?: boolean;
+}
+
 export interface MessagePolicyOptions {
   deleteAfterRead?: boolean;
   ttlSeconds?: number | null;
@@ -102,6 +109,8 @@ interface ConversationPageState {
 }
 
 const TTL_SWEEP_INTERVAL_MS = 30_000;
+const CHAT_AUTO_SYNC_INTERVAL_MS = 30_000;
+const CHAT_READ_TIMEOUT_MS = 45_000;
 const MAX_TIMEOUT_DELAY_MS = 2_147_483_647;
 const KEY_DIRECTORY_TTL_MS = 45_000;
 const CHAT_PAGE_SIZE = 30;
@@ -124,6 +133,8 @@ export class ChatService implements OnDestroy {
   private readonly nativeDevice = inject(NativeDeviceService);
   readonly deviceHistory = inject(HistoryDeviceSyncService);
   private readonly pendingHistoryEnvelopes = new Map<string, MessageResponse>();
+  private readonly removedHistoryMessageIds = new Set<string>();
+  private readonly conversationHistoryGenerations = new Map<string, number>();
   private readonly destroyRef = inject(DestroyRef);
   private readonly directories = new Map<string, PublicKeyDirectory>();
   private readonly directoryCachedAt = new Map<string, number>();
@@ -144,6 +155,15 @@ export class ChatService implements OnDestroy {
   private ttlSweepTimer: number | null = null;
   private lastTypingSentAt = 0;
   private bootstrapInFlight: Promise<void> | null = null;
+  private bootstrapScope = '';
+  private activeChatScope = '';
+  private automaticSyncTimer: number | null = null;
+  private listUpdateCount = 0;
+  private refreshChatsInFlight: Promise<boolean> | null = null;
+  private refreshChatsScope = '';
+  private messageSyncInFlight: Promise<boolean> | null = null;
+  private messageSyncScope = '';
+  private syncCatchupPending = false;
   private hasBootstrappedSession = false;
   private launchCacheSaveTimer: number | null = null;
   private launchCacheSaveTask: Promise<void> = Promise.resolve();
@@ -171,6 +191,9 @@ export class ChatService implements OnDestroy {
   readonly typingByConversation = signal<Record<string, string[]>>({});
   readonly presenceByUser = signal<Record<string, PresenceResponse>>({});
   readonly loading = signal(false);
+  readonly listUpdating = signal(false);
+  readonly syncError = signal('');
+  readonly lastSyncedAt = signal<number | null>(null);
   private remoteIndexRevision = 0;
   readonly uploading = signal(false);
   readonly uploadStatus = signal('');
@@ -253,6 +276,7 @@ export class ChatService implements OnDestroy {
       }
       if (event.type === 'device.listChanged') {
         this.invalidateKeyDirectories();
+        this.auth.invalidateDeviceIdentity();
         void this.syncMissedMessages();
       }
     });
@@ -268,18 +292,29 @@ export class ChatService implements OnDestroy {
     fromEvent(window, 'online')
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
-        void this.signalr.connect().finally(() => void this.resumeSoftSync().catch(() => undefined));
+        void this.signalr.connect().catch(() => undefined);
+        void this.resumeSoftSync().catch(() => undefined);
       });
 
     effect(() => {
+      const session = this.auth.session();
+      const scope = session ? `${session.user.id}:${session.device.id}` : '';
       if (this.auth.isAuthenticated()) {
         untracked(() => {
+          if (scope === this.activeChatScope) return;
+          if (this.activeChatScope) this.resetInMemoryState();
+          this.activeChatScope = scope;
           this.startTtlSweep();
-          void this.bootstrap();
-          void this.signalr.connect();
+          this.startAutomaticSync();
+          void this.bootstrap().catch(() => {
+            if (this.activeChatScope === scope) this.syncError.set('refresh');
+          });
+          void this.signalr.connect().catch(() => undefined);
         });
       } else {
         untracked(() => {
+          this.activeChatScope = '';
+          this.stopAutomaticSync();
           this.stopTtlSweep();
           this.pauseForLoggedOutSession();
         });
@@ -288,6 +323,7 @@ export class ChatService implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.stopAutomaticSync();
     this.stopTtlSweep();
     this.resetInMemoryState();
   }
@@ -296,63 +332,175 @@ export class ChatService implements OnDestroy {
     if (!this.auth.isAuthenticated()) {
       return;
     }
-    if (this.bootstrapInFlight) {
+    const session = this.auth.session()!;
+    const scope = `${session.user.id}:${session.device.id}`;
+    if (this.bootstrapInFlight && this.bootstrapScope === scope) {
       return this.bootstrapInFlight;
     }
-
-    this.bootstrapInFlight = this.bootstrapCore().finally(() => {
-      this.bootstrapInFlight = null;
+    this.bootstrapScope = scope;
+    const operation = this.bootstrapCore().finally(() => {
+      if (this.bootstrapInFlight === operation) this.bootstrapInFlight = null;
     });
-    return this.bootstrapInFlight;
+    this.bootstrapInFlight = operation;
+    return operation;
+  }
+
+  /** A user refresh includes the open conversation as well as the list. */
+  refreshChats(): Promise<boolean> {
+    const session = this.auth.session();
+    if (!session) return Promise.resolve(false);
+    const scope = `${session.user.id}:${session.device.id}`;
+    if (this.refreshChatsInFlight && this.refreshChatsScope === scope) return this.refreshChatsInFlight;
+    this.refreshChatsScope = scope;
+    const operation = this.withListUpdating(async () => {
+      const localReady = await this.history.retryNativeStorage();
+      if (this.auth.session()?.user.id !== session.user.id) return false;
+      await this.auth.ensureDeviceIdentity();
+      if (this.auth.session()?.user.id !== session.user.id) return false;
+      const context = this.captureSendContext();
+      await this.bootstrap();
+      if (!this.isSendContextCurrent(context)) return false;
+      if (!await this.syncMissedMessages()) throw new Error('No se pudieron actualizar todos los mensajes disponibles.');
+      if (!this.isSendContextCurrent(context)) return false;
+      const selected = this.selectedConversationId();
+      if (selected) await this.loadMessages(selected);
+      if (!this.isSendContextCurrent(context)) return false;
+      if (this.deviceHistory.state() !== 'idle') this.deviceHistory.retry();
+      this.syncError.set('');
+      this.lastSyncedAt.set(Date.now());
+      return localReady && !this.history.storageError();
+    }).catch(error => {
+      const current = this.auth.session();
+      if (current?.user.id === session.user.id) this.syncError.set('refresh');
+      throw error;
+    }).finally(() => {
+      if (this.refreshChatsInFlight === operation) this.refreshChatsInFlight = null;
+    });
+    this.refreshChatsInFlight = operation;
+    return operation;
+  }
+
+  private async withListUpdating<T>(work: () => Promise<T>): Promise<T> {
+    const generation = this.messageLoadGeneration;
+    this.listUpdateCount += 1;
+    this.listUpdating.set(true);
+    try { return await work(); }
+    finally {
+      if (generation === this.messageLoadGeneration) {
+        this.listUpdateCount = Math.max(0, this.listUpdateCount - 1);
+        this.listUpdating.set(this.listUpdateCount > 0);
+      }
+    }
   }
 
   private resumeSyncInFlight: Promise<void> | null = null;
+  private resumeSyncScope = '';
 
   resumeSoftSync(take = CHAT_PAGE_SIZE): Promise<void> {
-    this.resumeSyncInFlight ??= this.resumeSoftSyncCore(take).finally(() => { this.resumeSyncInFlight = null; });
-    return this.resumeSyncInFlight;
+    const session = this.auth.session();
+    if (!session) return Promise.resolve();
+    const scope = `${session.user.id}:${session.device.id}`;
+    if (this.resumeSyncInFlight && this.resumeSyncScope === scope) return this.resumeSyncInFlight;
+    this.resumeSyncScope = scope;
+    const operation = this.resumeSoftSyncCore(take).finally(() => {
+      if (this.resumeSyncInFlight === operation) this.resumeSyncInFlight = null;
+    });
+    this.resumeSyncInFlight = operation;
+    return operation;
   }
 
   private async resumeSoftSyncCore(take = CHAT_PAGE_SIZE): Promise<void> {
     if (!this.auth.isAuthenticated()) {
       return;
     }
+    if (this.refreshChatsInFlight) {
+      await this.refreshChatsInFlight.catch(() => undefined);
+      return;
+    }
     if (this.bootstrapInFlight) {
       await this.bootstrapInFlight.catch(() => undefined);
       return;
     }
-    await this.purgeExpiredLocalMessages();
     if (!this.hasLoadedChatState()) {
       await this.bootstrap();
       return;
     }
-    await this.rejoinSelectedConversation();
-    await this.syncMissedMessages(take);
-    await this.refreshPresenceForConversations();
+    const userId = this.auth.session()?.user.id;
+    await this.withListUpdating(async () => {
+      await this.auth.ensureDeviceIdentity();
+      if (this.auth.session()?.user.id !== userId) return;
+      const context = this.captureSendContext();
+      // Realtime handshakes may remain pending on mobile networks. HTTP and
+      // cached conversations must continue to refresh independently.
+      void this.rejoinSelectedConversation().catch(() => undefined);
+      await this.refreshRemoteConversationIndex(context);
+      const updated = await this.syncMissedMessages(take);
+      if (!this.isSendContextCurrent(context)) return;
+      if (!updated) throw new Error('No se pudieron actualizar los mensajes.');
+      this.syncError.set('');
+      this.lastSyncedAt.set(Date.now());
+      void this.refreshPresenceForConversations().catch(() => undefined);
+    }).catch(error => {
+      if (this.auth.session()?.user.id === userId) this.syncError.set('refresh');
+      throw error;
+    });
+  }
+
+  private async refreshRemoteConversationIndex(context: ChatSendContext): Promise<void> {
+    const items = await firstValueFrom(this.api.get<Conversation[]>('/conversations').pipe(timeout(CHAT_READ_TIMEOUT_MS)));
+    if (!this.isSendContextCurrent(context)) return;
+    const conversations = this.applyLocalConversationState(items ?? []).sort(this.compareConversations);
+    this.remoteIndexRevision += 1;
+    this.rememberConversationParticipants(conversations);
+    this.conversations.set(conversations);
+    this.ensureSelectedConversation();
+    void this.persistChatIndex(conversations, this.contacts());
+    void this.hydrateConversationProfiles(conversations);
+  }
+
+  private startAutomaticSync(): void {
+    if (this.automaticSyncTimer !== null) return;
+    this.automaticSyncTimer = window.setInterval(() => {
+      if (document.visibilityState === 'hidden' || navigator.onLine === false || !this.auth.isAuthenticated()) return;
+      if (this.bootstrapInFlight || this.refreshChatsInFlight || this.resumeSyncInFlight) return;
+      if (!this.syncCatchupPending && this.signalr.connected() && Date.now() - (this.lastSyncedAt() ?? 0) < 60_000) return;
+      void this.resumeSoftSync().catch(() => undefined);
+    }, CHAT_AUTO_SYNC_INTERVAL_MS);
+  }
+
+  private stopAutomaticSync(): void {
+    if (this.automaticSyncTimer !== null) window.clearInterval(this.automaticSyncTimer);
+    this.automaticSyncTimer = null;
   }
 
   private async bootstrapCore(): Promise<void> {
     if (!this.auth.isAuthenticated()) {
       return;
     }
-    const context = this.captureSendContext();
-
     this.loading.set(true);
+    const generation = this.messageLoadGeneration;
+    let context: ChatSendContext | null = null;
+    const current = () => generation === this.messageLoadGeneration && (!context || this.isSendContextCurrent(context));
     try {
+      context = this.captureSendContext();
       this.restoreSelectedConversationId();
       await this.loadLaunchCache();
-      if (!this.isSendContextCurrent(context)) return;
+      if (!current()) return;
       await this.loadCachedChatIndex();
-      if (!this.isSendContextCurrent(context)) return;
+      if (!current()) return;
       await this.loadCachedSelectedMessages();
-      if (!this.isSendContextCurrent(context)) return;
+      if (!current()) return;
       await this.purgeExpiredLocalMessages();
+      if (!current()) return;
+      await this.auth.ensureDeviceIdentity();
+      if (!current()) return;
       if (!await this.auth.ensureFreshSession()) {
-        return;
+        throw new Error('No se pudo actualizar la conexión de la cuenta.');
       }
-      if (!this.isSendContextCurrent(context)) return;
-      const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>(`/sync/bootstrap?messageTake=${CHAT_PAGE_SIZE}`));
-      if (!this.isSendContextCurrent(context)) return;
+      if (!current()) return;
+      const historyGenerations = new Map(this.conversationHistoryGenerations);
+      const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>(`/sync/bootstrap?messageTake=${CHAT_PAGE_SIZE}`).pipe(timeout(CHAT_READ_TIMEOUT_MS)));
+      if (!current()) return;
       const contacts = bootstrap.contacts ?? [];
       const conversations = this.applyLocalConversationState(bootstrap.conversations ?? []);
       this.remoteIndexRevision += 1;
@@ -364,55 +512,105 @@ export class ChatService implements OnDestroy {
       this.conversations.set(conversations.sort(this.compareConversations));
       this.ensureSelectedConversation();
       await this.persistChatIndex(conversations, contacts);
-      if (!this.isSendContextCurrent(context)) return;
+      if (!current()) return;
       void this.hydrateConversationProfiles(conversations);
       const messages = bootstrap.messages ?? [];
-      const decodedCleanly = await this.ingestMessageBatch(messages, false, context);
-      if (!this.isSendContextCurrent(context)) return;
+      for (const deleted of bootstrap.deletedMessages ?? []) this.applyMessageDeleted(deleted);
+      await this.ingestMessageBatch(messages, false, context, historyGenerations);
+      if (!current()) return;
       await this.ackDelivered(messages);
-      if (decodedCleanly) {
-        await this.rememberSyncWatermark(messages);
-      }
       void this.refreshPresenceForConversations().catch(() => undefined);
+      const firstBootstrap = !this.hasBootstrappedSession;
       this.hasBootstrappedSession = true;
+      this.syncError.set('');
+      this.lastSyncedAt.set(Date.now());
+      // Cached placeholders can predate the small bootstrap page after a
+      // restart. Recover their original envelopes even without a new key event.
+      if (firstBootstrap && Object.values(this.messagesByConversation()).some(items => items.some(item => item.decryptError))) {
+        queueMicrotask(() => { if (current()) void this.retryRecoveredHistory(); });
+      }
     } finally {
-      this.loading.set(false);
+      if (current()) this.loading.set(false);
     }
   }
 
-  async syncMissedMessages(take = CHAT_PAGE_SIZE): Promise<void> {
-    if (!this.auth.isAuthenticated() || this.syncInFlight) {
-      return;
-    }
+  syncMissedMessages(take = CHAT_PAGE_SIZE): Promise<boolean> {
+    const session = this.auth.session();
+    if (!session || !this.auth.isAuthenticated()) return Promise.resolve(false);
+    const scope = `${session.user.id}:${session.device.id}`;
+    if (this.messageSyncInFlight && this.messageSyncScope === scope) return this.messageSyncInFlight;
+    this.messageSyncScope = scope;
+    const operation = this.syncMissedMessagesCore(take).finally(() => {
+      if (this.messageSyncInFlight === operation) this.messageSyncInFlight = null;
+    });
+    this.messageSyncInFlight = operation;
+    return operation;
+  }
+
+  private async syncMissedMessagesCore(take: number): Promise<boolean> {
     const context = this.captureSendContext();
     if (!await this.auth.ensureFreshSession()) {
-      return;
+      return false;
     }
-    if (!this.isSendContextCurrent(context)) return;
+    if (!this.isSendContextCurrent(context)) return false;
     this.syncInFlight = true;
     try {
       const accountKey = this.localAccountKey();
-      const storedWatermark = accountKey ? await this.history.getSyncWatermark(accountKey).catch(() => null) : null;
-      if (!this.isSendContextCurrent(context)) return;
-      const watermark = this.newestIso(storedWatermark, this.latestLoadedMessageAt());
-      const params = new URLSearchParams({ take: String(Math.max(1, Math.min(take, 100))) });
-      const retryDecryptErrors = Object.values(this.messagesByConversation()).some((messages) => messages.some((message) => message.decryptError));
-      if (watermark && !retryDecryptErrors) {
-        params.set('since', watermark);
-      }
-      const sync = await firstValueFrom(this.api.get<MessageSyncResponse>(`/messages/sync?${params.toString()}`));
-      if (!this.isSendContextCurrent(context)) return;
-      const hadDecryptError = !(await this.ingestMessageBatch(sync.messages ?? [], false, context));
-      if (!this.isSendContextCurrent(context)) return;
-      await this.ackDelivered(sync.messages ?? []);
-      if (accountKey && sync.syncedAt && !hadDecryptError) {
-        await this.history.setSyncWatermark(accountKey, sync.syncedAt).catch(() => undefined);
+      // This cursor tracks only a contiguous HTTP scan. A newer realtime event
+      // or a latest-page bootstrap must never skip the offline gap before it.
+      const cursorKey = JSON.stringify(['message-sync-v2', accountKey, context.deviceId]);
+      const saved = accountKey ? await this.history.getSyncWatermark(cursorKey).catch(() => null) : null;
+      if (!this.isSendContextCurrent(context)) return false;
+      let cursor: MessageSyncCursor = { at: '1970-01-01T00:00:00.000Z', id: '' };
+      let completedCursor: MessageSyncCursor | null = null;
+      try {
+        const parsed = JSON.parse(saved ?? 'null') as MessageSyncCursor | null;
+        if (parsed && typeof parsed.at === 'string' && Number.isFinite(Date.parse(parsed.at))
+          && typeof parsed.id === 'string' && parsed.id.length <= 64) {
+          cursor = parsed;
+          // Replay a small completed window for transactions that committed
+          // after a newer envelope was observed. A partial backlog resumes
+          // exactly where it stopped instead of continually rewinding.
+          if (parsed.caughtUp) {
+            completedCursor = parsed;
+            cursor = { at: new Date(Math.max(0, Date.parse(parsed.at) - 5 * 60_000)).toISOString(), id: '' };
+          }
+        }
+      } catch { /* Legacy cursors are intentionally not used for this full scan. */ }
+      const limit = Math.max(1, Math.min(take, 100));
+      for (let page = 0; page < 8; page++) {
+        const params = new URLSearchParams({ take: String(limit), cursorVersion: '2', since: cursor.at, sinceId: cursor.id });
+        const historyGenerations = new Map(this.conversationHistoryGenerations);
+        const sync = await firstValueFrom(this.api.get<MessageSyncResponse>(`/messages/sync?${params.toString()}`).pipe(timeout(CHAT_READ_TIMEOUT_MS)));
+        if (!this.isSendContextCurrent(context)) return false;
+        await this.ingestMessageBatch(sync.messages ?? [], false, context, historyGenerations);
+        if (!this.isSendContextCurrent(context)) return false;
+        await this.ackDelivered(sync.messages ?? []);
+        if (!this.isSendContextCurrent(context)) return false;
+        // Old APIs remain usable, but cannot certify a stable composite scan.
+        // Leave its cursor intact until the updated backend is deployed.
+        if (typeof sync.hasMore !== 'boolean') return false;
+        if (sync.messages?.length) {
+          if (!Number.isFinite(Date.parse(sync.syncedAt)) || typeof sync.cursorId !== 'string' || !sync.cursorId || sync.cursorId.length > 64
+            || (cursor.at === sync.syncedAt && cursor.id === sync.cursorId)) return false;
+          cursor = { at: sync.syncedAt, id: sync.cursorId, caughtUp: !sync.hasMore };
+        } else if (sync.hasMore) return false;
+        else cursor = { ...cursor, caughtUp: true };
+        if (!sync.hasMore && completedCursor && Date.parse(cursor.at) <= Date.parse(completedCursor.at)) {
+          cursor = Date.parse(cursor.at) < Date.parse(completedCursor.at) || cursor.id < completedCursor.id
+            ? completedCursor : cursor;
+        }
+        if (accountKey) await this.history.setSyncWatermark(cursorKey, JSON.stringify(cursor));
+        if (!this.isSendContextCurrent(context)) return false;
+        this.syncCatchupPending = sync.hasMore;
+        if (!sync.hasMore) break;
       }
       void this.refreshPresenceForConversations().catch(() => undefined);
+      return true;
     } catch {
-      // Best-effort foreground sync; realtime/bootstrap remain authoritative.
+      return false;
     } finally {
-      void this.purgeExpiredLocalMessages();
+      void this.purgeExpiredLocalMessages().catch(() => undefined);
       this.syncInFlight = false;
     }
   }
@@ -524,6 +722,7 @@ export class ChatService implements OnDestroy {
     options: { before?: string | null; beforeId?: string | null } = {},
   ): Promise<MessageResponse[]> {
     const context = this.captureSendContext();
+    const historyGeneration = this.historyGeneration(conversationId);
     const params = new URLSearchParams({ take: String(CHAT_PAGE_SIZE) });
     if (options.before) {
       params.set('before', options.before);
@@ -534,9 +733,9 @@ export class ChatService implements OnDestroy {
     const messages = await firstValueFrom(
       this.api.get<MessageResponse[]>(`/conversations/${encodeURIComponent(conversationId)}/messages?${params.toString()}`),
     );
-    if (!this.isSendContextCurrent(context)) return [];
+    if (!this.isSendContextCurrent(context) || historyGeneration !== this.historyGeneration(conversationId)) return [];
     await this.ingestMessageBatch(messages ?? [], false, context);
-    if (!this.isSendContextCurrent(context)) return [];
+    if (!this.isSendContextCurrent(context) || historyGeneration !== this.historyGeneration(conversationId)) return [];
     const existingHasMore = this.conversationPaging()[conversationId]?.hasMore === true;
     this.refreshConversationPageState(conversationId, (messages ?? []).length >= CHAT_PAGE_SIZE || (!options.before && existingHasMore));
     return messages ?? [];
@@ -823,6 +1022,12 @@ export class ChatService implements OnDestroy {
     file: File,
     options: { forwardedFrom?: unknown; voiceNote?: boolean; sticker?: boolean; policy?: MessagePolicyOptions; mode?: EncryptedUploadMode; caption?: string } = {},
   ): Promise<MessageResponse | null> {
+    const requestedUserId = this.auth.session()?.user.id;
+    const identity = await this.auth.ensureDeviceIdentity();
+    if (this.auth.session()?.user.id !== requestedUserId || identity.userId !== requestedUserId
+      || identity.deviceId !== this.auth.session()?.device.id) {
+      throw new Error('La cuenta o el dispositivo cambió durante el envío. Vuelve al chat y reintenta.');
+    }
     const context = this.captureSendContext();
     const uploadSequence = this.fileSendSequence = (this.fileSendSequence || 0) + 1;
     this.uploading.set(true);
@@ -905,6 +1110,12 @@ export class ChatService implements OnDestroy {
     fileObjectId: string | null = null,
     options: SendPayloadOptions = {},
   ): Promise<MessageResponse | null> {
+    const requestedUserId = this.auth.session()?.user.id;
+    const identity = await this.auth.ensureDeviceIdentity();
+    if (this.auth.session()?.user.id !== requestedUserId || identity.userId !== requestedUserId
+      || identity.deviceId !== this.auth.session()?.device.id) {
+      throw new Error('La cuenta o el dispositivo cambió durante el envío. Vuelve al chat y reintenta.');
+    }
     const context = this.captureSendContext();
     if (this.isConversationBlocked(conversation.id)) {
       throw new Error('Este chat esta bloqueado en este dispositivo.');
@@ -1084,6 +1295,7 @@ export class ChatService implements OnDestroy {
 
   async clearConversation(conversation: Conversation, scope: 'me' | 'everyone'): Promise<void> {
     await firstValueFrom(this.api.post(`/api/chats/${encodeURIComponent(conversation.id)}/clear`, { scope }));
+    this.forgetConversationHistory(conversation.id);
     this.messagesByConversation.update((state) => ({ ...state, [conversation.id]: [] }));
     this.patchConversationPageState(conversation.id, {
       oldestLoadedAt: null,
@@ -1099,6 +1311,7 @@ export class ChatService implements OnDestroy {
 
   async deleteConversation(conversation: Conversation, scope: 'me' | 'everyone'): Promise<void> {
     await firstValueFrom(this.api.delete(`/api/chats/${encodeURIComponent(conversation.id)}?scope=${encodeURIComponent(scope)}`));
+    this.forgetConversationHistory(conversation.id);
     this.conversations.update((items) => items.filter((item) => item.id !== conversation.id));
     this.messagesByConversation.update((state) => {
       const next = { ...state };
@@ -1677,7 +1890,8 @@ export class ChatService implements OnDestroy {
     await this.removeConversationLocally(conversation.id);
   }
 
-  private async ingestMessage(message: MessageResponse, markDelivered: boolean): Promise<boolean> {
+  private async ingestMessage(message: MessageResponse, markDelivered: boolean, historyGeneration = this.historyGeneration(message.conversationId)): Promise<boolean> {
+    if (this.discardHistoryEnvelope(message, historyGeneration)) return true;
     const current = this.auth.session();
     if (!current) {
       return false;
@@ -1716,6 +1930,7 @@ export class ChatService implements OnDestroy {
       payload = { type: 'system', text: 'Paquete cifrado no disponible para este dispositivo.' };
     }
     if (!this.isSendContextCurrent(ingestContext)) return false;
+    if (this.discardHistoryEnvelope(message, historyGeneration)) return true;
     if (decryptError) {
       this.pendingHistoryEnvelopes.set(message.id, message);
       this.deviceHistory.requestHistory();
@@ -1833,14 +2048,53 @@ export class ChatService implements OnDestroy {
             await Promise.all(ids.slice(index, index + 2).map(id => this.loadMessages(id)));
             if (!current()) return;
           }
-          const unreadable = this.pendingHistoryEnvelopes.size > 0
-            || Object.values(this.messagesByConversation()).some(messages => messages.some(message => message.decryptError));
+          // After a restart, a protected cache row has no in-memory envelope.
+          // Its ciphertext can be older than every recent page we just fetched.
+          // Retrieve those exact authorized IDs instead of polling the same page.
+          const unresolved = new Map<string, string>();
+          for (const message of this.pendingHistoryEnvelopes.values()) {
+            if (!this.discardHistoryEnvelope(message)) unresolved.set(message.id, message.conversationId);
+          }
+          for (const messages of Object.values(this.messagesByConversation())) {
+            for (const message of messages) {
+              if (message.decryptError && !this.isExpiredMessage(message) && !this.removedHistoryMessageIds?.has(message.id)) {
+                unresolved.set(message.id, message.conversationId);
+              }
+            }
+          }
+          const unresolvedIds = [...unresolved.keys()];
+          for (let index = 0; index < unresolvedIds.length; index += 100) {
+            const batch = unresolvedIds.slice(index, index + 100);
+            const requested = new Set(batch);
+            const historyGenerations = new Map(this.conversationHistoryGenerations);
+            const response = await firstValueFrom(this.api.post<MessageHistoryRecoveryResponse>('/messages/history-recovery', {
+              messageIds: batch,
+            }).pipe(timeout(CHAT_READ_TIMEOUT_MS)));
+            if (!current()) return;
+            if (!Array.isArray(response?.messages) || !Array.isArray(response.deletedMessages)) throw new Error('No se pudo comprobar la respuesta del historial.');
+            for (const deleted of response.deletedMessages) {
+              const tombstone = deleted as { messageId?: unknown; conversationId?: unknown } | null;
+              if (!tombstone || typeof tombstone.messageId !== 'string' || typeof tombstone.conversationId !== 'string'
+                || !requested.has(tombstone.messageId) || unresolved.get(tombstone.messageId) !== tombstone.conversationId
+                || this.historyGeneration(tombstone.conversationId) !== (historyGenerations.get(tombstone.conversationId) ?? 0)) continue;
+              this.applyMessageDeleted(deleted);
+            }
+            const envelopes = response.messages.filter(message => requested.has(message.id)
+              && unresolved.get(message.id) === message.conversationId);
+            await this.ingestMessageBatch(envelopes, false, context, historyGenerations);
+            if (!current()) return;
+          }
+          const unreadable = [...this.pendingHistoryEnvelopes.values()].some(message => !this.discardHistoryEnvelope(message))
+            || Object.values(this.messagesByConversation()).some(messages => messages.some(message =>
+              message.decryptError && !this.isExpiredMessage(message) && !this.removedHistoryMessageIds?.has(message.id)));
           if (revision === this.historyRecoveryRevision) {
             if (!unreadable) this.deviceHistory.markHistoryReadable();
             else this.deviceHistory.markHistoryRecoveryIncomplete();
           }
         } catch {
-          if (current()) this.deviceHistory.markHistoryRecoveryIncomplete();
+          if (current() && revision === this.historyRecoveryRevision) {
+            this.deviceHistory.markHistoryRecoveryIncomplete({ retryable: true });
+          }
         }
       } while (current() && revision !== this.historyRecoveryRevision);
     })().finally(() => {
@@ -1853,12 +2107,12 @@ export class ChatService implements OnDestroy {
     return recovery;
   }
 
-  private async ingestMessageBatch(messages: MessageResponse[], markDelivered: boolean, context = this.captureSendContext()): Promise<boolean> {
+  private async ingestMessageBatch(messages: MessageResponse[], markDelivered: boolean, context = this.captureSendContext(), historyGenerations: ReadonlyMap<string, number> = new Map(this.conversationHistoryGenerations)): Promise<boolean> {
     let hadDecryptError = false;
     let index = 0;
     for (const message of messages ?? []) {
       if (!this.isSendContextCurrent(context)) return false;
-      hadDecryptError = !(await this.ingestMessage(message, markDelivered)) || hadDecryptError;
+      hadDecryptError = !(await this.ingestMessage(message, markDelivered, historyGenerations.get(message.conversationId) ?? 0)) || hadDecryptError;
       if (!this.isSendContextCurrent(context)) return false;
       if (++index % 8 === 0) {
         await this.yieldToMainThread();
@@ -1866,6 +2120,33 @@ export class ChatService implements OnDestroy {
       }
     }
     return !hadDecryptError;
+  }
+
+  private historyGeneration(conversationId: string): number {
+    return this.conversationHistoryGenerations?.get(conversationId) ?? 0;
+  }
+
+  private discardHistoryEnvelope(message: Pick<MessageResponse, 'id' | 'expiresAt' | 'conversationId'>, historyGeneration?: number): boolean {
+    if (historyGeneration !== undefined && historyGeneration !== this.historyGeneration(message.conversationId)) {
+      this.forgetHistoryMessage(message.id); return true;
+    }
+    if (!this.removedHistoryMessageIds?.has(message.id)
+      && !(message.expiresAt && Date.parse(message.expiresAt) <= Date.now())) return false;
+    this.pendingHistoryEnvelopes.delete(message.id);
+    return true;
+  }
+
+  private forgetHistoryMessage(id: string): void {
+    this.pendingHistoryEnvelopes.delete(id);
+    this.removedHistoryMessageIds.add(id);
+  }
+
+  private forgetConversationHistory(conversationId: string): void {
+    this.conversationHistoryGenerations.set(conversationId, this.historyGeneration(conversationId) + 1);
+    for (const message of this.pendingHistoryEnvelopes.values()) {
+      if (message.conversationId === conversationId) this.forgetHistoryMessage(message.id);
+    }
+    for (const message of this.messagesByConversation()[conversationId] ?? []) this.forgetHistoryMessage(message.id);
   }
 
   private ownRecipientCandidates(
@@ -2010,6 +2291,7 @@ export class ChatService implements OnDestroy {
   }
 
   private upsertMessage(message: ChatMessageVm, options: { persist?: boolean } = {}): void {
+    if (this.removedHistoryMessageIds?.has(message.id)) return;
     const existing = this.messagesByConversation()[message.conversationId]?.find(item => item.id === message.id);
     if (message.decryptError && existing?.payload && !existing.decryptError) {
       this.pendingHistoryEnvelopes.delete(message.id);
@@ -2397,8 +2679,9 @@ export class ChatService implements OnDestroy {
     options: { before?: string | null; beforeId?: string | null; limit?: number } = {},
   ): Promise<ChatMessageVm[]> {
     const context = this.captureSendContext();
+    const historyGeneration = this.historyGeneration(conversationId);
     const accountKeys = await this.localAccountKeys();
-    if (!this.isSendContextCurrent(context)) return [];
+    if (!this.isSendContextCurrent(context) || historyGeneration !== this.historyGeneration(conversationId)) return [];
     if (!accountKeys.length || !conversationId) {
       return [];
     }
@@ -2409,10 +2692,10 @@ export class ChatService implements OnDestroy {
         beforeId: options.beforeId ?? null,
         limit,
       }).catch(() => [])));
-    if (!this.isSendContextCurrent(context)) return [];
+    if (!this.isSendContextCurrent(context) || historyGeneration !== this.historyGeneration(conversationId)) return [];
     const now = Date.now();
     const messages = this.uniqueMessages(groups.flat())
-      .filter((message) => !this.isExpiredMessage(message, now))
+      .filter((message) => !this.isExpiredMessage(message, now) && !this.removedHistoryMessageIds?.has(message.id))
       .slice(-limit);
     for (const message of messages) {
       this.upsertMessage(message, { persist: false });
@@ -2488,6 +2771,7 @@ export class ChatService implements OnDestroy {
       return next;
     });
     for (const message of expired) {
+      this.forgetHistoryMessage(message.id);
       this.clearMessageExpiryTimer(message.conversationId, message.id);
       this.removeLocalMessage(message.conversationId, message.id);
     }
@@ -2521,6 +2805,7 @@ export class ChatService implements OnDestroy {
     if (!conversationId || !messageId) {
       return;
     }
+    this.forgetHistoryMessage(messageId);
     this.clearMessageExpiryTimer(conversationId, messageId);
     this.messagesByConversation.update((state) => ({
       ...state,
@@ -2816,7 +3101,7 @@ export class ChatService implements OnDestroy {
     if (!ids.length) {
       return;
     }
-    await firstValueFrom(this.api.post('/messages/sync/ack', { messageIds: ids })).catch(() => null);
+    await firstValueFrom(this.api.post('/messages/sync/ack', { messageIds: ids }).pipe(timeout(CHAT_READ_TIMEOUT_MS))).catch(() => null);
   }
 
   private async sendReceipt(messageId: string, kind: 'Delivered' | 'Read' | 'Deleted', options: { opened?: boolean } = {}): Promise<void> {
@@ -3232,6 +3517,7 @@ export class ChatService implements OnDestroy {
     if (!messageId) {
       return;
     }
+    this.forgetHistoryMessage(messageId);
     if (String(value.reason || '').toLowerCase() === 'view_once') {
       this.applyViewOnceTombstones(conversationId, [messageId], typeof value.at === 'string' ? value.at : new Date().toISOString(), {
         includeMine: true,
@@ -3268,6 +3554,7 @@ export class ChatService implements OnDestroy {
     if (!conversationId) {
       return;
     }
+    this.forgetConversationHistory(conversationId);
     if (value.mode === 'deleted') {
       this.conversations.update((items) => items.filter((conversation) => conversation.id !== conversationId));
       if (this.selectedConversationId() === conversationId) {
@@ -3804,6 +4091,10 @@ export class ChatService implements OnDestroy {
     if (!conversationId) {
       return;
     }
+    this.forgetConversationHistory(conversationId);
+    this.messagesByConversation.update(state => {
+      const next = { ...state }; delete next[conversationId]; return next;
+    });
     this.conversations.update((items) => items.filter((item) => item.id !== conversationId));
     this.conversationPaging.update((state) => {
       const next = { ...state };
@@ -3882,10 +4173,13 @@ export class ChatService implements OnDestroy {
 
   private resetInMemoryState(): void {
     this.messageLoadGeneration += 1;
+    this.resetRefreshState();
     this.messageLoadCounts.set({});
     this.historyRecoveryInFlight = null;
     this.historyRecoveryScope = null;
     this.pendingHistoryEnvelopes.clear();
+    this.removedHistoryMessageIds.clear();
+    this.conversationHistoryGenerations.clear();
     this.launchCacheEpoch += 1;
     if (this.launchCacheSaveTimer !== null) window.clearTimeout(this.launchCacheSaveTimer);
     this.launchCacheSaveTimer = null;
@@ -3922,10 +4216,13 @@ export class ChatService implements OnDestroy {
 
   private pauseForLoggedOutSession(): void {
     this.messageLoadGeneration += 1;
+    this.resetRefreshState();
     this.messageLoadCounts.set({});
     this.historyRecoveryInFlight = null;
     this.historyRecoveryScope = null;
     this.pendingHistoryEnvelopes.clear();
+    this.removedHistoryMessageIds.clear();
+    this.conversationHistoryGenerations.clear();
     this.launchCacheEpoch += 1;
     if (this.launchCacheSaveTimer !== null) window.clearTimeout(this.launchCacheSaveTimer);
     this.launchCacheSaveTimer = null;
@@ -3956,6 +4253,19 @@ export class ChatService implements OnDestroy {
         URL.revokeObjectURL(preview.url);
       }
     });
+  }
+
+  private resetRefreshState(): void {
+    this.refreshChatsInFlight = null;
+    this.resumeSyncInFlight = null;
+    this.messageSyncInFlight = null;
+    this.syncCatchupPending = false;
+    this.bootstrapInFlight = null;
+    this.listUpdateCount = 0;
+    this.listUpdating.set(false);
+    this.loading.set(false);
+    this.syncError.set('');
+    this.lastSyncedAt.set(null);
   }
 
   private applyPendingReactions(message: ChatMessageVm): ChatMessageVm {
@@ -4036,13 +4346,12 @@ export class ChatService implements OnDestroy {
     fileObjectId: string | null = null,
     context?: ChatSendContext,
   ): Promise<RecipientCipherRequest[]> {
+    const own = await this.auth.ensureDeviceIdentity();
     const current = this.auth.session();
     if (!current) {
       return [];
     }
     const sendContext = context ?? this.captureSendContext();
-    this.assertSendContext(sendContext);
-    const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
     this.assertSendContext(sendContext);
     const recipients: RecipientCipherRequest[] = [];
     const groupRecipients: PublicKeyRecipient[] = [];

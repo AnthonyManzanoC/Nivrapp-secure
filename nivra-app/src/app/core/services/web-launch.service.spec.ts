@@ -109,4 +109,42 @@ describe('WebLaunchService', () => {
     await TestBed.runInInjectionContext(() => new WebLaunchService()).start();
     expect(reload).not.toHaveBeenCalled();
   });
+
+  it('finds a newer build in an already open app on the same day', async () => {
+    const service = TestBed.inject(WebLaunchService);
+    await service.start();
+    fetchVersion.and.resolveTo({ version: newer });
+    await service.checkForUpdate();
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(service.checking()).toBeFalse();
+  });
+
+  it('waits for drafts or calls to finish and applies the remembered build without another fetch', async () => {
+    const service = TestBed.inject(WebLaunchService);
+    fetchVersion.and.resolveTo({ version: newer });
+    await service.checkForUpdate(() => false);
+    expect(reload).not.toHaveBeenCalled();
+    await service.checkForUpdate(() => true);
+    expect(fetchVersion).toHaveBeenCalledTimes(1);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('throttles background traffic but checks again after five minutes', async () => {
+    const service = TestBed.inject(WebLaunchService);
+    await service.checkForUpdate();
+    await service.checkForUpdate();
+    expect(fetchVersion).toHaveBeenCalledTimes(1);
+    runtime.now = () => new Date(2026, 9, 9, 8, 5);
+    fetchVersion.and.resolveTo({ version: newer });
+    await service.checkForUpdate();
+    expect(fetchVersion).toHaveBeenCalledTimes(2);
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not loop when an old HTML document is served again after a background upgrade', async () => {
+    fetchVersion.and.resolveTo({ version: newer });
+    await TestBed.inject(WebLaunchService).checkForUpdate();
+    await TestBed.runInInjectionContext(() => new WebLaunchService()).checkForUpdate();
+    expect(reload).toHaveBeenCalledTimes(1);
+  });
 });

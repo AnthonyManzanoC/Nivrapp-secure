@@ -25,11 +25,14 @@ describe('Chats actions and scoped search', () => {
   };
 
   beforeEach(() => {
-    auth = { session: signal({ user: { id: 'ux-me', alias: 'maria' }, device: { id: 'ux-device' } }) };
+    auth = { session: signal({ user: { id: 'ux-me', alias: 'maria' }, device: { id: 'ux-device' } }), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), relinkDevice: jasmine.createSpy('relinkDevice').and.resolveTo() };
     router = { events: EMPTY, url: '/app/chats', navigate: jasmine.createSpy().and.resolveTo(true), navigateByUrl: jasmine.createSpy().and.resolveTo(true), parseUrl: () => ({ root: { children: {} } }) };
     chat = {
       conversations: signal([{ id: 'family', title: 'Familía' }, { id: 'archived', title: 'Equipo' }]),
       loading: signal(false), bootstrap: jasmine.createSpy().and.resolveTo(),
+      listUpdating: signal(false), syncError: signal(''),
+      deviceHistory: { state: signal('idle') },
+      messagesByConversation: signal({}),
       clearSelectedConversation: () => undefined,
       chatFolderConversations: (folder: string) => chat.conversations().filter((item: any) => folder === 'archived' ? item.id === 'archived' : item.id !== 'archived'),
       conversationTitle: (item: any) => item.title,
@@ -55,6 +58,11 @@ describe('Chats actions and scoped search', () => {
       { provide: ActionSheetController, useValue: {} },
       { provide: TranslateService, useValue: { instant: (_key: string, fallback: string) => fallback } },
     ] });
+    chat.refreshChats = jasmine.createSpy('refreshChats').and.callFake(async () => {
+      const localReady = await TestBed.inject(LocalHistoryService).retryNativeStorage();
+      await chat.bootstrap();
+      return localReady;
+    });
     page = TestBed.runInInjectionContext(() => new ChatsPage());
   });
 
@@ -177,6 +185,135 @@ describe('Chats actions and scoped search', () => {
     await task;
     expect(page.syncNotice).toContain('al día');
     expect(page.refreshing).toBeFalse();
+  });
+
+  it('replaces only unreadable last-message previews with silhouettes while approved history recovers', () => {
+    const pending = chat.conversations()[0];
+    const readable = chat.conversations()[1];
+    chat.messagesByConversation.set({
+      [pending.id]: [{ decryptError: true }],
+      [readable.id]: [{ decryptError: false, payload: { text: 'Hola' } }],
+    });
+    chat.deviceHistory.state.set('waiting');
+    expect(page.conversationPreviewLoading(pending)).toBeFalse();
+    expect(page.conversationHistoryPending(pending)).toBeTrue();
+    chat.deviceHistory.state.set('syncing');
+    expect(page.conversationIndexLoading()).toBeTrue();
+    expect(page.conversationPreviewLoading(pending)).toBeTrue();
+    expect(page.conversationPreviewLoading(readable)).toBeFalse();
+    chat.messagesByConversation.set({ [pending.id]: [{ decryptError: false, payload: { text: 'Recuperado' } }] });
+    expect(page.conversationPreviewLoading(pending)).toBeFalse();
+    expect(page.conversationHistoryPending(pending)).toBeFalse();
+    chat.deviceHistory.state.set('idle');
+    expect(page.conversationIndexLoading()).toBeFalse();
+  });
+
+  it('stops preview animation after a recovery attempt fails instead of spinning while waiting for approval', () => {
+    const conversation = chat.conversations()[0];
+    chat.messagesByConversation.set({ [conversation.id]: [{ decryptError: true }] });
+    chat.deviceHistory.state.set('syncing');
+    expect(page.conversationPreviewLoading(conversation)).toBeTrue();
+    chat.deviceHistory.state.set('unavailable');
+    expect(page.conversationIndexLoading()).toBeFalse();
+    expect(page.conversationPreviewLoading(conversation)).toBeFalse();
+    expect(page.conversationHistoryPending(conversation)).toBeTrue();
+  });
+
+  it('does not announce completed synchronization while the history still awaits another device', async () => {
+    chat.deviceHistory.state.set('waiting');
+    await page.refresh();
+    expect(page.syncNotice).toBe('');
+    expect(page.refreshing).toBeFalse();
+  });
+
+  it('clears transient refresh notices after they have been announced', fakeAsync(() => {
+    void page.refresh();
+    tick();
+    expect(page.syncNotice).toContain('al día');
+    tick(5_000);
+    expect(page.syncNotice).toBe('');
+  }));
+
+  it('shows full-row loading during a list refresh while retaining cached conversations and previews', () => {
+    const conversations = chat.conversations();
+    const previews = { family: [{ decryptError: false, payload: { text: 'Hola' } }] };
+    chat.messagesByConversation.set(previews);
+    expect(page.showConversationSkeleton()).toBeFalse();
+    chat.listUpdating.set(true);
+    expect(page.showConversationSkeleton()).toBeTrue();
+    expect(chat.conversations()).toBe(conversations);
+    expect(chat.messagesByConversation()).toBe(previews);
+    chat.listUpdating.set(false);
+    expect(page.showConversationSkeleton()).toBeFalse();
+    chat.deviceHistory.state.set('waiting');
+    expect(page.showConversationSkeleton()).toBeFalse();
+    expect(page.showHistoryStatus()).toBeTrue();
+  });
+
+  it('completes pull-to-refresh only after the real refresh operation settles', async () => {
+    const pending = deferred<boolean>();
+    chat.refreshChats.and.returnValue(pending.promise);
+    const complete = jasmine.createSpy('complete').and.resolveTo();
+    const task = page.onPullRefresh({ detail: { complete } } as unknown as CustomEvent<{ complete: () => Promise<void> }>);
+    expect(page.showConversationSkeleton()).toBeTrue();
+    expect(complete).not.toHaveBeenCalled();
+    pending.resolve(true);
+    await task;
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(page.showConversationSkeleton()).toBeFalse();
+  });
+
+  it('offers explicit relinking for an unsafe device identity without attempting another history transfer', async () => {
+    auth.deviceIdentityError.set('Identity mismatch');
+    auth.deviceIdentityNeedsRelink.set(true);
+    expect(page.showHistoryStatus()).toBeTrue();
+    expect(page.historyStatusTitle()).toContain('vincular');
+    expect(auth.relinkDevice).not.toHaveBeenCalled();
+    await page.relinkDevice();
+    expect(auth.relinkDevice).toHaveBeenCalledTimes(1);
+    expect(chat.refreshChats).not.toHaveBeenCalled();
+  });
+
+  it('restores a keyboard-focused conversation after the loading overlay without changing the list scroll', async () => {
+    const list = document.createElement('div');
+    const row = document.createElement('button');
+    list.append(row);
+    document.body.append(list);
+    (page as any).conversationList = { nativeElement: list };
+    try {
+      row.focus();
+      chat.listUpdating.set(true);
+      list.setAttribute('inert', '');
+      row.blur();
+      TestBed.flushEffects();
+      chat.listUpdating.set(false);
+      list.removeAttribute('inert');
+      TestBed.flushEffects();
+      await Promise.resolve();
+      expect(document.activeElement).toBe(row);
+    } finally { list.remove(); }
+  });
+
+  it('does not steal focus back from search when the user changes focus during a list refresh', async () => {
+    const list = document.createElement('div');
+    const row = document.createElement('button');
+    const search = document.createElement('input');
+    list.append(row);
+    document.body.append(list, search);
+    (page as any).conversationList = { nativeElement: list };
+    try {
+      row.focus();
+      chat.listUpdating.set(true);
+      list.setAttribute('inert', '');
+      row.blur();
+      TestBed.flushEffects();
+      search.focus();
+      chat.listUpdating.set(false);
+      list.removeAttribute('inert');
+      TestBed.flushEffects();
+      await Promise.resolve();
+      expect(document.activeElement).toBe(search);
+    } finally { list.remove(); search.remove(); }
   });
 
   it('requests call notification permission only through the explicit action', async () => {

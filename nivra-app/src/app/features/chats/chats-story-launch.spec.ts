@@ -25,6 +25,9 @@ describe('Chats story creation entry', () => {
       bootstrap: jasmine.createSpy('bootstrap').and.resolveTo(),
       conversations: signal([]),
       loading: signal(false),
+      listUpdating: signal(false), syncError: signal(''),
+      deviceHistory: { state: signal('idle') },
+      messagesByConversation: signal({}),
       clearSelectedConversation: () => undefined,
     };
     history = {
@@ -34,9 +37,14 @@ describe('Chats story creation entry', () => {
       retryNativeStorage: jasmine.createSpy('retryNativeStorage').and.resolveTo(true),
       clearStorageError: jasmine.createSpy('clearStorageError').and.callFake(() => history.storageError.set('')),
     };
+    chat.refreshChats = jasmine.createSpy('refreshChats').and.callFake(async () => {
+      const localReady = await history.retryNativeStorage();
+      await chat.bootstrap();
+      return localReady;
+    });
     TestBed.configureTestingModule({ providers: [
       { provide: Router, useValue: { events: EMPTY, url: '/app/chats', navigate, parseUrl: () => ({ root: { children: {} } }) } },
-      { provide: AuthService, useValue: { session: signal({ user: { id: 'me', alias: 'maria' } }) } },
+      { provide: AuthService, useValue: { session: signal({ user: { id: 'me', alias: 'maria' } }), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false) } },
       { provide: AppSettingsService, useValue: {} },
       { provide: ChatService, useValue: chat },
       { provide: SocialService, useValue: { stories: signal([]), worldStories: signal([]), load: async () => undefined } },
@@ -79,14 +87,18 @@ describe('Chats story creation entry', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it('collapses only scrollable lists and expands when returning to their start', () => {
+  it('keeps stories compact until explicitly opened and does not expand them when returning to the list start', () => {
     const scroll = (scrollTop: number, scrollHeight: number, clientHeight: number) =>
       page.onChatListScroll({ target: { scrollTop, scrollHeight, clientHeight } } as unknown as Event);
+    expect(page.storiesCollapsed).toBeTrue();
+    page.expandStories();
     scroll(90, 480, 380);
     expect(page.storiesCollapsed).toBeFalse();
     scroll(90, 900, 380);
     expect(page.storiesCollapsed).toBeTrue();
     scroll(0, 900, 480);
+    expect(page.storiesCollapsed).toBeTrue();
+    page.expandStories();
     expect(page.storiesCollapsed).toBeFalse();
   });
 

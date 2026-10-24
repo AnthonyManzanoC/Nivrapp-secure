@@ -18,8 +18,8 @@ import {
   IonModal,
   IonNote,
   IonPopover,
-  IonSegment,
-  IonSegmentButton,
+  IonRefresher,
+  IonRefresherContent,
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -48,7 +48,7 @@ import { PushService } from '../../core/services/push.service';
 import { Capacitor } from '@capacitor/core';
 
 type ChatSearchScope = 'all' | 'chats' | 'people';
-type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'refresh' | 'settings';
+type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'refresh' | 'settings' | 'enable-alerts';
 type ConversationMenuAction = 'pin' | 'mute' | 'archive';
 
 @Component({
@@ -81,8 +81,8 @@ type ConversationMenuAction = 'pin' | 'mute' | 'archive';
     IonModal,
     IonNote,
     IonPopover,
-    IonSegment,
-    IonSegmentButton,
+    IonRefresher,
+    IonRefresherContent,
     IonSpinner,
   ],
   templateUrl: './chats.page.html',
@@ -95,7 +95,7 @@ export class ChatsPage implements OnDestroy {
   readonly localHistory = inject(LocalHistoryService);
   readonly visibleStorageError = computed(() => this.localHistory.storageError());
   private readonly translate = inject(TranslateService);
-  private readonly auth = inject(AuthService);
+  readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly actionSheetController = inject(ActionSheetController);
   private readonly nativeDevice = inject(NativeDeviceService);
@@ -138,6 +138,7 @@ export class ChatsPage implements OnDestroy {
   startingPersonId = '';
   refreshing = false;
   syncNotice = '';
+  historyPanelOpen = false;
   chatMenuOpen = false;
   chatMenuEvent: Event | null = null;
   conversationMenuOpen = false;
@@ -195,11 +196,17 @@ export class ChatsPage implements OnDestroy {
   private avatarPressTimer: number | null = null;
   private suppressAvatarClickUntil = 0;
   private storyStripTimer: number | null = null;
+  private syncNoticeTimer: number | null = null;
   private readonly accountScopeEffect: EffectRef;
+  private readonly listLoadingFocusEffect: EffectRef;
+  private lastConversationFocus: HTMLElement | null = null;
+  private pendingConversationFocus: HTMLElement | null = null;
+  private focusIntent = 0;
+  private listWasLoading = false;
   private accountScope = this.searchContext();
   private alive = true;
   storyHighlightOpening = '';
-  storiesCollapsed = false;
+  storiesCollapsed = true;
   @ViewChild('conversationList', { read: ElementRef }) private conversationList?: ElementRef<HTMLElement>;
   @ViewChild('chatSearchInput') private chatSearchInput?: IonInput;
 
@@ -217,7 +224,11 @@ export class ChatsPage implements OnDestroy {
         this.searchError = '';
         this.startingPersonId = '';
         this.syncNotice = '';
+        this.clearSyncNoticeTimer();
         this.refreshing = false;
+        this.historyPanelOpen = false;
+        this.forgetConversationFocus();
+        this.storiesCollapsed = true;
         this.showRecentSearches = false;
         this.recentSearches = this.loadRecent();
         this.selectedFolder = 'all';
@@ -240,6 +251,10 @@ export class ChatsPage implements OnDestroy {
         this.stopStoryProgress();
       }
     });
+    this.listLoadingFocusEffect = effect(() => this.preserveConversationFocus(this.showConversationSkeleton()));
+    document.addEventListener('focusin', this.onDocumentFocus, true);
+    document.addEventListener('pointerdown', this.onDocumentPointerDown, true);
+    document.addEventListener('keydown', this.onDocumentKeydown, true);
     addIcons({
       addOutline,
       archiveOutline,
@@ -275,6 +290,12 @@ export class ChatsPage implements OnDestroy {
     this.alive = false;
     this.searchSeq += 1;
     this.accountScopeEffect.destroy();
+    this.listLoadingFocusEffect.destroy();
+    document.removeEventListener('focusin', this.onDocumentFocus, true);
+    document.removeEventListener('pointerdown', this.onDocumentPointerDown, true);
+    document.removeEventListener('keydown', this.onDocumentKeydown, true);
+    this.forgetConversationFocus();
+    this.clearSyncNoticeTimer();
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
     }
@@ -291,27 +312,155 @@ export class ChatsPage implements OnDestroy {
     const scope = this.searchContext();
     this.refreshing = true;
     this.syncNotice = '';
+    this.clearSyncNoticeTimer();
     void this.social.load().catch(() => undefined);
     try {
-      const localReady = await this.localHistory.retryNativeStorage();
-      if (!this.isCurrentScope(scope)) return;
-      await this.chat.bootstrap();
+      const localReady = await this.chat.refreshChats();
       if (!this.isCurrentScope(scope)) return;
       // A successful remote refresh never proves that local encrypted storage opened.
-      this.syncNotice = localReady && !this.localHistory.storageError()
-        ? this.tr('CHATS.SYNCED', 'Tus chats están al día.')
-        : this.tr('HISTORY_LOADING.LOCAL_PENDING', 'Conexión actualizada. El historial local sigue pendiente.');
+      const notice = !localReady || this.localHistory.storageError()
+        ? this.tr('HISTORY_LOADING.LOCAL_PENDING', 'Conexión actualizada. El historial local sigue pendiente.')
+        : this.chat.deviceHistory.state() === 'idle'
+          ? this.tr('CHATS.SYNCED', 'Tus chats están al día.')
+          : '';
+      this.showSyncNotice(notice, scope);
     } catch {
       // Keep the warning visible when either local storage or the remote
       // reload failed.  It contains the action the user can take next.
-      if (this.isCurrentScope(scope)) this.syncNotice = this.tr('CHATS.SYNC_ERROR', 'No se pudo actualizar. Inténtalo cuando tengas conexión.');
+      if (this.isCurrentScope(scope)) this.showSyncNotice(this.tr('CHATS.SYNC_ERROR', 'No se pudo actualizar. Inténtalo cuando tengas conexión.'), scope);
     } finally {
       if (this.isCurrentScope(scope)) this.refreshing = false;
     }
   }
 
   conversationIndexLoading(): boolean {
-    return this.chat.loading() || this.refreshing || this.localHistory.storageBusy();
+    return this.chat.loading() || this.chat.listUpdating() || this.refreshing || this.localHistory.storageBusy()
+      || this.chat.deviceHistory.state() === 'syncing';
+  }
+
+  showConversationSkeleton(): boolean {
+    return this.refreshing || this.chat.loading() || this.chat.listUpdating() || this.localHistory.storageBusy();
+  }
+
+  showHistoryStatus(): boolean {
+    return Boolean(this.auth.deviceIdentityError() || this.visibleStorageError() || this.chat.syncError() || this.chat.deviceHistory.state() !== 'idle');
+  }
+
+  historyStatusTitle(): string {
+    if (this.auth.deviceIdentityNeedsRelink()) return this.tr('HISTORY_DEVICE.RELINK_REQUIRED', 'Vuelve a vincular este equipo');
+    if (this.auth.deviceIdentityError()) return this.tr('CHATS.HISTORY_UNAVAILABLE', 'Historial temporalmente no disponible');
+    if (this.visibleStorageError()) return this.tr('CHATS.HISTORY_UNAVAILABLE', 'Historial temporalmente no disponible');
+    if (this.chat.syncError()) return this.tr('CHATS.SYNC_ERROR', 'No se pudo actualizar. Inténtalo cuando tengas conexión.');
+    return this.chat.deviceHistory.state() === 'syncing'
+      ? this.tr('HISTORY_DEVICE.SYNCING', 'Sincronizando tu historial')
+      : this.tr('HISTORY_DEVICE.PENDING', 'Historial cifrado pendiente');
+  }
+
+  async relinkDevice(): Promise<void> {
+    if (!this.auth.deviceIdentityNeedsRelink() || this.refreshing) return;
+    const scope = this.searchContext();
+    this.historyPanelOpen = false;
+    try { await this.auth.relinkDevice(); }
+    catch { if (this.isCurrentScope(scope)) this.showSyncNotice(this.tr('CHATS.SYNC_ERROR', 'No se pudo actualizar. Inténtalo cuando tengas conexión.'), scope); }
+  }
+
+  async onPullRefresh(event: CustomEvent<{ complete: () => Promise<void> | void }>): Promise<void> {
+    try {
+      await this.refresh();
+    } finally {
+      await event.detail.complete();
+    }
+  }
+
+  conversationHistoryPending(conversation: Conversation): boolean {
+    const messages = this.chat.messagesByConversation()[conversation.id] ?? [];
+    return Boolean(messages[messages.length - 1]?.decryptError);
+  }
+
+  conversationPreviewLoading(conversation: Conversation): boolean {
+    // Keep every readable preview visible while other conversations recover.
+    // Waiting for a device's approval alone must not animate indefinitely.
+    return this.conversationHistoryPending(conversation) && this.conversationIndexLoading();
+  }
+
+  private showSyncNotice(message: string, scope: string): void {
+    this.clearSyncNoticeTimer();
+    this.syncNotice = message;
+    if (!message) return;
+    this.syncNoticeTimer = window.setTimeout(() => {
+      this.syncNoticeTimer = null;
+      if (this.isCurrentScope(scope)) this.syncNotice = '';
+    }, 5_000);
+  }
+
+  private clearSyncNoticeTimer(): void {
+    if (this.syncNoticeTimer !== null) window.clearTimeout(this.syncNoticeTimer);
+    this.syncNoticeTimer = null;
+  }
+
+  private belongsToConversationList(node: Node | null): boolean {
+    const list = this.conversationList?.nativeElement;
+    if (!list || !node) return false;
+    while (node) {
+      if (list.contains(node)) return true;
+      const root: Node = node.getRootNode();
+      node = root instanceof ShadowRoot ? root.host : null;
+    }
+    return false;
+  }
+
+  private focusedElement(): HTMLElement | null {
+    let active = document.activeElement;
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement;
+    return active instanceof HTMLElement ? active : null;
+  }
+
+  private readonly onDocumentFocus = (event: FocusEvent): void => {
+    const focused = this.focusedElement();
+    if (this.belongsToConversationList(focused)) {
+      this.lastConversationFocus = focused;
+    } else if (event.target !== document.body && event.target !== document.documentElement) {
+      this.forgetConversationFocus();
+    }
+  };
+
+  private readonly onDocumentPointerDown = (event: PointerEvent): void => {
+    if (!this.belongsToConversationList(event.target as Node | null)) this.forgetConversationFocus();
+  };
+
+  private readonly onDocumentKeydown = (event: KeyboardEvent): void => {
+    if ((this.pendingConversationFocus || this.listWasLoading) && ['Tab', 'Escape'].includes(event.key)) this.forgetConversationFocus();
+  };
+
+  private forgetConversationFocus(): void {
+    this.lastConversationFocus = null;
+    this.pendingConversationFocus = null;
+    this.focusIntent += 1;
+  }
+
+  private preserveConversationFocus(loading: boolean): void {
+    if (loading === this.listWasLoading) return;
+    this.listWasLoading = loading;
+    if (loading) {
+      const active = this.focusedElement();
+      // The inert binding may already have moved focus to body. The last
+      // focusin still identifies the row, unless the user chose another target.
+      if (this.lastConversationFocus?.isConnected
+        && (this.belongsToConversationList(active) || !active || active === document.body)) {
+        this.pendingConversationFocus = this.lastConversationFocus;
+      }
+      return;
+    }
+    const target = this.pendingConversationFocus;
+    const intent = this.focusIntent;
+    const scope = this.searchContext();
+    this.pendingConversationFocus = null;
+    if (!target) return;
+    queueMicrotask(() => {
+      if (!this.isCurrentScope(scope) || intent !== this.focusIntent || !target.isConnected
+        || this.showConversationSkeleton() || this.conversationList?.nativeElement.hasAttribute('inert')) return;
+      target.focus({ preventScroll: true });
+    });
   }
 
   ionViewDidEnter(): void {
@@ -348,6 +497,7 @@ export class ChatsPage implements OnDestroy {
       case 'share-pass': void this.openShareAccount(); break;
       case 'refresh': void this.refresh(); break;
       case 'settings': void this.router.navigateByUrl('/app/account'); break;
+      case 'enable-alerts': void this.enableCallAlerts(); break;
     }
   }
 
@@ -416,7 +566,6 @@ export class ChatsPage implements OnDestroy {
   }
 
   onSearchFocus(): void {
-    this.storiesCollapsed = false;
     if (!this.query.trim()) {
       this.showRecentSearches = true;
       this.recentCollapsed = false;
@@ -562,10 +711,8 @@ export class ChatsPage implements OnDestroy {
 
   onChatListScroll(event: Event): void {
     const list = event.target as HTMLElement;
-    if (list.scrollTop <= 8) {
-      this.storiesCollapsed = false;
-    } else if (list.scrollTop > 80 && list.scrollHeight - list.clientHeight > 180) {
-      // Short lists stay expanded so changing the viewport cannot trigger a collapse/expand loop.
+    if (list.scrollTop > 80 && list.scrollHeight - list.clientHeight > 180) {
+      // Returning to the top must not expand stories and push the list away.
       this.storiesCollapsed = true;
     }
   }
@@ -897,7 +1044,7 @@ export class ChatsPage implements OnDestroy {
   setFolder(value: string | number | undefined): void {
     if (value === 'all' || value === 'pinned' || value === 'unread' || value === 'archived') {
       this.selectedFolder = value;
-      this.expandStories();
+      this.conversationList?.nativeElement.scrollTo({ top: 0, behavior: 'instant' });
     }
   }
 

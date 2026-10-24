@@ -8,6 +8,38 @@ import { WEB_LAUNCH_RUNTIME } from './core/services/web-launch.service';
 
 describe('AppComponent', () => {
 
+  it('defers a web version reload while an unfocused chat draft or modal is open', () => {
+    const app: any = Object.assign(Object.create(AppComponent.prototype), {
+      auth: { busy: () => false }, calls: { activeCall: () => null, resumableCall: () => null },
+      chat: { uploading: () => false, deviceHistory: { approvingRequestId: () => null, state: () => 'idle', pendingRequests: () => [] } },
+    });
+    const draft = document.createElement('textarea');
+    const modal = Object.assign(document.createElement('ion-modal'), { isOpen: false });
+    document.body.append(draft, modal);
+    try {
+      expect(app.canApplyWebUpdate()).toBeTrue();
+      draft.value = 'Mensaje que todavía no envié';
+      expect(app.canApplyWebUpdate()).toBeFalse();
+      draft.value = ''; modal.isOpen = true;
+      expect(app.canApplyWebUpdate()).toBeFalse();
+      modal.isOpen = false;
+      expect(app.canApplyWebUpdate()).toBeTrue();
+    } finally { draft.remove(); modal.remove(); }
+  });
+
+  it('resumes HTTP chat updates even when the realtime handshake never finishes', async () => {
+    const sync = jasmine.createSpy('sync').and.resolveTo();
+    const app: any = Object.assign(Object.create(AppComponent.prototype), {
+      appLock: { refreshBiometryAvailability: async () => undefined },
+      auth: { isAuthenticated: () => true },
+      localHistory: { retryNativeStorage: jasmine.createSpy('open').and.resolveTo(true) },
+      realtime: { connect: jasmine.createSpy('connect').and.returnValue(new Promise(() => undefined)) },
+      chat: { resumeSoftSync: sync }, lastPushResume: Date.now(),
+    });
+    await app.resumeExistingSession();
+    expect(sync).toHaveBeenCalledTimes(1);
+  });
+
   beforeEach(async () => {
     await TestBed.configureTestingModule({
       imports: [AppComponent],

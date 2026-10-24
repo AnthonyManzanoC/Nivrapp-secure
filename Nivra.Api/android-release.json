@@ -1,7 +1,7 @@
 {
-  "version": "4.2.1",
-  "versionCode": 30,
-  "url": "https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v4.2.1/Nivra-4.2.1-debug.apk",
-  "sha256": "97ecdd60924a53117f7bb63c507491636ad1c82b6e74f2ea70fcdf720272fc04",
-  "size": 82500512
+  "version": "5.0.0",
+  "versionCode": 32,
+  "url": "https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v5.0.0/Nivra-5.0.0-debug.apk",
+  "sha256": "1066ef07f396c2deba139eb339d7380f6fc85cfe7c816a02c1b7b9aef56f534c",
+  "size": 82517716
 }

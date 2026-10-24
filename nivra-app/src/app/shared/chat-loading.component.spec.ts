@@ -45,4 +45,13 @@ describe('ChatLoadingComponent', () => {
     expect(root.querySelector('[role="status"]')).toBeNull();
     expect(root.querySelector('.loading-description')).toBeNull();
   });
+
+  it('fills an existing conversation viewport with full rows using one accessible loading announcement', () => {
+    fixture.componentInstance.rowCount = 9;
+    fixture.detectChanges();
+    const root = fixture.nativeElement as HTMLElement;
+    expect(root.querySelectorAll('.loading-row').length).toBe(9);
+    expect(root.querySelectorAll('.loading-avatar').length).toBe(9);
+    expect(root.querySelectorAll('[role="status"]').length).toBe(1);
+  });
 });

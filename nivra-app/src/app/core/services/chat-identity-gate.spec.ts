@@ -7,6 +7,7 @@ describe('message identity gate',()=>{
     const encrypt=jasmine.createSpy('encrypt').and.resolveTo({ciphertext:'sealed',header:{}});
     service.auth={session:()=>({user:{id:'self',alias:'self'},device:{id:'phone'}})};
     service.crypto={currentKeyMaterial:async()=>({publicJwk:{}}),parsePublicJwk:()=>({}),encryptForPublicKey:encrypt};
+    service.auth.ensureDeviceIdentity=async()=>service.crypto.currentKeyMaterial();
     service.identityTrust={check:jasmine.createSpy('check').and.resolveTo()};
     service.contacts=()=>[];
     service.api={post:jasmine.createSpy('post').and.returnValue(of([

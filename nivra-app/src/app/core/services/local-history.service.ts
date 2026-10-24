@@ -23,8 +23,30 @@ const LOCAL_PAYLOAD_VERSION = 2;
 const NATIVE_STORAGE_ERROR = 'No se pudo abrir el historial cifrado. Desbloquea el dispositivo y vuelve a intentar. Tus datos locales se han conservado.';
 
 export type LocalHistoryStorageState = 'idle' | 'opening' | 'retrying' | 'ready' | 'error';
+export type LocalHistoryStorageStage = 'bridge' | 'database-check' | 'secure-secret' | 'secret-status' | 'secret-check'
+  | 'secret-install' | 'retained-key' | 'reconcile' | 'connection' | 'database-open' | 'schema';
+export interface LocalHistoryStorageDiagnostic {
+  backend: 'sqlite';
+  stage: LocalHistoryStorageStage;
+  code: string;
+  attempt: number;
+  retryable: boolean;
+}
 
-class LocalHistoryKeyMismatchError extends Error {}
+class NativeHistoryStorageError extends Error {
+  constructor(readonly stage: LocalHistoryStorageStage, readonly code: string,
+    readonly retryable = true, readonly initializationFailure = false) {
+    // Only allowlisted codes reach this error, never native messages, SQL,
+    // account identifiers, envelopes or encryption secrets.
+    super(`No se pudo abrir el historial cifrado (${stage}/${code}).`);
+  }
+}
+
+class LocalHistoryKeyMismatchError extends NativeHistoryStorageError {
+  constructor(stage: LocalHistoryStorageStage = 'secret-check', code = 'KEY_MISMATCH') {
+    super(stage, code, false);
+  }
+}
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -105,6 +127,7 @@ interface ConversationMessagesPageOptions {
 export class LocalHistoryService {
   readonly storageError = signal('');
   readonly storageState = signal<LocalHistoryStorageState>('idle');
+  readonly storageDiagnostic = signal<LocalHistoryStorageDiagnostic | null>(null);
   readonly storageBusy = computed(() => this.storageState() === 'opening' || this.storageState() === 'retrying');
   private readonly ngZone = inject(NgZone);
   private readonly secureVault = inject(NativeSecureVaultService);
@@ -112,7 +135,6 @@ export class LocalHistoryService {
   private sqlitePromise?: Promise<SQLiteDBConnection>;
   private sqliteConnection?: SQLiteConnection;
   private sqliteOpenFailed = false;
-  private sqliteNeedsReconciliation = true;
   private nativeRecoveryPromise?: Promise<boolean>;
   private secureSecretInFlight?: Promise<string | null>;
   private readonly vaultKeyInFlight = new Map<string, Promise<CryptoKey>>();
@@ -145,6 +167,7 @@ export class LocalHistoryService {
     if (this.sqliteOpenFailed || this.storageBusy()) return;
     this.ngZone.run(() => {
       this.storageError.set('');
+      this.storageDiagnostic.set(null);
       if (this.storageState() === 'error') this.storageState.set('ready');
     });
   }
@@ -779,7 +802,6 @@ export class LocalHistoryService {
       this.sqlitePromise = undefined;
       this.sqliteConnection = undefined;
       this.sqliteOpenFailed = false;
-      this.sqliteNeedsReconciliation = true;
       this.nativeRecoveryPromise = undefined;
 
       await Promise.all([
@@ -789,6 +811,7 @@ export class LocalHistoryService {
       await this.secureVault.clearSecret('local-db').catch(() => undefined);
       this.ngZone.run(() => {
         this.storageError.set('');
+        this.storageDiagnostic.set(null);
         this.storageState.set('idle');
       });
     } finally {
@@ -919,7 +942,10 @@ export class LocalHistoryService {
     if (this.wiping) throw new Error('El almacenamiento local se esta cerrando.');
     const generation = this.storageGeneration;
     if (!this.sqlitePromise) {
-      this.ngZone.run(() => this.storageState.set(this.storageState() === 'error' ? 'retrying' : 'opening'));
+      this.ngZone.run(() => {
+        this.storageDiagnostic.set(null);
+        this.storageState.set(this.storageState() === 'error' ? 'retrying' : 'opening');
+      });
       this.sqlitePromise = this.openNativeSqliteWithRetry(generation);
     }
     const opening = this.sqlitePromise;
@@ -991,7 +1017,9 @@ export class LocalHistoryService {
   private async openNativeSqliteWithRetry(generation: number): Promise<SQLiteDBConnection> {
     // Share a bounded retry while the native bridge/Keystore resumes.
     // Never replace the existing encrypted database after an opening failure.
+    let attempt = 0;
     for (const delay of [0, 300, 900]) {
+      attempt++;
       if (delay) await new Promise<void>((resolve) => setTimeout(resolve, delay));
       this.assertStorageGeneration(generation);
       try {
@@ -1003,15 +1031,35 @@ export class LocalHistoryService {
         this.sqliteOpenFailed = false;
         this.ngZone.run(() => {
           this.storageError.set('');
+          this.storageDiagnostic.set(null);
           this.storageState.set('ready');
         });
         return db;
       } catch (error) {
         this.assertStorageGeneration(generation);
-        if (delay === 900 || error instanceof LocalHistoryKeyMismatchError) {
+        let failure = this.nativeStorageFailure('bridge', error);
+        if (failure.code === 'DATABASE_KEY_UNREADABLE') {
+          const inspection = await this.secureVault.inspectLocalHistoryStorage?.();
+          this.assertStorageGeneration(generation);
+          if (inspection?.databaseFormat === 'sqlite') {
+            failure = new NativeHistoryStorageError(failure.stage, 'LEGACY_UNENCRYPTED_HISTORY', false);
+          }
+        }
+        if (delay === 900 || !failure.retryable) {
           this.sqliteOpenFailed = true;
-          this.setStorageError(NATIVE_STORAGE_ERROR);
-          throw error;
+          this.ngZone.run(() => this.storageDiagnostic.set({
+            backend: 'sqlite', stage: failure.stage, code: failure.code, attempt, retryable: failure.retryable,
+          }));
+          this.setStorageError(this.nativeStorageErrorMessage(failure));
+          throw failure;
+        }
+        // The Android plugin caches a failed Keystore initialization for the
+        // lifetime of the activity. Repeating a JS connection alone cannot
+        // recover it after unlock. Only that initialization error may reload
+        // the native plugin; ordinary DB/key failures must preserve its state.
+        if (failure.initializationFailure && await this.secureVault.retryLocalHistoryInitialization()) {
+          this.assertStorageGeneration(generation);
+          this.sqliteConnection = undefined;
         }
       }
     }
@@ -1024,26 +1072,29 @@ export class LocalHistoryService {
       const { CapacitorSQLite, SQLiteConnection } = await import('@capacitor-community/sqlite');
       if (!this.sqliteConnection) {
         this.sqliteConnection = new SQLiteConnection(CapacitorSQLite);
-        this.sqliteNeedsReconciliation = true;
       }
       sqlite = this.sqliteConnection;
-      if (this.sqliteNeedsReconciliation) {
-        // Retry reconciliation after a transient bridge failure too. The SQLite
-        // wrapper resets its handle map when this check rejects.
-        await this.sqliteConnection.checkConnectionsConsistency();
-        this.sqliteNeedsReconciliation = false;
-      }
-      this.assertStorageGeneration(generation);
       await this.prepareNativeSqliteSecret(sqlite);
       this.assertStorageGeneration(generation);
-      const existing = await sqlite.isConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => ({ result: false }));
-      const db = existing.result
-        ? await sqlite.retrieveConnection(NATIVE_SQLITE_DB_NAME, false)
-        : await sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
+      // Android checkEncryptionSecret/setEncryptionSecret close every native
+      // connection, while the JS wrapper still retains its previous handles.
+      // Reconcile AFTER preparing the secret so retrieval cannot reuse a stale
+      // handle and turn a successful unlock into another opening failure.
+      // The wrapper resets its handle map when this check rejects, so repeat
+      // it after a transient bridge failure as well.
+      await this.nativeStorageStep('reconcile', () => sqlite!.checkConnectionsConsistency());
       this.assertStorageGeneration(generation);
-      if (!(await db.isDBOpen()).result) await db.open();
+      const db = await this.nativeStorageStep('connection', async () => {
+        const existing = await sqlite!.isConnection(NATIVE_SQLITE_DB_NAME, false);
+        return existing.result ? sqlite!.retrieveConnection(NATIVE_SQLITE_DB_NAME, false)
+          : sqlite!.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, false);
+      });
       this.assertStorageGeneration(generation);
-      await db.execute(`
+      await this.nativeStorageStep('database-open', async () => {
+        if (!(await db.isDBOpen()).result) await db.open();
+      });
+      this.assertStorageGeneration(generation);
+      await this.nativeStorageStep('schema', () => db.execute(`
         CREATE TABLE IF NOT EXISTS local_messages (
           key TEXT PRIMARY KEY NOT NULL,
           account_key TEXT NOT NULL,
@@ -1097,28 +1148,103 @@ export class LocalHistoryService {
           raw_key TEXT NOT NULL,
           created_at TEXT NOT NULL
         );
-      `);
+      `));
       return db;
     } catch (error) {
-      this.sqliteNeedsReconciliation = true;
       await sqlite?.closeConnection(NATIVE_SQLITE_DB_NAME, false).catch(() => undefined);
-      if (error instanceof LocalHistoryKeyMismatchError) throw error;
-      throw new Error(NATIVE_STORAGE_ERROR);
+      throw error;
     }
   }
 
   private async prepareNativeSqliteSecret(sqlite: SQLiteConnection): Promise<void> {
-    const secret = await this.localDatabaseSecret();
-    if (!secret) throw new Error('No se pudo abrir el secreto local de SQLite.');
+    const exists = (await this.nativeStorageStep('database-check', () => sqlite.isDatabase(NATIVE_SQLITE_DB_NAME))).result === true;
+    const stored = (await this.nativeStorageStep('secret-status', () => sqlite.isSecretStored())).result === true;
+    let secret: string | null = null;
+    let protectorFailure: unknown;
+    try {
+      // Reading an installed vault must not create another protector merely
+      // because the old envelope/key is missing, partial or unavailable.
+      secret = await this.nativeStorageStep('secure-secret', () => this.localDatabaseSecret(!exists && !stored));
+    } catch (error) { protectorFailure = error; }
     // The plugin stores this in the OS protected vault. Repeated clear/set scans
     // databases unnecessarily and complicates reconnection after navigation.
-    if ((await sqlite.isSecretStored()).result) {
-      if (!(await sqlite.checkEncryptionSecret(secret)).result) {
-        throw new LocalHistoryKeyMismatchError(NATIVE_STORAGE_ERROR);
-      }
+    if (stored) {
+      if (secret && (await this.nativeStorageStep('secret-check', () => sqlite.checkEncryptionSecret(secret!))).result) return;
+      // Old installations may retain a valid SQLCipher secret while the
+      // independent Nivra protector differs or cannot unlock. Validate ONLY
+      // the existing DB in read-only mode with the retained SQLCipher key.
+      // Never replace either secret or create an empty DB to accept a mismatch.
+      if (!exists) throw new LocalHistoryKeyMismatchError('database-check', 'DATABASE_MISSING_WITH_RETAINED_KEY');
+      await this.validateRetainedNativeSqliteSecret(sqlite);
     } else {
-      await sqlite.setEncryptionSecret(secret);
+      if (protectorFailure) throw protectorFailure;
+      if (!secret) throw new NativeHistoryStorageError('secure-secret', 'NIVRA_SECURE_SECRET_MISSING', false);
+      await this.nativeStorageStep('secret-install', () => sqlite.setEncryptionSecret(secret!));
     }
+  }
+
+  private async validateRetainedNativeSqliteSecret(sqlite: SQLiteConnection): Promise<void> {
+    await this.nativeStorageStep('reconcile', () => sqlite.checkConnectionsConsistency());
+    let probe: SQLiteDBConnection | undefined;
+    try {
+      probe = await this.nativeStorageStep('retained-key', () => sqlite.createConnection(NATIVE_SQLITE_DB_NAME, true, 'secret', 1, true));
+      await this.nativeStorageStep('retained-key', () => probe!.open());
+      const tables = await this.nativeStorageStep('retained-key', () => probe!.query(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('local_messages', 'local_conversations', 'local_vault_keys')",
+      ));
+      const names = new Set((tables.values ?? []).map(row => row['name']));
+      if (!['local_messages', 'local_conversations', 'local_vault_keys'].every(name => names.has(name))) {
+        throw new LocalHistoryKeyMismatchError('retained-key', 'RETAINED_KEY_SCHEMA_INVALID');
+      }
+      // Validate required columns without retrieving conversation contents.
+      // Merely finding a table with the right name is not a valid history DB.
+      for (const sql of [
+        'SELECT key, account_key, conversation_id, id, at, expires_at_ms, opened_at_ms, delete_after_read, record_json FROM local_messages LIMIT 0',
+        'SELECT key, account_key, id, updated_at, record_json FROM local_conversations LIMIT 0',
+        'SELECT account_key, raw_key, created_at FROM local_vault_keys LIMIT 0',
+      ]) await this.nativeStorageStep('retained-key', () => probe!.query(sql));
+    } finally {
+      if (probe) await sqlite.closeConnection(NATIVE_SQLITE_DB_NAME, true).catch(() => undefined);
+    }
+  }
+
+  private async nativeStorageStep<T>(stage: LocalHistoryStorageStage, operation: () => Promise<T>): Promise<T> {
+    try { return await operation(); }
+    catch (error) { throw this.nativeStorageFailure(stage, error); }
+  }
+
+  private nativeStorageFailure(stage: LocalHistoryStorageStage, error: unknown): NativeHistoryStorageError {
+    if (error instanceof NativeHistoryStorageError) return error;
+    const native = error as { message?: unknown; code?: unknown } | null;
+    const code = String(native?.code || '');
+    const secureCodes = ['NIVRA_SECURE_SECRET_MISSING', 'NIVRA_SECURE_ENVELOPE_INCOMPLETE', 'NIVRA_KEYSTORE_KEY_MISSING',
+      'NIVRA_KEYSTORE_KEY_INVALIDATED', 'NIVRA_KEYSTORE_LOCKED', 'NIVRA_SECURE_DECRYPT_FAILED',
+      'NIVRA_SECURE_ENVELOPE_INVALID', 'NIVRA_SECURE_WRITE_FAILED', 'NIVRA_SECURE_UNAVAILABLE'];
+    if (secureCodes.includes(code)) {
+      return new NativeHistoryStorageError(stage, code, ['NIVRA_KEYSTORE_LOCKED', 'NIVRA_SECURE_UNAVAILABLE'].includes(code));
+    }
+    const message = typeof error === 'string' ? error : String(native?.message || '');
+    if (message.startsWith('CapacitorSQLitePlugin:')) return new NativeHistoryStorageError('bridge', 'NATIVE_INITIALIZATION_FAILED', true, true);
+    if (/no encryption|cannot be encrypted/i.test(message)) return new NativeHistoryStorageError(stage, 'ENCRYPTION_DISABLED', false);
+    if (/not a database|file is encrypted|wrong secret|hmac check|bad decrypt/i.test(message)) return new NativeHistoryStorageError(stage, 'DATABASE_KEY_UNREADABLE', false);
+    if (/no such column|no such table|syntax error|malformed.*schema/i.test(message)) return new NativeHistoryStorageError(stage, 'SCHEMA_MISMATCH', false);
+    if (/database is locked|sqlite_busy|sqlite_locked/i.test(message)) return new NativeHistoryStorageError(stage, 'DATABASE_BUSY');
+    if (/disk.*full|enospc/i.test(message)) return new NativeHistoryStorageError(stage, 'STORAGE_FULL', false);
+    if (/permission denied|eacces|read.?only database/i.test(message)) return new NativeHistoryStorageError(stage, 'STORAGE_PERMISSION', false);
+    if (/no available connection|connection.*(?:does not exist|already exists)/i.test(message)) return new NativeHistoryStorageError(stage, 'CONNECTION_UNAVAILABLE');
+    if (/keystore|authenticated|device.*locked/i.test(message)) return new NativeHistoryStorageError(stage, 'NIVRA_KEYSTORE_LOCKED');
+    return new NativeHistoryStorageError(stage, stage === 'schema' ? 'SCHEMA_PREPARATION_FAILED' : 'NATIVE_OPERATION_FAILED');
+  }
+
+  private nativeStorageErrorMessage(failure: NativeHistoryStorageError): string {
+    const message = failure.code === 'LEGACY_UNENCRYPTED_HISTORY'
+      ? 'Esta instalación conserva un historial de un formato anterior que requiere recuperación. La base y sus claves se han conservado.'
+      : failure.stage === 'schema' ? 'El historial cifrado se abrió, pero no se pudo preparar su estructura. Tus datos locales se han conservado.'
+      : failure.code === 'DATABASE_KEY_UNREADABLE' || failure.code === 'RETAINED_KEY_SCHEMA_INVALID'
+        ? 'La clave conservada no permite validar el historial cifrado de esta instalación. La base y sus claves se han conservado.'
+        : failure.code === 'STORAGE_FULL' ? 'No hay espacio suficiente para abrir el historial cifrado. Tus datos locales se han conservado.'
+          : NATIVE_STORAGE_ERROR;
+    return `${message} Código: ${failure.stage}/${failure.code}.`;
   }
 
   private assertStorageGeneration(generation: number): void {
@@ -1127,9 +1253,9 @@ export class LocalHistoryService {
     }
   }
 
-  private localDatabaseSecret(): Promise<string | null> {
+  private localDatabaseSecret(create = true): Promise<string | null> {
     if (this.secureSecretInFlight) return this.secureSecretInFlight;
-    const pending = this.secureVault.getOrCreateSecret('local-db');
+    const pending = this.secureVault.getOrCreateSecret('local-db', create ? undefined : { create: false });
     this.secureSecretInFlight = pending;
     void pending.finally(() => {
       if (this.secureSecretInFlight === pending) this.secureSecretInFlight = undefined;
@@ -1485,7 +1611,7 @@ export class LocalHistoryService {
     if (!record?.keyEnvelope) {
       return null;
     }
-    const secret = await this.localDatabaseSecret().catch(() => null);
+    const secret = await this.localDatabaseSecret(false).catch(() => null);
     if (!secret) {
       return null;
     }

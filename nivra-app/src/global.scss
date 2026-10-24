@@ -72,13 +72,12 @@ body.nivra-light-theme {
 body {
   margin: 0;
   overflow: hidden;
-  background:
-    linear-gradient(125deg, rgba(24, 214, 162, .075), transparent 30%),
-    linear-gradient(240deg, rgba(107, 168, 255, .07), transparent 34%),
-    var(--nivra-bg);
+  background: var(--nivra-bg);
   color: var(--nivra-text);
   -webkit-font-smoothing: antialiased;
-  text-rendering: geometricPrecision;
+  text-rendering: optimizeLegibility;
+  font-family: var(--ion-font-family);
+  -webkit-text-size-adjust: 100%;
 }
 
 button,
@@ -104,12 +103,12 @@ button:disabled {
 
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(114, 240, 202, .42) transparent;
+  scrollbar-color: color-mix(in srgb, var(--nivra-muted) 26%, transparent) transparent;
 }
 
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: 5px;
+  height: 5px;
 }
 
 *::-webkit-scrollbar-track {
@@ -117,9 +116,9 @@ button:disabled {
 }
 
 *::-webkit-scrollbar-thumb {
-  border: 3px solid transparent;
+  border: 1px solid transparent;
   border-radius: 999px;
-  background: linear-gradient(180deg, rgba(114, 240, 202, .5), rgba(107, 168, 255, .45)) border-box;
+  background: color-mix(in srgb, var(--nivra-muted) 26%, transparent) border-box;
 }
 
 ion-modal.profile-photo-viewer-modal {
@@ -1891,3 +1890,5 @@ ion-modal.nivra-story-viewer-modal::part(content) {
     backdrop-filter: none;
   }
 }
+
+@import "./theme/messenger-polish.scss";

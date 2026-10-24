@@ -1,0 +1,58 @@
+/* Shared chrome follows the same spacing and type scale as the chat workspace. */
+body.nivra-light-theme .workspace { background: var(--nivra-bg); }
+body.nivra-light-theme :is(.rail, .sidebar) {
+  background: var(--nivra-panel-solid);
+  box-shadow: none;
+}
+body.nivra-light-theme .nav-btn.active {
+  background: color-mix(in srgb, var(--nivra-brand) 12%, transparent);
+  border-color: transparent;
+  box-shadow: none;
+}
+body.nivra-light-theme app-chats .search-box {
+  background: var(--nivra-panel-2);
+  border-color: transparent;
+  box-shadow: none;
+}
+body.nivra-light-theme app-chats .search-box:focus-within {
+  border-color: color-mix(in srgb, var(--nivra-brand) 30%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--nivra-brand) 8%, transparent);
+}
+body app-chats .search-results .list-item::part(native) {
+  border-radius: 0;
+  border-color: transparent;
+  border-block-end-color: var(--nivra-line);
+  background: transparent;
+  box-shadow: none;
+}
+body app-chats .welcome-stage { background: var(--nivra-bg); }
+body :is(app-world, app-account, app-vault, app-calls) .page-head h1 {
+  font-size: clamp(28px, 2.4vw, 34px);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -.035em;
+}
+body :is(app-world, app-account, app-vault, app-calls) .page-head p {
+  margin-top: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+body :is(app-world, app-account, app-vault, app-calls) .panel {
+  border-radius: 16px;
+  box-shadow: none;
+}
+body :is(app-world, app-account, app-vault, app-calls) ion-button {
+  --box-shadow: none;
+  --border-radius: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+body :is(app-chats, app-chat-detail) ion-popover::part(content) {
+  border-color: var(--nivra-line);
+  box-shadow: 0 12px 40px rgb(0 0 0 / 15%);
+}
+@media (max-width: 768px) {
+  body.nivra-light-theme .rail .nav-btn.active { background: transparent; }
+  body :is(app-world, app-account, app-vault, app-calls) .page-head { padding-bottom: 16px; }
+  body :is(app-world, app-account, app-vault, app-calls) .page-head h1 { font-size: 28px; }
+}

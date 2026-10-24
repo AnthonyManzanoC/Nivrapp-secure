@@ -1,25 +1,41 @@
-import { Component, Input, computed, effect, inject } from '@angular/core';
-import { IonIcon, IonSpinner } from '@ionic/angular/standalone';
+import { Component, EventEmitter, Input, Output, computed, effect, inject } from '@angular/core';
+import { NgTemplateOutlet } from '@angular/common';
+import { IonIcon, IonModal, IonSpinner } from '@ionic/angular/standalone';
 import { HistoryDeviceSyncService, PendingHistoryApproval } from '../core/services/history-device-sync.service';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
 import { addIcons } from 'ionicons';
-import { lockClosedOutline, shieldCheckmarkOutline } from 'ionicons/icons';
+import { chevronForwardOutline, closeOutline, lockClosedOutline, shieldCheckmarkOutline } from 'ionicons/icons';
 import { FormsModule } from '@angular/forms';
 
 @Component({
-  selector: 'app-history-sync-notice', standalone: true, imports: [IonIcon, IonSpinner, TranslatePipe, FormsModule],
-  template: `@if (showWaiting && history.state() !== 'idle') {
+  selector: 'app-history-sync-notice', standalone: true, imports: [NgTemplateOutlet, IonIcon, IonModal, IonSpinner, TranslatePipe, FormsModule],
+  template: `<ng-template #waitingNotice>
     <aside class="history-notice" [class.history-unavailable]="history.state() === 'unavailable'" [class.history-syncing]="history.state() === 'syncing'" role="status" aria-live="polite" aria-atomic="true" [attr.aria-busy]="retryBusy()">
       <span class="history-notice-icon" aria-hidden="true">@if (retryBusy()) {<ion-spinner name="crescent" />} @else {<ion-icon name="lock-closed-outline" />}</span>
       <div class="history-copy">
         <strong>{{ titleKey() | translate:titleFallback() }}</strong>
         <p>{{ descriptionKey() | translate:descriptionFallback() }}</p>
-        @if (history.targetFingerprint()) {
+        @if (history.targetFingerprint() && history.state() !== 'syncing' && !identityError) {
           <div class="history-code"><span>{{ 'HISTORY_DEVICE.CODE_LABEL' | translate:'Código de vinculación' }}</span><code dir="ltr">{{ history.targetFingerprint() }}</code></div>
         }
       </div>
-      <button class="history-retry" type="button" [disabled]="retryBusy()" (click)="history.retry()">{{ (retryBusy() ? 'HISTORY_DEVICE.CHECKING' : 'COMMON.RETRY') | translate:(retryBusy() ? 'Comprobando…' : 'Reintentar') }}</button>
+      @if (needsRelink) {
+        <button class="history-retry" type="button" (click)="relinkRequested.emit()">{{ 'HISTORY_DEVICE.RELINK' | translate:'Volver a vincular' }}</button>
+      } @else if (history.state() !== 'syncing') {
+        <button class="history-retry" type="button" [disabled]="retryBusy()" (click)="history.retry()">{{ (retryBusy() ? 'HISTORY_DEVICE.CHECKING' : 'COMMON.RETRY') | translate:(retryBusy() ? 'Comprobando…' : 'Reintentar') }}</button>
+      }
     </aside>
+  </ng-template>
+  @if (showWaiting && (history.state() !== 'idle' || identityError)) {
+    @if (compact) {
+      <button type="button" class="history-compact" (click)="detailsOpen = true" aria-haspopup="dialog" [attr.aria-label]="titleKey() | translate:titleFallback()">
+        @if (retryBusy()) { <ion-spinner name="crescent" aria-hidden="true" /> } @else { <ion-icon name="lock-closed-outline" aria-hidden="true" /> }
+        <span>{{ titleKey() | translate:titleFallback() }}</span><ion-icon name="chevron-forward-outline" aria-hidden="true" />
+      </button>
+      <ion-modal class="history-sync-modal" [isOpen]="detailsOpen" (didDismiss)="detailsOpen = false">
+        <ng-template><section class="history-sync-details"><header><h2>{{ 'CHATS.SYNC' | translate:'Sincronizar' }}</h2><button type="button" (click)="detailsOpen = false" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline" aria-hidden="true" /></button></header><ng-container [ngTemplateOutlet]="waitingNotice" /></section></ng-template>
+      </ion-modal>
+    } @else { <ng-container [ngTemplateOutlet]="waitingNotice" /> }
   }
   @if (showApprovals) { @for (request of history.pendingRequests().slice(0, approvalLimit); track request.id) {
     <aside class="history-notice history-approval" role="region" [attr.aria-label]="'HISTORY_DEVICE.APPROVE_TITLE' | translate:'Vincular historial cifrado'" [attr.aria-busy]="history.approvingRequestId() === request.id">
@@ -42,23 +58,36 @@ export class HistorySyncNoticeComponent {
   @Input() showWaiting = true;
   @Input() showApprovals = true;
   @Input() approvalLimit = 32;
+  @Input() compact = false;
+  @Input() identityError = false;
+  @Input() needsRelink = false;
+  @Output() readonly relinkRequested = new EventEmitter<void>();
+  detailsOpen = false;
   constructor() {
-    addIcons({ lockClosedOutline, shieldCheckmarkOutline });
-    effect(() => { this.history.approvalEpoch(); for (const id of Object.keys(this.compared)) delete this.compared[id]; });
+    addIcons({ chevronForwardOutline, closeOutline, lockClosedOutline, shieldCheckmarkOutline });
+    effect(() => { this.history.approvalEpoch(); this.detailsOpen = false; for (const id of Object.keys(this.compared)) delete this.compared[id]; });
   }
   titleKey(): string {
+    if (this.needsRelink) return 'HISTORY_DEVICE.RELINK_REQUIRED';
+    if (this.identityError) return 'CHATS.HISTORY_UNAVAILABLE';
     return this.history.state() === 'syncing' ? 'HISTORY_DEVICE.SYNCING'
       : this.history.state() === 'unavailable' ? 'HISTORY_DEVICE.UNAVAILABLE_TITLE' : 'HISTORY_DEVICE.PENDING';
   }
   titleFallback(): string {
+    if (this.needsRelink) return 'Vuelve a vincular este equipo';
+    if (this.identityError) return 'Historial temporalmente no disponible';
     return this.history.state() === 'syncing' ? 'Sincronizando tu historial'
       : this.history.state() === 'unavailable' ? 'El historial sigue pendiente' : 'Historial cifrado pendiente';
   }
   descriptionKey(): string {
+    if (this.identityError) return this.needsRelink ? 'HISTORY_DEVICE.RELINK_COPY' : 'HISTORY_DEVICE.IDENTITY_ERROR_COPY';
     return this.history.state() === 'syncing' ? 'HISTORY_DEVICE.SYNCING_COPY'
       : this.history.state() === 'unavailable' ? 'HISTORY_DEVICE.UNAVAILABLE_COPY' : 'HISTORY_DEVICE.WAITING_COPY';
   }
   descriptionFallback(): string {
+    if (this.identityError) return this.needsRelink
+      ? 'Vuelve a vincular este equipo desde tu teléfono para recuperar los chats. El historial guardado se conserva.'
+      : 'No se pudo abrir la identidad de este equipo. Comprueba la conexión, desbloquea el dispositivo y vuelve a intentar.';
     return this.history.state() === 'syncing' ? 'Estamos comprobando las llaves y preparando tus mensajes disponibles.'
       : this.history.state() === 'unavailable' ? 'No pudimos completar la recuperación. Revisa la conexión y autoriza el código desde tu otro dispositivo.'
         : 'Abre la versión actual de Nivra en tu otro dispositivo y autoriza este código para recuperar tu historial.';

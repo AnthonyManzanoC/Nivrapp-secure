@@ -106,6 +106,9 @@ export class AuthService implements OnDestroy {
   private protectedSessionRestorePromise: Promise<void> | null = null;
   private refreshBackoffUntil = 0;
   private refreshHardFailure = false;
+  private deviceIdentityOperation: { scope: string; promise: Promise<StoredDeviceKeys> } | null = null;
+  private deviceIdentityReady: { scope: string; keys: StoredDeviceKeys } | null = null;
+  private deviceIdentityValidationEpoch = 0;
 
   readonly session = signal<AuthSession | null>(this.loadSession());
   readonly pendingPhoneAlias = signal<PhoneAliasChallenge | null>(null);
@@ -113,6 +116,8 @@ export class AuthService implements OnDestroy {
   readonly qrState = signal<'idle' | 'starting' | 'waiting' | 'authorizing' | 'expired' | 'error'>('idle');
   readonly qrError = signal<unknown>(null);
   readonly forceWipeRequested = signal(0);
+  readonly deviceIdentityError = signal('');
+  readonly deviceIdentityNeedsRelink = signal(false);
   readonly accessToken = computed(() => this.session()?.tokens.accessToken ?? '');
   readonly isAuthenticated = computed(() => Boolean(this.accessToken()));
   readonly hasFreshAccessToken = computed(() => this.hasUsableAccessToken(this.session()));
@@ -592,7 +597,151 @@ export class AuthService implements OnDestroy {
     return this.refreshToken();
   }
 
+  async ensureDeviceIdentity(): Promise<StoredDeviceKeys> {
+    if (!await this.ensureFreshSession()) throw new Error('No se pudo comprobar la sesión para abrir las llaves de este dispositivo. Vuelve a intentar cuando haya conexión.');
+    const auth = this.session();
+    if (!auth?.device.isTrusted || auth.device.revokedAt) throw new Error('Este dispositivo necesita una vinculación autorizada.');
+    const scope = `${auth.user.id}:${auth.device.id}`;
+    if (this.deviceIdentityReady && this.deviceIdentityReady.scope !== scope) this.deviceIdentityReady = null;
+    if (this.deviceIdentityReady?.scope === scope) {
+      const known = this.deviceIdentityReady.keys;
+      const local = await this.crypto.currentKeyMaterial(auth.user.alias, auth.device.id).catch(() => null);
+      if (this.session()?.user.id !== auth.user.id || this.session()?.device.id !== auth.device.id) throw new Error('La sesión cambió durante la apertura de las llaves.');
+      if (local?.userId === auth.user.id && this.crypto.samePublicKey(local.publicJwk, known.publicJwk)
+        && this.crypto.samePublicKey(local.privateJwk, known.privateJwk) && local.privateJwk.d === known.privateJwk.d) {
+        this.deviceIdentityError?.set(''); this.deviceIdentityNeedsRelink?.set(false); return local;
+      }
+      this.deviceIdentityReady = null;
+    }
+    if (this.deviceIdentityOperation?.scope === scope) return this.deviceIdentityOperation.promise;
+    const validationEpoch = this.deviceIdentityValidationEpoch;
+    const promise = this.reconcileDeviceIdentity(auth).then(keys => {
+      const current = this.session();
+      if (current && this.deviceIdentityValidationEpoch === validationEpoch && current.user.id === keys.userId && current.device.id === keys.deviceId) {
+        this.deviceIdentityReady = { scope: `${current.user.id}:${current.device.id}`, keys };
+      }
+      this.deviceIdentityError?.set(''); this.deviceIdentityNeedsRelink?.set(false);
+      return keys;
+    }).catch(error => {
+      if (this.session()?.user.id === auth.user.id && this.session()?.device.id === auth.device.id) {
+        this.deviceIdentityError?.set(error instanceof Error ? error.message : 'No se pudo abrir la identidad local de este dispositivo.');
+      }
+      throw error;
+    }).finally(() => {
+      if (this.deviceIdentityOperation?.promise === promise) this.deviceIdentityOperation = null;
+    });
+    this.deviceIdentityOperation = { scope, promise };
+    return promise;
+  }
+
+  invalidateDeviceIdentity(): void {
+    this.deviceIdentityReady = null;
+    this.deviceIdentityValidationEpoch = (this.deviceIdentityValidationEpoch ?? 0) + 1;
+  }
+
+  relinkDevice(): Promise<void> {
+    // A legacy QR can share the source refresh token. Remove only this local
+    // copy; server logout could otherwise sign the user's phone out as well.
+    return this.logout(true);
+  }
+
+  private async reconcileDeviceIdentity(auth: AuthSession): Promise<StoredDeviceKeys> {
+    const epoch = this.sessionWriteEpoch;
+    const isCurrent = () => this.sessionWriteEpoch === epoch && this.session()?.user.id === auth.user.id && this.session()?.device.id === auth.device.id;
+    const check = () => { if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación de las llaves.'); };
+    const [directory, devices, hardwareId] = await Promise.all([
+      this.readOwnKeyDirectory(auth, isCurrent),
+      this.deviceIdentityJson<AuthSession['device'][]>('/devices', auth, undefined, isCurrent),
+      this.hardwareId(),
+    ]);
+    check();
+    const registered = devices.find(device => device.id === auth.device.id && device.userId === auth.user.id && device.isTrusted && !device.revokedAt);
+    if (!registered) {
+      this.deviceIdentityNeedsRelink?.set(true);
+      throw new Error('Este dispositivo ya no está autorizado. Vuelve a vincularlo desde tu teléfono.');
+    }
+    if (registered.hardwareId !== hardwareId) {
+      // Old QR transports copied the source credentials. Give this installation
+      // its own session instead of publishing a new key onto the source device.
+      const pendingId = `identity-repair:${auth.user.id}:${hardwareId}`;
+      let pending = await this.crypto.recoverDeviceIdentity(auth.user.id, auth.user.alias, pendingId, null, isCurrent);
+      check();
+      if (!pending) {
+        const generated = await this.crypto.createDeviceKeys(); check();
+        await this.crypto.saveDeviceKeys(auth.user.alias, pendingId, generated, { userId: auth.user.id }, isCurrent);
+        pending = await this.crypto.recoverDeviceIdentity(auth.user.id, auth.user.alias, pendingId, generated.publicJwk, isCurrent);
+      }
+      check();
+      if (!pending) throw new Error('No se pudo guardar la identidad local de este dispositivo.');
+      // The server can resume only a target created by this repair, bound to
+      // a secret derived from the pending private key. Public directory data
+      // alone must never let another device claim an existing phone session.
+      const proof = await crypto.subtle.digest('SHA-256', authTextEncoder.encode(JSON.stringify([
+        'nivra-device-repair-v1', auth.user.id, auth.device.id, hardwareId, pending.privateJwk.d,
+      ])));
+      const recoveryToken = Array.from(new Uint8Array(proof), byte => byte.toString(16).padStart(2, '0')).join('');
+      check();
+      const linked = await this.deviceIdentityJson<AuthSession>('/auth/repair-device', auth, {
+        deviceName: this.deviceName(), hardwareId, keyBundle: pending.keyBundle, recoveryToken,
+      }, isCurrent);
+      check();
+      if (!this.isValidAuthSession(linked) || linked.user.id !== auth.user.id || linked.device.id === auth.device.id
+        || !linked.device.isTrusted || linked.device.revokedAt || linked.device.hardwareId !== hardwareId) throw new Error('No se pudo crear una sesión independiente. Renueva el QR desde tu teléfono.');
+      const published = await this.readOwnKeyDirectory(linked, isCurrent); check();
+      if (!this.crypto.samePublicKey(pending.publicJwk, published)) throw new Error('No se pudo comprobar la identidad del nuevo dispositivo. Renueva el QR.');
+      await this.crypto.saveDeviceKeys(linked.user.alias, linked.device.id, pending, { userId: linked.user.id }, isCurrent);
+      const restored = await this.crypto.recoverDeviceIdentity(linked.user.id, linked.user.alias, linked.device.id, published, isCurrent);
+      check();
+      // persistSession advances sessionWriteEpoch itself and owns the write
+      // compare-and-set. Keep the source scope guard without freezing that epoch.
+      const sourceScope = () => this.session()?.user.id === auth.user.id && this.session()?.device.id === auth.device.id;
+      if (!restored || !await this.persistSession(linked, sourceScope)) throw new Error('No se pudo guardar la sesión del nuevo dispositivo.');
+      return restored;
+    }
+    let own = await this.crypto.recoverDeviceIdentity(auth.user.id, auth.user.alias, auth.device.id, directory, isCurrent);
+    check();
+    if (!own) {
+      const generated = await this.crypto.createDeviceKeys(); check();
+      // Persist and read back before publishing. A storage failure must never
+      // leave the server pointing at an identity that this installation lost.
+      await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, generated, { userId: auth.user.id }, isCurrent);
+      own = await this.crypto.recoverDeviceIdentity(auth.user.id, auth.user.alias, auth.device.id, generated.publicJwk, isCurrent);
+    }
+    check();
+    if (!own) throw new Error('No se pudo guardar la llave privada local. Tu historial se ha conservado.');
+    if (!this.crypto.samePublicKey(own.publicJwk, directory)) {
+      await this.deviceIdentityJson('/keys/prekeys', auth, own.keyBundle, isCurrent); check();
+      const published = await this.readOwnKeyDirectory(auth, isCurrent); check();
+      if (!this.crypto.samePublicKey(own.publicJwk, published)) throw new Error('No se pudo comprobar la llave publicada. Vuelve a intentar la sincronización.');
+    }
+    return own;
+  }
+
+  private async readOwnKeyDirectory(auth: AuthSession, isCurrent: () => boolean): Promise<JsonWebKey | null> {
+    const directories = await this.deviceIdentityJson<Array<{ userId: string; devices: Array<{ deviceId: string; keyBundle?: { identityKey?: string | null } }> }>>('/keys/batch', auth, { userIds: [auth.user.id], aliases: [] }, isCurrent);
+    const device = directories.find(directory => directory.userId === auth.user.id)?.devices.find(item => item.deviceId === auth.device.id);
+    return this.crypto.parsePublicJwk(device?.keyBundle?.identityKey);
+  }
+
+  private async deviceIdentityJson<T>(path: string, auth: AuthSession, body: unknown, isCurrent: () => boolean): Promise<T> {
+    const response = await this.api.fetch(path, { method: body === undefined ? 'GET' : 'POST', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.tokens.accessToken}`, 'X-Nivra-Device-Id': auth.device.id },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }, path !== '/auth/repair-device', isCurrent);
+    if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación de las llaves.');
+    if (!response.ok) {
+      if (path === '/auth/repair-device' && [404, 409, 410].includes(response.status)) {
+        this.deviceIdentityNeedsRelink?.set(true);
+        throw new Error('Esta sesión antigua necesita volver a vincularse. Escanea un QR nuevo desde tu teléfono; el historial local se conserva.');
+      }
+      throw new Error('No se pudieron comprobar las llaves de este dispositivo. Revisa la conexión y vuelve a intentar.');
+    }
+    return await response.json() as T;
+  }
+
   async logout(skipServer = false): Promise<void> {
+    this.invalidateDeviceIdentity();
+    this.deviceIdentityError?.set(''); this.deviceIdentityNeedsRelink?.set(false);
     this.sessionWriteEpoch++;
     const accountId = this.session()?.user.id;
     if (!skipServer && this.accessToken()) {
@@ -1017,7 +1166,7 @@ export class AuthService implements OnDestroy {
     if (envelope.v !== 1 || envelope.alg !== 'NIVRA-AUTH-SESSION-A256GCM') {
       throw new Error('Envelope de sesion protegida no soportado.');
     }
-    const key = await this.authSessionProtectorKey();
+    const key = await this.authSessionProtectorKey(false);
     const plain = await globalThis.crypto.subtle.decrypt(
       { name: 'AES-GCM', iv: this.toArrayBuffer(this.crypto.ub64(envelope.iv)) },
       key,
@@ -1026,8 +1175,8 @@ export class AuthService implements OnDestroy {
     return JSON.parse(authTextDecoder.decode(plain));
   }
 
-  private async authSessionProtectorKey(): Promise<CryptoKey> {
-    const secret = await this.secureVault.getOrCreateSecret('auth-session').catch(() => null);
+  private async authSessionProtectorKey(create = true): Promise<CryptoKey> {
+    const secret = await this.secureVault.getOrCreateSecret('auth-session', { create }).catch(() => null);
     if (!secret) {
       throw new Error('No se pudo abrir el protector seguro de la sesion.');
     }

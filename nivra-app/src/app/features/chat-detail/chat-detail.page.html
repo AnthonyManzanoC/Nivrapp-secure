@@ -45,7 +45,7 @@
       </ion-buttons>
     </ion-toolbar>
   </ion-header>
-  <app-history-sync-notice [showApprovals]="false" />
+  <app-history-sync-notice [showApprovals]="false" [compact]="true" [identityError]="!!auth.deviceIdentityError()" [needsRelink]="auth.deviceIdentityNeedsRelink()" (relinkRequested)="auth.relinkDevice()" />
   @if (searchOpen) {
     <section class="thread-search" [attr.aria-label]="'CHAT.SEARCH_CHAT' | translate:'Buscar en este chat'">
       <div class="thread-search-input">

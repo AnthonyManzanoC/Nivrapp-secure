@@ -208,7 +208,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   readonly calls = inject(CallsService);
   readonly social = inject(SocialService);
   readonly translate = inject(TranslateService);
-  private readonly auth = inject(AuthService);
+  readonly auth = inject(AuthService);
   private readonly cdr = inject(ChangeDetectorRef);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);

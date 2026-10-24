@@ -152,11 +152,27 @@ describe('history device fingerprint comparison controls', () => {
     history.state.set('syncing');
     await settle();
     expect(root().querySelector('.history-syncing')).not.toBeNull();
-    expect(root().querySelector<HTMLButtonElement>('.history-retry')!.disabled).toBeTrue();
+    expect(root().querySelector('.history-retry')).toBeNull();
     history.state.set('idle');
     await settle();
     expect(root().querySelector('.history-notice:not(.history-approval)')).toBeNull();
     expect(history.approveRequest).not.toHaveBeenCalled();
+  });
+
+  it('replaces the authorization code with progress once the approved history starts recovering', async () => {
+    fixture.componentInstance.showApprovals = false;
+    history.state.set('waiting');
+    history.targetFingerprint.set('abcd ef01 2345 6789 abcd ef01');
+    await settle();
+    expect(root().querySelector('.history-code')).not.toBeNull();
+    history.state.set('syncing');
+    await settle();
+    expect(root().querySelector('.history-code')).toBeNull();
+    expect(root().querySelector('.history-retry')).toBeNull();
+    expect(root().querySelector('.history-syncing')?.textContent).toContain('Sincronizando');
+    history.state.set('idle');
+    await settle();
+    expect(root().querySelector('.history-notice')).toBeNull();
   });
 
   it('guards the approval handler against stale or unconfirmed fingerprints', async () => {
@@ -166,5 +182,39 @@ describe('history device fingerprint comparison controls', () => {
     history.pendingRequests.set([request('first', 'aaaa bbbb cccc dddd eeee ffff')]);
     fixture.componentInstance.approve(request('first'));
     expect(history.approveRequest).not.toHaveBeenCalled();
+  });
+
+  it('keeps waiting details out of a compact conversation header and exposes them through a dialog action', async () => {
+    fixture.componentInstance.compact = true;
+    fixture.componentInstance.showApprovals = false;
+    history.state.set('waiting');
+    history.targetFingerprint.set('abcd ef01 2345 6789 abcd ef01');
+    await settle();
+    expect(root().querySelector('.history-notice')).toBeNull();
+    const trigger = root().querySelector<HTMLButtonElement>('.history-compact')!;
+    expect(trigger.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(trigger.textContent).toContain('pendiente');
+    trigger.click();
+    expect(fixture.componentInstance.detailsOpen).toBeTrue();
+    fixture.componentInstance.detailsOpen = false;
+    history.state.set('idle');
+    await settle();
+    expect(root().querySelector('.history-compact')).toBeNull();
+  });
+
+  it('offers explicit relinking instead of repeatedly requesting history for an unsafe identity', async () => {
+    fixture.componentInstance.showApprovals = false;
+    fixture.componentInstance.identityError = true;
+    fixture.componentInstance.needsRelink = true;
+    history.state.set('unavailable');
+    history.targetFingerprint.set('abcd ef01 2345 6789 abcd ef01');
+    const relink = jasmine.createSpy('relink');
+    fixture.componentInstance.relinkRequested.subscribe(relink);
+    await settle();
+    expect(root().textContent).toContain('historial guardado se conserva');
+    expect(root().querySelector('.history-code')).toBeNull();
+    root().querySelector<HTMLButtonElement>('.history-retry')!.click();
+    expect(relink).toHaveBeenCalledTimes(1);
+    expect(history.retry).not.toHaveBeenCalled();
   });
 });

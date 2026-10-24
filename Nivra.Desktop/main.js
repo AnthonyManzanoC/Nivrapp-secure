@@ -40,11 +40,18 @@ function assertAllowedSecretName(name) {
 
 function readDesktopSecureSecret(name) {
   const filePath = secureSecretPath(name);
-  if (!fs.existsSync(filePath) || !safeStorage.isEncryptionAvailable()) {
-    return "";
+  if (!fs.existsSync(filePath)) return "";
+  if (!safeStorage.isEncryptionAvailable()) throw new Error('NIVRA_SECURE_UNAVAILABLE');
+  try {
+    const encrypted = fs.readFileSync(filePath);
+    if (!encrypted.length) throw new Error('Empty secure envelope');
+    const secret = safeStorage.decryptString(encrypted);
+    if (!secret) throw new Error('Empty secure secret');
+    return secret;
+  } catch {
+    // Preserve the existing wrapped file and expose no provider/file details.
+    throw new Error('NIVRA_SECURE_DECRYPT_FAILED');
   }
-  const encrypted = fs.readFileSync(filePath);
-  return safeStorage.decryptString(encrypted);
 }
 
 function writeDesktopSecureSecret(name, secret) {
@@ -53,7 +60,14 @@ function writeDesktopSecureSecret(name, secret) {
   }
   fs.mkdirSync(secureVaultDir(), { recursive: true });
   const filePath = secureSecretPath(name);
-  fs.writeFileSync(filePath, safeStorage.encryptString(secret), { mode: 0o600 });
+  try {
+    fs.writeFileSync(filePath, safeStorage.encryptString(secret), { mode: 0o600, flag: 'wx' });
+  } catch (error) {
+    // Another process may have initialized this installation first. Never
+    // overwrite its secret; every caller must use the committed winner.
+    if (error && error.code === 'EEXIST') return readDesktopSecureSecret(name);
+    throw new Error('NIVRA_SECURE_WRITE_FAILED');
+  }
   try {
     fs.chmodSync(filePath, 0o600);
   } catch {
@@ -77,11 +91,12 @@ function clearDesktopSecureSecret(name) {
 }
 
 function installSecureVaultHandlers() {
-  ipcMain.handle("nivra-secure-vault:get-or-create", (event, rawName) => {
+  ipcMain.handle("nivra-secure-vault:get-or-create", (event, rawName, options) => {
     assertTrustedRenderer(event);
     const name = normalizeSecretName(rawName);
     assertAllowedSecretName(name);
     const existing = readDesktopSecureSecret(name);
+    if (!existing && options && options.create === false) return { name, created: false, available: true };
     const created = !existing;
     const secret = existing || createDesktopSecureSecret(name);
     return { name, secret, created, available: Boolean(secret) };

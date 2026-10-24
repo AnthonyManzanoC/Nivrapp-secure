@@ -41,6 +41,10 @@ describe('chat sends stay with their original account and device', () => {
       ]),
     };
     service.auth = { session };
+    service.auth.ensureDeviceIdentity = async () => {
+      const started = session();
+      return { ...await service.crypto.currentKeyMaterial(), userId: started.user.id, deviceId: started.device.id };
+    };
     service.fileSendSequence = 0;
     service.uploading = signal(false);
     service.uploadStatus = signal('');
@@ -151,7 +155,7 @@ describe('chat sends stay with their original account and device', () => {
     uploaded.next(record);
     await rejected;
     expect(h.service.mediaPreviews()).toEqual({});
-    expect(h.service.crypto.currentKeyMaterial).not.toHaveBeenCalled();
+    expect(h.service.crypto.currentKeyMaterial).toHaveBeenCalledTimes(1);
     expect(h.messagePosts().length).toBe(0);
   });
 

@@ -69,17 +69,17 @@
   position: relative;
   z-index: 4;
   border-inline-end: 1px solid var(--nivra-line);
-  padding: max(20px, env(safe-area-inset-top)) 9px max(16px, env(safe-area-inset-bottom));
+  padding: max(16px, env(safe-area-inset-top)) 6px max(16px, env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
-  background: color-mix(in srgb, var(--nivra-panel-solid) 70%, var(--nivra-bg));
+  gap: 8px;
+  background: var(--nivra-panel-solid);
 }
 
 .rail-brand {
-  width: 54px;
-  margin-bottom: 20px;
+  width: 48px;
+  margin-bottom: 16px;
   display: grid;
   justify-items: center;
   gap: 4px;
@@ -91,24 +91,25 @@
 }
 
 .rail-logo {
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
 }
 
 .nav-btn {
   position: relative;
-  width: 56px;
-  min-height: 60px;
+  isolation: isolate;
+  width: 50px;
+  min-height: 56px;
   border: 1px solid transparent;
-  border-radius: 17px;
+  border-radius: 14px;
   color: var(--nivra-muted);
   background: transparent;
   display: grid;
   place-items: center;
   align-content: center;
-  gap: 6px;
+  gap: 5px;
   text-decoration: none;
-  font-weight: 650;
+  font-weight: 500;
   transition: background .16s, border-color .16s, color .16s;
 }
 
@@ -138,8 +139,8 @@
 .nav-btn.active {
   color: var(--nivra-brand-2);
   background: color-mix(in srgb, var(--nivra-brand) 12%, transparent);
-  border-color: color-mix(in srgb, var(--nivra-brand) 24%, var(--nivra-line));
-  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--nivra-brand) 9%, transparent);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .logout {
@@ -368,7 +369,7 @@
 @media (max-width: 768px) {
   .workspace {
     grid-template-columns: 1fr;
-    padding-bottom: calc(var(--nivra-bottom-nav-height) + env(safe-area-inset-bottom) + 10px);
+    padding-bottom: calc(var(--nivra-bottom-nav-height) + env(safe-area-inset-bottom));
   }
 
   .workspace.mobile-nav-hidden {
@@ -377,20 +378,21 @@
 
   .rail {
     position: fixed;
-    inset: auto max(10px, env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
-    width: auto;
-    max-width: 520px;
-    min-height: 72px;
-    height: 72px;
+    inset: auto 0 0;
+    width: 100%;
+    max-width: none;
+    min-height: calc(var(--nivra-bottom-nav-height) + env(safe-area-inset-bottom));
+    height: calc(var(--nivra-bottom-nav-height) + env(safe-area-inset-bottom));
     margin: 0 auto;
     flex-direction: row;
     justify-content: space-around;
-    border: 1px solid var(--nivra-line);
-    border-radius: 25px;
-    padding: 6px;
+    border: 0;
+    border-top: 1px solid var(--nivra-line);
+    border-radius: 0;
+    padding: 4px max(8px, env(safe-area-inset-right)) calc(4px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
     background: color-mix(in srgb, var(--nivra-panel-solid) 94%, transparent);
-    box-shadow: var(--nivra-shadow-soft);
-    backdrop-filter: blur(16px);
+    box-shadow: none;
+    backdrop-filter: blur(20px);
   }
 
   .rail-brand,
@@ -404,12 +406,12 @@
   }
 
   .nav-btn {
-    width: 56px;
+    width: 64px;
     max-width: 20%;
-    height: 58px;
-    min-height: 58px;
-    border-radius: 16px;
-    gap: 5px;
+    height: 54px;
+    min-height: 54px;
+    border-radius: 12px;
+    gap: 4px;
   }
 
   .nav-btn > span:not(.nav-unread-badge) {
@@ -417,16 +419,19 @@
     max-width: 100%;
     overflow: hidden;
     padding-inline: 2px;
-    font-size: 9.5px;
+    font-size: 10px;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
 
-  .nav-btn.active {
+  .rail .nav-btn.active {
     color: var(--nivra-brand-2);
-    background: color-mix(in srgb, var(--nivra-brand) 14%, transparent);
-    border-color: color-mix(in srgb, var(--nivra-brand) 28%, transparent);
+    background: transparent;
+    border-color: transparent;
+    font-weight: 650;
   }
+
+  .nav-btn.active::before { content: ''; position: absolute; width: 44px; height: 27px; top: 1px; left: calc(50% - 22px); z-index: -1; border-radius: 18px; background: color-mix(in srgb, var(--nivra-brand) 16%, transparent); }
 
   .call-pill {
     right: max(12px, env(safe-area-inset-right));

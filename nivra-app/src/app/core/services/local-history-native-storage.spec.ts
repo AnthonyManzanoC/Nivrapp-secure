@@ -1,6 +1,6 @@
 import { TestBed } from '@angular/core/testing';
 import { Capacitor } from '@capacitor/core';
-import { SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
+import { CapacitorSQLitePlugin, SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { ChatPayload } from '../models/nivra.models';
 import { LocalHistoryService } from './local-history.service';
 import { NativeSecureVaultService } from './native-secure-vault.service';
@@ -13,22 +13,27 @@ interface NativeHistoryInternals {
   decryptPayload(account: string, payload: any): Promise<ChatPayload>;
   deleteIndexedDatabases(): Promise<void>;
   deleteNativeSqliteDatabase(): Promise<void>;
+  sqliteConnection?: SQLiteConnection;
 }
 
 describe('native encrypted history startup recovery', () => {
   let service: LocalHistoryService;
   let internals: NativeHistoryInternals;
   let db: jasmine.SpyObj<SQLiteDBConnection>;
-  let vault: { getOrCreateSecret: jasmine.Spy; requiresProtection: () => boolean; clearSecret: jasmine.Spy };
+  let vault: { getOrCreateSecret: jasmine.Spy; requiresProtection: () => boolean; clearSecret: jasmine.Spy; retryLocalHistoryInitialization: jasmine.Spy; inspectLocalHistoryStorage: jasmine.Spy };
   let reconcile: jasmine.Spy;
   let checkSecret: jasmine.Spy;
   let create: jasmine.Spy;
   let clearSecret: jasmine.Spy;
+  let databaseExists: jasmine.Spy;
+  let secretStored: jasmine.Spy;
 
   beforeEach(() => {
     spyOn(Capacitor, 'isNativePlatform').and.returnValue(true);
     vault = { getOrCreateSecret: jasmine.createSpy().and.resolveTo('retained-native-secret'),
-      requiresProtection: () => true, clearSecret: jasmine.createSpy().and.resolveTo() };
+      requiresProtection: () => true, clearSecret: jasmine.createSpy().and.resolveTo(),
+      retryLocalHistoryInitialization: jasmine.createSpy().and.resolveTo(true),
+      inspectLocalHistoryStorage: jasmine.createSpy().and.resolveTo(null) };
     TestBed.configureTestingModule({ providers: [
       LocalHistoryService, { provide: NativeSecureVaultService, useValue: vault },
     ] });
@@ -44,7 +49,8 @@ describe('native encrypted history startup recovery', () => {
     reconcile = spyOn(SQLiteConnection.prototype, 'checkConnectionsConsistency').and.resolveTo({ result: true });
     spyOn(SQLiteConnection.prototype, 'isConnection').and.resolveTo({ result: true });
     spyOn(SQLiteConnection.prototype, 'retrieveConnection').and.resolveTo(db);
-    spyOn(SQLiteConnection.prototype, 'isSecretStored').and.resolveTo({ result: true });
+    databaseExists = spyOn(SQLiteConnection.prototype, 'isDatabase').and.resolveTo({ result: true });
+    secretStored = spyOn(SQLiteConnection.prototype, 'isSecretStored').and.resolveTo({ result: true });
     checkSecret = spyOn(SQLiteConnection.prototype, 'checkEncryptionSecret').and.resolveTo({ result: true });
     spyOn(SQLiteConnection.prototype, 'setEncryptionSecret').and.resolveTo();
     clearSecret = spyOn(SQLiteConnection.prototype, 'clearEncryptionSecret').and.resolveTo();
@@ -93,10 +99,38 @@ describe('native encrypted history startup recovery', () => {
     expect(service.storageState()).toBe('ready');
   });
 
+  it('reinitializes a native plugin that cached a temporary Keystore startup failure', async () => {
+    checkSecret.and.callFake(() => checkSecret.calls.count() === 1
+      ? Promise.reject(new Error('CapacitorSQLitePlugin: Keystore unavailable during startup'))
+      : Promise.resolve({ result: true }));
+    expect(await service.retryNativeStorage()).toBeTrue();
+    expect(vault.retryLocalHistoryInitialization).toHaveBeenCalledTimes(1);
+    expect(checkSecret).toHaveBeenCalledTimes(2);
+    expect(db.open).toHaveBeenCalledTimes(1);
+    expect(service.storageState()).toBe('ready');
+    expect(service.storageError()).toBe('');
+    expect(clearSecret).not.toHaveBeenCalled();
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+  });
+
+  it('ends a persistent native initialization failure after bounded recovery and retains storage', async () => {
+    checkSecret.and.rejectWith(new Error('CapacitorSQLitePlugin: Keystore remains unavailable'));
+    expect(await service.retryNativeStorage()).toBeFalse();
+    expect(checkSecret).toHaveBeenCalledTimes(3);
+    expect(vault.retryLocalHistoryInitialization).toHaveBeenCalledTimes(2);
+    expect(service.storageBusy()).toBeFalse();
+    expect(service.storageState()).toBe('error');
+    expect(service.storageError()).toContain('historial cifrado');
+    expect(clearSecret).not.toHaveBeenCalled();
+    expect(vault.clearSecret).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+  });
+
   it('keeps real failures visible and coalesces concurrent explicit retries into one successful open', async () => {
     db.open.and.rejectWith(new Error('device remains locked'));
     expect(await service.retryNativeStorage()).toBeFalse();
     expect(service.storageState()).toBe('error');
+    expect(vault.retryLocalHistoryInitialization).not.toHaveBeenCalled();
     expect(service.storageError()).toContain('historial cifrado');
     service.clearStorageError();
     expect(service.storageError()).toContain('historial cifrado');
@@ -118,17 +152,108 @@ describe('native encrypted history startup recovery', () => {
     expect(service.storageError()).toBe('');
   });
 
-  it('fails closed on a mismatched retained secret without replacing the database, key, or backend', async () => {
+  it('rejects a retained mismatched secret if the existing DB cannot validate the history schema', async () => {
     checkSecret.and.resolveTo({ result: false });
     const fallback = spyOn(internals, 'open').and.resolveTo(null);
     expect(await service.retryNativeStorage()).toBeFalse();
     expect(checkSecret).toHaveBeenCalledTimes(1);
-    expect(create).not.toHaveBeenCalled();
-    expect(db.open).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledOnceWith('nivra_local_vault', true, 'secret', 1, true);
+    expect(db.open).toHaveBeenCalledTimes(1);
     expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
     expect(clearSecret).not.toHaveBeenCalled();
     expect(fallback).not.toHaveBeenCalled();
     expect(service.storageState()).toBe('error');
+    expect(vault.retryLocalHistoryInitialization).not.toHaveBeenCalled();
+    expect(service.storageDiagnostic()).toEqual({ backend: 'sqlite', stage: 'retained-key', code: 'RETAINED_KEY_SCHEMA_INVALID', attempt: 1, retryable: false });
+  });
+
+  it('opens an existing history using its validated retained SQLCipher secret without replacing either vault secret', async () => {
+    checkSecret.and.resolveTo({ result: false });
+    db.query.and.resolveTo({ values: ['local_messages', 'local_conversations', 'local_vault_keys'].map(name => ({ name })) });
+    expect(await service.retryNativeStorage()).toBeTrue();
+    expect(create).toHaveBeenCalledOnceWith('nivra_local_vault', true, 'secret', 1, true);
+    expect(db.open).toHaveBeenCalledTimes(2); // Read-only validation, then normal connection.
+    expect(db.query.calls.first().args[0]).toContain('sqlite_master');
+    expect(vault.getOrCreateSecret).toHaveBeenCalledWith('local-db', { create: false });
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+    expect(clearSecret).not.toHaveBeenCalled();
+    expect(vault.clearSecret).not.toHaveBeenCalled();
+    expect(service.storageState()).toBe('ready');
+    expect(service.storageDiagnostic()).toBeNull();
+  });
+
+  it('retains a readable native history when the separate Nivra protector is temporarily unavailable', async () => {
+    vault.getOrCreateSecret.and.rejectWith({ code: 'NIVRA_KEYSTORE_LOCKED', message: 'private Android provider details' });
+    db.query.and.resolveTo({ values: ['local_messages', 'local_conversations', 'local_vault_keys'].map(name => ({ name })) });
+    expect(await service.retryNativeStorage()).toBeTrue();
+    expect(checkSecret).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledOnceWith('nivra_local_vault', true, 'secret', 1, true);
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+    expect(clearSecret).not.toHaveBeenCalled();
+  });
+
+  it('does not create a replacement database when retained secrets disagree and the old DB is missing', async () => {
+    databaseExists.and.resolveTo({ result: false });
+    checkSecret.and.resolveTo({ result: false });
+    expect(await service.retryNativeStorage()).toBeFalse();
+    expect(create).not.toHaveBeenCalled();
+    expect(db.open).not.toHaveBeenCalled();
+    expect(service.storageDiagnostic()?.code).toBe('DATABASE_MISSING_WITH_RETAINED_KEY');
+    expect(vault.getOrCreateSecret).toHaveBeenCalledWith('local-db', { create: false });
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unreadable retained key using only a safe stage and cause code', async () => {
+    checkSecret.and.resolveTo({ result: false });
+    db.open.and.rejectWith(new Error('file is not a database; private-secret-and-path-must-never-appear'));
+    expect(await service.retryNativeStorage()).toBeFalse();
+    expect(db.open).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledOnceWith('nivra_local_vault', true, 'secret', 1, true);
+    expect(service.storageDiagnostic()).toEqual({ backend: 'sqlite', stage: 'retained-key', code: 'DATABASE_KEY_UNREADABLE', attempt: 1, retryable: false });
+    expect(service.storageError()).toContain('retained-key/DATABASE_KEY_UNREADABLE');
+    expect(JSON.stringify(service.storageDiagnostic()) + service.storageError()).not.toContain('private-secret');
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+    expect(clearSecret).not.toHaveBeenCalled();
+  });
+
+  it('does not create another Nivra protector for an existing DB with no retained SQLCipher secret', async () => {
+    secretStored.and.resolveTo({ result: false });
+    vault.getOrCreateSecret.and.resolveTo(null);
+    expect(await service.retryNativeStorage()).toBeFalse();
+    expect(vault.getOrCreateSecret).toHaveBeenCalledOnceWith('local-db', { create: false });
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
+    expect(service.storageDiagnostic()?.code).toBe('NIVRA_SECURE_SECRET_MISSING');
+  });
+
+  it('distinguishes legacy plaintext history without attempting conversion or replacing the database', async () => {
+    checkSecret.and.resolveTo({ result: false });
+    db.open.and.rejectWith(new Error('file is not a database'));
+    vault.inspectLocalHistoryStorage.and.resolveTo({ databaseExists: true, databaseFormat: 'sqlite' });
+    expect(await service.retryNativeStorage()).toBeFalse();
+    expect(service.storageDiagnostic()).toEqual({ backend: 'sqlite', stage: 'retained-key', code: 'LEGACY_UNENCRYPTED_HISTORY', attempt: 1, retryable: false });
+    expect(create).toHaveBeenCalledOnceWith('nivra_local_vault', true, 'secret', 1, true);
+    expect(db.execute).not.toHaveBeenCalled();
+    expect(clearSecret).not.toHaveBeenCalled();
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+  });
+
+  it('distinguishes a partial native protector from a locked device and preserves its fragments', async () => {
+    secretStored.and.resolveTo({ result: false });
+    vault.getOrCreateSecret.and.rejectWith({ code: 'NIVRA_SECURE_ENVELOPE_INCOMPLETE', message: 'do-not-show-envelope-values' });
+    expect(await service.retryNativeStorage()).toBeFalse();
+    expect(service.storageDiagnostic()).toEqual({ backend: 'sqlite', stage: 'secure-secret', code: 'NIVRA_SECURE_ENVELOPE_INCOMPLETE', attempt: 1, retryable: false });
+    expect(service.storageError()).not.toContain('envelope-values');
+    expect(vault.clearSecret).not.toHaveBeenCalled();
+    expect(SQLiteConnection.prototype.setEncryptionSecret).not.toHaveBeenCalled();
+  });
+
+  it('reports schema preparation separately and never publishes the native SQL or values', async () => {
+    db.execute.and.rejectWith(new Error('syntax error in SQL with PRIVATE_VALUE'));
+    expect(await service.retryNativeStorage()).toBeFalse();
+    expect(service.storageDiagnostic()).toEqual({ backend: 'sqlite', stage: 'schema', code: 'SCHEMA_MISMATCH', attempt: 1, retryable: false });
+    expect(service.storageError()).toContain('estructura');
+    expect(service.storageError()).not.toContain('PRIVATE_VALUE');
   });
 
   it('creates one retained account key for concurrent first payloads and decrypts both with real AES-GCM', async () => {
@@ -209,5 +334,59 @@ describe('native encrypted history startup recovery', () => {
     expect(service.storageState()).toBe('idle');
     expect(service.storageError()).toBe('');
     expect(db.run).not.toHaveBeenCalled();
+  });
+});
+
+describe('native history with the actual SQLite connection wrapper', () => {
+  afterEach(() => TestBed.resetTestingModule());
+
+  it('reconciles retained JS handles after Android secret checking closes native connections', async () => {
+    spyOn(Capacitor, 'isNativePlatform').and.returnValue(true);
+    const handles = new Map<string, boolean>();
+    const native = {
+      isDatabase: jasmine.createSpy().and.resolveTo({ result: true }),
+      isSecretStored: jasmine.createSpy().and.resolveTo({ result: true }),
+      checkEncryptionSecret: jasmine.createSpy().and.callFake(async () => {
+        // This is the Android 8.1 plugin contract, not a side-effect-free check.
+        handles.clear();
+        return { result: true };
+      }),
+      checkConnectionsConsistency: jasmine.createSpy().and.callFake(async (options: { dbNames: string[] }) => ({
+        result: options.dbNames.length > 0 && options.dbNames.every(name => handles.has(name)),
+      })),
+      createConnection: jasmine.createSpy().and.callFake(async (options: { database: string }) => { handles.set(options.database, false); }),
+      closeConnection: jasmine.createSpy().and.callFake(async (options: { database: string }) => {
+        if (!handles.has(options.database)) throw new Error('No available connection');
+        handles.delete(options.database);
+      }),
+      isDBOpen: jasmine.createSpy().and.callFake(async (options: { database: string }) => {
+        if (!handles.has(options.database)) throw new Error('No available connection');
+        return { result: handles.get(options.database) };
+      }),
+      open: jasmine.createSpy().and.callFake(async (options: { database: string }) => {
+        if (!handles.has(options.database)) throw new Error('No available connection');
+        handles.set(options.database, true);
+      }),
+      execute: jasmine.createSpy().and.resolveTo({ changes: { changes: 0 } }),
+      query: jasmine.createSpy().and.resolveTo({ values: [] }),
+    };
+    TestBed.configureTestingModule({ providers: [LocalHistoryService, {
+      provide: NativeSecureVaultService, useValue: { getOrCreateSecret: async () => 'retained-native-secret' },
+    }] });
+    const service = TestBed.inject(LocalHistoryService);
+    const connection = new SQLiteConnection(native as unknown as CapacitorSQLitePlugin);
+    await connection.createConnection('nivra_local_vault', true, 'secret', 1, false);
+    handles.set('nivra_local_vault', true);
+    (service as unknown as NativeHistoryInternals).sqliteConnection = connection;
+
+    expect(await service.retryNativeStorage()).toBeTrue();
+    expect(native.checkEncryptionSecret).toHaveBeenCalledTimes(1);
+    expect(native.checkConnectionsConsistency).toHaveBeenCalledTimes(1);
+    expect(native.createConnection).toHaveBeenCalledTimes(2); // Seed plus fresh handle.
+    expect(native.open).toHaveBeenCalledTimes(1);
+    expect(native.closeConnection).not.toHaveBeenCalled();
+    expect(service.storageState()).toBe('ready');
+    expect(service.storageError()).toBe('');
+    expect(await service.conversations('account')).toEqual([]);
   });
 });

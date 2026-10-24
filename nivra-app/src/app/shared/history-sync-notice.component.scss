@@ -1,4 +1,12 @@
 :host { display: block; flex: none; min-width: 0; }
+.history-compact { display: flex; width: calc(100% - 28px); min-height: 32px; margin: 3px 14px; padding: 3px 0; gap: 7px; border: 0; border-radius: 0; color: var(--nivra-muted); background: transparent; font-size: 11px; font-weight: 500; text-align: start; }
+.history-compact > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.history-compact > ion-icon, .history-compact > ion-spinner { flex: none; width: 14px; height: 14px; }
+ion-modal.history-sync-modal { --width: min(440px, calc(100vw - 32px)); --height: auto; --max-height: 85dvh; --border-radius: 22px; --background: var(--nivra-panel-solid); --box-shadow: var(--nivra-shadow-soft); }
+.history-sync-details { padding: 16px 6px; max-height: 85dvh; overflow: auto; color: var(--nivra-text); }
+.history-sync-details > header { display: flex; align-items: center; justify-content: space-between; padding: 0 12px 8px; }
+.history-sync-details h2 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
+.history-sync-details > header button { width: 38px; min-height: 38px; padding: 0; border: 0; border-radius: 50%; background: var(--nivra-panel-2); }
 .history-notice { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: start; gap: 10px; margin: 10px 12px; padding: 14px; border: 1px solid var(--nivra-line, #d9e4d6); border-radius: 16px; background: var(--nivra-panel-solid, #f6f8ef); color: var(--nivra-text, #193c2c); }
 .history-notice-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: color-mix(in srgb, var(--nivra-brand-2, #a6cc98) 13%, transparent); color: var(--nivra-brand-2, #376b49); }
 .history-notice-icon ion-icon, .history-notice-icon ion-spinner { width: 19px; height: 19px; }
@@ -14,6 +22,7 @@ button:disabled { opacity: .55; cursor: default; }
 .history-retry { border-color: transparent; color: var(--nivra-brand-2, #376b49); }
 .history-unavailable { border-color: color-mix(in srgb, var(--nivra-amber, #c5965b) 35%, var(--nivra-line, #d9e4d6)); }
 .history-unavailable .history-notice-icon { background: color-mix(in srgb, var(--nivra-amber, #c5965b) 12%, transparent); color: var(--nivra-muted, #667b69); }
+.history-syncing { grid-template-columns: 34px minmax(0, 1fr); background: color-mix(in srgb, var(--nivra-brand-2, #a6cc98) 5%, var(--nivra-panel-solid, #f6f8ef)); }
 .history-approval { grid-template-columns: minmax(0, 1fr); gap: 14px; padding: 20px; }
 .history-approval-head { display: flex; align-items: center; gap: 12px; }
 .history-approval-head .history-notice-icon { flex: 0 0 40px; width: 40px; height: 40px; border-radius: 13px; }

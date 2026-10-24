@@ -60,6 +60,7 @@ public static partial class EndpointExtensions
         }));
 
         app.MapAuthEndpoints();
+        app.MapDeviceIdentityRecoveryEndpoints();
         app.MapRecoveryEndpoints();
         app.MapProfileEndpoints();
         app.MapDeviceAndKeyEndpoints();
@@ -67,6 +68,7 @@ public static partial class EndpointExtensions
         app.MapContactEndpoints();
         app.MapDirectoryAndFriendEndpoints();
         app.MapConversationAndMessageEndpoints();
+        app.MapMessageHistoryRecoveryEndpoints();
         app.MapStoryEndpoints();
         app.MapFileEndpoints();
         app.MapVaultEndpoints();
@@ -2084,7 +2086,7 @@ public static partial class EndpointExtensions
             return Results.Ok(pending);
         });
 
-        messages.MapGet("/sync", async Task<IResult> (int? take, DateTimeOffset? since, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        messages.MapGet("/sync", async Task<IResult> (int? take, DateTimeOffset? since, string? sinceId, int? cursorVersion, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2094,7 +2096,11 @@ public static partial class EndpointExtensions
 
             var now = timeProvider.GetUtcNow();
             var limit = Math.Clamp(take ?? 30, 1, 100);
+            var activeConversations = db.Conversations
+                .Where(conversation => conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt == null))
+                .Select(conversation => conversation.Id);
             var query = db.Messages
+                .Where(message => activeConversations.Contains(message.ConversationId))
                 .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId))
                 .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
                 .Where(message => !message.Receipts.Any(receipt => receipt.UserId == current.UserId && receipt.DeletedAt != null))
@@ -2103,28 +2109,38 @@ public static partial class EndpointExtensions
                     receipt.DeletedAt != null));
 
             List<MessageEnvelope> page;
+            var composite = cursorVersion == 2;
             if (since is { } watermark)
             {
-                page = await query
+                var boundary = composite ? await query.Where(message => message.ServerReceivedAt == watermark).ToListAsync(cancellationToken) : [];
+                var sameTime = MessageSyncBoundaryPage(boundary, sinceId, limit + 1);
+                var remaining = Math.Max(0, limit + 1 - sameTime.Count);
+                var newer = remaining == 0 ? [] : await query
                     .Where(message => message.ServerReceivedAt > watermark)
-                    .OrderBy(message => message.ServerReceivedAt)
-                    .Take(limit)
-                    .ToListAsync(cancellationToken);
+                    .OrderBy(message => message.ServerReceivedAt).ThenBy(message => message.Id)
+                    .Take(remaining).ToListAsync(cancellationToken);
+                page = sameTime.Concat(newer).ToList();
             }
             else
             {
                 page = await query
-                    .OrderByDescending(message => message.ServerReceivedAt)
+                    .OrderByDescending(message => message.ServerReceivedAt).ThenByDescending(message => message.Id)
                     .Take(limit)
                     .ToListAsync(cancellationToken);
                 page.Reverse();
             }
 
+            var hasMore = since is not null && page.Count > limit;
+            page = page.Take(limit).ToList();
+
             var pending = page
                 .Select(message => ToMessageResponseForUser(message, current.UserId, current.DeviceId))
                 .ToList();
-            var syncedAt = page.Count > 0 ? page[^1].ServerReceivedAt : now;
-            return Results.Ok(new MessageSyncResponse(pending, syncedAt));
+            // An empty read cannot advance past a message whose transaction is
+            // still committing. Only envelopes actually returned move a cursor.
+            var syncedAt = page.Count > 0 ? page[^1].ServerReceivedAt : since ?? now;
+            var cursorId = page.Count > 0 ? page[^1].Id : sinceId;
+            return Results.Ok(new MessageSyncResponse(pending, syncedAt, composite ? cursorId : null, composite ? hasMore : null));
         });
 
         messages.MapPost("/sync/ack", async Task<IResult> (MessageSyncAckRequest request, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>

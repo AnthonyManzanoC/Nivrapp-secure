@@ -4,11 +4,11 @@
 .title-wrap { width: calc(100% - 172px); max-width: calc(100% - 172px); gap: 10px; }
 .title-wrap h1 { font-size: 16px; font-weight: 650; letter-spacing: -.25px; }
 .title-wrap p { margin-top: 3px; font-size: 11px; }
-.title-wrap .avatar { width: 40px; height: 40px; border-radius: 14px; box-shadow: none; }
+.title-wrap .avatar { width: 40px; height: 40px; border-radius: 50%; box-shadow: none; }
 .messages { gap: 7px; padding: 16px 22px 20px; }
-.message { border-radius: 17px 17px 17px 5px; border: 0; padding: 10px 12px 6px; box-shadow: 0 2px 6px rgba(0,0,0,.13); color: var(--nivra-text); }
-.message.mine { border-radius: 17px 17px 5px 17px; box-shadow: 0 2px 6px rgba(0,0,0,.13); }
-.message p { font-size: 14px; line-height: 1.5; }
+.message { border-radius: 15px 15px 15px 4px; border: 0; padding: 9px 11px 5px; box-shadow: 0 1px 2px rgba(0,0,0,.1); color: var(--nivra-text); }
+.message.mine { border-radius: 15px 15px 4px 15px; box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+.message p { font-size: 14px; line-height: 1.48; }
 .message-sender { display: block; margin: 0 24px 5px 0; color: var(--nivra-brand); font-size: 11px; font-weight: 650; }
 .message footer { gap: 4px; font-size: 10px; }
 .message-receipt { display: inline-flex; align-items: center; }
@@ -41,9 +41,9 @@
 .composer .composer-input ion-button { width: 34px; min-width: 34px; flex: 0 0 34px; min-height: 38px; height: 38px; --background: transparent; --color: var(--nivra-muted); --box-shadow: none; }
 .composer .composer-input .composer-icon { width: 34px !important; min-width: 34px !important; flex-basis: 34px !important; }
 .composer .composer-input ion-textarea { --background: transparent; --padding-top: 9px; --padding-bottom: 8px; --padding-start: 6px; --padding-end: 4px; border: 0; box-shadow: none; border-radius: 0; min-height: 38px; margin: 0; font-size: 14px; }
-.composer > ion-button { width: 44px !important; min-width: 44px !important; flex-basis: 44px !important; min-height: 44px; height: 44px; --background: var(--nivra-brand); --color: #04100d; --box-shadow: none; }
+.composer > ion-button { width: 44px !important; min-width: 44px !important; flex-basis: 44px !important; min-height: 44px; height: 44px; --background: var(--nivra-brand); --color: #fff; --box-shadow: none; }
 .composer:not(.has-draft) > .send, .composer.has-draft:not(.voice-active) > .mic { display: none !important; }
-.composer .send { --background: var(--nivra-brand); --color: #04100d; --box-shadow: none; }
+.composer .send { --background: var(--nivra-brand); --color: #fff; --box-shadow: none; }
 .privacy-summary { min-height: 28px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 2px 12px 5px; border: 0; background: var(--nivra-panel-solid); color: var(--nivra-muted); font-size: 10px; }
 .privacy-summary ion-icon { font-size: 13px; }
 .privacy-summary.custom-policy { color: var(--nivra-brand-2); }
@@ -84,7 +84,7 @@ ion-popover.chat-options-popover::part(content), ion-popover.message-actions-pop
 :host-context(.nivra-light-theme) .call-log-bubble { background: #fff; border-color: rgba(0,0,0,.06); }
 :host-context(.nivra-light-theme) .call-log-bubble .call-log-icon ion-icon, :host-context(.nivra-light-theme) .call-log-bubble .call-log-redial { background: transparent; color: inherit; }
 :host-context(.nivra-light-theme) .composer .composer-input ion-textarea { --background: transparent; box-shadow: none; }
-:host-context(.nivra-light-theme) .composer .send { --background: var(--nivra-brand); --color: #04100d; --box-shadow: none; }
+:host-context(.nivra-light-theme) .composer .send { --background: var(--nivra-brand); --color: #fff; --box-shadow: none; }
 @media (max-width: 768px) {
   .chat-header ion-toolbar { --min-height: 58px; padding-inline: 0; }
   .chat-header ion-buttons ion-button { width: 35px; height: 40px; --padding-start: 6px; --padding-end: 6px; }

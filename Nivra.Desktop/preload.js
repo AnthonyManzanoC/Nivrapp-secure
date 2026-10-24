@@ -13,13 +13,16 @@ function assertAllowedName(name) {
 }
 
 contextBridge.exposeInMainWorld("nivraSecureVault", {
-  async getOrCreateSecret(name) {
+  readOnlySupported: true,
+  async getOrCreateSecret(name, options) {
     const normalized = normalizeName(name);
     assertAllowedName(normalized);
     if (normalized === "all") {
       throw new Error("Cannot create a bulk secure secret.");
     }
-    return ipcRenderer.invoke("nivra-secure-vault:get-or-create", normalized);
+    return options && options.create === false
+      ? ipcRenderer.invoke("nivra-secure-vault:get-or-create", normalized, { create: false })
+      : ipcRenderer.invoke("nivra-secure-vault:get-or-create", normalized);
   },
   async clearSecret(name) {
     const normalized = normalizeName(name);

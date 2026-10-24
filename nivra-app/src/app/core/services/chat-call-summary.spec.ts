@@ -9,6 +9,7 @@ describe('encrypted call summaries', () => {
   function harness() {
     const service: any = Object.create(ChatService.prototype);
     service.auth = { session: signal({ user: { id: 'bob', alias: 'bob' }, device: { id: 'phone-b' } }) };
+    service.auth.ensureDeviceIdentity = async () => ({ userId: service.auth.session().user.id, deviceId: service.auth.session().device.id });
     service.conversations = signal([conversation]);
     service.isConversationBlocked = () => false;
     service.canSendToConversation = () => false;

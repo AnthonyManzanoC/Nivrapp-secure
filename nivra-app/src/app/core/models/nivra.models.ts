@@ -315,6 +315,13 @@ export interface SyncBootstrapResponse {
 export interface MessageSyncResponse {
   messages: MessageResponse[];
   syncedAt: string;
+  cursorId?: string | null;
+  hasMore?: boolean | null;
+}
+
+export interface MessageHistoryRecoveryResponse {
+  messages: MessageResponse[];
+  deletedMessages: unknown[];
 }
 
 export interface PatchProfileRequest {

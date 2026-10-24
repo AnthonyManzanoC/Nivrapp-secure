@@ -17,16 +17,16 @@
 }
 
 .chat-header {
-  background: #080d0f !important;
+  background: var(--nivra-panel-solid) !important;
   box-shadow: none;
 }
 
 ion-toolbar {
   position: relative;
-  --background: #080d0f;
+  --background: var(--nivra-panel-solid);
   --border-color: transparent;
   --color: var(--nivra-text);
-  min-height: 68px;
+  min-height: 60px;
   padding-inline: 8px;
 }
 
