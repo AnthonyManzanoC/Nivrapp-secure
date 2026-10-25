@@ -1,5 +1,6 @@
-import { TestBed } from '@angular/core/testing';
+import { TestBed, fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
 import { API_POOL_RUNTIME, ApiEndpointPool, ApiPoolRuntime, apiOrigin } from './api-endpoint-pool.service';
+import { NETWORK_POLICY_RUNTIME } from './network-policy.service';
 
 describe('API endpoint pool isolation and failover', () => {
   const primary = 'https://primary.nivra.test', backup = 'https://backup.nivra.test', third = 'https://third.nivra.test';
@@ -16,7 +17,8 @@ describe('API endpoint pool isolation and failover', () => {
     fetcher = jasmine.createSpy('fetch').and.callFake(async () => new Response(JSON.stringify(ready())));
     runtime = { primary, origins: [primary, backup, third], expectedFingerprint: expected, preferred,
       fetch: fetcher, now: () => now, storage: { getItem: () => stored, setItem: jasmine.createSpy('persist') } };
-    TestBed.configureTestingModule({ providers: [{ provide: API_POOL_RUNTIME, useValue: runtime }] });
+    TestBed.configureTestingModule({ providers: [{ provide: API_POOL_RUNTIME, useValue: runtime },
+      { provide: NETWORK_POLICY_RUNTIME, useValue: { hints: () => ({}), onlineHint: () => true, now: () => now, random: () => .5 } }] });
     pool = TestBed.inject(ApiEndpointPool);
   };
   afterEach(() => TestBed.resetTestingModule());
@@ -155,5 +157,45 @@ describe('API endpoint pool isolation and failover', () => {
     build(pin); fetcher.and.resolveTo(new Response(JSON.stringify({ failoverProtocol: 1, multiInstanceReady: false, clusterFingerprint: null })));
     await pool.prepare(); expect(pool.clusterFingerprint()).toBe('');
     expect(await pool.recover(`${primary}/me`)).toBeFalse(); expect(pool.current()).toBe(primary);
+  });
+
+  it('allows useful traffic on the trusted primary while an optional readiness request stalls', fakeAsync(() => {
+    build();
+    let finishProbe!: (value: Response) => void;
+    fetcher.and.callFake((url: string) => url.endsWith('/health/ready')
+      ? new Promise<Response>(resolve => finishProbe = resolve) : Promise.resolve(new Response('{}')));
+    let response: Response | null = null;
+    void pool.fetch('/messages').then(value => response = value);
+    flushMicrotasks();
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    tick(1001); flushMicrotasks();
+    expect(response).toBeInstanceOf(Response);
+    expect(fetcher.calls.mostRecent().args[0]).toBe(primary + '/messages');
+    expect(pool.isTrustedUrl(backup + '/messages')).toBeFalse();
+    finishProbe(new Response('', { status: 503 })); flushMicrotasks();
+  }));
+
+  it('uses successful serving traffic instead of repeatedly probing a healthy node', async () => {
+    build(); await pool.prepare(); fetcher.calls.reset();
+    now += 45000; pool.reportSuccess(primary + '/messages');
+    now += 16000; await pool.prepare();
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it('backs off repeated total outages without sharing credentials with unverified hosts', async () => {
+    build(); fetcher.and.rejectWith(new TypeError('offline'));
+    expect(await pool.recover(primary + '/messages')).toBeFalse();
+    await Promise.all(Array.from({ length: 50 }, () => pool.recover(primary + '/messages')));
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    now += 3000;
+    expect(await pool.recover(primary + '/messages')).toBeFalse();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(pool.isTrustedUrl(backup + '/messages')).toBeFalse();
+  });
+
+  it('does not start readiness or API work for an already canceled fetch', async () => {
+    build(); const controller = new AbortController(); controller.abort();
+    await expectAsync(pool.fetch('/messages', { signal: controller.signal }, true)).toBeRejected();
+    expect(fetcher).not.toHaveBeenCalled();
   });
 });

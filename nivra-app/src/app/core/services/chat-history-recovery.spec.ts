@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
+import { fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
 import { ChatService } from './chat.service';
 
 describe('chat history recovery and loading continuity', () => {
@@ -67,26 +68,30 @@ describe('chat history recovery and loading continuity', () => {
     const service = harness(); const readable = message();
     service.messagesByConversation.set({ chat: [{ ...readable, decryptError: true,
       payload: { type: 'system', text: 'Local history pending' } }] });
+    service.pendingHistoryEnvelopes.set(readable.id, envelope(readable.id));
     service.upsertMessage(readable, { persist: false });
     expect(service.messagesByConversation().chat[0]).toBe(readable);
     expect(service.persistLocalMessage).not.toHaveBeenCalled();
+    expect(service.pendingHistoryEnvelopes.has(readable.id)).toBeFalse();
+    expect(service.hasUnreadableHistory()).toBeFalse();
   });
 
-  it('waits for an older bootstrap then replays all envelopes and affected conversations', async () => {
+  it('replays known envelopes immediately while an unrelated older bootstrap is stalled', async () => {
     const service = harness(); const initial = deferred();
     service.bootstrapInFlight = initial.promise;
     service.pendingHistoryEnvelopes.set('one', { id: 'one', conversationId: 'first' });
     const recovery = service.retryRecoveredHistory();
-    expect(service.ingestMessageBatch).not.toHaveBeenCalled();
-    service.pendingHistoryEnvelopes.set('two', { id: 'two', conversationId: 'second' });
-    initial.resolve(); await recovery;
-    expect(service.ingestMessageBatch.calls.first().args[0].map((item: any) => item.id)).toEqual(['one', 'two']);
-    expect(service.loadMessages.calls.allArgs().flat().sort()).toEqual(['chat', 'first', 'second']);
+    await recovery;
+    expect(service.ingestMessageBatch.calls.first().args[0].map((item: any) => item.id)).toEqual(['one']);
+    expect(service.bootstrap).not.toHaveBeenCalled();
+    expect(service.loadMessages).not.toHaveBeenCalled();
     expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
+    initial.resolve();
   });
 
-  it('keeps history pending when a page refresh fails instead of reporting successful synchronization', async () => {
-    const service = harness(); service.loadMessages.and.rejectWith(new Error('Offline'));
+  it('keeps history pending when retrieving an exact protected ID fails', async () => {
+    const service = harness(); service.messagesByConversation.set({ chat: [{ ...message(), decryptError: true }] });
+    service.api.post.and.returnValue(throwError(() => new Error('Offline')));
     await expectAsync(service.retryRecoveredHistory()).toBeResolved();
     expect(service.deviceHistory.markHistoryReadable).not.toHaveBeenCalled();
     expect(service.deviceHistory.markHistoryRecoveryIncomplete).toHaveBeenCalledTimes(1);
@@ -97,7 +102,7 @@ describe('chat history recovery and loading continuity', () => {
     const service = harness();
     service.messagesByConversation.set({ older: [{ ...message('old', 'older'), decryptError: true }] });
     await service.retryRecoveredHistory();
-    expect(service.loadMessages).toHaveBeenCalledWith('older');
+    expect(service.api.post).toHaveBeenCalledWith('/messages/history-recovery', { messageIds: ['old'] });
     expect(service.deviceHistory.markHistoryReadable).not.toHaveBeenCalled();
     expect(service.deviceHistory.markHistoryRecoveryIncomplete).toHaveBeenCalled();
   });
@@ -115,6 +120,62 @@ describe('chat history recovery and loading continuity', () => {
     expect(service.messagesByConversation().chat.some((item: any) => item.id === 'not-requested')).toBeFalse();
     expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
   });
+
+  it('finishes pending history when a normal HTTP batch resolves the final protected row after reopening', async () => {
+    const service = harness(); useRealIngestion(service);
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }] });
+    service.pendingHistoryEnvelopes.set('old', envelope('old'));
+    await service.ingestMessageBatch([envelope('old')], false);
+    expect(service.messagesByConversation().chat[0].decryptError).toBeFalse();
+    expect(service.pendingHistoryEnvelopes.size).toBe(0);
+    expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not declare completion when a normal batch recovers one conversation while another stays protected', async () => {
+    const service = harness(); useRealIngestion(service);
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }],
+      other: [{ ...message('missing', 'other'), decryptError: true }] });
+    await service.ingestMessageBatch([envelope('old')], false);
+    expect(service.messagesByConversation().chat[0].decryptError).toBeFalse();
+    expect(service.messagesByConversation().other[0].decryptError).toBeTrue();
+    expect(service.deviceHistory.markHistoryReadable).not.toHaveBeenCalled();
+  });
+
+  it('releases an exact-ID recovery on timeout and permits a later retry to complete', fakeAsync(() => {
+    const service = harness(); useRealIngestion(service);
+    service.network = { readTimeoutMs: () => 90_000 };
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }] });
+    const stalled = new Subject<any>(); service.api.post.and.returnValue(stalled);
+    void service.retryRecoveredHistory(); flushMicrotasks();
+    expect(service.historyRecoveryInFlight).not.toBeNull();
+    tick(45_000); flushMicrotasks();
+    expect(service.historyRecoveryInFlight).not.toBeNull(); // Preserve the slow-link policy's budget.
+    tick(45_000); flushMicrotasks();
+    expect(service.historyRecoveryInFlight).toBeNull();
+    expect(service.deviceHistory.markHistoryReadable).not.toHaveBeenCalled();
+    expect(service.deviceHistory.markHistoryRecoveryIncomplete).toHaveBeenCalledWith({ retryable: true });
+    expect(stalled.observers.length).toBe(0);
+    service.api.post.and.returnValue(of({ messages: [envelope('old')], deletedMessages: [] }));
+    void service.retryRecoveredHistory(); flushMicrotasks();
+    expect(service.historyRecoveryInFlight).toBeNull();
+    expect(service.messagesByConversation().chat[0].decryptError).toBeFalse();
+    expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
+  }));
+
+  it('releases selected-page loading after a stalled read rather than keeping message skeletons forever', fakeAsync(() => {
+    const service = harness(); const stalled = new Subject<any>();
+    service.api.get = jasmine.createSpy('get').and.returnValue(stalled);
+    service.loadMessages = ChatService.prototype.loadMessages.bind(service);
+    let failed = false;
+    void service.loadMessages('chat').catch(() => failed = true);
+    expect(service.messageLoadCounts().chat).toBe(1);
+    tick(45_000); flushMicrotasks();
+    expect(failed).toBeTrue(); expect(stalled.observers.length).toBe(0);
+    expect(service.messageLoadCounts()).toEqual({});
+    service.api.get.and.returnValue(of([]));
+    void service.loadMessages('chat'); flushMicrotasks();
+    expect(service.messageLoadCounts()).toEqual({});
+  }));
 
   it('recovers cached placeholders in chunks of at most 100 without losing any requested ID', async () => {
     const service = harness(); useRealIngestion(service);
@@ -185,24 +246,24 @@ describe('chat history recovery and loading continuity', () => {
 
   it('queues another imported keyring during recovery and acknowledges only the final pass', async () => {
     const service = harness(); const first = deferred();
-    service.bootstrap.and.returnValues(first.promise, Promise.resolve());
+    service.ingestMessageBatch.and.returnValues(first.promise, Promise.resolve());
     const recovery = service.retryRecoveredHistory();
     for (let index = 0; index < 5; index++) await Promise.resolve();
     expect(service.retryRecoveredHistory()).toBe(recovery);
     first.resolve(); await recovery;
-    expect(service.bootstrap).toHaveBeenCalledTimes(2);
+    expect(service.ingestMessageBatch).toHaveBeenCalledTimes(2);
     expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
   });
 
   it('does not let an older failed refresh override the next approved keyring recovery', async () => {
     const service = harness();
     let reject!: (reason?: unknown) => void;
-    service.bootstrap.and.returnValues(new Promise<void>((_resolve, fail) => reject = fail), Promise.resolve());
+    service.ingestMessageBatch.and.returnValues(new Promise<void>((_resolve, fail) => reject = fail), Promise.resolve());
     const recovery = service.retryRecoveredHistory();
     for (let index = 0; index < 5; index++) await Promise.resolve();
     service.retryRecoveredHistory();
     reject(new Error('An older refresh failed')); await recovery;
-    expect(service.bootstrap).toHaveBeenCalledTimes(2);
+    expect(service.ingestMessageBatch).toHaveBeenCalledTimes(2);
     expect(service.deviceHistory.markHistoryReadable).toHaveBeenCalledTimes(1);
     expect(service.deviceHistory.markHistoryRecoveryIncomplete).not.toHaveBeenCalled();
   });
@@ -321,11 +382,11 @@ describe('chat history recovery and loading continuity', () => {
 
   it('cannot acknowledge or load pages for an account switched during recovery', async () => {
     const service = harness(); const initial = deferred();
-    service.bootstrapInFlight = initial.promise;
+    service.ingestMessageBatch.and.returnValue(initial.promise);
     const recovery = service.retryRecoveredHistory();
     service.auth.session.set(session('bob'));
     initial.resolve(); await recovery;
-    expect(service.ingestMessageBatch).not.toHaveBeenCalled();
+    expect(service.ingestMessageBatch).toHaveBeenCalledTimes(1);
     expect(service.loadMessages).not.toHaveBeenCalled();
     expect(service.deviceHistory.markHistoryReadable).not.toHaveBeenCalled();
     expect(service.deviceHistory.markHistoryRecoveryIncomplete).not.toHaveBeenCalled();

@@ -1,7 +1,7 @@
 import { HttpErrorResponse, HttpEventType, HttpHandlerFn, HttpRequest, HttpResponse, provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { TestBed, fakeAsync, tick, flushMicrotasks } from '@angular/core/testing';
-import { concat, firstValueFrom, lastValueFrom, NEVER, of, throwError } from 'rxjs';
+import { concat, firstValueFrom, lastValueFrom, NEVER, of, Subject, throwError } from 'rxjs';
 import { API_POOL_RUNTIME, ApiEndpointPool } from '../services/api-endpoint-pool.service';
 import { AuthService } from '../services/auth.service';
 import { ClientCompatibilityService } from '../services/client-compatibility.service';
@@ -9,6 +9,7 @@ import { DeviceWipeService } from '../services/device-wipe.service';
 import { NivraApiService } from '../services/nivra-api.service';
 import { authInterceptor } from './auth.interceptor';
 import { apiFailoverInterceptor } from './api-failover.interceptor';
+import { NETWORK_POLICY_RUNTIME } from '../services/network-policy.service';
 
 describe('transport failover request semantics', () => {
   const primary = 'https://primary.test', backup = 'https://backup.test';
@@ -19,9 +20,10 @@ describe('transport failover request semantics', () => {
     selected = primary; session = { user: { id: 'alice' }, device: { id: 'phone' } };
     recover = jasmine.createSpy('recover').and.callFake(async () => { selected = backup; return true; });
     TestBed.configureTestingModule({ providers: [
-      { provide: ApiEndpointPool, useValue: { prepare: async () => undefined, isConfiguredUrl: (url: string) => new URL(url).origin === primary,
+      { provide: ApiEndpointPool, useValue: { prepareForRequest: async () => undefined, reportSuccess: () => undefined, isConfiguredUrl: (url: string) => new URL(url).origin === primary,
         rewrite: (url: string) => selected + new URL(url).pathname, recover } },
       { provide: AuthService, useValue: { session: () => session } },
+      { provide: NETWORK_POLICY_RUNTIME, useValue: { hints: () => ({}), onlineHint: () => true, now: () => Date.now(), random: () => .5 } },
     ] });
   });
   afterEach(() => TestBed.resetTestingModule());
@@ -51,15 +53,27 @@ describe('transport failover request semantics', () => {
       ? concat(of({ type: HttpEventType.Sent }), NEVER) : of(new HttpResponse({ body: { ok: true } })));
     let response: unknown;
     TestBed.runInInjectionContext(() => { void lastValueFrom(apiFailoverInterceptor(request(), next)).then(value => { response = value; }); });
-    tick(15001); flushMicrotasks();
+    tick(30001); flushMicrotasks();
     expect(recover).toHaveBeenCalledTimes(1); expect(next).toHaveBeenCalledTimes(2); expect(response).toBeInstanceOf(HttpResponse);
   }));
   it('releases a stalled small mutation without replaying its body', fakeAsync(() => {
     const next = jasmine.createSpy('next').and.returnValue(concat(of({ type: HttpEventType.Sent }), NEVER));
     let failed = false;
     TestBed.runInInjectionContext(() => { void lastValueFrom(apiFailoverInterceptor(request('POST'), next)).catch(() => { failed = true; }); });
-    tick(15001); flushMicrotasks();
+    tick(30001); flushMicrotasks();
     expect(failed).toBeTrue(); expect(recover).toHaveBeenCalledTimes(1); expect(next).toHaveBeenCalledTimes(1);
+  }));
+  it('lets a slow2G read complete after the old15second deadline without failover', fakeAsync(() => {
+    TestBed.overrideProvider(NETWORK_POLICY_RUNTIME, { useValue: { hints: () => ({ effectiveType: '2g' }), onlineHint: () => true, now: () => Date.now(), random: () => .5 } });
+    const body = new Subject<HttpResponse<unknown>>();
+    let result: unknown;
+    const next = jasmine.createSpy('next').and.returnValue(concat(of({ type: HttpEventType.Sent }), body));
+    TestBed.runInInjectionContext(() => { void lastValueFrom(apiFailoverInterceptor(request(), next)).then(value => result = value); });
+    tick(45000);
+    expect(recover).not.toHaveBeenCalled();
+    body.next(new HttpResponse({ body: { recovered: true } })); body.complete(); flushMicrotasks();
+    expect(result).toBeInstanceOf(HttpResponse);
+    expect(next).toHaveBeenCalledTimes(1);
   }));
 });
 

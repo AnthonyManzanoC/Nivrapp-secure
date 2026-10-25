@@ -2,6 +2,8 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { AppLockService } from './app-lock.service';
 import { AuthService } from './auth.service';
+import { AccountLockPolicyService } from './account-lock-policy.service';
+import { PlatformUnlockService } from './platform-unlock.service';
 
 describe('AppLockService account and verification boundaries', () => {
   const firstAccount = 'app-lock-test-first';
@@ -25,6 +27,9 @@ describe('AppLockService account and verification boundaries', () => {
     session.set({ user: { id: firstAccount } });
     TestBed.configureTestingModule({ providers: [
       { provide: AuthService, useValue: { session, isAuthenticated: () => !!session() } },
+      { provide: AccountLockPolicyService, useValue: { policy: signal(null), unresolved: signal(false), syncing: signal(false), syncError: signal(''),
+        save: async (enabled: boolean, pinEnvelope: unknown) => ({ userId: session()!.user.id, revision: 1, enabled, pinEnvelope, updatedAt: '2026-10-24T00:00:00Z' }) } },
+      { provide: PlatformUnlockService, useValue: { availability: async () => ({ available: false, enrolled: false, label: 'Verificación del dispositivo' }), cancel: () => undefined } },
     ] });
     service = TestBed.inject(AppLockService);
     TestBed.flushEffects();
@@ -37,6 +42,7 @@ describe('AppLockService account and verification boundaries', () => {
   });
 
   it('keeps existing PIN envelope crypto and account binding without storing the PIN', async () => {
+    service.unlock();
     await service.enableWebPin('5082');
     const envelope = JSON.parse(localStorage.getItem(settingsKey(firstAccount))!);
     expect(envelope.pin.alg).toBe('PBKDF2-SHA256+A256GCM');
@@ -96,6 +102,7 @@ describe('AppLockService account and verification boundaries', () => {
   });
 
   it('cannot save a PIN setup started in another account', async () => {
+    service.unlock();
     let finish!: (envelope: unknown) => void;
     spyOn<any>(service, 'createPinEnvelope').and.returnValue(new Promise(resolve => finish = resolve));
     const pending = service.enableWebPin('1234');

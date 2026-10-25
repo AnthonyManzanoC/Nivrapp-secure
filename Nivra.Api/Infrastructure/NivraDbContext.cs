@@ -64,6 +64,15 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        modelBuilder.Entity<AccountAppLock>(b =>
+        {
+            b.ToTable("account_app_locks");
+            b.HasKey(x => x.UserId);
+            b.Property(x => x.UserId).HasMaxLength(64);
+            b.Property(x => x.Revision).IsConcurrencyToken();
+            b.Property(x => x.PinEnvelopeJson).HasMaxLength(4096);
+            b.HasOne<UserAccount>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<HistoryKeyTransfer>(b =>
         {
             b.HasKey(x => x.Id);

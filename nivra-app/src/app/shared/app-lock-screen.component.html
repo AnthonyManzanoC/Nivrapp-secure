@@ -1,4 +1,14 @@
-@if (appLock.isLocked()) {
+@if (appLock.policyPending()) {
+  <section #lockDialog class="app-lock-screen" role="dialog" aria-modal="true" aria-labelledby="nivra-policy-title" tabindex="-1">
+    <div class="lock-shell">
+      <div class="brand-orbit" aria-hidden="true"><div class="brand-tile"><img src="assets/brand/nivra-mark.svg" alt=""></div></div>
+      <div class="lock-copy"><span class="lock-chip">Modo Seguro</span><h1 id="nivra-policy-title">Tu espacio, protegido.</h1><p>Comprobando la protección de tu cuenta antes de mostrar tus conversaciones.</p></div>
+      @if (appLock.policySyncing()) { <ion-spinner name="crescent" aria-label="Comprobando protección"></ion-spinner> }
+      @else { <button type="button" class="biometric-unlock" (click)="appLock.retryPolicySync()">Volver a comprobar</button> }
+      <p class="lock-feedback" role="status">{{ appLock.policySyncError() }}</p>
+    </div>
+  </section>
+} @else if (appLock.isLocked()) {
   <section #lockDialog class="app-lock-screen" role="dialog" aria-modal="true" aria-labelledby="nivra-lock-title" aria-describedby="nivra-lock-description" [attr.aria-busy]="appLock.busy()" tabindex="-1">
     <header class="lock-brand" aria-label="Nivra Private Messenger">
       <img src="assets/brand/nivra-mark.svg" width="37" height="37" alt="">
@@ -24,12 +34,15 @@
             @if (appLock.busy()) {
               <ion-spinner name="crescent" aria-hidden="true"></ion-spinner>
             } @else {
-              <ion-icon [name]="appLock.biometryLabel().includes('rostro') || appLock.biometryLabel().includes('facial') ? 'scan-outline' : 'finger-print-outline'" aria-hidden="true"></ion-icon>
+              <ion-icon [name]="verificationIcon()" aria-hidden="true"></ion-icon>
             }
-            <span>{{ 'APP_LOCK.UNLOCK' | translate:'Desbloquear Nivra' }}</span>
+            <span class="unlock-label"><span>{{ 'APP_LOCK.UNLOCK' | translate:'Desbloquear Nivra' }}</span><small>{{ appLock.biometryLabel() }}</small></span>
             <ion-icon class="unlock-arrow" name="arrow-forward-outline" aria-hidden="true"></ion-icon>
           </button>
           <small class="lock-hint">{{ 'APP_LOCK.DEVICE_IDENTITY' | translate:'Usa la verificación de identidad de tu dispositivo.' }}</small>
+          @if (appLock.hasPinFallback()) {
+            <button type="button" class="alternate-unlock pin-fallback" (click)="usePin()" [disabled]="appLock.busy()">{{ 'APP_LOCK.USE_ACCOUNT_PIN' | translate:'Usar PIN de la cuenta' }}</button>
+          }
         </div>
       } @else {
         <div class="pin-entry" role="group" [attr.aria-label]="'APP_LOCK.PIN_LABEL' | translate:'PIN de Modo Seguro'">
@@ -46,6 +59,9 @@
               } @else { <span aria-hidden="true"></span> }
             }
           </div>
+          @if (appLock.canUseBiometric()) {
+            <button type="button" class="alternate-unlock platform-fallback" (click)="useBiometrics()" [disabled]="appLock.busy()">{{ 'APP_LOCK.USE_METHOD' | translate:'Usar' }} {{ appLock.biometryLabel() }}</button>
+          }
         </div>
       }
 

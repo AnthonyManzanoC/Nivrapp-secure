@@ -370,15 +370,15 @@
           </div>
           <div>
 
-            <p class="card-sub">{{ appLock.isNativePlatform() ? ('ACCOUNT.SAFE_MODE_NATIVE_COPY' | translate:'APK con biometria nativa al abrir o volver.') : ('ACCOUNT.SAFE_MODE_WEB_COPY' | translate:'Web y PC con PIN local cifrado.') }}</p>
+            <p class="card-sub">Un PIN para tu cuenta. Usa también la biometría o el desbloqueo que tengas configurado en cada equipo.</p>
           </div>
         </div>
         <label class="toggle-row app-lock-toggle-row">
           <span>
             <strong>{{ 'ACCOUNT.APP_LOCK' | translate:'Bloqueo de App' }}</strong>
-            <small>{{ appLock.isEnabled() ? ('ACCOUNT.ACTIVE' | translate:'Activo') : ('ACCOUNT.DISABLED' | translate:'Desactivado') }} - {{ appLock.isNativePlatform() ? appLock.biometryLabel() : ('ACCOUNT.PIN_4_DIGITS' | translate:'PIN de 4 digitos') }}</small>
+            <small>{{ appLock.isEnabled() ? ('ACCOUNT.ACTIVE' | translate:'Activo') : ('ACCOUNT.DISABLED' | translate:'Desactivado') }} · {{ appLock.canUseBiometric() ? appLock.biometryLabel() + ' y PIN' : 'PIN de Nivra' }}</small>
           </span>
-          <ion-toggle mode="ios" [checked]="appLock.isEnabled()" (ionChange)="setSecureMode($event.detail.checked)" [attr.aria-label]="'ACCOUNT.ENABLE_SAFE_MODE' | translate:'Activar Modo Seguro'"></ion-toggle>
+          <ion-toggle mode="ios" [checked]="appLock.isEnabled()" [disabled]="saving || appLock.policySyncing()" (ionChange)="setSecureMode($event.detail.checked)" [attr.aria-label]="'ACCOUNT.ENABLE_SAFE_MODE' | translate:'Activar Modo Seguro'"></ion-toggle>
         </label>
         <div class="app-lock-preview" [class.enabled]="appLock.isEnabled()" aria-hidden="true">
           <ion-icon name="lock-closed-outline"></ion-icon>
@@ -387,6 +387,17 @@
           <span></span>
           <span></span>
         </div>
+        @if (appLock.needsSharedPinSetup()) {
+          <p class="card-sub">Tu bloqueo anterior sigue activo en este equipo. Crea el PIN común para extenderlo a tu cuenta.</p>
+          <ion-button mode="ios" fill="outline" (click)="openPinSetupModal()" [disabled]="saving">Configurar PIN común</ion-button>
+        }
+        @if (appLock.isShared()) {
+          <p class="card-sub">Configuración de cuenta sincronizada. Sin conexión se conserva el último bloqueo recibido.</p>
+          @if (appLock.canEnrollPlatform()) {
+            <ion-button mode="ios" fill="outline" (click)="openPinSetupModal('platform')" [disabled]="saving">Activar desbloqueo de este equipo</ion-button>
+          }
+        }
+        @if (appLock.policySyncError()) { <p class="card-sub" role="status">{{ appLock.policySyncError() }}</p> }
       </div>
       </details>
 
@@ -763,7 +774,7 @@
           <header>
             <div>
               <h2>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</h2>
-              <p>{{ setupPin.length < 4 ? ('ACCOUNT.CREATE_PIN_4' | translate:'Crea un PIN de 4 digitos.') : ('ACCOUNT.CONFIRM_PIN' | translate:'Confirma el PIN.') }}</p>
+              <p>{{ pinSetupPurpose === 'platform' ? 'Introduce tu PIN de Nivra para activar el desbloqueo de este equipo.' : setupPin.length < 4 ? 'Crea un PIN de 4 dígitos para tus dispositivos.' : 'Confirma el PIN. Guárdalo para usarlo en web y PC.' }}</p>
             </div>
             <ion-button mode="ios" fill="clear" (click)="closePinSetupModal()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
               <ion-icon name="close-outline"></ion-icon>
@@ -780,11 +791,11 @@
                   <span [class.filled]="slot < setupPin.length"></span>
                 }
               </div>
-              <div>
+              @if (pinSetupPurpose === 'enable') { <div>
                 @for (slot of pinSlots; track slot) {
                   <span [class.filled]="slot < setupPinConfirm.length"></span>
                 }
-              </div>
+              </div> }
             </div>
           </div>
 
@@ -808,9 +819,9 @@
             <p class="pin-setup-error">{{ pinSetupError }}</p>
           }
 
-          <ion-button mode="ios" (click)="confirmWebPin()" [disabled]="saving || setupPin.length !== 4 || setupPinConfirm.length !== 4 || setupPin !== setupPinConfirm">
+          <ion-button mode="ios" (click)="confirmWebPin()" [disabled]="saving || setupPin.length !== 4 || (pinSetupPurpose === 'enable' && (setupPinConfirm.length !== 4 || setupPin !== setupPinConfirm))">
             <ion-icon slot="start" name="lock-closed-outline"></ion-icon>
-            {{ 'ACCOUNT.ENABLE_SAFE_MODE' | translate:'Activar Modo Seguro' }}
+            {{ pinSetupPurpose === 'platform' ? 'Activar en este equipo' : 'Activar Modo Seguro' }}
           </ion-button>
         </section>
       </ng-template>

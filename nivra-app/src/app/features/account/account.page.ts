@@ -105,6 +105,7 @@ export class AccountPage implements OnInit, OnDestroy {
   pinSetupModalOpen = false;
   setupPin = '';
   setupPinConfirm = '';
+  pinSetupPurpose: 'enable' | 'platform' = 'enable';
   pinSetupError = '';
   panicPinValue = '';
   panicPinConfirm = '';
@@ -506,16 +507,8 @@ export class AccountPage implements OnInit, OnDestroy {
   async setSecureMode(enabled: boolean): Promise<void> {
     if (!enabled) {
       await this.run(async () => {
-        this.appLock.disable();
-        this.notice = this.t('ACCOUNT.SAFE_MODE_DISABLED', 'Modo Seguro desactivado.');
-      });
-      return;
-    }
-
-    if (this.appLock.isNativePlatform()) {
-      await this.run(async () => {
-        await this.appLock.enableMobileBiometrics();
-        this.notice = `${this.t('ACCOUNT.SAFE_MODE_ENABLED_WITH', 'Modo Seguro activado con')} ${this.appLock.biometryLabel()}.`;
+        await this.appLock.disable();
+        this.notice = 'Modo Seguro desactivado en tus dispositivos conectados.';
       });
       return;
     }
@@ -523,7 +516,8 @@ export class AccountPage implements OnInit, OnDestroy {
     this.openPinSetupModal();
   }
 
-  openPinSetupModal(): void {
+  openPinSetupModal(purpose: 'enable' | 'platform' = 'enable'): void {
+    this.pinSetupPurpose = purpose;
     this.setupPin = '';
     this.setupPinConfirm = '';
     this.pinSetupError = '';
@@ -566,6 +560,15 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   async confirmWebPin(): Promise<void> {
+    if (this.pinSetupPurpose === 'platform') {
+      if (!this.appLock.isValidPin(this.setupPin)) return;
+      await this.run(async () => {
+        await this.appLock.enrollPlatformUnlock(this.setupPin);
+        this.notice = 'Desbloqueo de este equipo activado. Tu PIN de Nivra sigue disponible.';
+        this.closePinSetupModal();
+      });
+      return;
+    }
     if (!this.appLock.isValidPin(this.setupPin) || !this.appLock.isValidPin(this.setupPinConfirm)) {
       this.pinSetupError = this.t('ACCOUNT.CREATE_CONFIRM_PIN_4', 'Crea y confirma un PIN de 4 digitos.');
       return;
@@ -576,8 +579,8 @@ export class AccountPage implements OnInit, OnDestroy {
     }
 
     await this.run(async () => {
-      await this.appLock.enableWebPin(this.setupPin);
-      this.notice = this.t('ACCOUNT.SAFE_MODE_PIN_ENABLED', 'Modo Seguro activado con PIN.');
+      await this.appLock.enableSharedPin(this.setupPin);
+      this.notice = 'Modo Seguro activado para tu cuenta. El PIN protege también tus otros dispositivos.';
       this.closePinSetupModal();
     });
   }

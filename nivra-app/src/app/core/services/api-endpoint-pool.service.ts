@@ -2,6 +2,7 @@ import { Injectable, InjectionToken, inject, signal } from '@angular/core';
 import { Subject } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { NIVRA_CALL_PROTOCOL } from '../release';
+import { NetworkPolicyService } from './network-policy.service';
 
 export interface ApiPoolRuntime {
   origins: readonly string[];
@@ -48,6 +49,7 @@ export function apiOrigin(value: string): string | null {
 @Injectable({ providedIn: 'root' })
 export class ApiEndpointPool {
   private readonly runtime = inject(API_POOL_RUNTIME);
+  private readonly network = inject(NetworkPolicyService);
   readonly primary = apiOrigin(this.runtime.primary) || environment.apiBaseUrl;
   readonly origins = [...new Set([this.primary, ...this.runtime.origins.map(apiOrigin).filter((v): v is string => Boolean(v))])];
   readonly current = signal(this.primary);
@@ -60,6 +62,10 @@ export class ApiEndpointPool {
   private preparation: Promise<void> | null = null;
   private preparedAt = 0;
   private candidateCursor = 0;
+  private lastSuccessfulOrigin = '';
+  private lastSuccessfulAt = 0;
+  private recoveryNotBefore = 0;
+  private recoveryFailures = 0;
 
   constructor() {
     const configured = this.runtime.expectedFingerprint || '';
@@ -82,9 +88,26 @@ export class ApiEndpointPool {
 
   prepare(): Promise<void> {
     if (this.preparation) return this.preparation;
+    if (this.lastSuccessfulOrigin === this.current() && this.runtime.now() - this.lastSuccessfulAt < 60_000) return Promise.resolve();
     if (this.preparedAt && this.runtime.now() - this.preparedAt < 60000) return Promise.resolve();
     this.preparation = this.prepareOnce().finally(() => { this.preparation = null; this.preparedAt = this.runtime.now(); });
     return this.preparation;
+  }
+
+  /** Readiness can continue in the background without blocking useful API traffic. */
+  prepareForRequest(): Promise<void> {
+    const preparation = this.prepare();
+    return new Promise(resolve => {
+      const timer = globalThis.setTimeout(resolve, this.network.preparationBudgetMs());
+      void preparation.then(() => { globalThis.clearTimeout(timer); resolve(); }, () => { globalThis.clearTimeout(timer); resolve(); });
+    });
+  }
+
+  reportSuccess(url: string): void {
+    const origin = this.originOf(url);
+    if (origin !== this.current() || !this.verified.has(origin)) return;
+    this.lastSuccessfulOrigin = origin;
+    this.lastSuccessfulAt = this.runtime.now();
   }
 
   private async prepareOnce(): Promise<void> {
@@ -92,11 +115,11 @@ export class ApiEndpointPool {
     // suspended primary. Keep the same cluster verification for every health check.
     const active = this.current();
     if (active !== this.primary) {
-      if (this.compatible(await this.probe(active, 5000))) return;
+      if (this.compatible(await this.probe(active, this.network.probeTimeoutMs()))) return;
       await this.recover(`${active}/health/ready`);
       return;
     }
-    const health = await this.probe(this.primary, 5000);
+    const health = await this.probe(this.primary, this.network.probeTimeoutMs());
     if (health) this.rememberPrimary(health);
     // Never interrupt a healthy node just because a background readiness check failed.
     const preferred = apiOrigin(this.runtime.preferred || '');
@@ -115,14 +138,19 @@ export class ApiEndpointPool {
     if (!origin) return Promise.resolve(false);
     if (origin !== this.current()) return Promise.resolve(true);
     if (this.recovery) return this.recovery;
-    this.recovery = this.recoverOnce(origin).finally(() => { this.recovery = null; });
+    if (this.runtime.now() < this.recoveryNotBefore) return Promise.resolve(false);
+    this.recovery = this.recoverOnce(origin).then(changed => {
+      if (changed) { this.recoveryFailures = 0; this.recoveryNotBefore = 0; }
+      else this.recoveryNotBefore = this.runtime.now() + this.network.retryDelayMs(this.recoveryFailures++, 2000, 30_000);
+      return changed;
+    }).finally(() => { this.recovery = null; });
     return this.recovery;
   }
 
   private async recoverOnce(failed: string): Promise<boolean> {
     this.failedUntil.set(failed, this.runtime.now() + 60000);
     if (!this.clusterFingerprint()) {
-      const health = await this.probe(this.primary, 5000);
+      const health = await this.probe(this.primary, this.network.probeTimeoutMs());
       if (health) this.rememberPrimary(health);
     }
     if (!this.clusterFingerprint()) return false;
@@ -184,7 +212,7 @@ export class ApiEndpointPool {
       return !url.username && !url.password && this.origins.includes(url.origin) ? url.origin : null;
     } catch { return null; }
   }
-  private async probe(origin: string, deadline = 10000): Promise<Readiness | null> {
+  private async probe(origin: string, deadline = this.network.probeTimeoutMs()): Promise<Readiness | null> {
     try {
       const response = await this.runtime.fetch(`${origin}/health/ready`, {
         credentials: 'omit', redirect: 'error', cache: 'no-store', signal: AbortSignal.timeout(deadline),
@@ -215,13 +243,22 @@ export class ApiEndpointPool {
 
   /** Mutations change the selected origin after a failure, but are never replayed ambiguously. */
   async fetch(path: string, options: RequestInit = {}, replaySafe = false, isCurrent = () => true): Promise<Response> {
-    await this.prepare();
+    if (options.signal?.aborted) throw options.signal.reason ?? new DOMException('Aborted', 'AbortError');
+    await this.prepareForRequest();
     const url = `${this.current()}${path.startsWith('/') ? path : `/${path}`}`;
     const send = (target: string) => {
       if (!isCurrent()) throw new Error('Session changed');
-      const ownDeadline = AbortSignal.timeout(15000);
+      const ownDeadline = AbortSignal.timeout(this.network.readTimeoutMs());
       const signal = options.signal ? AbortSignal.any([options.signal, ownDeadline]) : ownDeadline;
-      return this.runtime.fetch(target, { ...options, credentials: 'omit', redirect: 'error', signal });
+      const startedAt = this.runtime.now();
+      return this.runtime.fetch(target, { ...options, credentials: 'omit', redirect: 'error', signal }).then(response => {
+        this.network.recordResponse(this.runtime.now() - startedAt);
+        if (response.ok) this.reportSuccess(target);
+        return response;
+      }).catch(error => {
+        if (ownDeadline.aborted && !options.signal?.aborted) this.network.recordTimeout();
+        throw error;
+      });
     };
     try {
       const response = await send(url);

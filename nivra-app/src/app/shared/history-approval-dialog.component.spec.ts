@@ -23,7 +23,7 @@ describe('history approval dialog interruption and queue', () => {
     history.dismissRequest.and.callFake((id: string) => history.pendingRequests.update(items => items.filter(item => item.id !== id)));
     TestBed.configureTestingModule({ providers: [
       { provide: HistoryDeviceSyncService, useValue: history },
-      { provide: AppLockService, useValue: { isLocked: locked } },
+      { provide: AppLockService, useValue: { isLocked: locked, isContentLocked: locked } },
       { provide: CallsService, useValue: { activeCall } },
     ] });
     dialog = TestBed.runInInjectionContext(() => new HistoryApprovalDialogComponent());

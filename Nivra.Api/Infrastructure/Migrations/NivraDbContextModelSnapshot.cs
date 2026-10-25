@@ -23,6 +23,31 @@ namespace Nivra.Api.Infrastructure.Migrations
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
 
+            modelBuilder.Entity("Nivra.Api.Domain.AccountAppLock", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("PinEnvelopeJson")
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("account_app_locks", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.AccountRecoveryChallenge", b =>
                 {
                     b.Property<string>("TokenHash")
@@ -1250,6 +1275,15 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("vault_room_members", "public");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.AccountAppLock", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Nivra.Api.Domain.AccountRecoveryChallenge", b =>

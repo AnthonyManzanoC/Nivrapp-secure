@@ -1,0 +1,47 @@
+using System.Reflection;
+using System.Text.Json;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
+using Nivra.Api.Domain;
+using Nivra.Api.Endpoints;
+using Nivra.Api.Infrastructure;
+
+var passed = 0;
+void Check(bool valid, string name) { if (!valid) throw new InvalidOperationException(name); passed++; Console.WriteLine($"PASS {name}"); }
+var flags = BindingFlags.NonPublic | BindingFlags.Static;
+var validEnvelope = typeof(EndpointExtensions).GetMethod("ValidAppLockEnvelope", flags)!;
+bool Valid(AppLockPinEnvelope? value) => (bool)validEnvelope.Invoke(null, [value])!;
+var envelope = new AppLockPinEnvelope(1, "PBKDF2-SHA256+A256GCM", 240000,
+    Convert.ToBase64String(new byte[16]), Convert.ToBase64String(new byte[12]), Convert.ToBase64String(new byte[128]));
+Check(Valid(envelope), "accepts current encrypted account-bound PIN envelope");
+Check(!Valid(null), "enabled lock requires a verifier");
+Check(!Valid(envelope with { V = 2 }), "rejects unknown version");
+Check(!Valid(envelope with { Alg = "plaintext" }), "rejects plaintext verifier algorithms");
+Check(!Valid(envelope with { Iterations = 239999 }), "rejects weakened KDF");
+Check(!Valid(envelope with { Iterations = 1000001 }), "bounds KDF work before another client imports it");
+Check(!Valid(envelope with { Salt = Convert.ToBase64String(new byte[15]) }), "requires 128-bit salt");
+Check(!Valid(envelope with { Iv = Convert.ToBase64String(new byte[11]) }), "requires GCM nonce length");
+Check(!Valid(envelope with { Ciphertext = "1234" }), "rejects short plaintext PIN");
+Check(!Valid(envelope with { Ciphertext = new string('A', 2049) }), "bounds imported ciphertext");
+Check(!Valid(envelope with { Salt = "!invalid!" }), "rejects malformed base64");
+Check(!Valid(envelope with { Iv = null! }), "rejects null envelope fields");
+using var db = new NivraDbContext(new DbContextOptionsBuilder<NivraDbContext>().UseNpgsql("Host=localhost;Database=unused;Username=unused;Password=unused").Options);
+var model = db.Model.FindEntityType(typeof(AccountAppLock))!;
+Check(model.FindPrimaryKey()!.Properties.Single().Name == nameof(AccountAppLock.UserId), "one policy per stable account ID");
+Check(model.FindProperty(nameof(AccountAppLock.Revision))!.IsConcurrencyToken, "concurrent device updates use database compare-and-swap");
+Check(model.GetForeignKeys().Single().DeleteBehavior == DeleteBehavior.Cascade, "account deletion also removes its policy");
+Check(model.GetProperties().All(x => x.Name is not "Pin" and not "Fingerprint" and not "Face"), "database stores no plaintext PIN or biometric template");
+var migrations = db.GetService<IMigrationsAssembly>();
+Check(migrations.Migrations.Keys.Any(x => x.EndsWith("_AccountAppLock")), "additive account-lock migration discoverable");
+Check(!db.Database.HasPendingModelChanges(), "migration snapshot matches current runtime model");
+var toResponse = typeof(EndpointExtensions).GetMethod("ToAppLockResponse", flags)!;
+AccountAppLockResponse Response(string user, AccountAppLock? value) => (AccountAppLockResponse)toResponse.Invoke(null, [user, value])!;
+Check(Response("alice", null) is { UserId: "alice", Revision: 0, Enabled: false, PinEnvelope: null }, "new accounts have no inherited lock or verifier");
+var settings = new AccountAppLock { UserId = "alice", Enabled = true, Revision = 8, PinEnvelopeJson = JsonSerializer.Serialize(envelope, new JsonSerializerOptions(JsonSerializerDefaults.Web)), UpdatedAt = DateTimeOffset.UtcNow };
+Check(Response("alice", settings).PinEnvelope == envelope, "trusted own-account clients receive the opaque verifier");
+settings.Enabled = false;
+Check(Response("alice", settings) is { Enabled: false, Revision: 8, PinEnvelope: null }, "disabled tombstone never returns former verifier");
+var sql = db.Devices.AsNoTracking().Where(x => x.Id == "device" && x.UserId == "alice" && x.IsTrusted && x.RevokedAt == null).ToQueryString();
+Check(sql.Contains("\"UserId\"") && sql.Contains("\"IsTrusted\"") && sql.Contains("\"RevokedAt\" IS NULL"), "provider translates trusted active same-account device gate");
+Console.WriteLine($"{passed} app lock checks passed.");

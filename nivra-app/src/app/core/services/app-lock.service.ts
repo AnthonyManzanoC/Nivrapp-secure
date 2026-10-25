@@ -1,14 +1,12 @@
 import { Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import {
-  AndroidBiometryStrength,
-  BiometricAuth,
   BiometryError,
   BiometryErrorType,
-  BiometryType,
-  CheckBiometryResult,
 } from '@aparajita/capacitor-biometric-auth';
 import { AuthService } from './auth.service';
+import { AccountLockPolicy, AccountLockPolicyService, validSharedPin } from './account-lock-policy.service';
+import { PlatformUnlockService } from './platform-unlock.service';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -40,6 +38,7 @@ interface AppLockSettings {
   createdAt: string;
   updatedAt: string;
   pin?: PinEnvelope;
+  policyRevision?: number;
 }
 
 interface PinVerifierPayload {
@@ -52,6 +51,8 @@ interface PinVerifierPayload {
 @Injectable({ providedIn: 'root' })
 export class AppLockService implements OnDestroy {
   private readonly auth = inject(AuthService);
+  private readonly accountPolicy = inject(AccountLockPolicyService);
+  private readonly platformUnlock = inject(PlatformUnlockService);
   private readonly settings = signal<AppLockSettings | null>(null);
   private bootLockAccountKey = '';
   private pinFailureCount = 0;
@@ -62,22 +63,41 @@ export class AppLockService implements OnDestroy {
   private pinRetryAt = 0;
   private pinRetryTimer?: ReturnType<typeof setTimeout>;
   private readonly accountAttempts = new Map<string, PinAttempts>();
+  private appliedPolicyRevision = -1;
+  private configuringAccount = '';
+  private capabilitySequence = 0;
+  private readonly pinSelected = signal(false);
 
   readonly isNativePlatform = signal(Boolean(Capacitor.isNativePlatform?.()));
-  readonly isLocked = signal(false);
+  readonly isLocked = signal(Boolean(this.accountPolicy.policy()?.enabled));
   readonly busy = signal(false);
   readonly unlockError = signal('');
   readonly statusMessage = signal('');
   readonly biometryLabel = signal('biometria');
   readonly lockCycle = signal(0);
   readonly pinRetrySeconds = signal(0);
-  readonly unlockMode = computed<AppLockMode>(() => this.settings()?.mode ?? (this.isNativePlatform() ? 'biometric' : 'pin'));
+  readonly canUseBiometric = signal(false);
+  readonly canEnrollPlatform = signal(false);
+  readonly hasPinFallback = computed(() => Boolean(this.settings()?.pin));
+  readonly unlockMode = computed<AppLockMode>(() => !this.pinSelected() && (this.canUseBiometric()
+    || !this.hasPinFallback() && this.settings()?.mode === 'biometric' && this.isNativePlatform()) ? 'biometric' : 'pin');
   readonly isEnabled = computed(() => Boolean(this.auth.isAuthenticated() && this.settings()?.enabled));
+  readonly policyPending = this.accountPolicy.unresolved;
+  readonly isContentLocked = computed(() => this.isLocked() || this.policyPending());
+  readonly isShared = computed(() => Boolean(this.settings()?.policyRevision));
+  readonly needsSharedPinSetup = computed(() => this.isEnabled() && !this.isShared());
+  readonly policySyncing = this.accountPolicy.syncing;
+  readonly policySyncError = this.accountPolicy.syncError;
+  retryPolicySync(): void { void this.accountPolicy.refresh(true).catch(() => undefined); }
 
   constructor() {
     effect(() => {
       const accountKey = this.currentAccountKey();
-      untracked(() => this.loadForAccount(accountKey));
+      const policy = this.accountPolicy.policy();
+      untracked(() => {
+        this.loadForAccount(accountKey);
+        if (policy?.userId === accountKey && this.configuringAccount !== accountKey) this.applySharedPolicy(policy);
+      });
     });
   }
 
@@ -86,6 +106,7 @@ export class AppLockService implements OnDestroy {
       return;
     }
     this.invalidateVerification();
+    this.pinSelected.set(false);
     this.unlockError.set('');
     this.statusMessage.set(this.unlockMode() === 'biometric'
       ? 'Nivra esta bloqueado. Toca para desbloquear.'
@@ -107,37 +128,24 @@ export class AppLockService implements OnDestroy {
 
   ngOnDestroy(): void {
     this.invalidateVerification();
+    this.platformUnlock.cancel();
+    this.capabilitySequence++;
     if (this.pinRetryTimer) clearTimeout(this.pinRetryTimer);
   }
 
-  async enableMobileBiometrics(): Promise<void> {
-    const accountKey = this.requireAccountKey();
-    const version = this.stateVersion;
-    if (!this.isNativePlatform()) {
-      throw new Error('La biometria solo se activa dentro de la APK movil.');
-    }
-
-    const info = await this.checkBiometry();
-    if (!info.isAvailable) {
-      throw new Error(info.reason || 'Este telefono no tiene huella o reconocimiento facial configurado.');
-    }
-
-    this.requireUnchangedAccount(accountKey, version);
-    await this.authenticateBiometrics('Confirma tu identidad para activar Modo Seguro.');
-    this.requireUnchangedAccount(accountKey, version);
-    this.saveSettings(accountKey, {
-      enabled: true,
-      mode: 'biometric',
-      createdAt: this.settings()?.createdAt ?? new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    this.bootLockAccountKey = accountKey;
-    this.unlock();
+  async enableMobileBiometrics(pin?: string): Promise<void> {
+    if (!pin) throw new Error('Crea y confirma tu PIN para proteger también tus otros dispositivos.');
+    await this.enableSharedPin(pin);
   }
 
   async enableWebPin(pin: string): Promise<void> {
+    await this.enableSharedPin(pin);
+  }
+
+  async enableSharedPin(pin: string): Promise<void> {
     const accountKey = this.requireAccountKey();
     const version = this.stateVersion;
+    if (this.isLocked()) throw new Error('Desbloquea Nivra antes de cambiar Modo Seguro.');
     const normalized = this.normalizePin(pin);
     if (!this.isValidPin(normalized)) {
       throw new Error('El PIN debe tener exactamente 4 digitos.');
@@ -145,25 +153,62 @@ export class AppLockService implements OnDestroy {
 
     const envelope = await this.createPinEnvelope(normalized, accountKey);
     this.requireUnchangedAccount(accountKey, version);
-    this.saveSettings(accountKey, {
-      enabled: true,
-      mode: 'pin',
-      pin: envelope,
-      createdAt: this.settings()?.createdAt ?? new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    });
-    this.bootLockAccountKey = accountKey;
-    this.unlock();
+    await this.refreshBiometryAvailability();
+    this.requireUnchangedAccount(accountKey, version);
+    if (this.isNativePlatform() && this.canUseBiometric()) {
+      await this.authenticateBiometrics('Confirma tu identidad para activar Modo Seguro.');
+      this.requireUnchangedAccount(accountKey, version);
+    }
+    this.configuringAccount = accountKey;
+    try {
+      const policy = await this.accountPolicy.save(true, envelope);
+      if (this.currentAccountKey() !== accountKey) throw new Error('La cuenta cambió.');
+      this.applySharedPolicy(policy, false);
+      this.bootLockAccountKey = accountKey;
+      if (this.stateVersion === version) this.unlock();
+    } finally { this.finishConfiguration(); }
   }
 
-  disable(): void {
-    const accountKey = this.currentAccountKey();
-    if (accountKey) {
-      this.removeSettings(accountKey);
-    }
-    this.settings.set(null);
-    this.bootLockAccountKey = accountKey;
-    this.unlock();
+  async disable(): Promise<void> {
+    const accountKey = this.requireAccountKey();
+    if (this.isLocked()) throw new Error('Desbloquea Nivra antes de cambiar Modo Seguro.');
+    this.configuringAccount = accountKey;
+    try {
+      const policy = await this.accountPolicy.save(false, null);
+      if (this.currentAccountKey() !== accountKey) throw new Error('La cuenta cambió.');
+      this.applySharedPolicy(policy, false);
+    } finally { this.finishConfiguration(); }
+  }
+
+  usePin(): void {
+    if (!this.hasPinFallback() || this.busy()) return;
+    this.invalidateVerification(); this.pinSelected.set(true); this.unlockError.set('');
+  }
+
+  useBiometrics(): void {
+    if (!this.canUseBiometric() || this.busy()) return;
+    this.invalidateVerification(); this.pinSelected.set(false); this.unlockError.set('');
+  }
+
+  async enrollPlatformUnlock(pin: string): Promise<void> {
+    const accountKey = this.requireAccountKey(), version = this.stateVersion;
+    if (this.isLocked() || !this.isShared()) throw new Error('Activa el PIN compartido y desbloquea Nivra primero.');
+    this.refreshPinRetry();
+    if (this.busy() || this.pinRetrySeconds() > 0) throw new Error('Espera antes de volver a intentar.');
+    const envelope = this.settings()?.pin;
+    if (!envelope || !this.isValidPin(this.normalizePin(pin))) throw new Error('Introduce tu PIN de Nivra.');
+    const operation = this.beginVerification();
+    try {
+      const valid = await this.verifyPinEnvelope(this.normalizePin(pin), envelope, accountKey);
+      this.requireUnchangedAccount(accountKey, version);
+      if (this.activeOperation !== operation) throw new Error('La verificación cambió.');
+      if (!valid) { this.recordPinFailure(accountKey); throw new Error('PIN incorrecto.'); }
+      this.pinFailureCount = 0; this.pinRetryAt = 0; this.persistPinAttempts(accountKey); this.refreshPinRetry();
+      const enrolled = await this.platformUnlock.enroll(accountKey, this.auth.session()?.user.displayName || accountKey);
+      this.requireUnchangedAccount(accountKey, version);
+      if (!enrolled) throw new Error('No se pudo activar el desbloqueo del equipo. Tu PIN de Nivra sigue disponible.');
+      await this.refreshBiometryAvailability();
+    } finally { this.finishVerification(operation); }
   }
 
   async unlockWithBiometrics(): Promise<boolean> {
@@ -171,7 +216,7 @@ export class AppLockService implements OnDestroy {
       return true;
     }
     if (this.busy()) return false;
-    if (!this.isNativePlatform() || this.unlockMode() !== 'biometric') {
+    if (this.unlockMode() !== 'biometric') {
       this.unlockError.set('Esta sesion usa PIN, no biometria.');
       return false;
     }
@@ -220,13 +265,7 @@ export class AppLockService implements OnDestroy {
       const valid = await this.verifyPinEnvelope(normalized, pinEnvelope, accountKey);
       if (!this.isCurrentVerification(accountKey, version, operation)) return false;
       if (!valid) {
-        this.pinFailureCount = Math.min(1000, this.pinFailureCount + 1);
-        if (this.pinFailureCount >= 5) {
-          this.pinRetryAt = Date.now() + Math.min(MAX_PIN_RETRY_MS,
-            30000 * 2 ** Math.floor((this.pinFailureCount - 5) / 5));
-        }
-        this.persistPinAttempts(accountKey);
-        this.refreshPinRetry();
+        this.recordPinFailure(accountKey);
         this.statusMessage.set('Nivra esta bloqueado. Ingresa tu PIN.');
         this.unlockError.set(this.pinFailureCount >= 3 ? 'PIN incorrecto. Revisa y vuelve a intentar.' : 'PIN incorrecto.');
         return false;
@@ -239,10 +278,19 @@ export class AppLockService implements OnDestroy {
   }
 
   async refreshBiometryAvailability(): Promise<void> {
-    if (!this.isNativePlatform() || this.unlockMode() !== 'biometric') {
-      return;
+    const accountKey = this.currentAccountKey(), sequence = ++this.capabilitySequence;
+    if (!accountKey) return;
+    try {
+      const info = await this.platformUnlock.availability(accountKey);
+      if (sequence !== this.capabilitySequence || accountKey !== this.currentAccountKey()) return;
+      this.canUseBiometric.set(info.available && info.enrolled);
+      this.canEnrollPlatform.set(info.available && !info.enrolled && !this.isNativePlatform());
+      this.biometryLabel.set(info.label);
+    } catch {
+      if (sequence === this.capabilitySequence && accountKey === this.currentAccountKey()) {
+        this.canUseBiometric.set(false); this.canEnrollPlatform.set(false);
+      }
     }
-    await this.checkBiometry().catch(() => undefined);
   }
 
   normalizePin(value: string | number | null | undefined): string {
@@ -253,33 +301,22 @@ export class AppLockService implements OnDestroy {
     return /^\d{4}$/.test(pin);
   }
 
-  private async checkBiometry(): Promise<CheckBiometryResult> {
-    try {
-      const info = await BiometricAuth.checkBiometry();
-      this.biometryLabel.set(this.describeBiometry(info));
-      return info;
-    } catch (error) {
-      throw new Error(this.biometricErrorMessage(error, 'La biometria nativa no esta disponible en esta APK.'));
-    }
-  }
-
-  private authenticateBiometrics(reason: string): Promise<void> {
-    return BiometricAuth.authenticate({
-      reason,
-      cancelTitle: 'Cancelar',
-      iosFallbackTitle: 'Usar codigo',
-      allowDeviceCredential: true,
-      androidTitle: 'Nivra bloqueado',
-      androidSubtitle: reason,
-      androidConfirmationRequired: false,
-      androidBiometryStrength: AndroidBiometryStrength.weak,
-    });
+  private async authenticateBiometrics(reason: string): Promise<void> {
+    const legacy = this.isNativePlatform() && !this.settings()?.pin && this.settings()?.mode === 'biometric';
+    const verified = legacy
+      ? await this.platformUnlock.verifyLegacyDeviceCredential(this.requireAccountKey(), reason)
+      : await this.platformUnlock.verify(this.requireAccountKey(), reason);
+    if (!verified) throw new Error('Desbloqueo cancelado. Puedes usar tu PIN de Nivra.');
   }
 
   private loadForAccount(accountKey: string): void {
     if (accountKey !== this.loadedAccountKey) {
       this.invalidateVerification();
       this.loadedAccountKey = accountKey;
+      this.appliedPolicyRevision = -1;
+      this.capabilitySequence++; this.platformUnlock.cancel();
+      this.canUseBiometric.set(false); this.canEnrollPlatform.set(false); this.pinSelected.set(false);
+      void this.refreshBiometryAvailability();
       const attempts = this.readPinAttempts(accountKey);
       this.pinFailureCount = attempts.failures;
       this.pinRetryAt = attempts.retryAt;
@@ -310,6 +347,32 @@ export class AppLockService implements OnDestroy {
   private saveSettings(accountKey: string, settings: AppLockSettings): void {
     localStorage.setItem(this.storageKey(accountKey), JSON.stringify(settings));
     this.settings.set(settings);
+  }
+
+  private applySharedPolicy(policy: AccountLockPolicy, lockOnChange = true): void {
+    const accountKey = this.currentAccountKey();
+    if (!accountKey || policy.userId !== accountKey || policy.revision <= this.appliedPolicyRevision || policy.revision === 0) return;
+    if (policy.enabled && !validSharedPin(policy.pinEnvelope)) return;
+    this.appliedPolicyRevision = policy.revision;
+    if (!policy.enabled) {
+      this.removeSettings(accountKey); this.settings.set(null); this.bootLockAccountKey = accountKey; this.unlock(); return;
+    }
+    this.saveSettings(accountKey, {
+      enabled: true, mode: 'pin', pin: policy.pinEnvelope!, policyRevision: policy.revision,
+      createdAt: this.settings()?.createdAt ?? policy.updatedAt ?? new Date().toISOString(),
+      updatedAt: policy.updatedAt ?? new Date().toISOString(),
+    });
+    if (lockOnChange) {
+      // A remote PIN replacement also invalidates an in-flight old PIN/biometric
+      // result. Updating an already locked screen must not release it.
+      this.invalidateVerification(); this.isLocked.set(false); this.bootLockAccountKey = accountKey; this.lock();
+    }
+  }
+
+  private finishConfiguration(): void {
+    this.configuringAccount = '';
+    const policy = this.accountPolicy.policy();
+    if (policy?.userId === this.currentAccountKey()) this.applySharedPolicy(policy);
   }
 
   private removeSettings(accountKey: string): void {
@@ -399,6 +462,13 @@ export class AppLockService implements OnDestroy {
     }
   }
 
+  private recordPinFailure(accountKey: string): void {
+    this.pinFailureCount = Math.min(1000, this.pinFailureCount + 1);
+    if (this.pinFailureCount >= 5) this.pinRetryAt = Date.now() + Math.min(MAX_PIN_RETRY_MS,
+      30000 * 2 ** Math.floor((this.pinFailureCount - 5) / 5));
+    this.persistPinAttempts(accountKey); this.refreshPinRetry();
+  }
+
   private refreshPinRetry(): void {
     if (this.pinRetryTimer) clearTimeout(this.pinRetryTimer);
     this.pinRetryTimer = undefined;
@@ -438,7 +508,7 @@ export class AppLockService implements OnDestroy {
   }
 
   private async verifyPinEnvelope(pin: string, envelope: PinEnvelope, accountKey: string): Promise<boolean> {
-    if (!this.isValidPin(pin) || envelope.v !== 1 || envelope.alg !== 'PBKDF2-SHA256+A256GCM') {
+    if (!this.isValidPin(pin) || !validSharedPin(envelope)) {
       return false;
     }
 
@@ -471,18 +541,6 @@ export class AppLockService implements OnDestroy {
       false,
       ['encrypt', 'decrypt'],
     );
-  }
-
-  private describeBiometry(info: CheckBiometryResult): string {
-    const types = [info.biometryType, ...info.biometryTypes];
-    const hasFace = types.some((type) => type === BiometryType.faceId || type === BiometryType.faceAuthentication);
-    const hasFinger = types.some((type) => type === BiometryType.touchId || type === BiometryType.fingerprintAuthentication);
-    const hasIris = types.some((type) => type === BiometryType.irisAuthentication);
-    if (hasFace && hasFinger) return 'huella o rostro';
-    if (hasFace) return 'reconocimiento facial';
-    if (hasFinger) return 'huella digital';
-    if (hasIris) return 'iris';
-    return 'biometria';
   }
 
   private biometricErrorMessage(error: unknown, fallback: string): string {

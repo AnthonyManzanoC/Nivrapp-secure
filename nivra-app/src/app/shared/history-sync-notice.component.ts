@@ -15,10 +15,10 @@ import { FormsModule } from '@angular/forms';
       <div class="history-copy">
         <strong>{{ titleKey() | translate:titleFallback() }}</strong>
         <p>{{ descriptionKey() | translate:descriptionFallback() }}</p>
-        @if (!identityError && history.state() !== 'syncing' && history.preferredSource(); as source) {
+        @if (!identityError && history.state() !== 'syncing' && history.recoveryStatus?.() !== 'retryable' && history.preferredSource(); as source) {
           <p class="history-source-hint">{{ 'HISTORY_DEVICE.SOURCE_SUGGESTION' | translate:'Prueba primero en:' }} {{ source.deviceName }}. {{ 'HISTORY_DEVICE.SOURCE_HINT' | translate:'Si conserva tus chats, compara el código y aprueba allí. También puedes usar otro equipo que aún tenga el historial.' }}</p>
         }
-        @if (history.targetFingerprint() && history.state() !== 'syncing' && !identityError) {
+        @if (history.targetFingerprint() && history.state() !== 'syncing' && history.recoveryStatus?.() !== 'retryable' && !identityError) {
           <div class="history-code"><span>{{ 'HISTORY_DEVICE.CODE_LABEL' | translate:'Código de vinculación' }}</span><code dir="ltr">{{ history.targetFingerprint() }}</code></div>
         }
       </div>
@@ -73,17 +73,23 @@ export class HistorySyncNoticeComponent {
   titleKey(): string {
     if (this.needsRelink) return 'HISTORY_DEVICE.RELINK_REQUIRED';
     if (this.identityError) return 'CHATS.HISTORY_UNAVAILABLE';
+    if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'HISTORY_DEVICE.PARTIAL_TITLE';
+    if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'HISTORY_DEVICE.REFRESH_FAILED_TITLE';
     return this.history.state() === 'syncing' ? 'HISTORY_DEVICE.SYNCING'
       : this.history.state() === 'unavailable' ? 'HISTORY_DEVICE.UNAVAILABLE_TITLE' : 'HISTORY_DEVICE.PENDING';
   }
   titleFallback(): string {
     if (this.needsRelink) return 'Vuelve a vincular este equipo';
     if (this.identityError) return 'Historial temporalmente no disponible';
+    if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'Parte del historial sigue protegida';
+    if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'Falta comprobar algunos mensajes';
     return this.history.state() === 'syncing' ? 'Sincronizando tu historial'
       : this.history.state() === 'unavailable' ? 'El historial sigue pendiente' : 'Historial cifrado pendiente';
   }
   descriptionKey(): string {
     if (this.identityError) return this.needsRelink ? 'HISTORY_DEVICE.RELINK_COPY' : 'HISTORY_DEVICE.IDENTITY_ERROR_COPY';
+    if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'HISTORY_DEVICE.PARTIAL_COPY';
+    if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'HISTORY_DEVICE.REFRESH_FAILED_COPY';
     return this.history.state() === 'syncing' ? 'HISTORY_DEVICE.SYNCING_COPY'
       : this.history.state() === 'unavailable' ? 'HISTORY_DEVICE.UNAVAILABLE_COPY' : 'HISTORY_DEVICE.WAITING_COPY';
   }
@@ -91,6 +97,8 @@ export class HistorySyncNoticeComponent {
     if (this.identityError) return this.needsRelink
       ? 'Vuelve a vincular este equipo desde tu teléfono para recuperar los chats. El historial guardado se conserva.'
       : 'No se pudo abrir la identidad de este equipo. Comprueba la conexión, desbloquea el dispositivo y vuelve a intentar.';
+    if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'Las llaves aprobadas ya están guardadas. Algunos mensajes necesitan otras llaves: prueba un equipo que todavía pueda leerlos y compara el código.';
+    if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'No pudimos comprobar todos los mensajes. Reintenta con las llaves guardadas en este equipo; no se ha borrado tu historial.';
     return this.history.state() === 'syncing' ? 'Estamos comprobando las llaves y preparando tus mensajes disponibles.'
       : this.history.state() === 'unavailable' ? 'No pudimos completar la recuperación. Revisa la conexión y autoriza el código desde tu otro dispositivo.'
         : 'Abre Nivra en un equipo que conserve tus chats y autoriza este código para recuperar tu historial.';

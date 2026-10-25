@@ -52,6 +52,7 @@ describe('chat sends stay with their original account and device', () => {
     service.messagesByConversation = signal({});
     service.conversations = signal([conversation]);
     service.pendingReactionsByMessageId = new Map();
+    service.pendingHistoryEnvelopes = new Map();
     service.expiryTimers = new Map();
     service.history = { putMessage: jasmine.createSpy('putMessage').and.resolveTo() };
     service.mediaOptimizer = {

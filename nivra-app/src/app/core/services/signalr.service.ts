@@ -5,12 +5,14 @@ import { ApiEndpointPool } from './api-endpoint-pool.service';
 import { PresenceResponse, RealtimeEvent, RecipientCipherRequest } from '../models/nivra.models';
 import { AuthService } from './auth.service';
 import { NivraApiService } from './nivra-api.service';
+import { NetworkPolicyService } from './network-policy.service';
 
 @Injectable({ providedIn: 'root' })
 export class SignalrService implements OnDestroy {
   private readonly auth = inject(AuthService);
   private readonly api = inject(NivraApiService);
   private readonly pool = inject(ApiEndpointPool);
+  private readonly network = inject(NetworkPolicyService);
   private readonly endpointChanges = this.pool.changes$.subscribe(() => {
     void this.reconnectForEndpointChange();
   });
@@ -18,23 +20,59 @@ export class SignalrService implements OnDestroy {
   private reconnectTimer: number | null = null;
   private startPromise: Promise<void> | null = null;
   private connectionGeneration = 0;
+  private startScope = '';
+  private connectionScope = '';
+  private reconnectScope = '';
+  private reconnectAttempt = 0;
+  private wakeTimer: number | null = null;
+  private lastWakeAt = 0;
+  private readonly wake = () => this.scheduleNetworkWake();
+  private readonly visible = () => { if (document.visibilityState !== 'hidden') this.scheduleNetworkWake(); };
 
   readonly connectionState = signal<HubConnectionState>(HubConnectionState.Disconnected);
   readonly connected = computed(() => this.connectionState() === HubConnectionState.Connected);
   readonly events$ = new Subject<RealtimeEvent>();
 
+  constructor() {
+    window.addEventListener('online', this.wake);
+    document.addEventListener('visibilitychange', this.visible);
+  }
+
   ngOnDestroy(): void {
     this.endpointChanges.unsubscribe();
+    window.removeEventListener('online', this.wake);
+    document.removeEventListener('visibilitychange', this.visible);
+    if (this.wakeTimer !== null) window.clearTimeout(this.wakeTimer);
     void this.disconnect();
     this.events$.complete();
   }
 
-  async connect(): Promise<void> {
+  connect(): Promise<void> {
+    const session = this.auth.session();
+    const scope = session ? `${session.user.id}:${session.device.id}` : '';
+    if (this.connection?.state === HubConnectionState.Connected && this.connectionScope === scope) return Promise.resolve();
+    if (this.startPromise && this.startScope === scope) return this.startPromise;
+    if (this.reconnectTimer !== null) {
+      if (this.reconnectScope === scope) return Promise.resolve();
+      this.clearReconnectTimer();
+    }
+    this.startScope = scope;
+    const generation = this.connectionGeneration;
+    const operation = this.connectCore(generation, session?.user.id, session?.device.id).finally(() => {
+      if (this.startPromise === operation) this.startPromise = null;
+    });
+    this.startPromise = operation;
+    return operation;
+  }
+
+  private async connectCore(generation: number, userId?: string, deviceId?: string): Promise<void> {
     if (!await this.auth.ensureFreshSession()) {
       return;
     }
     const session = this.auth.session();
-    await this.pool.prepare();
+    if (generation !== this.connectionGeneration || (userId && (session?.user.id !== userId || session?.device.id !== deviceId))) return;
+    await this.pool.prepareForRequest();
+    if (generation !== this.connectionGeneration) return;
     if (!session || this.auth.session()?.user.id !== session.user.id
       || this.auth.session()?.device.id !== session.device.id) return;
     const token = this.auth.accessToken();
@@ -44,18 +82,12 @@ export class SignalrService implements OnDestroy {
     this.clearReconnectTimer();
     if (
       this.connection &&
+      this.connectionScope === `${session.user.id}:${session.device.id}` &&
       [HubConnectionState.Connected, HubConnectionState.Connecting, HubConnectionState.Reconnecting].includes(this.connection.state)
     ) {
       return;
     }
-    if (this.startPromise) {
-      return this.startPromise;
-    }
-
-    this.startPromise = this.openConnection(false).finally(() => {
-      this.startPromise = null;
-    });
-    return this.startPromise;
+    await this.openConnection(false);
   }
 
   async disconnect(options: { clearReconnect?: boolean } = {}): Promise<void> {
@@ -65,6 +97,7 @@ export class SignalrService implements OnDestroy {
     }
     const connection = this.connection;
     this.connection = null;
+    this.connectionScope = '';
     if (connection) {
       this.unbind(connection);
       await connection.stop().catch(() => undefined);
@@ -177,20 +210,28 @@ export class SignalrService implements OnDestroy {
       .withUrl(endpoint, {
         accessTokenFactory: () => sameSession() ? this.auth.accessToken() : '',
         withCredentials: false,
-        timeout: 15000,
+        timeout: this.network.readTimeoutMs(),
       })
-      .withAutomaticReconnect([0, 2000, 5000, 10000, 30000])
+      .withAutomaticReconnect({ nextRetryDelayInMilliseconds: context => {
+        if (context.previousRetryCount >= 5 || !this.network.onlineHint() || !sameSession()) return null;
+        return this.network.retryDelayMs(context.previousRetryCount, 1000, 60_000);
+      } })
       .configureLogging(LogLevel.None)
       .build();
 
+    connection.serverTimeoutInMilliseconds = this.network.serverTimeoutMs();
+
     this.bind(connection);
     this.connection = connection;
+    this.connectionScope = `${session.user.id}:${session.device.id}`;
     this.connectionState.set(connection.state);
 
     try {
       await connection.start();
       if (this.connection !== connection || !sameSession()) { await connection.stop().catch(() => undefined); return; }
       this.connectionState.set(connection.state);
+      this.reconnectAttempt = 0;
+      this.pool.reportSuccess(endpoint);
       this.events$.next({ type: 'connected', payload: null });
     } catch (error) {
       if (this.connection !== connection || !sameSession()) return;
@@ -204,12 +245,13 @@ export class SignalrService implements OnDestroy {
         await this.openConnection(true);
         return;
       }
-      this.scheduleReconnect(status === 429 ? 30000 : 2500);
+      this.scheduleReconnect(status === 429 ? 30000 : undefined);
     }
   }
 
   private async ensureConnected(): Promise<void> {
-    if (this.connection?.state === HubConnectionState.Connected) {
+    const session = this.auth.session();
+    if (this.connection?.state === HubConnectionState.Connected && session && this.connectionScope === `${session.user.id}:${session.device.id}`) {
       return;
     }
     await this.connect();
@@ -263,6 +305,7 @@ export class SignalrService implements OnDestroy {
       'FORCE_WIPE',
       'device.revoked',
       'device.listChanged',
+      'account.app-lock.updated',
       'history.requested',
       'history.available',
     ].forEach((eventName) => connection.on(eventName, forward(eventName)));
@@ -279,6 +322,7 @@ export class SignalrService implements OnDestroy {
     connection.onreconnected(() => {
       if (!current()) return;
       this.clearReconnectTimer();
+      this.reconnectAttempt = 0;
       this.connectionState.set(HubConnectionState.Connected);
       this.events$.next({ type: 'reconnected', payload: null });
     });
@@ -334,19 +378,38 @@ export class SignalrService implements OnDestroy {
       'FORCE_WIPE',
       'device.revoked',
       'device.listChanged',
+      'account.app-lock.updated',
       'history.requested',
       'history.available',
     ].forEach((eventName) => connection.off(eventName));
   }
 
-  private scheduleReconnect(delayMs = 2500): void {
-    if (this.reconnectTimer !== null || !this.auth.accessToken()) {
+  private scheduleReconnect(delayMs?: number): void {
+    if (this.reconnectTimer !== null || !this.auth.accessToken() || !this.network.onlineHint()) {
       return;
     }
+    const session = this.auth.session();
+    this.reconnectScope = session ? `${session.user.id}:${session.device.id}` : '';
+    const scope = this.reconnectScope;
+    const delay = delayMs === 0 ? 0 : Math.max(delayMs ?? 0, this.network.retryDelayMs(this.reconnectAttempt++));
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
+      const current = this.auth.session();
+      if (!current || `${current.user.id}:${current.device.id}` !== scope) return;
       void this.connect();
-    }, delayMs);
+    }, delay);
+  }
+
+  private scheduleNetworkWake(): void {
+    if (this.wakeTimer !== null || !this.auth.accessToken() || !this.network.onlineHint()) return;
+    if (Date.now() - this.lastWakeAt < 2000) return;
+    this.wakeTimer = window.setTimeout(() => {
+      this.wakeTimer = null;
+      this.lastWakeAt = Date.now();
+      if (!this.auth.accessToken() || !this.network.onlineHint()) return;
+      this.clearReconnectTimer();
+      void this.connect();
+    }, 400);
   }
 
   private clearReconnectTimer(): void {

@@ -59,8 +59,12 @@ p { max-width: 31ch; margin: 0; color: var(--lock-muted); font-size: 13px; line-
 .biometric-unlock > ion-icon { flex-shrink: 0; font-size: 27px; }
 .biometric-unlock .unlock-arrow { margin-inline-start: auto; font-size: 20px; }
 .biometric-unlock > ion-spinner { width: 24px; height: 24px; color: #234d34; }
+.unlock-label { display: grid; gap: 3px; min-width: 0; text-align: start; }
+.unlock-label small { font-size: 10px; font-weight: 450; line-height: 1.4; }
 .biometric-unlock:active { transform: scale(.98); }
 .biometric-unlock:disabled { opacity: .65; cursor: wait; }
+.alternate-unlock { min-height: 44px; max-width: 100%; padding: 9px 16px; border: 1px solid var(--lock-line); border-radius: 99px; background: transparent; color: var(--lock-green); font: inherit; font-size: 12px; font-weight: 600; line-height: 1.5; cursor: pointer; touch-action: manipulation; }
+.alternate-unlock:disabled { opacity: .4; cursor: wait; }
 .lock-hint { max-width: 31ch; margin-inline: auto; color: var(--lock-muted); font-size: 12px; line-height: 1.6; }
 .lock-feedback { min-height: 36px; max-width: 310px; color: var(--lock-muted); font-size: 11px; line-height: 1.6; }
 .status { display: flex; align-items: center; justify-content: center; gap: 7px; }
@@ -76,7 +80,7 @@ button:focus-visible { outline: 3px solid var(--lock-green); outline-offset: 4px
 :host-context(.nivra-light-theme) .pin-dots > span.filled { border-color: #35734f; background: #35734f; }
 :host-context(.nivra-light-theme) .brand-tile { box-shadow: 0 14px 28px -14px #214d3b60; }
 :host-context([dir='rtl']) .unlock-arrow { transform: rotate(180deg); }
-@media (hover: hover) { .key:hover:not(:disabled) { background: var(--lock-soft); border-color: var(--lock-green); } .biometric-unlock:hover:not(:disabled) { background: #b1dda4; } }
+@media (hover: hover) { .key:hover:not(:disabled) { background: var(--lock-soft); border-color: var(--lock-green); } .biometric-unlock:hover:not(:disabled) { background: #b1dda4; } .alternate-unlock:hover:not(:disabled) { background: var(--lock-soft); border-color: var(--lock-green); } }
 @media (min-width: 700px) { .app-lock-screen { padding: max(30px, env(safe-area-inset-top)) max(40px, env(safe-area-inset-right)) max(24px, env(safe-area-inset-bottom)) max(40px, env(safe-area-inset-left)); } .lock-shell { width: min(100%, 440px); padding: 24px 35px 10px; } .biometric-shell { gap: 30px; } }
 @media (max-height: 850px) { .lock-shell { gap: 17px; padding-top: 18px; } .brand-orbit { width: 96px; height: 96px; } .orbit-ring { inset: -10px; } .brand-tile { width: 61px; height: 61px; border-radius: 17px; } .orbit-seal { width: 33px; height: 33px; } .lock-copy { gap: 10px; } h1 { font-size: 28px; } .pin-entry { gap: 17px; } .keypad { gap: 8px 17px; } .lock-feedback { min-height: 31px; } .lock-footer { margin-top: 10px; } }
 @media (max-height: 730px) { .app-lock-screen { padding-top: max(18px, env(safe-area-inset-top)); padding-bottom: max(14px, env(safe-area-inset-bottom)); } .lock-shell { gap: 12px; padding-block: 16px 8px; } .brand-orbit { width: 72px; height: 72px; } .brand-tile { width: 48px; height: 48px; border-radius: 13px; } .orbit-seal { width: 28px; height: 28px; border-width: 3px; } .orbit-seal ion-icon { font-size: 12px; } .lock-copy { gap: 8px; } .lock-chip { min-height: 23px; } h1 { font-size: 26px; } .pin-entry { gap: 12px; } .pin-dots { height: 14px; } .keypad { row-gap: 6px; } .key { height: 44px; border-radius: 15px; } }

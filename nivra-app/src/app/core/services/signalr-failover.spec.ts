@@ -6,15 +6,16 @@ import { ApiEndpointPool } from './api-endpoint-pool.service';
 import { AuthService } from './auth.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
+import { NETWORK_POLICY_RUNTIME } from './network-policy.service';
 
 describe('realtime failover and authenticated event scope', () => {
-  let service: SignalrService, pool: { prepare: jasmine.Spy; recover: jasmine.Spy; changes$: Subject<string> }, auth: any;
+  let service: SignalrService, pool: { prepareForRequest: jasmine.Spy; reportSuccess: jasmine.Spy; recover: jasmine.Spy; changes$: Subject<string> }, auth: any;
   let handlers: Map<string, (payload: unknown) => void>, session: ReturnType<typeof signal<any>>, connection: any;
   let selected: string, build: jasmine.Spy;
   beforeEach(() => {
     selected = 'https://primary.test';
     session = signal<any>({ user: { id: 'alice' }, device: { id: 'phone' } }); handlers = new Map();
-    pool = { prepare: jasmine.createSpy('prepare').and.resolveTo(), recover: jasmine.createSpy('recover').and.resolveTo(false), changes$: new Subject() };
+    pool = { prepareForRequest: jasmine.createSpy('prepare').and.resolveTo(), reportSuccess: jasmine.createSpy('success'), recover: jasmine.createSpy('recover').and.resolveTo(false), changes$: new Subject() };
     auth = { session, accessToken: () => session() ? 'synthetic-token' : '', ensureFreshSession: async () => Boolean(session()), refreshToken: jasmine.createSpy('refresh').and.resolveTo(false) };
     connection = { state: HubConnectionState.Disconnected,
       on: (name: string, handler: (value: unknown) => void) => handlers.set(name, handler), off: (name: string) => handlers.delete(name),
@@ -25,6 +26,7 @@ describe('realtime failover and authenticated event scope', () => {
     TestBed.configureTestingModule({ providers: [
       { provide: AuthService, useValue: auth }, { provide: ApiEndpointPool, useValue: pool },
       { provide: NivraApiService, useValue: { url: (path: string) => selected + path } },
+      { provide: NETWORK_POLICY_RUNTIME, useValue: { hints: () => ({}), onlineHint: () => true, now: () => Date.now(), random: () => .5 } },
     ] });
     service = TestBed.inject(SignalrService);
   });
@@ -88,15 +90,15 @@ describe('realtime failover and authenticated event scope', () => {
     expect(listener).toHaveBeenCalledOnceWith({ type: 'connected', payload: null });
   }));
   it('selects the prepared backup before opening its first hub', async () => {
-    pool.prepare.and.callFake(async () => { selected = 'https://backup.test'; });
+    pool.prepareForRequest.and.callFake(async () => { selected = 'https://backup.test'; });
     const urls = spyOn(HubConnectionBuilder.prototype, 'withUrl').and.callThrough();
     await service.connect();
-    expect(pool.prepare).toHaveBeenCalledTimes(1);
+    expect(pool.prepareForRequest).toHaveBeenCalledTimes(1);
     expect(urls).toHaveBeenCalledOnceWith('https://backup.test/hubs/realtime', jasmine.any(Object));
-    expect(urls.calls.first().args[1]).toEqual(jasmine.objectContaining({ timeout: 15000, withCredentials: false }));
+    expect(urls.calls.first().args[1]).toEqual(jasmine.objectContaining({ timeout: 30000, withCredentials: false }));
   });
   it('does not open a hub for an owner that changed during endpoint preparation', async () => {
-    pool.prepare.and.callFake(async () => { session.set({ user: { id: 'bob' }, device: { id: 'other' } }); });
+    pool.prepareForRequest.and.callFake(async () => { session.set({ user: { id: 'bob' }, device: { id: 'other' } }); });
     await service.connect();
     expect(build).not.toHaveBeenCalled();
   });
@@ -128,5 +130,56 @@ describe('realtime failover and authenticated event scope', () => {
     expect(service.connected()).toBeTrue();
     finishStop(); await stopping;
     expect(service.connected()).toBeTrue();
+  });
+  it('coalesces concurrent starts before authentication or endpoint preparation finishes', async () => {
+    let finishAuth!: (value: boolean) => void;
+    auth.ensureFreshSession = jasmine.createSpy('fresh').and.returnValue(new Promise<boolean>(resolve => finishAuth = resolve));
+    const starts = Array.from({ length: 40 }, () => service.connect());
+    expect(starts.every(value => value === starts[0])).toBeTrue();
+    expect(auth.ensureFreshSession).toHaveBeenCalledTimes(1);
+    finishAuth(true); await Promise.all(starts);
+    expect(connection.start).toHaveBeenCalledTimes(1);
+    expect(pool.prepareForRequest).toHaveBeenCalledTimes(1);
+  });
+  it('cancels an initial authentication wait when explicitly disconnected', async () => {
+    let finishAuth!: (value: boolean) => void;
+    auth.ensureFreshSession = jasmine.createSpy().and.returnValue(new Promise<boolean>(resolve => finishAuth = resolve));
+    const pending = service.connect(); await service.disconnect();
+    finishAuth(true); await pending;
+    expect(build).not.toHaveBeenCalled();
+  });
+  it('spaces repeated failures and ignores incidental connect calls during backoff', fakeAsync(() => {
+    connection.start.and.rejectWith({ statusCode: 503 });
+    void service.connect(); flushMicrotasks();
+    expect(connection.start).toHaveBeenCalledTimes(1);
+    for (let index = 0; index < 40; index++) void service.connect();
+    flushMicrotasks();
+    expect(connection.start).toHaveBeenCalledTimes(1);
+    tick(2500); flushMicrotasks();
+    expect(connection.start).toHaveBeenCalledTimes(2);
+    tick(4999); flushMicrotasks();
+    expect(connection.start).toHaveBeenCalledTimes(2);
+    tick(1); flushMicrotasks();
+    expect(connection.start).toHaveBeenCalledTimes(3);
+  }));
+  it('coalesces online and resume events into one connection and clears its event listeners on destroy', fakeAsync(() => {
+    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('visible');
+    for (let index = 0; index < 10; index++) {
+      window.dispatchEvent(new Event('online')); document.dispatchEvent(new Event('visibilitychange'));
+    }
+    tick(401); flushMicrotasks();
+    expect(connection.start).toHaveBeenCalledTimes(1);
+    service.ngOnDestroy(); flushMicrotasks();
+    tick(2000); window.dispatchEvent(new Event('online')); tick(401); flushMicrotasks();
+    expect(connection.start).toHaveBeenCalledTimes(1);
+  }));
+  it('forwards account app lock revisions only in the authenticated connection scope', async () => {
+    await service.connect();
+    const listener = jasmine.createSpy('revision'); service.events$.subscribe(listener);
+    handlers.get('account.app-lock.updated')!({ revision: 2 });
+    expect(listener).toHaveBeenCalledWith({ type: 'account.app-lock.updated', payload: { revision: 2 } });
+    session.set({ user: { id: 'bob' }, device: { id: 'other' } });
+    handlers.get('account.app-lock.updated')!({ revision: 3 });
+    expect(listener).toHaveBeenCalledTimes(1);
   });
 });

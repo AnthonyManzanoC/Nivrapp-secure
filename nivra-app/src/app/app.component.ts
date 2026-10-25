@@ -84,7 +84,7 @@ export class AppComponent {
   readonly showCallBanner = computed(() => {
     const phase = this.calls.phase();
     return this.auth.isAuthenticated()
-      && !this.appLock.isLocked()
+      && !this.appLock.isContentLocked()
       && Boolean(this.calls.activeCall())
       && phase !== 'idle'
       && phase !== 'ringing'
@@ -109,14 +109,14 @@ export class AppComponent {
       const url = this.currentUrl();
       const accountId = this.auth.isAuthenticated() ? this.auth.session()?.user.id ?? null : null;
       const canShow = this.foreground() && this.canPresentDailyLaunch(url)
-        && !this.appLock.isLocked() && this.canApplyWebUpdate();
+        && !this.appLock.isContentLocked() && this.canApplyWebUpdate();
       const ready = !this.chat.loading();
       untracked(() => this.dailyLaunch.update({ accountId, canShow, ready }));
     });
     this.androidUpdates.start();
-    effect(() => this.androidUpdates.safe.set(!this.appLock.isLocked() && !this.dailyLaunch.visible() && this.canApplyWebUpdate()));
+    effect(() => this.androidUpdates.safe.set(!this.appLock.isContentLocked() && !this.dailyLaunch.visible() && this.canApplyWebUpdate()));
     this.desktopUpdates.start();
-    effect(() => this.desktopUpdates.safe.set(!this.appLock.isLocked() && !this.dailyLaunch.visible() && this.canApplyWebUpdate()));
+    effect(() => this.desktopUpdates.safe.set(!this.appLock.isContentLocked() && !this.dailyLaunch.visible() && this.canApplyWebUpdate()));
     if (Capacitor.getPlatform() === 'android') {
       // Ionic overlays and router navigation retain their higher priorities.
       // At the root, background the existing activity instead of finishing it.

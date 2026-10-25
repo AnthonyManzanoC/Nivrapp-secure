@@ -37,6 +37,7 @@ import { SignalrService } from './signalr.service';
 import { AppSettingsService } from './app-settings.service';
 import { NativeDeviceService } from './native-device.service';
 import { HistoryDeviceSyncService } from './history-device-sync.service';
+import { NetworkPolicyService } from './network-policy.service';
 import { uniqueCallSummaries, validatedCallSummary } from './call-summary.helpers';
 
 const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
@@ -121,6 +122,7 @@ const CHAT_PAYLOAD_TEXT_ENCODER = new TextEncoder();
 @Injectable({ providedIn: 'root' })
 export class ChatService implements OnDestroy {
   private readonly api = inject(NivraApiService);
+  private readonly network = inject(NetworkPolicyService);
   private readonly downloads = inject(EncryptedDownloadService);
   private readonly auth = inject(AuthService);
   private readonly identityTrust = inject(IdentityTrustService);
@@ -448,7 +450,7 @@ export class ChatService implements OnDestroy {
   }
 
   private async refreshRemoteConversationIndex(context: ChatSendContext): Promise<void> {
-    const items = await firstValueFrom(this.api.get<Conversation[]>('/conversations').pipe(timeout(CHAT_READ_TIMEOUT_MS)));
+    const items = await firstValueFrom(this.api.get<Conversation[]>('/conversations').pipe(timeout(this.chatReadTimeoutMs())));
     if (!this.isSendContextCurrent(context)) return;
     const conversations = this.applyLocalConversationState(items ?? []).sort(this.compareConversations);
     this.remoteIndexRevision += 1;
@@ -501,7 +503,7 @@ export class ChatService implements OnDestroy {
       }
       if (!current()) return;
       const historyGenerations = new Map(this.conversationHistoryGenerations);
-      const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>(`/sync/bootstrap?messageTake=${CHAT_PAGE_SIZE}`).pipe(timeout(CHAT_READ_TIMEOUT_MS)));
+      const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>(`/sync/bootstrap?messageTake=${CHAT_PAGE_SIZE}`).pipe(timeout(this.chatReadTimeoutMs())));
       if (!current()) return;
       const contacts = bootstrap.contacts ?? [];
       const conversations = this.applyLocalConversationState(bootstrap.conversations ?? []);
@@ -586,7 +588,7 @@ export class ChatService implements OnDestroy {
       for (let page = 0; page < 8; page++) {
         const params = new URLSearchParams({ take: String(limit), cursorVersion: '2', since: cursor.at, sinceId: cursor.id });
         const historyGenerations = new Map(this.conversationHistoryGenerations);
-        const sync = await firstValueFrom(this.api.get<MessageSyncResponse>(`/messages/sync?${params.toString()}`).pipe(timeout(CHAT_READ_TIMEOUT_MS)));
+        const sync = await firstValueFrom(this.api.get<MessageSyncResponse>(`/messages/sync?${params.toString()}`).pipe(timeout(this.chatReadTimeoutMs())));
         if (!this.isSendContextCurrent(context)) return false;
         await this.ingestMessageBatch(sync.messages ?? [], false, context, historyGenerations);
         if (!this.isSendContextCurrent(context)) return false;
@@ -740,7 +742,7 @@ export class ChatService implements OnDestroy {
       params.set('beforeId', options.beforeId);
     }
     const messages = await firstValueFrom(
-      this.api.get<MessageResponse[]>(`/conversations/${encodeURIComponent(conversationId)}/messages?${params.toString()}`),
+      this.api.get<MessageResponse[]>(`/conversations/${encodeURIComponent(conversationId)}/messages?${params.toString()}`).pipe(timeout(this.chatReadTimeoutMs())),
     );
     if (!this.isSendContextCurrent(context) || historyGeneration !== this.historyGeneration(conversationId)) return [];
     await this.ingestMessageBatch(messages ?? [], false, context);
@@ -2036,28 +2038,12 @@ export class ChatService implements OnDestroy {
       do {
         revision = this.historyRecoveryRevision;
         try {
-          // An older bootstrap may still be decoding with its original keys.
-          // Let it settle before replaying every envelope with the imported keyring.
-          await this.bootstrapInFlight?.catch(() => undefined);
-          if (!current()) return;
           const pending = [...this.pendingHistoryEnvelopes.values()];
-          const affected = new Set(pending.map(message => message.conversationId));
-          for (const [id, messages] of Object.entries(this.messagesByConversation())) {
-            if (messages.some(message => message.decryptError)) affected.add(id);
-          }
-          const selected = this.selectedConversationId();
-          if (selected) affected.add(selected);
+          // Recovery concerns known protected messages. A separate bootstrap or
+          // selected-page load must not hold approved local keys hostage. Late
+          // failed decryptions cannot replace readable rows (upsertMessage).
           await this.ingestMessageBatch(pending, false, context);
           if (!current()) return;
-          await this.bootstrap();
-          if (!current()) return;
-          // Refresh affected pages with bounded concurrency; a key transfer is
-          // not complete merely because the small global bootstrap was readable.
-          const ids = [...affected];
-          for (let index = 0; index < ids.length; index += 2) {
-            await Promise.all(ids.slice(index, index + 2).map(id => this.loadMessages(id)));
-            if (!current()) return;
-          }
           // After a restart, a protected cache row has no in-memory envelope.
           // Its ciphertext can be older than every recent page we just fetched.
           // Retrieve those exact authorized IDs instead of polling the same page.
@@ -2079,7 +2065,7 @@ export class ChatService implements OnDestroy {
             const historyGenerations = new Map(this.conversationHistoryGenerations);
             const response = await firstValueFrom(this.api.post<MessageHistoryRecoveryResponse>('/messages/history-recovery', {
               messageIds: batch,
-            }).pipe(timeout(CHAT_READ_TIMEOUT_MS)));
+            }).pipe(timeout(this.chatReadTimeoutMs())));
             if (!current()) return;
             if (!Array.isArray(response?.messages) || !Array.isArray(response.deletedMessages)) throw new Error('No se pudo comprobar la respuesta del historial.');
             for (const deleted of response.deletedMessages) {
@@ -2094,9 +2080,7 @@ export class ChatService implements OnDestroy {
             await this.ingestMessageBatch(envelopes, false, context, historyGenerations);
             if (!current()) return;
           }
-          const unreadable = [...this.pendingHistoryEnvelopes.values()].some(message => !this.discardHistoryEnvelope(message))
-            || Object.values(this.messagesByConversation()).some(messages => messages.some(message =>
-              message.decryptError && !this.isExpiredMessage(message) && !this.removedHistoryMessageIds?.has(message.id)));
+          const unreadable = this.hasUnreadableHistory();
           if (revision === this.historyRecoveryRevision) {
             if (!unreadable) this.deviceHistory.markHistoryReadable();
             else this.deviceHistory.markHistoryRecoveryIncomplete();
@@ -2117,6 +2101,22 @@ export class ChatService implements OnDestroy {
     return recovery;
   }
 
+  private hasUnreadableHistory(): boolean {
+    return [...this.pendingHistoryEnvelopes.values()].some(message => !this.discardHistoryEnvelope(message))
+      || Object.values(this.messagesByConversation()).some(messages => messages.some(message =>
+        message.decryptError && !this.isExpiredMessage(message) && !this.removedHistoryMessageIds?.has(message.id)));
+  }
+
+  private chatReadTimeoutMs(): number {
+    return Math.max(CHAT_READ_TIMEOUT_MS, this.network?.readTimeoutMs() ?? 0);
+  }
+
+  private reconcileHistoryReadability(): void {
+    // Normal HTTP/cache loads can resolve the final placeholder after a reload,
+    // without a new transfer event. A network receipt alone proves nothing.
+    if (!this.historyRecoveryInFlight && !this.hasUnreadableHistory()) this.deviceHistory?.markHistoryReadable?.();
+  }
+
   private async ingestMessageBatch(messages: MessageResponse[], markDelivered: boolean, context = this.captureSendContext(), historyGenerations: ReadonlyMap<string, number> = new Map(this.conversationHistoryGenerations)): Promise<boolean> {
     let hadDecryptError = false;
     let index = 0;
@@ -2129,6 +2129,7 @@ export class ChatService implements OnDestroy {
         if (!this.isSendContextCurrent(context)) return false;
       }
     }
+    this.reconcileHistoryReadability();
     return !hadDecryptError;
   }
 
@@ -2313,6 +2314,7 @@ export class ChatService implements OnDestroy {
   private upsertMessage(message: ChatMessageVm, options: { persist?: boolean } = {}): void {
     if (this.removedHistoryMessageIds?.has(message.id)) return;
     const existing = this.messagesByConversation()[message.conversationId]?.find(item => item.id === message.id);
+    if (message.payload && !message.decryptError) this.pendingHistoryEnvelopes.delete(message.id);
     if (message.decryptError && existing?.payload && !existing.decryptError) {
       this.pendingHistoryEnvelopes.delete(message.id);
       return;
@@ -2720,6 +2722,7 @@ export class ChatService implements OnDestroy {
     for (const message of messages) {
       this.upsertMessage(message, { persist: false });
     }
+    this.reconcileHistoryReadability();
     this.refreshConversationPageState(conversationId, messages.length >= limit);
     const primary = this.localAccountKey();
     if (primary && messages.length) {
@@ -3121,7 +3124,7 @@ export class ChatService implements OnDestroy {
     if (!ids.length) {
       return;
     }
-    await firstValueFrom(this.api.post('/messages/sync/ack', { messageIds: ids }).pipe(timeout(CHAT_READ_TIMEOUT_MS))).catch(() => null);
+    await firstValueFrom(this.api.post('/messages/sync/ack', { messageIds: ids }).pipe(timeout(this.chatReadTimeoutMs()))).catch(() => null);
   }
 
   private async sendReceipt(messageId: string, kind: 'Delivered' | 'Read' | 'Deleted', options: { opened?: boolean } = {}): Promise<void> {

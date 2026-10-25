@@ -15,6 +15,7 @@ describe('history device fingerprint comparison controls', () => {
     approvalEpoch: ReturnType<typeof signal<number>>;
     checking: ReturnType<typeof signal<boolean>>;
     preferredSource: ReturnType<typeof signal<PreferredHistorySource | null>>;
+    recoveryStatus: ReturnType<typeof signal<'approval' | 'partial' | 'retryable'>>;
     approveRequest: jasmine.Spy; dismissRequest: jasmine.Spy; retry: jasmine.Spy;
   };
   const request = (id: string, fingerprint = '1234 5678 90ab cdef 1234 5678'): PendingHistoryApproval => ({
@@ -33,6 +34,7 @@ describe('history device fingerprint comparison controls', () => {
       targetFingerprint: signal(''), approvingRequestId: signal<string | null>(null),
       approvalError: signal(''), approvalEpoch: signal(1), checking: signal(false),
       preferredSource: signal<PreferredHistorySource | null>(null),
+      recoveryStatus: signal<'approval' | 'partial' | 'retryable'>('approval'),
       approveRequest: jasmine.createSpy('approveRequest').and.resolveTo(),
       dismissRequest: jasmine.createSpy('dismissRequest'), retry: jasmine.createSpy('retry'),
     };
@@ -234,5 +236,27 @@ describe('history device fingerprint comparison controls', () => {
     history.state.set('syncing');
     await settle();
     expect(root().querySelector('.history-source-hint')).toBeNull();
+  });
+
+  it('keeps a partial history honest after approval and offers comparison for another key source', async () => {
+    fixture.componentInstance.showApprovals = false;
+    history.state.set('waiting'); history.recoveryStatus.set('partial');
+    history.targetFingerprint.set('abcd ef01 2345 6789 abcd ef01');
+    await settle();
+    expect(root().textContent).toContain('Las llaves aprobadas ya están guardadas');
+    expect(root().textContent).toContain('otras llaves');
+    expect(root().querySelector('.history-code')).not.toBeNull();
+    expect(root().querySelector('.history-syncing')).toBeNull();
+  });
+
+  it('offers a local retry for a failed refresh without asking to approve the same saved keys again', async () => {
+    fixture.componentInstance.showApprovals = false;
+    history.state.set('waiting'); history.recoveryStatus.set('retryable');
+    history.targetFingerprint.set('abcd ef01 2345 6789 abcd ef01');
+    await settle();
+    expect(root().textContent).toContain('Reintenta con las llaves guardadas');
+    expect(root().querySelector('.history-code')).toBeNull();
+    root().querySelector<HTMLButtonElement>('.history-retry')!.click();
+    expect(history.retry).toHaveBeenCalledTimes(1);
   });
 });

@@ -75,6 +75,7 @@ public static partial class EndpointExtensions
         app.MapVaultRoomEndpoints();
         app.MapCallEndpoints();
         app.MapPrivacyEndpoints();
+        app.MapAccountAppLockEndpoints();
         app.MapNotificationEndpoints();
         app.MapMonetizationEndpoints();
         app.MapDeletionAndSyncEndpoints();

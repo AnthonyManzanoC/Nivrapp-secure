@@ -18,6 +18,12 @@ export class AppLockScreenComponent {
   readonly pin = signal('');
   readonly pinDots = computed(() => Array.from({ length: 4 }, (_, index) => index < this.pin().length));
   readonly inputDisabled = computed(() => this.appLock.busy() || this.appLock.pinRetrySeconds() > 0);
+  readonly verificationIcon = computed(() => {
+    const label = this.appLock.biometryLabel().toLocaleLowerCase();
+    if (label.includes('rostro') || label.includes('facial')) return 'scan-outline';
+    if (label.includes('huella')) return 'finger-print-outline';
+    return 'shield-checkmark-outline';
+  });
   readonly keys = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '', '0', 'backspace'];
   private readonly dialog = viewChild<ElementRef<HTMLElement>>('lockDialog');
   private previousFocus: HTMLElement | null = null;
@@ -26,8 +32,9 @@ export class AppLockScreenComponent {
   constructor() {
     addIcons({ arrowForwardOutline, backspaceOutline, fingerPrintOutline, lockClosedOutline, scanOutline, shieldCheckmarkOutline });
     effect(() => {
-      const locked = this.appLock.isLocked();
+      const locked = this.appLock.isContentLocked();
       this.appLock.lockCycle();
+      this.appLock.unlockMode();
       this.pin.set('');
       const dialog = this.dialog()?.nativeElement;
       if (locked && dialog) {
@@ -38,7 +45,7 @@ export class AppLockScreenComponent {
         const previous = this.previousFocus;
         this.previousFocus = null;
         queueMicrotask(() => {
-          if (!this.appLock.isLocked() && previous.isConnected && !previous.closest('[inert]')) {
+          if (!this.appLock.isContentLocked() && previous.isConnected && !previous.closest('[inert]')) {
             previous.focus({ preventScroll: true });
           }
         });
@@ -48,8 +55,20 @@ export class AppLockScreenComponent {
   }
 
   async unlockMobile(): Promise<void> {
-    if (this.appLock.busy()) return;
+    if (!this.appLock.isLocked() || this.appLock.unlockMode() !== 'biometric' || this.appLock.busy() || this.submitting) return;
     await this.appLock.unlockWithBiometrics();
+  }
+
+  usePin(): void {
+    if (!this.appLock.isLocked() || this.appLock.busy() || this.submitting || !this.appLock.hasPinFallback()) return;
+    this.pin.set('');
+    this.appLock.usePin();
+  }
+
+  useBiometrics(): void {
+    if (!this.appLock.isLocked() || this.appLock.busy() || this.submitting || !this.appLock.canUseBiometric()) return;
+    this.pin.set('');
+    this.appLock.useBiometrics();
   }
 
   pressKey(key: string): void {
@@ -66,7 +85,7 @@ export class AppLockScreenComponent {
 
   @HostListener('document:keydown', ['$event'])
   handleKeydown(event: KeyboardEvent): void {
-    if (!this.appLock.isLocked() || event.altKey || event.ctrlKey || event.metaKey) return;
+    if (!this.appLock.isContentLocked() || event.altKey || event.ctrlKey || event.metaKey) return;
     const dialog = this.dialog()?.nativeElement;
     if (event.key === 'Tab' && dialog) {
       const focusable = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));

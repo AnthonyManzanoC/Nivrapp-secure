@@ -19,7 +19,7 @@ export class HistoryApprovalDialogComponent {
   readonly history = inject(HistoryDeviceSyncService);
   private readonly lock = inject(AppLockService);
   private readonly calls = inject(CallsService);
-  readonly show = computed(() => !this.lock.isLocked() && !this.calls.activeCall() && this.history.pendingRequests().length > 0);
+  readonly show = computed(() => !this.lock.isContentLocked() && !this.calls.activeCall() && this.history.pendingRequests().length > 0);
   // Ionic's isOpen is one-way. Keep a visible queue inside the same modal;
   // only programmatic hiding for lock/call/empty queue can close the overlay.
   readonly canDismiss = async (): Promise<boolean> => !this.show();
