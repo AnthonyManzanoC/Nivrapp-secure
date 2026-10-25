@@ -1,6 +1,8 @@
 using System.Reflection;
 using System.Security.Cryptography;
+using Microsoft.EntityFrameworkCore;
 using Nivra.Api.Domain;
+using Nivra.Api.Infrastructure;
 using Nivra.Api.Services;
 
 var checks = 0;
@@ -43,6 +45,56 @@ Check(NativePushRegistrationPolicy.CanRenewDestination(destination, "bob", "phon
 destination.RevokedAt = now;
 Check(!NativePushRegistrationPolicy.CanRenewDestination(destination, "bob", "phone-b"), "native worker cannot reactivate an explicitly revoked destination");
 Check(NativePushRegistrationPolicy.CanRenewDestination(null, "bob", "phone-b"), "native token refresh can create a newly issued FCM destination");
+
+var destinationQuery = typeof(PushNotificationService).GetMethod("PushDestinations", BindingFlags.NonPublic | BindingFlags.Static)!;
+IQueryable<PushTokenRecord> Destinations(IQueryable<PushTokenRecord> tokens, IQueryable<DeviceRecord> devices,
+    string uid, Dictionary<string, string> data, string? target = null) =>
+    (IQueryable<PushTokenRecord>)destinationQuery.Invoke(null, new object?[] { tokens, devices, uid, data, target })!;
+DeviceRecord PushDevice(string id, string uid = "alice", bool revoked = false, bool trusted = true) =>
+    new() { Id = id, UserId = uid, Name = id, IsTrusted = trusted, RevokedAt = revoked ? now : null };
+PushTokenRecord PushDestination(string id, string did, string uid = "alice", string provider = "fcm", bool revoked = false) =>
+    new() { Id = id, UserId = uid, DeviceId = did, Provider = provider, TokenHash = id, RevokedAt = revoked ? now.AddMinutes(-1) : null };
+Dictionary<string, string> Wipe(string did) => new() { ["type"] = "force_wipe", ["code"] = "FORCE_WIPE", ["deviceId"] = did };
+var pushDevices = new[] {
+    PushDevice("active"), PushDevice("revoked", revoked: true), PushDevice("foreign", "bob", revoked: true),
+    PushDevice("untrusted", revoked: true, trusted: false)
+}.AsQueryable();
+var pushDestinations = new[] {
+    PushDestination("active-fcm", "active"), PushDestination("revoked-fcm", "revoked"),
+    PushDestination("revoked-web", "revoked", provider: "webpush"), PushDestination("explicitly-revoked", "revoked", revoked: true),
+    PushDestination("foreign-account", "revoked", "bob"), PushDestination("foreign-device", "foreign"),
+    PushDestination("untrusted", "untrusted"), PushDestination("unsupported", "revoked", provider: "unsupported")
+}.AsQueryable();
+var wipeTargets = Destinations(pushDestinations, pushDevices, "alice", Wipe("revoked"), "revoked").Select(token => token.Id).Order().ToArray();
+Check(wipeTargets.SequenceEqual(new[] { "revoked-fcm", "revoked-web" }), "scoped FORCE_WIPE reaches the revoked device through its active FCM and Web Push destinations only");
+Check(Destinations(pushDestinations, pushDevices, "alice", Wipe("revoked"), "revoked").All(token => token.RevokedAt == null),
+    "FORCE_WIPE never reuses an explicitly revoked token");
+Check(!Destinations(pushDestinations, pushDevices, "alice", Wipe("foreign"), "foreign").Any(), "FORCE_WIPE cannot target another account's device");
+Check(!Destinations(pushDestinations, pushDevices, "bob", Wipe("revoked"), "revoked").Any(), "token account alone cannot authorize a wipe of another account's device");
+Check(!Destinations(pushDestinations, pushDevices, "alice", Wipe("untrusted"), "untrusted").Any(), "FORCE_WIPE does not bypass device trust");
+Check(!Destinations(pushDestinations, pushDevices, "alice", Wipe("revoked")).Any(), "FORCE_WIPE without an explicit target fails closed");
+Check(!Destinations(pushDestinations, pushDevices, "alice", Wipe("active"), "revoked").Any(), "FORCE_WIPE with a mismatched payload device fails closed");
+var incompleteWipe = Wipe("revoked"); incompleteWipe.Remove("code");
+Check(!Destinations(pushDestinations, pushDevices, "alice", incompleteWipe, "revoked").Any(), "incomplete FORCE_WIPE cannot bypass revocation");
+foreach (var eventType in new[] { "message", "incoming_call", "end_call", "contact_joined" })
+{
+    var ordinaryTargets = Destinations(pushDestinations, pushDevices, "alice", new() { ["type"] = eventType }).Select(token => token.Id).ToArray();
+    Check(ordinaryTargets.SequenceEqual(new[] { "active-fcm" }), $"{eventType} remains restricted to active trusted devices");
+}
+Check(!Destinations(pushDestinations, pushDevices, "alice", new() { ["type"] = "message", ["code"] = "FORCE_WIPE", ["deviceId"] = "revoked" }, "revoked").Any(),
+    "adding wipe metadata to a normal event cannot deliver it to a revoked device");
+Check(pushDevices.Single(candidate => candidate.Id == "revoked").RevokedAt == now &&
+    pushDestinations.Single(token => token.Id == "explicitly-revoked").RevokedAt == now.AddMinutes(-1),
+    "wipe destination selection preserves device and token revocation state");
+using (var pushDb = new NivraDbContext(new DbContextOptionsBuilder<NivraDbContext>()
+    .UseNpgsql("Host=127.0.0.1;Database=offline_checks;Username=offline;Password=offline").Options))
+{
+    var wipeSql = Destinations(pushDb.PushTokens, pushDb.Devices, "alice", Wipe("revoked"), "revoked").ToQueryString();
+    var normalSql = Destinations(pushDb.PushTokens, pushDb.Devices, "alice", new() { ["type"] = "message" }).ToQueryString();
+    Check(wipeSql.Contains("EXISTS", StringComparison.Ordinal) && wipeSql.Contains("\"RevokedAt\" IS NULL", StringComparison.Ordinal) &&
+        wipeSql.Contains("\"DeviceId\"", StringComparison.Ordinal) && normalSql.Contains("\"RevokedAt\" IS NULL", StringComparison.Ordinal),
+        "production PostgreSQL translates both destination policies into SQL without a database connection");
+}
 
 var builder = typeof(PushNotificationService).GetMethod("CreateFcmMessage", BindingFlags.NonPublic | BindingFlags.Static)!;
 Dictionary<string, object?> Message(string type) => (Dictionary<string, object?>)builder.Invoke(null, new object[] {

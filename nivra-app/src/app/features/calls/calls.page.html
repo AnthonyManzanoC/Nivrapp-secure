@@ -288,8 +288,8 @@
                     <ion-icon name="videocam-outline"></ion-icon>
                   </ion-button>
                 }
-                <ion-button mode="ios" fill="clear" [class.control-off]="!calls.speaker()" (click)="calls.toggleSpeaker()" [attr.aria-pressed]="calls.speaker()" aria-label="Cambiar salida de audio" title="Cambiar salida de audio">
-                  <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'"></ion-icon>
+                <ion-button mode="ios" fill="clear" (click)="openAudioRoutes()" [attr.aria-expanded]="audioRoutesOpen" [attr.aria-label]="'Salida de audio: ' + calls.audioOutput.selectedRouteLabel()" [title]="calls.audioOutput.selectedRouteLabel()">
+                  <ion-icon [name]="audioRouteIcon()"></ion-icon>
                 </ion-button>
                 <ion-button mode="ios" fill="clear" class="games-button"
                   [class.active]="calls.games.panelOpen()" [class.has-game]="calls.games.state()"
@@ -429,6 +429,43 @@
       }
     </section>
   </main>
+
+  <ion-modal class="call-audio-modal" [isOpen]="audioRoutesOpen" (didDismiss)="closeAudioRoutes()">
+    <ng-template>
+      <section class="call-audio-sheet" aria-labelledby="call-audio-title">
+        <header>
+          <h2 id="call-audio-title">Salida de audio</h2>
+          <ion-button fill="clear" (click)="closeAudioRoutes()" aria-label="Cerrar"><ion-icon name="close-outline"></ion-icon></ion-button>
+        </header>
+        @if (calls.audioOutput.routingSupported()) {
+          <div class="call-audio-routes" role="group" aria-label="Dispositivos de salida">
+            @for (route of calls.audioOutput.availableRoutes(); track route.id) {
+              <button type="button" class="call-audio-route" [class.selected]="route.id === calls.audioOutput.selectedRouteId()" [attr.aria-pressed]="route.id === calls.audioOutput.selectedRouteId()" [disabled]="calls.audioOutput.routeBusy()" (click)="selectAudioRoute(route.id)">
+                <ion-icon [name]="audioRouteIcon(route.kind)" aria-hidden="true"></ion-icon>
+                <span>{{ route.label }}</span>
+                @if (route.id === calls.audioOutput.selectedRouteId()) { <small>En uso</small> }
+              </button>
+            }
+          </div>
+        } @else {
+          <p>Esta plataforma usa la salida del sistema. Puedes cambiarla desde los controles de sonido del dispositivo.</p>
+        }
+        @if (calls.audioOutput.routeBusy()) { <p role="status">Conectando salida de audio…</p> }
+        @if (!calls.audioOutput.bluetoothPermission()) {
+          <ion-button fill="clear" (click)="calls.audioOutput.refreshRoutes(true)"><ion-icon name="bluetooth-outline" slot="start"></ion-icon>Permitir Bluetooth</ion-button>
+        }
+        @if (calls.audioOutput.systemPickerSupported) {
+          <ion-button fill="clear" (click)="calls.audioOutput.chooseSystemOutput()">Elegir otro dispositivo</ion-button>
+        }
+        @if (calls.audioOutput.routeError()) { <p class="error-copy" role="status">{{ calls.audioOutput.routeError() }}</p> }
+        <button type="button" class="call-audio-route output-mute" [attr.aria-pressed]="!calls.speaker()" (click)="calls.toggleOutputMute()">
+          <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'" aria-hidden="true"></ion-icon>
+          <span>{{ calls.speaker() ? 'Silenciar escucha' : 'Activar escucha' }}</span>
+        </button>
+        <p class="call-audio-hint">Este control no cambia tu micrófono.</p>
+      </section>
+    </ng-template>
+  </ion-modal>
 
   <ion-modal class="call-exit-modal" [isOpen]="exitModalOpen" [canDismiss]="!callExitBusy" (didDismiss)="closeExitModal()">
     <ng-template>

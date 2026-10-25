@@ -187,6 +187,7 @@ export class CallsService implements OnDestroy {
   readonly remoteStates = signal<Record<string, Record<string, unknown>>>({});
   readonly muted = signal(false);
   readonly cameraOff = signal(false);
+  /** Whether incoming audio is audible; physical routing belongs to audioOutput. */
   readonly speaker = signal(true);
   readonly screenSharing = signal(false);
   readonly mediaUpgradeInFlight = signal(false);
@@ -236,6 +237,13 @@ export class CallsService implements OnDestroy {
       const streams = this.remoteStreams();
       const muted = !this.speaker();
       untracked(() => this.audioOutput.sync(streams, muted));
+    });
+    effect(() => {
+      const call = this.activeCall();
+      const phase = this.phase();
+      const hasMicrophone = this.localStream()?.getAudioTracks().some(track => track.readyState === 'live');
+      const live = call && hasMicrophone && ['calling', 'connecting', 'connected'].includes(phase);
+      untracked(() => this.audioOutput.setCallSession?.(live ? call.id : null, live ? call.type === 'Video' : false));
     });
     effect(() => {
       const phase = this.phase();
@@ -747,6 +755,10 @@ export class CallsService implements OnDestroy {
   }
 
   toggleSpeaker(): void {
+    this.toggleOutputMute();
+  }
+
+  toggleOutputMute(): void {
     this.speaker.update((value) => !value);
   }
 
@@ -3282,6 +3294,7 @@ export class CallsService implements OnDestroy {
     this.stopPendingRemoteMedia();
     this.stopRemoteMedia();
     this.audioOutput.sync({}, false);
+    this.audioOutput.setCallSession?.(null);
     this.pendingSignals.splice(0);
     this.processedSignalIds.clear();
     this.activeCall.set(null);

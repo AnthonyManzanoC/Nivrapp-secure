@@ -30,6 +30,12 @@ describe('call video presentation', () => {
       acceptVideoUpgrade: jasmine.createSpy().and.resolveTo(),
       declineVideoUpgrade: jasmine.createSpy(), clearInactiveCallUi: jasmine.createSpy(),
       canEndGroupForEveryone: jasmine.createSpy().and.returnValue(false),
+      speaker: signal(true), muted: signal(false), toggleOutputMute: jasmine.createSpy(),
+      audioOutput: {
+        refreshRoutes: jasmine.createSpy().and.resolveTo(), selectRoute: jasmine.createSpy().and.resolveTo(true),
+        availableRoutes: signal([{ id: 'ear', label: 'Auricular', kind: 'earpiece' }, { id: 'bt', label: 'Bluetooth', kind: 'bluetooth' }]),
+        selectedRouteId: signal('ear'),
+      },
       end: jasmine.createSpy().and.resolveTo(), endGroupForEveryone: jasmine.createSpy().and.resolveTo(),
     };
     TestBed.configureTestingModule({ providers: [
@@ -43,6 +49,27 @@ describe('call video presentation', () => {
   });
 
   afterEach(() => page.ionViewWillLeave());
+
+  it('opens a route choice without muting playback or microphone and refreshes real devices', async () => {
+    await page.openAudioRoutes();
+    expect(page.audioRoutesOpen).toBeTrue();
+    expect(calls.audioOutput.refreshRoutes).toHaveBeenCalledOnceWith();
+    expect(calls.toggleOutputMute).not.toHaveBeenCalled();
+    expect(calls.muted()).toBeFalse();
+    expect(page.audioRouteIcon()).toBe('call-outline');
+    await page.selectAudioRoute('bt');
+    expect(calls.audioOutput.selectRoute).toHaveBeenCalledOnceWith('bt');
+    expect(calls.speaker()).toBeTrue();
+  });
+
+  it('closes the route choice and refuses an old selection after the call changes', async () => {
+    await page.openAudioRoutes();
+    calls.activeCall.set({ id: 'new-call', type: 'Voice' });
+    TestBed.flushEffects();
+    expect(page.audioRoutesOpen).toBeFalse();
+    await page.selectAudioRoute('bt');
+    expect(calls.audioOutput.selectRoute).not.toHaveBeenCalled();
+  });
 
   it('keeps the peer placeholder visible while own camera is already streaming', () => {
     const local = fakeStream([fakeTrack(false)]);

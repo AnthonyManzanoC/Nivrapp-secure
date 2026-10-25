@@ -203,15 +203,23 @@ export class PushService {
       return;
     }
     navigator.serviceWorker.addEventListener('message', (event) => {
-      const payload = event.data as { type?: string; data?: Record<string, string> };
-      if (payload?.type !== 'nivra.push') {
-        return;
-      }
-      const data = this.normalizeWebData(payload.data ?? {});
-      data['nivraRouteIntent'] = 'tap';
-      void this.handlePushData(data, 'service-worker-click');
+      this.handleServiceWorkerMessage(event.data);
     });
     this.serviceWorkerBound = true;
+  }
+
+  private handleServiceWorkerMessage(raw: unknown): void {
+    const payload = raw as { type?: string; intent?: string; data?: Record<string, string> } | null;
+    if (payload?.type !== 'nivra.push' && payload?.type !== 'nivra.push.received') return;
+    const data = this.normalizeWebData(payload.data ?? {});
+    // Older workers already marked notificationclick in the data itself. Keep
+    // those clicks working during an update, but never promote a reception to
+    // navigation. An explicit receipt also overrides any stale payload marker.
+    const clicked = payload.type === 'nivra.push' && (payload.intent === 'click'
+      || (payload.intent === undefined && data['nivraRouteIntent'] === 'tap'));
+    if (clicked) data['nivraRouteIntent'] = 'tap';
+    else delete data['nivraRouteIntent'];
+    void this.handlePushData(data, clicked ? 'service-worker-click' : 'web-fcm');
   }
 
   private async initializeDesktopNotifications(options: { requestPermission?: boolean }): Promise<boolean> {

@@ -208,7 +208,7 @@ export class ChatsPage implements OnDestroy {
   storyHighlightOpening = '';
   storiesCollapsed = true;
   private conversationList?: ElementRef<HTMLElement>;
-  private nativeStoryTouch: { id: number; x: number; y: number; atTop: boolean; pull: boolean } | null = null;
+  private nativeStoryTouch: { id: number; x: number; y: number; atTop: boolean; pull: boolean; expanded: boolean; collapse: boolean } | null = null;
   private nativeStoryScrollTop = 0;
   private nativeStoryReturnArmed = false;
   private nativeStoryGestureUntil = 0;
@@ -766,7 +766,8 @@ export class ChatsPage implements OnDestroy {
     const touch = event.touches[0];
     this.nativeStoryScrollTop = list.scrollTop;
     if (list.scrollTop > 8) this.nativeStoryGestureUntil = Date.now() + 1_600;
-    this.nativeStoryTouch = { id: touch.identifier, x: touch.clientX, y: touch.clientY, atTop: list.scrollTop <= 8, pull: false };
+    this.nativeStoryTouch = { id: touch.identifier, x: touch.clientX, y: touch.clientY,
+      atTop: list.scrollTop <= 8, pull: false, expanded: !this.storiesCollapsed, collapse: false };
   };
 
   readonly onNativeStoryTouchMove = (event: TouchEvent): void => {
@@ -783,12 +784,19 @@ export class ChatsPage implements OnDestroy {
     if (dx > 20 && dx > Math.abs(dy) * .8) { this.resetNativeStoryGesture(); return; }
     if (Math.abs(dy) > 12 && Math.abs(dy) > dx * 1.4) this.nativeStoryGestureUntil = Date.now() + 1_600;
     gesture.pull = gesture.atTop && dy >= 56 && dx <= 20 && list.scrollTop <= 8;
+    // A short list cannot scroll far enough to hide the strip. Observe the
+    // upward gesture itself so the same accordion works with zero or one row.
+    gesture.collapse = gesture.expanded && dy <= -40 && dx <= 20;
   };
 
   readonly onNativeStoryTouchEnd = (event: TouchEvent): void => {
     const gesture = this.nativeStoryTouch;
     const list = event.currentTarget as HTMLElement;
     this.nativeStoryTouch = null;
+    if (gesture?.collapse && !this.showConversationSkeleton() && !this.nativeStorySlideIsActive(event)) {
+      this.collapseStories();
+      return;
+    }
     if (gesture?.pull && list?.scrollTop <= 8 && !this.showConversationSkeleton() && !this.nativeStorySlideIsActive(event)) {
       this.resetNativeStoryGesture();
       this.expandStories();
@@ -821,6 +829,11 @@ export class ChatsPage implements OnDestroy {
     this.resetNativeStoryGesture();
     this.storiesCollapsed = false;
     this.conversationList?.nativeElement.scrollTo({ top: 0, behavior: 'instant' });
+  }
+
+  collapseStories(): void {
+    this.resetNativeStoryGesture();
+    this.storiesCollapsed = true;
   }
 
   async openStoryHighlight(highlight: ChatStoryHighlight): Promise<void> {

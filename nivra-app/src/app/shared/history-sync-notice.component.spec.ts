@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
-import { HistoryDeviceSyncService, PendingHistoryApproval } from '../core/services/history-device-sync.service';
+import { HistoryDeviceSyncService, PendingHistoryApproval, PreferredHistorySource } from '../core/services/history-device-sync.service';
 import { TranslateService } from '../core/services/translate.service';
 import { HistorySyncNoticeComponent } from './history-sync-notice.component';
 
@@ -14,6 +14,7 @@ describe('history device fingerprint comparison controls', () => {
     approvalError: ReturnType<typeof signal<string>>;
     approvalEpoch: ReturnType<typeof signal<number>>;
     checking: ReturnType<typeof signal<boolean>>;
+    preferredSource: ReturnType<typeof signal<PreferredHistorySource | null>>;
     approveRequest: jasmine.Spy; dismissRequest: jasmine.Spy; retry: jasmine.Spy;
   };
   const request = (id: string, fingerprint = '1234 5678 90ab cdef 1234 5678'): PendingHistoryApproval => ({
@@ -31,6 +32,7 @@ describe('history device fingerprint comparison controls', () => {
       pendingRequests: signal([request('first')]), state: signal<'idle' | 'waiting' | 'syncing' | 'unavailable'>('idle'),
       targetFingerprint: signal(''), approvingRequestId: signal<string | null>(null),
       approvalError: signal(''), approvalEpoch: signal(1), checking: signal(false),
+      preferredSource: signal<PreferredHistorySource | null>(null),
       approveRequest: jasmine.createSpy('approveRequest').and.resolveTo(),
       dismissRequest: jasmine.createSpy('dismissRequest'), retry: jasmine.createSpy('retry'),
     };
@@ -216,5 +218,21 @@ describe('history device fingerprint comparison controls', () => {
     root().querySelector<HTMLButtonElement>('.history-retry')!.click();
     expect(relink).toHaveBeenCalledTimes(1);
     expect(history.retry).not.toHaveBeenCalled();
+  });
+
+  it('recommends the habitual APK without claiming it still owns history or disabling another source', async () => {
+    history.state.set('waiting');
+    history.preferredSource.set({ deviceId: 'phone', deviceName: 'Android Nivra Mobile', kind: 'android', basis: 'message-recipient' });
+    await settle();
+    const hint = root().querySelector('.history-source-hint');
+    expect(hint?.textContent).toContain('Android Nivra Mobile');
+    expect(hint?.textContent).toContain('Si conserva tus chats');
+    expect(hint?.textContent).toContain('otro equipo');
+    expect(share().disabled).toBeTrue();
+    await confirmCode();
+    expect(share().disabled).toBeFalse();
+    history.state.set('syncing');
+    await settle();
+    expect(root().querySelector('.history-source-hint')).toBeNull();
   });
 });

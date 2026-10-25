@@ -1739,3 +1739,23 @@ ion-modal.invite-modal {
     transition: none;
   }
 }
+ion-modal.call-audio-modal {
+  --width: min(440px, 94vw);
+  --height: auto;
+  --border-radius: 24px;
+  --background: var(--nivra-panel-solid);
+}
+.call-audio-sheet { padding: 18px 20px; max-height: 78dvh; overflow-y: auto; color: var(--nivra-text); }
+.call-audio-sheet header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.call-audio-sheet h2 { margin: 0; font-size: 21px; }
+.call-audio-sheet p { color: var(--nivra-muted); line-height: 1.5; font-size: 14px; }
+.call-audio-routes { display: grid; gap: 8px; margin: 14px 0; }
+.call-audio-route { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 54px; padding: 12px; border: 1px solid var(--nivra-line); border-radius: 15px; background: transparent; color: var(--nivra-text); text-align: start; }
+.call-audio-route ion-icon { font-size: 23px; flex-shrink: 0; }
+.call-audio-route span { flex: 1; overflow-wrap: anywhere; }
+.call-audio-route small { color: var(--nivra-muted); }
+.call-audio-route.selected { border-color: #0bbd93; background: rgba(11, 189, 147, .09); }
+.call-audio-route:focus-visible { outline: 2px solid #008f72; outline-offset: 3px; }
+.call-audio-route:disabled { opacity: .6; }
+.call-audio-route.output-mute { margin-top: 14px; }
+.call-audio-sheet .call-audio-hint { margin-bottom: 0; font-size: 12px; }

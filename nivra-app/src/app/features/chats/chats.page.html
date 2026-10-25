@@ -47,8 +47,9 @@
       </header>
 
       @if (storyHighlights().length && !query.trim() && !showRecentSearches) {
-        <nav class="story-strip" [class.is-collapsed]="storiesCollapsed" [attr.inert]="storiesCollapsed ? '' : null" [attr.aria-hidden]="storiesCollapsed" [attr.aria-label]="'WORLD.STORIES' | translate:'Historias'">
-          <button class="story-collapse" type="button" (click)="storiesCollapsed = true" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
+        <nav class="story-strip" [class.native-story-accordion]="androidStoryGesturesEnabled()" [class.is-collapsed]="storiesCollapsed" [attr.inert]="storiesCollapsed ? '' : null" [attr.aria-hidden]="storiesCollapsed" [attr.aria-label]="'WORLD.STORIES' | translate:'Historias'"
+          (touchstart)="onNativeStoryTouchStart($event)" (touchmove)="onNativeStoryTouchMove($event)" (touchend)="onNativeStoryTouchEnd($event)" (touchcancel)="onNativeStoryTouchCancel()">
+          <button class="story-collapse" type="button" (click)="collapseStories()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
           @for (highlight of storyHighlights(); track highlight.id) {
             <div class="story-highlight-item">
               <button

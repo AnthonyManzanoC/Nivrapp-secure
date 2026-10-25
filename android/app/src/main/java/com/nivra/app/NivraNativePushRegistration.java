@@ -10,8 +10,10 @@ import android.util.Base64;
 import androidx.work.BackoffPolicy;
 import androidx.work.Constraints;
 import androidx.work.ExistingWorkPolicy;
+import androidx.work.ExistingPeriodicWorkPolicy;
 import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
+import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
 import androidx.core.app.NotificationManagerCompat;
 
@@ -36,6 +38,9 @@ final class NivraNativePushRegistration {
     private static final String PREFS = "nivra_native_push";
     private static final String KEY = "nivra.native.push.v1";
     static final String WORK_NAME = "nivra-native-push-registration";
+    static final String MAINTENANCE_WORK_NAME = "nivra-native-push-maintenance";
+    private static final String TOKEN_REPAIR_WORK_NAME = "nivra-native-push-token-repair";
+    private static final long REGISTRATION_FRESH_MS = TimeUnit.HOURS.toMillis(24);
 
     private NivraNativePushRegistration() { }
 
@@ -61,9 +66,19 @@ final class NivraNativePushRegistration {
                 .put("refreshToken", refresh).put("clusterFingerprint", fingerprint).put("epoch", UUID.randomUUID().toString());
             write(context, value);
             // A newly queued session has not confirmed provider availability yet.
-            prefs(context).edit().remove("registeredAt").putBoolean("fcmReady", false).commit();
+            prefs(context).edit().remove("registeredAt").remove("pendingToken").putBoolean("fcmReady", false).commit();
         }
-        FirebaseMessaging.getInstance().getToken().addOnSuccessListener(token -> tokenChanged(context, token));
+        // Persisted OS work heals an exhausted transient retry without keeping
+        // the WebView or a foreground service alive between notifications.
+        PeriodicWorkRequest maintenance = new PeriodicWorkRequest.Builder(
+            NivraPushMaintenanceWorker.class, 12, TimeUnit.HOURS, 1, TimeUnit.HOURS)
+            .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build();
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            MAINTENANCE_WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, maintenance);
+        FirebaseMessaging.getInstance().getToken()
+            .addOnSuccessListener(token -> tokenChanged(context, token))
+            .addOnFailureListener(unavailable -> queueTokenRepair(context));
     }
 
     static synchronized JSONObject read(Context context) {
@@ -90,6 +105,8 @@ final class NivraNativePushRegistration {
     static synchronized void clear(Context context) {
         prefs(context).edit().clear().commit();
         WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME);
+        WorkManager.getInstance(context).cancelUniqueWork(MAINTENANCE_WORK_NAME);
+        WorkManager.getInstance(context).cancelUniqueWork(TOKEN_REPAIR_WORK_NAME);
         clearNotifications(context);
         try {
             KeyStore store = KeyStore.getInstance("AndroidKeyStore");
@@ -116,6 +133,10 @@ final class NivraNativePushRegistration {
 
     static synchronized void tokenChanged(Context context, String token) {
         if (token == null || token.trim().isEmpty()) return;
+        SharedPreferences state = prefs(context);
+        String pending = pendingToken(context);
+        if (pending.isEmpty() && registrationFresh(token, state.getString("registeredToken", ""),
+            state.getLong("registeredAt", 0), System.currentTimeMillis(), state.getBoolean("fcmReady", false))) return;
         // The token is a routing address, not a session credential. It can be queued
         // before login, but no network request is made without the encrypted session.
         prefs(context).edit().putString("pendingToken", token).commit();
@@ -123,7 +144,21 @@ final class NivraNativePushRegistration {
         OneTimeWorkRequest work = new OneTimeWorkRequest.Builder(NivraPushRegistrationWorker.class)
             .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build();
-        WorkManager.getInstance(context).enqueueUniqueWork(WORK_NAME, ExistingWorkPolicy.REPLACE, work);
+        WorkManager.getInstance(context).enqueueUniqueWork(WORK_NAME,
+            token.equals(pending) ? ExistingWorkPolicy.KEEP : ExistingWorkPolicy.REPLACE, work);
+    }
+
+    static boolean registrationFresh(String token, String registeredToken, long registeredAt, long now, boolean fcmReady) {
+        return token != null && !token.isEmpty() && token.equals(registeredToken) && fcmReady
+            && registeredAt > 0 && now >= registeredAt && now - registeredAt < REGISTRATION_FRESH_MS;
+    }
+
+    private static synchronized void queueTokenRepair(Context context) {
+        if (read(context) == null) return;
+        OneTimeWorkRequest repair = new OneTimeWorkRequest.Builder(NivraPushMaintenanceWorker.class)
+            .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build();
+        WorkManager.getInstance(context).enqueueUniqueWork(TOKEN_REPAIR_WORK_NAME, ExistingWorkPolicy.KEEP, repair);
     }
 
     static synchronized String pendingToken(Context context) { return prefs(context).getString("pendingToken", ""); }
@@ -137,7 +172,7 @@ final class NivraNativePushRegistration {
     static synchronized void registered(Context context, JSONObject snapshot, String token, boolean fcmReady) {
         if (!isCurrent(context, snapshot, token)) return;
         prefs(context).edit().putLong("registeredAt", System.currentTimeMillis())
-            .putBoolean("fcmReady", fcmReady).remove("pendingToken").commit();
+            .putString("registeredToken", token).putBoolean("fcmReady", fcmReady).remove("pendingToken").commit();
     }
 
     static boolean accepts(Context context, java.util.Map<String, String> data) {

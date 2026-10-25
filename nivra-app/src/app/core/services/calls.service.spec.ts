@@ -44,7 +44,7 @@ describe('call session isolation', () => {
         setActiveCall: () => Promise.resolve(false),
       } },
       { provide: SignalrService, useValue: { events$: new Subject() } },
-      { provide: CallAudioOutputService, useValue: { sync: jasmine.createSpy(), resume: jasmine.createSpy().and.resolveTo(), playbackBlocked: signal(false) } },
+      { provide: CallAudioOutputService, useValue: { sync: jasmine.createSpy(), setCallSession: jasmine.createSpy(), resume: jasmine.createSpy().and.resolveTo(), playbackBlocked: signal(false) } },
       { provide: CallGameSessionService, useValue: { configure: jasmine.createSpy(), reset: jasmine.createSpy(), transport: { detachPeer: jasmine.createSpy(), attachDirect: jasmine.createSpy() } } },
       { provide: GroupCallCryptoService, useValue: { updateRoster: jasmine.createSpy().and.resolveTo(), clear: jasmine.createSpy(), isMediaKeySignal: () => false } },
       { provide: NativeScreenShareService, useValue: { stop: jasmine.createSpy().and.resolveTo(), supported: () => false } },
@@ -56,6 +56,41 @@ describe('call session isolation', () => {
   });
 
   afterEach(() => service.ngOnDestroy());
+
+  it('owns communication routing only after capture and releases it when the call ends', () => {
+    const audio = TestBed.inject(CallAudioOutputService);
+    service.activeCall.set(invitation);
+    service.phase.set('ringing');
+    TestBed.flushEffects();
+    expect(audio.setCallSession).not.toHaveBeenCalledWith(invitation.id, false);
+    const track = { readyState: 'live', enabled: true, stop: jasmine.createSpy() };
+    service.localStream.set({ getAudioTracks: () => [track], getVideoTracks: () => [], getTracks: () => [track] } as unknown as MediaStream);
+    service.phase.set('connected');
+    TestBed.flushEffects();
+    expect(audio.setCallSession).toHaveBeenCalledWith(invitation.id, false);
+    service.activeCall.set({ ...invitation, type: 'Video' });
+    TestBed.flushEffects();
+    expect(audio.setCallSession).toHaveBeenCalledWith(invitation.id, true);
+    (service as any).cleanup({ remember: false });
+    expect(audio.setCallSession).toHaveBeenCalledWith(null);
+  });
+
+  it('keeps listen mute independent from microphone mute and communication route ownership', () => {
+    const track = { readyState: 'live', enabled: true, stop: jasmine.createSpy() };
+    service.localStream.set({ getAudioTracks: () => [track], getVideoTracks: () => [], getTracks: () => [track] } as unknown as MediaStream);
+    service.activeCall.set(invitation);
+    service.phase.set('connected');
+    TestBed.flushEffects();
+    const audio = TestBed.inject(CallAudioOutputService);
+    (audio.setCallSession as jasmine.Spy).calls.reset();
+    service.toggleOutputMute();
+    TestBed.flushEffects();
+    expect(service.speaker()).toBeFalse();
+    expect(service.muted()).toBeFalse();
+    expect(track.enabled).toBeTrue();
+    expect(audio.setCallSession).not.toHaveBeenCalled();
+    expect(audio.sync).toHaveBeenCalledWith({}, true);
+  });
 
   it('reloads active rooms and call state after reconnecting on a replacement API', () => {
     const rooms = spyOn(service, 'refreshActiveGroupRooms').and.resolveTo();

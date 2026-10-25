@@ -7,6 +7,8 @@ import {
   arrowDownLeftBoxOutline,
   arrowUpRightBoxOutline,
   callOutline,
+  bluetoothOutline,
+  headsetOutline,
   closeCircleOutline,
   closeOutline,
   desktopOutline,
@@ -28,6 +30,7 @@ import { CallSession, Contact, Conversation, Participant, UserSummary } from '..
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { CALL_CAMERA_FAILURE_MESSAGES } from '../../core/services/call-media-capture';
+import { type CallAudioRouteKind } from '../../core/services/call-audio-output.service';
 import { ChatService } from '../../core/services/chat.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
@@ -66,6 +69,8 @@ export class CallsPage {
   private readonly auth = inject(AuthService);
   inviteModalOpen = false;
   exitModalOpen = false;
+  audioRoutesOpen = false;
+  private audioRouteCallId: string | null = null;
   callExitBusy = false;
   private exitCallId: string | null = null;
   callQuery = '';
@@ -81,6 +86,8 @@ export class CallsPage {
       arrowDownLeftBoxOutline,
       arrowUpRightBoxOutline,
       callOutline,
+      bluetoothOutline,
+      headsetOutline,
       closeCircleOutline,
       closeOutline,
       desktopOutline,
@@ -155,6 +162,7 @@ export class CallsPage {
       const callId = this.calls.activeCall()?.id ?? null;
       untracked(() => {
         if (this.exitModalOpen && callId !== this.exitCallId) this.closeExitModal();
+        if (this.audioRoutesOpen && callId !== this.audioRouteCallId) this.closeAudioRoutes();
       });
     });
   }
@@ -170,9 +178,36 @@ export class CallsPage {
   ionViewWillLeave(): void {
     this.calls.clearInactiveCallUi();
     this.clearControlsAutoHide();
+    this.closeAudioRoutes();
     if (!this.calls.activeCall()) {
       this.resetIdleUi(true);
     }
+  }
+
+  async openAudioRoutes(): Promise<void> {
+    const callId = this.calls.activeCall()?.id;
+    if (!callId) return;
+    this.audioRouteCallId = callId;
+    this.audioRoutesOpen = true;
+    this.revealCallChrome();
+    await this.calls.audioOutput.refreshRoutes();
+  }
+
+  closeAudioRoutes(): void {
+    this.audioRoutesOpen = false;
+    this.audioRouteCallId = null;
+  }
+
+  async selectAudioRoute(routeId: string): Promise<void> {
+    const callId = this.audioRouteCallId;
+    if (!callId || callId !== this.calls.activeCall()?.id) return;
+    await this.calls.audioOutput.selectRoute(routeId);
+  }
+
+  audioRouteIcon(kind?: CallAudioRouteKind): string {
+    const selected = kind || this.calls.audioOutput.availableRoutes().find(route => route.id === this.calls.audioOutput.selectedRouteId())?.kind;
+    return selected === 'bluetooth' ? 'bluetooth-outline' : selected === 'wired' || selected === 'usb' ? 'headset-outline'
+      : selected === 'earpiece' ? 'call-outline' : 'volume-high-outline';
   }
 
   async startSelected(type: 'Voice' | 'Video'): Promise<void> {

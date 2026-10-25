@@ -91,7 +91,8 @@ import androidx.core.app.NotificationManagerCompat;
 @CapacitorPlugin(
     name = "NivraNative",
     permissions = {
-        @Permission(strings = { Manifest.permission.READ_CONTACTS }, alias = NivraNativePlugin.CONTACTS)
+        @Permission(strings = { Manifest.permission.READ_CONTACTS }, alias = NivraNativePlugin.CONTACTS),
+        @Permission(strings = { Manifest.permission.BLUETOOTH_CONNECT }, alias = "callBluetooth")
     }
 )
 public class NivraNativePlugin extends Plugin {
@@ -114,6 +115,7 @@ public class NivraNativePlugin extends Plugin {
     private final ExecutorService contactsExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService historyExecutor = Executors.newSingleThreadExecutor();
     private AudioManager audioManager;
+    private NivraCallAudio callAudio;
     private AudioFocusRequest audioFocusRequest;
     private SensorManager sensorManager;
     private Sensor proximitySensor;
@@ -165,6 +167,7 @@ public class NivraNativePlugin extends Plugin {
     @Override
     public void load() {
         activePlugin = new WeakReference<>(this);
+        callAudio = new NivraCallAudio(getContext(), state -> notifyListeners("nativeCallAudioRoutes", state));
         appUpdateManager = new NativeAppUpdateManager(getActivity(), getContext(), state -> {
             JSObject event = new JSObject();
             java.util.Iterator<String> keys = state.keys();
@@ -201,6 +204,7 @@ public class NivraNativePlugin extends Plugin {
     protected void handleOnDestroy() {
         activityResumed = false;
         if (appUpdateManager != null) appUpdateManager.destroy();
+        if (callAudio != null) callAudio.release();
         historyExecutor.shutdown();
         super.handleOnDestroy();
     }
@@ -346,6 +350,45 @@ public class NivraNativePlugin extends Plugin {
         JSObject result = new JSObject();
         result.put("active", active);
         call.resolve(result);
+    }
+
+    @PluginMethod
+    public void configureCallAudio(PluginCall call) {
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            try {
+                call.resolve(callAudio.configure(call.getString("callId", ""), call.getBoolean("active", false), call.getBoolean("video", false)));
+            } catch (RuntimeException failure) {
+                call.reject("No se pudo preparar la salida de audio de la llamada.", "CALL_AUDIO_UNAVAILABLE");
+            }
+        });
+    }
+
+    @PluginMethod
+    public void getCallAudioRoutes(PluginCall call) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && call.getBoolean("requestPermission", false)
+            && getPermissionState("callBluetooth") != PermissionState.GRANTED) {
+            requestPermissionForAlias("callBluetooth", call, "callBluetoothPermissionResult");
+            return;
+        }
+        resolveCallAudioRoutes(call);
+    }
+
+    @PermissionCallback
+    private void callBluetoothPermissionResult(PluginCall call) { resolveCallAudioRoutes(call); }
+
+    private void resolveCallAudioRoutes(PluginCall call) {
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            try { call.resolve(callAudio.refresh()); }
+            catch (RuntimeException failure) { call.reject("No se pudieron consultar las salidas de audio.", "CALL_AUDIO_UNAVAILABLE"); }
+        });
+    }
+
+    @PluginMethod
+    public void selectCallAudioRoute(PluginCall call) {
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            try { call.resolve(callAudio.select(call.getString("callId", ""), call.getString("routeId", ""))); }
+            catch (RuntimeException failure) { call.reject("No se pudo usar la salida de audio elegida.", "CALL_AUDIO_ROUTE_REJECTED"); }
+        });
     }
 
     @PluginMethod

@@ -342,19 +342,7 @@ public sealed class PushNotificationService(
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
-        var tokens = await db.PushTokens
-            .Where(token => token.UserId == userId &&
-                db.Devices.Any(device => device.Id == token.DeviceId && device.UserId == userId && device.IsTrusted && device.RevokedAt == null) &&
-                (targetDeviceId == null || token.DeviceId == targetDeviceId) &&
-                token.RevokedAt == null &&
-                (token.Provider == "fcm" ||
-                 token.Provider == "Fcm" ||
-                 token.Provider == "FCM" ||
-                 token.Provider == "fcm-fid" ||
-                 token.Provider == "FcmFid" ||
-                 token.Provider == "FCM-FID" ||
-                 token.Provider == "webpush" ||
-                 token.Provider == "WebPush"))
+        var tokens = await PushDestinations(db.PushTokens, db.Devices, userId, data, targetDeviceId)
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
         {
@@ -434,6 +422,37 @@ public sealed class PushNotificationService(
                 unreadableCount,
                 skippedCount);
         }
+    }
+
+    private static IQueryable<PushTokenRecord> PushDestinations(
+        IQueryable<PushTokenRecord> tokens,
+        IQueryable<DeviceRecord> devices,
+        string userId,
+        IReadOnlyDictionary<string, string> data,
+        string? targetDeviceId)
+    {
+        var isForceWipe = data.TryGetValue("type", out var type) && type == "force_wipe";
+        var scopedForceWipe = isForceWipe && !string.IsNullOrWhiteSpace(targetDeviceId) &&
+            data.TryGetValue("code", out var code) && code == "FORCE_WIPE" &&
+            data.TryGetValue("deviceId", out var deviceId) && deviceId == targetDeviceId;
+
+        // Revocation is persisted before this command is sent. Only that exact
+        // account/device command may reach a revoked device; destination tokens
+        // explicitly revoked or reassigned to another account remain excluded.
+        return tokens.Where(token => token.UserId == userId &&
+            (!isForceWipe || scopedForceWipe) &&
+            (targetDeviceId == null || token.DeviceId == targetDeviceId) &&
+            token.RevokedAt == null &&
+            devices.Any(device => device.Id == token.DeviceId && device.UserId == userId && device.IsTrusted &&
+                (device.RevokedAt == null || scopedForceWipe)) &&
+            (token.Provider == "fcm" ||
+             token.Provider == "Fcm" ||
+             token.Provider == "FCM" ||
+             token.Provider == "fcm-fid" ||
+             token.Provider == "FcmFid" ||
+             token.Provider == "FCM-FID" ||
+             token.Provider == "webpush" ||
+             token.Provider == "WebPush"));
     }
 
     private async Task<FcmSendResult> SendFcmAsync(

@@ -95,13 +95,11 @@ import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.com
 import { ChatLoadingComponent } from '../../shared/chat-loading.component';
 import { ChatVerificationDraftService } from './chat-verification-draft.service';
 import { ChatIdentityChangeNoticeComponent } from './chat-identity-change-notice.component';
+import { AttachmentReviewComponent, AttachmentReviewItem } from './attachment-review.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
 
-interface PendingAttachmentPreview {
-  file: File;
-  url: string | null;
-}
+type PendingAttachmentPreview = AttachmentReviewItem;
 
 type VoiceComposerMode = 'idle' | 'holding' | 'locked' | 'cancelling';
 
@@ -160,6 +158,7 @@ interface MessageTextPart {
     GroupInviteShareComponent,
     ChatMediaGalleryComponent,
     ImageCropperComponent,
+    AttachmentReviewComponent,
     ChatExpressionPickerComponent,
     HistorySyncNoticeComponent,
     ChatLoadingComponent,
@@ -246,6 +245,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   pendingAttachmentFiles: PendingAttachmentPreview[] = [];
   pendingAttachmentCaption = '';
   private pendingAttachmentDraftSeed = '';
+  private pendingAttachmentSequence = 0;
   messageActionsOpen = false;
   messageActionEvent: Event | null = null;
   actionMessage: ChatMessageVm | null = null;
@@ -311,6 +311,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   deleteAfterRead = false;
   ttlSeconds = -1;
   recordingVoice = false;
+  voiceStarting = false;
   voiceMode: VoiceComposerMode = 'idle';
   voiceElapsedSeconds = 0;
   voicePaused = false;
@@ -334,6 +335,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private voicePausedDurationMs = 0;
   private voiceTimer: number | null = null;
   private voiceStartPromise: Promise<void> | null = null;
+  private voiceGeneration = 0;
+  private voiceContext: { conversationId: string; userId: string; deviceId: string; composerGeneration: number } | null = null;
+  private voiceStopPromise: Promise<File | null> | null = null;
   private messagePressTimer: number | null = null;
   private avatarPressTimer: number | null = null;
   private suppressAvatarClickUntil = 0;
@@ -409,6 +413,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.routeSub = this.route.paramMap.subscribe((params) => {
       const id = params.get('conversationId');
       if (id) {
+        void this.cancelVoiceNote();
+        this.clearPendingAttachments(false);
         ++this.composerGeneration;
         this.sending = false;
         this.replyingMessage = null;
@@ -469,7 +475,22 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
   }
 
-  ionViewWillLeave(): void { this.stopGroupRoomRefresh(); }
+  @HostListener('window:blur')
+  cancelVoiceOnBlur(): void {
+    if ((this.voiceComposerActive() || this.voiceStarting || this.recordingVoice) && !this.sending) void this.cancelVoiceNote();
+  }
+
+  @HostListener('document:visibilitychange')
+  cancelHiddenVoiceCapture(): void {
+    if (document.visibilityState === 'hidden') this.cancelVoiceOnBlur();
+  }
+
+  ionViewWillLeave(): void {
+    this.stopGroupRoomRefresh();
+    ++this.composerGeneration;
+    void this.cancelVoiceNote();
+    this.clearPendingAttachments(false);
+  }
 
   private stopGroupRoomRefresh(): void {
     if (this.groupRoomRefreshTimer !== null) window.clearInterval(this.groupRoomRefreshTimer);
@@ -565,7 +586,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const files = Array.from(input.files ?? []);
     input.value = '';
     const conversation = this.conversation();
-    if (!conversation || !files.length || this.sending) {
+    if (!conversation || !files.length || this.sending || this.isBlocked() || this.voiceComposerActive()) {
       return;
     }
     if (!this.canSendMessages()) {
@@ -607,8 +628,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   async sendPendingAttachments(): Promise<void> {
     const conversation = this.conversation();
+    const session = this.auth.session();
+    const generation = this.composerGeneration;
     const items = [...this.pendingAttachmentFiles];
-    if (!conversation || !items.length || this.sending) {
+    if (!conversation || !session || !items.length || this.sending || this.chat.uploading() || this.isBlocked()) {
       return;
     }
     if (!this.canSendMessages()) {
@@ -618,44 +641,76 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
     const caption = this.pendingAttachmentCaption.trim();
     const draftSeed = this.pendingAttachmentDraftSeed;
+    const mode = this.pendingAttachmentMode === 'media' ? 'media' : 'document';
+    const policy = this.currentPolicy();
+    const current = () => this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation);
     this.attachmentError = '';
     this.sending = true;
     let lastError = '';
     let sent = 0;
     try {
-      for (const [index, item] of items.entries()) {
+      for (const item of items) {
+        if (!current() || this.isBlocked() || !this.canSendMessages()) break;
         try {
           await this.chat.sendFile(conversation, item.file, {
-            policy: this.currentPolicy(),
-            mode: this.pendingAttachmentMode === 'media' ? 'media' : 'document',
-            caption: index === 0 ? caption : '',
+            policy,
+            mode,
+            caption: sent === 0 ? caption : '',
           });
           sent += 1;
+          if (!current()) return;
+          this.removePendingAttachment(item.id, true);
         } catch (error) {
+          if (!current()) return;
           lastError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_UPLOAD_ATTACHMENT', 'No se pudo subir el adjunto.');
           if (this.isUploadLimitError(lastError)) {
             await this.showPremiumToast(lastError);
           }
         }
       }
+      if (!current()) return;
       this.attachmentError = lastError;
       if (sent > 0) {
         if (draftSeed && this.draft.trim() === draftSeed) {
           this.draft = '';
           await this.chat.sendTyping(conversation.id, 'stopped', { force: true });
         }
-        this.clearPendingAttachments(false);
+        if (!this.pendingAttachmentFiles.length) this.clearPendingAttachments(false);
+        else if (caption) this.pendingAttachmentCaption = '';
         this.scrollBottom();
       }
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_UPLOAD_ATTACHMENT', 'No se pudo subir el adjunto.');
+      if (current()) this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_UPLOAD_ATTACHMENT', 'No se pudo subir el adjunto.');
     } finally {
-      this.sending = false;
+      if (current()) this.sending = false;
     }
   }
 
   cancelPendingAttachments(): void {
+    if (this.sending || this.chat.uploading()) return;
     this.clearPendingAttachments(true);
+  }
+
+  addPendingAttachments(files: File[]): void {
+    if (this.sending || this.chat.uploading() || this.isBlocked() || !this.canSendMessages()) return;
+    this.pendingAttachmentFiles = [...this.pendingAttachmentFiles, ...this.pendingPreviews(files)];
+  }
+
+  removePendingAttachment(id: number, uploaded = false): void {
+    if (!uploaded && (this.sending || this.chat.uploading())) return;
+    const item = this.pendingAttachmentFiles.find(candidate => candidate.id === id);
+    if (item?.url) URL.revokeObjectURL(item.url);
+    this.pendingAttachmentFiles = this.pendingAttachmentFiles.filter(candidate => candidate.id !== id);
+    if (!this.pendingAttachmentFiles.length && !uploaded) this.clearPendingAttachments(true);
+  }
+
+  replacePendingAttachment(change: { id: number; file: File }): void {
+    if (this.sending || this.chat.uploading()) return;
+    const item = this.pendingAttachmentFiles.find(candidate => candidate.id === change.id);
+    if (!item || !change.file.size) return;
+    if (item.url) URL.revokeObjectURL(item.url);
+    this.pendingAttachmentFiles = this.pendingAttachmentFiles.map(candidate => candidate === item
+      ? { ...item, file: change.file, url: URL.createObjectURL(change.file) } : candidate);
   }
 
   pendingAttachmentTitle(): string {
@@ -1721,11 +1776,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async startVoiceNote(): Promise<void> {
-    if (this.recordingVoice || this.sending) {
+    if (this.recordingVoice || this.voiceStarting || this.sending || this.chat.uploading() || this.destroyed || this.isBlocked()) {
       return;
     }
     const conversation = this.conversation();
-    if (!conversation || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
+    const session = this.auth.session();
+    if (!conversation || !session || !navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined') {
       this.attachmentError = this.tr('CHAT.ERROR_RECORDING_UNSUPPORTED', 'Este dispositivo no permite grabar audio desde la app.');
       return;
     }
@@ -1733,13 +1789,30 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.attachmentError = this.tr('CHAT.ADMINS_ONLY_VOICE', 'Solo los admins pueden enviar notas de voz en este grupo.');
       return;
     }
+    const request = ++this.voiceGeneration;
+    const context = { conversationId: conversation.id, userId: session.user.id, deviceId: session.device.id, composerGeneration: this.composerGeneration };
+    const current = () => request === this.voiceGeneration && this.composerContextCurrent(context.conversationId, context.userId, context.deviceId, context.composerGeneration)
+      && !this.isBlocked() && this.canSendMessages();
+    this.voiceContext = context;
+    this.voiceStarting = true;
     this.attachmentError = '';
     try {
       if (this.appSettings.settings().pauseMediaOnRecord) {
         await this.nativeDevice.setAudioFocus(true, 'record');
+        if (!current()) {
+          if (!this.voiceContext || this.voiceContext === context) void this.nativeDevice.setAudioFocus(false, 'record');
+          return;
+        }
         this.pauseAmbientMedia();
       }
-      this.voiceStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      if (!current()) return;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      // A permission dialog may outlive the finger, route, account or page.
+      if (!current()) {
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+      this.voiceStream = stream;
       const mimeType = this.supportedVoiceMimeType();
       this.voiceRecorder = mimeType
         ? new MediaRecorder(this.voiceStream, { mimeType })
@@ -1750,8 +1823,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.voicePauseStartedAt = 0;
       this.voicePaused = false;
       this.voiceElapsedSeconds = 0;
-      this.voiceRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0) {
+      const recorder = this.voiceRecorder;
+      recorder.ondataavailable = (event) => {
+        if (this.voiceRecorder === recorder && event.data.size > 0) {
           this.voiceChunks.push(event.data);
         }
       };
@@ -1760,37 +1834,52 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.startVoiceTimer();
       this.cdr.detectChanges();
     } catch (error) {
-      this.cleanupVoiceRecorder();
-      this.resetVoiceUi();
-      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_MIC', 'No se pudo abrir el microfono.');
+      if (current()) {
+        this.cleanupVoiceRecorder();
+        this.resetVoiceUi();
+        this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_MIC', 'No se pudo abrir el microfono.');
+      }
+    } finally {
+      if (request === this.voiceGeneration) {
+        this.voiceStarting = false;
+        if (!this.recordingVoice) this.cleanupVoiceRecorder();
+        if (!this.destroyed) this.cdr.detectChanges();
+      }
     }
   }
 
   async stopVoiceNote(): Promise<void> {
     const conversation = this.conversation();
-    if (!conversation || !this.voiceRecorder) {
+    const context = this.voiceContext;
+    const request = this.voiceGeneration;
+    const current = () => !!context && request === this.voiceGeneration && this.composerContextCurrent(context.conversationId, context.userId, context.deviceId, context.composerGeneration);
+    if (this.sending) return;
+    if (!conversation || !this.voiceRecorder || !current() || this.isBlocked() || !this.canSendMessages()) {
       await this.cancelVoiceNote();
-      return;
-    }
-    const file = await this.stopVoiceCapture(true);
-    if (!file) {
-      this.resetVoiceUi();
       return;
     }
     this.sending = true;
     try {
+      const file = await this.stopVoiceCapture(true);
+      if (!file || !current() || this.isBlocked() || !this.canSendMessages()) return;
       await this.chat.sendFile(conversation, file, { voiceNote: true, policy: this.currentPolicy(), mode: 'document' });
-      this.scrollBottom();
+      if (current()) this.scrollBottom();
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_VOICE', 'No se pudo enviar la nota de voz.');
+      if (current()) this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_VOICE', 'No se pudo enviar la nota de voz.');
     } finally {
-      this.sending = false;
-      this.resetVoiceUi();
+      if (current()) {
+        this.sending = false;
+        this.resetVoiceUi();
+      }
     }
   }
 
   async cancelVoiceNote(): Promise<void> {
+    const request = ++this.voiceGeneration;
+    this.voiceStarting = false;
+    this.voiceContext = null;
     await this.stopVoiceCapture(false);
+    if (request === this.voiceGeneration) this.resetVoiceUi();
   }
 
   voiceComposerActive(): boolean {
@@ -1806,10 +1895,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async sendLockedVoiceNote(): Promise<void> {
-    if (this.voiceMode !== 'locked' && !this.recordingVoice) {
+    if (this.voiceMode !== 'locked' || !this.recordingVoice || this.voiceStarting || this.sending) {
       return;
     }
-    await this.voiceStartPromise?.catch(() => undefined);
     await this.stopVoiceNote();
   }
 
@@ -2971,8 +3059,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.voiceSlideX = 0;
     this.attachmentError = '';
     this.notice = '';
-    this.voiceStartPromise = this.startVoiceNote();
-    void this.voiceStartPromise.finally(() => {
+    const pending = this.startVoiceNote();
+    this.voiceStartPromise = pending;
+    void pending.finally(() => {
+      if (this.voiceStartPromise !== pending || this.destroyed) return;
       if (!this.recordingVoice && this.voiceMode !== 'cancelling') {
         this.resetVoiceUi();
       }
@@ -2990,7 +3080,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       void this.cancelVoiceGesture();
       return;
     }
-    if (deltaY <= -72) {
+    if (deltaY <= -72 && this.recordingVoice && !this.voiceStarting) {
       this.voiceMode = 'locked';
       this.voiceSlideX = 0;
     }
@@ -3001,7 +3091,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (this.voiceMode === 'locked' || this.voiceMode === 'cancelling' || this.voiceMode === 'idle') {
       return;
     }
-    await this.voiceStartPromise?.catch(() => undefined);
+    if (!this.recordingVoice || this.voiceStarting) {
+      await this.cancelVoiceNote();
+      return;
+    }
     if (this.voiceMode !== 'holding') {
       return;
     }
@@ -3009,16 +3102,16 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private async cancelVoiceGesture(): Promise<void> {
-    if (this.voiceMode === 'idle') {
+    if (this.voiceMode === 'idle' || this.sending) {
       return;
     }
+    await this.cancelVoiceNote();
+    if (this.destroyed) return;
     this.voiceMode = 'cancelling';
     this.voiceSlideX = -110;
     this.cdr.detectChanges();
-    await this.voiceStartPromise?.catch(() => undefined);
-    await this.cancelVoiceNote();
     window.setTimeout(() => {
-      if (this.voiceMode === 'cancelling') {
+      if (this.voiceMode === 'cancelling' && !this.destroyed) {
         this.resetVoiceUi();
         this.cdr.detectChanges();
       }
@@ -3033,7 +3126,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.voicePaused = false;
     this.voicePauseStartedAt = 0;
     this.voicePausedDurationMs = 0;
-    window.requestAnimationFrame(() => this.bindVoiceGesture());
+    if (!this.destroyed) window.requestAnimationFrame(() => { if (!this.destroyed) this.bindVoiceGesture(); });
   }
 
   private startVoiceTimer(): void {
@@ -3080,12 +3173,20 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private preparePendingAttachments(files: File[], mode: AttachmentMode): void {
+    if (this.pendingAttachmentFiles.length && mode === this.pendingAttachmentMode) {
+      this.addPendingAttachments(files);
+      return;
+    }
     this.clearPendingAttachments(false);
     this.pendingAttachmentMode = mode;
     this.pendingAttachmentDraftSeed = this.draft.trim();
     this.pendingAttachmentCaption = this.pendingAttachmentDraftSeed;
-    this.pendingAttachmentFiles = files.map((file) => ({
-      file,
+    this.pendingAttachmentFiles = this.pendingPreviews(files);
+  }
+
+  private pendingPreviews(files: File[]): PendingAttachmentPreview[] {
+    return files.filter(file => file.size > 0).map(file => ({
+      id: ++this.pendingAttachmentSequence, file, originalFile: file,
       url: this.canPreviewPendingFile(file) ? URL.createObjectURL(file) : null,
     }));
   }
@@ -3293,8 +3394,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.voiceSlideX = 0;
     this.attachmentError = '';
     this.notice = '';
-    this.voiceStartPromise = this.startVoiceNote();
-    await this.voiceStartPromise.catch(() => undefined);
+    const pending = this.startVoiceNote();
+    this.voiceStartPromise = pending;
+    await pending.catch(() => undefined);
+    if (this.voiceStartPromise !== pending || this.destroyed) return;
     if (!this.recordingVoice) {
       this.resetVoiceUi();
     }
@@ -3445,31 +3548,48 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private stopVoiceCapture(send: boolean): Promise<File | null> {
+    if (this.voiceStopPromise) return this.voiceStopPromise;
     const recorder = this.voiceRecorder;
     if (!recorder) {
       this.cleanupVoiceRecorder();
       return Promise.resolve(null);
     }
-    return new Promise((resolve) => {
-      recorder.onstop = () => {
+    const durationMs = this.currentVoiceDurationMs();
+    const chunks = this.voiceChunks;
+    let finished = false;
+    const pending = new Promise<File | null>((resolve) => {
+      const finish = (stopped: boolean) => {
+        if (finished) return;
+        finished = true;
+        window.clearTimeout(timeout);
+        recorder.onstop = null;
+        recorder.onerror = null;
+        recorder.ondataavailable = null;
         const mime = recorder.mimeType || this.supportedVoiceMimeType() || 'audio/webm';
-        const chunks = [...this.voiceChunks];
-        const durationMs = this.currentVoiceDurationMs();
-        this.cleanupVoiceRecorder();
-        if (!send || !chunks.length) {
+        if (this.voiceRecorder === recorder) this.cleanupVoiceRecorder();
+        if (!send || !stopped || durationMs < 800 || !chunks.length) {
           resolve(null);
           return;
         }
         const blob = new Blob(chunks, { type: mime });
+        if (blob.size < 128 || !mime.startsWith('audio/')) {
+          resolve(null);
+          return;
+        }
         const extension = mime.includes('mp4') ? 'm4a' : mime.includes('ogg') ? 'ogg' : 'webm';
         resolve(new File([blob], `nivra-voice-${Math.max(1, Math.round(durationMs / 1000))}s.${extension}`, { type: mime }));
       };
-      if (recorder.state === 'inactive') {
-        recorder.onstop(new Event('stop'));
-      } else {
-        recorder.stop();
-      }
+      const timeout = window.setTimeout(() => finish(false), 3000);
+      recorder.onstop = () => finish(true);
+      recorder.onerror = () => finish(false);
+      try {
+        if (recorder.state === 'inactive') finish(true);
+        else recorder.stop();
+      } catch { finish(false); }
     });
+    this.voiceStopPromise = pending;
+    void pending.finally(() => { if (this.voiceStopPromise === pending) this.voiceStopPromise = null; });
+    return pending;
   }
 
   private cleanupVoiceRecorder(): void {

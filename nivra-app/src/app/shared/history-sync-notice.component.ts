@@ -15,6 +15,9 @@ import { FormsModule } from '@angular/forms';
       <div class="history-copy">
         <strong>{{ titleKey() | translate:titleFallback() }}</strong>
         <p>{{ descriptionKey() | translate:descriptionFallback() }}</p>
+        @if (!identityError && history.state() !== 'syncing' && history.preferredSource(); as source) {
+          <p class="history-source-hint">{{ 'HISTORY_DEVICE.SOURCE_SUGGESTION' | translate:'Prueba primero en:' }} {{ source.deviceName }}. {{ 'HISTORY_DEVICE.SOURCE_HINT' | translate:'Si conserva tus chats, compara el código y aprueba allí. También puedes usar otro equipo que aún tenga el historial.' }}</p>
+        }
         @if (history.targetFingerprint() && history.state() !== 'syncing' && !identityError) {
           <div class="history-code"><span>{{ 'HISTORY_DEVICE.CODE_LABEL' | translate:'Código de vinculación' }}</span><code dir="ltr">{{ history.targetFingerprint() }}</code></div>
         }
@@ -90,7 +93,7 @@ export class HistorySyncNoticeComponent {
       : 'No se pudo abrir la identidad de este equipo. Comprueba la conexión, desbloquea el dispositivo y vuelve a intentar.';
     return this.history.state() === 'syncing' ? 'Estamos comprobando las llaves y preparando tus mensajes disponibles.'
       : this.history.state() === 'unavailable' ? 'No pudimos completar la recuperación. Revisa la conexión y autoriza el código desde tu otro dispositivo.'
-        : 'Abre la versión actual de Nivra en tu otro dispositivo y autoriza este código para recuperar tu historial.';
+        : 'Abre Nivra en un equipo que conserve tus chats y autoriza este código para recuperar tu historial.';
   }
   approve(request: PendingHistoryApproval): void {
     const current = this.history.pendingRequests().find(candidate => candidate.id === request.id);

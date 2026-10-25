@@ -24,7 +24,7 @@ self.addEventListener('notificationclick', (event) => {
     const existing = clientsList.find((client) => 'focus' in client);
     if (existing) {
       await existing.focus();
-      existing.postMessage({ type: 'nivra.push', data });
+      existing.postMessage({ type: 'nivra.push', intent: 'click', data });
       return;
     }
     await clients.openWindow(target);
@@ -77,10 +77,15 @@ try {
 }
 
 async function showNivraNotification(data) {
+  // A network payload is reception, even if it contains an old routing marker.
+  // Only the notificationclick handler can attach the user's navigation intent.
+  delete data.nivraRouteIntent;
   const clientsList = await clients.matchAll({ type: 'window', includeUncontrolled: true });
   const visibleClient = clientsList.find((client) => client.focused || client.visibilityState === 'visible');
   if (visibleClient) {
-    visibleClient.postMessage({ type: 'nivra.push', data });
+    // Older foreground clients treat every `nivra.push` as a tap. A distinct
+    // receipt type keeps those tabs passive until they reload the new client.
+    visibleClient.postMessage({ type: 'nivra.push.received', intent: 'receive', data });
     return;
   }
 

@@ -35,6 +35,8 @@ describe('approved encrypted history recovery', () => {
       pumpPromise: null, pumpAgain: false, replayRequested: false, recoveryIncomplete: false,
       recoveryRetryAt: 0, recoveryRetryAttempts: 0,
       requestEvidence: null, evidenceCheck: null,
+      sourceDirectory: null, sourceDirectoryCheck: null, sourceDirectoryRevision: 0,
+      preferredSource: signal(null), sourceCapability: signal('unknown'),
       checkingState: checking, checking: checking.asReadonly(),
       recovered$: { next: jasmine.createSpy('recovered'), complete: () => undefined },
     });
@@ -67,8 +69,105 @@ describe('approved encrypted history recovery', () => {
     return { source, target, sourceSync, targetSync, status, response, transfer };
   }
 
+  const registeredDevice = (id: string, name: string, overrides: Record<string, unknown> = {}) => ({
+    id, userId: 'alice', name, isTrusted: true, revokedAt: null,
+    createdAt: '2025-01-01T00:00:00Z', lastSeenAt: new Date().toISOString(), ...overrides,
+  });
+
+  it('recommends the habitual APK addressed by the unreadable message without declaring remote key possession', async () => {
+    const { service, api } = syncHarness(cryptoHarness().service, 'target');
+    service.requested = true; service.requestEvidence = evidence({}, 'target');
+    api.get.and.returnValue(of([
+      registeredDevice('desktop', 'Windows Chrome'),
+      registeredDevice('old-device', 'Android Nivra Mobile', { lastSeenAt: '2025-01-01T00:00:00Z' }),
+    ]));
+    await service.refreshSourcePreference(service.scope());
+    expect(service.preferredSource()).toEqual({ deviceId: 'old-device', deviceName: 'Android Nivra Mobile', kind: 'android', basis: 'message-recipient' });
+    expect(service.sourceCapability()).toBe('unknown');
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('keeps Web as the first source when a newly registered APK was never addressed by the old message', async () => {
+    const { service, api } = syncHarness(cryptoHarness().service, 'target');
+    service.requested = true; service.requestEvidence = evidence({}, 'target');
+    api.get.and.returnValue(of([
+      registeredDevice('new-apk', 'Android Nivra Mobile'), registeredDevice('old-device', 'Windows Chrome'),
+    ]));
+    await service.refreshSourcePreference(service.scope());
+    expect(service.preferredSource()?.deviceId).toBe('old-device');
+    expect(service.preferredSource()?.kind).toBe('other');
+  });
+
+  it('allows an APK receiver to find its Web-only source and excludes self, revoked, untrusted and foreign devices', async () => {
+    const { service, api } = syncHarness(cryptoHarness().service, 'new-apk');
+    service.requested = true; service.requestEvidence = evidence({}, 'new-apk');
+    api.get.and.returnValue(of([
+      registeredDevice('new-apk', 'Android Nivra Mobile'), registeredDevice('old-device', 'Windows Chrome'),
+      registeredDevice('other-account', 'Android Nivra Mobile', { userId: 'mallory' }),
+      registeredDevice('revoked', 'Android Nivra Mobile', { revokedAt: new Date().toISOString() }),
+      registeredDevice('untrusted', 'Android Nivra Mobile', { isTrusted: false }),
+    ]));
+    await service.refreshSourcePreference(service.scope());
+    expect(service.preferredSource()?.deviceId).toBe('old-device');
+    expect(service.state()).toBe('idle'); // Advice never initiates recovery.
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('coalesces recommendation reads per session and refreshes the cache when its device list changes', async () => {
+    const { service, api } = syncHarness(cryptoHarness().service, 'target');
+    service.requested = true; service.requestEvidence = evidence({}, 'target');
+    const devices = new Subject<any[]>(); api.get.and.returnValue(devices);
+    const first = service.refreshSourcePreference(service.scope());
+    for (let index = 0; index < 100; index++) expect(service.refreshSourcePreference(service.scope())).toBe(first);
+    expect(api.get).toHaveBeenCalledOnceWith('/devices');
+    devices.next([registeredDevice('old-device', 'Android Nivra Mobile')]); devices.complete(); await first;
+    await service.refreshSourcePreference(service.scope());
+    expect(api.get).toHaveBeenCalledTimes(1);
+    service.invalidateSourcePreference();
+    expect(service.preferredSource()).toBeNull();
+    api.get.and.returnValue(of([registeredDevice('old-device', 'Windows Chrome')]));
+    await service.refreshSourcePreference(service.scope());
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(service.preferredSource()?.kind).toBe('other');
+  });
+
+  it('imports an approved Web package immediately while the optional APK recommendation is stalled', async () => {
+    const { targetSync, status } = await approvedTarget();
+    const devices = new Subject<any[]>();
+    targetSync.api.get.and.callFake((url: string) => url === '/devices' ? devices : of(url.endsWith('/pending') ? [] : status));
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    expect(targetSync.service.state()).toBe('syncing');
+    expect(targetSync.service.preferredSource()).toBeNull();
+    devices.next([registeredDevice('source', 'Android Nivra Mobile')]); devices.complete();
+    await targetSync.service.sourceDirectoryCheck?.promise;
+  });
+
+  it('does not advertise approval capability on a reinstalled or locked source without a readable saved identity', async () => {
+    const local = cryptoHarness(); const destination = await local.service.createDeviceKeys();
+    const { service, api } = syncHarness(local.service);
+    const created = spyOn(local.service, 'createDeviceKeys').and.callThrough();
+    api.get.and.returnValue(of([request(destination.publicJwk)]));
+    await service.pump();
+    expect(service.pendingRequests()).toEqual([]);
+    expect(service.sourceCapability()).toBe('unavailable');
+    expect(created).not.toHaveBeenCalled(); expect(api.post).not.toHaveBeenCalled();
+    expect(service.requested).toBeFalse(); expect(service.state()).toBe('idle');
+  });
+
+  it('discards an optional source directory that arrives after the account changes', async () => {
+    const { service, api, auth } = syncHarness(cryptoHarness().service, 'target');
+    service.requested = true; service.requestEvidence = evidence({}, 'target');
+    const devices = new Subject<any[]>(); api.get.and.returnValue(devices);
+    const read = service.refreshSourcePreference(service.scope());
+    auth.session.set(session('bob-device', 'bob')); service.reset('bob:bob-device');
+    devices.next([registeredDevice('old-device', 'Android Nivra Mobile')]); devices.complete(); await read;
+    expect(service.preferredSource()).toBeNull(); expect(service.sourceDirectory).toBeNull();
+  });
+
   it('never exports private keys merely because the server lists a trusted request', async () => {
     const { service: crypto } = cryptoHarness(); const target = await crypto.createDeviceKeys();
+    await crypto.saveDeviceKeys('alice', 'source', await crypto.createDeviceKeys(), { userId: 'alice' });
     const { service, api } = syncHarness(crypto);
     const exported = spyOn(crypto, 'exportDeviceKeyMaterialsForUser').and.callThrough();
     api.get.and.returnValue(of([request(target.publicJwk)]));
@@ -591,13 +690,14 @@ describe('approved encrypted history recovery', () => {
     await service.requestHistory(proof);
     const poll = service.pumpPromise;
     for (let index = 0; index < 100; index++) void service.requestHistory(proof);
-    expect(api.get).toHaveBeenCalledTimes(1);
+    expect(api.get.calls.allArgs().filter(([url]) => url !== '/devices').length).toBe(1);
     pending.next([]); pending.complete(); await poll;
     expect(api.post).toHaveBeenCalledTimes(1);
-    expect(api.get).toHaveBeenCalledTimes(2); // Independent approval listing and our own status.
+    expect(api.get.calls.allArgs().filter(([url]) => url !== '/devices').length).toBe(2); // Independent approval listing and our own status.
+    expect(api.get.calls.allArgs().filter(([url]) => url === '/devices').length).toBe(1);
     // A duplicate-trigger follow-up would already be queued before this turn.
     await new Promise<void>(resolve => window.setTimeout(resolve, 0));
-    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(api.get.calls.allArgs().filter(([url]) => url !== '/devices').length).toBe(2);
     expect(service.checking()).toBeFalse();
     expect(service.state()).toBe('waiting');
   });

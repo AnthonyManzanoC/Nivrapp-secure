@@ -36,13 +36,16 @@ describe('encrypted browser history transaction boundaries', () => {
       database.createObjectStore('localVaultKeys', { keyPath: 'accountKey' });
     } });
     spyOn<any>(service, 'open').and.resolveTo(db);
-  });
+  // IndexedDB setup depends on OS storage scheduling on loaded build hosts.
+  // Keep the tested operations' normal timeout; allow setup/cleanup more time.
+  }, 15_000);
 
   afterEach(async () => {
-    db.close();
-    await deleteDB(databaseName);
-    TestBed.resetTestingModule();
-  });
+    try {
+      db?.close();
+      if (databaseName) await deleteDB(databaseName);
+    } finally { TestBed.resetTestingModule(); }
+  }, 15_000);
 
   it('persists a first encrypted batch after real asynchronous key protection without an inactive transaction', async () => {
     const messages = [message('1', 'first protected text'), message('2', 'second protected text')];

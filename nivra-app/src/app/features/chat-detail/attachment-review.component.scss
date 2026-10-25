@@ -1,0 +1,32 @@
+:host { display: block; height: 100%; min-height: 0; color: var(--nivra-text); background: var(--nivra-panel-solid); }
+.review { height: 100%; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+button { font: inherit; color: inherit; cursor: pointer; border: 0; background: transparent; }
+button:focus-visible, .crop-frame:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: -3px; }
+button:disabled { opacity: .45; cursor: default; }
+.review-header { display: flex; align-items: center; gap: 12px; padding: max(10px, env(safe-area-inset-top)) 12px 10px; border-bottom: 1px solid var(--nivra-line); }
+.icon-button { display: grid; place-items: center; width: 42px; height: 42px; border-radius: 50%; flex: none; background: rgba(var(--ion-text-color-rgb), .045); }
+.icon-button ion-icon { font-size: 23px; }
+.heading { min-width: 0; flex: 1; display: grid; gap: 3px; }
+.heading strong { display: flex; align-items: center; gap: 8px; font-size: 16px; }
+.heading strong span { font-size: 12px; background: rgba(var(--ion-text-color-rgb), .06); padding: 2px 7px; border-radius: 9px; }
+.heading small { font-size: 11px; color: var(--nivra-muted); }
+.preview { position: relative; flex: 1 1 240px; min-height: 100px; display: flex; align-items: center; justify-content: center; overflow: hidden; background: rgba(var(--ion-text-color-rgb), .035); }
+.full-image, .full-video { display: block; width: 100%; height: 100%; min-height: 0; object-fit: contain; }
+.document-card { padding: 20px; text-align: center; max-width: 100%; min-width: 0; overflow: auto; max-height: 100%; }
+.document-icon { margin: 0 auto 14px; width: 78px; height: 94px; border: 1px solid var(--nivra-line); border-radius: 14px; display: grid; place-content: center; gap: 5px; background: var(--nivra-panel-solid); color: var(--nivra-brand-2); }
+.document-icon ion-icon { font-size: 34px; margin: auto; }.document-icon b { font-size: 10px; letter-spacing: .08em; }
+.document-card h2 { font-size: 17px; line-height: 1.4; overflow-wrap: anywhere; margin: 0; }.document-card p, .document-card small { font-size: 12px; color: var(--nivra-muted); overflow-wrap: anywhere; }.document-card audio { max-width: 100%; margin-top: 12px; }
+.file-information { display: flex; align-items: center; gap: 10px; padding: 9px 16px; font-size: 12px; border-top: 1px solid var(--nivra-line); }
+.file-information span { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; flex: 1; }.file-information small { color: var(--nivra-muted); white-space: nowrap; }
+.edit-tools { display: flex; justify-content: center; gap: 4px; min-height: 42px; flex-wrap: wrap; padding: 0 8px 6px; }.edit-tools button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 8px 10px; border-radius: 10px; font-size: 12px; }.edit-tools button:hover { background: rgba(var(--ion-text-color-rgb), .055); }.edit-tools ion-icon { font-size: 18px; }.edit-tools .apply { color: var(--nivra-brand-2); }.edit-tools label { display: flex; align-items: center; gap: 6px; font-size: 12px; flex: 1; max-width: 210px; }.edit-tools input { min-width: 40px; width: 100%; accent-color: var(--nivra-brand); }
+.thumbnail-rail { display: flex; flex: none; gap: 8px; padding: 5px 14px 12px; overflow-x: auto; scrollbar-width: thin; }
+.thumbnail, .add-file { position: relative; width: 58px; height: 58px; flex: none; border: 2px solid transparent; border-radius: 11px; display: grid; align-content: center; justify-items: center; background: rgba(var(--ion-text-color-rgb), .055); overflow: hidden; }
+.thumbnail.selected { border-color: var(--nivra-brand); }.thumbnail img, .thumbnail video { width: 100%; height: 100%; object-fit: cover; position: absolute; inset: 0; }.thumbnail ion-icon, .add-file ion-icon { font-size: 24px; }.thumbnail small { font-size: 9px; }.thumbnail .video-badge { position: absolute; right: 3px; bottom: 3px; font-size: 17px; color: white; filter: drop-shadow(0 1px 2px #000); }.add-file { border: 1px dashed var(--nivra-line); color: var(--nivra-brand-2); }
+.review-footer { display: flex; gap: 10px; align-items: flex-end; padding: 10px 12px max(12px, env(safe-area-inset-bottom)); border-top: 1px solid var(--nivra-line); }
+ion-textarea { flex: 1; min-width: 0; --background: rgba(var(--ion-text-color-rgb), .055); --color: var(--nivra-text); --placeholder-color: var(--nivra-muted); --padding-top: 12px; --padding-bottom: 12px; --padding-start: 15px; --padding-end: 15px; border: 1px solid var(--nivra-line); border-radius: 22px; max-height: 110px; overflow: auto; font-size: 15px; margin: 0; }
+.send-button { width: 46px; height: 46px; display: grid; place-items: center; flex: none; border-radius: 50%; color: #04100d; background: var(--nivra-brand); }.send-button ion-icon { font-size: 23px; }.send-button ion-spinner { width: 23px; height: 23px; }
+.review-error { margin: 0; padding: 4px 16px 10px; font-size: 12px; color: var(--ion-color-danger, #d35056); }
+.processing { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0,0,0,.25); color: white; }
+.crop-frame { position: relative; width: min(100%, 48dvh, 420px); aspect-ratio: 1; overflow: hidden; touch-action: none; cursor: move; }
+.crop-frame img { position: absolute; left: 50%; top: 50%; width: 100%; height: 100%; max-width: none; object-fit: cover; user-select: none; pointer-events: none; }.crop-grid { position: absolute; inset: 0; border: 2px solid #fff; pointer-events: none; background: linear-gradient(to right, transparent 33%, rgba(255,255,255,.5) 33%, rgba(255,255,255,.5) 33.4%, transparent 33.4%, transparent 66%, rgba(255,255,255,.5) 66%, rgba(255,255,255,.5) 66.4%, transparent 66.4%), linear-gradient(to bottom, transparent 33%, rgba(255,255,255,.5) 33%, rgba(255,255,255,.5) 33.4%, transparent 33.4%, transparent 66%, rgba(255,255,255,.5) 66%, rgba(255,255,255,.5) 66.4%, transparent 66.4%); }
+@media (max-height: 500px) { .heading small { display: none; }.review-header { padding-top: 5px; padding-bottom: 5px; }.thumbnail, .add-file { width: 44px; height: 44px; }.thumbnail-rail { padding-bottom: 5px; }.preview { min-height: 60px; }.file-information { padding-top: 5px; padding-bottom: 5px; } }

@@ -78,6 +78,19 @@
   visibility: hidden;
 }
 
+.story-strip.native-story-accordion {
+  max-height: 180px;
+  opacity: 1;
+  transition: max-height 220ms ease, padding 220ms ease, opacity 180ms ease, visibility 0s;
+}
+
+.story-strip.native-story-accordion.is-collapsed {
+  height: auto;
+  max-height: 0;
+  opacity: 0;
+  transition: max-height 220ms ease, padding 220ms ease, opacity 180ms ease, visibility 0s 220ms;
+}
+
 .side-heading {
   min-width: 0;
 }
@@ -907,6 +920,8 @@ time {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .story-strip.native-story-accordion { transition: none; }
+  .story-strip.native-story-accordion.is-collapsed { transition: none; }
   .chat-loading-line { animation: none; }
   .conversation-preview-loading::after { display: none; animation: none; }
   .conversation-list-stage > .list { transition: none; }

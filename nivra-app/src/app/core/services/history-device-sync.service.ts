@@ -5,10 +5,16 @@ import { AuthService } from './auth.service';
 import { CryptoService, HistoricalDeviceKeyMaterial } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
-import { MessageResponse } from '../models/nivra.models';
+import { MessageResponse, NivraDevice } from '../models/nivra.models';
 
 interface TransferRequest { id: string; userId: string; targetDeviceId: string; targetIdentityKey: string; targetDeviceName?: string; expiresAt: string; }
 export interface PendingHistoryApproval extends TransferRequest { fingerprint: string; }
+export interface PreferredHistorySource {
+  deviceId: string;
+  deviceName: string;
+  kind: 'android' | 'other';
+  basis: 'message-recipient' | 'active-device';
+}
 interface TransferResponse { sourceDeviceId: string; sourceIdentityKey: string; header: string; ciphertext: string; }
 interface TransferStatus extends TransferRequest { responses: TransferResponse[]; }
 interface KeyringPayload { v: 1; purpose: 'history-keyring'; requestId: string; userId: string; targetDeviceId: string; sourceDeviceId: string; targetPublicJwk: JsonWebKey; expiresAt: string; keys: HistoricalDeviceKeyMaterial[]; }
@@ -21,6 +27,7 @@ export interface HistoryRecoveryEvidence {
 }
 const TRANSFER_HTTP_TIMEOUT_MS = 15_000;
 const RECOVERY_RETRY_DELAYS_MS = [2500, 5000, 10_000];
+const SOURCE_DIRECTORY_CACHE_MS = 60_000;
 
 @Injectable({ providedIn: 'root' })
 export class HistoryDeviceSyncService implements OnDestroy {
@@ -47,6 +54,13 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private requestedAt = 0;
   private readonly importedResponses = new Set<string>();
   private readonly dismissedRequests = new Set<string>();
+  private sourceDirectory: { epoch: number; expiresAt: number; devices: NivraDevice[] } | null = null;
+  private sourceDirectoryCheck: { epoch: number; promise: Promise<void> } | null = null;
+  private sourceDirectoryRevision = 0;
+  // This is an actionable candidate, never a claim that a remote installation
+  // still possesses private keys. The current API intentionally exposes none.
+  readonly preferredSource = signal<PreferredHistorySource | null>(null);
+  readonly sourceCapability = signal<'unknown' | 'persisted-keys' | 'unavailable'>('unknown');
   readonly pendingRequests = signal<PendingHistoryApproval[]>([]);
   readonly targetFingerprint = signal('');
   readonly approvingRequestId = signal<string | null>(null);
@@ -69,6 +83,9 @@ export class HistoryDeviceSyncService implements OnDestroy {
       });
     });
     this.realtime.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(event => {
+      if (event.type === 'device.listChanged') {
+        this.invalidateSourcePreference();
+      }
       if (['connected', 'reconnected', 'history.requested', 'history.available', 'device.listChanged'].includes(event.type)) void this.pump();
     });
     fromEvent(window, 'online').pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => void this.pump());
@@ -82,7 +99,11 @@ export class HistoryDeviceSyncService implements OnDestroy {
   requestHistory(evidence: HistoryRecoveryEvidence): Promise<void> {
     const scope = this.scope();
     if (!scope || !this.validEvidence(evidence, scope)) return Promise.resolve();
-    if (this.requested) { this.requestEvidence = evidence; return Promise.resolve(); }
+    if (this.requested) {
+      this.requestEvidence = evidence;
+      this.updatePreferredSource(scope);
+      return Promise.resolve();
+    }
     if (this.evidenceCheck?.epoch === scope.epoch) { this.evidenceCheck.evidence = evidence; return this.evidenceCheck.promise; }
     const promise = (async () => {
       // Failure to open the local key store is not evidence that another device
@@ -132,6 +153,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.recoveryRetryAt = this.recoveryRetryAttempts = 0;
     this.requested = false; this.replayRequested = this.recoveryIncomplete = false; this.state.set('idle');
     this.requestEvidence = null;
+    this.preferredSource.set(null);
   }
   markHistoryRecoveryIncomplete(options: { retryable?: boolean } = {}): void {
     if (!this.scope() || !this.requested || !this.requestEvidence) return;
@@ -190,6 +212,9 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.recoveryRetryAt = this.recoveryRetryAttempts = 0;
     this.importedResponses.clear();
     this.dismissedRequests.clear();
+    this.sourceDirectory = this.sourceDirectoryCheck = null;
+    this.sourceDirectoryRevision = (this.sourceDirectoryRevision ?? 0) + 1;
+    this.preferredSource.set(null); this.sourceCapability.set('unknown');
     this.pendingRequests.set([]); this.targetFingerprint.set(''); this.approvingRequestId.set(null); this.approvalError.set('');
     this.state.set('idle');
     this.checkingState.set(false);
@@ -273,6 +298,9 @@ export class HistoryDeviceSyncService implements OnDestroy {
     // Fetch our approved package independently. A stalled request list for
     // other devices must not hold up an approval that has already arrived.
     const approvals = this.refreshPendingRequests(scope);
+    // Directory availability must never delay creating a request or importing
+    // an already approved package from any capable platform.
+    if (this.requested && this.requestEvidence) void this.refreshSourcePreference(scope);
     try {
       if (this.requested && this.recoveryRetryAt && this.recoveryRetryAt <= Date.now()) {
         this.recoveryRetryAt = 0;
@@ -325,6 +353,18 @@ export class HistoryDeviceSyncService implements OnDestroy {
     try {
       const pending = await firstValueFrom(this.api.get<TransferRequest[]>('/devices/history-transfer/pending').pipe(timeout(TRANSFER_HTTP_TIMEOUT_MS)));
       this.assertCurrent(scope);
+      if (pending?.length) {
+        try {
+          await this.persistedIdentity(scope);
+          this.assertCurrent(scope);
+          this.sourceCapability.set('persisted-keys');
+        } catch {
+          this.assertCurrent(scope);
+          this.sourceCapability.set('unavailable');
+          this.pendingRequests.set([]);
+          return;
+        }
+      }
       const approvals: PendingHistoryApproval[] = [];
       for (const request of pending ?? []) {
         if (this.dismissedRequests.has(request.id) || request.userId !== scope.userId || request.targetDeviceId === scope.deviceId || !Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) continue;
@@ -335,6 +375,58 @@ export class HistoryDeviceSyncService implements OnDestroy {
       }
       this.pendingRequests.set(approvals);
     } catch { /* Approval listing is best effort and independent of delivery. */ }
+  }
+
+  private refreshSourcePreference(scope: SessionScope): Promise<void> {
+    if (!this.requested || !this.requestEvidence || !this.isCurrent(scope)) return Promise.resolve();
+    if (this.sourceDirectory?.epoch === scope.epoch && this.sourceDirectory.expiresAt > Date.now()) {
+      this.updatePreferredSource(scope);
+      return Promise.resolve();
+    }
+    if (this.sourceDirectoryCheck?.epoch === scope.epoch) return this.sourceDirectoryCheck.promise;
+    const revision = this.sourceDirectoryRevision;
+    const promise = (async () => {
+      const devices = await firstValueFrom(this.api.get<NivraDevice[]>('/devices').pipe(timeout(TRANSFER_HTTP_TIMEOUT_MS)));
+      this.assertCurrent(scope);
+      if (revision !== this.sourceDirectoryRevision) return;
+      this.sourceDirectory = { epoch: scope.epoch, expiresAt: Date.now() + SOURCE_DIRECTORY_CACHE_MS,
+        devices: Array.isArray(devices) ? devices : [] };
+      this.updatePreferredSource(scope);
+    })().catch(() => {
+      // Back off a missing/offline directory too; optional advice must not add
+      // an HTTP request for every message or every short transfer status poll.
+      if (this.isCurrent(scope) && revision === this.sourceDirectoryRevision) {
+        this.sourceDirectory = { epoch: scope.epoch, expiresAt: Date.now() + SOURCE_DIRECTORY_CACHE_MS, devices: [] };
+        this.preferredSource.set(null);
+      }
+    }).finally(() => {
+      if (this.sourceDirectoryCheck?.promise === promise) this.sourceDirectoryCheck = null;
+    });
+    this.sourceDirectoryCheck = { epoch: scope.epoch, promise };
+    return promise;
+  }
+
+  private invalidateSourcePreference(): void {
+    this.sourceDirectory = null; this.sourceDirectoryRevision++;
+    this.preferredSource.set(null);
+  }
+
+  private updatePreferredSource(scope: SessionScope): void {
+    if (!this.isCurrent(scope) || !this.requested || !this.requestEvidence || this.sourceDirectory?.epoch !== scope.epoch) return;
+    const addressed = new Set(this.requestEvidence.message.recipients.filter(recipient => recipient.userId === scope.userId).map(recipient => recipient.deviceId));
+    const candidates = this.sourceDirectory.devices.filter(device => device.userId === scope.userId && device.id !== scope.deviceId
+      && device.isTrusted && !device.revokedAt && typeof device.name === 'string' && device.name.trim());
+    const android = (device: NivraDevice) => /^Android\s+Nivra Mobile$/i.test(device.name.trim());
+    const recent = (device: NivraDevice) => Number.isFinite(Date.parse(device.lastSeenAt || ''))
+      && Date.parse(device.lastSeenAt!) > Date.now() - 7 * 24 * 60 * 60_000;
+    const rank = (device: NivraDevice) => addressed.has(device.id) ? (android(device) ? 0 : 1)
+      : recent(device) ? (android(device) ? 2 : 3) : (android(device) ? 4 : 5);
+    candidates.sort((left, right) => rank(left) - rank(right)
+      || (Date.parse(right.lastSeenAt || '') || 0) - (Date.parse(left.lastSeenAt || '') || 0)
+      || left.id.localeCompare(right.id));
+    const selected = candidates[0];
+    this.preferredSource.set(selected ? { deviceId: selected.id, deviceName: selected.name,
+      kind: android(selected) ? 'android' : 'other', basis: addressed.has(selected.id) ? 'message-recipient' : 'active-device' } : null);
   }
 
   private async requestStatus(scope: SessionScope): Promise<TransferStatus> {

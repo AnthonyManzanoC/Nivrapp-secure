@@ -316,6 +316,35 @@ describe('Chats actions and scoped search', () => {
       expect(page.storiesCollapsed).toBeTrue();
     });
 
+    it('folds expanded stories with an upward swipe even when the list cannot scroll', () => {
+      for (const height of [0, 100, 500]) {
+        list.scrollHeight = height;
+        page.storiesCollapsed = false;
+        page.onNativeStoryTouchStart(touch(120, 190));
+        page.onNativeStoryTouchMove(touch(124, 138));
+        page.onNativeStoryTouchEnd(touch(124, 138, 0));
+        expect(page.storiesCollapsed).toBeTrue();
+      }
+      expect(chat.refreshChats).not.toHaveBeenCalled();
+    });
+
+    it('keeps the accordion open for a tap, cancelled swipe or horizontal story navigation', () => {
+      page.storiesCollapsed = false;
+      page.onNativeStoryTouchStart(touch(120, 190));
+      page.onNativeStoryTouchMove(touch(124, 175));
+      page.onNativeStoryTouchEnd(touch(124, 175, 0));
+      expect(page.storiesCollapsed).toBeFalse();
+      page.onNativeStoryTouchStart(touch(120, 190));
+      page.onNativeStoryTouchMove(touch(190, 135));
+      page.onNativeStoryTouchEnd(touch(190, 135, 0));
+      expect(page.storiesCollapsed).toBeFalse();
+      page.onNativeStoryTouchStart(touch(120, 190));
+      page.onNativeStoryTouchMove(touch(120, 130));
+      page.onNativeStoryTouchCancel();
+      page.onNativeStoryTouchEnd(touch(120, 130, 0));
+      expect(page.storiesCollapsed).toBeFalse();
+    });
+
     it('does not turn a horizontal chat swipe into a story pull', () => {
       page.onNativeStoryTouchStart(touch(120, 120));
       page.onNativeStoryTouchMove(touch(190, 133));

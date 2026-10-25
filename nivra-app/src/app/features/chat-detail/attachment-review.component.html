@@ -1,0 +1,61 @@
+<section class="review" [attr.aria-busy]="busy || processing">
+  <header class="review-header">
+    <button type="button" class="icon-button" (click)="closed.emit()" [disabled]="busy || processing" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline"></ion-icon></button>
+    <div class="heading"><strong>{{ 'CHAT.ATTACHMENT' | translate:'Adjunto' }} <span>{{ items.length }}</span></strong><small>{{ 'COMMON.E2EE_ENCRYPTED' | translate:'Cifrado extremo a extremo' }}</small></div>
+    @if (selected(); as item) {
+      <button type="button" class="icon-button remove" (click)="removed.emit(item.id)" [disabled]="busy || processing" [attr.aria-label]="'COMMON.REMOVE' | translate:'Quitar'"><ion-icon name="trash-outline"></ion-icon></button>
+    }
+  </header>
+  @if (selected(); as item) {
+    <div class="preview" [class.document-preview]="!image(item) && !video(item)">
+      @if (editing) {
+        <div #cropFrame class="crop-frame" tabindex="0" role="group" [attr.aria-label]="'CHAT.CROP_DRAG' | translate:'Arrastra para encuadrar. Usa las flechas para ajustar.'"
+          (pointerdown)="cropPointerDown($event)" (pointermove)="cropPointerMove($event)" (pointerup)="cropPointerEnd()" (pointercancel)="cropPointerEnd()"
+          (keydown.arrowleft)="moveCrop(-10, 0, $event)" (keydown.arrowright)="moveCrop(10, 0, $event)" (keydown.arrowup)="moveCrop(0, -10, $event)" (keydown.arrowdown)="moveCrop(0, 10, $event)">
+          <img [src]="item.url" [alt]="item.file.name" (load)="imageLoaded($event)" [style.width.px]="cropImageSize('width')" [style.height.px]="cropImageSize('height')" [style.transform]="cropTransform()" draggable="false">
+          <span class="crop-grid" aria-hidden="true"></span>
+        </div>
+      } @else if (item.url && image(item) && failedId !== item.id) {
+        <img class="full-image" [src]="item.url" [alt]="item.file.name" (error)="failedId = item.id">
+      } @else if (item.url && video(item) && failedId !== item.id) {
+        <video class="full-video" [src]="item.url" controls playsinline preload="metadata" [attr.aria-label]="item.file.name" (error)="failedId = item.id"></video>
+      } @else {
+        <article class="document-card"><span class="document-icon"><ion-icon name="document-text-outline"></ion-icon><b>{{ extension(item.file) }}</b></span><h2>{{ item.file.name }}</h2><p>{{ size(item.file) }} · {{ item.file.type || ('COMMON.FILE' | translate:'Archivo') }}</p>
+          @if (item.url && item.file.type.startsWith('audio/')) { <audio [src]="item.url" controls preload="metadata"></audio> }
+          @if (failedId === item.id) { <small>{{ 'CHAT.PREVIEW_UNAVAILABLE' | translate:'La vista previa no está disponible. Puedes enviar el archivo original.' }}</small> }
+        </article>
+      }
+      @if (processing) { <div class="processing"><ion-spinner name="crescent"></ion-spinner></div> }
+    </div>
+    <div class="file-information"><span>{{ item.file.name }}</span><small>{{ size(item.file) }} · {{ items.indexOf(item) + 1 }}/{{ items.length }}</small></div>
+    @if (editable(item)) {
+      <div class="edit-tools">
+        @if (editing) {
+          <label>{{ 'COMMON.ZOOM' | translate:'Zoom' }}<input #zoom type="range" min="1" max="3" step=".05" [value]="cropZoom" (input)="zoomChanged(zoom.value)" [disabled]="processing"></label>
+          <button type="button" (click)="cancelCrop()" [disabled]="processing">{{ 'COMMON.CANCEL' | translate:'Cancelar' }}</button>
+          <button type="button" class="apply" (click)="editImage('crop')" [disabled]="processing"><ion-icon name="checkmark-outline"></ion-icon>{{ 'COMMON.APPLY' | translate:'Aplicar' }}</button>
+        } @else {
+          <button type="button" (click)="editImage('rotate')" [disabled]="busy || processing"><ion-icon name="refresh-outline"></ion-icon>{{ 'COMMON.ROTATE' | translate:'Girar' }}</button>
+          <button type="button" (click)="beginCrop()" [disabled]="busy || processing"><ion-icon name="crop-outline"></ion-icon>{{ 'COMMON.CROP' | translate:'Recortar' }}</button>
+          @if (item.file !== item.originalFile) { <button type="button" (click)="replaced.emit({ id: item.id, file: item.originalFile })" [disabled]="busy || processing"><ion-icon name="arrow-undo-outline"></ion-icon>{{ 'COMMON.RESTORE' | translate:'Restaurar' }}</button> }
+        }
+      </div>
+    }
+  }
+  <div class="thumbnail-rail" [attr.aria-label]="'COMMON.FILES' | translate:'Archivos'">
+    @for (item of items; track item.id) {
+      <button type="button" class="thumbnail" [class.selected]="item.id === selected()?.id" [attr.aria-pressed]="item.id === selected()?.id" [attr.aria-label]="item.file.name" (click)="select(item.id)" [disabled]="busy || processing">
+        @if (item.url && image(item)) { <img [src]="item.url" alt=""> }
+        @else if (item.url && video(item)) { <video [src]="item.url" muted playsinline preload="metadata"></video><ion-icon class="video-badge" name="videocam-outline"></ion-icon> }
+        @else { <ion-icon name="document-text-outline"></ion-icon><small>{{ extension(item.file) }}</small> }
+      </button>
+    }
+    <button type="button" class="add-file" (click)="files.click()" [disabled]="busy || processing" [attr.aria-label]="'CHAT.ADD_FILES' | translate:'Añadir archivos'"><ion-icon name="add-outline"></ion-icon></button>
+    <input #files type="file" hidden multiple [accept]="media ? 'image/*,video/*' : ''" (change)="addFiles($event)">
+  </div>
+  @if (error || editError) { <p class="review-error" role="alert">{{ error || (editError | translate:'No se pudo editar esta foto. El original se ha conservado.') }}</p> }
+  <footer class="review-footer">
+    <ion-textarea mode="ios" [ngModel]="caption" (ngModelChange)="captionChange.emit($event)" [disabled]="busy || processing" autoGrow="true" rows="1" maxlength="1200" [attr.aria-label]="'CHAT.ATTACHMENT_CAPTION' | translate:'Agregar mensaje al adjunto'" [placeholder]="'CHAT.ATTACHMENT_CAPTION' | translate:'Agregar mensaje al adjunto'"></ion-textarea>
+    <button type="button" class="send-button" (click)="submitted.emit()" [disabled]="busy || processing || editing || !items.length" [attr.aria-label]="'COMMON.SEND' | translate:'Enviar'">@if (busy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }</button>
+  </footer>
+</section>

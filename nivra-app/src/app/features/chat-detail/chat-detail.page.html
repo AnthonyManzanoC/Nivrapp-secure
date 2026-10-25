@@ -496,17 +496,17 @@
       } @else {
         <div class="voice-recorder-panel" [style.transform]="voiceSlideTransform()">
           @if (voiceMode === 'locked') {
-            <button type="button" class="voice-trash" (click)="cancelLockedVoiceNote()" [attr.aria-label]="'CHAT.DISCARD_VOICE_NOTE' | translate:'Descartar nota de voz'">
+            <button type="button" class="voice-trash" (click)="cancelLockedVoiceNote()" [disabled]="sending" [attr.aria-label]="'CHAT.DISCARD_VOICE_NOTE' | translate:'Descartar nota de voz'">
               <ion-icon name="trash-outline"></ion-icon>
             </button>
             <div class="voice-clock">
               <span class="record-dot"></span>
               <strong>{{ voiceTimerLabel() }}</strong>
             </div>
-            <button type="button" class="voice-pause" (click)="toggleVoicePause()" [attr.aria-label]="voicePaused ? ('CHAT.RESUME_VOICE_NOTE' | translate:'Reanudar nota de voz') : ('CHAT.PAUSE_VOICE_NOTE' | translate:'Pausar nota de voz')">
+            <button type="button" class="voice-pause" (click)="toggleVoicePause()" [disabled]="!recordingVoice || voiceStarting || sending" [attr.aria-label]="voicePaused ? ('CHAT.RESUME_VOICE_NOTE' | translate:'Reanudar nota de voz') : ('CHAT.PAUSE_VOICE_NOTE' | translate:'Pausar nota de voz')">
               <ion-icon [name]="voicePaused ? 'play-circle-outline' : 'pause-circle-outline'"></ion-icon>
             </button>
-            <button type="button" class="voice-send" (click)="sendLockedVoiceNote()" [disabled]="sending" [attr.aria-label]="'CHAT.SEND_VOICE_NOTE' | translate:'Enviar nota de voz'">
+            <button type="button" class="voice-send" (click)="sendLockedVoiceNote()" [disabled]="sending || voiceStarting || !recordingVoice" [attr.aria-label]="'CHAT.SEND_VOICE_NOTE' | translate:'Enviar nota de voz'">
               @if (sending) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
             </button>
           } @else if (voiceMode === 'cancelling') {
@@ -516,7 +516,7 @@
             </div>
           } @else {
             <div class="voice-clock">
-              <span class="record-dot"></span>
+              @if (voiceStarting) { <ion-spinner name="crescent"></ion-spinner> } @else { <span class="record-dot"></span> }
               <strong>{{ voiceTimerLabel() }}</strong>
             </div>
             <span class="voice-slide-copy">{{ 'CHAT.SLIDE_CANCEL' | translate:'< Desliza para cancelar' }}</span>
@@ -618,56 +618,15 @@
     </ng-template>
   </ion-popover>
 
-  <ion-modal class="attachment-review-modal" [isOpen]="pendingAttachmentFiles.length > 0" (didDismiss)="cancelPendingAttachments()">
+  <ion-modal class="attachment-review-modal media-review-modal" [isOpen]="pendingAttachmentFiles.length > 0" [canDismiss]="pendingAttachmentFiles.length === 0 || (!sending && !chat.uploading())" (didDismiss)="cancelPendingAttachments()">
     <ng-template>
-      <section class="attachment-review">
-        <header>
-          <div>
-            <strong>{{ pendingAttachmentTitle() }}</strong>
-            <span>{{ pendingAttachmentSubtitle() }}</span>
-          </div>
-          <ion-button mode="ios" fill="clear" (click)="cancelPendingAttachments()" [attr.aria-label]="'CHAT.CLOSE_ATTACHMENT' | translate:'Cerrar adjunto'">
-            <ion-icon name="close-outline"></ion-icon>
-          </ion-button>
-        </header>
-        <div class="attachment-review-list">
-          @for (item of pendingAttachmentFiles; track item.file.name + item.file.size + item.file.lastModified) {
-            <article class="attachment-review-item">
-              <span class="attachment-review-thumb">
-                @if (item.url && isPendingImage(item.file)) {
-                  <img [src]="item.url" [alt]="item.file.name">
-                } @else if (item.url && isPendingVideo(item.file)) {
-                  <video [src]="item.url" muted playsinline preload="metadata"></video>
-                } @else {
-                  <ion-icon [name]="item.file.type.startsWith('audio/') ? 'mic-outline' : 'document-attach-outline'"></ion-icon>
-                }
-              </span>
-              <span class="attachment-review-copy">
-                <strong>{{ item.file.name }}</strong>
-                <small>{{ item.file.type || ('COMMON.FILE' | translate:'Archivo') }} - {{ pendingFileSize(item.file) }}</small>
-              </span>
-            </article>
-          }
-        </div>
-        <footer>
-          <ion-textarea
-            mode="ios"
-            name="pendingAttachmentCaption"
-            [(ngModel)]="pendingAttachmentCaption"
-            autoGrow="true"
-            rows="1"
-            maxlength="1200"
-            [placeholder]="'CHAT.ATTACHMENT_CAPTION' | translate:'Agregar mensaje al adjunto'">
-          </ion-textarea>
-          <ion-button mode="ios" class="send" (click)="sendPendingAttachments()" [disabled]="sending || chat.uploading()">
-            @if (sending || chat.uploading()) {
-              <ion-spinner name="crescent"></ion-spinner>
-            } @else {
-              <ion-icon name="send-outline"></ion-icon>
-            }
-          </ion-button>
-        </footer>
-      </section>
+      <app-attachment-review
+        [items]="pendingAttachmentFiles" [(caption)]="pendingAttachmentCaption"
+        [busy]="sending || chat.uploading()" [media]="pendingAttachmentMode === 'media'" [error]="attachmentError"
+        (closed)="cancelPendingAttachments()" (submitted)="sendPendingAttachments()"
+        (added)="addPendingAttachments($event)" (removed)="removePendingAttachment($event)"
+        (replaced)="replacePendingAttachment($event)">
+      </app-attachment-review>
     </ng-template>
   </ion-modal>
 
