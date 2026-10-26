@@ -1,6 +1,6 @@
 import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, timeout } from 'rxjs';
 import {
   Contact,
   ContactRadarScanResponse,
@@ -21,7 +21,9 @@ import { E2EE_UPLOAD_LIMIT_BYTES, MediaOptimizerService } from './media-optimize
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 import { EncryptedDownloadService } from './encrypted-download.service';
+import { StoryMusicDraft, validateStoryMusicDraft } from './story-music';
 import { friendRequestStatus, normalizeFriendRequests } from './social-connections.helpers';
+import { NetworkPolicyService } from './network-policy.service';
 
 const MAX_STORY_MEDIA_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 
@@ -50,6 +52,7 @@ export class SocialService {
   private readonly auth = inject(AuthService);
   private readonly crypto = inject(CryptoService);
   private readonly history = inject(LocalHistoryService);
+  private readonly network = inject(NetworkPolicyService);
   private readonly mediaOptimizer = inject(MediaOptimizerService);
   private readonly realtime = inject(SignalrService);
   private readonly downloads = inject(EncryptedDownloadService);
@@ -575,6 +578,7 @@ export class SocialService {
     text: string;
     visibility: string;
     file?: File | null;
+    music?: StoryMusicDraft | null;
     durationSeconds?: number;
     viewOnce?: boolean;
     allowReposts?: boolean;
@@ -584,12 +588,15 @@ export class SocialService {
   }): Promise<void> {
     const text = options.text.trim();
     const file = options.file ?? null;
+    const musicDraft = options.music ?? null;
+    if (musicDraft && !file?.type.startsWith('image/')) throw new Error('La música acompaña una foto.');
     if (!text && !file) {
       return;
     }
     const publisher = this.auth.session();
     const publisherAccountDeviceKey = publisher ? `${publisher.user.id}:${publisher.device.id}` : '';
-    const assertPublishingSession = () => this.assertSocialSession(publisherAccountDeviceKey);
+    const assertPublishingSession = this.captureSocialSessionGuard();
+    const publisherEpoch = this.socialEpoch;
     assertPublishingSession();
 
     this.publishing.set(true);
@@ -597,7 +604,15 @@ export class SocialService {
     this.storyDeliveryWarning.set('');
     try {
       assertPublishingSession();
+      if (musicDraft) {
+        await validateStoryMusicDraft(musicDraft); assertPublishingSession();
+        const capabilities = await firstValueFrom(this.api.get<{ musicFragments?: number }>('/stories/capabilities')
+          .pipe(timeout(this.network.readTimeoutMs()))).catch(() => null);
+        assertPublishingSession();
+        if (capabilities?.musicFragments !== 1) throw new Error('El servidor aún no permite historias con música. Conservamos tu borrador; vuelve a intentar cuando se actualice.');
+      }
       const durationSeconds = options.durationSeconds ?? 24 * 60 * 60;
+      const assetsExpiresAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
       const allowedUserIds = [...new Set((options.allowedUserIds ?? []).filter(Boolean))];
       const contacts = options.visibility === 'MutualContacts'
         ? this.contacts().filter((contact) => contact.isMutualContact)
@@ -618,6 +633,7 @@ export class SocialService {
       let mediaFileObjectId: string | null = null;
       let media: StoryPayload['media'] = null;
       let preparedMediaFile: File | null = null;
+      let music: StoryPayload['music'] = null;
 
       if (file) {
         this.publishingStatus.set('Optimizando y protegiendo tu archivo…');
@@ -635,13 +651,12 @@ export class SocialService {
         const clientSha256 = Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join('');
         assertPublishingSession();
         const mime = uploadFile.type || 'application/octet-stream';
-        const expiresAt = new Date(Date.now() + durationSeconds * 1000).toISOString();
         const fileRecord = await firstValueFrom(this.api.post<FileResponse>('/files', {
           encryptedSize: encrypted.bytes.byteLength,
           mimeTypeCiphertext: this.crypto.b64(new TextEncoder().encode(mime)),
           clientSha256,
           allowedUserIds: securedAudienceUserIds,
-          expiresAt,
+          expiresAt: assetsExpiresAt,
         }));
         assertPublishingSession();
         this.publishingStatus.set('Subiendo tu archivo…');
@@ -670,7 +685,15 @@ export class SocialService {
         preparedMediaFile = uploadFile;
       }
 
-      const decodedPayload: StoryPayload = { v: 2, type: media ? 'media' : 'text', text, media };
+      if (musicDraft) {
+        this.publishingStatus.set('Protegiendo tu fragmento de música…');
+        const uploaded = await this.uploadStoryMusic(musicDraft, securedAudienceUserIds, assetsExpiresAt, assertPublishingSession);
+        assertPublishingSession();
+        music = { ...uploaded, title: musicDraft.title.trim(), durationSeconds: musicDraft.durationSeconds,
+          sourceStartSeconds: musicDraft.sourceStartSeconds };
+      }
+
+      const decodedPayload: StoryPayload = { v: 2, type: media ? 'media' : 'text', text, media, ...(music ? { music } : {}) };
       const payload = await this.encodeStoryPayload(decodedPayload, recipientPlan, options.visibility, assertPublishingSession);
       assertPublishingSession();
       this.publishingStatus.set('Publicando tu historia…');
@@ -681,6 +704,7 @@ export class SocialService {
         encryptedPayload: payload,
         caption: null,
         mediaFileObjectId,
+        ...(music ? { musicFileObjectId: music.fileId } : {}),
         allowedUserIds: securedAudienceUserIds,
         viewOnce: Boolean(options.viewOnce),
         allowReposts: options.allowReposts !== false,
@@ -690,7 +714,9 @@ export class SocialService {
       if (preparedMediaFile && media) {
         this.rememberMediaPreview(story.id, preparedMediaFile, media.mime, media.fileName);
       }
-      this.decodedPayloads.update((items) => ({ ...items, [story.id]: decodedPayload }));
+      const musicConfirmed = !music || story.musicFileObjectId === music.fileId;
+      if (musicDraft && music && musicConfirmed) this.rememberMediaPreview(`${story.id}:music`, musicDraft.file, music.mime, music.fileName);
+      this.decodedPayloads.update((items) => ({ ...items, [story.id]: this.confirmedStoryPayload(story, decodedPayload) }));
       this.unconfirmedPublishedStories.set(story.id, {
         story: this.normalizeStory(story),
         accountDeviceKey: publisherAccountDeviceKey,
@@ -699,12 +725,12 @@ export class SocialService {
       });
       this.storyRealtimeVersion += 1;
       this.applyStoryUpdate(story);
-      this.storyDeliveryWarning.set(this.deliveryWarningFor(recipientPlan));
+      this.storyDeliveryWarning.set([this.deliveryWarningFor(recipientPlan), musicConfirmed ? '' : 'Historia publicada. El servidor no confirmó la música; se mostrará la foto sin sonido.'].filter(Boolean).join(' '));
       // The POST has committed. A delayed or unavailable feed must not make
       // the composer report failure and invite the user to publish it again.
       await this.load().catch(() => undefined);
     } finally {
-      if (publisherAccountDeviceKey === this.accountDeviceKey()) {
+      if (publisherAccountDeviceKey === this.accountDeviceKey() && publisherEpoch === this.socialEpoch) {
         this.publishing.set(false);
         this.publishingStatus.set('');
       }
@@ -713,6 +739,29 @@ export class SocialService {
 
   async publishTextStory(text: string, visibility: string): Promise<void> {
     await this.publishStory({ text, visibility });
+  }
+
+  private async uploadStoryMusic(draft: StoryMusicDraft, allowedUserIds: string[], expiresAt: string, assertSession: () => void): Promise<NonNullable<StoryPayload['media']>> {
+    assertSession();
+    const encrypted = await this.crypto.encryptAttachment(await draft.file.arrayBuffer());
+    assertSession();
+    const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', encrypted.bytes));
+    assertSession();
+    const file = await firstValueFrom(this.api.post<FileResponse>('/files', {
+      encryptedSize: encrypted.bytes.byteLength, mimeTypeCiphertext: this.crypto.b64(new TextEncoder().encode('audio/wav')),
+      clientSha256: Array.from(digest, byte => byte.toString(16).padStart(2, '0')).join(''), allowedUserIds,
+      expiresAt,
+    }));
+    assertSession();
+    const path = `/files/${encodeURIComponent(file.id)}/blob`;
+    try { await firstValueFrom(this.api.putRaw<FileResponse>(path, encrypted.bytes)); }
+    catch (error) {
+      assertSession();
+      if (![0, 502, 503, 504].includes((error as { status?: number })?.status ?? -1)) throw error;
+      await firstValueFrom(this.api.putRaw<FileResponse>(path, encrypted.bytes));
+    }
+    assertSession();
+    return { fileId: file.id, fileName: 'fragment.wav', mime: 'audio/wav', size: draft.file.size, fileKey: encrypted.key, fileIv: encrypted.iv };
   }
 
   async viewStory(story: Story, viewerOwner = this.storyViewerOwner()): Promise<void> {
@@ -737,6 +786,8 @@ export class SocialService {
       if (this.storyPayload(local).media && !await this.ensureStoryMedia(local)) {
         throw new Error('No se pudo descifrar el contenido de esta historia.');
       }
+      if (this.storyPayload(local).music && !await this.ensureStoryMedia(local, 'music')) throw new Error('No se pudo abrir la música de esta historia.');
+      if (!isCurrent()) return;
       assertSession();
       if (!isCurrent()) return;
       const fresh = await firstValueFrom(this.api.post<Story>(`/stories/${encodeURIComponent(story.id)}/view`, {}));
@@ -843,25 +894,35 @@ export class SocialService {
     this.removeStoryLocally(story.id);
   }
 
-  async ensureStoryMedia(story: Story): Promise<StoryMediaPreview | null> {
+  async ensureStoryMedia(story: Story, track: 'media' | 'music' = 'media'): Promise<StoryMediaPreview | null> {
     this.syncSocialAccountState();
-    const key = `${this.accountDeviceKey()}:${story.id}`;
+    const key = `${this.accountDeviceKey()}:${story.id}:${track}`;
     const current = this.storyMediaInFlight.get(key);
     if (current) return current;
-    const request = this.downloadStoryMedia(story);
+    const request = this.downloadStoryMedia(story, track);
     this.storyMediaInFlight.set(key, request);
     try { return await request; }
     finally { if (this.storyMediaInFlight.get(key) === request) this.storyMediaInFlight.delete(key); }
   }
 
-  private async downloadStoryMedia(story: Story): Promise<StoryMediaPreview | null> {
+  private async downloadStoryMedia(story: Story, track: 'media' | 'music'): Promise<StoryMediaPreview | null> {
     const assertSession = this.captureSocialSessionGuard();
     const accountDeviceKeyAtRequest = this.accountDeviceKey();
+    const assertAccess = () => {
+      assertSession();
+      if (this.deletedStoryIds.has(story.id) || Date.parse(story.expiresAt) <= Date.now()) throw new Error('Esta historia ya no está disponible.');
+    };
+    assertAccess();
     const payload = this.storyPayload(story);
-    if (!payload.media?.fileKey || !payload.media.fileIv) {
+    const media = track === 'music' ? payload.music : payload.media;
+    const cacheKey = track === 'music' ? `${story.id}:music` : story.id;
+    if (!media?.fileKey || !media.fileIv) {
       return null;
     }
-    const cached = this.mediaPreviews()[story.id];
+    if (track === 'music' && (!payload.media?.mime.startsWith('image/') || media.mime !== 'audio/wav'
+      || !payload.music || !Number.isFinite(payload.music.durationSeconds) || payload.music.durationSeconds <= 0 || payload.music.durationSeconds > 15
+      || !Number.isFinite(media.size) || media.size < 46 || media.size > 661544)) throw new Error('El fragmento de música no es válido.');
+    const cached = this.mediaPreviews()[cacheKey];
     if (cached) {
       this.setStoryMediaError(story.id, '');
       return cached;
@@ -869,17 +930,22 @@ export class SocialService {
     this.setStoryMediaError(story.id, '');
     try {
       const path = `/stories/${encodeURIComponent(story.id)}`;
-      const encrypted = await this.downloads.download(`${path}/media-access`, `${path}/media`,
-        () => accountDeviceKeyAtRequest === this.accountDeviceKey());
-      assertSession();
-      const plain = await this.crypto.decryptAttachment(encrypted, payload.media.fileKey, payload.media.fileIv);
-      assertSession();
-      return this.rememberMediaPreview(story.id, new Blob([plain], { type: payload.media.mime }), payload.media.mime, payload.media.fileName);
+      const query = track === 'music' ? '?track=music' : '';
+      const encrypted = await this.downloads.download(`${path}/media-access${query}`, `${path}/media${query}`,
+        () => accountDeviceKeyAtRequest === this.accountDeviceKey() && !this.deletedStoryIds.has(story.id) && Date.parse(story.expiresAt) > Date.now());
+      assertAccess();
+      if (track === 'music' && encrypted.byteLength > 661560) throw new Error('El fragmento de música supera el límite permitido.');
+      const plain = await this.crypto.decryptAttachment(encrypted, media.fileKey, media.fileIv);
+      assertAccess();
+      if (track === 'music') await validateStoryMusicDraft({ file: new File([plain], 'fragment.wav', { type: media.mime }),
+        title: payload.music!.title, durationSeconds: payload.music!.durationSeconds, sourceStartSeconds: payload.music!.sourceStartSeconds });
+      assertAccess();
+      return this.rememberMediaPreview(cacheKey, new Blob([plain], { type: media.mime }), media.mime, media.fileName);
     } catch (error) {
       const message = typeof navigator !== 'undefined' && !navigator.onLine
         ? 'Sin conexion. El contenido cifrado seguira disponible para reintentar.'
         : 'No se pudo descargar o descifrar el contenido. Toca Reintentar.';
-      if (accountDeviceKeyAtRequest === this.accountDeviceKey()) {
+      if (accountDeviceKeyAtRequest === this.accountDeviceKey() && !this.deletedStoryIds.has(story.id) && Date.parse(story.expiresAt) > Date.now()) {
         this.setStoryMediaError(story.id, message);
       }
       throw error;
@@ -904,13 +970,13 @@ export class SocialService {
     this.storyActivityRevision += 1;
     this.storyActivityLoading.set(false);
     // One-view plaintext must not be available for a second local playback.
-    if (consumed && closing?.viewOnce && closing.owner.id !== this.auth.session()?.user.id) this.removeStoryLocally(closing.id);
+    if (closing && ((consumed && closing.viewOnce && closing.owner.id !== this.auth.session()?.user.id) || Date.parse(closing.expiresAt) <= Date.now())) this.removeStoryLocally(closing.id);
   }
 
   storyPayload(story: Story | null | undefined): StoryPayload {
     const cached = story?.id ? this.decodedPayloads()[story.id] : null;
     if (cached) {
-      return cached;
+      return this.confirmedStoryPayload(story!, cached);
     }
     if (!story?.encryptedPayload) {
       return { type: 'text', text: '' };
@@ -921,7 +987,7 @@ export class SocialService {
       if (this.isEncryptedStoryEnvelope(payload)) {
         return { type: 'text', text: story.caption || '' };
       }
-      return payload && typeof payload === 'object' ? payload : { type: 'text', text: '' };
+      return payload && typeof payload === 'object' ? this.confirmedStoryPayload(story, payload) : { type: 'text', text: '' };
     } catch {
       return { type: 'text', text: story.caption || '' };
     }
@@ -933,6 +999,14 @@ export class SocialService {
 
   storyMedia(story: Story | null | undefined): StoryMediaPreview | null {
     return story?.id ? this.mediaPreviews()[story.id] ?? null : null;
+  }
+
+  storyMusic(story: Story | null | undefined): StoryMediaPreview | null {
+    return story?.id ? this.mediaPreviews()[`${story.id}:music`] ?? null : null;
+  }
+
+  private confirmedStoryPayload(story: Story, payload: StoryPayload): StoryPayload {
+    return payload.music && story.musicFileObjectId !== payload.music.fileId ? { ...payload, music: null } : payload;
   }
 
   contactStories(): Story[] {
@@ -1105,12 +1179,12 @@ export class SocialService {
     const assertSession = this.captureSocialSessionGuard();
     const cached = this.decodedPayloads()[story.id];
     if (cached) {
-      return cached;
+      return this.confirmedStoryPayload(story, cached);
     }
     const text = new TextDecoder().decode(this.crypto.ub64(story.encryptedPayload));
     const parsed = JSON.parse(text) as StoryPayload | EncryptedStoryEnvelope;
     if (!this.isEncryptedStoryEnvelope(parsed)) {
-      const legacy = parsed && typeof parsed === 'object' ? parsed as StoryPayload : { type: 'text', text: '' };
+      const legacy = this.confirmedStoryPayload(story, parsed && typeof parsed === 'object' ? parsed as StoryPayload : { type: 'text', text: '' });
       this.decodedPayloads.update((items) => ({ ...items, [story.id]: legacy }));
       return legacy;
     }
@@ -1126,7 +1200,7 @@ export class SocialService {
     }
     const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
     assertSession();
-    const payload = await this.crypto.decryptEnvelope<StoryPayload>(own, recipient.header, recipient.ciphertext);
+    const payload = this.confirmedStoryPayload(story, await this.crypto.decryptEnvelope<StoryPayload>(own, recipient.header, recipient.ciphertext));
     assertSession();
     this.decodedPayloads.update((items) => ({ ...items, [story.id]: payload }));
     return payload;
@@ -1142,6 +1216,7 @@ export class SocialService {
     if (payload.media) {
       await this.ensureStoryMedia(story).catch(() => null);
     }
+    if (payload.music) await this.ensureStoryMedia(story, 'music').catch(() => null);
   }
 
   private isEncryptedStoryEnvelope(value: unknown): value is EncryptedStoryEnvelope {
@@ -1288,6 +1363,9 @@ export class SocialService {
       delete next[storyId];
       return next;
     });
+    const musicPreview = this.mediaPreviews()[`${storyId}:music`];
+    if (musicPreview?.url) URL.revokeObjectURL(musicPreview.url);
+    this.storyMediaBytes.delete(`${storyId}:music`);
     const preview = this.mediaPreviews()[storyId];
     this.storyMediaBytes.delete(storyId);
     if (preview?.url) {
@@ -1296,6 +1374,7 @@ export class SocialService {
     this.mediaPreviews.update((items) => {
       const next = { ...items };
       delete next[storyId];
+      delete next[`${storyId}:music`];
       return next;
     });
     this.storyMediaErrors.update((items) => {
@@ -1387,10 +1466,11 @@ export class SocialService {
     this.syncSocialAccountState();
     const accountDeviceKey = this.accountDeviceKey();
     const epoch = this.socialEpoch;
+    const activation = this.auth.sessionGeneration?.();
     this.assertSocialSession(accountDeviceKey);
     return () => {
       this.assertSocialSession(accountDeviceKey);
-      if (epoch !== this.socialEpoch) throw new Error('La sesión cambió. Vuelve a abrir este contenido desde tu cuenta actual.');
+      if (epoch !== this.socialEpoch || activation !== this.auth.sessionGeneration?.()) throw new Error('La sesión cambió. Vuelve a abrir este contenido desde tu cuenta actual.');
     };
   }
 
@@ -1510,7 +1590,7 @@ export class SocialService {
     let total = [...this.storyMediaBytes.values()].reduce((sum, size) => sum + size, 0);
     for (const [id, size] of this.storyMediaBytes) {
       if (this.storyMediaBytes.size <= 4 && total <= 64 * 1024 * 1024) break;
-      if (id === cacheKey || id === this.activeStory()?.id) continue;
+      if (id === cacheKey || id === this.activeStory()?.id || id === `${this.activeStory()?.id}:music`) continue;
       const old = this.mediaPreviews()[id];
       if (old) URL.revokeObjectURL(old.url);
       this.mediaPreviews.update((items) => { const next = { ...items }; delete next[id]; return next; });

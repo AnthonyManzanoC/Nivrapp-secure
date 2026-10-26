@@ -53,6 +53,25 @@ h2 { margin: 4px 0 0; font-size: 24px; letter-spacing: -.035em; }
 .media-edit-tools { display: flex; flex-wrap: wrap; gap: 4px 12px; justify-content: center; margin-top: 6px; }
 .text-button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 42px; padding: 6px 3px; border: 0; background: none; color: var(--nivra-brand); font-size: 13px; font-weight: 650; }
 .draft-options { min-width: 0; }
+.music-editor { padding: 16px; margin-bottom: 20px; border: 1px solid color-mix(in srgb, var(--nivra-brand) 28%, var(--nivra-line)); border-radius: 20px; background: linear-gradient(145deg, color-mix(in srgb, var(--nivra-brand) 9%, var(--nivra-panel-solid)), var(--nivra-panel-solid)); }
+.music-editor-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.music-symbol { display: grid; place-items: center; flex: 0 0 38px; height: 38px; border-radius: 13px; color: var(--nivra-brand); background: color-mix(in srgb, var(--nivra-brand) 12%, transparent); font-size: 23px; }
+.music-editor-heading > div { flex: 1; min-width: 0; }
+.music-editor-heading strong { display: block; font-size: 14px; }
+.music-editor-heading small { display: block; color: var(--nivra-muted); font-size: 11px; margin-top: 3px; line-height: 1.4; }
+.music-editor-heading .icon-button { width: 36px; height: 36px; flex-shrink: 0; }
+.music-editor > label { display: grid; gap: 7px; margin-top: 12px; color: var(--nivra-muted); font-size: 12px; }
+.music-name input { width: 100%; border: 1px solid var(--nivra-line); border-radius: 12px; padding: 10px; background: var(--nivra-panel-solid); color: var(--nivra-text); }
+.music-editor input[type=range] { width: 100%; min-height: 30px; accent-color: var(--nivra-brand); cursor: pointer; }
+.music-window { display: flex; justify-content: space-between; align-items: center; padding: 13px 12px; margin-top: 14px; border-radius: 12px; background: color-mix(in srgb, var(--nivra-brand) 8%, transparent); font-variant-numeric: tabular-nums; font-size: 12px; }
+.music-window strong { color: var(--nivra-brand); }
+.music-controls { display: flex; gap: 8px; margin-top: 10px; }
+.music-controls button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 42px; padding: 10px 14px; border: 1px solid var(--nivra-line); border-radius: 13px; background: var(--nivra-panel-solid); color: var(--nivra-text); font-size: 12px; }
+.music-controls button:first-child { flex: 1; }
+.music-note, .music-error, .music-loading { margin: 12px 0 0; font-size: 11px; line-height: 1.5; color: var(--nivra-muted); }
+.music-error { color: #cf5555; }
+.music-loading { display: flex; align-items: center; gap: 8px; }
+.music-loading ion-spinner { width: 18px; height: 18px; }
 .caption-heading { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 9px; }
 .caption-heading .caption-label { margin: 0; }
 .caption-heading > span { font-size: 10px; color: var(--nivra-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }

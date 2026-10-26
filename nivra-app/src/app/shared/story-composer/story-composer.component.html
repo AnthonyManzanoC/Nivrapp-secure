@@ -13,6 +13,7 @@
 
       <input #galleryInput type="file" accept="image/*,video/*,audio/*" hidden (change)="fileSelected($event)">
       <input #deviceVideoInput type="file" accept="video/*" [attr.capture]="facing" hidden (change)="fileSelected($event)">
+      <input #musicInput type="file" accept="audio/*" hidden (change)="musicSelected($event)">
 
       @if (confirmingDiscard) {
         <div class="discard-confirmation" role="alert">
@@ -109,12 +110,32 @@
                 </div>
               }
               <div class="media-edit-tools">
+                @if (mediaKind === 'image') {
+                  <button type="button" class="text-button" (click)="musicInput.click()" [disabled]="busy || musicLoading"><ion-icon name="musical-notes-outline"></ion-icon>{{ musicUrl ? 'Cambiar música' : 'Añadir música' }}</button>
+                }
                 <button type="button" class="text-button" (click)="galleryInput.click()" [disabled]="busy"><ion-icon name="image-outline"></ion-icon>{{ file ? ('STORY_COMPOSER.REPLACE' | translate:'Cambiar') : ('STORY_COMPOSER.ADD_MEDIA' | translate:'Añadir foto o video') }}</button>
                 <button type="button" class="text-button" (click)="openCamera()" [disabled]="busy"><ion-icon name="camera-outline"></ion-icon>{{ 'COMMON.CAMERA' | translate:'Cámara' }}</button>
                 @if (file) { <button type="button" class="text-button" (click)="removeFile()" [disabled]="busy">{{ 'WORLD.REMOVE_FILE' | translate:'Quitar archivo' }}</button> }
               </div>
             </div>
             <div class="draft-options">
+              @if (mediaKind === 'image' && (musicUrl || musicLoading || musicError)) {
+                <section class="music-editor" aria-label="Fragmento de música" [attr.aria-busy]="musicLoading">
+                  <div class="music-editor-heading"><span class="music-symbol"><ion-icon name="musical-notes-outline"></ion-icon></span><div><strong>Tu foto, con música</strong><small>Elige hasta 15 segundos de tu archivo</small></div><button type="button" class="icon-button" (click)="removeMusic()" [disabled]="busy" aria-label="Quitar música"><ion-icon name="close-outline"></ion-icon></button></div>
+                  @if (musicLoading) { <p class="music-loading" role="status"><ion-spinner name="crescent"></ion-spinner>Preparando el audio…</p> }
+                  @if (musicUrl) {
+                    <audio #draftMusic [src]="musicUrl" preload="metadata" (timeupdate)="musicTimeChanged()" (ended)="pauseMusic()" (error)="pauseMusic(); musicError = 'No se pudo reproducir el audio.'"></audio>
+                    <label class="music-name">Nombre en tu historia<input type="text" [(ngModel)]="musicTitle" maxlength="80" [disabled]="busy" placeholder="Mi música"></label>
+                    <div class="music-window"><span>{{ musicTime(musicStart) }}</span><strong>{{ musicLength | number:'1.0-2' }} s</strong><span>{{ musicTime(musicStart + musicLength) }}</span></div>
+                    <label>Inicio del fragmento<input type="range" min="0" [max]="musicTotal - musicLength" step="0.1" [ngModel]="musicStart" (ngModelChange)="updateMusicWindow($event)" [disabled]="busy" aria-label="Inicio del fragmento de música"></label>
+                    <label>Duración<input type="range" [min]="musicTotal < .25 ? musicTotal : .25" [max]="musicTotal < 15 ? musicTotal : 15" step="0.25" [ngModel]="musicLength" (ngModelChange)="updateMusicWindow(musicStart, $event)" [disabled]="busy" aria-label="Duración del fragmento de música"></label>
+                    <div class="music-controls"><button type="button" (click)="toggleMusicPreview()" [disabled]="busy || musicLoading"><ion-icon [name]="musicPlaying ? 'pause-outline' : 'play-outline'"></ion-icon>{{ musicPlaying ? 'Pausar' : 'Escuchar fragmento' }}</button><button type="button" (click)="toggleMusicMute()" [attr.aria-label]="musicMuted ? 'Activar sonido de la vista previa' : 'Silenciar vista previa'" [attr.aria-pressed]="musicMuted"><ion-icon [name]="musicMuted ? 'volume-mute-outline' : 'volume-high-outline'"></ion-icon></button></div>
+                    <p class="music-note">Sólo se publicará este fragmento. Tu archivo original se queda en este dispositivo.</p>
+                    @if (audience === 'contacts' && visibility === 'PublicWorld') { <p class="music-note">En Mundo, la foto, el nombre de la música y el fragmento serán públicos.</p> }
+                  }
+                  @if (musicError) { <p class="music-error" role="alert">{{ musicError }}</p> }
+                </section>
+              }
               <div class="caption-heading"><label class="caption-label" for="story-caption">{{ 'STORY_COMPOSER.CAPTION' | translate:'Añade unas palabras' }}</label><span>{{ text.length }} / 4000</span></div>
               <textarea #captionInput id="story-caption" [(ngModel)]="text" [disabled]="busy" rows="3" maxlength="4000" [placeholder]="'WORLD.STORY_PLACEHOLDER' | translate:'Comparte una historia cifrada'"></textarea>
               <button type="button" class="audience-summary" (click)="settingsOpen = !settingsOpen" [disabled]="busy" [attr.aria-expanded]="settingsOpen" aria-controls="story-audience-settings">
@@ -161,7 +182,7 @@
         <footer class="composer-footer">
           @if (error) { <p class="composer-error" role="alert">{{ error }}</p> }
           @if (busy) { <span class="publish-status" role="status">{{ social.publishingStatus() || ('STORY_COMPOSER.PUBLISHING' | translate:'Publicando tu historia…') }}</span> }
-          <button type="button" class="publish-button" (click)="publish()" [disabled]="busy || social.publishing() || !hasDraft() || imageLoading">
+          <button type="button" class="publish-button" (click)="publish()" [disabled]="busy || social.publishing() || !hasDraft() || imageLoading || musicLoading">
             @if (busy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
             {{ publicationFailed ? ('COMMON.RETRY' | translate:'Reintentar') : ('COMMON.PUBLISH' | translate:'Publicar') }}
           </button>

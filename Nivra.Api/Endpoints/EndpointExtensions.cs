@@ -869,21 +869,24 @@ public static partial class EndpointExtensions
                 return Error("invalid_contact", "No puedes agregarte como contacto.");
             }
 
-            await using var transaction = await LockRelationshipAsync(db, current.UserId, contactUser.Id, cancellationToken);
-            var contact = new ContactRecord
+            return await CallCoordination.RunAsync(db, async Task<IResult> () =>
             {
-                Id = $"{current.UserId}:{contactUser.Id}",
-                OwnerUserId = current.UserId,
-                ContactUserId = contactUser.Id,
-                NicknameCiphertext = request.NicknameCiphertext,
-                CreatedAt = timeProvider.GetUtcNow()
-            };
+                await using var transaction = await LockRelationshipAsync(db, current.UserId, contactUser.Id, cancellationToken);
+                var contact = new ContactRecord
+                {
+                    Id = $"{current.UserId}:{contactUser.Id}",
+                    OwnerUserId = current.UserId,
+                    ContactUserId = contactUser.Id,
+                    NicknameCiphertext = request.NicknameCiphertext,
+                    CreatedAt = timeProvider.GetUtcNow()
+                };
 
-            await store.AddOrUpdateContactAsync(contact, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            await NotifyRelationshipChangedAsync(db, hub, current.UserId, contactUser.Id, cancellationToken);
-            http.Response.Headers.CacheControl = "no-store";
-            return Results.Created($"/contacts/{contactUser.Id}", await ToContactResponseAsync(contact, store, cancellationToken));
+                await store.AddOrUpdateContactAsync(contact, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                await NotifyRelationshipChangedAsync(db, hub, current.UserId, contactUser.Id, cancellationToken);
+                http.Response.Headers.CacheControl = "no-store";
+                return Results.Created($"/contacts/{contactUser.Id}", await ToContactResponseAsync(contact, store, cancellationToken));
+            });
         });
 
         group.MapDelete("/{contactUserId}", async Task<IResult> (string contactUserId, HttpContext http, INivraStore store, NivraDbContext db, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
@@ -894,11 +897,14 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            await using var transaction = await LockRelationshipAsync(db, current.UserId, contactUserId, cancellationToken);
-            await store.DeleteContactAsync(current.UserId, contactUserId, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            await NotifyRelationshipChangedAsync(db, hub, current.UserId, contactUserId, cancellationToken);
-            return Results.NoContent();
+            return await CallCoordination.RunAsync(db, async Task<IResult> () =>
+            {
+                await using var transaction = await LockRelationshipAsync(db, current.UserId, contactUserId, cancellationToken);
+                await store.DeleteContactAsync(current.UserId, contactUserId, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                await NotifyRelationshipChangedAsync(db, hub, current.UserId, contactUserId, cancellationToken);
+                return Results.NoContent();
+            });
         });
 
         group.MapPatch("/{contactUserId}", async Task<IResult> (string contactUserId, PatchContactRequest request, HttpContext http, NivraDbContext db, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
@@ -909,23 +915,26 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            await using var transaction = await LockRelationshipAsync(db, current.UserId, contactUserId, cancellationToken);
-            var contact = await db.Contacts.FirstOrDefaultAsync(candidate =>
-                candidate.OwnerUserId == current.UserId &&
-                candidate.ContactUserId == contactUserId,
-                cancellationToken);
-            if (contact is null)
+            return await CallCoordination.RunAsync(db, async Task<IResult> () =>
             {
-                return Results.NotFound();
-            }
+                await using var transaction = await LockRelationshipAsync(db, current.UserId, contactUserId, cancellationToken);
+                var contact = await db.Contacts.FirstOrDefaultAsync(candidate =>
+                    candidate.OwnerUserId == current.UserId &&
+                    candidate.ContactUserId == contactUserId,
+                    cancellationToken);
+                if (contact is null)
+                {
+                    return Results.NotFound();
+                }
 
-            contact.IsFavorite = request.IsFavorite ?? contact.IsFavorite;
-            contact.NicknameCiphertext = request.NicknameCiphertext ?? contact.NicknameCiphertext;
-            await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            await NotifyUsers(hub, [current.UserId], "contacts.updated", new { });
-            http.Response.Headers.CacheControl = "no-store";
-            return Results.Ok(await ToContactResponseAsync(contact, new PgSqlNivraStore(db), cancellationToken));
+                contact.IsFavorite = request.IsFavorite ?? contact.IsFavorite;
+                contact.NicknameCiphertext = request.NicknameCiphertext ?? contact.NicknameCiphertext;
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                await NotifyUsers(hub, [current.UserId], "contacts.updated", new { });
+                http.Response.Headers.CacheControl = "no-store";
+                return Results.Ok(await ToContactResponseAsync(contact, new PgSqlNivraStore(db), cancellationToken));
+            });
         });
 
         group.MapPost("/radar/scan", async Task<IResult> (ContactRadarScanRequest request, HttpContext http, NivraDbContext db, CancellationToken cancellationToken) =>
@@ -1094,53 +1103,56 @@ public static partial class EndpointExtensions
                 return Error("invalid_friend_request", "No puedes enviarte solicitud a ti mismo.");
             }
 
-            await using var transaction = await LockRelationshipAsync(db, current.UserId, target.Id, cancellationToken);
-
-            if (await AreContactsAsync(db, current.UserId, target.Id, cancellationToken) &&
-                await AreContactsAsync(db, target.Id, current.UserId, cancellationToken))
+            return await CallCoordination.RunAsync(db, async Task<IResult> () =>
             {
-                return Error("already_friends", "Ya estan agregados mutuamente.", StatusCodes.Status409Conflict);
-            }
+                await using var transaction = await LockRelationshipAsync(db, current.UserId, target.Id, cancellationToken);
 
-            var existing = await db.FriendRequests.Where(candidate =>
-                candidate.Status == FriendRequestStatus.Pending &&
-                ((candidate.FromUserId == current.UserId && candidate.ToUserId == target.Id) ||
-                 (candidate.FromUserId == target.Id && candidate.ToUserId == current.UserId)))
-                .OrderBy(candidate => candidate.CreatedAt).ThenBy(candidate => candidate.Id).FirstOrDefaultAsync(cancellationToken);
-            if (existing is not null)
-            {
-                await CloseDuplicateFriendRequestsAsync(db, existing, timeProvider.GetUtcNow(), cancellationToken);
+                if (await AreContactsAsync(db, current.UserId, target.Id, cancellationToken) &&
+                    await AreContactsAsync(db, target.Id, current.UserId, cancellationToken))
+                {
+                    return Error("already_friends", "Ya estan agregados mutuamente.", StatusCodes.Status409Conflict);
+                }
+
+                var existing = await db.FriendRequests.Where(candidate =>
+                    candidate.Status == FriendRequestStatus.Pending &&
+                    ((candidate.FromUserId == current.UserId && candidate.ToUserId == target.Id) ||
+                     (candidate.FromUserId == target.Id && candidate.ToUserId == current.UserId)))
+                    .OrderBy(candidate => candidate.CreatedAt).ThenBy(candidate => candidate.Id).FirstOrDefaultAsync(cancellationToken);
+                if (existing is not null)
+                {
+                    await CloseDuplicateFriendRequestsAsync(db, existing, timeProvider.GetUtcNow(), cancellationToken);
+                    await db.SaveChangesAsync(cancellationToken);
+                    await transaction.CommitAsync(cancellationToken);
+                    await NotifyFriendRequestChangedAsync(db, hub, existing, "friend.updated", cancellationToken);
+                    http.Response.Headers.CacheControl = "no-store";
+                    return Results.Ok(await ToFriendRequestResponseAsync(existing, current.UserId, db, cancellationToken));
+                }
+
+                var now = timeProvider.GetUtcNow();
+                var friendRequest = new FriendRequestRecord
+                {
+                    Id = NivraIds.NewId("frq"),
+                    FromUserId = current.UserId,
+                    ToUserId = target.Id,
+                    Status = FriendRequestStatus.Pending,
+                    Message = NormalizeOptional(request.Message) is { } message ? message[..Math.Min(message.Length, 500)] : null,
+                    CreatedAt = now,
+                    UpdatedAt = now
+                };
+
+                db.FriendRequests.Add(friendRequest);
                 await db.SaveChangesAsync(cancellationToken);
                 await transaction.CommitAsync(cancellationToken);
-                await NotifyFriendRequestChangedAsync(db, hub, existing, "friend.updated", cancellationToken);
+                var response = await ToFriendRequestResponseAsync(friendRequest, current.UserId, db, cancellationToken);
+                await NotifyFriendRequestChangedAsync(db, hub, friendRequest, "friend.requested", cancellationToken);
+                await pushNotifications.SendEventAsync(target.Id, "Nivra", "Nueva solicitud de amistad", "friend_request", $"nivra-friend-request-{friendRequest.Id}", new Dictionary<string, string>
+                {
+                    ["requestId"] = friendRequest.Id,
+                    ["senderUserId"] = current.UserId
+                }, cancellationToken);
                 http.Response.Headers.CacheControl = "no-store";
-                return Results.Ok(await ToFriendRequestResponseAsync(existing, current.UserId, db, cancellationToken));
-            }
-
-            var now = timeProvider.GetUtcNow();
-            var friendRequest = new FriendRequestRecord
-            {
-                Id = NivraIds.NewId("frq"),
-                FromUserId = current.UserId,
-                ToUserId = target.Id,
-                Status = FriendRequestStatus.Pending,
-                Message = NormalizeOptional(request.Message) is { } message ? message[..Math.Min(message.Length, 500)] : null,
-                CreatedAt = now,
-                UpdatedAt = now
-            };
-
-            db.FriendRequests.Add(friendRequest);
-            await db.SaveChangesAsync(cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
-            var response = await ToFriendRequestResponseAsync(friendRequest, current.UserId, db, cancellationToken);
-            await NotifyFriendRequestChangedAsync(db, hub, friendRequest, "friend.requested", cancellationToken);
-            await pushNotifications.SendEventAsync(target.Id, "Nivra", "Nueva solicitud de amistad", "friend_request", $"nivra-friend-request-{friendRequest.Id}", new Dictionary<string, string>
-            {
-                ["requestId"] = friendRequest.Id,
-                ["senderUserId"] = current.UserId
-            }, cancellationToken);
-            http.Response.Headers.CacheControl = "no-store";
-            return Results.Created($"/friends/requests/{friendRequest.Id}", response);
+                return Results.Created($"/friends/requests/{friendRequest.Id}", response);
+            });
         });
 
         friends.MapPost("/requests/{requestId}/accept", async Task<IResult> (string requestId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
@@ -2278,6 +2290,12 @@ public static partial class EndpointExtensions
     {
         var group = app.MapGroup("/stories");
 
+        group.MapGet("/capabilities", (HttpContext http) =>
+        {
+            http.Response.Headers.CacheControl = "no-store";
+            return http.GetCurrentUser() is null ? Results.Unauthorized() : Results.Ok(new { musicFragments = 1, maxMusicSeconds = 15 });
+        });
+
         group.MapGet("/world", async Task<IResult> (HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
@@ -2407,6 +2425,7 @@ public static partial class EndpointExtensions
             }
 
             DateTimeOffset? mediaExpiresAt = null;
+            DateTimeOffset? musicExpiresAt = null;
             if (request.MediaFileObjectId is not null)
             {
                 var file = await db.Files.FirstOrDefaultAsync(candidate => candidate.Id == request.MediaFileObjectId, cancellationToken);
@@ -2415,6 +2434,14 @@ public static partial class EndpointExtensions
                     return Error("invalid_story_media", "La historia necesita un archivo subido, vigente y perteneciente al usuario.");
                 }
                 mediaExpiresAt = file!.ExpiresAt;
+            }
+            if (request.MusicFileObjectId is not null)
+            {
+                var music = await db.Files.FirstOrDefaultAsync(candidate => candidate.Id == request.MusicFileObjectId, cancellationToken);
+                if (request.MediaFileObjectId is null || request.MusicFileObjectId == request.MediaFileObjectId ||
+                    !StoryMediaPolicy.CanAttachMusic(music, current.UserId, timeProvider.GetUtcNow()))
+                    return Error("invalid_story_music", "La música necesita un fragmento cifrado subido, vigente y perteneciente al usuario junto a su foto.");
+                musicExpiresAt = music!.ExpiresAt;
             }
 
             var now = timeProvider.GetUtcNow();
@@ -2428,6 +2455,7 @@ public static partial class EndpointExtensions
                 EncryptedPayload = request.EncryptedPayload,
                 Caption = NormalizeOptional(request.Caption),
                 MediaFileObjectId = request.MediaFileObjectId,
+                MusicFileObjectId = request.MusicFileObjectId,
                 AllowedUserIds = allowed,
                 ViewedByUserIds = [],
                 ViewEvents = [],
@@ -2436,7 +2464,7 @@ public static partial class EndpointExtensions
                 ViewOnce = request.ViewOnce,
                 AllowReposts = request.AllowReposts ?? true,
                 CreatedAt = now,
-                ExpiresAt = StoryMediaPolicy.Deadline(now.AddSeconds(durationSeconds), mediaExpiresAt)
+                ExpiresAt = StoryMediaPolicy.Deadline(now.AddSeconds(durationSeconds), mediaExpiresAt, musicExpiresAt)
             };
 
             var response = await ToStoryResponseAsync(story, current.UserId, db, cancellationToken);
@@ -2683,6 +2711,7 @@ public static partial class EndpointExtensions
                 EncryptedPayload = repostPayload,
                 Caption = null,
                 MediaFileObjectId = original.MediaFileObjectId,
+                MusicFileObjectId = original.MusicFileObjectId,
                 AllowedUserIds = allowed,
                 ViewedByUserIds = [],
                 ViewEvents = [],
@@ -2693,7 +2722,7 @@ public static partial class EndpointExtensions
                 ViewOnce = false,
                 AllowReposts = request.AllowReposts ?? original.AllowReposts,
                 CreatedAt = now,
-                ExpiresAt = original.ExpiresAt < now.AddSeconds(durationSeconds) ? original.ExpiresAt : now.AddSeconds(durationSeconds)
+                ExpiresAt = StoryMediaPolicy.Deadline(now.AddSeconds(durationSeconds), original.ExpiresAt)
             };
 
             var response = await ToStoryResponseAsync(repost, current.UserId, db, cancellationToken);
@@ -2719,16 +2748,17 @@ public static partial class EndpointExtensions
             }, cancellationToken);
         });
 
-        group.MapGet("/{storyId}/media-access", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
+        group.MapGet("/{storyId}/media-access", async Task<IResult> (string storyId, string? track, HttpContext http, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
         {
             http.Response.Headers.CacheControl = "no-store";
             var current = http.GetCurrentUser();
             if (current is null) return Results.Unauthorized();
             var now = timeProvider.GetUtcNow();
             var story = await db.Stories.FirstOrDefaultAsync(candidate => candidate.Id == storyId, cancellationToken);
-            if (story is null || story.DeletedAt is not null || story.ExpiresAt <= now || story.MediaFileObjectId is null ||
+            if (story is null || story.DeletedAt is not null || story.ExpiresAt <= now || StoryMediaPolicy.FileId(story, track) is null ||
                 !await CanViewStoryAsync(db, story, current.UserId, cancellationToken)) return Results.NotFound();
-            var file = await db.Files.FirstOrDefaultAsync(candidate => candidate.Id == story.MediaFileObjectId, cancellationToken);
+            var fileId = StoryMediaPolicy.FileId(story, track);
+            var file = await db.Files.FirstOrDefaultAsync(candidate => candidate.Id == fileId, cancellationToken);
             if (file is null || file.State != FileState.Uploaded || file.ExpiresAt <= now) return Results.NotFound();
             // Read-once stories keep the revocable API path rather than a reusable capability URL.
             if (story.ViewOnce) return Results.NoContent();
@@ -2736,7 +2766,7 @@ public static partial class EndpointExtensions
             return access is null ? Results.NoContent() : Results.Ok(access);
         });
 
-        group.MapGet("/{storyId}/media", async Task<IResult> (string storyId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
+        group.MapGet("/{storyId}/media", async Task<IResult> (string storyId, string? track, HttpContext http, NivraDbContext db, TimeProvider timeProvider, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -2748,13 +2778,14 @@ public static partial class EndpointExtensions
             if (story is null ||
                 story.DeletedAt is not null ||
                 story.ExpiresAt <= timeProvider.GetUtcNow() ||
-                story.MediaFileObjectId is null ||
+                StoryMediaPolicy.FileId(story, track) is null ||
                 !await CanViewStoryAsync(db, story, current.UserId, cancellationToken))
             {
                 return Results.NotFound();
             }
 
-            var file = await db.Files.FirstOrDefaultAsync(candidate => candidate.Id == story.MediaFileObjectId, cancellationToken);
+            var fileId = StoryMediaPolicy.FileId(story, track);
+            var file = await db.Files.FirstOrDefaultAsync(candidate => candidate.Id == fileId, cancellationToken);
             if (file is null ||
                 file.State != FileState.Uploaded ||
                 file.ExpiresAt <= timeProvider.GetUtcNow() ||
@@ -2905,7 +2936,7 @@ public static partial class EndpointExtensions
             // Vault burn-on-exit, read-once stories and delete-after-read messages remain proxied.
             if (file.VaultRoomId is not null ||
                 await db.Messages.AnyAsync(message => message.DeleteAfterRead && message.Recipients.Any(recipient => recipient.FileObjectId == file.Id), cancellationToken) ||
-                await db.Stories.AnyAsync(story => story.MediaFileObjectId == file.Id && story.ViewOnce, cancellationToken)) return Results.NoContent();
+                await db.Stories.AnyAsync(story => (story.MediaFileObjectId == file.Id || story.MusicFileObjectId == file.Id) && story.ViewOnce, cancellationToken)) return Results.NoContent();
             var access = storage.CreateDownloadAccess(file, now);
             return access is null ? Results.NoContent() : Results.Ok(access);
         });
@@ -5158,7 +5189,8 @@ public static partial class EndpointExtensions
             includeStats ? await ToStoryReactionResponsesAsync(story, currentUserId, db, cancellationToken) : [],
             includeStats ? await ToStoryCommentResponsesAsync(story, currentUserId, db, cancellationToken) : [],
             story.CreatedAt,
-            story.ExpiresAt);
+            story.ExpiresAt,
+            story.MusicFileObjectId);
     }
 
     private static async Task<List<StoryViewResponse>> ToStoryViewResponsesAsync(StoryRecord story, string currentUserId, NivraDbContext db, CancellationToken cancellationToken)
@@ -5480,7 +5512,7 @@ public static partial class EndpointExtensions
         // one-time access and current group membership. Include inactive stories so their
         // old ACL cannot regain access after deletion or expiry.
         var linkedStories = await db.Stories
-            .Where(story => story.MediaFileObjectId == file.Id)
+            .Where(story => story.MediaFileObjectId == file.Id || story.MusicFileObjectId == file.Id)
             .ToListAsync(cancellationToken);
         foreach (var story in linkedStories)
         {

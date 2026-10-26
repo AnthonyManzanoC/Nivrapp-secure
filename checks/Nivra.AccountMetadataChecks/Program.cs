@@ -6,9 +6,11 @@ using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Storage;
 using Nivra.Api.Domain;
 using Nivra.Api.Endpoints;
 using Nivra.Api.Infrastructure;
+using Nivra.Api.Services;
 
 var count = 0;
 void Check(bool valid, string name) { if (!valid) throw new InvalidOperationException(name); count++; Console.WriteLine("PASS " + name); }
@@ -112,7 +114,8 @@ await using (var second = new NivraDbContext(options))
     Check(conflicted, "a stale edited list cannot resurrect a concurrently deleted ciphertext record");
 }
 
-await using var sqlDb = new NivraDbContext(new DbContextOptionsBuilder<NivraDbContext>().UseNpgsql("Host=localhost;Database=offline;Username=offline;Password=offline").Options);
+await using var sqlDb = new NivraDbContext(new DbContextOptionsBuilder<NivraDbContext>()
+    .UseNpgsql("Host=127.0.0.1;Port=1;Database=offline;Username=offline;Password=offline", provider => provider.EnableRetryOnFailure(3)).Options);
 var appearanceModel = sqlDb.Model.FindEntityType(typeof(AccountAppearance))!;
 var listModel = sqlDb.Model.FindEntityType(typeof(BroadcastListRecord))!;
 Check(appearanceModel.FindProperty("Revision")!.IsConcurrencyToken && listModel.FindProperty("Revision")!.IsConcurrencyToken, "both account metadata tables enforce database compare-and-swap revisions");
@@ -121,4 +124,42 @@ Check(listModel.GetProperties().All(property => property.Name is not "Name" and 
 Check(appearanceModel.GetForeignKeys().Single().DeleteBehavior == DeleteBehavior.Cascade && listModel.GetForeignKeys().Single().DeleteBehavior == DeleteBehavior.Cascade,
     "deleting an account also removes appearance and encrypted list metadata");
 Check(sqlDb.GetService<IMigrationsAssembly>().Migrations.Keys.Any(name => name.EndsWith("_AccountAppearanceBroadcastLists")) && !sqlDb.Database.HasPendingModelChanges(), "additive migration is discoverable and its model snapshot matches runtime");
+var authorizationSql = ((IQueryable<DeviceRecord>)Call("MetadataDeviceQuery", sqlDb, "fixture-owner", "fixture-device")!).ToQueryString();
+Check(authorizationSql.Contains("EXISTS", StringComparison.OrdinalIgnoreCase) && authorizationSql.Contains("\"IsTrusted\"") && authorizationSql.Contains("\"RevokedAt\"") && authorizationSql.Contains("\"DisabledAt\""),
+    "production Npgsql translates account appearance and broadcast trusted-device authorization with owner-status checks");
+Check(sqlDb.Set<AccountAppearance>().Where(row => row.UserId == "fixture-owner").ToQueryString().Contains("public.account_appearances") &&
+    sqlDb.Set<BroadcastListRecord>().Where(row => row.UserId == "fixture-owner").OrderBy(row => row.DeletedAt != null).ThenByDescending(row => row.UpdatedAt).Take(200).ToQueryString().Contains("public.broadcast_lists"),
+    "production Npgsql translates appearance GET and bounded encrypted broadcast-list snapshot queries");
+
+// Reproduce EF's actual provider guard without opening a socket or writing a
+// row. InMemory never exercises this production failure. The marker represents
+// the already-created transaction that EF sees before executing its command.
+var connection = sqlDb.GetService<IRelationalConnection>();
+var transactionProperty = typeof(RelationalConnection).GetProperty(nameof(RelationalConnection.CurrentTransaction))!;
+using var marker = new FixtureTransaction();
+transactionProperty.SetValue(connection, marker);
+Check(sqlDb.Database.CreateExecutionStrategy().RetriesOnFailure && ReferenceEquals(sqlDb.Database.CurrentTransaction, marker),
+    "metadata regression uses the production Npgsql retry policy with a user-initiated transaction");
+var rejected = false;
+try { await sqlDb.Database.CreateExecutionStrategy().ExecuteAsync(() => Task.FromResult(42)); }
+catch (InvalidOperationException error) when (error.Message.Contains("user-initiated transactions", StringComparison.OrdinalIgnoreCase)) { rejected = true; }
+Check(rejected, "reproduces the released appearance PUT failure before any database command is executed");
+var result = await CallCoordination.RunAsync(sqlDb, () => sqlDb.Database.CreateExecutionStrategy().ExecuteAsync(() => Task.FromResult(42)));
+Check(result == 42, "the mutation execution scope permits the same real provider guard while retaining the transaction");
+var executions = 0;
+try { await CallCoordination.RunAsync<int>(sqlDb, () => { executions++; throw new TimeoutException("fixture uncertain commit"); }); }
+catch (TimeoutException) { }
+Check(executions == 1 && ExecutionStrategy.Current is null, "uncertain commits never replay writes or realtime notifications and release the execution scope");
+transactionProperty.SetValue(connection, null);
 Console.WriteLine($"{count} account metadata checks passed (isolated fixtures; no live accounts).");
+
+sealed class FixtureTransaction : IDbContextTransaction
+{
+    public Guid TransactionId { get; } = Guid.NewGuid();
+    public void Commit() { }
+    public Task CommitAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public void Rollback() { }
+    public Task RollbackAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
+    public void Dispose() { }
+    public ValueTask DisposeAsync() => ValueTask.CompletedTask;
+}

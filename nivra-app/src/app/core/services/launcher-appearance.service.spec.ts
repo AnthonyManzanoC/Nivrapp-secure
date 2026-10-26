@@ -19,6 +19,7 @@ describe('account launcher appearance synchronization', () => {
   let api: { get: jasmine.Spy; put: jasmine.Spy };
   let events: Subject<{ type: string; payload: unknown }>;
   let session: ReturnType<typeof signal<any>>;
+  let generation: ReturnType<typeof signal<number>>;
   let server: Map<string, AccountAppearance>;
   let physical: LauncherIconId;
   let page: Document;
@@ -28,6 +29,7 @@ describe('account launcher appearance synchronization', () => {
   beforeEach(() => {
     localStorage.removeItem(cacheKey(accountA)); localStorage.removeItem(cacheKey(accountB));
     session = signal<any>({ user: { id: accountA }, device: { id: 'device-A' } });
+    generation = signal(0);
     events = new Subject();
     server = new Map([[accountA, { icon: 'original', revision: 0 }], [accountB, { icon: 'ivory', revision: 4 }]]);
     physical = 'original';
@@ -47,7 +49,7 @@ describe('account launcher appearance synchronization', () => {
     const base = page.createElement('base'); base.href = 'https://nivra.example/'; page.head.append(base);
     TestBed.configureTestingModule({ providers: [
       { provide: DOCUMENT, useValue: page }, { provide: LAUNCHER_APPEARANCE_RUNTIME, useValue: runtime },
-      { provide: AuthService, useValue: { session, isAuthenticated: () => !!session() } },
+      { provide: AuthService, useValue: { session, sessionGeneration: generation, isAuthenticated: () => !!session() } },
       { provide: NivraApiService, useValue: api }, { provide: SignalrService, useValue: { events$: events } },
     ] });
   });
@@ -111,6 +113,26 @@ describe('account launcher appearance synchronization', () => {
     expect(await service.selectIcon('ivory')).toBeTrue(); expect(api.put).toHaveBeenCalledTimes(1);
   });
 
+  it('reconciles a committed icon write after a lost HTTP response without replaying its CAS mutation', async () => {
+    const service = TestBed.inject(LauncherAppearanceService); await service.refresh();
+    api.put.and.callFake(() => {
+      server.set(accountA, { icon: 'emerald', revision: 1 });
+      return throwError(() => ({ status: 500 }));
+    });
+    expect(await service.selectIcon('emerald')).toBeTrue();
+    expect(service.current()).toBe('emerald'); expect(service.synced()).toBeTrue(); expect(service.error()).toBeNull();
+    expect(api.put).toHaveBeenCalledTimes(1); expect(api.get).toHaveBeenCalledTimes(2);
+    expect(setIcon).toHaveBeenCalledOnceWith('emerald');
+  });
+
+  it('does not claim an icon was changed when the server failed before committing it', async () => {
+    const service = TestBed.inject(LauncherAppearanceService); await service.refresh();
+    api.put.and.returnValue(throwError(() => ({ status: 500 })));
+    expect(await service.selectIcon('emerald')).toBeFalse();
+    expect(service.current()).toBe('original'); expect(service.error()).toBe('sync');
+    expect(api.put).toHaveBeenCalledTimes(1); expect(setIcon).not.toHaveBeenCalled();
+  });
+
   it('does not report native success for malformed or mismatched confirmations', async () => {
     const service = TestBed.inject(LauncherAppearanceService); await service.refresh();
     for (const result of [null, { supported: false, icon: 'emerald' }, { supported: true, icon: 'original' }, { supported: true, icon: '../icon' }]) {
@@ -166,6 +188,16 @@ describe('account launcher appearance synchronization', () => {
     response.next({ icon: 'emerald', revision: 1 });
     expect(await pending).toBeFalse(); expect(service.accountId()).toBeNull(); expect(setIcon).not.toHaveBeenCalled();
     expect(page.querySelector<HTMLLinkElement>('link[rel="icon"]')!.href).toContain('launcher-original.png');
+  });
+
+  it('ignores a delayed response from a previous login of the same account and installation', async () => {
+    const old = new Subject<AccountAppearance>(); api.get.and.returnValues(old, of({ icon: 'ivory', revision: 2 }));
+    const service = TestBed.inject(LauncherAppearanceService); const pending = service.refresh(); await settle();
+    generation.update(value => value + 1);
+    await service.refresh();
+    old.next({ icon: 'emerald', revision: 99 }); await pending;
+    expect(service.current()).toBe('ivory'); expect(service.revision()).toBe(2);
+    expect(JSON.parse(localStorage.getItem(cacheKey(accountA))!).icon).toBe('ivory');
   });
 
   it('never imports a device-local or another account cached preference as the current account setting', async () => {

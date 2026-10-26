@@ -1,11 +1,11 @@
 import { CommonModule } from '@angular/common';
-import { Component, ElementRef, EventEmitter, HostListener, Input, NgZone, OnChanges, OnDestroy, Output, SimpleChanges, ViewChild, inject } from '@angular/core';
+import { Component, ElementRef, EventEmitter, HostListener, Input, NgZone, OnChanges, OnDestroy, Output, SimpleChanges, ViewChild, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonIcon, IonModal, IonSpinner } from '@ionic/angular/standalone';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Capacitor } from '@capacitor/core';
 import { addIcons } from 'ionicons';
-import { cameraOutline, checkmarkOutline, closeOutline, expandOutline, imageOutline, musicalNotesOutline, refreshOutline, sendOutline, settingsOutline, shieldCheckmarkOutline, textOutline, videocamOutline } from 'ionicons/icons';
+import { cameraOutline, checkmarkOutline, closeOutline, expandOutline, imageOutline, musicalNotesOutline, pauseOutline, playOutline, refreshOutline, sendOutline, settingsOutline, shieldCheckmarkOutline, textOutline, videocamOutline, volumeHighOutline, volumeMuteOutline } from 'ionicons/icons';
 import { Conversation } from '../../core/models/nivra.models';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { AuthService } from '../../core/services/auth.service';
@@ -14,6 +14,7 @@ import { E2EE_UPLOAD_LIMIT_BYTES } from '../../core/services/media-optimizer.ser
 import { SocialService } from '../../core/services/social.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { MediaStreamDirective } from '../media-stream.directive';
+import { encodeStoryMusicFragment, STORY_MUSIC_SOURCE_MAX_BYTES, STORY_MUSIC_SOURCE_MAX_SECONDS, validMusicWindow } from '../../core/services/story-music';
 
 type ComposerMode = 'choose' | 'edit' | 'camera';
 type MediaKind = 'image' | 'video' | 'audio' | '';
@@ -38,15 +39,20 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   @ViewChild('cameraPreview') private cameraPreview?: ElementRef<HTMLVideoElement>;
   @ViewChild('captionInput') private captionInput?: ElementRef<HTMLTextAreaElement>;
   @ViewChild('draftMedia') private draftMedia?: ElementRef<HTMLMediaElement>;
+  @ViewChild('draftMusic') private draftMusic?: ElementRef<HTMLAudioElement>;
   @ViewChild('draftPreview') set draftPreview(ref: ElementRef<HTMLElement> | undefined) {
+    const revision = ++this.previewRevision;
     this.previewObserver?.disconnect();
     this.previewObserver = null;
     if (!ref) return;
     const measure = () => {
+      if (revision !== this.previewRevision) return;
       const { width, height } = ref.nativeElement.getBoundingClientRect();
       if (width && height) this.previewAspect = width / height;
     };
-    measure();
+    // A ViewChild setter runs during view checking. Measure after that turn so
+    // the preview style stays stable through Angular's verification pass.
+    queueMicrotask(() => this.zone.run(measure));
     this.previewObserver = new ResizeObserver(() => this.zone.run(measure));
     this.previewObserver.observe(ref.nativeElement);
   }
@@ -76,11 +82,26 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   error = '';
   publicationFailed = false;
   confirmingDiscard = false;
+  musicUrl = '';
+  musicTitle = '';
+  musicTotal = 0;
+  musicStart = 0;
+  musicLength = 15;
+  musicLoading = false;
+  musicPlaying = false;
+  musicMuted = false;
+  musicError = '';
+  private musicBuffer: AudioBuffer | null = null;
+  private musicContext: AudioContext | null = null;
+  private musicRevision = 0;
+  private musicStopTimer: number | null = null;
+  private composerAccount = '';
   readonly native = Capacitor.isNativePlatform();
   readonly recordingSupported = typeof MediaRecorder !== 'undefined';
   private generation = 0;
   private previewAspect = 9 / 16;
   private previewObserver: ResizeObserver | null = null;
+  private previewRevision = 0;
   private closedEmitted = false;
   private dismissRequested = false;
   private recorder: MediaRecorder | null = null;
@@ -91,6 +112,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   private recordingStartedAt = 0;
   private readonly onVisibilityChange = () => {
     if (document.visibilityState === 'hidden') this.draftMedia?.nativeElement.pause();
+    if (document.visibilityState === 'hidden') this.pauseMusic();
     if (document.visibilityState !== 'hidden' || !this.cameraStream) return;
     // Leaving the app must never leave a camera or microphone recording invisibly.
     this.zone.run(() => this.recording ? this.finishRecording() : this.leaveCamera());
@@ -99,8 +121,19 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   readonly canDismiss = () => this.dismissRequested || (!this.busy && !this.hasDraft() && !this.cameraBusy);
 
   constructor() {
-    addIcons({ cameraOutline, checkmarkOutline, closeOutline, expandOutline, imageOutline, musicalNotesOutline, refreshOutline, sendOutline, settingsOutline, shieldCheckmarkOutline, textOutline, videocamOutline });
+    addIcons({ cameraOutline, checkmarkOutline, closeOutline, expandOutline, imageOutline, musicalNotesOutline, pauseOutline, playOutline, refreshOutline, sendOutline, settingsOutline, shieldCheckmarkOutline, textOutline, videocamOutline, volumeHighOutline, volumeMuteOutline });
     document.addEventListener('visibilitychange', this.onVisibilityChange);
+    const initial = this.auth.session();
+    this.composerAccount = initial ? `${initial.user.id}:${initial.device.id}:${this.auth.sessionGeneration?.() ?? 0}` : '';
+    effect(() => {
+      const session = this.auth.session();
+      const activation = this.auth.sessionGeneration?.() ?? 0;
+      const scope = session ? `${session.user.id}:${session.device.id}:${activation}` : '';
+      untracked(() => {
+        if (this.composerAccount && scope !== this.composerAccount) this.finishClose();
+        this.composerAccount = scope;
+      });
+    });
   }
 
   ngOnChanges(changes: SimpleChanges): void {
@@ -116,6 +149,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    ++this.previewRevision;
     this.previewObserver?.disconnect();
     this.resetDraft();
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
@@ -192,6 +226,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
     }
     this.releaseCapture();
     this.releasePreview();
+    this.removeMusic();
     this.file = file;
     this.mediaKind = kind;
     this.previewUrl = URL.createObjectURL(file);
@@ -209,6 +244,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   removeFile(): void {
     if (this.busy) return;
     this.releasePreview();
+    this.removeMusic();
     this.file = null;
     this.mediaKind = '';
     this.imageLoading = false;
@@ -217,6 +253,124 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
     this.imageWidth = 0;
     this.imageHeight = 0;
   }
+
+  async musicSelected(event: Event): Promise<void> {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0]; input.value = '';
+    if (file) await this.selectMusic(file);
+  }
+
+  async selectMusic(file: File): Promise<void> {
+    if (this.busy || this.mediaKind !== 'image') return;
+    if (!file.type.startsWith('audio/') || !file.size || file.size > STORY_MUSIC_SOURCE_MAX_BYTES) {
+      this.musicError = 'Elige un audio mono o estéreo de hasta 12 MB y 5 minutos.'; return;
+    }
+    const revision = ++this.musicRevision;
+    const generation = this.generation;
+    const session = this.auth.session();
+    const activation = this.auth.sessionGeneration?.();
+    const scope = session ? `${session.user.id}:${session.device.id}` : '';
+    const current = () => revision === this.musicRevision && generation === this.generation && this.isOpen && this.mediaKind === 'image'
+      && `${this.auth.session()?.user.id}:${this.auth.session()?.device.id}` === scope;
+    const currentActivation = () => current() && activation === this.auth.sessionGeneration?.();
+    this.musicLoading = true; this.musicError = ''; this.pauseMusic();
+    const previousContext = this.musicContext; this.musicContext = null;
+    if (previousContext) await previousContext.close().catch(() => undefined);
+    if (!currentActivation()) return;
+    const url = URL.createObjectURL(file);
+    let retained = false;
+    let context: AudioContext | null = null;
+    try {
+      // Probe duration before PCM decoding: compressed long recordings can
+      // otherwise allocate hundreds of megabytes on a mobile WebView.
+      await this.probeMusic(url);
+      if (!currentActivation()) return;
+      context = new AudioContext({ sampleRate: 22050 }); this.musicContext = context;
+      const buffer = await this.withMusicDeadline(context.decodeAudioData(await file.arrayBuffer()));
+      if (!currentActivation()) return;
+      if (!Number.isFinite(buffer.duration) || buffer.duration <= 0 || buffer.duration > STORY_MUSIC_SOURCE_MAX_SECONDS || buffer.numberOfChannels > 2)
+        throw new Error('Elige un audio mono o estéreo de hasta 5 minutos.');
+      this.clearMusicAsset();
+      this.musicBuffer = buffer; this.musicUrl = url; retained = true;
+      this.musicTitle = file.name.replace(/\.[^.]+$/, '').slice(0, 80);
+      this.musicTotal = buffer.duration; this.musicStart = 0; this.musicLength = Math.min(15, buffer.duration);
+    } catch (error) {
+      if (currentActivation()) this.musicError = error instanceof Error && /hasta 5 minutos/.test(error.message) ? error.message : 'No se pudo abrir este audio. Prueba con MP3, M4A, OGG o WAV compatible.';
+    } finally {
+      if (!retained) URL.revokeObjectURL(url);
+      if (context) await context.close().catch(() => undefined);
+      if (this.musicContext === context) this.musicContext = null;
+      if (revision === this.musicRevision) this.musicLoading = false;
+    }
+  }
+
+  private probeMusic(url: string): Promise<void> {
+    const audio = new Audio(); audio.preload = 'metadata';
+    return this.withMusicDeadline(new Promise<void>((resolve, reject) => {
+      audio.onloadedmetadata = () => Number.isFinite(audio.duration) && audio.duration > 0 && audio.duration <= STORY_MUSIC_SOURCE_MAX_SECONDS
+        ? resolve() : reject(new Error('Elige un audio mono o estéreo de hasta 5 minutos.'));
+      audio.onerror = () => reject(new Error('audio-format')); audio.src = url;
+    })).finally(() => { audio.onloadedmetadata = null; audio.onerror = null; audio.pause(); audio.removeAttribute('src'); audio.load(); });
+  }
+
+  private withMusicDeadline<T>(operation: Promise<T>): Promise<T> {
+    let timer: number;
+    return Promise.race([operation, new Promise<T>((_resolve, reject) => timer = window.setTimeout(() => reject(new Error('audio-timeout')), 15000))])
+      .finally(() => window.clearTimeout(timer));
+  }
+
+  updateMusicWindow(start: number | string = this.musicStart, duration: number | string = this.musicLength): void {
+    this.pauseMusic();
+    this.musicLength = Math.min(15, this.musicTotal, Math.max(Math.min(.25, this.musicTotal), Number(duration) || 0));
+    this.musicStart = Math.max(0, Math.min(Number(start) || 0, this.musicTotal - this.musicLength));
+    if (this.draftMusic) this.draftMusic.nativeElement.currentTime = this.musicStart;
+  }
+  async toggleMusicPreview(): Promise<void> {
+    const audio = this.draftMusic?.nativeElement;
+    if (!audio || !this.musicBuffer || this.musicLoading) return;
+    if (this.musicPlaying) { this.pauseMusic(); return; }
+    const revision = this.musicRevision;
+    audio.currentTime = this.musicStart; audio.muted = this.musicMuted;
+    try {
+      await audio.play();
+      if (revision !== this.musicRevision || document.visibilityState === 'hidden' || !this.isOpen || this.busy) { audio.pause(); return; }
+      this.musicPlaying = true;
+      this.watchMusicPreview(audio, revision, Date.now() + Math.max(30000, this.musicLength * 4000));
+    } catch { this.musicError = 'Toca reproducir para escuchar el fragmento.'; }
+  }
+  private watchMusicPreview(audio: HTMLAudioElement, revision: number, deadline: number): void {
+    this.musicStopTimer = window.setTimeout(() => {
+      if (revision !== this.musicRevision || audio !== this.draftMusic?.nativeElement || !this.musicPlaying) return;
+      if (!this.isOpen || this.busy || document.visibilityState === 'hidden' || audio.currentTime >= this.musicStart + this.musicLength) {
+        this.pauseMusic(); return;
+      }
+      // Buffering and a slow play() startup do not consume the selected audio.
+      // A bounded watchdog still releases a source that remains stuck forever.
+      if (Date.now() >= deadline) {
+        this.pauseMusic(); this.musicError = 'El audio dejó de avanzar. Toca reproducir para volver a escuchar el fragmento.'; return;
+      }
+      this.watchMusicPreview(audio, revision, deadline);
+    }, 250);
+  }
+  musicTimeChanged(): void {
+    if ((this.draftMusic?.nativeElement.currentTime ?? 0) >= this.musicStart + this.musicLength) this.pauseMusic();
+  }
+  toggleMusicMute(): void { this.musicMuted = !this.musicMuted; if (this.draftMusic) this.draftMusic.nativeElement.muted = this.musicMuted; }
+  pauseMusic(): void {
+    this.draftMusic?.nativeElement.pause(); this.musicPlaying = false;
+    if (this.musicStopTimer !== null) window.clearTimeout(this.musicStopTimer);
+    this.musicStopTimer = null;
+  }
+  removeMusic(): void {
+    ++this.musicRevision; this.clearMusicAsset(); this.musicLoading = false; this.musicError = '';
+    void this.musicContext?.close().catch(() => undefined); this.musicContext = null;
+  }
+  private clearMusicAsset(): void {
+    this.pauseMusic(); this.musicBuffer = null;
+    if (this.musicUrl) URL.revokeObjectURL(this.musicUrl);
+    this.musicUrl = ''; this.musicTitle = ''; this.musicTotal = 0; this.musicStart = 0; this.musicLength = 15;
+  }
+  musicTime(seconds: number): string { const value = Math.max(0, Math.floor(seconds)); return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, '0')}`; }
 
   imageLoaded(event: Event): void {
     const image = event.target as HTMLImageElement;
@@ -273,6 +427,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   async openCamera(): Promise<void> {
     if (this.busy || this.cameraBusy || this.recording) return;
     this.mode = 'camera';
+    this.pauseMusic();
     this.error = '';
     await this.startCamera();
   }
@@ -437,7 +592,10 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   }
 
   async publish(): Promise<void> {
-    if (this.busy || this.social.publishing() || !this.hasDraft() || this.mode === 'camera' || this.imageLoading) return;
+    if (this.busy || this.social.publishing() || !this.hasDraft() || this.mode === 'camera' || this.imageLoading || this.musicLoading) return;
+    if (this.musicBuffer && !validMusicWindow(this.musicTotal, this.musicStart, this.musicLength)) {
+      this.musicError = 'Elige un fragmento válido de hasta 15 segundos.'; return;
+    }
     const publisher = this.auth.session();
     const userId = publisher?.user.id;
     const deviceId = publisher?.device.id;
@@ -453,6 +611,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
     this.error = '';
     this.publicationFailed = false;
     this.draftMedia?.nativeElement.pause();
+    this.pauseMusic();
     try {
       const file = await this.editedImageFile();
       if (!this.publicationStillCurrent(userId, deviceId, generation)) return;
@@ -463,6 +622,10 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
       }
       await this.social.publishStory({
         text: this.text.trim(), file,
+        ...(this.musicBuffer && validMusicWindow(this.musicTotal, this.musicStart, this.musicLength) ? { music: {
+          file: encodeStoryMusicFragment(this.musicBuffer, this.musicStart, this.musicLength), title: this.musicTitle.trim(),
+          durationSeconds: Math.floor(this.musicLength * 22050) / 22050, sourceStartSeconds: this.musicStart,
+        } } : {}),
         visibility: group ? 'SelectedUsers' : this.visibility,
         durationSeconds: Number(this.durationSeconds), viewOnce: this.viewOnce, allowReposts: !this.viewOnce && this.allowReposts,
         targetType: group ? 'group' : 'contacts', targetId: group?.id ?? null,
@@ -481,6 +644,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
           ['No se pudo sincronizar el cifrado de la audiencia. Revisa la conexion e intenta de nuevo.', this.tr('STORY_COMPOSER.KEY_SYNC_ERROR', 'No se pudo sincronizar el cifrado de la audiencia. Revisa la conexión e inténtalo de nuevo.')],
           ['No hay llaves publicas para cifrar la audiencia de la historia.', this.tr('STORY_COMPOSER.KEYS_UNAVAILABLE_ERROR', 'No hay llaves públicas disponibles para cifrar esta audiencia. Revisa los dispositivos e inténtalo de nuevo.')],
           ['La sesion cambio. Vuelve a abrir este contenido desde tu cuenta actual.', this.tr('STORY_COMPOSER.SESSION_ERROR', 'Tu sesión cambió. Vuelve a iniciar sesión e inténtalo otra vez.')],
+          ['El servidor aún no permite historias con música. Conservamos tu borrador; vuelve a intentar cuando se actualice.', 'El servidor aún no permite historias con música. Conservamos tu borrador; vuelve a intentar cuando se actualice.'],
         ]);
         const safeMessage = error instanceof Error ? safeErrors.get(error.message) : undefined;
         if (safeMessage) {
@@ -560,6 +724,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
     this.draftMedia?.nativeElement.pause();
     this.releaseCapture();
     this.releasePreview();
+    this.removeMusic();
     if (this.captionFocusTimer !== null) window.clearTimeout(this.captionFocusTimer);
     this.captionFocusTimer = null;
     this.mode = 'choose';

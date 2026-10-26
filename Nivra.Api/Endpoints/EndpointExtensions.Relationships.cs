@@ -9,6 +9,7 @@ using Nivra.Api.Domain;
 using Nivra.Api.Infrastructure;
 using Nivra.Api.Realtime;
 using Nivra.Api.Security;
+using Nivra.Api.Services;
 
 namespace Nivra.Api.Endpoints;
 
@@ -91,29 +92,32 @@ public static partial class EndpointExtensions
         if (current is null) return Results.Unauthorized();
         var snapshot = await db.FriendRequests.AsNoTracking().FirstOrDefaultAsync(request => request.Id == id, token);
         if (snapshot is null || !CanRespondToFriendRequest(snapshot, current.UserId, next)) return Results.NotFound();
-        await using var transaction = await LockRelationshipAsync(db, snapshot.FromUserId, snapshot.ToUserId, token);
-        var request = await db.FriendRequests.FirstOrDefaultAsync(candidate => candidate.Id == id, token);
-        if (request is null || !CanRespondToFriendRequest(request, current.UserId, next)) return Results.NotFound();
-        if (!CanTransitionFriendRequest(request, next))
-            return Results.Conflict(new { code = "friend_request_closed" });
-        if (request.Status == FriendRequestStatus.Pending)
+        return await CallCoordination.RunAsync(db, async Task<IResult> () =>
         {
-            var now = clock.GetUtcNow();
-            request.Status = next; request.UpdatedAt = now; request.RespondedAt = now;
-            if (next == FriendRequestStatus.Accepted)
+            await using var transaction = await LockRelationshipAsync(db, snapshot.FromUserId, snapshot.ToUserId, token);
+            var request = await db.FriendRequests.FirstOrDefaultAsync(candidate => candidate.Id == id, token);
+            if (request is null || !CanRespondToFriendRequest(request, current.UserId, next)) return Results.NotFound();
+            if (!CanTransitionFriendRequest(request, next))
+                return Results.Conflict(new { code = "friend_request_closed" });
+            if (request.Status == FriendRequestStatus.Pending)
             {
-                await UpsertContactAsync(db, request.FromUserId, request.ToUserId, now, token);
-                await UpsertContactAsync(db, request.ToUserId, request.FromUserId, now, token);
+                var now = clock.GetUtcNow();
+                request.Status = next; request.UpdatedAt = now; request.RespondedAt = now;
+                if (next == FriendRequestStatus.Accepted)
+                {
+                    await UpsertContactAsync(db, request.FromUserId, request.ToUserId, now, token);
+                    await UpsertContactAsync(db, request.ToUserId, request.FromUserId, now, token);
+                }
+                await CloseDuplicateFriendRequestsAsync(db, request, now, token);
+                await db.SaveChangesAsync(token);
             }
-            await CloseDuplicateFriendRequestsAsync(db, request, now, token);
-            await db.SaveChangesAsync(token);
-        }
-        await transaction.CommitAsync(token);
-        await NotifyFriendRequestChangedAsync(db, hub, request, "friend.updated", token);
-        if (next == FriendRequestStatus.Accepted)
-            await NotifyRelationshipChangedAsync(db, hub, request.FromUserId, request.ToUserId, token);
-        http.Response.Headers.CacheControl = "no-store";
-        return Results.Ok(await ToFriendRequestResponseAsync(request, current.UserId, db, token));
+            await transaction.CommitAsync(token);
+            await NotifyFriendRequestChangedAsync(db, hub, request, "friend.updated", token);
+            if (next == FriendRequestStatus.Accepted)
+                await NotifyRelationshipChangedAsync(db, hub, request.FromUserId, request.ToUserId, token);
+            http.Response.Headers.CacheControl = "no-store";
+            return Results.Ok(await ToFriendRequestResponseAsync(request, current.UserId, db, token));
+        });
     }
 
     private static async Task NotifyFriendRequestChangedAsync(NivraDbContext db, IHubContext<NivraHub> hub,

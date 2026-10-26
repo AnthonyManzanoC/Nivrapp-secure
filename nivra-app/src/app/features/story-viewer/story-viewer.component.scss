@@ -578,3 +578,13 @@ footer.story-action-bar {
     justify-self: center;
   }
 }
+.story-music-badge { position: absolute; left: max(20px, env(safe-area-inset-left)); bottom: calc(142px + env(safe-area-inset-bottom)); z-index: 5; display: flex; align-items: center; gap: 10px; max-width: min(320px, calc(100% - 40px)); padding: 9px 10px 9px 9px; border: 1px solid #ffffff24; border-radius: 18px; color: #fff; background: #10231cd9; backdrop-filter: blur(14px); box-shadow: 0 8px 24px #0002; }
+.story-music-symbol { display: grid; place-items: center; width: 36px; height: 36px; flex: 0 0 auto; border-radius: 12px; background: #8be5bf25; color: #baf7da; font-size: 21px; }
+.story-music-symbol.playing { animation: music-glow 2s ease-in-out infinite alternate; }
+.story-music-badge > span:nth-child(2) { min-width: 0; }
+.story-music-badge strong { display: block; font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.story-music-badge small { display: block; color: #ffffffa8; margin-top: 3px; font-size: 10px; }
+.story-music-badge button { display: grid; place-items: center; flex: 0 0 36px; min-height: 36px; border: 0; border-radius: 50%; color: white; background: #ffffff12; font-size: 19px; }
+.ui-hidden .story-music-badge { opacity: 0; pointer-events: none; }
+@keyframes music-glow { to { background: #8be5bf40; } }
+@media (prefers-reduced-motion: reduce) { .story-music-symbol.playing { animation: none; } }

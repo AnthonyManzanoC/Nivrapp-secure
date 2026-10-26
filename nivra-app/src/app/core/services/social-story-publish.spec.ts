@@ -10,6 +10,7 @@ import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 import { SocialService } from './social.service';
 import { EncryptedDownloadService } from './encrypted-download.service';
+import { encodeStoryMusicFragment } from './story-music';
 
 describe('confirmed story publication and feed recovery', () => {
   let service: SocialService;
@@ -59,7 +60,7 @@ describe('confirmed story publication and feed recovery', () => {
     history.putStories.and.resolveTo();
     history.removeStory.and.resolveTo();
     api.get.and.callFake((path: string) => of(
-      path === '/stories/feed' ? feed : path === '/stories/world' ? world : [],
+      path === '/stories/feed' ? feed : path === '/stories/world' ? world : path === '/stories/capabilities' ? { musicFragments: 1 } : [],
     ) as never);
     api.post.and.callFake((path: string) => of(
       path === '/keys/batch' ? keys : path === '/files' ? { id: 'encrypted-file' } : published,
@@ -117,6 +118,76 @@ describe('confirmed story publication and feed recovery', () => {
     expect(history.putStories).toHaveBeenCalled();
     expect(service.publishing()).toBeFalse();
     expect(service.publishingStatus()).toBe('');
+  });
+
+  const fragment = () => encodeStoryMusicFragment({ duration: 2, sampleRate: 22050, numberOfChannels: 1, length: 44100,
+    getChannelData: () => new Float32Array(44100) } as unknown as AudioBuffer, 0, 2);
+
+  it('uploads separate encrypted photo and actual music fragment with the same audience and TTL, keeping private metadata inside E2EE', async () => {
+    let files = 0;
+    published.musicFileObjectId = 'asset-2';
+    api.post.and.callFake((path: string) => of(path === '/keys/batch' ? keys : path === '/files' ? { id: `asset-${++files}` } : published) as never);
+    await service.publishStory({ text: 'Foto privada', file: new File(['image'], 'photo.jpg', { type: 'image/jpeg' }), visibility: 'Contacts', durationSeconds: 3600,
+      music: { file: fragment(), title: 'Canción secreta', durationSeconds: 2, sourceStartSeconds: 38 } });
+    const reservations = api.post.calls.allArgs().filter(([path]) => path === '/files').map(args => args[1] as any);
+    expect(reservations.length).toBe(2);
+    expect(reservations[1].allowedUserIds).toEqual(reservations[0].allowedUserIds);
+    expect(reservations[1].expiresAt).toBe(reservations[0].expiresAt);
+    const request = api.post.calls.allArgs().find(([path]) => path === '/stories')![1] as any;
+    expect(request.mediaFileObjectId).toBe('asset-1'); expect(request.musicFileObjectId).toBe('asset-2');
+    expect(JSON.stringify(request)).not.toContain('Canción secreta');
+    expect(JSON.stringify(request)).not.toContain('file-key');
+    expect(seal.calls.mostRecent().args[2].music).toEqual(jasmine.objectContaining({ title: 'Canción secreta', durationSeconds: 2, sourceStartSeconds: 38 }));
+    expect(service.storyMusic(published)?.url).toMatch(/^blob:/);
+  });
+
+  it('refuses a fabricated or untrimmed soundtrack before reserving any upload', async () => {
+    await expectAsync(service.publishStory({ text: '', file: new File(['image'], 'photo.jpg', { type: 'image/jpeg' }), visibility: 'Contacts',
+      music: { file: fragment(), title: '', durationSeconds: 15, sourceStartSeconds: 0 } })).toBeRejected();
+    expect(api.post).not.toHaveBeenCalled(); expect(api.putRaw).not.toHaveBeenCalled();
+    expect(service.publishing()).toBeFalse();
+  });
+
+  it('preserves the draft without uploading or publishing music against an older API', async () => {
+    api.get.and.returnValue(throwError(() => ({ status: 404 })) as never);
+    await expectAsync(service.publishStory({ text: '', file: new File(['image'], 'photo.jpg', { type: 'image/jpeg' }), visibility: 'Contacts',
+      music: { file: fragment(), title: 'Música', durationSeconds: 2, sourceStartSeconds: 0 } })).toBeRejectedWithError(/servidor aún no permite/);
+    expect(api.post).not.toHaveBeenCalled(); expect(api.putRaw).not.toHaveBeenCalled(); expect(service.publishing()).toBeFalse();
+  });
+
+  it('downloads and decrypts both story assets before committing a one-view consumption', async () => {
+    const oneView = { ...published, viewOnce: true, musicFileObjectId: 'music' };
+    const music = fragment();
+    service.decodedPayloads.set({ [oneView.id]: { type: 'media', media: { fileId: 'photo', fileName: 'photo.jpg', mime: 'image/jpeg', size: 1, fileKey: 'key', fileIv: 'iv' },
+      music: { fileId: 'music', fileName: 'fragment.wav', mime: 'audio/wav', size: music.size, fileKey: 'key', fileIv: 'iv', title: 'Música', durationSeconds: 2, sourceStartSeconds: 0 } } });
+    const order: string[] = [];
+    api.getArrayBuffer.and.callFake((path: string) => { order.push(path); return of(new ArrayBuffer(16)); });
+    decryptAttachment.and.returnValues(Promise.resolve(new ArrayBuffer(1)), music.arrayBuffer());
+    api.post.and.callFake((path: string) => { order.push(path); return of(oneView) as never; });
+    await service.viewStory(oneView);
+    expect(order).toEqual([`/stories/${oneView.id}/media`, `/stories/${oneView.id}/media?track=music`, `/stories/${oneView.id}/view`]);
+    expect(service.storyReadyId()).toBe(oneView.id);
+  });
+
+  it('does not consume a one-view photo if its music cannot be downloaded, and clears opening state for retry', async () => {
+    const oneView = { ...published, viewOnce: true, musicFileObjectId: 'music' };
+    service.decodedPayloads.set({ [oneView.id]: { type: 'media', media: { fileId: 'photo', fileName: 'photo.jpg', mime: 'image/jpeg', size: 1, fileKey: 'key', fileIv: 'iv' },
+      music: { fileId: 'music', fileName: 'fragment.wav', mime: 'audio/wav', size: fragment().size, fileKey: 'key', fileIv: 'iv', title: 'Música', durationSeconds: 2, sourceStartSeconds: 0 } } });
+    api.getArrayBuffer.and.callFake((path: string) => path.includes('track=music') ? throwError(() => ({ status: 503 })) : of(new ArrayBuffer(16)));
+    await expectAsync(service.viewStory(oneView)).toBeRejected();
+    expect(api.post).not.toHaveBeenCalled(); expect(service.storyReadyId()).toBe(''); expect(service.storyOpening()).toBeFalse();
+  });
+
+  it('keeps an already committed photo confirmed if a server omits the music acknowledgement, without inviting a duplicate publication', async () => {
+    let files = 0;
+    api.post.and.callFake((path: string) => of(path === '/keys/batch' ? keys : path === '/files' ? { id: `asset-${++files}` } : published) as never);
+    spyOn(service, 'load').and.rejectWith(new Error('feed unavailable after commit'));
+    await expectAsync(service.publishStory({ text: 'Mi foto', file: new File(['image'], 'photo.jpg', { type: 'image/jpeg' }), visibility: 'Contacts',
+      music: { file: fragment(), title: 'Canción', durationSeconds: 2, sourceStartSeconds: 0 } })).toBeResolved();
+    expect(api.post.calls.allArgs().filter(([path]) => path === '/stories').length).toBe(1);
+    expect(service.stories()[0].id).toBe(published.id); expect(service.storyPayload(published).media).toBeTruthy();
+    expect(service.storyPayload(published).music).toBeNull(); expect(service.storyMusic(published)).toBeNull();
+    expect(service.storyDeliveryWarning()).toContain('no confirmó la música'); expect(service.publishing()).toBeFalse();
   });
 
   it('resumes one interrupted media upload with the same reservation and ciphertext, without duplicate creation', async () => {

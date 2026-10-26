@@ -1,5 +1,9 @@
 using System.Text.Json;
+using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
+using Nivra.Api.Domain;
+using Nivra.Api.Endpoints;
 using Nivra.Api.Infrastructure;
 using Nivra.Api.Services;
 using Npgsql;
@@ -17,6 +21,43 @@ try
     var pending = (await db.Database.GetPendingMigrationsAsync()).ToArray();
     Console.WriteLine("Database connected; pending migrations: " + string.Join(", ", pending));
     if (args.Contains("--migrate")) { await db.Database.MigrateAsync(); Console.WriteLine("Migrations applied successfully."); }
+    var metadataProbe = "__metadata_probe__" + Guid.NewGuid().ToString("N");
+    var relationshipLock = typeof(EndpointExtensions).GetMethod("LockRelationshipAsync", BindingFlags.Static | BindingFlags.NonPublic)!;
+    Task<IDbContextTransaction> MetadataLock(NivraDbContext context, string scope) =>
+        (Task<IDbContextTransaction>)relationshipLock.Invoke(null, [context, scope, metadataProbe, CancellationToken.None])!;
+    // Exercise the exact released failure against the real provider, with only
+    // a random advisory lock. This starts no account/session or message write.
+    var rejectedUnscopedTransaction = false;
+    try
+    {
+        await using var unexpected = await MetadataLock(db, "account-appearance");
+        // Raw advisory-lock SQL intentionally bypasses provider retries. The
+        // first ordinary LINQ query inside that transaction triggers the guard.
+        await db.Set<AccountAppearance>().AsNoTracking().SingleOrDefaultAsync(row => row.UserId == metadataProbe);
+    }
+    catch (InvalidOperationException error) when (error.Message.Contains("user-initiated transactions", StringComparison.OrdinalIgnoreCase)) { rejectedUnscopedTransaction = true; }
+    if (!rejectedUnscopedTransaction || db.Database.CurrentTransaction is not null)
+        throw new InvalidOperationException("Metadata transaction regression did not reproduce or release its failed transaction.");
+    Console.WriteLine("PASS: real Npgsql reproduces the old appearance transaction failure and rolls back its advisory-lock attempt.");
+    foreach (var scope in new[] { "account-appearance", "account-broadcast-lists", "relationship-probe" })
+    {
+        await CallCoordination.RunAsync(db, async () =>
+        {
+            await using var transaction = await MetadataLock(db, scope);
+            // Reserved random fixture IDs only: real account data is neither
+            // selected nor written. Missing schema/translation errors surface.
+            if (await db.Set<AccountAppearance>().AsNoTracking().SingleOrDefaultAsync(row => row.UserId == metadataProbe) is not null ||
+                (await db.Set<BroadcastListRecord>().AsNoTracking().Where(row => row.UserId == metadataProbe)
+                    .OrderBy(row => row.DeletedAt != null).ThenByDescending(row => row.UpdatedAt).ThenBy(row => row.Id).Take(200).ToListAsync()).Count != 0)
+                throw new InvalidOperationException("Unexpected metadata probe collision.");
+            var deviceQuery = (IQueryable<DeviceRecord>)typeof(EndpointExtensions).GetMethod("MetadataDeviceQuery", BindingFlags.Static | BindingFlags.NonPublic)!
+                .Invoke(null, [db, metadataProbe, metadataProbe])!;
+            if (await deviceQuery.FirstOrDefaultAsync() is not null) throw new InvalidOperationException("Unexpected device probe collision.");
+            await transaction.CommitAsync();
+            return true;
+        });
+    }
+    Console.WriteLine("PASS: real PostgreSQL appearance, broadcast and relationship locks run with provider retries; metadata GET and trusted-device queries execute (no rows changed).");
     var lockKey = "nivra-regression:" + Guid.NewGuid().ToString("N");
     var inside = 0; var peak = 0;
     var checks = Enumerable.Range(0, 8).Select(async _ =>

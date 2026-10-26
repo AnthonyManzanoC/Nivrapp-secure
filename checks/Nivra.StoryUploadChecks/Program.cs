@@ -142,26 +142,39 @@ try
     async Task<bool> CanRead(FileObject candidate, string user = "bob") =>
         await (Task<bool>)aclMethod.Invoke(null, [user, candidate, store, db, now, CancellationToken.None])!;
     var media = NewFile("story-media"); media.State = FileState.Uploaded;
+    var music = NewFile("story-music", 15 * 22050 * 2 + 44 + 16); music.State = FileState.Uploaded;
     var story = new StoryRecord
     {
         Id = "story-one", OwnerUserId = "alice", EncryptedPayload = "fixture-ciphertext", MediaFileObjectId = media.Id,
+        MusicFileObjectId = music.Id,
         Visibility = StoryVisibility.SelectedUsers, AllowedUserIds = ["bob"], CreatedAt = now, ExpiresAt = now.AddHours(1), ViewOnce = true
     };
     db.Stories.Add(story); await db.SaveChangesAsync();
     Check(await CanRead(media), "active story permits its encrypted recipient before first viewing");
+    Check(await CanRead(music) && !await CanRead(music, "mallory"), "music asset uses the story audience, never a standalone permissive file ACL");
     story.ViewedByUserIds.Add("bob"); await db.SaveChangesAsync();
     Check(!await CanRead(media), "generic file URL cannot bypass a consumed read-once story using its old file ACL");
+    Check(!await CanRead(music), "consumed read-once story revokes both photo and music through generic file URLs");
     story.ViewOnce = false; story.DeletedAt = now; await db.SaveChangesAsync();
     Check(!await CanRead(media), "generic file URL cannot bypass deleted story revocation");
+    Check(!await CanRead(music), "deleting a story revokes its music even if its file ACL still lists the viewer");
     story.DeletedAt = null; story.ExpiresAt = now.AddSeconds(-1); await db.SaveChangesAsync();
     Check(!await CanRead(media), "generic file URL cannot bypass expired story revocation before cleanup");
+    Check(!await CanRead(music), "expired stories cannot expose their music before cleanup");
     story.ExpiresAt = now.AddHours(1); story.TargetType = "group"; story.TargetId = "group-test";
     var group = new ConversationRecord { Id = story.TargetId, Type = ConversationType.Group, CreatedByUserId = "alice", CreatedAt = now };
     group.Participants.Add(new ConversationParticipant { UserId = "bob", JoinedAt = now, RemovedAt = now });
     db.Conversations.Add(group); await db.SaveChangesAsync();
     Check(!await CanRead(media), "former group member cannot download story ciphertext with an old recipient ACL");
+    Check(!await CanRead(music), "former group member cannot fetch the music with a stale file ACL");
     group.Participants[0].RemovedAt = null; await db.SaveChangesAsync();
     Check(await CanRead(media), "current group member retains authorized story media access");
+    Check(await CanRead(music), "active group member can download both story assets");
+    Check(StoryMediaPolicy.CanAttachMusic(music, "alice", now) && !StoryMediaPolicy.CanAttachMusic(music, "mallory", now), "music attachment requires an uploaded owned bounded encrypted asset");
+    music.EncryptedSize += 1;
+    Check(!StoryMediaPolicy.CanAttachMusic(music, "alice", now), "full songs cannot bypass the small encrypted fragment size ceiling");
+    Check(StoryMediaPolicy.FileId(story, null) == media.Id && StoryMediaPolicy.FileId(story, "music") == music.Id && StoryMediaPolicy.FileId(story, "foreign-file") is null,
+        "track selection resolves only the story-linked photo or music, never a supplied arbitrary file ID");
     Check(await CanRead(NewFile("ordinary-message")), "ordinary encrypted message attachments preserve recipient ACL access");
     media.ExpiresAt = now;
     Check(!await CanRead(media, "alice"), "file expiry applies even to owner access before asynchronous cleanup");
@@ -173,6 +186,9 @@ try
     attach.VaultRoomId = "vault-private";
     Check(!StoryMediaPolicy.CanAttach(attach, "alice", now), "private vault media cannot escape through story publication");
     Check(StoryMediaPolicy.Deadline(now.AddHours(24), now.AddHours(1)) == now.AddHours(1), "story lifetime cannot outlive its media file");
+    Check(StoryMediaPolicy.Deadline(now.AddHours(24), now.AddHours(2), now.AddHours(1)) == now.AddHours(1) &&
+        StoryMediaPolicy.Deadline(now.AddHours(24), now.AddHours(1), now.AddHours(2)) == now.AddHours(1), "creation takes the earliest of requested, photo and music expiry regardless of asset order");
+    Check(StoryMediaPolicy.Deadline(now.AddDays(7), story.ExpiresAt) == story.ExpiresAt, "a repost cannot extend the original story's already bounded photo and music lifetime");
     story.ViewOnce = true;
     Check(!StoryMediaPolicy.CanRepost(story, true), "read-once story cannot be converted into a reusable repost");
     story.ViewOnce = false;
@@ -188,9 +204,10 @@ try
     var committedStory = new StoryRecord
     {
         Id = "story-persisted-before-notification", OwnerUserId = "alice", Visibility = StoryVisibility.PublicWorld,
-        EncryptedPayload = "fixture-ciphertext", CreatedAt = now, ExpiresAt = now.AddHours(24)
+        EncryptedPayload = "fixture-ciphertext", CreatedAt = now, ExpiresAt = now.AddHours(24), MusicFileObjectId = music.Id
     };
     var publicationResponse = await (Task<StoryResponse>)toResponse.Invoke(null, [committedStory, "alice", db, CancellationToken.None])!;
+    Check(publicationResponse.MusicFileObjectId == music.Id, "committed story response acknowledges the linked music without exposing its private title or key");
     var notificationContext = new DefaultHttpContext { RequestServices = services };
     Func<CancellationToken, Task> notify = token => hub.Clients.All.SendAsync("story.worldCreated", publicationResponse, token);
     var publication = await (Task<IResult>)savePublication.Invoke(null, [committedStory, db, publicationResponse, notificationContext, notify, CancellationToken.None])!;

@@ -361,6 +361,7 @@ export interface Story {
   encryptedPayload: string;
   caption?: string | null;
   mediaFileObjectId?: string | null;
+  musicFileObjectId?: string | null;
   allowedUserIds: string[];
   viewOnce: boolean;
   allowReposts: boolean;
@@ -409,6 +410,7 @@ export interface StoryPayload {
   type: 'text' | 'media' | string;
   text?: string;
   media?: StoryMediaPayload | null;
+  music?: (StoryMediaPayload & { title: string; durationSeconds: number; sourceStartSeconds: number }) | null;
 }
 
 export interface StoryMediaPreview {

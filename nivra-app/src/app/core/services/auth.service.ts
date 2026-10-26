@@ -821,7 +821,8 @@ export class AuthService implements OnDestroy {
       || this.session()?.user.id !== requestedSession.user.id || this.session()?.device.id !== requestedSession.device.id)) return false;
     const refreshToken = this.session()?.tokens.refreshToken;
     if (!refreshToken) {
-      this.refreshHardFailure = true;
+      // An intentionally signed-out add-account form has no expired session.
+      this.refreshHardFailure = Boolean(this.session()?.tokens.accessToken);
       return false;
     }
     if (Date.now() < this.refreshBackoffUntil) {
@@ -1106,6 +1107,9 @@ export class AuthService implements OnDestroy {
       return;
     }
     if (this.addingAccount()) {
+      // Automatic expiry handling has no authority over the saved return slot.
+      // Only the user's explicit cancel/logout action may leave this form.
+      if (skipServer) return;
       await this.cancelAddAccount();
       return;
     }
@@ -1466,8 +1470,10 @@ export class AuthService implements OnDestroy {
 
   async ensureSessionRestored(): Promise<boolean> {
     for (const delayMs of [0, 180, 600]) {
+      if (this.addingAccount?.()) return false;
       if (delayMs) await new Promise((resolve) => setTimeout(resolve, delayMs));
       await this.restoreProtectedSession();
+      if (this.addingAccount?.()) return false;
       if (this.isAuthenticated()) return true;
     }
     return this.isAuthenticated();
@@ -1490,12 +1496,13 @@ export class AuthService implements OnDestroy {
   }
 
   private async restoreProtectedSession(): Promise<void> {
-    if (this.sessionRestoreComplete || this.destroyed) return;
+    if (this.sessionRestoreComplete || this.destroyed || this.addingAccount?.()) return;
     if (this.protectedSessionRestorePromise) return this.protectedSessionRestorePromise;
     const operation = (async () => {
       const restoreEpoch = this.sessionWriteEpoch;
       const initialSession = this.session();
-      const mayRestore = () => !this.destroyed && this.sessionWriteEpoch === restoreEpoch && this.session() === initialSession;
+      const mayRestore = () => !this.destroyed && !this.addingAccount?.()
+        && this.sessionWriteEpoch === restoreEpoch && this.session() === initialSession;
       try {
         let snapshot = await this.accountSessions.load();
         if (!mayRestore()) return;

@@ -53,6 +53,49 @@ describe('story playback lifecycle', () => {
     expect(close).not.toHaveBeenCalled();
   });
 
+  const photoWithMusic = () => {
+    const audio = document.createElement('audio'); let paused = true;
+    Object.defineProperty(audio, 'paused', { get: () => paused });
+    Object.defineProperty(audio, 'readyState', { value: 4, configurable: true });
+    Object.defineProperty(audio, 'duration', { value: 15, configurable: true });
+    Object.defineProperty(audio, 'currentTime', { value: 0, writable: true, configurable: true });
+    spyOn(audio, 'play').and.callFake(async () => { paused = false; });
+    spyOn(audio, 'pause').and.callFake(() => { paused = true; });
+    player.payload = { type: 'media', media: { mime: 'image/jpeg' } as any,
+      music: { mime: 'audio/wav', title: 'Un fragmento', durationSeconds: 15, sourceStartSeconds: 50 } as any };
+    player.storyMedia = new ElementRef(audio);
+    return audio;
+  };
+
+  it('waits for the photo and music before playing, then times the slide from the real trimmed fragment', () => {
+    const audio = photoWithMusic();
+    player.loadedMedia({ target: audio } as unknown as Event);
+    advance(100); expect(audio.play).not.toHaveBeenCalled(); expect(player.localProgress).toBe(0);
+    player.loadedImage(); expect(audio.play).toHaveBeenCalledTimes(1);
+    audio.currentTime = 6; advance(100); expect(player.localProgress).toBe(40);
+    audio.pause(); advance(100); expect(player.localProgress).toBe(40);
+  });
+
+  it('does not skip a photo with music when autoplay needs a gesture, then resumes within the selected fragment', async () => {
+    const audio = photoWithMusic();
+    (audio.play as jasmine.Spy).and.rejectWith(new DOMException('blocked', 'NotAllowedError'));
+    player.loadedImage(); player.loadedMedia({ target: audio } as unknown as Event);
+    await Promise.resolve(); await Promise.resolve();
+    expect(player.needsPlay).toBeTrue(); advance(100); expect(player.localProgress).toBe(0);
+    // Resolve a real explicit play request without permitting muted auto-advance.
+    (audio.play as jasmine.Spy).and.resolveTo();
+    await player.playFromGesture(); expect(player.needsPlay).toBeFalse();
+  });
+
+  it('stops music when authorization disappears, the story expires, or the component is destroyed', () => {
+    const audio = photoWithMusic(); player.loadedImage(); player.loadedMedia({ target: audio } as unknown as Event);
+    social.storyReadyId.set(''); TestBed.flushEffects(); expect(audio.pause).toHaveBeenCalled();
+    social.storyReadyId.set('one'); TestBed.flushEffects();
+    player.story = { ...player.story, expiresAt: new Date(Date.now() - 1).toISOString() };
+    const close = spyOn(player.closeViewer, 'emit'); advance(); expect(close).toHaveBeenCalledTimes(1);
+    player.ngOnDestroy(); expect(audio.paused).toBeTrue();
+  });
+
   it('preserves keyboard activation of a focused story control', () => {
     const pause = spyOn(player, 'togglePause');
     player.onKey({ key: ' ', target: document.createElement('button'), preventDefault: () => undefined } as any);

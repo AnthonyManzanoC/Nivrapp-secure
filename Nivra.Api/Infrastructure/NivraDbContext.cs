@@ -417,6 +417,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(story => story.EncryptedPayload).IsRequired();
             entity.Property(story => story.Caption).HasMaxLength(500);
             entity.Property(story => story.MediaFileObjectId).HasMaxLength(64);
+            entity.Property(story => story.MusicFileObjectId).HasMaxLength(64);
             entity.Property(story => story.OriginalStoryId).HasMaxLength(64);
             entity.Property(story => story.OriginalAuthorId).HasMaxLength(64);
             entity.Property(story => story.AllowReposts).HasColumnName("allow_reposts").HasDefaultValue(true);
@@ -451,6 +452,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasIndex(story => story.DeletedAt);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(story => story.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<FileObject>().WithMany().HasForeignKey(story => story.MediaFileObjectId).OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne<FileObject>().WithMany().HasForeignKey(story => story.MusicFileObjectId).OnDelete(DeleteBehavior.SetNull);
         });
 
         modelBuilder.Entity<VaultRoom>(entity =>

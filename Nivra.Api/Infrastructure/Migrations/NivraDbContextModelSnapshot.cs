@@ -958,6 +958,10 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("MusicFileObjectId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<string>("OriginalAuthorId")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
@@ -1010,6 +1014,8 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasIndex("DeletedAt");
 
                     b.HasIndex("MediaFileObjectId");
+
+                    b.HasIndex("MusicFileObjectId");
 
                     b.HasIndex("OwnerUserId", "CreatedAt");
 
@@ -1825,6 +1831,11 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.FileObject", null)
                         .WithMany()
                         .HasForeignKey("MediaFileObjectId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("Nivra.Api.Domain.FileObject", null)
+                        .WithMany()
+                        .HasForeignKey("MusicFileObjectId")
                         .OnDelete(DeleteBehavior.SetNull);
 
                     b.HasOne("Nivra.Api.Domain.UserAccount", null)

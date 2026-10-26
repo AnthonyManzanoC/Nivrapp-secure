@@ -9,7 +9,7 @@
       <div class="story-owner-copy"><strong>{{ story.owner.displayName || story.owner.alias }}</strong><span>{{ subtitle }}</span></div>
     </div>
     <div class="story-top-actions">
-      @if (payload.media && !social.isImage(payload.media.mime)) {
+      @if (payload.music || (payload.media && !social.isImage(payload.media.mime))) {
         <button type="button" (click)="toggleMute()" [attr.aria-label]="(muted ? 'STORY_PLAYER.SOUND_ON' : 'STORY_PLAYER.SOUND_OFF') | translate">
           <ion-icon [name]="muted ? 'volume-mute-outline' : 'volume-high-outline'"></ion-icon>
         </button>
@@ -40,6 +40,9 @@
                 @for (revision of [imageRevision]; track revision) {
                   <img [src]="media.url" [alt]="media.name" (load)="loadedImage()" (error)="failedMedia()">
                 }
+                @if (payload.music && social.storyMusic(current); as music) {
+                  <audio #storyMedia [src]="music.url" playsinline preload="auto" (canplay)="loadedMedia($event)" (waiting)="waitingMedia()" (stalled)="waitingMedia()" (playing)="playingMedia()" (error)="failedMedia()" (ended)="ended()"></audio>
+                }
               } @else if (social.isVideo(media.mime)) {
                 <video #storyMedia [src]="media.url" playsinline preload="auto" (loadedmetadata)="syncDuration.emit($event)" (canplay)="loadedMedia($event)" (waiting)="waitingMedia()" (stalled)="waitingMedia()" (playing)="playingMedia()" (error)="failedMedia()" (ended)="ended()"></video>
               } @else {
@@ -52,12 +55,15 @@
       @if (needsPlay && !mediaFailed) {
         <button type="button" class="story-play-prompt" (click)="playFromGesture()"><ion-icon name="play-outline"></ion-icon>{{ 'STORY_PLAYER.TAP_PLAY' | translate:'Toca para reproducir' }}</button>
       }
-      @if (payload.media && (!mediaReady || buffering) && social.storyMedia(story) && social.storyReadyId() === story.id && !needsPlay && !mediaFailed && !social.storyOpenError() && !social.storyMediaError(story)) {
+      @if (payload.media && (!mediaReady || (payload.music && !musicReady) || buffering) && social.storyMedia(story) && social.storyReadyId() === story.id && !needsPlay && !mediaFailed && !social.storyOpenError() && !social.storyMediaError(story)) {
         <div class="story-buffering" role="status"><ion-spinner name="crescent"></ion-spinner><span>{{ 'COMMON.LOADING' | translate:'Cargando' }}</span></div>
       }
       @if (userPaused && !needsPlay && !mediaFailed) { <span class="story-paused-indicator"><ion-icon name="pause-outline"></ion-icon>{{ 'STORY_PLAYER.PAUSED' | translate:'En pausa' }}</span> }
     </div>
   </div>
+  @if (payload.music; as music) {
+    <div class="story-music-badge"><span class="story-music-symbol" [class.playing]="!userPaused && !needsPlay && musicReady && !buffering"><ion-icon name="musical-notes-outline"></ion-icon></span><span><strong>{{ music.title || 'Música' }}</strong><small>{{ music.durationSeconds | number:'1.0-1' }} s · fragmento</small></span><button type="button" (click)="toggleMute()" [attr.aria-label]="muted ? 'Activar música' : 'Silenciar música'"><ion-icon [name]="muted ? 'volume-mute-outline' : 'volume-high-outline'"></ion-icon></button></div>
+  }
   @if (story.originalAuthor?.alias) {
     <div class="story-repost-badge"><ion-icon name="repeat-outline"></ion-icon>{{ 'WORLD.REPOSTED_FROM' | translate:'Compartido de' }} @{{ story.originalAuthor?.alias }}</div>
   }

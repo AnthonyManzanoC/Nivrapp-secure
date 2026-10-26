@@ -9,7 +9,7 @@ import { StatusBar, Style } from '@capacitor/status-bar';
 import { NavigationEnd, Router } from '@angular/router';
 import { IonApp, IonIcon, IonRouterOutlet } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { callOutline, shieldCheckmarkOutline, videocamOutline } from 'ionicons/icons';
+import { callOutline, chevronDownOutline, chevronUpOutline, shieldCheckmarkOutline, videocamOutline } from 'ionicons/icons';
 import { AuthService } from './core/services/auth.service';
 import { AppLockService } from './core/services/app-lock.service';
 import { AppSettingsService } from './core/services/app-settings.service';
@@ -130,7 +130,10 @@ export class AppComponent {
     this.bindAppLinks();
     this.bindNativeShares();
     this.bindAppLifecycleLock();
-    addIcons({ callOutline, shieldCheckmarkOutline, videocamOutline });
+    // Refresher and account controls can render before the lazy chat route.
+    // Register these shared arrows here so Ionicons never attempts a runtime
+    // SVG URL lookup (which has no resource base in bundled WebViews).
+    addIcons({ callOutline, chevronDownOutline, chevronUpOutline, shieldCheckmarkOutline, videocamOutline });
     void this.configureNativeKeyboard();
 
     const timer = window.setInterval(() => this.now.set(Date.now()), 1000);
@@ -238,7 +241,10 @@ export class AppComponent {
       });
     const hasOverlay = Array.from(document.querySelectorAll('ion-modal,ion-alert,ion-action-sheet,ion-popover'))
       .some(element => 'isOpen' in element && Boolean(element.isOpen));
-    return !this.auth.busy() && !this.calls.activeCall() && !this.calls.resumableCall()
+    // The URL may still be a private route while second-account navigation is
+    // pending. Reloading here would discard the in-memory sign-in intent.
+    return !this.auth.busy() && !this.auth.addingAccount() && !this.auth.accountsBusy()
+      && !this.calls.activeCall() && !this.calls.resumableCall()
       && !this.chat.uploading() && !history.approvingRequestId()
       && history.state() !== 'syncing' && history.pendingRequests().length === 0 && !hasDraft && !hasOverlay;
   }

@@ -3,7 +3,7 @@ namespace Nivra.Api.Services;
 public static class ClientCompatibility
 {
     public const int CallProtocol = 2;
-    public const string Version = "6.0.0";
+    public const string Version = "6.1.0";
     public const string UpdateUrl = "https://nivrapp-secure.vercel.app";
 
     public static bool RequiresCallProtocol(PathString path, string method)

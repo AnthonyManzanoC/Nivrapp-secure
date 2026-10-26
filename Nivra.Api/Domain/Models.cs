@@ -345,6 +345,7 @@ public sealed class StoryRecord
     public required string EncryptedPayload { get; set; }
     public string? Caption { get; set; }
     public string? MediaFileObjectId { get; set; }
+    public string? MusicFileObjectId { get; set; }
     public HashSet<string> AllowedUserIds { get; set; } = new(StringComparer.Ordinal);
     public HashSet<string> ViewedByUserIds { get; set; } = new(StringComparer.Ordinal);
     public List<StoryViewEvent> ViewEvents { get; set; } = [];

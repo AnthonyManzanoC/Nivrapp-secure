@@ -93,6 +93,7 @@ export class LauncherAppearanceService {
     effect(() => {
       this.auth.session();
       this.auth.isAuthenticated();
+      this.auth.sessionGeneration?.();
       untracked(() => { if (this.synchronizeScope()) void this.refresh(); });
     });
     this.realtime.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(event => {
@@ -138,11 +139,14 @@ export class LauncherAppearanceService {
     this.writing = true;
     this.busy.set(true);
     this.error.set(null);
+    let awaitingWrite = false;
     try {
       if (this.confirmed.icon !== icon || !this.synced()) {
         const expectedRevision = this.confirmed.revision;
+        awaitingWrite = true;
         const response = await firstValueFrom(this.api.put<AccountAppearance>('/account/appearance', { icon, expectedRevision })
           .pipe(timeout(LAUNCHER_SYNC_TIMEOUT_MS)));
+        awaitingWrite = false;
         if (!this.currentContext(context)) return false;
         if (!isAppearance(response) || response.icon !== icon || response.revision < expectedRevision
           || (response.revision === expectedRevision && this.confirmed.icon !== icon)) throw new Error('INVALID_APPEARANCE');
@@ -156,6 +160,14 @@ export class LauncherAppearanceService {
         await this.readAccountPreference(context).catch(() => undefined);
         if (this.currentContext(context)) this.error.set('conflict');
       } else {
+        const failure = (error && typeof error === 'object' ? error : {}) as { status?: number; name?: string };
+        if (awaitingWrite && (failure.status === 0 || (failure.status ?? 0) >= 500 || failure.name === 'TimeoutError')) {
+          // A lost response can follow a committed CAS write. Read back once;
+          // never replay the mutation or undo the account's saved preference.
+          await this.readAccountPreference(context).catch(() => undefined);
+          if (!this.currentContext(context)) return false;
+          if (this.synced() && this.confirmed?.icon === icon && this.selected() === icon && !this.error()) return true;
+        }
         this.error.set(this.synced() && this.confirmed?.icon === icon ? 'failed' : 'sync');
       }
       return false;
@@ -261,7 +273,7 @@ export class LauncherAppearanceService {
   private synchronizeScope(): boolean {
     const session = this.auth.session();
     const accountId = this.auth.isAuthenticated() ? session?.user.id ?? null : null;
-    const scope = accountId ? JSON.stringify([accountId, session?.device?.id ?? '']) : '';
+    const scope = accountId ? JSON.stringify([accountId, session?.device?.id ?? '', this.auth.sessionGeneration?.() ?? 0]) : '';
     if (scope === this.scope && accountId === this.account()) return false;
     this.scope = scope;
     this.epoch++;
@@ -288,7 +300,7 @@ export class LauncherAppearanceService {
   private currentContext(context: AppearanceContext): boolean {
     const session = this.auth.session();
     const accountId = this.auth.isAuthenticated() ? session?.user.id ?? null : null;
-    const scope = accountId ? JSON.stringify([accountId, session?.device?.id ?? '']) : '';
+    const scope = accountId ? JSON.stringify([accountId, session?.device?.id ?? '', this.auth.sessionGeneration?.() ?? 0]) : '';
     return !this.destroyed && context.epoch === this.epoch && context.scope === this.scope && context.scope === scope;
   }
   private readCache(userId: string | null): AccountAppearance | null {

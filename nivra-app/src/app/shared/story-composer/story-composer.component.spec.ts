@@ -1,4 +1,4 @@
-import { SimpleChange, signal } from '@angular/core';
+import { ElementRef, SimpleChange, signal } from '@angular/core';
 import { TestBed, fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
@@ -42,6 +42,108 @@ describe('Story composer draft, privacy and capture lifecycle', () => {
     expect(composer.cameraStream).toBeNull();
     expect(composer.allowReposts).toBeFalse();
     expect(social.publishStory).not.toHaveBeenCalled();
+  });
+
+  const musicBuffer = () => ({ duration: 40, sampleRate: 22050, numberOfChannels: 2, length: 40 * 22050,
+    getChannelData: () => new Float32Array(40 * 22050) } as unknown as AudioBuffer);
+
+  function prepareMusicDecoder() {
+    spyOn<any>(composer, 'probeMusic').and.resolveTo();
+    const context = { decodeAudioData: jasmine.createSpy('decodeAudioData').and.resolveTo(musicBuffer()), close: jasmine.createSpy('close').and.resolveTo() };
+    const constructor = spyOn(window, 'AudioContext').and.returnValue(context as unknown as AudioContext);
+    return { context, constructor };
+  }
+
+  it('selects a bounded local soundtrack without publishing, decodes at 22.05 kHz and uploads only the selected fifteen seconds', async () => {
+    composer.selectFile(new File(['image'], 'photo.jpg', { type: 'image/jpeg' })); composer.imageLoading = false;
+    const decoder = prepareMusicDecoder();
+    await composer.selectMusic(new File(['source-song'], 'Mi canción.mp3', { type: 'audio/mpeg' }));
+    expect(decoder.constructor).toHaveBeenCalledOnceWith({ sampleRate: 22050 });
+    expect(composer.musicTitle).toBe('Mi canción'); expect(composer.musicTotal).toBe(40);
+    expect(social.publishStory).not.toHaveBeenCalled();
+    composer.updateMusicWindow(20, 15);
+    await composer.publish();
+    const published = social.publishStory.calls.mostRecent().args[0].music;
+    expect(published.sourceStartSeconds).toBe(20); expect(published.durationSeconds).toBe(15);
+    expect(published.file.type).toBe('audio/wav'); expect(published.file.size).toBe(661544);
+    expect(decoder.context.close).toHaveBeenCalled();
+  });
+
+  it('rejects oversized and overlong sources without clearing the photo or decoding them', async () => {
+    const photo = new File(['image'], 'photo.jpg', { type: 'image/jpeg' }); composer.selectFile(photo);
+    const probe = spyOn<any>(composer, 'probeMusic').and.rejectWith(new Error('Elige un audio mono o estéreo de hasta 5 minutos.'));
+    const context = spyOn(window, 'AudioContext');
+    const huge = new File(['source'], 'huge.mp3', { type: 'audio/mpeg' }); spyOnProperty(huge, 'size', 'get').and.returnValue(12 * 1024 * 1024 + 1);
+    await composer.selectMusic(huge); expect(probe).not.toHaveBeenCalled();
+    await composer.selectMusic(new File(['long'], 'long.mp3', { type: 'audio/mpeg' }));
+    expect(context).not.toHaveBeenCalled(); expect(composer.file).toBe(photo);
+    expect(composer.musicLoading).toBeFalse(); expect(composer.musicError).toContain('5 minutos');
+  });
+
+  it('rejects multichannel decoded sources and releases the bounded decoder', async () => {
+    composer.selectFile(new File(['image'], 'photo.jpg', { type: 'image/jpeg' }));
+    const decoder = prepareMusicDecoder();
+    decoder.context.decodeAudioData.and.resolveTo({ ...musicBuffer(), numberOfChannels: 6 });
+    await composer.selectMusic(new File(['surround'], 'surround.mp3', { type: 'audio/mpeg' }));
+    expect(composer.musicUrl).toBe(''); expect(composer.musicError).toContain('mono o estéreo');
+    expect(decoder.context.close).toHaveBeenCalled();
+  });
+
+  it('closes a previous decoder before starting a replacement song', async () => {
+    composer.selectFile(new File(['image'], 'photo.jpg', { type: 'image/jpeg' }));
+    const decoder = prepareMusicDecoder(); let finishClose!: () => void;
+    const previous = { close: jasmine.createSpy('previous.close').and.returnValue(new Promise<void>(done => finishClose = done)) };
+    (composer as any).musicContext = previous;
+    const selecting = composer.selectMusic(new File(['new-song'], 'new.mp3', { type: 'audio/mpeg' }));
+    expect(previous.close).toHaveBeenCalledTimes(1); expect(decoder.constructor).not.toHaveBeenCalled();
+    finishClose(); await selecting; expect(decoder.constructor).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a late decode from attaching music to a closed or replaced draft', async () => {
+    composer.selectFile(new File(['image'], 'photo.jpg', { type: 'image/jpeg' }));
+    const decoder = prepareMusicDecoder();
+    let resolve!: (buffer: AudioBuffer) => void;
+    let started!: () => void;
+    const decoding = new Promise<void>(done => started = done);
+    decoder.context.decodeAudioData.and.callFake(() => new Promise<AudioBuffer>(done => { resolve = done; started(); }));
+    const selected = composer.selectMusic(new File(['song'], 'song.mp3', { type: 'audio/mpeg' }));
+    await decoding;
+    composer.discardAndClose(); resolve(musicBuffer()); await selected;
+    expect(composer.musicUrl).toBe(''); expect(composer.musicLoading).toBeFalse(); expect(composer.file).toBeNull();
+  });
+
+  it('pauses the actual preview on visibility loss, mutes it on demand and revokes the music URL on removal', async () => {
+    composer.selectFile(new File(['image'], 'photo.jpg', { type: 'image/jpeg' })); prepareMusicDecoder();
+    await composer.selectMusic(new File(['song'], 'song.mp3', { type: 'audio/mpeg' }));
+    const audio = document.createElement('audio'); spyOn(audio, 'play').and.resolveTo(); const pause = spyOn(audio, 'pause');
+    (composer as any).draftMusic = new ElementRef(audio);
+    await composer.toggleMusicPreview(); expect(composer.musicPlaying).toBeTrue();
+    composer.toggleMusicMute(); expect(audio.muted).toBeTrue();
+    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('hidden'); document.dispatchEvent(new Event('visibilitychange'));
+    expect(pause).toHaveBeenCalled(); expect(composer.musicPlaying).toBeFalse();
+    const url = composer.musicUrl; const revoke = spyOn(URL, 'revokeObjectURL'); composer.removeMusic();
+    expect(revoke).toHaveBeenCalledWith(url); expect(composer.file).not.toBeNull();
+  });
+
+  it('waits for the media clock through buffering instead of cutting the preview at its wall-clock duration', fakeAsync(() => {
+    composer.selectFile(new File(['image'], 'photo.jpg', { type: 'image/jpeg' }));
+    (composer as any).musicBuffer = musicBuffer(); composer.musicTotal = 40; composer.musicStart = 3; composer.musicLength = 5;
+    const audio = document.createElement('audio');
+    Object.defineProperty(audio, 'currentTime', { value: 3, writable: true });
+    spyOn(audio, 'play').and.resolveTo(); const pause = spyOn(audio, 'pause');
+    (composer as any).draftMusic = new ElementRef(audio);
+    void composer.toggleMusicPreview(); flushMicrotasks();
+    audio.currentTime = 6.75; tick(5000);
+    expect(composer.musicPlaying).toBeTrue(); expect(pause).not.toHaveBeenCalled();
+    audio.currentTime = 8; tick(250);
+    expect(composer.musicPlaying).toBeFalse(); expect(pause).toHaveBeenCalledTimes(1);
+  }));
+
+  it('closes and clears the private draft when the active account changes', () => {
+    composer.selectFile(new File(['photo'], 'photo.jpg', { type: 'image/jpeg' }));
+    const closed = spyOn(composer.closed, 'emit');
+    auth.session.set({ user: { id: 'another' }, device: { id: 'another-device' } }); TestBed.flushEffects();
+    expect(composer.file).toBeNull(); expect(composer.musicUrl).toBe(''); expect(closed).toHaveBeenCalledTimes(1);
   });
 
   it('previews a chosen file without publishing and keeps captions when replacing media', () => {
@@ -269,12 +371,13 @@ describe('Story composer draft, privacy and capture lifecycle', () => {
     expect(composer.publicationFailed).toBeFalse();
   });
 
-  it('fits the original image to the measured editor stage rather than stretching a portrait assumption', () => {
+  it('fits the original image after the view turn measures the editor stage', async () => {
     composer.imageWidth = 1200;
     composer.imageHeight = 600;
     const element = document.createElement('div');
     spyOn(element, 'getBoundingClientRect').and.returnValue({ width: 320, height: 320 } as DOMRect);
     composer.draftPreview = { nativeElement: element };
+    await Promise.resolve();
     expect(composer.imagePreviewTransform()).toContain('width: 100%; height: 50%');
     composer.rotateImage();
     expect(composer.imagePreviewTransform()).toContain('rotate(90deg)');

@@ -10,7 +10,7 @@ describe('AppComponent', () => {
 
   it('defers a web version reload while an unfocused chat draft or modal is open', () => {
     const app: any = Object.assign(Object.create(AppComponent.prototype), {
-      auth: { busy: () => false }, calls: { activeCall: () => null, resumableCall: () => null },
+      auth: { busy: () => false, addingAccount: () => false, accountsBusy: () => false }, calls: { activeCall: () => null, resumableCall: () => null },
       chat: { uploading: () => false, deviceHistory: { approvingRequestId: () => null, state: () => 'idle', pendingRequests: () => [] } },
     });
     const draft = document.createElement('textarea');

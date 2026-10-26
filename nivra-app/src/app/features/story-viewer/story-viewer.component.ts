@@ -3,7 +3,7 @@ import { Component, ElementRef, EventEmitter, HostListener, Input, NgZone, OnCha
 import { FormsModule } from '@angular/forms';
 import { IonIcon, IonInput, IonSpinner } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { closeOutline, eyeOutline, happyOutline, heart, heartOutline, pauseOutline, playOutline, repeatOutline, sendOutline, volumeHighOutline, volumeMuteOutline } from 'ionicons/icons';
+import { closeOutline, eyeOutline, happyOutline, heart, heartOutline, musicalNotesOutline, pauseOutline, playOutline, repeatOutline, sendOutline, volumeHighOutline, volumeMuteOutline } from 'ionicons/icons';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { Story, StoryPayload } from '../../core/models/nivra.models';
 import { SocialService } from '../../core/services/social.service';
@@ -55,6 +55,7 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
   needsPlay = false;
   mediaFailed = false;
   mediaReady = false;
+  musicReady = false;
   buffering = false;
   captionExpanded = false;
   repostConfirmOpen = false;
@@ -77,7 +78,7 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     if (this.media) { this.media.muted = this.muted; this.syncPlayback(); }
   }
   constructor() {
-    addIcons({ closeOutline, eyeOutline, happyOutline, heart, heartOutline, pauseOutline, playOutline, repeatOutline, sendOutline, volumeHighOutline, volumeMuteOutline });
+    addIcons({ closeOutline, eyeOutline, happyOutline, heart, heartOutline, musicalNotesOutline, pauseOutline, playOutline, repeatOutline, sendOutline, volumeHighOutline, volumeMuteOutline });
     document.addEventListener('visibilitychange', this.visibilityListener);
     effect(() => { this.social.storyReadyId(); this.syncPlayback(); });
     this.zone.runOutsideAngular(() => this.timer = window.setInterval(() => this.tick(), 80));
@@ -119,7 +120,7 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
   }
   async playFromGesture(): Promise<void> {
     this.userPaused = false; this.needsPlay = false; this.mediaFailed = false;
-    if (this.media) {
+    if (this.media && (!this.payload?.music || (this.mediaReady && this.musicReady))) {
       const revision = ++this.playRevision;
       const media = this.media;
       try {
@@ -130,10 +131,14 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     }
     this.syncPlayback();
   }
-  loadedImage(): void { this.mediaReady = true; this.mediaFailed = false; this.lastTick = performance.now(); }
+  loadedImage(): void { this.mediaReady = true; this.mediaFailed = false; this.lastTick = performance.now(); this.syncPlayback(); }
   loadedMedia(event: Event): void {
-    this.mediaReady = true; this.mediaFailed = false; this.buffering = false;
-    this.syncDuration.emit(event); this.syncPlayback();
+    if (this.payload?.music) this.musicReady = true; else this.mediaReady = true;
+    this.mediaFailed = false; this.buffering = false;
+    // Legacy parents use video metadata for their clocks. A photo with music
+    // is timed here by its already-trimmed audio, never by the original song.
+    if (!this.payload?.music) this.syncDuration.emit(event);
+    this.syncPlayback();
   }
   waitingMedia(): void { this.buffering = true; }
   playingMedia(): void { this.buffering = false; }
@@ -144,7 +149,8 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     this.completed = true; this.localProgress = 100; this.mediaEnded.emit();
   }
   retryMedia(): void {
-    this.mediaFailed = false; this.mediaReady = false;
+    this.mediaFailed = false;
+    if (!this.payload?.music) this.mediaReady = false; else this.musicReady = false;
     if (this.social.storyReadyId() !== this.story.id) void this.social.viewStory(this.story).catch(() => undefined);
     else if (this.media) { this.media.load(); void this.playFromGesture(); }
     else { this.imageRevision += 1; void this.social.ensureStoryMedia(this.story).catch(() => undefined); }
@@ -188,7 +194,7 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     this.playRevision += 1; this.media?.pause(); this.media = null;
     this.localProgress = 0; this.textElapsed = 0; this.completed = false; this.userPaused = false;
     this.held = false; this.inputFocused = false; this.mediaReady = false; this.mediaFailed = false; this.needsPlay = false;
-    this.buffering = false; this.captionExpanded = false;
+    this.buffering = false; this.captionExpanded = false; this.musicReady = false;
     this.repostConfirmOpen = false; this.deleteConfirmOpen = false; this.actionError = false;
     this.lastTick = performance.now();
   }
@@ -196,6 +202,7 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     this.lastTick = performance.now();
     const media = this.media;
     if (!media) return;
+    if (this.payload?.music && (!this.mediaReady || !this.musicReady)) { if (!media.paused) media.pause(); return; }
     if (this.stopped()) { if (!media.paused) media.pause(); return; }
     if (!media.paused) return;
     const revision = ++this.playRevision;
@@ -219,10 +226,14 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     }
     if (this.stopped()) { if (this.media && !this.media.paused) this.media.pause(); return; }
     if (this.payload?.media && !this.mediaReady) return;
+    if (this.payload?.music && (!this.musicReady || !this.media)) return;
     if (this.media) {
       if (this.media.paused || this.media.seeking || this.media.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) return;
-      if (Number.isFinite(this.media.duration) && this.media.duration > 0)
-        this.zone.run(() => this.localProgress = Math.min(100, this.media!.currentTime / this.media!.duration * 100));
+      const duration = this.payload?.music?.durationSeconds ?? this.media.duration;
+      if (Number.isFinite(duration) && duration > 0) {
+        this.zone.run(() => this.localProgress = Math.min(100, this.media!.currentTime / duration * 100));
+        if (this.payload?.music && this.media.currentTime >= duration) { this.media.pause(); this.zone.run(() => this.ended()); }
+      }
       return; // Only a real ended event advances audio/video.
     }
     this.textElapsed += delta;

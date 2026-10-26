@@ -48,6 +48,9 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
       error instanceof HttpErrorResponse &&
       error.status === 401 &&
       shouldAuthenticate &&
+      // A background request made while adding an account has no session to
+      // renew or expire. Its 401 must never cancel the sign-in form.
+      requestSession && token &&
       sameSession() &&
       !req.context.get(AUTH_RETRIED)
     ) {

@@ -326,7 +326,8 @@ public sealed record CreateStoryRequest(
     List<string>? AllowedUserIds,
     bool ViewOnce,
     bool? AllowReposts,
-    int? DurationSeconds);
+    int? DurationSeconds,
+    string? MusicFileObjectId = null);
 
 public sealed record StoryReactRequest(string Emoji);
 
@@ -376,7 +377,8 @@ public sealed record StoryResponse(
     List<StoryReactionResponse> Reactions,
     List<StoryCommentResponse> Comments,
     DateTimeOffset CreatedAt,
-    DateTimeOffset ExpiresAt);
+    DateTimeOffset ExpiresAt,
+    string? MusicFileObjectId = null);
 
 public sealed record CreateVaultRoomRequest(
     string Name,

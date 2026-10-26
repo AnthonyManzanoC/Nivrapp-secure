@@ -66,7 +66,7 @@ public static partial class EndpointExtensions
                 story.AllowReposts, story.ViewedByUserIds.Contains(viewerId),
                 story.ViewedByUserIds.Concat(story.ViewEvents.Select(view => view.UserId)).Where(id => !string.IsNullOrWhiteSpace(id)).Distinct(StringComparer.Ordinal).Count(),
                 story.Reactions.OrderByDescending(reaction => reaction.ReactedAt).FirstOrDefault(reaction => reaction.UserId == viewerId)?.Emoji,
-                story.OriginalStoryId, original, views, reactions, comments, story.CreatedAt, story.ExpiresAt));
+                story.OriginalStoryId, original, views, reactions, comments, story.CreatedAt, story.ExpiresAt, story.MusicFileObjectId));
         }
         return responses;
     }
