@@ -12,6 +12,7 @@ import { NativeDeviceService } from '../../core/services/native-device.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { PushService } from '../../core/services/push.service';
 import { ChatsPage } from './chats.page';
+import { HISTORY_STATUS_SNOOZE_MS } from '../../core/services/history-status-snooze.service';
 
 describe('Chats actions and scoped search', () => {
   let page: ChatsPage;
@@ -31,7 +32,7 @@ describe('Chats actions and scoped search', () => {
       conversations: signal([{ id: 'family', title: 'Familía' }, { id: 'archived', title: 'Equipo' }]),
       loading: signal(false), bootstrap: jasmine.createSpy().and.resolveTo(),
       listUpdating: signal(false), syncError: signal(''),
-      deviceHistory: { state: signal('idle') },
+      deviceHistory: { state: signal('idle'), recoveryStatus: signal('approval'), targetFingerprint: signal('ux-fixture-fingerprint') },
       messagesByConversation: signal({}),
       clearSelectedConversation: () => undefined,
       chatFolderConversations: (folder: string) => chat.conversations().filter((item: any) => folder === 'archived' ? item.id === 'archived' : item.id !== 'archived'),
@@ -70,6 +71,9 @@ describe('Chats actions and scoped search', () => {
     page.ngOnDestroy();
     localStorage.removeItem('nivra_recent_searches.ux-me');
     localStorage.removeItem('nivra_recent_searches.ux-other');
+    for (const userId of ['ux-me', 'ux-other']) for (const deviceId of ['ux-device', 'other-device']) {
+      localStorage.removeItem('nivra.historyStatusSnooze.v1.' + encodeURIComponent(JSON.stringify([userId, deviceId])));
+    }
   });
 
   it('searches existing and archived chats locally with accent-insensitive matching', fakeAsync(() => {
@@ -224,6 +228,57 @@ describe('Chats actions and scoped search', () => {
     await page.refresh();
     expect(page.syncNotice).toBe('');
     expect(page.refreshing).toBeFalse();
+  });
+
+  it('hides only the pending reminder while keeping the actual incomplete history and manual synchronization accessible', async () => {
+    chat.deviceHistory.state.set('waiting');
+    expect(page.canSnoozeHistoryStatus()).toBeTrue(); page.snoozeHistoryStatus();
+    expect(page.showHistoryStatus()).toBeFalse(); expect(page.hasHistoryStatus()).toBeTrue();
+    expect(chat.deviceHistory.state()).toBe('waiting'); expect(chat.deviceHistory.targetFingerprint()).toBe('ux-fixture-fingerprint');
+    expect(chat.refreshChats).not.toHaveBeenCalled();
+    page.chooseChatMenuAction('refresh'); page.onChatMenuDismiss();
+    expect(page.historyPanelOpen).toBeTrue(); await Promise.resolve(); await Promise.resolve();
+    expect(chat.refreshChats).toHaveBeenCalledTimes(1); expect(page.syncNotice).toBe('');
+  });
+
+  it('re-exposes active storage, identity, network and recovery failures even during the saved snooze window', () => {
+    chat.deviceHistory.state.set('waiting'); page.snoozeHistoryStatus();
+    expect(page.showHistoryStatus()).toBeFalse();
+    for (const status of ['partial', 'retryable']) {
+      chat.deviceHistory.recoveryStatus.set(status); chat.deviceHistory.state.set('unavailable');
+      expect(page.showHistoryStatus()).toBeTrue(); expect(page.canSnoozeHistoryStatus()).toBeFalse();
+    }
+    chat.deviceHistory.state.set('waiting'); chat.deviceHistory.recoveryStatus.set('retryable');
+    expect(page.showHistoryStatus()).toBeTrue(); expect(page.canSnoozeHistoryStatus()).toBeFalse();
+    chat.deviceHistory.recoveryStatus.set('partial'); expect(page.showHistoryStatus()).toBeFalse();
+    auth.deviceIdentityError.set('Unreadable identity'); expect(page.showHistoryStatus()).toBeTrue(); expect(page.canSnoozeHistoryStatus()).toBeFalse();
+    auth.deviceIdentityError.set(''); auth.deviceIdentityNeedsRelink.set(true); expect(page.showHistoryStatus()).toBeTrue();
+    auth.deviceIdentityNeedsRelink.set(false); chat.syncError.set('offline'); expect(page.showHistoryStatus()).toBeTrue();
+    chat.syncError.set(''); const storage = TestBed.inject(LocalHistoryService); storage.storageError.set('Locked storage'); expect(page.showHistoryStatus()).toBeTrue();
+    storage.storageError.set(''); const busy = spyOn(storage, 'storageBusy').and.returnValue(true); expect(page.showHistoryStatus()).toBeTrue();
+    busy.and.returnValue(false); chat.deviceHistory.state.set('syncing'); expect(page.showHistoryStatus()).toBeTrue();
+  });
+
+  it('does not hide a fresh device identity, another account or a device without a checked fingerprint', () => {
+    chat.deviceHistory.state.set('waiting'); page.snoozeHistoryStatus(); expect(page.showHistoryStatus()).toBeFalse();
+    chat.deviceHistory.targetFingerprint.set('new-device-key'); expect(page.showHistoryStatus()).toBeTrue();
+    chat.deviceHistory.targetFingerprint.set(''); expect(page.canSnoozeHistoryStatus()).toBeFalse();
+    chat.deviceHistory.targetFingerprint.set('ux-fixture-fingerprint');
+    auth.session.set({ user: { id: 'ux-other' }, device: { id: 'other-device' } }); expect(page.showHistoryStatus()).toBeTrue();
+    auth.session.set({ user: { id: 'ux-me' }, device: { id: 'other-device' } }); expect(page.showHistoryStatus()).toBeTrue();
+  });
+
+  it('reminds again after twenty-four hours using the minute clock and releases the hidden-notice timer', fakeAsync(() => {
+    let now = Date.now(); spyOn(Date, 'now').and.callFake(() => now);
+    chat.deviceHistory.state.set('waiting'); page.snoozeHistoryStatus(); TestBed.flushEffects();
+    expect(page.showHistoryStatus()).toBeFalse(); expect((page as any).historySnoozeTimer).not.toBeNull();
+    now += HISTORY_STATUS_SNOOZE_MS; tick(60_000); TestBed.flushEffects();
+    expect(page.showHistoryStatus()).toBeTrue(); expect((page as any).historySnoozeTimer).toBeNull();
+  }));
+
+  it('does not label an empty new account as pending solely because its local store is opening', () => {
+    chat.deviceHistory.state.set('idle'); spyOn(TestBed.inject(LocalHistoryService), 'storageBusy').and.returnValue(true);
+    expect(page.hasHistoryStatus()).toBeFalse(); expect(page.showHistoryStatus()).toBeFalse(); expect(page.canSnoozeHistoryStatus()).toBeFalse();
   });
 
   it('clears transient refresh notices after they have been announced', fakeAsync(() => {

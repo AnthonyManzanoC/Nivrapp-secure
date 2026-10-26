@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EffectRef, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal } from '@angular/core';
+import { Component, EffectRef, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import {
@@ -46,6 +46,7 @@ import { ChatWelcomeComponent } from './chat-welcome.component';
 import { ChatPassComponent } from './chat-pass.component';
 import { PushService } from '../../core/services/push.service';
 import { Capacitor } from '@capacitor/core';
+import { HistoryStatusSnoozeService } from '../../core/services/history-status-snooze.service';
 
 type ChatSearchScope = 'all' | 'chats' | 'people';
 type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'refresh' | 'settings' | 'enable-alerts' | 'broadcasts';
@@ -100,6 +101,10 @@ export class ChatsPage implements OnDestroy {
   private readonly actionSheetController = inject(ActionSheetController);
   private readonly nativeDevice = inject(NativeDeviceService);
   private readonly push = inject(PushService);
+  private readonly historySnooze = inject(HistoryStatusSnoozeService);
+  private readonly historyStatusNow = signal(Date.now());
+  private readonly historySnoozeEffect: EffectRef;
+  private historySnoozeTimer: number | null = null;
   private readonly nativeAndroid = Capacitor.getPlatform() === 'android';
   private readonly storyStripNow = signal(Date.now());
   readonly storyHighlights = computed(() => {
@@ -225,6 +230,13 @@ export class ChatsPage implements OnDestroy {
   @ViewChild('chatSearchInput') private chatSearchInput?: IonInput;
 
   constructor() {
+    this.historySnoozeEffect = effect(() => {
+      const hidden = this.isHistoryStatusSnoozed();
+      untracked(() => {
+        if (hidden && this.historySnoozeTimer === null) this.historySnoozeTimer = window.setInterval(() => this.historyStatusNow.set(Date.now()), 60_000);
+        else if (!hidden && this.historySnoozeTimer !== null) { window.clearInterval(this.historySnoozeTimer); this.historySnoozeTimer = null; }
+      });
+    });
     this.accountScopeEffect = effect(() => {
       const scope = this.searchContext();
       if (scope !== this.accountScope) {
@@ -270,6 +282,7 @@ export class ChatsPage implements OnDestroy {
     document.addEventListener('focusin', this.onDocumentFocus, true);
     document.addEventListener('pointerdown', this.onDocumentPointerDown, true);
     document.addEventListener('keydown', this.onDocumentKeydown, true);
+    document.addEventListener('visibilitychange', this.onHistoryVisibility);
     addIcons({
       addOutline,
       archiveOutline,
@@ -308,6 +321,10 @@ export class ChatsPage implements OnDestroy {
     this.searchSeq += 1;
     this.accountScopeEffect.destroy();
     this.listLoadingFocusEffect.destroy();
+    this.historySnoozeEffect.destroy();
+    if (this.historySnoozeTimer !== null) window.clearInterval(this.historySnoozeTimer);
+    this.historySnoozeTimer = null;
+    document.removeEventListener('visibilitychange', this.onHistoryVisibility);
     document.removeEventListener('focusin', this.onDocumentFocus, true);
     document.removeEventListener('pointerdown', this.onDocumentPointerDown, true);
     document.removeEventListener('keydown', this.onDocumentKeydown, true);
@@ -360,9 +377,44 @@ export class ChatsPage implements OnDestroy {
       || (!this.chat.conversations().length && (this.chat.loading() || this.localHistory.storageBusy()));
   }
 
-  showHistoryStatus(): boolean {
-    return Boolean(this.auth.deviceIdentityError() || this.visibleStorageError() || this.chat.syncError() || this.chat.deviceHistory.state() !== 'idle');
+  hasHistoryStatus(): boolean {
+    return Boolean(this.auth.deviceIdentityError() || this.auth.deviceIdentityNeedsRelink() || this.visibleStorageError()
+      || this.chat.syncError() || this.chat.deviceHistory.state() !== 'idle');
   }
+
+  showHistoryStatus(): boolean { return this.hasHistoryStatus() && !this.isHistoryStatusSnoozed(); }
+
+  canSnoozeHistoryStatus(): boolean {
+    const session = this.auth.session();
+    if (!session?.user.id || !session.device?.id || session.device.isTrusted === false || session.device.revokedAt
+      || this.auth.deviceIdentityError() || this.auth.deviceIdentityNeedsRelink() || this.visibleStorageError()
+      || this.localHistory.storageBusy() || this.chat.syncError() || this.refreshing) return false;
+    const history = this.chat.deviceHistory;
+    const fingerprint = history.targetFingerprint?.();
+    // Both unavailable and retryable can represent fresh HTTP, storage or
+    // key-reading failures. Only approval/partial reminders may be hidden.
+    return typeof fingerprint === 'string' && fingerprint.length > 0 && fingerprint.length <= 256
+      && history.state() === 'waiting' && ['approval', 'partial'].includes(history.recoveryStatus?.() ?? 'approval');
+  }
+
+  isHistoryStatusSnoozed(): boolean {
+    if (!this.canSnoozeHistoryStatus()) return false;
+    const session = this.auth.session()!;
+    return this.historySnooze.isSnoozed(session.user.id, session.device.id, this.chat.deviceHistory.targetFingerprint(), Math.max(this.historyStatusNow(), Date.now()));
+  }
+
+  snoozeHistoryStatus(): void {
+    if (!this.canSnoozeHistoryStatus()) return;
+    const session = this.auth.session()!;
+    this.historyStatusNow.set(Date.now());
+    this.historySnooze.snooze(session.user.id, session.device.id, this.chat.deviceHistory.targetFingerprint());
+  }
+
+  openHistoryPanel(): void { this.historyPanelOpen = true; void this.refresh(); }
+
+  private readonly onHistoryVisibility = (): void => {
+    if (document.visibilityState === 'visible') this.historyStatusNow.set(Date.now());
+  };
 
   historyStatusTitle(): string {
     if (this.auth.deviceIdentityNeedsRelink()) return this.tr('HISTORY_DEVICE.RELINK_REQUIRED', 'Vuelve a vincular este equipo');
@@ -486,6 +538,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   ionViewDidEnter(): void {
+    this.historyStatusNow.set(Date.now());
     this.storyStripNow.set(Date.now());
     void this.social.load().catch(() => undefined);
     void this.refreshRecentProfiles();
@@ -518,7 +571,7 @@ export class ChatsPage implements OnDestroy {
       case 'broadcasts': void this.router.navigateByUrl('/app/broadcasts'); break;
       case 'new-story': this.openStoryComposer(); break;
       case 'share-pass': void this.openShareAccount(); break;
-      case 'refresh': void this.refresh(); break;
+      case 'refresh': this.openHistoryPanel(); break;
       case 'settings': void this.router.navigateByUrl('/app/account'); break;
       case 'enable-alerts': void this.enableCallAlerts(); break;
     }

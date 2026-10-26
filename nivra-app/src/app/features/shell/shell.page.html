@@ -6,7 +6,10 @@
         <span>Nivra</span>
       </a>
       @for (item of nav; track item.path) {
-        <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active" ariaCurrentWhenActive="page" [title]="item.labelKey | translate:item.label" [attr.aria-label]="(item.labelKey | translate:item.label) + (item.path === '/app/chats' && unread.unreadChats() ? ' · ' + unread.unreadChats() + ' ' + ('CHATS.UNREAD_CONVERSATIONS' | translate:'chats sin leer') : '')">
+        <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active" ariaCurrentWhenActive="page"
+          [attr.data-account-shortcut]="item.path === '/app/account' ? 'true' : null"
+          [title]="(item.labelKey | translate:item.label) + (item.path === '/app/account' && accountShortcutAvailable() ? ' · ' + ('TABS.ACCOUNT_SWITCH_HINT' | translate:'Pulsa dos veces para cambiar de cuenta') : '')"
+          [attr.aria-label]="(item.labelKey | translate:item.label) + (item.path === '/app/chats' && unread.unreadChats() ? ' · ' + unread.unreadChats() + ' ' + ('CHATS.UNREAD_CONVERSATIONS' | translate:'chats sin leer') : '') + (item.path === '/app/account' && accountShortcutAvailable() ? ' · ' + ('TABS.ACCOUNT_SWITCH_HINT' | translate:'Pulsa dos veces para cambiar de cuenta') : '')">
           @if (item.path === '/app/account' && auth.session()?.user?.profilePhotoDataUrl && failedAvatar() !== auth.session()?.user?.profilePhotoDataUrl) {
 <img class="nav-profile-avatar" [src]="auth.session()?.user?.profilePhotoDataUrl" alt="" (error)="failedAvatar.set(auth.session()?.user?.profilePhotoDataUrl ?? '')">
 } @else { <ion-icon [name]="item.icon" aria-hidden="true"></ion-icon> }
@@ -23,7 +26,9 @@
       </button>
     </nav>
 
-    <section class="app-stage">
+    <section class="app-stage" [appTabSwipe]="tabPaths"
+      [tabSwipeEnabled]="!hideMobileNav() && !auth.accountsBusy() && !auth.addingAccount() && !appLock.isContentLocked() && !calls.activeCall() && !calls.resumableCall()"
+      [tabSwipeScope]="(auth.session()?.user?.id || '') + ':' + (auth.session()?.device?.id || '')">
       @if (compatibility.updateRequired()) {
         <div class="update-banner" role="alert">
           <span>{{ compatibility.message() }}</span>

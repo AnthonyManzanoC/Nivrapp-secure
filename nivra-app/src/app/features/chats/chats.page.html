@@ -33,7 +33,7 @@
           }
         </div>
         <div class="side-actions">
-          <button class="header-refresh" type="button" [disabled]="showConversationSkeleton()" (click)="refresh()" [attr.aria-label]="'CHATS.SYNC' | translate:'Sincronizar'" [title]="'CHATS.SYNC' | translate:'Sincronizar'">
+          <button class="header-refresh" type="button" [disabled]="showConversationSkeleton()" (click)="openHistoryPanel()" [attr.aria-label]="'CHATS.SYNC' | translate:'Sincronizar'" [title]="'CHATS.SYNC' | translate:'Sincronizar'">
             @if (showConversationSkeleton()) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
             @else { <ion-icon name="sync-outline" aria-hidden="true"></ion-icon> }
           </button>
@@ -199,12 +199,17 @@
           </nav>
 
           @if (showHistoryStatus()) {
-            <button class="history-status-trigger" type="button" (click)="historyPanelOpen = true" aria-haspopup="dialog" [attr.aria-label]="historyStatusTitle()">
-              @if (localHistory.storageBusy() || chat.deviceHistory.state() === 'syncing') { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
-              @else { <span class="history-status-dot" aria-hidden="true"></span> }
-              <span>{{ historyStatusTitle() }}</span>
-              <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
-            </button>
+            <div class="history-status-row">
+              <button class="history-status-trigger" type="button" (click)="historyPanelOpen = true" aria-haspopup="dialog" [attr.aria-label]="historyStatusTitle()">
+                @if (localHistory.storageBusy() || chat.deviceHistory.state() === 'syncing') { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
+                @else { <span class="history-status-dot" aria-hidden="true"></span> }
+                <span>{{ historyStatusTitle() }}</span>
+                <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
+              </button>
+              @if (canSnoozeHistoryStatus()) {
+                <button class="history-status-dismiss" type="button" (click)="snoozeHistoryStatus()" [attr.aria-label]="'CHATS.HIDE_HISTORY_24H' | translate:'Ocultar aviso 24h'" [title]="'CHATS.HIDE_HISTORY_24H' | translate:'Ocultar aviso 24h'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
+              }
+            </div>
           }
 
           <div class="conversation-list-stage" [class.is-loading]="showConversationSkeleton()" [attr.aria-busy]="conversationIndexLoading()">
@@ -330,7 +335,7 @@
     <ng-template>
       <section class="history-panel">
         <header><h2>{{ 'CHATS.SYNC' | translate:'Sincronizar' }}</h2><button type="button" (click)="historyPanelOpen = false" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button></header>
-        @if (auth.deviceIdentityError()) {
+        @if (auth.deviceIdentityError() || auth.deviceIdentityNeedsRelink()) {
           <div class="history-connection-error" role="status"><p>{{ (auth.deviceIdentityNeedsRelink() ? 'HISTORY_DEVICE.RELINK_COPY' : 'HISTORY_DEVICE.IDENTITY_ERROR_COPY') | translate:(auth.deviceIdentityNeedsRelink() ? 'Vuelve a vincular este equipo desde tu teléfono para recuperar los chats. El historial guardado se conserva.' : 'No se pudo abrir la identidad de este equipo. Comprueba la conexión, desbloquea el dispositivo y vuelve a intentar.') }}</p>
             @if (auth.deviceIdentityNeedsRelink()) { <button type="button" [disabled]="refreshing" (click)="relinkDevice()">{{ 'HISTORY_DEVICE.RELINK' | translate:'Volver a vincular' }}</button> }
             @else { <button type="button" [disabled]="showConversationSkeleton()" (click)="refresh()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button> }
@@ -344,9 +349,9 @@
           </div>
         }
         @if (chat.syncError() && !auth.deviceIdentityError()) { <div class="history-connection-error" role="status"><p>{{ 'CHATS.SYNC_ERROR' | translate:'No se pudo actualizar. Inténtalo cuando tengas conexión.' }}</p><button type="button" [disabled]="showConversationSkeleton()" (click)="refresh()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button></div> }
-        <app-history-sync-notice [showApprovals]="false" [showWaiting]="!auth.deviceIdentityError()" />
+        <app-history-sync-notice [showApprovals]="false" [showWaiting]="!auth.deviceIdentityError() && !auth.deviceIdentityNeedsRelink()" />
         @if (showConversationSkeleton()) { <app-chat-loading [compact]="true" /> }
-        @else if (!showHistoryStatus()) { <p class="history-ready" role="status"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.SYNCED' | translate:'Tus chats están al día.' }}</p> }
+        @else if (!hasHistoryStatus()) { <p class="history-ready" role="status"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.SYNCED' | translate:'Tus chats están al día.' }}</p> }
       </section>
     </ng-template>
   </ion-modal>

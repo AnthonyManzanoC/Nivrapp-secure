@@ -477,7 +477,11 @@ ion-popover.chats-actions-popover { --width: 250px; --background: var(--nivra-pa
 .chat-folders button.selected { color: var(--nivra-brand-2); background: color-mix(in srgb, var(--nivra-brand) 15%, transparent); }
 .chat-folders button:focus-visible { outline: 2px solid var(--nivra-brand-2); outline-offset: -2px; }
 
-.history-status-trigger { display: flex; align-items: center; gap: 8px; min-height: 32px; margin: 0 18px 5px; padding: 3px 0; border: 0; background: transparent; color: var(--nivra-muted); font: inherit; font-size: 11px; text-align: start; }
+.history-status-row { display: flex; align-items: center; gap: 6px; margin: 0 18px 5px; }
+.history-status-trigger { display: flex; flex: 1; min-width: 0; align-items: center; gap: 8px; min-height: 32px; margin: 0; padding: 3px 0; border: 0; background: transparent; color: var(--nivra-muted); font: inherit; font-size: 11px; text-align: start; }
+.history-status-dismiss { display: grid; place-items: center; flex: 0 0 32px; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--nivra-muted); font-size: 15px; }
+.history-status-dismiss:hover { background: color-mix(in srgb, var(--nivra-muted) 8%, transparent); }
+.history-status-dismiss:focus-visible { outline: 2px solid var(--nivra-brand-2); outline-offset: 2px; }
 .history-status-trigger > span:not(.history-status-dot) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .history-status-trigger > ion-icon { margin-inline-start: auto; flex: none; font-size: 14px; }
 .history-status-trigger ion-spinner { width: 13px; height: 13px; flex: none; }

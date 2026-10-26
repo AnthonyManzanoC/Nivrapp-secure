@@ -91,19 +91,27 @@
 
         </activity>
 
-        <!-- Keep these names stable in all future APKs. Only these launcher aliases
-             are toggled; MainActivity always retains app links, shares and call intents. -->
-        <activity-alias android:name=".LauncherOriginal" android:targetActivity=".MainActivity"
+        <!-- A replaceable alias must never identify the WebView's live task.
+             The non-UI entry opens/reuses MainActivity in its own stable task. -->
+        <activity android:name=".LauncherEntryActivity"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:launchMode="standard" android:noHistory="true"
+            android:taskAffinity="" android:excludeFromRecents="true"
+            android:enabled="true" android:exported="false" />
+
+        <!-- Keep these names stable across APK upgrades. MainActivity retains
+             app links, shares and call intents and is never enabled/disabled. -->
+        <activity-alias android:name=".LauncherOriginal" android:targetActivity=".LauncherEntryActivity"
             android:enabled="true" android:exported="true" android:label="@string/app_name"
             android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity-alias>
-        <activity-alias android:name=".LauncherEmerald" android:targetActivity=".MainActivity"
+        <activity-alias android:name=".LauncherEmerald" android:targetActivity=".LauncherEntryActivity"
             android:enabled="false" android:exported="true" android:label="@string/app_name"
             android:icon="@mipmap/ic_launcher_emerald" android:roundIcon="@mipmap/ic_launcher_emerald_round">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
         </activity-alias>
-        <activity-alias android:name=".LauncherIvory" android:targetActivity=".MainActivity"
+        <activity-alias android:name=".LauncherIvory" android:targetActivity=".LauncherEntryActivity"
             android:enabled="false" android:exported="true" android:label="@string/app_name"
             android:icon="@mipmap/ic_launcher_ivory" android:roundIcon="@mipmap/ic_launcher_ivory_round">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
