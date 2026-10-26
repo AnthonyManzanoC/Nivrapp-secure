@@ -97,11 +97,14 @@ describe('authenticated device identity recovery', () => {
     const test = harness(local.service, source.publicJwk, 'physical-phone');
     test.service.persistSession = (AuthService.prototype as any).persistSession.bind(test.service);
     test.service.secureVault = { requiresProtection: () => false };
+    const saveSession = jasmine.createSpy('saveSession').and.callFake(async (_auth: any, _activate: boolean, current: () => boolean) => current() ? {} : null);
+    test.service.accountSessions = { upsert: saveSession };
     const write = spyOn(localStorage, 'setItem'); spyOn(localStorage, 'removeItem');
     const keys = await test.service.ensureDeviceIdentity();
     expect(keys.deviceId).toBe('target'); expect(test.service.session().device.id).toBe('target');
     expect(test.service.sessionWriteEpoch).toBe(1);
-    expect(write).toHaveBeenCalledWith('nivra.auth', JSON.stringify(test.linked));
+    expect(write).not.toHaveBeenCalled();
+    expect(saveSession).toHaveBeenCalledWith(test.linked, true, jasmine.any(Function));
     expect(JSON.parse(atob(test.service.session().tokens.accessToken.split('.')[1])).deviceId).toBe('target');
     const freshLookup = await local.service.currentKeyMaterial('alice', 'target');
     expect(freshLookup.privateJwk.d).toBe(keys.privateJwk.d);

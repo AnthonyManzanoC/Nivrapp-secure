@@ -14,7 +14,16 @@ public class NivraCallActionReceiver extends BroadcastReceiver {
         }
         int notificationId = intent.getIntExtra("notificationId", 0);
         if (notificationId != 0) {
-            NotificationManagerCompat.from(context).cancel(notificationId);
+            NotificationManagerCompat.from(context).cancel(NivraPushScopePolicy.notificationTag(intent.getStringExtra("recipientUserId"), intent.getStringExtra("recipientDeviceId")), notificationId);
+        }
+
+        java.util.Map<String, String> scope = new java.util.HashMap<>();
+        scope.put("recipientUserId", intent.getStringExtra("recipientUserId"));
+        scope.put("recipientDeviceId", intent.getStringExtra("recipientDeviceId"));
+        if (!NivraNativePushRegistration.accepts(context, scope)) return;
+        if (!NivraPushScopePolicy.permitsCallAction(true, NivraNativePushRegistration.isActive(context, scope))) {
+            launchCallAction(context, intent, NivraNativePlugin.ACTION_CALL_OPEN);
+            return;
         }
 
         String action = intent.getAction();
@@ -24,7 +33,7 @@ public class NivraCallActionReceiver extends BroadcastReceiver {
         }
         if (NivraNativePlugin.ACTION_CALL_REJECT.equals(action)) {
             boolean delivered = NivraNativePlugin.hasActivePlugin()
-                && NivraNativePlugin.handleCallIntent(cloneForAction(intent, NivraNativePlugin.ACTION_CALL_REJECT));
+                && NivraNativePlugin.handleCallIntent(context, cloneForAction(intent, NivraNativePlugin.ACTION_CALL_REJECT));
             if (!delivered) {
                 launchCallAction(context, intent, NivraNativePlugin.ACTION_CALL_REJECT);
             }

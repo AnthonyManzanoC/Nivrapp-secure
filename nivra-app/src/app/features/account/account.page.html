@@ -11,6 +11,7 @@
     </header>
 
     <section class="grid">
+      <div class="span-12"><app-account-switcher /></div>
       <section class="security-overview panel span-12" aria-labelledby="security-overview-title">
         <div class="security-overview-heading">
           <span class="security-overview-mark" aria-hidden="true"><ion-icon name="shield-checkmark-outline"></ion-icon></span>
@@ -58,7 +59,7 @@
                 <small>{{ 'CHAT.VIEW_PHOTO' | translate:'Ver foto' }}</small>
               </span>
             } @else {
-              <span>{{ (displayName || auth.session()?.user?.alias || 'N').slice(0, 2).toUpperCase() }}</span>
+              <span>{{ profileTitle().slice(0, 2).toUpperCase() }}</span>
             }
           </button>
           <button type="button" class="photo-edit-badge" (click)="profilePhotoInput.click()"
@@ -69,8 +70,11 @@
           </div>
           <div class="profile-photo-actions">
             <div class="profile-hero-copy">
-              <h2>{{ displayName || auth.session()?.user?.displayName || auth.session()?.user?.alias || ('ACCOUNT.PROFILE' | translate:'Perfil') }}</h2>
-              <p dir="ltr">@{{ alias || auth.session()?.user?.alias }}</p>
+              <h2>{{ profileTitle() }}</h2>
+              @if (!legacyIdentityAlias()) { <p dir="ltr">@{{ alias || auth.session()?.user?.alias }}</p> }
+              @if (privateIdentity()) {
+                <span class="nivra-id-profile-tag"><ion-icon name="finger-print-outline" aria-hidden="true"></ion-icon>Nivra ID</span>
+              }
               <span class="profile-draft-tag" [class.pending]="hasProfileChanges() || !!profileError" role="status">
                 @if (saving || profileLoading) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
                 @else { <ion-icon [name]="hasProfileChanges() || profileError ? 'create-outline' : 'checkmark-circle-outline'" aria-hidden="true"></ion-icon> }
@@ -93,7 +97,7 @@
               <label class="profile-photo-visibility">
                 <span>
                   <strong>{{ 'ACCOUNT.WHO_SEES_PHOTO' | translate:'Quien puede ver tu foto' }}</strong>
-                  <small>{{ 'ACCOUNT.PHOTO_VISIBILITY_HELP' | translate:'Elige con quién compartir tu foto de perfil.' }}</small>
+                  <small>{{ photoVisibilityHelp() }}</small>
                 </span>
                 <select
                   class="native-select compact"
@@ -125,6 +129,12 @@
           <label class="alias-field">
             <span>{{ 'ACCOUNT.ALIAS' | translate:'Alias' }}</span>
             <ion-input mode="ios" fill="outline" [ngModel]="alias" (ngModelChange)="aliasChanged($event)" maxlength="32" autocomplete="off" [disabled]="saving || profileLoading"></ion-input>
+            @if (privateIdentity()) {
+              <span class="alias-inspiration">
+                <small>{{ 'ACCOUNT.ALIAS_MEMORABLE_HELP' | translate:'Elige un alias fácil de recordar. Tu ID y tus chats se conservan.' }}</small>
+                <button type="button" class="profile-text-action" (click)="suggestAlias()" [disabled]="saving || profileLoading">{{ 'ACCOUNT.ALIAS_INSPIRE' | translate:'Inspirarme' }}</button>
+              </span>
+            }
             @if (aliasStatus === 'checking') {
               <small class="alias-hint">{{ 'ACCOUNT.ALIAS_CHECKING' | translate:'Validando alias...' }}</small>
             } @else if (aliasStatus === 'taken') {
@@ -496,6 +506,7 @@
               <small>{{ panicPin.isConfigured() ? ('ACCOUNT.CONFIGURED_DEVICE' | translate:'Configurado en este dispositivo.') : ('ACCOUNT.NOT_CONFIGURED' | translate:'Sin configurar.') }}</small>
             </span>
           </div>
+          <p class="card-sub">{{ 'ACCOUNT.PANIC_SCOPE_HELP' | translate:'Al introducir este PIN, se cierra la cuenta actual y se borran sus datos locales de este dispositivo. La otra cuenta guardada se conserva.' }}</p>
           <div class="panic-pin-grid">
             <label>
               <span>{{ 'ACCOUNT.FALSE_PIN' | translate:'PIN falso' }}</span>

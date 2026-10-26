@@ -4,7 +4,7 @@ El paquete Electron conserva su perfil por usuario de Windows y su canal de actu
 
 ## Icono de la aplicación
 
-Cuenta permite elegir `original`, `emerald` o `ivory`. La preferencia pertenece al usuario de Windows y se conserva en `app.getPath('userData')/launcher-appearance.json`; no depende de la cuenta de Nivra abierta. El cambio actualiza el icono de la ventana y los accesos directos existentes de Nivra en Escritorio e Inicio. No modifica el ejecutable, el instalador, sus hashes, el registro de otras aplicaciones ni otros accesos directos.
+Cuenta permite elegir `original`, `emerald` o `ivory`. Desde 6.0.0 el cliente sincroniza la preferencia de la cuenta de Nivra con sus otros dispositivos. El puente de Windows conserva la última variante aplicada en `app.getPath('userData')/launcher-appearance.json` para restaurarla al arrancar; cuando cambia la cuenta activa, el cliente aplica su elección. La instalación tiene un único icono físico. El cambio actualiza el icono de la ventana y los accesos directos existentes de Nivra en Escritorio e Inicio. No modifica el ejecutable, el instalador, sus hashes, el registro de otras aplicaciones ni otros accesos directos.
 
 Los tres ICO se distribuyen dentro de `icons/`. En el arranque se copia el recurso seleccionado a `userData/launcher-icons/` mediante escritura temporal exclusiva, sincronización y renombrado atómico. Esto proporciona una ruta física que Windows Shell puede leer aunque el recurso original esté dentro de `app.asar`, y mantiene el icono disponible durante las actualizaciones. Al abrir una versión nueva, se restaura la elección y se reaplica a los accesos existentes que haya recreado el instalador.
 

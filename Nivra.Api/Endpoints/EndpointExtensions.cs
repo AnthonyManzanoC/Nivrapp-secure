@@ -76,6 +76,7 @@ public static partial class EndpointExtensions
         app.MapCallEndpoints();
         app.MapPrivacyEndpoints();
         app.MapAccountAppLockEndpoints();
+        app.MapAccountMetadataEndpoints();
         app.MapNotificationEndpoints();
         app.MapMonetizationEndpoints();
         app.MapDeletionAndSyncEndpoints();
@@ -87,19 +88,22 @@ public static partial class EndpointExtensions
 
         group.MapPost("/register-private", async Task<IResult> (PrivateRegisterRequest request, INivraStore store, NivraDbContext db, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
         {
-            var internalAlias = $"n_{Guid.NewGuid():N}"[..26];
+            var internalAlias = PrivateAccountAliases.Generate();
             var validation = ValidateRegister(new RegisterRequest(internalAlias, request.Password, request.DeviceName, request.KeyBundle, null, null, null, request.HardwareId));
             if (validation is not null) return validation;
             var now = timeProvider.GetUtcNow();
             var user = new UserAccount
             {
                 Id = NivraIds.NewId("usr"), Alias = internalAlias, PasswordHash = hasher.Hash(request.Password),
-                IsDiscoverable = false, CreatedAt = now, UpdatedAt = now
+                IsDiscoverable = false, IsPrivateAccount = true, CreatedAt = now, UpdatedAt = now
             };
             var created = false;
             for (var attempt = 0; attempt < 4 && !created; attempt++)
             {
-                user.Alias = $"n_{Guid.NewGuid():N}"[..26];
+                var candidate = await PrivateAccountAliases.GenerateAvailableAsync(
+                    (alias, token) => db.Users.AnyAsync(other => other.Alias == alias, token), cancellationToken);
+                if (candidate is null) break;
+                user.Alias = candidate;
                 created = await store.TryAddUserAsync(user, cancellationToken);
             }
             if (!created) return Error("private_registration_unavailable", "No pudimos crear la cuenta privada. Inténtalo de nuevo.", StatusCodes.Status503ServiceUnavailable);
@@ -526,6 +530,11 @@ public static partial class EndpointExtensions
             }
 
             await tokenService.RevokeSessionAsync(store, current.SessionId, cancellationToken);
+            // Logging out this account/device must not remove another retained
+            // account that shares the same FCM token or Web Push endpoint.
+            foreach (var push in await store.ActivePushTokensForUserAsync(current.UserId, cancellationToken))
+                if (push.DeviceId == current.DeviceId) push.RevokedAt = timeProvider.GetUtcNow();
+            await store.SaveChangesAsync(cancellationToken);
             await store.AddAuditAsync(current.UserId, "auth.logout", ClientIp(http), null, timeProvider.GetUtcNow(), cancellationToken);
             return Results.NoContent();
         });
@@ -831,6 +840,7 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            http.Response.Headers.CacheControl = "no-store";
             var responses = new List<ContactResponse>();
             foreach (var contact in await store.ContactsForUserAsync(current.UserId, cancellationToken))
             {
@@ -840,7 +850,7 @@ public static partial class EndpointExtensions
             return Results.Ok(responses);
         });
 
-        group.MapPost("/", async Task<IResult> (CreateContactRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        group.MapPost("/", async Task<IResult> (CreateContactRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -859,6 +869,7 @@ public static partial class EndpointExtensions
                 return Error("invalid_contact", "No puedes agregarte como contacto.");
             }
 
+            await using var transaction = await LockRelationshipAsync(db, current.UserId, contactUser.Id, cancellationToken);
             var contact = new ContactRecord
             {
                 Id = $"{current.UserId}:{contactUser.Id}",
@@ -869,10 +880,13 @@ public static partial class EndpointExtensions
             };
 
             await store.AddOrUpdateContactAsync(contact, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            await NotifyRelationshipChangedAsync(db, hub, current.UserId, contactUser.Id, cancellationToken);
+            http.Response.Headers.CacheControl = "no-store";
             return Results.Created($"/contacts/{contactUser.Id}", await ToContactResponseAsync(contact, store, cancellationToken));
         });
 
-        group.MapDelete("/{contactUserId}", async Task<IResult> (string contactUserId, HttpContext http, INivraStore store, CancellationToken cancellationToken) =>
+        group.MapDelete("/{contactUserId}", async Task<IResult> (string contactUserId, HttpContext http, INivraStore store, NivraDbContext db, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -880,11 +894,14 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            await using var transaction = await LockRelationshipAsync(db, current.UserId, contactUserId, cancellationToken);
             await store.DeleteContactAsync(current.UserId, contactUserId, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            await NotifyRelationshipChangedAsync(db, hub, current.UserId, contactUserId, cancellationToken);
             return Results.NoContent();
         });
 
-        group.MapPatch("/{contactUserId}", async Task<IResult> (string contactUserId, PatchContactRequest request, HttpContext http, NivraDbContext db, CancellationToken cancellationToken) =>
+        group.MapPatch("/{contactUserId}", async Task<IResult> (string contactUserId, PatchContactRequest request, HttpContext http, NivraDbContext db, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -892,6 +909,7 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            await using var transaction = await LockRelationshipAsync(db, current.UserId, contactUserId, cancellationToken);
             var contact = await db.Contacts.FirstOrDefaultAsync(candidate =>
                 candidate.OwnerUserId == current.UserId &&
                 candidate.ContactUserId == contactUserId,
@@ -904,6 +922,9 @@ public static partial class EndpointExtensions
             contact.IsFavorite = request.IsFavorite ?? contact.IsFavorite;
             contact.NicknameCiphertext = request.NicknameCiphertext ?? contact.NicknameCiphertext;
             await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            await NotifyUsers(hub, [current.UserId], "contacts.updated", new { });
+            http.Response.Headers.CacheControl = "no-store";
             return Results.Ok(await ToContactResponseAsync(contact, new PgSqlNivraStore(db), cancellationToken));
         });
 
@@ -967,14 +988,7 @@ public static partial class EndpointExtensions
             }
 
             var query = NormalizeOptional(q) ?? string.Empty;
-            var normalizedAlias = NivraNumbers.NormalizeAlias(query);
-            var nivraNumber = NivraNumbers.Normalize(query);
-            var contactIds = await ContactIdsFor(db, current.UserId, cancellationToken);
-
-            var candidates = await db.Users
-                .Where(user => user.DisabledAt == null && user.Id != current.UserId)
-                .Where(user => user.IsDiscoverable || user.Alias == normalizedAlias || (nivraNumber != null && user.NivraNumber == nivraNumber) || contactIds.Contains(user.Id))
-                .Where(user => nivraNumber == null || user.NivraNumber == nivraNumber || user.Alias == normalizedAlias)
+            var candidates = await DirectoryCandidates(db.Users, current.UserId, query)
                 .OrderByDescending(user => user.UpdatedAt)
                 .Take(240)
                 .ToListAsync(cancellationToken);
@@ -983,7 +997,7 @@ public static partial class EndpointExtensions
             foreach (var user in candidates)
             {
                 var score = ScoreUserSearch(user, query);
-                if (query.Length == 0 || score > 0 || contactIds.Contains(user.Id))
+                if (query.Length == 0 || score > 0 || user.Id == query)
                 {
                     people.Add((user, score));
                 }
@@ -999,6 +1013,7 @@ public static partial class EndpointExtensions
                 result.Add(await ToUserSummaryAsync(user, current.UserId, db, cancellationToken));
             }
 
+            http.Response.Headers.CacheControl = "no-store";
             return Results.Ok(new DirectorySearchResponse(query, result));
         });
 
@@ -1016,13 +1031,9 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
-            if (!user.IsDiscoverable &&
-                user.Id != current.UserId &&
-                !await AreContactsAsync(db, current.UserId, user.Id, cancellationToken))
-            {
-                return Results.NotFound();
-            }
-
+            // This route is an exact stable identifier, including a shared QR.
+            // Ghost mode removes discovery, not a deliberately shared address.
+            http.Response.Headers.CacheControl = "no-store";
             return Results.Ok(await ToUserSummaryAsync(user, current.UserId, db, cancellationToken));
         });
 
@@ -1036,11 +1047,18 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            var requests = await db.FriendRequests
-                .Where(request => request.FromUserId == current.UserId || request.ToUserId == current.UserId)
-                .OrderByDescending(request => request.UpdatedAt)
-                .Take(100)
-                .ToListAsync(cancellationToken);
+            var ownRequests = db.FriendRequests.AsNoTracking()
+                .Where(request => request.FromUserId == current.UserId || request.ToUserId == current.UserId);
+            var requests = await PendingFriendRequestsForViewer(ownRequests, current.UserId)
+                .Where(request => !db.Contacts.Any(contact => contact.OwnerUserId == request.FromUserId && contact.ContactUserId == request.ToUserId)
+                    || !db.Contacts.Any(contact => contact.OwnerUserId == request.ToUserId && contact.ContactUserId == request.FromUserId))
+                .Take(100).ToListAsync(cancellationToken);
+            var pendingPeers = requests.Select(request => request.FromUserId == current.UserId ? request.ToUserId : request.FromUserId).ToList();
+            if (requests.Count < 100)
+                requests.AddRange(await ownRequests.Where(request => request.Status != FriendRequestStatus.Pending &&
+                    !pendingPeers.Contains(request.FromUserId == current.UserId ? request.ToUserId : request.FromUserId))
+                    .OrderByDescending(request => request.UpdatedAt).ThenByDescending(request => request.Id)
+                    .Take(100 - requests.Count).ToListAsync(cancellationToken));
 
             var result = new List<FriendRequestResponse>();
             foreach (var request in requests)
@@ -1048,6 +1066,7 @@ public static partial class EndpointExtensions
                 result.Add(await ToFriendRequestResponseAsync(request, current.UserId, db, cancellationToken));
             }
 
+            http.Response.Headers.CacheControl = "no-store";
             return Results.Ok(result);
         });
 
@@ -1075,19 +1094,26 @@ public static partial class EndpointExtensions
                 return Error("invalid_friend_request", "No puedes enviarte solicitud a ti mismo.");
             }
 
+            await using var transaction = await LockRelationshipAsync(db, current.UserId, target.Id, cancellationToken);
+
             if (await AreContactsAsync(db, current.UserId, target.Id, cancellationToken) &&
                 await AreContactsAsync(db, target.Id, current.UserId, cancellationToken))
             {
                 return Error("already_friends", "Ya estan agregados mutuamente.", StatusCodes.Status409Conflict);
             }
 
-            var existing = await db.FriendRequests.FirstOrDefaultAsync(candidate =>
+            var existing = await db.FriendRequests.Where(candidate =>
                 candidate.Status == FriendRequestStatus.Pending &&
                 ((candidate.FromUserId == current.UserId && candidate.ToUserId == target.Id) ||
-                 (candidate.FromUserId == target.Id && candidate.ToUserId == current.UserId)),
-                cancellationToken);
+                 (candidate.FromUserId == target.Id && candidate.ToUserId == current.UserId)))
+                .OrderBy(candidate => candidate.CreatedAt).ThenBy(candidate => candidate.Id).FirstOrDefaultAsync(cancellationToken);
             if (existing is not null)
             {
+                await CloseDuplicateFriendRequestsAsync(db, existing, timeProvider.GetUtcNow(), cancellationToken);
+                await db.SaveChangesAsync(cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+                await NotifyFriendRequestChangedAsync(db, hub, existing, "friend.updated", cancellationToken);
+                http.Response.Headers.CacheControl = "no-store";
                 return Results.Ok(await ToFriendRequestResponseAsync(existing, current.UserId, db, cancellationToken));
             }
 
@@ -1098,93 +1124,38 @@ public static partial class EndpointExtensions
                 FromUserId = current.UserId,
                 ToUserId = target.Id,
                 Status = FriendRequestStatus.Pending,
-                Message = NormalizeOptional(request.Message),
+                Message = NormalizeOptional(request.Message) is { } message ? message[..Math.Min(message.Length, 500)] : null,
                 CreatedAt = now,
                 UpdatedAt = now
             };
 
             db.FriendRequests.Add(friendRequest);
             await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             var response = await ToFriendRequestResponseAsync(friendRequest, current.UserId, db, cancellationToken);
-            await hub.Clients.Group(GroupsFor.User(target.Id)).SendAsync("friend.requested", response, cancellationToken);
+            await NotifyFriendRequestChangedAsync(db, hub, friendRequest, "friend.requested", cancellationToken);
             await pushNotifications.SendEventAsync(target.Id, "Nivra", "Nueva solicitud de amistad", "friend_request", $"nivra-friend-request-{friendRequest.Id}", new Dictionary<string, string>
             {
                 ["requestId"] = friendRequest.Id,
                 ["senderUserId"] = current.UserId
             }, cancellationToken);
+            http.Response.Headers.CacheControl = "no-store";
             return Results.Created($"/friends/requests/{friendRequest.Id}", response);
         });
 
         friends.MapPost("/requests/{requestId}/accept", async Task<IResult> (string requestId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
-            var current = http.GetCurrentUser();
-            if (current is null)
-            {
-                return Results.Unauthorized();
-            }
-
-            var friendRequest = await db.FriendRequests.FirstOrDefaultAsync(request => request.Id == requestId, cancellationToken);
-            if (friendRequest is null || friendRequest.ToUserId != current.UserId || friendRequest.Status != FriendRequestStatus.Pending)
-            {
-                return Results.NotFound();
-            }
-
-            var now = timeProvider.GetUtcNow();
-            friendRequest.Status = FriendRequestStatus.Accepted;
-            friendRequest.UpdatedAt = now;
-            friendRequest.RespondedAt = now;
-            await UpsertContactAsync(db, friendRequest.FromUserId, friendRequest.ToUserId, now, cancellationToken);
-            await UpsertContactAsync(db, friendRequest.ToUserId, friendRequest.FromUserId, now, cancellationToken);
-            await db.SaveChangesAsync(cancellationToken);
-
-            var response = await ToFriendRequestResponseAsync(friendRequest, current.UserId, db, cancellationToken);
-            await NotifyUsers(hub, [friendRequest.FromUserId, friendRequest.ToUserId], "friend.updated", response);
-            return Results.Ok(response);
+            return await RespondToFriendRequestAsync(requestId, FriendRequestStatus.Accepted, http, db, timeProvider, hub, cancellationToken);
         });
 
         friends.MapPost("/requests/{requestId}/reject", async Task<IResult> (string requestId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
-            var current = http.GetCurrentUser();
-            if (current is null)
-            {
-                return Results.Unauthorized();
-            }
-
-            var friendRequest = await db.FriendRequests.FirstOrDefaultAsync(request => request.Id == requestId, cancellationToken);
-            if (friendRequest is null || friendRequest.ToUserId != current.UserId || friendRequest.Status != FriendRequestStatus.Pending)
-            {
-                return Results.NotFound();
-            }
-
-            friendRequest.Status = FriendRequestStatus.Rejected;
-            friendRequest.UpdatedAt = timeProvider.GetUtcNow();
-            friendRequest.RespondedAt = friendRequest.UpdatedAt;
-            await db.SaveChangesAsync(cancellationToken);
-
-            var response = await ToFriendRequestResponseAsync(friendRequest, current.UserId, db, cancellationToken);
-            await NotifyUsers(hub, [friendRequest.FromUserId, friendRequest.ToUserId], "friend.updated", response);
-            return Results.Ok(response);
+            return await RespondToFriendRequestAsync(requestId, FriendRequestStatus.Rejected, http, db, timeProvider, hub, cancellationToken);
         });
 
-        friends.MapPost("/requests/{requestId}/cancel", async Task<IResult> (string requestId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, CancellationToken cancellationToken) =>
+        friends.MapPost("/requests/{requestId}/cancel", async Task<IResult> (string requestId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
-            var current = http.GetCurrentUser();
-            if (current is null)
-            {
-                return Results.Unauthorized();
-            }
-
-            var friendRequest = await db.FriendRequests.FirstOrDefaultAsync(request => request.Id == requestId, cancellationToken);
-            if (friendRequest is null || friendRequest.FromUserId != current.UserId || friendRequest.Status != FriendRequestStatus.Pending)
-            {
-                return Results.NotFound();
-            }
-
-            friendRequest.Status = FriendRequestStatus.Cancelled;
-            friendRequest.UpdatedAt = timeProvider.GetUtcNow();
-            friendRequest.RespondedAt = friendRequest.UpdatedAt;
-            await db.SaveChangesAsync(cancellationToken);
-            return Results.Ok(await ToFriendRequestResponseAsync(friendRequest, current.UserId, db, cancellationToken));
+            return await RespondToFriendRequestAsync(requestId, FriendRequestStatus.Cancelled, http, db, timeProvider, hub, cancellationToken);
         });
     }
 
@@ -4226,7 +4197,7 @@ public static partial class EndpointExtensions
                 UserId = current.UserId,
                 DeviceId = current.DeviceId,
                 Provider = request.Provider.Trim(),
-                TokenHash = tokenService.HashOpaqueToken(request.Token),
+                TokenHash = tokenService.HashOpaqueToken(request.Token.Trim()),
                 TokenCiphertext = pushNotifications.ProtectToken(request.Token.Trim()),
                 CreatedAt = timeProvider.GetUtcNow()
             };
@@ -4237,13 +4208,15 @@ public static partial class EndpointExtensions
             return Results.Created($"/push-tokens/{stored.Id}", new PushTokenResponse(stored.Id, stored.Provider, stored.CreatedAt, stored.RevokedAt, pushNotifications.IsConfigured, pushNotifications.IsFcmConfigured, pushNotifications.IsWebPushConfigured));
         });
 
-        // This narrowly scoped operation renews FCM while the WebView is asleep.
+        // This narrowly scoped operation renews saved push memberships without account activation.
         // It never issues access tokens, rotates refresh credentials or extends a session.
         group.MapPost("/native-renew", async Task<IResult> (RenewNativePushTokenRequest request, INivraStore store, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
+            var provider = string.IsNullOrWhiteSpace(request.Provider) ? "fcm" : request.Provider.Trim().ToLowerInvariant();
             if (string.IsNullOrWhiteSpace(request.RefreshToken) || request.RefreshToken.Length > 4096 ||
                 string.IsNullOrWhiteSpace(request.UserId) || string.IsNullOrWhiteSpace(request.DeviceId) ||
-                string.IsNullOrWhiteSpace(request.Token) || request.Token.Length > 4096)
+                string.IsNullOrWhiteSpace(request.Token) || request.Token.Length > 32768 ||
+                (provider != "fcm" && provider != "webpush"))
                 return Results.Unauthorized();
             var session = await store.FindSessionByRefreshHashAsync(tokenService.HashOpaqueToken(request.RefreshToken), timeProvider.GetUtcNow(), cancellationToken);
             var user = session is null ? null : await store.GetUserAsync(session.UserId, cancellationToken);
@@ -4253,7 +4226,7 @@ public static partial class EndpointExtensions
             var push = new PushTokenRecord
             {
                 Id = NivraIds.NewId("psh"), UserId = session!.UserId, DeviceId = session.DeviceId,
-                Provider = "fcm", TokenHash = tokenService.HashOpaqueToken(request.Token.Trim()),
+                Provider = provider, TokenHash = tokenService.HashOpaqueToken(request.Token.Trim()),
                 TokenCiphertext = pushNotifications.ProtectToken(request.Token.Trim()), CreatedAt = timeProvider.GetUtcNow()
             };
             if (!await store.TryRenewNativePushTokenAsync(push, cancellationToken)) return Results.Unauthorized();
@@ -4310,7 +4283,7 @@ public static partial class EndpointExtensions
             }
 
             var push = await store.GetPushTokenAsync(pushTokenId, cancellationToken);
-            if (push is null || push.UserId != current.UserId)
+            if (push is null || push.UserId != current.UserId || push.DeviceId != current.DeviceId)
             {
                 return Results.NotFound();
             }
@@ -4849,7 +4822,8 @@ public static partial class EndpointExtensions
             user.PlanCode,
             user.PrivacySettings,
             user.CreatedAt,
-            user.NivraNumber);
+            user.NivraNumber,
+            user.IsPrivateAccount);
     }
 
     private static DeviceResponse ToDeviceResponse(DeviceRecord device)
@@ -4866,13 +4840,14 @@ public static partial class EndpointExtensions
             contact.ContactUserId,
             user?.Alias ?? "unknown",
             user?.DisplayName,
-            user?.Phone,
+            VisibleContactPhone(user, contact.OwnerUserId, ownerIsInContacts),
             VisibleProfilePhoto(user, contact.OwnerUserId, ownerIsInContacts),
             contact.NicknameCiphertext,
             contact.IsFavorite,
             ownerIsInContacts,
             contact.CreatedAt,
-            user?.NivraNumber);
+            user?.NivraNumber,
+            user?.IsPrivateAccount ?? false);
     }
 
     private static async Task<List<ConversationResponse>> ToConversationResponsesAsync(IEnumerable<ConversationRecord> conversations, INivraStore store, CancellationToken cancellationToken)
@@ -4913,7 +4888,8 @@ public static partial class EndpointExtensions
                 participant.RemovedAt,
                 users is not null && users.TryGetValue(participant.UserId, out var user)
                     ? ToParticipantPrivacyPolicyResponse(user.PrivacySettings)
-                    : null)).ToList(),
+                    : null,
+                users is not null && users.TryGetValue(participant.UserId, out var identityUser) && identityUser.IsPrivateAccount)).ToList(),
             conversation.CreatedAt,
             conversation.UpdatedAt,
             conversation.LastMessageAt);
@@ -4923,7 +4899,7 @@ public static partial class EndpointExtensions
     {
         var users = await store.GetUsersAsync(participantUserIds, cancellationToken);
         var names = users
-            .Select(user => NormalizeOptional(user.DisplayName) ?? NormalizeOptional(user.Phone) ?? NormalizeOptional(user.Alias))
+            .Select(user => NormalizeOptional(user.DisplayName) ?? NormalizeOptional(user.Alias))
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Take(3)
             .ToList();
@@ -5116,7 +5092,7 @@ public static partial class EndpointExtensions
             user.Id,
             user.Alias,
             user.DisplayName,
-            outgoing is not null || user.Id == currentUserId ? user.Phone : null,
+            VisibleContactPhone(user, currentUserId, outgoing is not null && incoming),
             user.Bio,
             VisibleProfilePhoto(user, currentUserId, incoming),
             user.IsDiscoverable,
@@ -5125,7 +5101,8 @@ public static partial class EndpointExtensions
             outgoing is not null && incoming,
             outgoing?.IsFavorite ?? false,
             friendshipState,
-            user.NivraNumber);
+            user.NivraNumber,
+            user.IsPrivateAccount);
     }
 
     private static async Task<FriendRequestResponse> ToFriendRequestResponseAsync(FriendRequestRecord request, string currentUserId, NivraDbContext db, CancellationToken cancellationToken)
@@ -5363,6 +5340,7 @@ public static partial class EndpointExtensions
 
     private static int ScoreUserSearch(UserAccount user, string query)
     {
+        if (user.Id == query) return 120;
         var normalized = NivraNumbers.NormalizeAlias(query);
         if (NivraNumbers.Normalize(query) is { } number && number == user.NivraNumber) return 110;
         if (normalized.Length == 0)
@@ -5634,14 +5612,21 @@ public static partial class EndpointExtensions
         NivraDbContext db,
         IHubContext<NivraHub> hub,
         string userId,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        IEnumerable<string>? additionalViewerIds = null)
     {
-        var relatedUserIds = await db.Contacts
+        var owner = await db.Users.AsNoTracking().FirstOrDefaultAsync(user => user.Id == userId, cancellationToken);
+        if (owner is null) return;
+        var relationships = await db.Contacts
             .AsNoTracking()
             .Where(contact => contact.OwnerUserId == userId || contact.ContactUserId == userId)
-            .Select(contact => contact.OwnerUserId == userId ? contact.ContactUserId : contact.OwnerUserId)
-            .Distinct()
             .ToListAsync(cancellationToken);
+        var ownerSaved = relationships.Where(contact => contact.OwnerUserId == userId).Select(contact => contact.ContactUserId).ToHashSet(StringComparer.Ordinal);
+        var savedOwner = relationships.Where(contact => contact.ContactUserId == userId).Select(contact => contact.OwnerUserId).ToHashSet(StringComparer.Ordinal);
+        var requestViewers = await db.FriendRequests.AsNoTracking()
+            .Where(request => request.FromUserId == userId || request.ToUserId == userId)
+            .Select(request => request.FromUserId == userId ? request.ToUserId : request.FromUserId)
+            .Distinct().ToListAsync(cancellationToken);
         var relatedConversations = await db.Conversations
             .AsNoTracking()
             .Where(conversation => conversation.Participants.Any(participant =>
@@ -5654,11 +5639,9 @@ public static partial class EndpointExtensions
             .Select(participant => participant.UserId)
             .Distinct(StringComparer.Ordinal);
 
-        await NotifyUsers(
-            hub,
-            relatedUserIds.Concat(conversationUserIds).Append(userId),
-            "profile.updated",
-            new { userId });
+        foreach (var viewerId in ownerSaved.Concat(savedOwner).Concat(conversationUserIds).Concat(requestViewers).Concat(additionalViewerIds ?? []).Append(userId).Distinct(StringComparer.Ordinal))
+            await hub.Clients.Group(GroupsFor.User(viewerId)).SendAsync("profile.updated",
+                ProfileVisibilityFor(owner, viewerId, ownerSaved.Contains(viewerId), savedOwner.Contains(viewerId)), cancellationToken);
     }
 
     private static async Task NotifyUsers(IHubContext<NivraHub> hub, IEnumerable<string> userIds, string method, object payload)

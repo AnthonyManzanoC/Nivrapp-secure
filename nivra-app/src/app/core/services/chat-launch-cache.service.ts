@@ -10,15 +10,17 @@ export interface ChatLaunchSnapshot {
 }
 
 interface ChatLaunchEnvelope {
-  v: 1;
+  v: 2;
   alg: 'NIVRA-CHAT-LAUNCH-HKDF-A256GCM';
   iv: string;
   ciphertext: string;
 }
 
-const STORAGE_PREFIX = 'nivra.chatLaunchCache.v1.';
+// Earlier snapshots may contain profiles merged from a shared cross-account
+// cache. Rebuild this display-only cache; encrypted message history is intact.
+const STORAGE_PREFIX = 'nivra.chatLaunchCache.v2.';
 const ENVELOPE_ALGORITHM = 'NIVRA-CHAT-LAUNCH-HKDF-A256GCM';
-const KEY_SALT = new TextEncoder().encode('Nivra chat launch cache HKDF-SHA256 v1');
+const KEY_SALT = new TextEncoder().encode('Nivra chat launch cache HKDF-SHA256 v2');
 const MAX_CONVERSATIONS = 250;
 const MAX_CONTACTS = 400;
 const MAX_PREVIEWS = 250;
@@ -47,7 +49,7 @@ export class ChatLaunchCacheService {
 
     try {
       const envelope = JSON.parse(stored) as ChatLaunchEnvelope;
-      if (envelope?.v !== 1 || envelope.alg !== ENVELOPE_ALGORITHM
+      if (envelope?.v !== 2 || envelope.alg !== ENVELOPE_ALGORITHM
         || typeof envelope.iv !== 'string' || typeof envelope.ciphertext !== 'string') return null;
       const iv = this.fromBase64(envelope.iv);
       const ciphertext = this.fromBase64(envelope.ciphertext);
@@ -86,7 +88,7 @@ export class ChatLaunchCacheService {
       );
       if (this.generation(userId) !== generation) return;
       const envelope: ChatLaunchEnvelope = {
-        v: 1,
+        v: 2,
         alg: ENVELOPE_ALGORITHM,
         iv: this.toBase64(iv),
         ciphertext: this.toBase64(new Uint8Array(ciphertext)),
@@ -123,7 +125,7 @@ export class ChatLaunchCacheService {
         name: 'HKDF',
         hash: 'SHA-256',
         salt: KEY_SALT,
-        info: this.encoder.encode(`chat-list-snapshot/v1/${userId}`),
+        info: this.encoder.encode(`chat-list-snapshot/v2/${userId}`),
       },
       material,
       { name: 'AES-GCM', length: 256 },

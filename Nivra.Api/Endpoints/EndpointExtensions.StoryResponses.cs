@@ -38,11 +38,11 @@ public static partial class EndpointExtensions
             outgoing.TryGetValue(user.Id, out var saved);
             var reverse = incoming.Contains(user.Id);
             pending.TryGetValue(user.Id, out var request);
-            return new(user.Id, user.Alias, user.DisplayName, saved is not null || user.Id == viewerId ? user.Phone : null,
+            return new(user.Id, user.Alias, user.DisplayName, VisibleContactPhone(user, viewerId, saved is not null && reverse),
                 user.Bio, VisibleProfilePhoto(user, viewerId, reverse), user.IsDiscoverable, user.AllowStoryReposts,
                 saved is not null, saved is not null && reverse, saved?.IsFavorite ?? false,
                 saved is not null && reverse ? "friends" : request is null ? "none" : request.FromUserId == viewerId ? "requested" : "incoming",
-                user.NivraNumber);
+                user.NivraNumber, user.IsPrivateAccount);
         }
 
         var responses = new List<StoryResponse>(stories.Count);

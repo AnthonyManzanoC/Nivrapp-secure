@@ -64,6 +64,26 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        modelBuilder.Entity<AccountAppearance>(b =>
+        {
+            b.ToTable("account_appearances", table => table.HasCheckConstraint("CK_account_appearances_Icon", "\"Icon\" IN ('original','emerald','ivory')"));
+            b.HasKey(x => x.UserId);
+            b.Property(x => x.UserId).HasMaxLength(64);
+            b.Property(x => x.Icon).HasMaxLength(16).IsRequired();
+            b.Property(x => x.Revision).IsConcurrencyToken();
+            b.HasOne<UserAccount>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<BroadcastListRecord>(b =>
+        {
+            b.ToTable("broadcast_lists", table => table.HasCheckConstraint("CK_broadcast_lists_RecipientCount", "\"RecipientCount\" BETWEEN 0 AND 256"));
+            b.HasKey(x => new { x.UserId, x.Id });
+            b.Property(x => x.UserId).HasMaxLength(64);
+            b.Property(x => x.Id).HasMaxLength(64);
+            b.Property(x => x.EncryptedPayload).HasMaxLength(1_048_576);
+            b.Property(x => x.Revision).IsConcurrencyToken();
+            b.HasIndex(x => new { x.UserId, x.DeletedAt, x.UpdatedAt });
+            b.HasOne<UserAccount>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<AccountAppLock>(b =>
         {
             b.ToTable("account_app_locks");
@@ -141,6 +161,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasIndex(user => user.NivraNumber).IsUnique();
             entity.Property(user => user.Alias).HasMaxLength(32).IsRequired();
             entity.HasIndex(user => user.Alias).IsUnique();
+            entity.Property(user => user.IsPrivateAccount).HasDefaultValue(false);
             entity.Property(user => user.DisplayName).HasMaxLength(160);
             entity.Property(user => user.Email).HasMaxLength(320);
             entity.Property(user => user.RecoveryEmail).HasMaxLength(320);
@@ -547,7 +568,9 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(push => push.TokenHash).HasMaxLength(128).IsRequired();
             entity.Property(push => push.TokenCiphertext);
             entity.HasIndex(push => new { push.UserId, push.DeviceId, push.RevokedAt });
-            entity.HasIndex(push => push.TokenHash).IsUnique();
+            // A physical installation can retain two independently authenticated
+            // accounts. The routing address never transfers ownership between them.
+            entity.HasIndex(push => new { push.UserId, push.DeviceId, push.TokenHash }).IsUnique();
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(push => push.UserId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<DeviceRecord>().WithMany().HasForeignKey(push => push.DeviceId).OnDelete(DeleteBehavior.Cascade);
         });

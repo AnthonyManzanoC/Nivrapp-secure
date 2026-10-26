@@ -259,7 +259,7 @@
                     }
                   </span>
                   <ion-label class="item-copy">
-                    <strong class="conversation-title"><span>{{ chat.conversationTitle(conversation) }}</span>@if (chat.isConversationPinned(conversation.id)) { <ion-icon name="pin-outline" [attr.aria-label]="'CHATS.PINNED_TAG' | translate:'Fijado'"></ion-icon> }@if (chat.isConversationMuted(conversation.id)) { <ion-icon name="notifications-off-outline" [attr.aria-label]="'CHATS.MUTED_TAG' | translate:'Silenciado'"></ion-icon> }</strong>
+                    <strong class="conversation-title"><span>{{ chat.conversationTitle(conversation) }}</span>@if (chat.conversationIsNivraId(conversation)) { <small class="nivra-id-badge" [title]="'CHATS.NIVRA_ID_ACCOUNT' | translate:'Cuenta Nivra ID'" [attr.aria-label]="'CHATS.NIVRA_ID_ACCOUNT' | translate:'Cuenta Nivra ID'"><ion-icon name="finger-print-outline" aria-hidden="true"></ion-icon><span>ID</span></small> }@if (chat.isConversationPinned(conversation.id)) { <ion-icon name="pin-outline" [attr.aria-label]="'CHATS.PINNED_TAG' | translate:'Fijado'"></ion-icon> }@if (chat.isConversationMuted(conversation.id)) { <ion-icon name="notifications-off-outline" [attr.aria-label]="'CHATS.MUTED_TAG' | translate:'Silenciado'"></ion-icon> }</strong>
                     @if (conversationPreviewLoading(conversation)) {
                       <span class="conversation-preview-loading" aria-hidden="true"></span>
                     } @else if (conversationHistoryPending(conversation)) {
@@ -356,6 +356,7 @@
       <div class="chats-actions-menu" role="menu" (keydown)="onChatMenuKeydown($event)" [attr.aria-label]="'CHATS.MORE_ACTIONS' | translate:'Más opciones de chats'">
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('new-chat')"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.NEW_CHAT' | translate:'Nuevo chat' }}</button>
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('new-group')"><ion-icon name="people-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.NEW_GROUP' | translate:'Nuevo grupo' }}</button>
+        <button type="button" role="menuitem" (click)="chooseChatMenuAction('broadcasts')"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon>{{ 'BROADCAST.TITLE' | translate:'Listas de difusión' }}</button>
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('new-story')"><ion-icon name="image-outline" aria-hidden="true"></ion-icon>{{ 'WORLD.NEW_STORY' | translate:'Nueva historia' }}</button>
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('share-pass')"><ion-icon name="share-social-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.SHARE_PASS' | translate:'Compartir pase' }}</button>
         <span class="menu-divider" role="separator"></span>

@@ -25,6 +25,8 @@ public final class NivraOngoingCallService extends Service {
     private static volatile String requestedCallId = "";
     private static volatile String runningCallId = "";
     private static volatile boolean runningVideo;
+    private static volatile String requestedUserId = "";
+    private static volatile String requestedDeviceId = "";
     private PowerManager.WakeLock wakeLock;
     private String ownedCallId = "";
 
@@ -35,6 +37,9 @@ public final class NivraOngoingCallService extends Service {
     public static boolean hasActiveCall() { return !requestedCallId.isEmpty() || !runningCallId.isEmpty(); }
 
     public static void start(Context context, String callId, boolean video) {
+        org.json.JSONObject account = NivraNativePushRegistration.read(context);
+        requestedUserId = account == null ? "" : account.optString("userId");
+        requestedDeviceId = account == null ? "" : account.optString("deviceId");
         requestedCallId = callId;
         Intent intent = new Intent(context, NivraOngoingCallService.class)
             .putExtra("callId", callId)
@@ -56,6 +61,14 @@ public final class NivraOngoingCallService extends Service {
         }
         requestedCallId = "";
         context.stopService(new Intent(context, NivraOngoingCallService.class));
+    }
+
+    static void stopScope(Context context, String userId, String deviceId) {
+        if (NivraPushScopePolicy.matches(requestedUserId, requestedDeviceId, userId, deviceId)) stop(context, "");
+    }
+
+    static void stopScopeCall(Context context, String userId, String deviceId, String callId) {
+        if (NivraPushScopePolicy.matches(requestedUserId, requestedDeviceId, userId, deviceId)) stop(context, callId);
     }
 
     @Override
@@ -110,7 +123,10 @@ public final class NivraOngoingCallService extends Service {
         }
         Intent open = new Intent(this, MainActivity.class)
             .setAction(NivraNativePlugin.ACTION_CALL_OPEN)
+            .setData(android.net.Uri.parse("nivra://active-call/" + android.net.Uri.encode(NivraPushScopePolicy.notificationTag(requestedUserId, requestedDeviceId)) + "/" + android.net.Uri.encode(requestedCallId)))
             .putExtra("callId", requestedCallId)
+            .putExtra("recipientUserId", requestedUserId)
+            .putExtra("recipientDeviceId", requestedDeviceId)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         PendingIntent content = PendingIntent.getActivity(this, NOTIFICATION_ID, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL_ID)

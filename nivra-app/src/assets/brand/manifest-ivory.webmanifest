@@ -1,0 +1,14 @@
+{
+  "id": "/",
+  "name": "Nivra",
+  "short_name": "Nivra",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "theme_color": "#061014",
+  "background_color": "#061014",
+  "icons": [
+    { "src": "/assets/brand/launcher-ivory.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/assets/brand/launcher-ivory.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

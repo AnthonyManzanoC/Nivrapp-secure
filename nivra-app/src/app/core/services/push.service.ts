@@ -1,4 +1,4 @@
-import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import { FirebaseMessaging, Importance, Visibility, type Notification as NativeFcmNotification } from '@capacitor-firebase/messaging';
 import { LocalNotifications } from '@capacitor/local-notifications';
@@ -14,8 +14,12 @@ import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { NativeDeviceService } from './native-device.service';
 import { SignalrService } from './signalr.service';
+import { DeviceWipeService } from './device-wipe.service';
+import { CallsService } from './calls.service';
+import { DesktopInactivePushService } from './desktop-inactive-push.service';
+import { clearPendingWebPushClick, pendingWebPushAccountWipes, readPendingWebPushClick, savePushAccountScopes } from './push-account-scopes';
 
-type PushSource = 'web-fcm' | 'native-fcm' | 'service-worker-click' | 'native-action' | 'realtime';
+type PushSource = 'web-fcm' | 'native-fcm' | 'service-worker-click' | 'native-action' | 'realtime' | 'desktop-inactive';
 type PushRegistration = { provider: 'fcm' | 'fcm-fid' | 'webpush'; token: string };
 
 const FIREBASE_APP_NAME = 'nivra';
@@ -50,13 +54,20 @@ export class PushService {
   private readonly nativeDevice = inject(NativeDeviceService);
   private readonly realtime = inject(SignalrService);
   private readonly toastController = inject(ToastController);
+  private readonly deviceWipe = inject(DeviceWipeService);
+  private readonly calls = inject(CallsService);
+  private readonly desktop = inject(DesktopInactivePushService);
+  private readonly destroyRef = inject(DestroyRef);
   private foregroundBound = false;
   private serviceWorkerBound = false;
   private nativeBound = false;
   private initializing = false;
   private observedNativeSession = false;
+  private registrationEpoch = 0;
+  private scopeSync: Promise<void> = Promise.resolve();
   private webConfigPromise?: Promise<ResolvedFirebaseWebConfig | null>;
   private readonly visualDedupe = new Map<string, number>();
+  private readonly browserCallNotifications = new Map<string, Notification>();
 
   readonly supported = signal(false);
   readonly permission = signal<NotificationPermission | 'unsupported'>('default');
@@ -68,20 +79,29 @@ export class PushService {
   readonly nativeBackgroundReady = computed(() => this.permission() === 'granted' && this.serverReady() && Boolean(this.tokenId()));
 
   constructor() {
+    const desktopEvents = this.desktop.events$.subscribe(data => void this.handlePushData(data, 'desktop-inactive').catch(() => undefined));
+    this.destroyRef.onDestroy(() => { desktopEvents.unsubscribe(); for (const notification of this.browserCallNotifications.values()) notification.close(); });
+    void this.deviceWipe.processPendingAccountWipes().catch(() => undefined);
+    void this.consumePendingPushIntent().catch(() => undefined);
+    void this.nativeDevice.addPushIntentListener(event => {
+      if (event.data) void this.handlePushData({ ...event.data, nivraRouteIntent: 'tap' }, 'native-action').then(async () => {
+        if (this.isCurrentRecipient(event.data!)) await this.nativeDevice.clearPendingPushIntent();
+      }).catch(() => undefined);
+    }).catch(() => undefined);
     effect(() => {
       const session = this.auth.session();
+      const saved = this.auth.savedAccounts();
       // Endpoint changes and the first verified cluster pin must reach the sleeping native worker.
       this.api.baseUrl;
       this.api.clusterFingerprint;
-      if (!Capacitor.isNativePlatform()) return;
-      if (session?.tokens.refreshToken) {
+      if (session?.tokens.refreshToken || saved.length) {
         this.observedNativeSession = true;
-        if (this.nativeBound) void this.syncNativeRegistration().catch(() => undefined);
+        void this.syncNativeRegistration().catch(() => undefined);
       } else if (this.observedNativeSession) {
         this.observedNativeSession = false;
         this.tokenId.set(null);
         this.serverReady.set(false);
-        void this.nativeDevice.clearPushRegistration().catch(() => undefined);
+        void this.syncNativeRegistration().catch(() => undefined);
       }
     });
   }
@@ -103,6 +123,8 @@ export class PushService {
         return false;
       }
       this.bindServiceWorkerMessages();
+      await this.consumePendingWebPushIntent();
+      if (this.isElectronRuntime()) return this.initializeDesktopNotifications(options);
       if (Capacitor.isNativePlatform()) {
         return await this.initializeNativeFirebase(options);
       }
@@ -203,12 +225,12 @@ export class PushService {
       return;
     }
     navigator.serviceWorker.addEventListener('message', (event) => {
-      this.handleServiceWorkerMessage(event.data);
+      this.handleServiceWorkerMessage(event.data, () => event.ports?.[0]?.postMessage({ handled: true }));
     });
     this.serviceWorkerBound = true;
   }
 
-  private handleServiceWorkerMessage(raw: unknown): void {
+  private handleServiceWorkerMessage(raw: unknown, acknowledge?: () => void): void {
     const payload = raw as { type?: string; intent?: string; data?: Record<string, string> } | null;
     if (payload?.type !== 'nivra.push' && payload?.type !== 'nivra.push.received') return;
     const data = this.normalizeWebData(payload.data ?? {});
@@ -219,7 +241,12 @@ export class PushService {
       || (payload.intent === undefined && data['nivraRouteIntent'] === 'tap'));
     if (clicked) data['nivraRouteIntent'] = 'tap';
     else delete data['nivraRouteIntent'];
-    void this.handlePushData(data, clicked ? 'service-worker-click' : 'web-fcm');
+    void this.handlePushData(data, clicked ? 'service-worker-click' : 'web-fcm').then(async () => {
+      if (clicked && this.isCurrentRecipient(data)) await clearPendingWebPushClick();
+      const active = this.auth?.session?.();
+      if (!clicked && this.isAppInteractive() && active?.user.id === data['recipientUserId']
+        && active?.device.id === data['recipientDeviceId']) acknowledge?.();
+    }).catch(() => undefined);
   }
 
   private async initializeDesktopNotifications(options: { requestPermission?: boolean }): Promise<boolean> {
@@ -230,6 +257,7 @@ export class PushService {
     }
     this.supported.set(true);
     const permission = await this.ensureWebNotificationPermission(options.requestPermission === true);
+    if (permission === 'granted') this.desktop.enable();
     return permission === 'granted';
   }
 
@@ -264,13 +292,42 @@ export class PushService {
   }
 
   private async syncNativeRegistration(): Promise<void> {
-    const session = this.auth.session();
-    if (!session?.tokens.refreshToken || !Capacitor.isNativePlatform()) return;
-    await this.nativeDevice.syncPushRegistration({
-      apiBaseUrl: this.api.baseUrl, userId: session.user.id, deviceId: session.device.id,
-      clusterFingerprint: this.api.clusterFingerprint,
-      accessToken: session.tokens.accessToken, refreshToken: session.tokens.refreshToken,
+    const epoch = ++this.registrationEpoch;
+    this.scopeSync = this.scopeSync.catch(() => undefined).then(async () => {
+      const sessions = await this.auth.storedSessionCredentials();
+      if (epoch !== this.registrationEpoch) return;
+      const active = this.auth.session();
+      const scope = active ? { userId: active.user.id, deviceId: active.device.id } : undefined;
+      await savePushAccountScopes(sessions.map(session => ({ userId: session.user.id, deviceId: session.device.id,
+        hideNotificationContent: session.user.privacySettings?.hideNotificationContent === true })), scope);
+      if (epoch !== this.registrationEpoch || !Capacitor.isNativePlatform()) return;
+      await this.nativeDevice.syncPushRegistrations(sessions.filter(session => session.tokens.refreshToken).map(session => ({
+        apiBaseUrl: this.api.baseUrl, clusterFingerprint: this.api.clusterFingerprint,
+        userId: session.user.id, deviceId: session.device.id,
+        accessToken: session.tokens.accessToken, refreshToken: session.tokens.refreshToken,
+      })), scope);
     });
+    return this.scopeSync;
+  }
+
+  private async consumePendingPushIntent(): Promise<void> {
+    const data = await this.nativeDevice.pendingPushIntent();
+    if (!data) return;
+    // Auth restoration owns account adoption; wait for its protected registry.
+    await this.auth.storedSessionCredentials();
+    await this.handlePushData({ ...data, nivraRouteIntent: 'tap' }, 'native-action');
+    if (this.isCurrentRecipient(data)) await this.nativeDevice.clearPendingPushIntent();
+  }
+
+  private async consumePendingWebPushIntent(): Promise<void> {
+    const data = await readPendingWebPushClick();
+    if (!data) return;
+    await this.handlePushData({ ...data, nivraRouteIntent: 'tap' }, 'service-worker-click');
+    if (this.isCurrentRecipient(data)) await clearPendingWebPushClick();
+  }
+
+  private isCurrentRecipient(data: Record<string, string>): boolean {
+    return this.auth.session()?.user.id === data['recipientUserId'] && this.auth.session()?.device.id === data['recipientDeviceId'];
   }
 
   private async resolveWebFirebaseConfig(): Promise<ResolvedFirebaseWebConfig | null> {
@@ -618,8 +675,9 @@ export class PushService {
 
   private async registerServerToken(token: string, provider: PushRegistration['provider'] = 'fcm'): Promise<void> {
     const initial = this.auth.session();
+    const generation = this.auth.sessionGeneration?.();
     const sameAccount = () => Boolean(initial && this.auth.session()?.user.id === initial.user.id &&
-      this.auth.session()?.device.id === initial.device.id);
+      this.auth.session()?.device.id === initial.device.id && this.auth.sessionGeneration?.() === generation);
     if (!await this.auth.ensureFreshSession()) {
       throw new Error('Sesion vencida; no se pudo registrar el token push.');
     }
@@ -631,6 +689,19 @@ export class PushService {
     if (!sameAccount()) return;
     this.tokenId.set(response.id);
     this.serverReady.set(Capacitor.isNativePlatform() ? response.fcmReady ?? response.serverReady : response.serverReady);
+    if (!Capacitor.isNativePlatform()) {
+      // The refresh credential authorizes this one membership operation only;
+      // it neither switches the UI nor rotates the sleeping account's session.
+      for (const saved of await this.auth.storedSessionCredentials()) {
+        if (saved.user.id === initial!.user.id && saved.device.id === initial!.device.id) continue;
+        await this.api.fetch('/push-tokens/native-renew', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: saved.user.id, deviceId: saved.device.id,
+            refreshToken: saved.tokens.refreshToken, token, provider: provider === 'webpush' ? 'webpush' : 'fcm' }),
+        }, true).catch(() => undefined);
+      }
+      await this.syncNativeRegistration();
+    }
   }
 
   private async handleNativeNotification(notification: NativeFcmNotification, actionId = ''): Promise<void> {
@@ -645,29 +716,65 @@ export class PushService {
 
   private async handlePushData(rawData: Record<string, string>, source: PushSource): Promise<void> {
     const data = this.normalizeWebData(rawData);
+    const clicked = source === 'service-worker-click' || source === 'native-action';
+    if (!clicked) {
+      delete data['nivraRouteIntent'];
+      delete data['action'];
+    }
     const session = this.auth.session();
-    if (!session || (data['recipientUserId'] && data['recipientUserId'] !== session.user.id) ||
-      (data['recipientDeviceId'] && data['recipientDeviceId'] !== session.device.id)) return;
-    this.lastMessage.set({ data } as MessagePayload);
-
+    if (source === 'realtime' && session) {
+      data['recipientUserId'] ||= session.user.id;
+      data['recipientDeviceId'] ||= session.device.id;
+    }
+    const userId = data['recipientUserId']; const deviceId = data['recipientDeviceId'];
+    if (!userId || !deviceId) return;
+    const sessions = await this.auth.storedSessionCredentials();
     const type = this.normalizePushType(data['type']);
-    if (type === 'contact-joined') {
+    const savedRecipient = sessions.some(saved => saved.user.id === userId && saved.device.id === deviceId);
+    if (type === 'force-wipe' && data['code'] === 'FORCE_WIPE') {
+      const pending = [...await this.nativeDevice.pendingPushAccountWipes(), ...await pendingWebPushAccountWipes()];
+      if (!savedRecipient && !pending.some(scope => scope.userId === userId && scope.deviceId === deviceId)) return;
+      await this.deviceWipe.wipeAccount({ userId, deviceId });
+      return;
+    }
+    if (!savedRecipient) return;
+    const active = () => this.auth.session()?.user.id === userId && this.auth.session()?.device.id === deviceId;
+    if (clicked && !active()) {
+      if (this.calls.activeCall() || this.calls.resumableCall()) {
+        this.error.set('Finaliza la llamada actual antes de abrir la otra cuenta.');
+        return;
+      }
+      // Receipt never changes accounts. An explicit tap must finish exact-scope
+      // adoption before routing or a call action is exposed to app services.
+      if (!await this.auth.switchToStoredAccount(userId, deviceId) || !active()) return;
+      // An inactive call notification opens the correct account's call screen;
+      // it cannot carry an accept/decline command across credentials.
+      delete data['action'];
+    }
+    if (active()) this.lastMessage.set({ data } as MessagePayload);
+
+    if (type === 'contact-joined' && active()) {
       this.contactSync.markContactJoinedHint();
     }
-    if (type === 'end-call' || type === 'missed-call' || type === 'call-ended') {
-      await this.cancelCallNotification(data['callId']);
+    if (type === 'end-call' || type === 'missed-call' || type === 'call-ended' || type === 'call-rejected') {
+      await this.cancelCallNotification(data['callId'], { userId, deviceId });
+      if (source === 'desktop-inactive' && type !== 'missed-call') return;
     }
     if (data['action'] === 'decline') {
-      await this.cancelCallNotification(data['callId']);
+      await this.cancelCallNotification(data['callId'], { userId, deviceId });
     }
 
     if (data['nivraRouteIntent'] === 'tap' || data['action'] === 'accept' || data['action'] === 'decline') {
       return;
     }
-    if (source === 'web-fcm' && this.realtime.connected()) {
+    if (source === 'web-fcm' && active() && this.realtime.connected()) {
       return;
     }
     if (this.shouldSkipVisual(data)) {
+      return;
+    }
+    if (source === 'desktop-inactive') {
+      await this.showBrowserNotification(data);
       return;
     }
     if (this.isAppInteractive()) {
@@ -762,6 +869,12 @@ export class PushService {
     };
     (options as NotificationOptions & { renotify?: boolean }).renotify = visual.requireInteraction;
     const notification = new Notification(visual.title, options);
+    if (data['callId']) {
+      const key = JSON.stringify([data['recipientUserId'], data['recipientDeviceId'], data['callId']]);
+      this.browserCallNotifications.get(key)?.close();
+      this.browserCallNotifications.set(key, notification);
+      notification.onclose = () => { if (this.browserCallNotifications.get(key) === notification) this.browserCallNotifications.delete(key); };
+    }
     notification.onclick = () => {
       window.focus();
       notification.close();
@@ -770,12 +883,7 @@ export class PushService {
   }
 
   private openFromPush(data: Record<string, string>): void {
-    this.lastMessage.set(({
-      data: {
-        ...data,
-        nivraRouteIntent: 'tap',
-      },
-    } as unknown) as MessagePayload);
+    void this.handlePushData({ ...data, nivraRouteIntent: 'tap' }, 'service-worker-click');
   }
 
   private dataFromRealtimeEvent(event: RealtimeEvent): Record<string, string> | null {
@@ -845,11 +953,21 @@ export class PushService {
 
   private async visualForData(data: Record<string, string>): Promise<{ title: string; body: string; tag: string; requireInteraction: boolean }> {
     const type = this.normalizePushType(data['type']);
-    const tag = data['tag'] || data['callId'] || data['messageId'] || 'nivra-event';
+    const tag = `${data['recipientUserId'] || ''}:${data['recipientDeviceId'] || ''}:${data['tag'] || data['callId'] || data['messageId'] || 'nivra-event'}`;
+    const current = this.auth.session();
+    const generation = this.auth.sessionGeneration?.();
+    if (data['recipientUserId'] !== current?.user.id || data['recipientDeviceId'] !== current?.device.id) {
+      return { title: 'Nivra', body: type.includes('call') ? 'Llamada en tu otra cuenta' : 'Nueva actividad en tu otra cuenta', tag,
+        requireInteraction: type === 'incoming-call' || type === 'incomingcall' };
+    }
     if (this.hideNotificationContent() && type === 'message') {
       return { title: 'Nivra', body: 'Nuevo mensaje', tag, requireInteraction: false };
     }
     const preview = await this.decryptPreviewIfPresent(data);
+    if (this.auth.sessionGeneration?.() !== generation || this.auth.session()?.user.id !== current.user.id
+      || this.auth.session()?.device.id !== current.device.id || this.hideNotificationContent()) {
+      return { title: 'Nivra', body: 'Nueva actividad privada', tag, requireInteraction: false };
+    }
     if (preview) {
       return {
         title: preview.title || 'Nivra',
@@ -889,6 +1007,8 @@ export class PushService {
     }
     try {
       const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+      if (own.userId !== current.user.id || (data['recipientUserId'] && data['recipientUserId'] !== own.userId)
+        || (data['recipientDeviceId'] && data['recipientDeviceId'] !== current.device.id)) return null;
       const preview = await this.crypto.decryptEnvelope<{ title?: unknown; body?: unknown }>(own, header, ciphertext);
       return {
         title: typeof preview.title === 'string' ? preview.title.slice(0, 80) : undefined,
@@ -899,11 +1019,17 @@ export class PushService {
     }
   }
 
-  private async cancelCallNotification(callId?: string): Promise<void> {
-    if (!callId || !Capacitor.isNativePlatform()) {
+  private async cancelCallNotification(callId?: string, scope?: { userId: string; deviceId: string }): Promise<void> {
+    if (!callId) return;
+    if (!Capacitor.isNativePlatform()) {
+      const key = JSON.stringify([scope?.userId, scope?.deviceId, callId]);
+      this.browserCallNotifications.get(key)?.close(); this.browserCallNotifications.delete(key);
       return;
     }
-    await this.nativeDevice.clearIncomingCall(callId).catch(() => undefined);
+    await this.nativeDevice.clearIncomingCall(callId, scope).catch(() => undefined);
+    // Legacy local call IDs were unscoped. Only the active account can clear
+    // those old notices; inactive terminal events use the scoped native path.
+    if (scope && (scope.userId !== this.auth.session()?.user.id || scope.deviceId !== this.auth.session()?.device.id)) return;
     await LocalNotifications.cancel({
       notifications: [{ id: this.callNotificationId(callId) }],
     }).catch(() => undefined);
@@ -1001,7 +1127,7 @@ export class PushService {
   }
 
   private shouldSkipVisual(data: Record<string, string>): boolean {
-    const key = data['tag'] || data['messageId'] || data['callId'] || JSON.stringify(data);
+    const key = `${data['recipientUserId'] || ''}:${data['recipientDeviceId'] || ''}:${data['tag'] || data['messageId'] || data['callId'] || JSON.stringify(data)}`;
     const now = Date.now();
     for (const [tag, at] of this.visualDedupe.entries()) {
       if (now - at > 9000) {

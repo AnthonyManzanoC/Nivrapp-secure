@@ -1,4 +1,5 @@
 <ion-app [class.nivra-access-locked]="appLock.isContentLocked()" [attr.inert]="appLock.isContentLocked() ? '' : null" [attr.aria-hidden]="appLock.isContentLocked() ? 'true' : null">
+  @if (accountView.ready()) {
   <ion-router-outlet [attr.inert]="appLock.isContentLocked() || dailyLaunch.visible() ? '' : null"></ion-router-outlet>
   @if (showCallBanner()) {
     @if (calls.activeCall(); as call) {
@@ -28,6 +29,9 @@
       </div>
       <small class="daily-launch-footer"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'LAUNCH.PROTECTED' | translate:'Tu privacidad, siempre presente' }}</small>
     </div>
+  }
+  } @else {
+    <div class="account-transition" role="status" aria-live="polite"><img src="assets/brand/nivra-mark.svg" alt="" width="48" height="48"><span>{{ 'ACCOUNT.SWITCHING' | translate:'Preparando tu cuenta…' }}</span></div>
   }
 </ion-app>
 <app-lock-screen></app-lock-screen>

@@ -34,6 +34,8 @@ import { AndroidUpdateService } from './core/services/android-update.service';
 import { AndroidUpdateDialogComponent } from './shared/android-update-dialog.component';
 import { DesktopUpdateService } from './core/services/desktop-update.service';
 import { DesktopUpdateDialogComponent } from './shared/desktop-update-dialog.component';
+import { LauncherAppearanceService } from './core/services/launcher-appearance.service';
+import { AccountViewBoundaryService } from './core/services/account-view-boundary.service';
 
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 interface NativeStatusBarSurface {
@@ -49,6 +51,7 @@ interface NativeStatusBarSurface {
   imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent, HistoryApprovalDialogComponent, AndroidUpdateDialogComponent, DesktopUpdateDialogComponent],
 })
 export class AppComponent {
+  readonly accountView = inject(AccountViewBoundaryService);
   private readonly zone = inject(NgZone);
   private lastPushResume = 0;
   private resumePromise: Promise<void> | null = null;
@@ -73,6 +76,7 @@ export class AppComponent {
   private readonly unreadTab = inject(UnreadTabService);
   private readonly androidUpdates = inject(AndroidUpdateService);
   private readonly desktopUpdates = inject(DesktopUpdateService);
+  private readonly launcherAppearance = inject(LauncherAppearanceService);
   private readonly now = signal(Date.now());
   private readonly currentUrl = signal(this.router.url);
   private readonly foreground = signal(document.visibilityState !== 'hidden');
@@ -191,21 +195,25 @@ export class AppComponent {
 
     effect(() => {
       const request = this.auth.forceWipeRequested();
-      if (request > 0) {
-        untracked(() => void this.deviceWipe.nukeDevice());
+      const scope = this.auth.forceWipeScope();
+      if (request > 0 && scope && scope.generation === this.auth.sessionGeneration()) {
+        untracked(() => void this.deviceWipe.wipeAccount(scope));
       }
     });
 
     effect(() => {
       const message = this.push.lastMessage();
       const data = message?.data as Record<string, string> | undefined;
-      if (!this.auth.isAuthenticated() || !data) {
+      if (!this.auth.isAuthenticated() || !data || !this.accountView.ready()) {
         return;
       }
       if (data['nivraRouteIntent'] !== 'tap') {
         return;
       }
-      const key = data['tag'] || data['messageId'] || data['callId'] || JSON.stringify(data);
+      const session = this.auth.session()!;
+      if ((data['recipientUserId'] && data['recipientUserId'] !== session.user.id)
+        || (data['recipientDeviceId'] && data['recipientDeviceId'] !== session.device.id)) return;
+      const key = `${session.user.id}:${session.device.id}:${data['tag'] || data['messageId'] || data['callId'] || JSON.stringify(data)}`;
       if (key === this.lastPushRouteKey) {
         return;
       }
@@ -216,7 +224,7 @@ export class AppComponent {
       } else if (pushType === 'contact-joined') {
         void this.router.navigateByUrl('/app/world');
       } else if (data['conversationId']) {
-        void this.router.navigateByUrl(`/app/chats/${data['conversationId']}`);
+        void this.router.navigateByUrl(`/app/chats/${encodeURIComponent(data['conversationId'])}`);
       }
     });
   }
@@ -475,9 +483,12 @@ export class AppComponent {
 
   private shouldForceWipe(event: { type: string; payload: unknown }): boolean {
     const payload = event.payload && typeof event.payload === 'object'
-      ? event.payload as { code?: unknown; deviceId?: unknown }
+      ? event.payload as { code?: unknown; deviceId?: unknown; userId?: unknown }
       : null;
     const currentDeviceId = this.auth.session()?.device.id;
+    const currentUserId = this.auth.session()?.user.id;
+    if (!currentUserId || !currentDeviceId || payload?.deviceId !== currentDeviceId
+      || (payload.userId && payload.userId !== currentUserId)) return false;
     if (event.type === 'FORCE_WIPE') {
       return !payload?.deviceId || payload.deviceId === currentDeviceId;
     }

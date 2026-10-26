@@ -1,7 +1,7 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnDestroy, OnInit, inject } from '@angular/core';
+import { Component, OnDestroy, OnInit, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, ToastController } from '@ionic/angular/standalone';
+import { IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, ToastController } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
   addOutline,
@@ -31,7 +31,7 @@ import {
   timeOutline,
   trashOutline,
 } from 'ionicons/icons';
-import { ChatMessageVm, Contact, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
+import { ChatMessageVm, Contact, FriendRequest, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { ContactSyncService } from '../../core/services/contact-sync.service';
@@ -44,6 +44,8 @@ import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { StoryActivityComponent } from '../story-viewer/story-activity.component';
 import { GroupHubComponent } from './group-hub.component';
 import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
+import { identityDisplayName } from '../../core/utils/nivra-identity';
+import { friendRequestStatus } from '../../core/services/social-connections.helpers';
 
 interface StoryBucket {
   id: string;
@@ -61,7 +63,7 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryActivityComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryActivityComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })
@@ -99,8 +101,25 @@ export class WorldPage implements OnInit, OnDestroy {
   private storyTransitionInFlight = false;
   private pointerStartedAt = 0;
   private pointerStartY = 0;
+  private destroyed = false;
+  private uiRevision = 0;
+  private searchRevision = 0;
+  private readonly runningActions = new Set<string>();
+  private uiScope = this.accountScope();
+  readonly personName = identityDisplayName;
 
   constructor() {
+    effect(() => {
+      const scope = this.accountScope();
+      untracked(() => {
+        if (scope === this.uiScope) return;
+        this.uiScope = scope;
+        ++this.uiRevision; ++this.searchRevision;
+        if (this.timer !== null) window.clearTimeout(this.timer);
+        this.query = ''; this.radarPhones = ''; this.notice = ''; this.error = ''; this.busyId = '';
+        this.runningActions.clear(); this.storyComposerOpen = false; this.stopStoryProgress();
+      });
+    });
     addIcons({
       addOutline,
       barChartOutline,
@@ -133,10 +152,12 @@ export class WorldPage implements OnInit, OnDestroy {
 
   async ngOnInit(): Promise<void> {
     await this.social.load();
-    void this.contactSync.syncCachedContactsInBackground();
+    if (!this.destroyed) void this.contactSync.syncCachedContactsInBackground();
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
+    ++this.uiRevision; ++this.searchRevision;
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
     }
@@ -147,7 +168,17 @@ export class WorldPage implements OnInit, OnDestroy {
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
     }
-    this.timer = window.setTimeout(() => void this.social.search(this.query), 300);
+    const query = this.query;
+    const scope = this.accountScope();
+    const revision = ++this.searchRevision;
+    // Invalidate an older in-flight query immediately, including when clearing input.
+    void this.social.search('');
+    if (query.trim().length < 2) return;
+    this.timer = window.setTimeout(() => {
+      void this.social.search(query).catch(error => {
+        if (!this.destroyed && scope === this.accountScope() && revision === this.searchRevision) this.error = error instanceof Error ? error.message : this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la acción.');
+      });
+    }, 300);
   }
 
   openStoryComposer(): void {
@@ -156,22 +187,25 @@ export class WorldPage implements OnInit, OnDestroy {
   }
 
   async request(person: UserSummary): Promise<void> {
-    await this.run(person.id, async () => {
+    await this.run(person.id, async current => {
       await this.social.requestFriend(person);
-      this.notice = this.tr('WORLD.NOTICE_REQUEST_SENT', 'Solicitud enviada.');
+      if (current()) this.notice = this.social.incomingRequests().some(request => request.from.id === person.id)
+        ? this.tr('WORLD.NOTICE_REQUEST_RECEIVED', 'Esta persona ya te ha enviado una solicitud. Revísala en Recibidas.')
+        : this.tr('WORLD.NOTICE_REQUEST_SENT', 'Solicitud enviada.');
     });
   }
 
   async addContact(person: UserSummary): Promise<void> {
-    await this.run(`contact:${person.id}`, async () => {
+    await this.run(`contact:${person.id}`, async current => {
       await this.social.addContact(person);
-      this.notice = this.tr('WORLD.NOTICE_CONTACT_SAVED', 'Contacto guardado.');
+      if (current()) this.notice = this.tr('WORLD.NOTICE_CONTACT_SAVED', 'Contacto guardado.');
     });
   }
 
   async scanRadar(): Promise<void> {
-    await this.run('radar', async () => {
+    await this.run('radar', async current => {
       const response = await this.social.scanPhoneRadar(this.radarPhones);
+      if (!current()) return;
       if (response.matched) {
         this.notice = this.social.radarNewCount()
           ? `${this.social.radarNewCount()} contacto nuevo en Nivra.`
@@ -184,10 +218,12 @@ export class WorldPage implements OnInit, OnDestroy {
   }
 
   async pickDeviceContacts(): Promise<void> {
-    await this.run('radar:picker', async () => {
+    await this.run('radar:picker', async current => {
       const phones = await this.contactSync.pickAndSyncDeviceContacts();
+      if (!current()) return;
       this.radarPhones = phones.join('\n');
       await this.scanRadar();
+      if (!current()) return;
       if (!this.social.radarMatches().length && this.contactSync.lastDeviceContactCount()) {
         this.notice = `${this.contactSync.lastDeviceContactCount()} ${this.tr('WORLD.CONTACTS_SYNCED_HINT', 'telefonos sincronizados. Si alguno visible usa Nivra, aparecera aqui.')}`;
       }
@@ -195,8 +231,9 @@ export class WorldPage implements OnInit, OnDestroy {
   }
 
   async openPerson(person: UserSummary): Promise<void> {
-    await this.run(`open:${person.id}`, async () => {
+    await this.run(`open:${person.id}`, async current => {
       const conversation = await this.chat.createDirectConversation(person);
+      if (!current()) return;
       await this.router.navigateByUrl(`/app/chats/${conversation.id}`);
     });
   }
@@ -213,9 +250,9 @@ export class WorldPage implements OnInit, OnDestroy {
     if (!window.confirm(`Eliminar @${contact.alias} de tus contactos?`)) {
       return;
     }
-    await this.run(`remove:${contact.userId}`, async () => {
+    await this.run(`remove:${contact.userId}`, async current => {
       await this.social.deleteContact(contact);
-      this.notice = this.tr('WORLD.NOTICE_CONTACT_DELETED', 'Contacto eliminado.');
+      if (current()) this.notice = this.tr('WORLD.NOTICE_CONTACT_DELETED', 'Contacto eliminado.');
     });
   }
 
@@ -391,8 +428,9 @@ export class WorldPage implements OnInit, OnDestroy {
       return;
     }
     const removingReaction = story.myReaction === emoji;
-    await this.run(`react:${story.id}`, async () => {
+    await this.run(`react:${story.id}`, async current => {
       await this.social.reactStory(story, emoji);
+      if (!current()) return;
       this.reactionsOpen = false;
       this.resumeStoryProgress();
       this.notice = removingReaction
@@ -407,8 +445,9 @@ export class WorldPage implements OnInit, OnDestroy {
     if (this.isMine(story) || !this.canRepostStory(story)) {
       return;
     }
-    await this.run(`repost:${story.id}`, async () => {
+    await this.run(`repost:${story.id}`, async current => {
       await this.social.repostStory(story);
+      if (!current()) return;
       this.notice = this.social.storyDeliveryWarning() ||
         `${this.tr('WORLD.REPOSTED_FROM', 'Reposteado de')} @${story.owner.alias}.`;
     });
@@ -419,21 +458,25 @@ export class WorldPage implements OnInit, OnDestroy {
     if (!text || this.isMine(story)) {
       return;
     }
-    await this.run(`reply:${story.id}`, async () => {
+    await this.run(`reply:${story.id}`, async current => {
       const conversation = await this.chat.createDirectConversation(story.owner);
+      if (!current()) return;
       const message = await this.chat.sendText(conversation, text, {
         replyTo: this.storyReplyReference(story),
       });
+      if (!current()) return;
       // Sending committed before activity metadata; retrying must not duplicate the reply.
       await this.social.commentStory(story, message?.id ?? null).catch(() => undefined);
+      if (!current()) return;
       this.storyReply = '';
       this.notice = this.tr('WORLD.NOTICE_REPLY_SENT', 'Respuesta enviada al chat.');
     });
   }
 
   async deleteStory(story: Story): Promise<void> {
-    await this.run(`delete:${story.id}`, async () => {
+    await this.run(`delete:${story.id}`, async current => {
       await this.social.deleteStory(story);
+      if (!current()) return;
       this.notice = this.tr('WORLD.NOTICE_STORY_DELETED', 'Historia eliminada.');
     });
   }
@@ -509,7 +552,7 @@ export class WorldPage implements OnInit, OnDestroy {
 
   isGhostMode(): boolean {
     const user = this.auth.session()?.user;
-    return !user?.phone || user.isDiscoverable === false;
+    return user?.isDiscoverable === false;
   }
 
   radarCountLabel(): string {
@@ -542,6 +585,7 @@ export class WorldPage implements OnInit, OnDestroy {
   contactAsPerson(contact: Contact): UserSummary {
     return {
       id: contact.userId,
+      nivraNumber: contact.nivraNumber,
       alias: contact.alias,
       displayName: contact.displayName,
       profilePhotoDataUrl: contact.profilePhotoDataUrl,
@@ -549,26 +593,54 @@ export class WorldPage implements OnInit, OnDestroy {
       isDiscoverable: true,
       allowStoryReposts: true,
       isContact: true,
-      isMutualContact: true,
+      isMutualContact: contact.isMutualContact,
       isFavorite: contact.isFavorite,
-      friendshipState: 'friends',
+      friendshipState: contact.isMutualContact ? 'friends' : 'none',
     };
   }
 
-  private async run(id: string, action: () => Promise<void>): Promise<void> {
+  private async run(id: string, action: (current: () => boolean) => Promise<void>): Promise<void> {
+    if (this.destroyed || this.runningActions.has(id)) return;
+    const scope = this.accountScope();
+    const revision = this.uiRevision;
+    const current = () => !this.destroyed && this.uiRevision === revision && this.accountScope() === scope;
+    this.runningActions.add(id);
     this.busyId = id;
     this.error = '';
     this.notice = '';
     try {
-      await action();
+      await action(current);
     } catch (error) {
+      if (!current()) return;
       this.error = error instanceof Error ? error.message : this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
       if (this.isUploadLimitError(this.error)) {
         await this.showPremiumToast(this.error);
       }
     } finally {
-      this.busyId = '';
+      if (current()) {
+        this.runningActions.delete(id);
+        this.busyId = [...this.runningActions].pop() ?? '';
+      }
     }
+  }
+
+  isBusy(id: string): boolean { return this.runningActions.has(id); }
+  personBusy(personId: string): boolean { return this.social.connectionActions().includes(`person:${personId}`); }
+  requestPerson(request: FriendRequest): UserSummary { return request.from.id === this.auth.session()?.user.id ? request.to : request.from; }
+  requestBusy(request: FriendRequest): boolean { return this.personBusy(this.requestPerson(request).id) || this.isBusy(request.id); }
+  requestStatus(request: FriendRequest): string {
+    const status = friendRequestStatus(request);
+    return status === 'pending' ? this.tr('WORLD.REQUEST_PENDING', 'Pendiente') : status === 'accepted' ? this.tr('WORLD.REQUEST_ACCEPTED', 'Aceptada') : status === 'rejected' ? this.tr('WORLD.REQUEST_REJECTED', 'Rechazada') : status === 'cancelled' ? this.tr('WORLD.REQUEST_CANCELLED', 'Cancelada') : this.tr('WORLD.REQUEST_CLOSED', 'Cerrada');
+  }
+  friendshipLabel(person: UserSummary): string {
+    const state = person.friendshipState?.toLowerCase();
+    return state === 'friends' || person.isMutualContact ? this.tr('WORLD.FRIENDS', 'Contactos mutuos') : state === 'incoming' ? this.tr('WORLD.REQUEST_RECEIVED', 'Solicitud recibida') : state === 'requested' ? this.tr('WORLD.REQUEST_SENT', 'Solicitud enviada') : person.isContact ? this.tr('WORLD.CONTACT_SAVED', 'Contacto guardado') : this.tr('WORLD.NO_REQUEST', 'Sin solicitud');
+  }
+  reviewRequests(): void {
+    document.getElementById('friend-requests')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+  }
+  private accountScope(): string {
+    const session = this.auth.session(); return session ? `${session.user.id}:${session.device.id}` : '';
   }
 
   private tr(key: string, fallback: string): string {

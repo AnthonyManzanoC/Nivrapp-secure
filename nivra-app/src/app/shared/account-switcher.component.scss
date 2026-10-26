@@ -1,0 +1,33 @@
+:host { display: block; }
+.account-switcher { padding: 18px; border: 1px solid var(--nivra-line); border-radius: 20px; background: var(--nivra-panel); color: var(--nivra-text); }
+.accounts-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+h3 { margin: 0 0 6px; font-size: 1rem; font-weight: 700; }
+p { margin: 0; font-size: .8rem; line-height: 1.5; color: var(--nivra-muted); }
+.account-count { padding: 5px 9px; border-radius: 10px; font-size: .75rem; background: var(--nivra-panel-2); white-space: nowrap; }
+.account-list { display: grid; gap: 8px; }
+.account-row { display: flex; align-items: center; gap: 4px; padding: 4px; border: 1px solid var(--nivra-line); border-radius: 14px; }
+.account-row.active { border-color: color-mix(in srgb, var(--nivra-brand-2) 45%, transparent); background: color-mix(in srgb, var(--nivra-brand-2) 5%, transparent); }
+button { font: inherit; cursor: pointer; color: inherit; }
+button:focus-visible { outline: 2px solid var(--nivra-brand-2); outline-offset: 3px; }
+button:disabled { cursor: default; }
+.account-select { display: flex; align-items: center; flex: 1; min-width: 0; gap: 10px; border: 0; background: transparent; text-align: start; padding: 8px; border-radius: 10px; }
+.account-avatar { display: grid; place-items: center; width: 42px; height: 42px; flex: 0 0 42px; border-radius: 50%; overflow: hidden; background: var(--nivra-panel-2); font-size: 22px; }
+.account-avatar img { width: 100%; height: 100%; object-fit: cover; }
+.account-identity { display: grid; flex: 1; gap: 4px; min-width: 0; }
+.account-identity strong, .account-identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.account-identity strong { font-size: .86rem; }
+.account-identity small { font-size: .74rem; color: var(--nivra-muted); }
+.active-mark { display: flex; gap: 4px; align-items: center; color: var(--nivra-brand-2); font-size: .68rem; }
+.active-mark ion-icon { font-size: 17px; }
+.remove-account { display: grid; place-items: center; width: 38px; height: 38px; border: 0; border-radius: 10px; background: transparent; color: var(--nivra-muted); font-size: 20px; }
+.add-account { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; margin-top: 12px; padding: 12px; border: 1px dashed color-mix(in srgb, var(--nivra-brand-2) 45%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--nivra-brand-2) 5%, transparent); color: var(--nivra-brand-2); font-size: .84rem; font-weight: 600; }
+.add-account ion-icon { font-size: 20px; }
+.accounts-limit, .accounts-progress, .accounts-error { margin-top: 12px; }
+.accounts-progress { display: flex; align-items: center; gap: 8px; }
+.accounts-progress ion-spinner { width: 16px; height: 16px; }
+.accounts-error { color: var(--nivra-danger); }
+.remove-confirmation { padding: 12px; border-radius: 12px; background: #f16a6a0c; }
+.remove-confirmation > div { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.remove-confirmation button { border: 0; border-radius: 9px; padding: 8px 11px; font-size: .76rem; }
+.cancel-remove { background: var(--nivra-panel-2); }
+.confirm-remove { background: #f16a6a20; color: var(--nivra-danger); }

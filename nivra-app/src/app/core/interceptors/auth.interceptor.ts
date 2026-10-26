@@ -1,6 +1,6 @@
 import { HttpContextToken, HttpErrorResponse, HttpEvent, HttpHandlerFn, HttpRequest } from '@angular/common/http';
 import { inject } from '@angular/core';
-import { Observable, catchError, from, switchMap, throwError } from 'rxjs';
+import { Observable, catchError, from, of, switchMap, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 import { DeviceWipeService } from '../services/device-wipe.service';
 import { NivraApiService, SKIP_AUTH } from '../services/nivra-api.service';
@@ -21,8 +21,12 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
   const shouldAuthenticate = !req.context.get(SKIP_AUTH) && trustedApi;
   const token = auth.accessToken();
   const requestSession = auth.session();
+  const requestGeneration = auth.sessionGeneration();
   const deviceId = requestSession?.device.id || '';
-  const sameSession = () => auth.session()?.user?.id === requestSession?.user?.id && auth.session()?.device.id === requestSession?.device.id;
+  const sameSession = () => auth.sessionGeneration() === requestGeneration
+    && auth.session()?.user?.id === requestSession?.user?.id && auth.session()?.device.id === requestSession?.device.id;
+  const guardResponse = (events: Observable<HttpEvent<unknown>>) => events.pipe(switchMap(event =>
+    shouldAuthenticate && !sameSession() ? throwError(() => new Error('ACCOUNT_SESSION_CHANGED')) : of(event)));
   const authHeaders = () => ({
     ...(auth.accessToken() ? { Authorization: `Bearer ${auth.accessToken()}` } : {}),
     ...(deviceId ? { 'X-Nivra-Device-Id': deviceId } : {}),
@@ -35,7 +39,7 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
     if (trustedApi && sameSession() && error instanceof HttpErrorResponse && error.status === 426) {
       compatibility.requireUpdate();
     }
-    if (trustedApi && sameSession() && isForceWipeError(error)) {
+    if (shouldAuthenticate && requestSession && sameSession() && isForceWipeError(error)) {
       void wipe.nukeDevice();
       return throwError(() => error);
     }
@@ -60,7 +64,7 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
             context: req.context.set(AUTH_RETRIED, true),
             setHeaders: authHeaders(),
           });
-          return next(retry).pipe(catchError(handleError));
+          return guardResponse(next(retry)).pipe(catchError(handleError));
         }),
       );
     }
@@ -84,7 +88,7 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
         }
         // Only transport failures may enter the refresh-on-401 handler. A rejected
         // local session must not send the pending body or start another renewal.
-        return next(req.clone({ setHeaders: authHeaders() })).pipe(catchError(handleError));
+        return guardResponse(next(req.clone({ setHeaders: authHeaders() }))).pipe(catchError(handleError));
       }),
     );
   }
@@ -93,7 +97,7 @@ export function authInterceptor(req: HttpRequest<unknown>, next: HttpHandlerFn) 
     ? req.clone({ setHeaders: authHeaders() })
     : req;
 
-  return next(authedReq).pipe(catchError(handleError));
+  return guardResponse(next(authedReq)).pipe(catchError(handleError));
 }
 
 function isForceWipeError(error: unknown): boolean {

@@ -109,6 +109,8 @@ public sealed class UserAccount
     public required string Id { get; init; }
     public string NivraNumber { get; set; } = string.Empty;
     public required string Alias { get; set; }
+    // Registration mode is stable when a user changes their alias or discoverability.
+    public bool IsPrivateAccount { get; set; }
     public string? DisplayName { get; set; }
     public string? Email { get; set; }
     public string? RecoveryEmail { get; set; }

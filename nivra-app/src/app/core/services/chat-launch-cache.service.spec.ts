@@ -33,13 +33,13 @@ describe('encrypted cold-start chat list', () => {
       previews: { 'private-room': 'mensaje privado de prueba' },
     };
     await cache.save(firstUser, snapshot);
-    const key = `nivra.chatLaunchCache.v1.${firstUser}`;
+    const key = `nivra.chatLaunchCache.v2.${firstUser}`;
     const stored = localStorage.getItem(key);
     expect(stored).toBeTruthy();
     expect(stored).not.toContain('mensaje privado de prueba');
     expect((await cache.load(firstUser))?.previews['private-room']).toBe('mensaje privado de prueba');
 
-    localStorage.setItem(`nivra.chatLaunchCache.v1.${secondUser}`, stored!);
+    localStorage.setItem(`nivra.chatLaunchCache.v2.${secondUser}`, stored!);
     expect(await cache.load(secondUser)).toBeNull();
     cache.clear(firstUser);
     expect(await cache.load(firstUser)).toBeNull();

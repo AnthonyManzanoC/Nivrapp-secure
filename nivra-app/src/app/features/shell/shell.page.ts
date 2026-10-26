@@ -98,7 +98,7 @@ export class ShellPage {
     }
     this.calls.releaseLocalResources();
     await this.auth.logout();
-    await this.router.navigateByUrl('/auth');
+    await this.router.navigateByUrl(this.auth.session() ? '/app/chats' : '/auth');
   }
 
   private isMobileImmersiveRoute(url: string): boolean {

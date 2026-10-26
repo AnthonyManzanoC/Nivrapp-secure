@@ -1,0 +1,34 @@
+<section class="account-switcher" aria-labelledby="account-switcher-title" [attr.aria-busy]="auth.accountsBusy()">
+  <div class="accounts-heading">
+    <div><h3 id="account-switcher-title">{{ 'ACCOUNTS.TITLE' | translate:'Tus cuentas' }}</h3><p>{{ 'ACCOUNTS.COPY' | translate:'Mantén dos cuentas abiertas y cambia entre ellas al instante.' }}</p></div>
+    <span class="account-count">{{ auth.savedAccounts().length }}/2</span>
+  </div>
+  <div class="account-list">
+    @for (account of auth.savedAccounts(); track account.id) {
+      <div class="account-row" [class.active]="account.active">
+        <button class="account-select" type="button" [disabled]="auth.accountsBusy() || callInProgress() || account.active" [attr.aria-pressed]="account.active" (click)="switchAccount(account)">
+          <span class="account-avatar">@if (account.profilePhotoDataUrl) { <img [src]="account.profilePhotoDataUrl" alt="" width="42" height="42"> } @else { <ion-icon name="person-outline" aria-hidden="true"></ion-icon> }</span>
+          <span class="account-identity"><strong>{{ label(account) }}</strong><small>{{ subtitle(account) }}</small></span>
+          @if (account.active) { <span class="active-mark"><ion-icon name="checkmark-circle" aria-hidden="true"></ion-icon>{{ 'ACCOUNTS.ACTIVE' | translate:'Activa' }}</span> }
+        </button>
+        <button class="remove-account" type="button" [disabled]="auth.accountsBusy() || account.active && callInProgress()" [attr.aria-label]="('ACCOUNTS.REMOVE' | translate:'Quitar cuenta') + ': ' + label(account)" (click)="removing.set(account.id)"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
+      </div>
+      @if (removing() === account.id) {
+        <div class="remove-confirmation" role="group" [attr.aria-label]="'ACCOUNTS.REMOVE' | translate:'Quitar cuenta'">
+          <p>{{ 'ACCOUNTS.REMOVE_COPY' | translate:'Se cerrará esta cuenta en este dispositivo. Tu historial local se conserva.' }}</p>
+          <div><button type="button" class="cancel-remove" [disabled]="auth.accountsBusy()" (click)="removing.set(null)">{{ 'ACCOUNTS.CANCEL' | translate:'Cancelar' }}</button><button type="button" class="confirm-remove" [disabled]="auth.accountsBusy() || account.active && callInProgress()" (click)="removeAccount(account)">{{ 'ACCOUNTS.REMOVE' | translate:'Quitar cuenta' }}</button></div>
+        </div>
+      }
+    }
+  </div>
+  @if (auth.savedAccounts().length < 2) {
+    <button class="add-account" type="button" [disabled]="auth.accountsBusy() || callInProgress()" (click)="addAccount()"><ion-icon name="add-outline" aria-hidden="true"></ion-icon>{{ 'ACCOUNTS.ADD' | translate:'Añadir otra cuenta' }}</button>
+  } @else {
+    <p class="accounts-limit">{{ 'ACCOUNTS.LIMIT' | translate:'Puedes guardar hasta dos cuentas en este dispositivo.' }}</p>
+  }
+  <div aria-live="polite" aria-atomic="true">
+    @if (callInProgress()) { <p class="accounts-limit">{{ 'ACCOUNTS.CALL_IN_PROGRESS' | translate:'Finaliza la llamada antes de cambiar de cuenta.' }}</p> }
+    @if (auth.accountsBusy()) { <p class="accounts-progress"><ion-spinner name="crescent" aria-hidden="true"></ion-spinner>{{ 'ACCOUNTS.WORKING' | translate:'Actualizando cuentas…' }}</p> }
+    @if (auth.accountError() || localError()) { <p class="accounts-error" role="alert">{{ auth.accountError() || ('ACCOUNTS.ERROR' | translate:'No se pudo completar el cambio. Reintenta.') }}</p> }
+  </div>
+</section>

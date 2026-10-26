@@ -48,6 +48,32 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.ToTable("account_app_locks", "public");
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.AccountAppearance", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Icon")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("account_appearances", "public", t =>
+                        {
+                            t.HasCheckConstraint("CK_account_appearances_Icon", "\"Icon\" IN ('original','emerald','ivory')");
+                        });
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.AccountRecoveryChallenge", b =>
                 {
                     b.Property<string>("TokenHash")
@@ -179,6 +205,46 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("ad_impressions", "public");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.BroadcastListRecord", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset?>("DeletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EncryptedPayload")
+                        .HasMaxLength(1048576)
+                        .HasColumnType("character varying(1048576)");
+
+                    b.Property<int>("RecipientCount")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("Revision")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("UserId", "Id");
+
+                    b.HasIndex("UserId", "DeletedAt", "UpdatedAt");
+
+                    b.ToTable("broadcast_lists", "public", t =>
+                        {
+                            t.HasCheckConstraint("CK_broadcast_lists_RecipientCount", "\"RecipientCount\" BETWEEN 0 AND 256");
+                        });
                 });
 
             modelBuilder.Entity("Nivra.Api.Domain.CallSession", b =>
@@ -760,10 +826,10 @@ namespace Nivra.Api.Infrastructure.Migrations
 
                     b.HasIndex("DeviceId");
 
-                    b.HasIndex("TokenHash")
-                        .IsUnique();
-
                     b.HasIndex("UserId", "DeviceId", "RevokedAt");
+
+                    b.HasIndex("UserId", "DeviceId", "TokenHash")
+                        .IsUnique();
 
                     b.ToTable("push_tokens", "public");
                 });
@@ -992,6 +1058,11 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("boolean")
                         .HasDefaultValue(true);
+
+                    b.Property<bool>("IsPrivateAccount")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("boolean")
+                        .HasDefaultValue(false);
 
                     b.Property<string>("NivraNumber")
                         .IsRequired()
@@ -1286,6 +1357,15 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.AccountAppearance", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.AccountRecoveryChallenge", b =>
                 {
                     b.HasOne("Nivra.Api.Domain.UserAccount", null)
@@ -1300,6 +1380,15 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.AdCampaign", null)
                         .WithMany()
                         .HasForeignKey("CampaignId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.BroadcastListRecord", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

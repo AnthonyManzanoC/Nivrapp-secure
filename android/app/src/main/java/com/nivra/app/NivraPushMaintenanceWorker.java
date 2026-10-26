@@ -17,15 +17,13 @@ public final class NivraPushMaintenanceWorker extends Worker {
 
     @NonNull @Override public Result doWork() {
         Context context = getApplicationContext();
-        JSONObject snapshot = NivraNativePushRegistration.read(context);
-        if (snapshot == null || isStopped()) return Result.success();
+        if (NivraNativePushRegistration.readAll(context).isEmpty() || isStopped()) return Result.success();
         try {
             String token = Tasks.await(FirebaseMessaging.getInstance().getToken(), 20, TimeUnit.SECONDS);
             synchronized (NivraNativePushRegistration.class) {
-                JSONObject current = NivraNativePushRegistration.read(context);
                 // Never revive an account that logged out or changed while
                 // Google Play services was returning the routing token.
-                if (isStopped() || current == null || !current.optString("epoch").equals(snapshot.optString("epoch"))) {
+                if (isStopped() || NivraNativePushRegistration.readAll(context).isEmpty()) {
                     return Result.success();
                 }
                 NivraNativePushRegistration.tokenChanged(context, token);

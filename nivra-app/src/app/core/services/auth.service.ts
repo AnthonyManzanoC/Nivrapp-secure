@@ -31,6 +31,13 @@ import { NativeSecureVaultService } from './native-secure-vault.service';
 import { ChatLaunchCacheService } from './chat-launch-cache.service';
 import { authErrorMessage } from '../utils/auth-error';
 import { normalizeNivraNumber } from '../utils/nivra-number';
+import { AccountSessionsService } from './account-sessions.service';
+import { NivraNative } from './native-plugin';
+import { markWebPushAccountWipe, pendingWebPushAccountWipes } from './push-account-scopes';
+
+export class StoredAccountWipeRequiredError extends Error {
+  constructor(readonly scope: { userId: string; deviceId: string }) { super('STORED_ACCOUNT_FORCE_WIPE'); }
+}
 
 interface FirebasePhoneVerifyResponse {
   requiresAlias?: boolean;
@@ -89,6 +96,7 @@ export class AuthService implements OnDestroy {
   private readonly crypto = inject(CryptoService);
   private readonly secureVault = inject(NativeSecureVaultService);
   private readonly launchCache = inject(ChatLaunchCacheService);
+  private readonly accountSessions = inject(AccountSessionsService);
   private readonly router = inject(Router);
   private readonly ngZone = inject(NgZone);
   private firebaseApp: FirebaseApp | null = null;
@@ -103,19 +111,34 @@ export class AuthService implements OnDestroy {
   private qrGeneration = 0;
   private sessionWriteEpoch = 0;
   private authRefreshPromise: Promise<boolean> | null = null;
+  private refreshOperations = new Map<string, Promise<boolean>>();
   private protectedSessionRestorePromise: Promise<void> | null = null;
   private refreshBackoffUntil = 0;
   private refreshHardFailure = false;
   private deviceIdentityOperation: { scope: string; promise: Promise<StoredDeviceKeys> } | null = null;
   private deviceIdentityReady: { scope: string; keys: StoredDeviceKeys } | null = null;
   private deviceIdentityValidationEpoch = 0;
+  private authIntentEpoch = 0;
+  private accountOperationEpoch = 0;
+  private sessionRestoreComplete = false;
+  private addingReturnUserId: string | null = null;
+  private phoneRequestCancel: (() => void) | null = null;
+  private destroyed = false;
 
-  readonly session = signal<AuthSession | null>(this.loadSession());
+  // Never paint a legacy account before the encrypted registry has restored
+  // its authoritative active pointer, including after an interrupted switch.
+  readonly session = signal<AuthSession | null>(null);
+  readonly savedAccounts = this.accountSessions.accounts;
+  readonly addingAccount = signal(false);
+  readonly accountsBusy = signal(false);
+  readonly accountError = signal('');
+  readonly sessionGeneration = signal(0);
   readonly pendingPhoneAlias = signal<PhoneAliasChallenge | null>(null);
   readonly busy = signal(false);
   readonly qrState = signal<'idle' | 'starting' | 'waiting' | 'authorizing' | 'expired' | 'error'>('idle');
   readonly qrError = signal<unknown>(null);
   readonly forceWipeRequested = signal(0);
+  readonly forceWipeScope = signal<{ userId: string; deviceId: string; generation: number } | null>(null);
   readonly deviceIdentityError = signal('');
   readonly deviceIdentityNeedsRelink = signal(false);
   readonly accessToken = computed(() => this.session()?.tokens.accessToken ?? '');
@@ -128,17 +151,271 @@ export class AuthService implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.destroyed = true;
+    this.invalidateAuthenticationIntent();
     void this.stopQrLogin();
     void this.resetRecaptcha({ clear: true });
     void this.clearNativePhoneListeners();
   }
 
+  /** Privileged snapshot for native push registration; UI consumes savedAccounts only. */
+  async storedSessionCredentials(): Promise<readonly AuthSession[]> {
+    const snapshot = await this.accountSessions.load();
+    return snapshot ? structuredClone(snapshot.sessions) : [];
+  }
+
+  /** Refresh one saved notification slot without adopting its profile or UI session. */
+  async getFreshStoredSessionCredentials(userId: string, deviceId: string): Promise<AuthSession | null> {
+    const alive = () => !this.destroyed;
+    const read = async () => (await this.accountSessions.load())?.sessions.find(session =>
+      session.user.id === userId && session.device.id === deviceId) ?? null;
+    const saved = await read();
+    if (!saved || !alive() || !await this.allowAccountActivation(saved, alive)) return null;
+    if (this.hasUsableAccessToken(saved)) return saved;
+    const previousRefreshToken = saved.tokens.refreshToken;
+    const operationKey = JSON.stringify([userId, deviceId, previousRefreshToken]);
+    const operations = this.refreshOperations ??= new Map();
+    let operation = operations.get(operationKey);
+    if (!operation) {
+      operation = this.api.fetch('/auth/refresh', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Nivra-Device-Id': deviceId },
+        body: JSON.stringify({ refreshToken: previousRefreshToken }),
+      }, false, () => alive() && this.savedAccounts().some(account => account.id === userId)).then(async response => {
+        if (!alive()) return false;
+        if (!response.ok) {
+          if (await this.isForceWipeResponse(response)) {
+            const current = await read();
+            if (!alive() || current?.tokens.refreshToken !== previousRefreshToken) return false;
+            await markWebPushAccountWipe({ userId, deviceId });
+            throw new StoredAccountWipeRequiredError({ userId, deviceId });
+          }
+          return false;
+        }
+        const tokens = await response.json() as AuthSession['tokens'];
+        if (!tokens?.accessToken || !alive()) return false;
+        const snapshot = await this.accountSessions.rotateTokens(userId, deviceId, previousRefreshToken, tokens, alive);
+        return Boolean(snapshot?.sessions.some(session => session.user.id === userId && session.device.id === deviceId));
+      }).catch(error => {
+        if (error instanceof StoredAccountWipeRequiredError) throw error;
+        return false;
+      }).finally(() => {
+        if (operations.get(operationKey) === operation) operations.delete(operationKey);
+      });
+      operations.set(operationKey, operation);
+    }
+    await operation;
+    const latest = await read();
+    return latest && alive() && this.hasUsableAccessToken(latest) && await this.allowAccountActivation(latest, alive) ? latest : null;
+  }
+
+  async switchToStoredAccount(userId: string, deviceId: string): Promise<boolean> {
+    const snapshot = await this.accountSessions.load();
+    if (!snapshot?.sessions.some(auth => auth.user.id === userId && auth.device.id === deviceId)) return false;
+    return this.switchAccount(userId, deviceId);
+  }
+
+  async switchAccount(userId: string, expectedDeviceId?: string): Promise<boolean> {
+    if (!userId) return false;
+    const current = this.session();
+    if (current?.user.id === userId && (!expectedDeviceId || current.device.id === expectedDeviceId) && !this.addingAccount()) return true;
+    const operation = this.beginAccountOperation();
+    const isCurrent = () => this.accountOperationEpoch === operation && !this.destroyed;
+    try {
+      await this.stopAuthenticationTransports();
+      if (!isCurrent()) return false;
+      const existing = await this.accountSessions.load();
+      if (!isCurrent()) return false;
+      const target = existing?.sessions.find(auth => auth.user.id === userId);
+      if (!target || expectedDeviceId && target.device.id !== expectedDeviceId || !await this.allowAccountActivation(target, isCurrent)) return false;
+      const snapshot = await this.accountSessions.activate(userId, isCurrent, target.device.id);
+      if (!snapshot || !isCurrent()) return false;
+      const active = snapshot.sessions.find(auth => auth.user.id === snapshot.activeUserId);
+      if (!active || active.user.id !== userId) return false;
+      this.finishAccountActivation(active);
+      this.markFreshAuthNavigation();
+      await this.router.navigateByUrl('/app/chats', { replaceUrl: true });
+      return isCurrent();
+    } catch {
+      if (isCurrent()) this.accountError.set('No se pudo abrir esta cuenta. Sus sesiones e historial se han conservado.');
+      return false;
+    } finally { if (isCurrent()) this.accountsBusy.set(false); }
+  }
+
+  async beginAddAccount(): Promise<void> {
+    const current = this.session();
+    if (!current) throw new Error('Abre tu primera cuenta antes de añadir otra.');
+    const operation = this.beginAccountOperation();
+    const isCurrent = () => this.accountOperationEpoch === operation && !this.destroyed;
+    try {
+      const snapshot = await this.accountSessions.load();
+      if (!snapshot || !isCurrent()) return;
+      if (!snapshot.sessions.some(auth => auth.user.id === current.user.id && auth.device.id === current.device.id)) throw new Error('No se pudo comprobar la cuenta activa.');
+      if (snapshot.sessions.length >= 2) throw new Error('Puedes mantener hasta dos cuentas en este dispositivo.');
+      await this.stopAuthenticationTransports();
+      if (!isCurrent()) return;
+      this.addingReturnUserId = current.user.id;
+      this.addingAccount.set(true);
+      this.sessionRestoreComplete = true;
+      this.adoptSession(null);
+      this.clearLegacySessionRecords();
+      await this.router.navigateByUrl('/auth', { replaceUrl: true });
+    } finally { if (isCurrent()) this.accountsBusy.set(false); }
+  }
+
+  async cancelAddAccount(): Promise<void> {
+    if (!this.addingAccount()) return;
+    const userId = this.addingReturnUserId;
+    // Invalidate before the first await so pending login, QR and OTP results
+    // cannot acquire authority again after A -> B -> A navigation.
+    const operation = this.beginAccountOperation();
+    const isCurrent = () => this.accountOperationEpoch === operation && !this.destroyed;
+    try {
+      await this.stopAuthenticationTransports();
+      if (!isCurrent()) return;
+      const snapshot = userId ? await this.accountSessions.activate(userId, isCurrent) : await this.accountSessions.load();
+      if (!snapshot || !isCurrent()) return;
+      const active = snapshot.sessions.find(auth => auth.user.id === snapshot.activeUserId);
+      if (active && await this.allowAccountActivation(active, isCurrent) && isCurrent()) {
+        this.finishAccountActivation(active);
+        this.markFreshAuthNavigation();
+        await this.router.navigateByUrl('/app/chats', { replaceUrl: true });
+      }
+    } finally { if (isCurrent()) this.accountsBusy.set(false); }
+  }
+
+  async removeStoredAccount(userId: string, deviceId: string, _reason = 'removed'): Promise<void> {
+    const snapshot = await this.accountSessions.load();
+    if (!snapshot?.sessions.some(auth => auth.user.id === userId && auth.device.id === deviceId)) return;
+    await this.removeAccount(userId, false, deviceId);
+  }
+
+  async removeAccount(userId: string, revokeServer = true, expectedDeviceId?: string): Promise<void> {
+    const operation = this.beginAccountOperation();
+    const isCurrent = () => this.accountOperationEpoch === operation && !this.destroyed;
+    try {
+      const existing = await this.accountSessions.load();
+      if (!isCurrent()) return;
+      const removed = existing?.sessions.find(auth => auth.user.id === userId);
+      if (!removed || expectedDeviceId && removed.device.id !== expectedDeviceId) return;
+      const snapshot = await this.accountSessions.remove(userId, isCurrent, removed.device.id);
+      if (!snapshot || !isCurrent()) return;
+      this.launchCache.clear(userId);
+      const wasActive = this.session()?.user.id === userId || this.addingReturnUserId === userId;
+      if (wasActive) {
+        await this.stopAuthenticationTransports();
+        if (!isCurrent()) return;
+        const active = snapshot.sessions.find(auth => auth.user.id === snapshot.activeUserId);
+        if (active && await this.allowAccountActivation(active, isCurrent) && isCurrent()) this.finishAccountActivation(active);
+        else if (isCurrent()) this.finishAccountActivation(null);
+        if (isCurrent()) await this.router.navigateByUrl(this.session() ? '/app/chats' : '/auth', { replaceUrl: true });
+      }
+      if (snapshot.sessions.length === 0 && isCurrent()) await this.nativeFirebaseSignOut();
+      // Use the removed session's credentials directly. An inactive logout
+      // must never borrow the current account's interceptor or cookies.
+      if (revokeServer) {
+        await this.api.fetch('/auth/logout', {
+          method: 'POST', credentials: 'omit', headers: {
+            'Content-Type': 'application/json', Authorization: `Bearer ${removed.tokens.accessToken}`,
+            'X-Nivra-Device-Id': removed.device.id,
+          }, body: '{}',
+        }, false).catch(() => undefined);
+      }
+      // The shared protector may still decrypt another slot or launch cache.
+      // Removing an account never deletes global authentication/device keys.
+    } finally { if (isCurrent()) this.accountsBusy.set(false); }
+  }
+
+  private beginAccountOperation(): number {
+    this.invalidateAuthenticationIntent();
+    this.accountOperationEpoch = (this.accountOperationEpoch ?? 0) + 1;
+    this.invalidateDeviceIdentity();
+    this.authRefreshPromise = null;
+    this.refreshBackoffUntil = 0;
+    this.refreshHardFailure = false;
+    this.accountsBusy.set(true);
+    this.accountError.set('');
+    this.busy.set(false);
+    return this.accountOperationEpoch;
+  }
+
+  private invalidateAuthenticationIntent(): void {
+    this.authIntentEpoch = (this.authIntentEpoch ?? 0) + 1;
+    this.sessionWriteEpoch = (this.sessionWriteEpoch ?? 0) + 1;
+    this.phoneRequestCancel?.();
+    this.phoneRequestCancel = null;
+  }
+
+  private beginAuthenticationIntent(): () => boolean {
+    this.invalidateAuthenticationIntent();
+    this.accountOperationEpoch = (this.accountOperationEpoch ?? 0) + 1;
+    this.accountsBusy?.set(false);
+    const intent = this.authIntentEpoch;
+    return () => !this.destroyed && this.authIntentEpoch === intent;
+  }
+
+  private async stopAuthenticationTransports(): Promise<void> {
+    this.pendingPhoneAlias.set(null);
+    this.confirmationResult = null;
+    this.nativePhoneVerificationId = '';
+    await Promise.all([this.stopQrLogin(), this.resetRecaptcha({ clear: true }), this.clearNativePhoneListeners()]);
+  }
+
+  private finishAccountActivation(auth: AuthSession | null): void {
+    this.addingAccount.set(false);
+    this.addingReturnUserId = null;
+    this.sessionRestoreComplete = true;
+    this.pendingPhoneAlias.set(null);
+    this.clearLegacySessionRecords();
+    this.adoptSession(auth);
+  }
+
+  private adoptSession(auth: AuthSession | null): void {
+    const previous = this.session();
+    if (previous?.user.id !== auth?.user.id || previous?.device.id !== auth?.device.id) {
+      this.sessionGeneration?.update(value => value + 1);
+      this.invalidateDeviceIdentity();
+      this.deviceIdentityError?.set('');
+      this.deviceIdentityNeedsRelink?.set(false);
+    }
+    this.session.set(auth);
+  }
+
+  private clearLegacySessionRecords(): void {
+    try { localStorage.removeItem(SESSION_KEY); localStorage.removeItem(PROTECTED_SESSION_KEY); } catch { /* Registry remains authoritative. */ }
+  }
+
+  private async allowAccountActivation(auth: AuthSession, isCurrent: () => boolean): Promise<boolean> {
+    if (!isCurrent()) return false;
+    const scopes = await pendingWebPushAccountWipes();
+    if (!isCurrent()) return false;
+    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+      const pending = await NivraNative.getPendingPushAccountWipes();
+      if (!pending || !Array.isArray(pending.scopes)) throw new Error('No se pudo comprobar la sesión guardada.');
+      scopes.push(...pending.scopes);
+    }
+    if (!isCurrent()) return false;
+    if (scopes.some(scope => scope.userId === auth.user.id && scope.deviceId === auth.device.id)) {
+      await this.accountSessions.remove(auth.user.id, isCurrent, auth.device.id);
+      if (isCurrent()) this.accountError.set('Esta sesión ya no está autorizada. La otra cuenta se ha conservado.');
+      return false;
+    }
+    return true;
+  }
+
   updateUser(user: NivraUser): void {
     const current = this.session();
-    if (!current) {
+    if (!current || user.id !== current.user.id) {
       return;
     }
-    void this.persistSession({ ...current, user }).catch(() => undefined);
+    const generation = this.sessionGeneration();
+    const intent = this.authIntentEpoch;
+    const isCurrent = () => this.authIntentEpoch === intent && this.sessionGeneration() === generation
+      && this.session()?.user.id === current.user.id && this.session()?.device.id === current.device.id;
+    void this.accountSessions.updateProfile(user, current.device.id, isCurrent).then(snapshot => {
+      if (!isCurrent()) return;
+      const updated = snapshot?.sessions.find(auth => auth.user.id === current.user.id && auth.device.id === current.device.id);
+      if (updated) this.adoptSession(updated);
+    }).catch(() => undefined);
   }
 
   async loginWithAlias(alias: string, password: string, mode: 'login' | 'register', displayName = ''): Promise<void> {
@@ -147,15 +424,18 @@ export class AuthService implements OnDestroy {
       throw new Error('Alias y password son obligatorios.');
     }
 
+    const isCurrent = this.beginAuthenticationIntent();
     this.busy.set(true);
     try {
       const device = await this.deviceProfile();
+      if (!isCurrent()) return;
       let identity: { alias: string; userId: string; deviceId?: string | null; identityKey?: string | null } | undefined;
       if (mode === 'login') {
         identity = await firstValueFrom(this.api.post<{ alias: string; userId: string; deviceId?: string | null; identityKey?: string | null }>('/auth/login', {
           alias: normalizeNivraNumber(normalizedAlias) || `@${normalizedAlias.replace(/^@/, '')}`, password, deviceName: device.name,
           hardwareId: device.hardwareId, keyBundle: null, resolveOnly: true,
         }, { skipAuth: true }));
+        if (!isCurrent()) return;
         if (!identity || typeof identity.alias !== 'string' || !/^[A-Za-z0-9_.-]{3,32}$/.test(identity.alias)
           || ('userId' in identity && (typeof identity.userId !== 'string' || !identity.userId.trim()))) throw new Error('No se pudo comprobar la identidad de tu cuenta. Actualiza Nivra.');
         normalizedAlias = identity.alias;
@@ -165,6 +445,7 @@ export class AuthService implements OnDestroy {
       const keys = identity && !('userId' in identity)
         ? await this.crypto.createDeviceKeys()
         : await this.crypto.prepareDeviceKeys(normalizedAlias, mode === 'register', identity);
+      if (!isCurrent()) return;
       const payload = {
         alias: mode === 'login' ? `@${normalizedAlias}` : normalizedAlias,
         password,
@@ -178,10 +459,11 @@ export class AuthService implements OnDestroy {
       const auth = await firstValueFrom(
         this.api.post<AuthSession>(mode === 'register' ? '/auth/register' : '/auth/login', payload, { skipAuth: true }),
       );
+      if (!isCurrent()) return;
       if (identity?.userId && auth.user?.id !== identity.userId) throw new Error('La identidad de la cuenta cambió durante el inicio de sesión. Vuelve a intentar.');
-      await this.completeAuth(auth, keys);
+      await this.completeAuth(auth, keys, isCurrent);
     } finally {
-      this.busy.set(false);
+      if (isCurrent()) this.busy.set(false);
     }
   }
 
@@ -189,16 +471,19 @@ export class AuthService implements OnDestroy {
     if (password.length < 10) {
       throw new Error('Usa una contraseña de al menos 10 caracteres.');
     }
+    const isCurrent = this.beginAuthenticationIntent();
     this.busy.set(true);
     try {
       const keys = await this.crypto.createDeviceKeys();
       const device = await this.deviceProfile();
+      if (!isCurrent()) return;
       const auth = await firstValueFrom(this.api.post<AuthSession>('/auth/register-private', {
         password, deviceName: device.name, hardwareId: device.hardwareId, keyBundle: keys.keyBundle,
       }, { skipAuth: true }));
-      await this.completeAuth(auth, keys);
+      if (!isCurrent()) return;
+      await this.completeAuth(auth, keys, isCurrent);
     } finally {
-      this.busy.set(false);
+      if (isCurrent()) this.busy.set(false);
     }
   }
 
@@ -208,21 +493,26 @@ export class AuthService implements OnDestroy {
       throw new Error('Ingresa tu telefono con codigo de pais.');
     }
 
+    const isCurrent = this.beginAuthenticationIntent();
     this.busy.set(true);
     try {
       if (this.usesNativeFirebasePhoneAuth()) {
-        await this.sendNativeFirebaseOtp(normalizedPhone);
+        await this.sendNativeFirebaseOtp(normalizedPhone, isCurrent);
         return;
       }
 
       const auth = await this.ensureFirebaseAuth();
+      if (!isCurrent()) return;
       const verifier = await this.ensureRecaptcha(auth);
-      this.confirmationResult = await signInWithPhoneNumber(auth, normalizedPhone, verifier);
+      if (!isCurrent()) return;
+      const confirmation = await signInWithPhoneNumber(auth, normalizedPhone, verifier);
+      if (isCurrent()) this.confirmationResult = confirmation;
     } catch (error) {
+      if (!isCurrent()) return;
       await this.resetRecaptcha({ clear: true });
       throw new Error(this.firebasePhoneAuthErrorMessage(error, 'No se pudo enviar el codigo SMS.'));
     } finally {
-      this.busy.set(false);
+      if (isCurrent()) this.busy.set(false);
     }
   }
 
@@ -231,8 +521,10 @@ export class AuthService implements OnDestroy {
       throw new Error('Telefono y codigo son obligatorios.');
     }
 
+    const intent = this.authIntentEpoch;
+    const isCurrent = () => !this.destroyed && this.authIntentEpoch === intent;
     if (this.usesNativeFirebasePhoneAuth()) {
-      await this.verifyNativeFirebaseOtp(phone, code);
+      await this.verifyNativeFirebaseOtp(phone, code, isCurrent);
       return;
     }
 
@@ -243,13 +535,16 @@ export class AuthService implements OnDestroy {
     this.busy.set(true);
     try {
       const credential = await this.confirmationResult.confirm(code.trim());
+      if (!isCurrent()) return;
       const firebaseToken = await credential.user.getIdToken();
-      await this.completeFirebasePhoneSignIn(phone, firebaseToken);
-      this.confirmationResult = null;
+      if (!isCurrent()) return;
+      await this.completeFirebasePhoneSignIn(phone, firebaseToken, isCurrent);
+      if (isCurrent()) this.confirmationResult = null;
     } catch (error) {
+      if (!isCurrent()) return;
       throw new Error(this.firebasePhoneAuthErrorMessage(error, 'No se pudo entrar por telefono.'));
     } finally {
-      this.busy.set(false);
+      if (isCurrent()) this.busy.set(false);
     }
   }
 
@@ -260,9 +555,11 @@ export class AuthService implements OnDestroy {
       throw new Error('Escoge tu alias para terminar la cuenta.');
     }
 
+    const isCurrent = this.beginAuthenticationIntent();
     this.busy.set(true);
     try {
       const device = await this.deviceProfile();
+      if (!isCurrent()) return;
       const auth = await firstValueFrom(
         this.api.post<AuthSession>('/auth/phone/complete-alias', {
           phoneSetupToken: pending.token,
@@ -273,17 +570,19 @@ export class AuthService implements OnDestroy {
           keyBundle: pending.keys.keyBundle,
         }, { skipAuth: true }),
       );
+      if (!isCurrent()) return;
       this.pendingPhoneAlias.set(null);
-      await this.completeAuth(auth, pending.keys);
+      await this.completeAuth(auth, pending.keys, isCurrent);
     } finally {
-      this.busy.set(false);
+      if (isCurrent()) this.busy.set(false);
     }
   }
 
   async startQrLogin(): Promise<QrLoginChallenge> {
+    const isCurrent = this.beginAuthenticationIntent();
     const generation = this.qrGeneration + 1;
     await this.stopQrLogin();
-    if (generation !== this.qrGeneration) {
+    if (!isCurrent() || generation !== this.qrGeneration) {
       throw new Error('QR_CANCELLED');
     }
     this.qrState.set('starting');
@@ -302,7 +601,8 @@ export class AuthService implements OnDestroy {
   }
 
   private async createQrLogin(generation: number): Promise<QrLoginChallenge> {
-    const isCurrent = () => generation === this.qrGeneration;
+    const intent = this.authIntentEpoch;
+    const isCurrent = () => !this.destroyed && generation === this.qrGeneration && intent === this.authIntentEpoch;
     const ephemeral = await this.crypto.createQrEphemeralKeys();
     const localKeys = await this.crypto.createDeviceKeys();
     const device = await this.deviceProfile();
@@ -511,7 +811,14 @@ export class AuthService implements OnDestroy {
   }
 
   async refreshToken(): Promise<boolean> {
+    const requestedSession = this.session();
+    const requestedGeneration = this.sessionGeneration?.();
     await this.restoreProtectedSession();
+    if (requestedSession && (this.sessionGeneration?.() !== requestedGeneration
+      || this.session()?.user.id !== requestedSession.user.id || this.session()?.device.id !== requestedSession.device.id)) return false;
+    await this.synchronizeStoredSessionTokens();
+    if (requestedSession && (this.sessionGeneration?.() !== requestedGeneration
+      || this.session()?.user.id !== requestedSession.user.id || this.session()?.device.id !== requestedSession.device.id)) return false;
     const refreshToken = this.session()?.tokens.refreshToken;
     if (!refreshToken) {
       this.refreshHardFailure = true;
@@ -523,28 +830,40 @@ export class AuthService implements OnDestroy {
     }
 
     const currentSession = this.session();
-    const refreshEpoch = this.sessionWriteEpoch;
+    const refreshIntent = this.authIntentEpoch;
+    const refreshGeneration = this.sessionGeneration?.();
     const sameRefreshContext = () => {
       const current = this.session();
-      return current?.user.id === currentSession?.user.id && current?.device.id === currentSession?.device.id
+      return this.sessionGeneration?.() === refreshGeneration
+        && current?.user.id === currentSession?.user.id && current?.device.id === currentSession?.device.id
         && current?.tokens.refreshToken === refreshToken;
     };
-    const mayApplyRefresh = () => this.sessionWriteEpoch === refreshEpoch && sameRefreshContext();
+    const mayApplyRefresh = () => !this.destroyed && this.authIntentEpoch === refreshIntent && sameRefreshContext();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (currentSession?.device?.id) {
       headers['X-Nivra-Device-Id'] = currentSession.device.id;
     }
 
-    this.authRefreshPromise ??= this.api.fetch('/auth/refresh', {
+    const operationKey = JSON.stringify([currentSession?.user.id, currentSession?.device.id, refreshToken]);
+    const operations = this.refreshOperations ??= new Map();
+    const pending = operations.get(operationKey);
+    if (pending) return pending.then(async result => {
+      await this.synchronizeStoredSessionTokens();
+      return !this.destroyed && this.authIntentEpoch === refreshIntent && this.sessionGeneration?.() === refreshGeneration
+        && this.session()?.user.id === currentSession?.user.id && this.session()?.device.id === currentSession?.device.id
+        && (result || this.session()?.tokens.refreshToken !== refreshToken);
+    });
+    const operation = this.api.fetch('/auth/refresh', {
       method: 'POST',
       headers,
       body: JSON.stringify({ refreshToken }),
     }, false, mayApplyRefresh)
       .then(async (response) => {
-        if (!mayApplyRefresh()) return false;
         if (!response.ok) {
+          if (!mayApplyRefresh()) return false;
           if (await this.isForceWipeResponse(response)) {
             if (!mayApplyRefresh()) return false;
+            if (currentSession) this.forceWipeScope.set({ userId: currentSession.user.id, deviceId: currentSession.device.id, generation: this.sessionGeneration() });
             this.forceWipeRequested.update((value) => value + 1);
             this.refreshHardFailure = true;
             return false;
@@ -557,16 +876,23 @@ export class AuthService implements OnDestroy {
           return false;
         }
         const tokens = await response.json() as AuthSession['tokens'];
-        if (!mayApplyRefresh()) return false;
-        const current = this.session();
-        if (!current?.tokens || !tokens.accessToken) {
-          this.refreshHardFailure = true;
+        if (!currentSession?.tokens || !tokens.accessToken || this.destroyed) {
+          if (mayApplyRefresh()) this.refreshHardFailure = true;
           return false;
         }
-        this.refreshHardFailure = false;
-        this.refreshBackoffUntil = 0;
-        const next = { ...current, tokens };
-        return this.persistSession(next, sameRefreshContext);
+        // The server rotated this exact slot even when the user switched accounts
+        // while it was in flight. Keep the replacement token without resurrecting
+        // a removed slot or replacing a later login's credentials.
+        const snapshot = await this.accountSessions.rotateTokens(currentSession.user.id, currentSession.device.id, refreshToken, tokens, () => !this.destroyed);
+        if (!snapshot || this.destroyed) return false;
+        const refreshed = snapshot.sessions.find(auth => auth.user.id === currentSession.user.id && auth.device.id === currentSession.device.id);
+        if (!refreshed) return false;
+        const originalAuthority = mayApplyRefresh();
+        if (originalAuthority) { this.refreshHardFailure = false; this.refreshBackoffUntil = 0; }
+        // Token-only reconciliation is safe across A -> B -> A when A still has
+        // the exact old refresh credential. Never copy the old profile or route.
+        this.reconcileSessionTokens(currentSession, refreshed.tokens);
+        return originalAuthority;
       })
       .catch(() => {
         if (!mayApplyRefresh()) return false;
@@ -575,10 +901,12 @@ export class AuthService implements OnDestroy {
         return false;
       })
       .finally(() => {
-        this.authRefreshPromise = null;
+        if (operations.get(operationKey) === operation) operations.delete(operationKey);
+        if (this.authRefreshPromise === operation) this.authRefreshPromise = null;
       });
-
-    return this.authRefreshPromise;
+    operations.set(operationKey, operation);
+    this.authRefreshPromise = operation;
+    return operation;
   }
 
   lastRefreshFailedPermanently(): boolean {
@@ -586,7 +914,14 @@ export class AuthService implements OnDestroy {
   }
 
   async ensureFreshSession(options: { force?: boolean; skewMs?: number } = {}): Promise<boolean> {
+    const requestedSession = this.session();
+    const requestedGeneration = this.sessionGeneration?.();
     await this.restoreProtectedSession();
+    if (requestedSession && (this.sessionGeneration?.() !== requestedGeneration
+      || this.session()?.user.id !== requestedSession.user.id || this.session()?.device.id !== requestedSession.device.id)) return false;
+    await this.synchronizeStoredSessionTokens();
+    if (requestedSession && (this.sessionGeneration?.() !== requestedGeneration
+      || this.session()?.user.id !== requestedSession.user.id || this.session()?.device.id !== requestedSession.device.id)) return false;
     const current = this.session();
     if (!current?.tokens?.accessToken || !current.tokens.refreshToken) {
       return false;
@@ -597,16 +932,37 @@ export class AuthService implements OnDestroy {
     return this.refreshToken();
   }
 
+  private async synchronizeStoredSessionTokens(): Promise<void> {
+    const requested = this.session();
+    if (!requested) return;
+    const generation = this.sessionGeneration?.();
+    try {
+      const snapshot = await this.accountSessions.load();
+      if (this.destroyed || this.sessionGeneration?.() !== generation) return;
+      const stored = snapshot?.sessions.find(auth => auth.user.id === requested.user.id && auth.device.id === requested.device.id);
+      if (stored && stored.tokens.refreshToken !== requested.tokens.refreshToken) this.reconcileSessionTokens(requested, stored.tokens);
+    } catch { /* A transient vault failure must not replace or discard the live credential. */ }
+  }
+
+  private reconcileSessionTokens(previous: AuthSession, tokens: AuthSession['tokens']): void {
+    const current = this.session();
+    if (current?.user.id === previous.user.id && current.device.id === previous.device.id
+      && current.tokens.refreshToken === previous.tokens.refreshToken) {
+      this.session.set({ ...current, tokens: { ...current.tokens, ...tokens } });
+    }
+  }
+
   async ensureDeviceIdentity(): Promise<StoredDeviceKeys> {
     if (!await this.ensureFreshSession()) throw new Error('No se pudo comprobar la sesión para abrir las llaves de este dispositivo. Vuelve a intentar cuando haya conexión.');
     const auth = this.session();
     if (!auth?.device.isTrusted || auth.device.revokedAt) throw new Error('Este dispositivo necesita una vinculación autorizada.');
     const scope = `${auth.user.id}:${auth.device.id}`;
+    const generation = this.sessionGeneration?.();
     if (this.deviceIdentityReady && this.deviceIdentityReady.scope !== scope) this.deviceIdentityReady = null;
     if (this.deviceIdentityReady?.scope === scope) {
       const known = this.deviceIdentityReady.keys;
       const local = await this.crypto.currentKeyMaterial(auth.user.alias, auth.device.id).catch(() => null);
-      if (this.session()?.user.id !== auth.user.id || this.session()?.device.id !== auth.device.id) throw new Error('La sesión cambió durante la apertura de las llaves.');
+      if (this.sessionGeneration?.() !== generation || this.session()?.user.id !== auth.user.id || this.session()?.device.id !== auth.device.id) throw new Error('La sesión cambió durante la apertura de las llaves.');
       if (local?.userId === auth.user.id && this.crypto.samePublicKey(local.publicJwk, known.publicJwk)
         && this.crypto.samePublicKey(local.privateJwk, known.privateJwk) && local.privateJwk.d === known.privateJwk.d) {
         this.deviceIdentityError?.set(''); this.deviceIdentityNeedsRelink?.set(false); return local;
@@ -620,10 +976,12 @@ export class AuthService implements OnDestroy {
       if (current && this.deviceIdentityValidationEpoch === validationEpoch && current.user.id === keys.userId && current.device.id === keys.deviceId) {
         this.deviceIdentityReady = { scope: `${current.user.id}:${current.device.id}`, keys };
       }
-      this.deviceIdentityError?.set(''); this.deviceIdentityNeedsRelink?.set(false);
+      if (this.deviceIdentityValidationEpoch === validationEpoch) {
+        this.deviceIdentityError?.set(''); this.deviceIdentityNeedsRelink?.set(false);
+      }
       return keys;
     }).catch(error => {
-      if (this.session()?.user.id === auth.user.id && this.session()?.device.id === auth.device.id) {
+      if (this.deviceIdentityValidationEpoch === validationEpoch && this.session()?.user.id === auth.user.id && this.session()?.device.id === auth.device.id) {
         this.deviceIdentityError?.set(error instanceof Error ? error.message : 'No se pudo abrir la identidad local de este dispositivo.');
       }
       throw error;
@@ -636,6 +994,7 @@ export class AuthService implements OnDestroy {
 
   invalidateDeviceIdentity(): void {
     this.deviceIdentityReady = null;
+    this.deviceIdentityOperation = null;
     this.deviceIdentityValidationEpoch = (this.deviceIdentityValidationEpoch ?? 0) + 1;
   }
 
@@ -647,6 +1006,7 @@ export class AuthService implements OnDestroy {
 
   private async reconcileDeviceIdentity(auth: AuthSession): Promise<StoredDeviceKeys> {
     const epoch = this.sessionWriteEpoch;
+    const generation = this.sessionGeneration?.();
     const isCurrent = () => this.sessionWriteEpoch === epoch && this.session()?.user.id === auth.user.id && this.session()?.device.id === auth.device.id;
     const check = () => { if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación de las llaves.'); };
     const [directory, devices, hardwareId] = await Promise.all([
@@ -694,7 +1054,7 @@ export class AuthService implements OnDestroy {
       check();
       // persistSession advances sessionWriteEpoch itself and owns the write
       // compare-and-set. Keep the source scope guard without freezing that epoch.
-      const sourceScope = () => this.session()?.user.id === auth.user.id && this.session()?.device.id === auth.device.id;
+      const sourceScope = () => this.sessionGeneration?.() === generation && this.session()?.user.id === auth.user.id && this.session()?.device.id === auth.device.id;
       if (!restored || !await this.persistSession(linked, sourceScope)) throw new Error('No se pudo guardar la sesión del nuevo dispositivo.');
       return restored;
     }
@@ -740,36 +1100,41 @@ export class AuthService implements OnDestroy {
   }
 
   async logout(skipServer = false): Promise<void> {
-    this.invalidateDeviceIdentity();
-    this.deviceIdentityError?.set(''); this.deviceIdentityNeedsRelink?.set(false);
-    this.sessionWriteEpoch++;
-    const accountId = this.session()?.user.id;
-    if (!skipServer && this.accessToken()) {
-      await firstValueFrom(this.api.post('/auth/logout', {}, {})).catch(() => null);
+    const current = this.session();
+    if (current) {
+      await this.removeAccount(current.user.id, !skipServer, current.device.id);
+      return;
     }
-    await this.stopQrLogin();
-    await this.resetRecaptcha({ clear: true });
-    await this.clearNativePhoneListeners();
-    await this.nativeFirebaseSignOut();
-    this.session.set(null);
-    if (accountId) this.launchCache.clear(accountId);
-    this.pendingPhoneAlias.set(null);
-    // Logout only removes credentials; NivraDB chat history and conversations must stay local.
-    localStorage.removeItem(SESSION_KEY);
-    localStorage.removeItem(PROTECTED_SESSION_KEY);
-    await this.secureVault.clearSecret('auth-session').catch(() => undefined);
-    await this.router.navigateByUrl('/auth');
+    if (this.addingAccount()) {
+      await this.cancelAddAccount();
+      return;
+    }
+    const operation = this.beginAccountOperation();
+    const isCurrent = () => this.accountOperationEpoch === operation && !this.destroyed;
+    try {
+      await this.stopAuthenticationTransports();
+      if (!isCurrent()) return;
+      await this.nativeFirebaseSignOut();
+      if (!isCurrent()) return;
+      this.finishAccountActivation(null);
+      await this.router.navigateByUrl('/auth', { replaceUrl: true });
+    } finally { if (isCurrent()) this.accountsBusy.set(false); }
   }
 
-  async completeAuth(auth: AuthSession, keys: DeviceKeys): Promise<void> {
+  async completeAuth(auth: AuthSession, keys: DeviceKeys, isCurrent: () => boolean = () => true): Promise<void> {
     if (!auth?.tokens?.accessToken || !auth.user?.alias || !auth.device?.id) {
       throw new Error('La respuesta de autenticacion no contiene una sesion valida.');
     }
+    if (!isCurrent()) return;
     await this.stopQrLogin();
-    await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id });
+    if (!isCurrent()) return;
+    await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id }, isCurrent);
+    if (!isCurrent() || !await this.allowAccountActivation(auth, isCurrent)) return;
+    if (!await this.persistSession(auth, isCurrent) || !isCurrent()) return;
+    this.addingAccount.set(false);
+    this.addingReturnUserId = null;
     this.markFreshAuthNavigation();
-    if (!await this.persistSession(auth)) return;
-    await this.router.navigateByUrl(this.consumePostAuthUrl());
+    await this.router.navigateByUrl(this.consumePostAuthUrl(), { replaceUrl: true });
   }
 
   deviceName(): string {
@@ -797,9 +1162,10 @@ export class AuthService implements OnDestroy {
     return Capacitor.isNativePlatform?.() === true;
   }
 
-  private async sendNativeFirebaseOtp(normalizedPhone: string): Promise<void> {
+  private async sendNativeFirebaseOtp(normalizedPhone: string, isCurrent: () => boolean): Promise<void> {
     this.nativePhoneVerificationId = '';
     await this.clearNativePhoneListeners();
+    if (!isCurrent()) return;
 
     let requestResolved = false;
     let resolveRequest: () => void = () => undefined;
@@ -820,21 +1186,36 @@ export class AuthService implements OnDestroy {
       resolveRequest = resolve;
       rejectRequest = reject;
     });
+    void waitForCode.catch(() => undefined);
+    const cancel = () => rejectOnce(new Error('AUTH_CANCELLED'));
+    this.phoneRequestCancel = cancel;
+    const register = async (handle: PluginListenerHandle) => {
+      if (isCurrent()) this.nativePhoneListenerHandles.push(handle);
+      else await handle.remove().catch(() => undefined);
+    };
 
     try {
       const codeSentHandle = await FirebaseAuthentication.addListener('phoneCodeSent', (event) => {
+        if (!isCurrent()) return;
         this.nativePhoneVerificationId = event.verificationId;
         resolveOnce();
       });
+      await register(codeSentHandle);
+      if (!isCurrent()) return;
       const completedHandle = await FirebaseAuthentication.addListener('phoneVerificationCompleted', () => {
-        void this.completeNativeAutoVerifiedPhone(normalizedPhone)
+        if (!isCurrent()) return;
+        void this.completeNativeAutoVerifiedPhone(normalizedPhone, isCurrent)
           .then(resolveOnce)
           .catch(rejectOnce);
       });
+      await register(completedHandle);
+      if (!isCurrent()) return;
       const failedHandle = await FirebaseAuthentication.addListener('phoneVerificationFailed', (event) => {
+        if (!isCurrent()) return;
         rejectOnce(new Error(event.message || 'Firebase no pudo verificar este telefono en Android.'));
       });
-      this.nativePhoneListenerHandles.push(codeSentHandle, completedHandle, failedHandle);
+      await register(failedHandle);
+      if (!isCurrent()) return;
 
       await FirebaseAuthentication.signInWithPhoneNumber({
         phoneNumber: normalizedPhone,
@@ -842,13 +1223,17 @@ export class AuthService implements OnDestroy {
       });
       await waitForCode;
     } catch (error) {
-      this.nativePhoneVerificationId = '';
-      await this.clearNativePhoneListeners();
+      if (isCurrent()) {
+        this.nativePhoneVerificationId = '';
+        await this.clearNativePhoneListeners();
+      }
       throw error;
+    } finally {
+      if (this.phoneRequestCancel === cancel) this.phoneRequestCancel = null;
     }
   }
 
-  private async verifyNativeFirebaseOtp(phone: string, code: string): Promise<void> {
+  private async verifyNativeFirebaseOtp(phone: string, code: string, isCurrent: () => boolean): Promise<void> {
     if (!this.nativePhoneVerificationId) {
       throw new Error('Primero pide el codigo SMS de Firebase.');
     }
@@ -859,25 +1244,31 @@ export class AuthService implements OnDestroy {
         verificationId: this.nativePhoneVerificationId,
         verificationCode: code.trim(),
       });
+      if (!isCurrent()) return;
       const result = await FirebaseAuthentication.getIdToken({ forceRefresh: true });
-      await this.completeFirebasePhoneSignIn(phone, result.token);
+      if (!isCurrent()) return;
+      await this.completeFirebasePhoneSignIn(phone, result.token, isCurrent);
+      if (!isCurrent()) return;
       this.nativePhoneVerificationId = '';
       await this.clearNativePhoneListeners();
     } catch (error) {
+      if (!isCurrent()) return;
       throw new Error(this.firebasePhoneAuthErrorMessage(error, 'No se pudo entrar por telefono.'));
     } finally {
-      this.busy.set(false);
+      if (isCurrent()) this.busy.set(false);
     }
   }
 
-  private async completeNativeAutoVerifiedPhone(phone: string): Promise<void> {
+  private async completeNativeAutoVerifiedPhone(phone: string, isCurrent: () => boolean): Promise<void> {
     const result = await FirebaseAuthentication.getIdToken({ forceRefresh: true });
-    await this.completeFirebasePhoneSignIn(phone, result.token);
+    if (!isCurrent()) return;
+    await this.completeFirebasePhoneSignIn(phone, result.token, isCurrent);
+    if (!isCurrent()) return;
     this.nativePhoneVerificationId = '';
     await this.clearNativePhoneListeners();
   }
 
-  private async completeFirebasePhoneSignIn(phone: string, firebaseToken: string): Promise<void> {
+  private async completeFirebasePhoneSignIn(phone: string, firebaseToken: string, isCurrent: () => boolean = () => true): Promise<void> {
     if (!firebaseToken) {
       throw new Error('Firebase no entrego un token valido para este telefono.');
     }
@@ -886,6 +1277,7 @@ export class AuthService implements OnDestroy {
     // key could give a different account ownership of another user's secrets.
     const keys = await this.crypto.createDeviceKeys();
     const device = await this.deviceProfile();
+    if (!isCurrent()) return;
     const response = await firstValueFrom(
       this.api.post<FirebasePhoneVerifyResponse>('/api/auth/phone/verify-firebase', {
         firebaseToken,
@@ -894,6 +1286,7 @@ export class AuthService implements OnDestroy {
         keyBundle: keys.keyBundle,
       }, { skipAuth: true }),
     );
+    if (!isCurrent()) return;
 
     if (response.requiresAlias) {
       this.pendingPhoneAlias.set({
@@ -906,7 +1299,7 @@ export class AuthService implements OnDestroy {
     }
 
     const auth = response.auth ?? (response as unknown as AuthSession);
-    await this.completeAuth(auth, keys);
+    await this.completeAuth(auth, keys, isCurrent);
   }
 
   private async clearNativePhoneListeners(): Promise<void> {
@@ -1040,15 +1433,17 @@ export class AuthService implements OnDestroy {
     keyring?: HistoricalDeviceKeyMaterial[],
     isCurrent: () => boolean = () => true,
   ): Promise<void> {
-    if (!isCurrent()) return;
+    if (!isCurrent() || !await this.allowAccountActivation(auth, isCurrent)) return;
     if (keyring?.length) await this.crypto.importHistoricalDeviceKeys(auth.user.id, auth.user.alias, keyring, isCurrent);
     if (!isCurrent()) return;
     const keys = this.crypto.materialToDeviceKeys(keyMaterial);
     await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id }, isCurrent);
     if (!isCurrent()) return;
-    this.markFreshAuthNavigation();
     if (!await this.persistSession(auth, isCurrent) || !isCurrent()) return;
-    await this.router.navigateByUrl(this.consumePostAuthUrl());
+    this.addingAccount.set(false);
+    this.addingReturnUserId = null;
+    this.markFreshAuthNavigation();
+    await this.router.navigateByUrl(this.consumePostAuthUrl(), { replaceUrl: true });
   }
 
   private markFreshAuthNavigation(): void {
@@ -1079,87 +1474,68 @@ export class AuthService implements OnDestroy {
   }
 
   private async persistSession(auth: AuthSession, isCurrent: () => boolean = () => true): Promise<boolean> {
-    const epoch = ++this.sessionWriteEpoch;
-    const mayWrite = () => this.sessionWriteEpoch === epoch && isCurrent();
+    const epoch = this.sessionWriteEpoch = (this.sessionWriteEpoch ?? 0) + 1;
+    const mayWrite = () => !this.destroyed && this.sessionWriteEpoch === epoch && isCurrent();
     if (!mayWrite()) return false;
-    if (this.secureVault.requiresProtection()) {
-      if (!await this.persistProtectedSession(auth, mayWrite) || !mayWrite()) return false;
-    } else {
-      if (!mayWrite()) return false;
-      localStorage.setItem(SESSION_KEY, JSON.stringify(auth));
-      localStorage.removeItem(PROTECTED_SESSION_KEY);
+    if (!await this.accountSessions.upsert(auth, true, mayWrite) || !mayWrite()) return false;
+    this.sessionRestoreComplete = true;
+    this.clearLegacySessionRecords();
+    const previous = this.session();
+    if (previous?.user.id === auth.user.id && previous?.device.id === auth.device.id) {
+      this.sessionGeneration?.update(value => value + 1);
+      this.invalidateDeviceIdentity();
     }
-    if (!mayWrite()) return false;
-    this.session.set(auth);
+    this.adoptSession(auth);
     return true;
   }
 
   private async restoreProtectedSession(): Promise<void> {
-    if (!this.secureVault.requiresProtection()) {
-      return;
-    }
-    this.protectedSessionRestorePromise ??= (async () => {
+    if (this.sessionRestoreComplete || this.destroyed) return;
+    if (this.protectedSessionRestorePromise) return this.protectedSessionRestorePromise;
+    const operation = (async () => {
       const restoreEpoch = this.sessionWriteEpoch;
       const initialSession = this.session();
-      const mayRestore = () => this.sessionWriteEpoch === restoreEpoch && this.session() === initialSession;
-      const encrypted = this.readProtectedSessionEnvelope();
-      if (encrypted) {
-        try {
-          const restored = await this.decryptProtectedSession(encrypted);
-          if (!mayRestore()) return;
-          if (this.isValidAuthSession(restored)) {
-            this.session.set(restored);
-            localStorage.removeItem(SESSION_KEY);
-            return;
-          }
-        } catch {
-          // Keep the encrypted envelope on disk: a temporary Android Keystore/bridge failure
-          // must not turn a recoverable session into a permanent sign-out.
-        }
+      const mayRestore = () => !this.destroyed && this.sessionWriteEpoch === restoreEpoch && this.session() === initialSession;
+      try {
+        let snapshot = await this.accountSessions.load();
         if (!mayRestore()) return;
-        this.session.set(null);
-        return;
-      }
-
-      const legacy = this.readPlainSession();
-      if (legacy) {
-        try {
-          if (await this.persistProtectedSession(legacy, mayRestore) && mayRestore()) this.session.set(legacy);
-        } catch {
-          if (mayRestore()) this.session.set(null);
-          // Preserve the legacy record if migration fails transiently; never erase credentials
-          // until a protected replacement is safely persisted.
+        if (snapshot) {
+          // The registry, including an empty tombstone, supersedes all v5 records.
+          for (let remaining = 2; remaining >= 0; remaining--) {
+            const active = snapshot.sessions.find(auth => auth.user.id === snapshot!.activeUserId);
+            if (!active || await this.allowAccountActivation(active, mayRestore)) {
+              if (!mayRestore()) return;
+              this.sessionRestoreComplete = true;
+              this.clearLegacySessionRecords();
+              this.adoptSession(active ?? null);
+              return;
+            }
+            snapshot = await this.accountSessions.load();
+            if (!snapshot || !mayRestore()) return;
+          }
+          return;
         }
-        return;
+        const encrypted = this.readProtectedSessionEnvelope();
+        if (localStorage.getItem(PROTECTED_SESSION_KEY) && !encrypted) throw new Error('Sesión protegida no válida.');
+        const legacy = encrypted ? await this.decryptProtectedSession(encrypted) : this.readPlainSession();
+        if (!mayRestore()) return;
+        if (legacy) {
+          if (!this.isValidAuthSession(legacy)) throw new Error('Sesión no válida.');
+          if (!await this.allowAccountActivation(legacy, mayRestore) || !mayRestore()) return;
+          if (!await this.accountSessions.upsert(legacy, true, mayRestore) || !mayRestore()) return;
+          this.adoptSession(legacy);
+        }
+        if (!mayRestore() && this.session() !== legacy) return;
+        this.sessionRestoreComplete = true;
+        this.clearLegacySessionRecords();
+      } catch {
+        if (mayRestore()) this.accountError.set('No pudimos abrir las cuentas guardadas. Sus datos se han conservado. Desbloquea el dispositivo y vuelve a intentar.');
       }
-
-      if (mayRestore()) localStorage.removeItem(SESSION_KEY);
     })().finally(() => {
-      this.protectedSessionRestorePromise = null;
+      if (this.protectedSessionRestorePromise === operation) this.protectedSessionRestorePromise = null;
     });
-    await this.protectedSessionRestorePromise;
-  }
-
-  private async persistProtectedSession(auth: AuthSession, isCurrent: () => boolean = () => true): Promise<boolean> {
-    const key = await this.authSessionProtectorKey();
-    if (!isCurrent()) return false;
-    const iv = globalThis.crypto.getRandomValues(new Uint8Array(12));
-    const ciphertext = await globalThis.crypto.subtle.encrypt(
-      { name: 'AES-GCM', iv },
-      key,
-      authTextEncoder.encode(JSON.stringify(auth)),
-    );
-    if (!isCurrent()) return false;
-    const envelope: ProtectedAuthSessionEnvelope = {
-      v: 1,
-      alg: 'NIVRA-AUTH-SESSION-A256GCM',
-      iv: this.crypto.b64(iv),
-      ciphertext: this.crypto.b64(new Uint8Array(ciphertext)),
-      updatedAt: new Date().toISOString(),
-    };
-    localStorage.setItem(PROTECTED_SESSION_KEY, JSON.stringify(envelope));
-    localStorage.removeItem(SESSION_KEY);
-    return true;
+    this.protectedSessionRestorePromise = operation;
+    return operation;
   }
 
   private async decryptProtectedSession(envelope: ProtectedAuthSessionEnvelope): Promise<unknown> {

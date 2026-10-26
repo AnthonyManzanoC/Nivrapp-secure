@@ -51,7 +51,7 @@ describe('hybrid login preserves device key identity', () => {
     post.and.returnValues(of({ alias: 'reassigned' }), of(session));
     await service.loginWithAlias('@reassigned', 'synthetic-test-password', 'login');
     expect(prepareKeys).not.toHaveBeenCalled(); expect((service as any).crypto.createDeviceKeys).toHaveBeenCalledTimes(1);
-    expect((service as any).completeAuth).toHaveBeenCalledWith(session, keys);
+    expect((service as any).completeAuth).toHaveBeenCalledWith(session, keys, jasmine.any(Function));
   });
 
   it('does not downgrade a supplied but malformed account identifier to legacy alias login', async () => {
@@ -70,7 +70,7 @@ describe('hybrid login preserves device key identity', () => {
     post.and.returnValue(of({ auth: session }));
     await (service as any).completeFirebasePhoneSignIn('+15550000001', 'synthetic-firebase-token');
     expect(prepareKeys).not.toHaveBeenCalled(); expect((service as any).crypto.createDeviceKeys).toHaveBeenCalledTimes(1);
-    expect((service as any).completeAuth).toHaveBeenCalledWith(session, keys);
+    expect((service as any).completeAuth).toHaveBeenCalledWith(session, keys, jasmine.any(Function));
   });
 
   it('never persists or navigates a canceled QR import while protected session encryption is pending', async () => {
@@ -81,6 +81,8 @@ describe('hybrid login preserves device key identity', () => {
     const imported: any = Object.assign(Object.create(AuthService.prototype), {
       session: signal(null), sessionWriteEpoch: 0,
       secureVault: { requiresProtection: () => true },
+      accountSessions: { upsert: async (_auth: any, _activate: boolean, guard: () => boolean) => { await protector; return guard() ? {} : null; } },
+      allowAccountActivation: async () => true,
       authSessionProtectorKey: () => protector,
       crypto: { materialToDeviceKeys: () => keys, saveDeviceKeys: async () => undefined, b64: () => 'not-persisted' },
       markFreshAuthNavigation: () => undefined,
@@ -119,6 +121,7 @@ describe('hybrid login preserves device key identity', () => {
       const restoring: any = Object.assign(Object.create(AuthService.prototype), {
         session: signal<any>(null), sessionWriteEpoch: 0, protectedSessionRestorePromise: null,
         secureVault: { requiresProtection: () => true }, readProtectedSessionEnvelope: () => ({}),
+        accountSessions: { load: async () => null },
         decryptProtectedSession: () => decrypted,
       });
       const pending = restoring.restoreProtectedSession();

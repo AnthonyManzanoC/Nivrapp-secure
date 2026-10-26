@@ -1,12 +1,14 @@
 package com.nivra.app;
 
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
+import android.service.notification.StatusBarNotification;
 import android.util.Base64;
-
+import androidx.core.app.NotificationManagerCompat;
 import androidx.work.BackoffPolicy;
 import androidx.work.Constraints;
 import androidx.work.ExistingWorkPolicy;
@@ -15,25 +17,24 @@ import androidx.work.NetworkType;
 import androidx.work.OneTimeWorkRequest;
 import androidx.work.PeriodicWorkRequest;
 import androidx.work.WorkManager;
-import androidx.core.app.NotificationManagerCompat;
-
 import com.getcapacitor.JSObject;
 import com.google.firebase.messaging.FirebaseMessaging;
-
+import org.json.JSONArray;
 import org.json.JSONObject;
-
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
-
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
-/** Registration survives WebView/process sleep; credentials remain in Android Keystore. */
+/** Two independent authenticated scopes, encrypted at rest and maintained without a WebView. */
 final class NivraNativePushRegistration {
     private static final String PREFS = "nivra_native_push";
     private static final String KEY = "nivra.native.push.v1";
@@ -41,56 +42,119 @@ final class NivraNativePushRegistration {
     static final String MAINTENANCE_WORK_NAME = "nivra-native-push-maintenance";
     private static final String TOKEN_REPAIR_WORK_NAME = "nivra-native-push-token-repair";
     private static final long REGISTRATION_FRESH_MS = TimeUnit.HOURS.toMillis(24);
-
     private NivraNativePushRegistration() { }
 
+    /** Legacy bridge upserts only its scope; it must never remove the other account. */
     static synchronized void sync(Context context, JSObject options) throws Exception {
-        String api = options.optString("apiBaseUrl", "").replaceAll("/+$", "");
-        if (!isAllowedApiOrigin(api))
-            throw new IllegalArgumentException("A secure API origin is required.");
-        String fingerprint = NivraApiFailover.canonicalFingerprint(options.optString("clusterFingerprint", ""));
-        String user = options.optString("userId", "");
-        String device = options.optString("deviceId", "");
-        String refresh = options.optString("refreshToken", "");
-        if (user.isEmpty() || device.isEmpty() || refresh.isEmpty() || refresh.length() > 4096)
-            throw new IllegalArgumentException("An authenticated device session is required.");
-        JSONObject prior = read(context);
-        if (prior != null && isScopeChange(prior.optString("userId"), prior.optString("deviceId"), user, device))
-            clearNotifications(context);
-        boolean same = prior != null && api.equals(prior.optString("apiBaseUrl")) &&
-            user.equals(prior.optString("userId")) && device.equals(prior.optString("deviceId")) &&
-            refresh.equals(prior.optString("refreshToken")) && fingerprint.equals(prior.optString("clusterFingerprint"));
-        if (!same) {
-            JSONObject value = new JSONObject();
-            value.put("apiBaseUrl", api).put("userId", user).put("deviceId", device)
-                .put("refreshToken", refresh).put("clusterFingerprint", fingerprint).put("epoch", UUID.randomUUID().toString());
-            write(context, value);
-            // A newly queued session has not confirmed provider availability yet.
-            prefs(context).edit().remove("registeredAt").remove("pendingToken").putBoolean("fcmReady", false).commit();
-        }
-        // Persisted OS work heals an exhausted transient retry without keeping
-        // the WebView or a foreground service alive between notifications.
-        PeriodicWorkRequest maintenance = new PeriodicWorkRequest.Builder(
-            NivraPushMaintenanceWorker.class, 12, TimeUnit.HOURS, 1, TimeUnit.HOURS)
-            .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build();
-        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-            MAINTENANCE_WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, maintenance);
-        FirebaseMessaging.getInstance().getToken()
-            .addOnSuccessListener(token -> tokenChanged(context, token))
-            .addOnFailureListener(unavailable -> queueTokenRepair(context));
+        JSONObject root = registry(context);
+        String previousUser = root.optString("activeUserId"), previousDevice = root.optString("activeDeviceId");
+        JSONArray accounts = root.optJSONArray("accounts");
+        JSONObject next = registration(options, root);
+        if (next == null) return; // A pending revocation cannot be revived by a stale WebView.
+        int existing = indexOf(accounts, next.optString("userId"), next.optString("deviceId"));
+        if (existing < 0 && accounts.length() >= 2) throw new IllegalArgumentException("Only two saved accounts are supported.");
+        if (existing >= 0) accounts.put(existing, next); else accounts.put(next);
+        root.put("activeUserId", next.optString("userId")).put("activeDeviceId", next.optString("deviceId"));
+        write(context, root);
+        if (isScopeChange(previousUser, previousDevice, next.optString("userId"), next.optString("deviceId"))) clearCallNotifications(context, previousUser, previousDevice);
+        schedule(context);
     }
 
+    static synchronized void syncAll(Context context, JSObject options) throws Exception {
+        JSONArray requested = options.optJSONArray("accounts");
+        if (requested == null || requested.length() > 2) throw new IllegalArgumentException("At most two saved accounts are required.");
+        JSONObject root = registry(context);
+        String previousUser = root.optString("activeUserId"), previousDevice = root.optString("activeDeviceId");
+        JSONArray previous = root.optJSONArray("accounts");
+        JSONArray next = new JSONArray();
+        for (int i = 0; i < requested.length(); i++) {
+            JSONObject account = requested.optJSONObject(i);
+            if (account == null) throw new IllegalArgumentException("An authenticated device session is required.");
+            JSONObject value = registration(account, root);
+            if (value == null) continue;
+            for (int j = 0; j < next.length(); j++) {
+                if (value.optString("userId").equals(next.getJSONObject(j).optString("userId")))
+                    throw new IllegalArgumentException("Saved accounts must have distinct users.");
+            }
+            next.put(value);
+        }
+        String activeUser = options.optString("activeUserId", "");
+        String activeDevice = options.optString("activeDeviceId", "");
+        if (indexOf(next, activeUser, activeDevice) < 0) { activeUser = ""; activeDevice = ""; }
+        root.put("accounts", next).put("activeUserId", activeUser).put("activeDeviceId", activeDevice);
+        write(context, root);
+        if (isScopeChange(previousUser, previousDevice, activeUser, activeDevice)) clearCallNotifications(context, previousUser, previousDevice);
+        for (int i = 0; i < previous.length(); i++) {
+            JSONObject prior = previous.getJSONObject(i);
+            if (indexOf(next, prior.optString("userId"), prior.optString("deviceId")) < 0)
+                clearNotifications(context, prior.optString("userId"), prior.optString("deviceId"));
+        }
+        if (next.length() == 0) cancelWork(context); else schedule(context);
+    }
+
+    private static JSONObject registration(JSONObject options, JSONObject root) throws Exception {
+        String api = options.optString("apiBaseUrl", "").replaceAll("/+$", "");
+        if (!isAllowedApiOrigin(api)) throw new IllegalArgumentException("A secure API origin is required.");
+        String user = options.optString("userId", ""), device = options.optString("deviceId", ""), refresh = options.optString("refreshToken", "");
+        if (user.isEmpty() || device.isEmpty() || user.length() > 128 || device.length() > 128 || refresh.isEmpty() || refresh.length() > 4096)
+            throw new IllegalArgumentException("An authenticated device session is required.");
+        if (indexOf(root.optJSONArray("pendingWipes"), user, device) >= 0) return null;
+        String fingerprint = NivraApiFailover.canonicalFingerprint(options.optString("clusterFingerprint", ""));
+        JSONObject prior = find(root.optJSONArray("accounts"), user, device);
+        if (prior != null && api.equals(prior.optString("apiBaseUrl")) && refresh.equals(prior.optString("refreshToken")) && fingerprint.equals(prior.optString("clusterFingerprint"))) return prior;
+        JSONObject value = new JSONObject().put("apiBaseUrl", api).put("userId", user).put("deviceId", device)
+            .put("refreshToken", refresh).put("clusterFingerprint", fingerprint).put("epoch", UUID.randomUUID().toString()).put("fcmReady", false);
+        String token = root.optString("routingToken", "");
+        if (!token.isEmpty()) value.put("pendingToken", token);
+        return value;
+    }
+
+    /** Returns only the active account for the existing foreground call bridge. */
     static synchronized JSONObject read(Context context) {
         try {
-            SharedPreferences prefs = prefs(context);
-            String encrypted = prefs.getString("ciphertext", "");
-            String iv = prefs.getString("iv", "");
-            if (encrypted == null || encrypted.isEmpty() || iv == null || iv.isEmpty()) return null;
-            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, secretKey(), new GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)));
-            return new JSONObject(new String(cipher.doFinal(Base64.decode(encrypted, Base64.NO_WRAP)), StandardCharsets.UTF_8));
-        } catch (Exception ignored) { return null; }
+            JSONObject root = registry(context);
+            return find(root.optJSONArray("accounts"), root.optString("activeUserId"), root.optString("activeDeviceId"));
+        } catch (IllegalStateException unavailable) { return null; }
+    }
+
+    static synchronized List<JSONObject> readAll(Context context) {
+        List<JSONObject> values = new ArrayList<>();
+        try {
+            JSONArray accounts = registry(context).optJSONArray("accounts");
+            for (int i = 0; i < accounts.length(); i++) if (accounts.optJSONObject(i) != null) values.add(accounts.optJSONObject(i));
+        } catch (IllegalStateException unavailable) { }
+        return values;
+    }
+
+    private static JSONObject registry(Context context) {
+        try {
+            SharedPreferences state = prefs(context);
+            String encrypted = state.getString("ciphertext", ""), iv = state.getString("iv", "");
+            if ((encrypted == null || encrypted.isEmpty()) && (iv == null || iv.isEmpty())) return emptyRegistry();
+            if (encrypted != null && !encrypted.isEmpty() && iv != null && !iv.isEmpty()) {
+                Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+                cipher.init(Cipher.DECRYPT_MODE, secretKey(), new GCMParameterSpec(128, Base64.decode(iv, Base64.NO_WRAP)));
+                JSONObject value = new JSONObject(new String(cipher.doFinal(Base64.decode(encrypted, Base64.NO_WRAP)), StandardCharsets.UTF_8));
+                if (value.optJSONArray("accounts") != null) return value;
+                // Migrate release 5's single encrypted session without rotating its credentials.
+                if (!value.optString("userId").isEmpty() && !value.optString("deviceId").isEmpty()) {
+                    value.put("registeredAt", state.getLong("registeredAt", 0)).put("registeredToken", state.getString("registeredToken", ""))
+                        .put("pendingToken", state.getString("pendingToken", "")).put("fcmReady", state.getBoolean("fcmReady", false));
+                    return emptyRegistry().put("accounts", new JSONArray().put(value)).put("activeUserId", value.optString("userId"))
+                        .put("activeDeviceId", value.optString("deviceId")).put("routingToken", state.getString("registeredToken", state.getString("pendingToken", "")));
+                }
+            }
+            throw new IllegalStateException("Invalid encrypted push registry.");
+        } catch (Exception unavailable) {
+            // Never replace an unreadable registry with an empty one: a brief
+            // Keystore failure must preserve the other account and wipe markers.
+            throw new IllegalStateException("Encrypted push registry is unavailable.", unavailable);
+        }
+    }
+
+    private static JSONObject emptyRegistry() {
+        try { return new JSONObject().put("version", 2).put("accounts", new JSONArray()).put("pendingWipes", new JSONArray()); }
+        catch (Exception impossible) { throw new IllegalStateException(impossible); }
     }
 
     private static void write(Context context, JSONObject value) throws Exception {
@@ -98,90 +162,187 @@ final class NivraNativePushRegistration {
         cipher.init(Cipher.ENCRYPT_MODE, secretKey());
         byte[] encrypted = cipher.doFinal(value.toString().getBytes(StandardCharsets.UTF_8));
         if (!prefs(context).edit().putString("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
-            .putString("ciphertext", Base64.encodeToString(encrypted, Base64.NO_WRAP)).commit())
+            .putString("ciphertext", Base64.encodeToString(encrypted, Base64.NO_WRAP))
+            .remove("registeredAt").remove("registeredToken").remove("pendingToken").remove("fcmReady").commit())
             throw new IllegalStateException("Could not persist push registration.");
     }
 
+    /** Backward compatibility: an unscoped logout clears the active account only. */
     static synchronized void clear(Context context) {
-        prefs(context).edit().clear().commit();
-        WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME);
-        WorkManager.getInstance(context).cancelUniqueWork(MAINTENANCE_WORK_NAME);
-        WorkManager.getInstance(context).cancelUniqueWork(TOKEN_REPAIR_WORK_NAME);
-        clearNotifications(context);
+        JSONObject active = read(context);
+        if (active != null) clear(context, active.optString("userId"), active.optString("deviceId"));
+    }
+
+    static synchronized void clear(Context context, String user, String device) {
+        if (user == null || device == null || user.isEmpty() || device.isEmpty()) return;
         try {
-            KeyStore store = KeyStore.getInstance("AndroidKeyStore");
-            store.load(null);
-            if (store.containsAlias(KEY)) store.deleteEntry(KEY);
-        } catch (Exception ignored) { }
+            JSONObject root = registry(context);
+            removeScope(root, user, device);
+            write(context, root);
+            clearNotifications(context, user, device);
+            if (root.optJSONArray("accounts").length() == 0) cancelWork(context);
+        } catch (Exception error) { throw new IllegalStateException("Could not retire push account.", error); }
+    }
+
+    static synchronized void retireForWipe(Context context, Map<String, String> data) throws Exception {
+        String user = data.get("recipientUserId"), device = data.get("recipientDeviceId");
+        JSONObject root = registry(context);
+        if (find(root.optJSONArray("accounts"), user, device) == null) return;
+        JSONArray pending = root.optJSONArray("pendingWipes");
+        if (indexOf(pending, user, device) < 0) pending.put(new JSONObject().put("userId", user).put("deviceId", device));
+        removeScope(root, user, device);
+        // Persist the revocation before JS receives it or any notification is published.
+        write(context, root);
+        clearNotifications(context, user, device);
+        if (root.optJSONArray("accounts").length() == 0) cancelWork(context);
+    }
+
+    static synchronized JSONArray pendingWipes(Context context) { return registry(context).optJSONArray("pendingWipes"); }
+    static synchronized void acknowledgeWipe(Context context, String user, String device) throws Exception {
+        JSONObject root = registry(context);
+        root.put("pendingWipes", without(root.optJSONArray("pendingWipes"), user, device));
+        write(context, root);
+    }
+
+    private static void removeScope(JSONObject root, String user, String device) throws Exception {
+        root.put("accounts", without(root.optJSONArray("accounts"), user, device));
+        if (user.equals(root.optString("activeUserId")) && device.equals(root.optString("activeDeviceId"))) root.remove("activeUserId");
+        JSONObject pending = root.optJSONObject("pendingIntent");
+        if (pending != null && user.equals(pending.optString("recipientUserId")) && device.equals(pending.optString("recipientDeviceId"))) root.remove("pendingIntent");
+    }
+
+    static synchronized void savePendingIntent(Context context, JSONObject data) throws Exception {
+        JSONObject root = registry(context);
+        if (find(root.optJSONArray("accounts"), data.optString("recipientUserId"), data.optString("recipientDeviceId")) == null) return;
+        root.put("pendingIntent", data);
+        write(context, root);
+    }
+    static synchronized JSONObject pendingIntent(Context context) { return registry(context).optJSONObject("pendingIntent"); }
+    static synchronized void clearPendingIntent(Context context) throws Exception {
+        JSONObject root = registry(context); root.remove("pendingIntent"); write(context, root);
     }
 
     static boolean isScopeChange(String priorUserId, String priorDeviceId, String nextUserId, String nextDeviceId) {
-        return priorUserId != null && !priorUserId.isEmpty() &&
-            (!priorUserId.equals(nextUserId) || !java.util.Objects.equals(priorDeviceId, nextDeviceId));
+        return priorUserId != null && !priorUserId.isEmpty() && (!priorUserId.equals(nextUserId) || !java.util.Objects.equals(priorDeviceId, nextDeviceId));
     }
 
-    private static void clearNotifications(Context context) {
-        NivraNativePlugin.discardPendingCallActions();
-        NotificationManagerCompat.from(context).cancelAll();
-        // Logging out or changing the authenticated device also releases the
-        // former account's foreground call service. Credential rotation within
-        // the same account/device never reaches this cleanup.
-        NivraOngoingCallService.stop(context, "");
-        context.sendBroadcast(new Intent(NivraNativePlugin.ACTION_CALL_DISMISS)
-            .setPackage(context.getPackageName()).putExtra("all", true));
+    static void clearNotifications(Context context, String user, String device) {
+        clearNotifications(context, user, device, false);
+    }
+
+    private static void clearCallNotifications(Context context, String user, String device) {
+        clearNotifications(context, user, device, true);
+    }
+
+    private static void clearNotifications(Context context, String user, String device, boolean callsOnly) {
+        NivraNativePlugin.discardPendingCallActions(user, device);
+        String tag = NivraPushScopePolicy.notificationTag(user, device);
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager != null) try {
+            for (StatusBarNotification active : manager.getActiveNotifications()) {
+                if (tag.equals(active.getTag()) && (!callsOnly || android.app.Notification.CATEGORY_CALL.equals(active.getNotification().category))) NotificationManagerCompat.from(context).cancel(tag, active.getId());
+            }
+        } catch (RuntimeException ignored) { }
+        // Call IDs are only acted on through the matching account scope.
+        NivraOngoingCallService.stopScope(context, user, device);
+        context.sendBroadcast(new Intent(NivraNativePlugin.ACTION_CALL_DISMISS).setPackage(context.getPackageName())
+            .putExtra("scopeAll", true).putExtra("recipientUserId", user).putExtra("recipientDeviceId", device));
     }
 
     static synchronized void tokenChanged(Context context, String token) {
         if (token == null || token.trim().isEmpty()) return;
-        SharedPreferences state = prefs(context);
-        String pending = pendingToken(context);
-        if (pending.isEmpty() && registrationFresh(token, state.getString("registeredToken", ""),
-            state.getLong("registeredAt", 0), System.currentTimeMillis(), state.getBoolean("fcmReady", false))) return;
-        // The token is a routing address, not a session credential. It can be queued
-        // before login, but no network request is made without the encrypted session.
-        prefs(context).edit().putString("pendingToken", token).commit();
-        if (read(context) == null) return;
-        OneTimeWorkRequest work = new OneTimeWorkRequest.Builder(NivraPushRegistrationWorker.class)
-            .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build();
-        WorkManager.getInstance(context).enqueueUniqueWork(WORK_NAME,
-            token.equals(pending) ? ExistingWorkPolicy.KEEP : ExistingWorkPolicy.REPLACE, work);
+        try {
+            JSONObject root = registry(context);
+            boolean replaced = !token.equals(root.optString("routingToken"));
+            root.put("routingToken", token);
+            JSONArray accounts = root.optJSONArray("accounts");
+            boolean pending = false;
+            for (int i = 0; i < accounts.length(); i++) {
+                JSONObject account = accounts.getJSONObject(i);
+                if (registrationFresh(token, account.optString("registeredToken"), account.optLong("registeredAt"), System.currentTimeMillis(), account.optBoolean("fcmReady")) && account.optString("pendingToken").isEmpty()) continue;
+                account.put("pendingToken", token); pending = true;
+            }
+            write(context, root);
+            if (!pending) return;
+            enqueueRegistration(context, replaced ? ExistingWorkPolicy.REPLACE : ExistingWorkPolicy.KEEP);
+        } catch (Exception ignored) { queueTokenRepair(context); }
     }
 
     static boolean registrationFresh(String token, String registeredToken, long registeredAt, long now, boolean fcmReady) {
-        return token != null && !token.isEmpty() && token.equals(registeredToken) && fcmReady
-            && registeredAt > 0 && now >= registeredAt && now - registeredAt < REGISTRATION_FRESH_MS;
+        return token != null && !token.isEmpty() && token.equals(registeredToken) && fcmReady && registeredAt > 0 && now >= registeredAt && now - registeredAt < REGISTRATION_FRESH_MS;
     }
 
+    private static void schedule(Context context) {
+        // Replace a worker holding an older account epoch even when the physical
+        // FCM token did not change. KEEP could otherwise strand the newly added
+        // account until the next periodic maintenance window.
+        for (JSONObject account : readAll(context)) {
+            if (!account.optString("pendingToken").isEmpty()) { enqueueRegistration(context, ExistingWorkPolicy.REPLACE); break; }
+        }
+        PeriodicWorkRequest maintenance = new PeriodicWorkRequest.Builder(NivraPushMaintenanceWorker.class, 12, TimeUnit.HOURS, 1, TimeUnit.HOURS)
+            .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build();
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(MAINTENANCE_WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, maintenance);
+        FirebaseMessaging.getInstance().getToken().addOnSuccessListener(token -> tokenChanged(context, token)).addOnFailureListener(unavailable -> queueTokenRepair(context));
+    }
+    private static void enqueueRegistration(Context context, ExistingWorkPolicy policy) {
+        OneTimeWorkRequest work = new OneTimeWorkRequest.Builder(NivraPushRegistrationWorker.class)
+            .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build();
+        WorkManager.getInstance(context).enqueueUniqueWork(WORK_NAME, policy, work);
+    }
     private static synchronized void queueTokenRepair(Context context) {
-        if (read(context) == null) return;
+        if (readAll(context).isEmpty()) return;
         OneTimeWorkRequest repair = new OneTimeWorkRequest.Builder(NivraPushMaintenanceWorker.class)
             .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
             .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS).build();
         WorkManager.getInstance(context).enqueueUniqueWork(TOKEN_REPAIR_WORK_NAME, ExistingWorkPolicy.KEEP, repair);
     }
-
-    static synchronized String pendingToken(Context context) { return prefs(context).getString("pendingToken", ""); }
+    private static void cancelWork(Context context) {
+        WorkManager work = WorkManager.getInstance(context);
+        work.cancelUniqueWork(WORK_NAME); work.cancelUniqueWork(MAINTENANCE_WORK_NAME); work.cancelUniqueWork(TOKEN_REPAIR_WORK_NAME);
+    }
 
     static synchronized boolean isCurrent(Context context, JSONObject snapshot, String token) {
-        JSONObject value = read(context);
-        return value != null && value.optString("epoch").equals(snapshot.optString("epoch")) &&
-            token.equals(pendingToken(context));
+        try {
+            JSONObject value = find(registry(context).optJSONArray("accounts"), snapshot.optString("userId"), snapshot.optString("deviceId"));
+            return value != null && NivraPushScopePolicy.currentSnapshot(value.optString("epoch"), snapshot.optString("epoch"), value.optString("pendingToken"), token);
+        } catch (IllegalStateException unavailable) { return false; }
+    }
+    static synchronized void registered(Context context, JSONObject snapshot, String token, boolean fcmReady) throws Exception {
+        JSONObject root = registry(context);
+        JSONObject value = find(root.optJSONArray("accounts"), snapshot.optString("userId"), snapshot.optString("deviceId"));
+        if (value == null || !NivraPushScopePolicy.currentSnapshot(value.optString("epoch"), snapshot.optString("epoch"), value.optString("pendingToken"), token)) return;
+        value.put("registeredAt", System.currentTimeMillis()).put("registeredToken", token).put("fcmReady", fcmReady).remove("pendingToken");
+        write(context, root);
+    }
+    static synchronized boolean accepts(Context context, Map<String, String> data) {
+        try { return find(registry(context).optJSONArray("accounts"), data.get("recipientUserId"), data.get("recipientDeviceId")) != null; }
+        catch (IllegalStateException unavailable) { return false; }
+    }
+    static synchronized boolean isActive(Context context, Map<String, String> data) {
+        try {
+            JSONObject root = registry(context);
+            return NivraPushScopePolicy.matches(root.optString("activeUserId"), root.optString("activeDeviceId"), data.get("recipientUserId"), data.get("recipientDeviceId")) && accepts(context, data);
+        } catch (IllegalStateException unavailable) { return false; }
     }
 
-    static synchronized void registered(Context context, JSONObject snapshot, String token, boolean fcmReady) {
-        if (!isCurrent(context, snapshot, token)) return;
-        prefs(context).edit().putLong("registeredAt", System.currentTimeMillis())
-            .putString("registeredToken", token).putBoolean("fcmReady", fcmReady).remove("pendingToken").commit();
+    private static JSONObject find(JSONArray values, String user, String device) { int index = indexOf(values, user, device); return index < 0 ? null : values.optJSONObject(index); }
+    private static int indexOf(JSONArray values, String user, String device) {
+        if (values == null) return -1;
+        for (int i = 0; i < values.length(); i++) {
+            JSONObject value = values.optJSONObject(i);
+            if (value != null && NivraPushScopePolicy.matches(value.optString("userId"), value.optString("deviceId"), user, device)) return i;
+        }
+        return -1;
     }
-
-    static boolean accepts(Context context, java.util.Map<String, String> data) {
-        JSONObject session = read(context);
-        if (session == null) return false;
-        String recipientUser = data.get("recipientUserId");
-        String recipientDevice = data.get("recipientDeviceId");
-        return recipientUser != null && recipientUser.equals(session.optString("userId")) &&
-            recipientDevice != null && recipientDevice.equals(session.optString("deviceId"));
+    private static JSONArray without(JSONArray values, String user, String device) {
+        JSONArray next = new JSONArray();
+        if (values != null) for (int i = 0; i < values.length(); i++) {
+            JSONObject value = values.optJSONObject(i);
+            if (value != null && !NivraPushScopePolicy.matches(value.optString("userId"), value.optString("deviceId"), user, device)) next.put(value);
+        }
+        return next;
     }
 
     static boolean isAllowedApiOrigin(String value) {
@@ -189,30 +350,24 @@ final class NivraNativePushRegistration {
             URI origin = URI.create(value);
             return "https".equalsIgnoreCase(origin.getScheme()) &&
                 ("nivra-webapp-secure.onrender.com".equalsIgnoreCase(origin.getHost()) || "nivrapp-secure.onrender.com".equalsIgnoreCase(origin.getHost())) &&
-                (origin.getPort() == -1 || origin.getPort() == 443) && origin.getUserInfo() == null &&
-                origin.getRawQuery() == null && origin.getRawFragment() == null &&
+                (origin.getPort() == -1 || origin.getPort() == 443) && origin.getUserInfo() == null && origin.getRawQuery() == null && origin.getRawFragment() == null &&
                 (origin.getRawPath() == null || origin.getRawPath().isEmpty());
         } catch (RuntimeException ignored) { return false; }
     }
-
     static void diagnostics(Context context, JSObject result) {
-        SharedPreferences prefs = prefs(context);
-        result.put("nativePushSessionReady", read(context) != null);
-        result.put("nativePushRegisteredAt", prefs.getLong("registeredAt", 0));
-        result.put("nativePushRegistrationPending", !pendingToken(context).isEmpty());
-        result.put("nativePushFcmReady", prefs.getBoolean("fcmReady", false));
+        List<JSONObject> accounts = readAll(context);
+        long registeredAt = 0; boolean pending = false, ready = !accounts.isEmpty();
+        for (JSONObject account : accounts) { registeredAt = Math.max(registeredAt, account.optLong("registeredAt")); pending |= !account.optString("pendingToken").isEmpty(); ready &= account.optBoolean("fcmReady"); }
+        result.put("nativePushSessionReady", !accounts.isEmpty()); result.put("nativePushAccountCount", accounts.size());
+        result.put("nativePushRegisteredAt", registeredAt); result.put("nativePushRegistrationPending", pending); result.put("nativePushFcmReady", ready);
     }
-
     private static SharedPreferences prefs(Context context) { return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE); }
-
     private static SecretKey secretKey() throws Exception {
-        KeyStore store = KeyStore.getInstance("AndroidKeyStore");
-        store.load(null);
+        KeyStore store = KeyStore.getInstance("AndroidKeyStore"); store.load(null);
         if (store.containsAlias(KEY)) return (SecretKey) store.getKey(KEY, null);
         KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
         generator.init(new KeyGenParameterSpec.Builder(KEY, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
-            .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-            .setRandomizedEncryptionRequired(true).build());
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM).setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).setRandomizedEncryptionRequired(true).build());
         return generator.generateKey();
     }
 }

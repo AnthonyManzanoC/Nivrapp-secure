@@ -4,9 +4,9 @@ namespace Nivra.Api.Services;
 
 public static class NativePushRegistrationPolicy
 {
-    public static bool CanRenewDestination(PushTokenRecord? destination, string userId, string deviceId) =>
+    public static bool CanRenewDestination(PushTokenRecord? destination, string userId, string deviceId, string provider = "fcm") =>
         destination is null || (destination.UserId == userId && destination.DeviceId == deviceId &&
-            destination.RevokedAt is null && string.Equals(destination.Provider, "fcm", StringComparison.OrdinalIgnoreCase));
+            destination.RevokedAt is null && string.Equals(destination.Provider, provider, StringComparison.OrdinalIgnoreCase));
 
     public static bool IsAllowed(SessionRecord? session, UserAccount? user, DeviceRecord? device,
         string requestedUserId, string requestedDeviceId, DateTimeOffset now) =>

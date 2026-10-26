@@ -110,7 +110,12 @@ interface BatteryOptimizationResponse {
 
 export interface NivraNativePlugin {
   syncPushRegistration(options: NativePushRegistration): Promise<{ registered?: boolean; ready?: boolean }>;
-  clearPushRegistration(): Promise<void>;
+  syncPushRegistrations(options: { accounts: NativePushRegistration[]; activeUserId?: string; activeDeviceId?: string }): Promise<{ registered?: boolean }>;
+  clearPushRegistration(options?: { userId?: string; deviceId?: string }): Promise<void>;
+  getPendingPushAccountWipes(): Promise<{ scopes: Array<{ userId: string; deviceId: string }> }>;
+  acknowledgePushAccountWipe(options: { userId: string; deviceId: string }): Promise<void>;
+  getPendingPushIntent(): Promise<{ data?: Record<string, string> | null }>;
+  clearPendingPushIntent(): Promise<void>;
   openNotificationSettings(options: { section: 'app' | 'calls' | 'full-screen' }): Promise<void>;
   getAppUpdateState(): Promise<NativeAppUpdateState>;
   downloadAppUpdate(options: AndroidRelease): Promise<NativeAppUpdateState>;
@@ -136,13 +141,14 @@ export interface NivraNativePlugin {
     callType?: string;
     conversationId?: string;
   }): Promise<void>;
-  clearIncomingCall(options: { callId: string }): Promise<void>;
+  clearIncomingCall(options: { callId: string; recipientUserId?: string; recipientDeviceId?: string }): Promise<void>;
   getPendingShareIntent(): Promise<PendingShareResponse>;
   clearPendingShareIntent(options: { id?: string }): Promise<void>;
   readSharedFileChunk(options: { uri: string; offset: number; length: number }): Promise<SharedChunkResponse>;
   getDeviceContacts(options: { requestPermission?: boolean; limit?: number }): Promise<DeviceContactsResponse>;
   addListener(eventName: 'raiseGesture', listener: (event: RaiseGestureEvent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'nativeCallAction', listener: (event: NativeCallActionEvent) => void): Promise<PluginListenerHandle>;
+  addListener(eventName: 'nativePushIntent', listener: (event: { data?: Record<string, string> }) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'nativeShareIntent', listener: (event: NativeShareIntent) => void): Promise<PluginListenerHandle>;
   addListener(eventName: 'nativeAppUpdateState', listener: (event: NativeAppUpdateState) => void): Promise<PluginListenerHandle>;
 }
@@ -161,8 +167,26 @@ export class NativeDeviceService {
     const result = await NivraNative.syncPushRegistration(options).catch(() => null);
     return result?.registered === true || result?.ready === true;
   }
-  async clearPushRegistration(): Promise<void> {
-    if (Capacitor.getPlatform() === 'android') await NivraNative.clearPushRegistration();
+  async syncPushRegistrations(accounts: NativePushRegistration[], active?: { userId: string; deviceId: string }): Promise<void> {
+    if (Capacitor.getPlatform() === 'android') await NivraNative.syncPushRegistrations({ accounts, activeUserId: active?.userId, activeDeviceId: active?.deviceId });
+  }
+  async clearPushRegistration(scope?: { userId: string; deviceId: string }): Promise<void> {
+    if (Capacitor.getPlatform() === 'android') await NivraNative.clearPushRegistration(scope);
+  }
+  async pendingPushAccountWipes(): Promise<Array<{ userId: string; deviceId: string }>> {
+    return Capacitor.getPlatform() === 'android' ? (await NivraNative.getPendingPushAccountWipes()).scopes : [];
+  }
+  async acknowledgePushAccountWipe(scope: { userId: string; deviceId: string }): Promise<void> {
+    if (Capacitor.getPlatform() === 'android') await NivraNative.acknowledgePushAccountWipe(scope);
+  }
+  async pendingPushIntent(): Promise<Record<string, string> | null> {
+    return Capacitor.getPlatform() === 'android' ? (await NivraNative.getPendingPushIntent()).data ?? null : null;
+  }
+  async clearPendingPushIntent(): Promise<void> {
+    if (Capacitor.getPlatform() === 'android') await NivraNative.clearPendingPushIntent();
+  }
+  async addPushIntentListener(listener: (event: { data?: Record<string, string> }) => void): Promise<PluginListenerHandle | null> {
+    return Capacitor.getPlatform() === 'android' ? NivraNative.addListener('nativePushIntent', listener) : null;
   }
   async openNotificationSettings(section: 'app' | 'calls' | 'full-screen' = 'app'): Promise<void> {
     if (Capacitor.getPlatform() === 'android') await NivraNative.openNotificationSettings({ section });
@@ -262,11 +286,11 @@ export class NativeDeviceService {
     await NivraNative.showIncomingCall(options).catch(() => undefined);
   }
 
-  async clearIncomingCall(callId: string | null | undefined): Promise<void> {
+  async clearIncomingCall(callId: string | null | undefined, scope?: { userId: string; deviceId: string }): Promise<void> {
     if (!this.native || !callId) {
       return;
     }
-    await NivraNative.clearIncomingCall({ callId }).catch(() => undefined);
+    await NivraNative.clearIncomingCall({ callId, recipientUserId: scope?.userId, recipientDeviceId: scope?.deviceId }).catch(() => undefined);
   }
 
   async onNativeCallAction(listener: (event: NativeCallActionEvent) => void): Promise<PluginListenerHandle | null> {

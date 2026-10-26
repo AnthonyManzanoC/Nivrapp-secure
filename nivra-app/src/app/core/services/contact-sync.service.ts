@@ -1,4 +1,4 @@
-import { Injectable, inject, signal } from '@angular/core';
+import { Injectable, effect, inject, signal, untracked } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { ContactHashSyncResponse } from '../models/nivra.models';
 import { AuthService } from './auth.service';
@@ -10,6 +10,7 @@ const CONTACT_HASH_CACHE_PREFIX = 'nivra.contactHashes.';
 const CONTACT_PHONE_CACHE_PREFIX = 'nivra.contactPhones.';
 const RADAR_JOINED_HINT_PREFIX = 'nivra.radar.contactJoined.';
 const MAX_CONTACT_HASHES = 5000;
+interface ContactSyncContext { scope: string; epoch: number; }
 
 @Injectable({ providedIn: 'root' })
 export class ContactSyncService {
@@ -22,14 +23,36 @@ export class ContactSyncService {
   readonly radarHasNewContact = signal(false);
   readonly lastSyncedCount = signal(0);
   readonly lastDeviceContactCount = signal(0);
+  private scope = this.accountScope();
+  private epoch = 0;
+  private backgroundInFlight: Promise<void> | null = null;
 
-  async syncCachedContactsInBackground(): Promise<void> {
+  constructor() {
+    effect(() => {
+      this.accountScope();
+      untracked(() => this.syncAccountScope());
+    });
+  }
+
+  syncCachedContactsInBackground(): Promise<void> {
+    this.syncAccountScope();
+    if (this.backgroundInFlight) return this.backgroundInFlight;
+    const task = this.syncCachedContactsCore().catch(() => undefined).finally(() => {
+      if (this.backgroundInFlight === task) this.backgroundInFlight = null;
+    });
+    this.backgroundInFlight = task;
+    return task;
+  }
+
+  private async syncCachedContactsCore(): Promise<void> {
     if (this.syncing() || !this.auth.isAuthenticated()) {
       return;
     }
+    const context = this.captureContext();
 
     this.restoreRadarHint();
     const deviceSynced = await this.syncDeviceContactsWithoutPrompt().catch(() => 0);
+    this.assertCurrent(context);
     if (deviceSynced > 0) {
       return;
     }
@@ -38,6 +61,7 @@ export class ContactSyncService {
     if (phones.length) {
       this.lastDeviceContactCount.set(phones.length);
       await this.syncContactPhones(phones).catch(() => undefined);
+      this.assertCurrent(context);
       return;
     }
 
@@ -47,27 +71,34 @@ export class ContactSyncService {
     }
 
     await this.syncContactHashes(hashes, { updateCache: false }).catch(() => undefined);
+    this.assertCurrent(context);
   }
 
   async syncContactPhones(rawPhones: readonly string[]): Promise<number> {
+    const context = this.captureContext();
     const phones = this.normalizePhones(rawPhones);
     if (!phones.length) {
       return 0;
     }
     const hashes = await this.hashPhones(phones);
+    this.assertCurrent(context);
     const stored = await this.syncContactHashes(hashes, { updateCache: true });
+    this.assertCurrent(context);
     this.cachePhones(phones);
     this.lastDeviceContactCount.set(Math.max(this.lastDeviceContactCount(), phones.length));
     return stored;
   }
 
   async pickAndSyncDeviceContacts(): Promise<string[]> {
+    const context = this.captureContext();
     if (this.nativeDevice.native) {
       try {
-        const phones = this.phoneNumbersFromContacts(await this.nativeDevice.readDeviceContacts({
+        const contacts = await this.nativeDevice.readDeviceContacts({
           requestPermission: true,
           limit: MAX_CONTACT_HASHES,
-        }));
+        });
+        this.assertCurrent(context);
+        const phones = this.phoneNumbersFromContacts(contacts);
         if (!phones.length) {
           throw new Error('No encontre telefonos legibles en tu agenda.');
         }
@@ -75,12 +106,15 @@ export class ContactSyncService {
         this.lastDeviceContactCount.set(normalized.length);
         this.cachePhones(normalized);
         await this.syncContactPhones(normalized).catch(() => undefined);
+        this.assertCurrent(context);
         return normalized;
       } catch (error) {
+        this.assertCurrent(context);
         const cached = this.readCachedPhones();
         if (cached.length) {
           this.lastDeviceContactCount.set(cached.length);
           await this.syncContactPhones(cached).catch(() => undefined);
+          this.assertCurrent(context);
           return cached;
         }
         throw new Error(this.contactAccessErrorMessage(error));
@@ -88,12 +122,14 @@ export class ContactSyncService {
     }
 
     const phones = await this.pickWebContactPhones().catch((error) => {
+      this.assertCurrent(context);
       const cached = this.readCachedPhones();
       if (cached.length) {
         return cached;
       }
       throw error;
     });
+    this.assertCurrent(context);
     if (!phones.length) {
       throw new Error('No encontre telefonos legibles en los contactos seleccionados.');
     }
@@ -101,10 +137,12 @@ export class ContactSyncService {
     this.lastDeviceContactCount.set(normalized.length);
     this.cachePhones(normalized);
     await this.syncContactPhones(normalized).catch(() => undefined);
+    this.assertCurrent(context);
     return normalized;
   }
 
   cachedContactPhones(): string[] {
+    this.syncAccountScope();
     const phones = this.readCachedPhones();
     if (phones.length) {
       this.lastDeviceContactCount.set(Math.max(this.lastDeviceContactCount(), phones.length));
@@ -113,6 +151,7 @@ export class ContactSyncService {
   }
 
   markContactJoinedHint(): void {
+    this.syncAccountScope();
     this.radarHasNewContact.set(true);
     const accountKey = this.accountKey();
     if (!accountKey) {
@@ -126,6 +165,7 @@ export class ContactSyncService {
   }
 
   clearContactJoinedHint(): void {
+    this.syncAccountScope();
     this.radarHasNewContact.set(false);
     const accountKey = this.accountKey();
     if (!accountKey) {
@@ -139,10 +179,13 @@ export class ContactSyncService {
   }
 
   private async syncContactHashes(hashes: readonly string[], options: { updateCache: boolean }): Promise<number> {
+    const context = this.captureContext();
     if (!this.auth.isAuthenticated()) {
       return 0;
     }
-    if (!await this.auth.ensureFreshSession()) {
+    const fresh = await this.auth.ensureFreshSession();
+    this.assertCurrent(context);
+    if (!fresh) {
       return 0;
     }
 
@@ -152,13 +195,14 @@ export class ContactSyncService {
       const response = await firstValueFrom(
         this.api.post<ContactHashSyncResponse>('/push-tokens/sync-contacts', normalized),
       );
+      this.assertCurrent(context);
       if (options.updateCache) {
         this.cacheHashes(normalized);
       }
       this.lastSyncedCount.set(response.stored ?? normalized.length);
       return response.stored ?? normalized.length;
     } finally {
-      this.syncing.set(false);
+      if (this.isCurrent(context)) this.syncing.set(false);
     }
   }
 
@@ -213,6 +257,7 @@ export class ContactSyncService {
   }
 
   private async syncDeviceContactsWithoutPrompt(): Promise<number> {
+    const context = this.captureContext();
     if (!this.nativeDevice.native) {
       return 0;
     }
@@ -220,6 +265,7 @@ export class ContactSyncService {
       requestPermission: false,
       limit: MAX_CONTACT_HASHES,
     });
+    this.assertCurrent(context);
     const phones = this.phoneNumbersFromContacts(contacts);
     if (!phones.length) {
       return 0;
@@ -343,5 +389,27 @@ export class ContactSyncService {
 
   private accountKey(): string | null {
     return this.auth.session()?.user.id ?? null;
+  }
+
+  private accountScope(): string {
+    const session = this.auth.session(); return session ? `${session.user.id}:${session.device.id}` : '';
+  }
+  private syncAccountScope(): void {
+    const scope = this.accountScope();
+    if (scope === this.scope) return;
+    this.scope = scope; ++this.epoch;
+    this.backgroundInFlight = null;
+    this.syncing.set(false); this.radarHasNewContact.set(false); this.lastSyncedCount.set(0); this.lastDeviceContactCount.set(0);
+  }
+  private captureContext(): ContactSyncContext {
+    this.syncAccountScope();
+    if (!this.scope) throw new Error('Inicia sesión para sincronizar tus contactos.');
+    return { scope: this.scope, epoch: this.epoch };
+  }
+  private isCurrent(context: ContactSyncContext): boolean {
+    this.syncAccountScope(); return context.scope === this.scope && context.epoch === this.epoch;
+  }
+  private assertCurrent(context: ContactSyncContext): void {
+    if (!this.isCurrent(context)) throw new Error('La cuenta o el dispositivo cambió. Vuelve a abrir tus contactos.');
   }
 }

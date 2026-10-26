@@ -39,6 +39,7 @@ import { NativeDeviceService } from './native-device.service';
 import { HistoryDeviceSyncService } from './history-device-sync.service';
 import { NetworkPolicyService } from './network-policy.service';
 import { uniqueCallSummaries, validatedCallSummary } from './call-summary.helpers';
+import { identityDisplayName, isNivraIdAccount } from '../utils/nivra-identity';
 
 const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 const LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
@@ -52,6 +53,8 @@ const DEFAULT_GROUP_SETTINGS: GroupSettings = {
 type ProfileSource = {
   id?: string | null;
   userId?: string | null;
+  nivraNumber?: string | null;
+  isPrivateAccount?: boolean;
   alias?: string | null;
   displayName?: string | null;
   phone?: string | null;
@@ -146,6 +149,10 @@ export class ChatService implements OnDestroy {
   private readonly pendingReactionsByMessageId = new Map<string, MessageReaction[]>();
   private readonly profileFetchInFlight = new Map<string, number>();
   private readonly profileRetryAfter = new Map<string, number>();
+  private profileUpdateRevisions = new Map<string, number>();
+  private contactsFetchInFlight: { epoch: number; promise: Promise<void> } | null = null;
+  private contactsUpdateRevision = 0;
+  private directoryRequestRevision = 0;
   private profileRequestsActive = 0;
   private readonly profileRequestWaiters: (() => void)[] = [];
   private readonly profileSources = new Map<string, 'authoritative' | 'summary' | 'cache'>();
@@ -266,10 +273,10 @@ export class ChatService implements OnDestroy {
         void this.applyTyping(event.payload);
       }
       if (event.type === 'profile.updated') {
-        const userId = String((event.payload as { userId?: unknown })?.userId || '');
-        if (userId && userId !== this.auth.session()?.user.id) {
-          void this.refreshProfile(userId);
-        }
+        this.applyProfileUpdate(event.payload);
+      }
+      if (event.type === 'contacts.updated') {
+        void this.refreshContacts().catch(() => undefined);
       }
       if (event.type === 'presence.changed') {
         this.applyPresence(event.payload as PresenceResponse);
@@ -319,7 +326,7 @@ export class ChatService implements OnDestroy {
           this.activeChatScope = '';
           this.stopAutomaticSync();
           this.stopTtlSweep();
-          this.pauseForLoggedOutSession();
+          this.resetInMemoryState();
         });
       }
     });
@@ -503,9 +510,10 @@ export class ChatService implements OnDestroy {
       }
       if (!current()) return;
       const historyGenerations = new Map(this.conversationHistoryGenerations);
+      const profileRevisions = new Map(this.profileUpdateRevisions);
       const bootstrap = await firstValueFrom(this.api.get<SyncBootstrapResponse>(`/sync/bootstrap?messageTake=${CHAT_PAGE_SIZE}`).pipe(timeout(this.chatReadTimeoutMs())));
       if (!current()) return;
-      const contacts = bootstrap.contacts ?? [];
+      const contacts = this.keepNewerProfileVisibility(bootstrap.contacts ?? [], profileRevisions);
       const conversations = this.applyLocalConversationState(bootstrap.conversations ?? []);
       this.remoteIndexRevision += 1;
       this.contacts.set(contacts);
@@ -827,6 +835,10 @@ export class ChatService implements OnDestroy {
 
   async searchPeople(query: string): Promise<UserSummary[]> {
     const normalized = query.trim();
+    const accountId = this.auth.session()?.user.id;
+    const epoch = this.launchCacheEpoch;
+    const revision = this.directoryRequestRevision = (this.directoryRequestRevision || 0) + 1;
+    const profileRevisions = new Map(this.profileUpdateRevisions);
     if (normalized.length < 2) {
       this.directoryResults.set([]);
       return [];
@@ -834,13 +846,15 @@ export class ChatService implements OnDestroy {
     const result = await firstValueFrom(
       this.api.get<DirectorySearchResponse>(`/directory/search?q=${encodeURIComponent(normalized)}`),
     );
-    this.directoryResults.set(result.people ?? []);
-    this.rememberProfiles(result.people ?? [], true);
-    return result.people ?? [];
+    if (this.auth.session()?.user.id !== accountId || this.launchCacheEpoch !== epoch || revision !== this.directoryRequestRevision) return [];
+    const people = this.keepNewerProfileVisibility(result.people ?? [], profileRevisions);
+    this.directoryResults.set(people);
+    this.rememberProfiles(people, true);
+    return people;
   }
 
   async createDirectConversation(person: UserSummary): Promise<Conversation> {
-    this.rememberProfiles([person], true);
+    this.rememberProfiles([this.profileSummary(person)], true);
     const existing = await this.findExistingDirectConversation(person.id);
     if (existing) {
       await this.selectConversation(existing.id);
@@ -861,6 +875,29 @@ export class ChatService implements OnDestroy {
     } finally {
       this.directConversationInFlight.delete(person.id);
     }
+  }
+
+  /** Resolve a normal private chat without changing the conversation on screen. */
+  async conversationForBroadcast(userId: string): Promise<Conversation> {
+    const context = this.captureSendContext();
+    if (!userId || userId === context.userId) throw new Error('El destinatario no es válido.');
+    const existing = await this.findExistingDirectConversation(userId);
+    this.assertSendContext(context);
+    if (existing) return existing;
+    const response = await firstValueFrom(this.api.post<Conversation>('/conversations', {
+      type: 'Direct', participantUserIds: [userId], titleCiphertext: null, privacySettings: null,
+    }));
+    this.assertSendContext(context);
+    if (!this.isDirectConversationWith(response, userId)
+      || response.participants.filter(participant => !participant.removedAt).some(participant => ![userId, context.userId].includes(participant.userId))) {
+      throw new Error('No se pudo confirmar la conversación privada.');
+    }
+    const conversation = this.applyLocalConversationState([response])[0];
+    this.rememberConversationParticipants([conversation]);
+    this.conversations.update(items => [conversation, ...items.filter(item => item.id !== conversation.id)].sort(this.compareConversations));
+    await this.persistChatIndex(this.conversations(), this.contacts());
+    this.assertSendContext(context);
+    return conversation;
   }
 
   private async createDirectConversationCore(person: UserSummary): Promise<Conversation> {
@@ -1503,6 +1540,10 @@ export class ChatService implements OnDestroy {
   conversationAlias(conversation: Conversation | null | undefined): string {
     const person = conversation ? this.conversationPrimaryPerson(conversation) : null;
     return person?.alias ? `@${person.alias}` : '';
+  }
+
+  conversationIsNivraId(conversation: Conversation): boolean {
+    return !this.isGroupConversation(conversation) && isNivraIdAccount(this.conversationPrimaryPerson(conversation));
   }
 
   conversationBio(conversation: Conversation | null | undefined): string {
@@ -2290,6 +2331,8 @@ export class ChatService implements OnDestroy {
     }
     return {
       ...person,
+      nivraNumber: profile.nivraNumber ?? person.nivraNumber,
+      isPrivateAccount: profile.isPrivateAccount ?? person.isPrivateAccount,
       alias: profile.alias || person.alias,
       displayName: profile.displayName !== undefined ? profile.displayName : person.displayName,
       phone: profile.phone !== undefined ? profile.phone : person.phone,
@@ -2309,6 +2352,64 @@ export class ChatService implements OnDestroy {
   async refreshProfiles(userIds: Array<string | null | undefined>): Promise<void> {
     const uniqueIds = [...new Set(userIds.filter((userId): userId is string => Boolean(userId)))];
     await Promise.all(uniqueIds.map((userId) => this.refreshProfile(userId)));
+  }
+
+  private applyProfileUpdate(payload: unknown): void {
+    const update = payload as { userId?: unknown; profilePhotoDataUrl?: unknown; phone?: unknown } | null;
+    const userId = typeof update?.userId === 'string' ? update.userId : '';
+    if (!userId || !this.auth.session()?.user.id || userId === this.auth.session()?.user.id) return;
+    this.profileUpdateRevisions ??= new Map();
+    this.profileUpdateRevisions.set(userId, (this.profileUpdateRevisions.get(userId) ?? 0) + 1);
+    const visible: ProfileSource = { userId };
+    if (Object.prototype.hasOwnProperty.call(update, 'profilePhotoDataUrl')
+      && (update?.profilePhotoDataUrl === null || typeof update?.profilePhotoDataUrl === 'string')) {
+      visible.profilePhotoDataUrl = update.profilePhotoDataUrl;
+    }
+    if (Object.prototype.hasOwnProperty.call(update, 'phone')
+      && (update?.phone === null || typeof update?.phone === 'string')) {
+      visible.phone = update.phone;
+    }
+    // The server sends each recipient only fields they may still see. Apply
+    // explicit removals now, even during a slow request or an offline retry.
+    this.rememberProfiles([visible], true);
+    this.profileRetryAfter.delete(userId);
+    void this.refreshProfile(userId);
+  }
+
+  private keepNewerProfileVisibility<T extends ProfileSource>(profiles: T[], revisions: Map<string, number>): T[] {
+    return profiles.map(profile => {
+      const id = profile.userId || profile.id || '';
+      if ((this.profileUpdateRevisions?.get(id) ?? 0) === (revisions.get(id) ?? 0)) return profile;
+      const latest = this.profileForUser(id);
+      return latest ? { ...profile, phone: latest.phone, profilePhotoDataUrl: latest.profilePhotoDataUrl } : profile;
+    });
+  }
+
+  private refreshContacts(): Promise<void> {
+    const userId = this.auth.session()?.user.id;
+    if (!userId) return Promise.resolve();
+    const epoch = this.launchCacheEpoch;
+    this.contactsUpdateRevision = (this.contactsUpdateRevision || 0) + 1;
+    if (this.contactsFetchInFlight?.epoch === epoch) return this.contactsFetchInFlight.promise;
+    const fetch = async () => {
+      let revision: number;
+      do {
+        revision = this.contactsUpdateRevision;
+        const profileRevisions = new Map(this.profileUpdateRevisions);
+        const contacts = await firstValueFrom(this.api.get<Contact[]>('/contacts'));
+        if (this.auth.session()?.user.id !== userId || this.launchCacheEpoch !== epoch) return;
+        if (revision !== this.contactsUpdateRevision) continue;
+        const visible = this.keepNewerProfileVisibility(contacts ?? [], profileRevisions);
+        this.contacts.set(visible);
+        this.rememberProfiles(visible, true);
+        await this.persistChatIndex(this.conversations(), visible);
+      } while (revision !== this.contactsUpdateRevision && this.auth.session()?.user.id === userId && this.launchCacheEpoch === epoch);
+    };
+    const promise = fetch().finally(() => {
+      if (this.contactsFetchInFlight?.promise === promise) this.contactsFetchInFlight = null;
+    });
+    this.contactsFetchInFlight = { epoch, promise };
+    return promise;
   }
 
   private upsertMessage(message: ChatMessageVm, options: { persist?: boolean } = {}): void {
@@ -2548,10 +2649,12 @@ export class ChatService implements OnDestroy {
     const revision = this.remoteIndexRevision;
     void Promise.all([
       Promise.all(accountKeys.map((key) => this.history.contacts(key).catch(() => []))),
-      this.history.profiles().catch(() => []),
+      this.history.profiles(userId).catch(() => []),
     ]).then(([contactGroups, profiles]) => {
       if (this.auth.session()?.user.id !== userId || this.remoteIndexRevision !== revision) return;
-      const contacts = this.uniqueContacts(contactGroups.flat());
+      // Old SQL contact rows can include fields once merged from an unscoped
+      // profile cache. Only the new viewer-scoped profile store owns these.
+      const contacts = this.uniqueContacts(contactGroups.flat()).map(contact => ({ ...contact, phone: undefined, profilePhotoDataUrl: undefined }));
       if (profiles.length) this.rememberProfiles(profiles, false, 'cache');
       if (contacts.length) {
         this.contacts.set(contacts);
@@ -2618,6 +2721,8 @@ export class ChatService implements OnDestroy {
           if (!profile) return participant;
           return {
             ...participant,
+            nivraNumber: profile.nivraNumber ?? participant.nivraNumber,
+            isPrivateAccount: profile.isPrivateAccount ?? participant.isPrivateAccount,
             alias: profile.alias ?? participant.alias,
             displayName: profile.displayName !== undefined ? profile.displayName : participant.displayName,
             phone: profile.phone !== undefined ? profile.phone : participant.phone,
@@ -2652,7 +2757,7 @@ export class ChatService implements OnDestroy {
     await Promise.all([
       this.history.putConversations(accountKey, conversations).catch(() => undefined),
       this.history.putContacts(accountKey, contacts).catch(() => undefined),
-      this.history.putProfiles(Object.values(this.profilesByUserId())).catch(() => undefined),
+      this.history.putProfiles(accountKey, Object.values(this.profilesByUserId())).catch(() => undefined),
     ]);
   }
 
@@ -3803,11 +3908,12 @@ export class ChatService implements OnDestroy {
   }
 
   private displayProfileName(profile: LocalProfile | null | undefined): string {
-    return this.firstText(profile?.displayName, profile?.phone, profile?.alias) || '';
+    return identityDisplayName(profile);
   }
 
   private rememberConversationParticipants(conversations: Conversation[], source: 'summary' | 'cache' = 'summary'): void {
-    const profiles = conversations.flatMap((conversation) => conversation.participants ?? []);
+    const profiles = conversations.flatMap((conversation) => conversation.participants ?? []).map(participant => source === 'cache'
+      ? { ...participant, phone: undefined, profilePhotoDataUrl: undefined } : participant);
     // Participant summaries frequently contain only an alias. Empty fields in
     // these summaries are not evidence that a known photo or name was removed.
     this.rememberProfiles(profiles, true, source);
@@ -3856,6 +3962,9 @@ export class ChatService implements OnDestroy {
           ...previous,
           ...Object.fromEntries(Object.entries(profile).filter(([, value]) => value !== undefined)),
           alias,
+          isPrivateAccount: source === 'authoritative'
+            ? profile.isPrivateAccount ?? previous.isPrivateAccount
+            : previous.isPrivateAccount ?? profile.isPrivateAccount,
           aliasLower: alias?.toLowerCase() ?? previous.aliasLower,
           displayName: field('displayName'),
           phone: field('phone'),
@@ -3876,7 +3985,8 @@ export class ChatService implements OnDestroy {
       // Persist the merged record; writing a sparse participant would erase
       // the richer profile on the next cold launch.
       const merged = this.profilesByUserId();
-      void this.history.putProfiles(normalized.map((profile) => merged[profile.userId])).catch(() => undefined);
+      const accountKey = this.localAccountKey();
+      if (accountKey) void this.history.putProfiles(accountKey, normalized.map((profile) => merged[profile.userId])).catch(() => undefined);
     }
     this.syncProfileCollections(normalized.map((profile) => profile.userId));
     return normalized;
@@ -3893,6 +4003,8 @@ export class ChatService implements OnDestroy {
     return {
       userId,
       id: userId,
+      nivraNumber: profile?.nivraNumber,
+      isPrivateAccount: profile?.isPrivateAccount,
       alias,
       aliasLower: alias?.toLowerCase() ?? '',
       displayName: has('displayName') ? this.firstText(profile?.displayName) : undefined,
@@ -3945,6 +4057,7 @@ export class ChatService implements OnDestroy {
     }
     const accountUserId = this.auth.session()?.user.id;
     const epoch = this.launchCacheEpoch;
+    const profileRevision = this.profileUpdateRevisions?.get(userId) ?? 0;
     this.profileFetchInFlight.set(userId, epoch);
     // A large group must not open a directory request per member at once and
     // exhaust the shared database pool. Pass completed slots to queued readers.
@@ -3957,14 +4070,15 @@ export class ChatService implements OnDestroy {
       if (this.auth.session()?.user.id !== accountUserId || this.launchCacheEpoch !== epoch) return;
       const person = await firstValueFrom(this.api.get<UserSummary>(`/directory/users/${encodeURIComponent(userId)}`));
       if (this.auth.session()?.user.id !== accountUserId || this.launchCacheEpoch !== epoch) return;
+      if ((this.profileUpdateRevisions?.get(userId) ?? 0) !== profileRevision) return;
       this.profileRetryAfter.delete(userId);
       this.rememberProfiles([person], true);
     } catch (error) {
       // A timeout/offline response must not erase a verified local photo.
       const status = (error as { status?: number })?.status;
       if ((status === 404 || status === 403) && this.auth.session()?.user.id === accountUserId
-        && this.launchCacheEpoch === epoch) {
-        this.rememberProfiles([{ userId, profilePhotoDataUrl: null }], true);
+        && this.launchCacheEpoch === epoch && (this.profileUpdateRevisions?.get(userId) ?? 0) === profileRevision) {
+        this.rememberProfiles([{ userId, profilePhotoDataUrl: null, phone: null }], true);
       } else if (this.auth.session()?.user.id === accountUserId && this.launchCacheEpoch === epoch) {
         this.profileRetryAfter.set(userId, Date.now() + 30_000);
       }
@@ -3973,6 +4087,10 @@ export class ChatService implements OnDestroy {
       const nextReader = this.profileRequestWaiters.shift();
       if (nextReader) nextReader();
       else this.profileRequestsActive -= 1;
+      if (this.auth.session()?.user.id === accountUserId && this.launchCacheEpoch === epoch
+        && (this.profileUpdateRevisions?.get(userId) ?? 0) !== profileRevision) {
+        void this.refreshProfile(userId);
+      }
     }
   }
 
@@ -3992,6 +4110,8 @@ export class ChatService implements OnDestroy {
         changed = true;
         return {
           ...contact,
+          nivraNumber: profile.nivraNumber ?? contact.nivraNumber,
+          isPrivateAccount: profile.isPrivateAccount ?? contact.isPrivateAccount,
           alias: profile.alias || contact.alias,
           displayName: profile.displayName !== undefined ? profile.displayName : contact.displayName,
           phone: profile.phone !== undefined ? profile.phone : contact.phone,
@@ -4211,6 +4331,7 @@ export class ChatService implements OnDestroy {
     this.revokeMediaPreviews();
     this.hasBootstrappedSession = false;
     this.conversations.set([]);
+    this.selectedConversationId.set(null);
     this.contacts.set([]);
     this.messagesByConversation.set({});
     this.conversationPaging.set({});
@@ -4231,6 +4352,8 @@ export class ChatService implements OnDestroy {
     this.typingTimers.clear();
     this.typingEventAt.clear();
     this.profileFetchInFlight.clear();
+    this.profileUpdateRevisions.clear();
+    this.contactsFetchInFlight = null;
     this.profileRetryAfter.clear();
     this.expiryTimers.forEach((timer) => window.clearTimeout(timer));
     this.expiryTimers.clear();
@@ -4265,6 +4388,8 @@ export class ChatService implements OnDestroy {
     this.typingTimers.clear();
     this.typingEventAt.clear();
     this.profileFetchInFlight.clear();
+    this.profileUpdateRevisions.clear();
+    this.contactsFetchInFlight = null;
     this.profileRetryAfter.clear();
     this.expiryTimers.forEach((timer) => window.clearTimeout(timer));
     this.expiryTimers.clear();

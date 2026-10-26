@@ -33,8 +33,10 @@ import { AndroidUpdateService } from '../../core/services/android-update.service
 import { DesktopUpdateService } from '../../core/services/desktop-update.service';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
 import { formatNivraNumber } from '../../core/utils/nivra-number';
+import { identityDisplayName, isLegacyPrivateAlias, isNivraIdAccount, suggestNivraAlias } from '../../core/utils/nivra-identity';
 import { RecoveryEmailComponent, RecoveryEmailState } from '../../shared/recovery-email.component';
 import { LauncherAppearanceComponent } from '../../shared/launcher-appearance.component';
+import { AccountSwitcherComponent } from '../../shared/account-switcher.component';
 import { NIVRA_UPDATE_URL } from '../../core/release';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
@@ -49,7 +51,7 @@ interface ProfileDraft {
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss', './account-security.scss'],
 })
@@ -373,6 +375,32 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   retryAliasCheck(): void { this.aliasChanged(this.alias); }
+
+  suggestAlias(): void {
+    if (this.saving || this.profileLoading || !this.isCurrent(this.profileOwnerScope)) return;
+    this.aliasChanged(suggestNivraAlias());
+  }
+
+  privateIdentity(): boolean {
+    return isNivraIdAccount(this.auth.session()?.user);
+  }
+
+  legacyIdentityAlias(): boolean {
+    return this.privateIdentity() && isLegacyPrivateAlias(this.alias);
+  }
+
+  profileTitle(): string {
+    const user = this.auth.session()?.user;
+    return identityDisplayName({ ...user, alias: this.alias || user?.alias, displayName: this.displayName || user?.displayName }, this.t('ACCOUNT.PROFILE', 'Perfil'));
+  }
+
+  photoVisibilityHelp(): string {
+    switch (this.account.privacy()?.profilePhotoVisibility) {
+      case 'everyone': return this.t('ACCOUNT.PHOTO_EVERYONE_HELP', 'Quien encuentre tu perfil podrá ver la foto. El modo fantasma limita cómo te encuentran.');
+      case 'nobody': return this.t('ACCOUNT.PHOTO_NOBODY_HELP', 'Sólo tú ves tu foto. Tus contactos verán tus iniciales.');
+      default: return this.t('ACCOUNT.PHOTO_CONTACTS_HELP', 'Sólo las personas que tú guardaste en Contactos ven tu foto.');
+    }
+  }
 
   hasProfileChanges(): boolean {
     const baseline = this.profileBaseline;
@@ -807,7 +835,7 @@ export class AccountPage implements OnInit, OnDestroy {
   }
 
   identityMode(): 'ghost' | 'public' {
-    return this.phone.trim() ? 'public' : 'ghost';
+    return this.isDiscoverable ? 'public' : 'ghost';
   }
 
   nivraNumber(): string {
@@ -831,7 +859,7 @@ export class AccountPage implements OnInit, OnDestroy {
   shareMessage(): string {
     const user = this.auth.session()?.user;
     const alias = user?.alias || '';
-    const name = user?.displayName || this.nivraNumber() || alias;
+    const name = identityDisplayName(user, this.nivraNumber() || alias);
     return [
       `${name} ${this.t('ACCOUNT.SHARE_LINE_1_SUFFIX', 'te invita a Nivra, mensajeria privada con chat y boveda cifrada.')}`,
       `${this.t('ACCOUNT.SHARE_LINE_2_PREFIX', 'Buscame como')} @${alias}.`,
@@ -1036,7 +1064,7 @@ export class AccountPage implements OnInit, OnDestroy {
       }
       this.calls.releaseLocalResources();
       await this.auth.logout();
-      await this.router.navigateByUrl('/auth');
+      await this.router.navigateByUrl(this.auth.session() ? '/app/chats' : '/auth');
     });
   }
 

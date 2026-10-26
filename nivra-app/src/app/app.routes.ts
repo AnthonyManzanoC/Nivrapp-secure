@@ -74,6 +74,10 @@ export const routes: Routes = [
         ],
       },
       {
+        path: 'broadcasts',
+        loadComponent: () => import('./features/broadcasts/broadcasts.page').then(m => m.BroadcastsPage),
+      },
+      {
         path: 'world',
         loadComponent: () => import('./features/world/world.page').then((m) => m.WorldPage),
       },

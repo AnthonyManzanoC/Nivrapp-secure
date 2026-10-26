@@ -10,6 +10,7 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.media.AudioAttributes;
 import android.media.RingtoneManager;
+import android.net.Uri;
 import android.os.Build;
 
 import androidx.annotation.NonNull;
@@ -43,7 +44,6 @@ public class NivraMessagingService extends MessagingService {
         // cannot reappear after that cleanup.
         synchronized (NivraNativePushRegistration.class) {
             if (!NivraNativePushRegistration.accepts(this, data)) return;
-            super.onMessageReceived(remoteMessage);
             handleCurrentMessage(remoteMessage, data);
         }
     }
@@ -52,32 +52,36 @@ public class NivraMessagingService extends MessagingService {
 
         if (isForceWipeEvent(data)) {
             try {
-                NivraNativePlugin.clearAllSecureSecrets(this);
+                NivraNativePushRegistration.retireForWipe(this, data);
+                super.onMessageReceived(remoteMessage);
             } catch (Exception ignored) {
-                // If native shredding hits a transient platform error, keep the push silent and do not show private data.
+                // A failed durable retirement is silent and never touches shared vault secrets.
             }
-            NotificationManagerCompat.from(this).cancelAll();
             return;
         }
+
+        super.onMessageReceived(remoteMessage);
 
         ensureNotificationChannels();
         String type = normalizeType(data.get("type"));
         String callId = stringValue(data, "callId");
         if (type.equals("end-call") || type.equals("call-ended") || type.equals("call-rejected") || type.equals("missed-call")) {
-            NivraCallPushPolicy.markEnded(this, callId);
-            cancelNotification(notificationId(callId.isEmpty() ? stringValue(data, "tag") : callId));
-            NivraNativePlugin.clearIncomingCallNotification(this, callId);
+            NivraCallPushPolicy.markEnded(this, data, callId);
+            cancelNotification(data, notificationId(callId.isEmpty() ? stringValue(data, "tag") : callId));
+            NivraNativePlugin.clearIncomingCallNotification(this, callId, stringValue(data, "recipientUserId"), stringValue(data, "recipientDeviceId"));
             if (!callId.isEmpty()) {
-                NivraOngoingCallService.stop(this, callId);
+                NivraOngoingCallService.stopScopeCall(this, stringValue(data, "recipientUserId"), stringValue(data, "recipientDeviceId"), callId);
             }
             if (!type.equals("missed-call")) return;
         }
 
-        if (isAppInForeground()) return;
+        boolean active = NivraNativePushRegistration.isActive(this, data);
+        if (active && isAppInForeground()) return;
 
         if (type.equals("incoming-call") || type.equals("incomingcall")) {
             if (!NivraCallPushPolicy.isCurrent(this, data, remoteMessage.getSentTime(), System.currentTimeMillis())) return;
-            NivraNativePlugin.showIncomingCallNotification(this, data);
+            if (active) NivraNativePlugin.showIncomingCallNotification(this, data);
+            else showNotification(remoteMessage, data, type);
             return;
         }
 
@@ -91,7 +95,9 @@ public class NivraMessagingService extends MessagingService {
 
         String callId = stringValue(data, "callId");
         String tag = firstNonBlank(stringValue(data, "tag"), callId, stringValue(data, "messageId"), "nivra-event");
-        boolean incomingCall = type.equals("incoming-call") || type.equals("incomingcall");
+        // Another saved account has a generic alert with a scoped tap. It never
+        // exposes call actions or opens a full-screen activity on receipt.
+        boolean incomingCall = (type.equals("incoming-call") || type.equals("incomingcall")) && NivraNativePushRegistration.isActive(this, data);
         boolean missedCall = type.equals("missed-call");
         boolean isCall = incomingCall || missedCall || type.contains("call");
         int id = notificationId(isCall && !callId.isEmpty() ? callId : tag);
@@ -114,15 +120,16 @@ public class NivraMessagingService extends MessagingService {
                 .setVibrate(new long[] { 320, 140, 320, 140, 480 })
                 .setTimeoutAfter(75000)
                 .addAction(android.R.drawable.ic_menu_call, "Contestar", openIntent(remoteMessage, data, "accept", id))
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Rechazar", declineIntent(callId, id));
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Rechazar", declineIntent(data, callId, id));
         }
 
-        NotificationManagerCompat.from(this).notify(id, builder.build());
+        NotificationManagerCompat.from(this).notify(scopeTag(data), id, builder.build());
     }
 
     private PendingIntent openIntent(RemoteMessage remoteMessage, Map<String, String> data, String action, int notificationId) {
         Intent intent = new Intent(this, MainActivity.class);
         intent.setAction("com.nivra.app.OPEN_PUSH");
+        intent.setData(Uri.parse("nivra://push/" + Uri.encode(scopeTag(data)) + "/" + notificationId + "/" + action));
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
         for (Map.Entry<String, String> entry : data.entrySet()) {
             intent.putExtra(entry.getKey(), entry.getValue());
@@ -138,11 +145,14 @@ public class NivraMessagingService extends MessagingService {
         );
     }
 
-    private PendingIntent declineIntent(String callId, int notificationId) {
+    private PendingIntent declineIntent(Map<String, String> data, String callId, int notificationId) {
         Intent intent = new Intent(this, NivraNotificationActionReceiver.class);
         intent.setAction("com.nivra.app.DECLINE_CALL");
+        intent.setData(Uri.parse("nivra://push/" + Uri.encode(scopeTag(data)) + "/" + notificationId + "/decline"));
         intent.putExtra("callId", callId);
         intent.putExtra("notificationId", notificationId);
+        intent.putExtra("recipientUserId", data.get("recipientUserId"));
+        intent.putExtra("recipientDeviceId", data.get("recipientDeviceId"));
         return PendingIntent.getBroadcast(
             this,
             notificationId,
@@ -151,9 +161,11 @@ public class NivraMessagingService extends MessagingService {
         );
     }
 
-    private void cancelNotification(int notificationId) {
-        NotificationManagerCompat.from(this).cancel(notificationId);
+    private void cancelNotification(Map<String, String> data, int notificationId) {
+        NotificationManagerCompat.from(this).cancel(scopeTag(data), notificationId);
     }
+
+    private String scopeTag(Map<String, String> data) { return NivraPushScopePolicy.notificationTag(data.get("recipientUserId"), data.get("recipientDeviceId")); }
 
     private boolean canPostNotifications() {
         return Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||

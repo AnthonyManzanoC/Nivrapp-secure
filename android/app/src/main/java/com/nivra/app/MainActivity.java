@@ -22,7 +22,7 @@ public class MainActivity extends BridgeActivity {
         // Appearance must never block auth, app links, notifications or sharing.
         try { LauncherAppearanceManager.reconcile(this); } catch (RuntimeException ignored) { }
         createNotificationChannels();
-        NivraNativePlugin.handleCallIntent(getIntent());
+        NivraNativePlugin.handleCallIntent(this, getIntent());
         NivraNativePlugin.handleShareIntent(this, getIntent());
     }
 
@@ -30,7 +30,7 @@ public class MainActivity extends BridgeActivity {
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
         setIntent(intent);
-        NivraNativePlugin.handleCallIntent(intent);
+        NivraNativePlugin.handleCallIntent(this, intent);
         NivraNativePlugin.handleShareIntent(this, intent);
     }
 

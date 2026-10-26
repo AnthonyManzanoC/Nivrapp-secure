@@ -1,6 +1,6 @@
 import { HttpErrorResponse, HttpHandlerFn, HttpRequest, HttpHeaders, HttpResponse } from '@angular/common/http';
 import { TestBed } from '@angular/core/testing';
-import { firstValueFrom, of, throwError } from 'rxjs';
+import { Subject, firstValueFrom, of, throwError } from 'rxjs';
 import { AuthService } from '../services/auth.service';
 import { ClientCompatibilityService } from '../services/client-compatibility.service';
 import { DeviceWipeService } from '../services/device-wipe.service';
@@ -14,6 +14,7 @@ describe('auth interceptor compatibility handling', () => {
   const auth = {
     accessToken: () => 'access-token',
     session: () => ({ device: { id: 'device-1' } }),
+    sessionGeneration: () => 0,
     hasFreshAccessToken: () => false,
     ensureFreshSession: jasmine.createSpy('ensureFreshSession').and.resolveTo(true),
     refreshToken: jasmine.createSpy('refreshToken').and.resolveTo(false),
@@ -72,7 +73,7 @@ describe('auth interceptor compatibility handling', () => {
 describe('auth interceptor session and response authority', () => {
   const baseUrl = 'https://api.nivra.test';
   let auth: {
-    accessToken: jasmine.Spy; session: jasmine.Spy; hasFreshAccessToken: jasmine.Spy;
+    accessToken: jasmine.Spy; session: jasmine.Spy; sessionGeneration: jasmine.Spy; hasFreshAccessToken: jasmine.Spy;
     ensureFreshSession: jasmine.Spy; refreshToken: jasmine.Spy;
     lastRefreshFailedPermanently: jasmine.Spy; logout: jasmine.Spy;
   };
@@ -83,6 +84,7 @@ describe('auth interceptor session and response authority', () => {
     auth = {
       accessToken: jasmine.createSpy('accessToken').and.returnValue('existing-access'),
       session: jasmine.createSpy('session').and.returnValue({ user: { id: 'owner' }, device: { id: 'device-1' } }),
+      sessionGeneration: jasmine.createSpy('sessionGeneration').and.returnValue(0),
       hasFreshAccessToken: jasmine.createSpy('hasFreshAccessToken').and.returnValue(false),
       ensureFreshSession: jasmine.createSpy('ensureFreshSession').and.resolveTo(false),
       refreshToken: jasmine.createSpy('refreshToken').and.resolveTo(false),
@@ -160,5 +162,44 @@ describe('auth interceptor session and response authority', () => {
     const error = new HttpErrorResponse({ status: 403, url: `${baseUrl}/messages`, error: { code: 'FORCE_WIPE' } });
     await expectAsync(run(new HttpRequest('GET', `${baseUrl}/messages`), () => throwError(() => error))).toBeRejectedWith(error);
     expect(wipe.nukeDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores stale errors after switching away and back to the same user and device', async () => {
+    auth.hasFreshAccessToken.and.returnValue(true);
+    for (const status of [401, 403, 426]) {
+      auth.sessionGeneration.and.returnValue(0);
+      const transport = new Subject<HttpResponse<unknown>>();
+      const pending = run(new HttpRequest('GET', `${baseUrl}/messages`), () => transport);
+      auth.sessionGeneration.and.returnValue(2);
+      const error = new HttpErrorResponse({ status, url: `${baseUrl}/messages`, error: { code: 'FORCE_WIPE' } });
+      transport.error(error);
+      await expectAsync(pending).toBeRejectedWith(error);
+    }
+    expect(wipe.nukeDevice).not.toHaveBeenCalled();
+    expect(compatibility.requireUpdate).not.toHaveBeenCalled();
+    expect(auth.refreshToken).not.toHaveBeenCalled();
+    expect(auth.logout).not.toHaveBeenCalled();
+  });
+
+  it('rejects stale successful responses so subscribers cannot repopulate another account view', async () => {
+    auth.hasFreshAccessToken.and.returnValue(true);
+    const transport = new Subject<HttpResponse<unknown>>();
+    const pending = run(new HttpRequest('GET', `${baseUrl}/me`), () => transport);
+    auth.sessionGeneration.and.returnValue(2);
+    transport.next(new HttpResponse({ body: { userId: 'owner', secret: 'synthetic-profile' } }));
+    await expectAsync(pending).toBeRejectedWithError('ACCOUNT_SESSION_CHANGED');
+  });
+
+  it('does not retry with new account credentials after an old refresh finishes', async () => {
+    auth.hasFreshAccessToken.and.returnValue(true);
+    let finish!: (result: boolean) => void;
+    auth.refreshToken.and.returnValue(new Promise<boolean>(resolve => finish = resolve));
+    const next = jasmine.createSpy('next').and.returnValue(throwError(() => new HttpErrorResponse({ status: 401 })));
+    const pending = run(new HttpRequest('POST', `${baseUrl}/messages`, { body: 'synthetic' }), next);
+    auth.sessionGeneration.and.returnValue(2);
+    finish(true);
+    await expectAsync(pending).toBeRejected();
+    expect(next).toHaveBeenCalledTimes(1);
+    expect(auth.logout).not.toHaveBeenCalled();
   });
 });

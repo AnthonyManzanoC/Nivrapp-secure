@@ -20,6 +20,13 @@
       </div>
 
       <h1 id="auth-title">{{ 'LOGIN.TITLE' | translate:'Entra a tu espacio privado' }}</h1>
+      @if (auth.addingAccount()) {
+        <div class="add-account-return" role="status">
+          <p>{{ 'ACCOUNTS.ADDING_COPY' | translate:'Añade tu segunda cuenta. La sesión anterior se conserva.' }}</p>
+          <button type="button" (click)="cancelAddingAccount()" [disabled]="submitting || auth.accountsBusy()">{{ 'ACCOUNTS.RETURN' | translate:'Volver a mi cuenta' }}</button>
+        </div>
+      }
+      @if (auth.accountError()) { <p class="auth-feedback failure" role="alert">{{ auth.accountError() }}</p> }
       <p class="auth-copy">{{ 'LOGIN.COPY' | translate:'Cifrado en cliente, llamadas en tiempo real y la misma cuenta en web, PC y movil.' }}</p>
 
       <div class="auth-modes" role="group" [attr.aria-label]="'LOGIN.ACCESS_METHOD' | translate:'Forma de acceso'">

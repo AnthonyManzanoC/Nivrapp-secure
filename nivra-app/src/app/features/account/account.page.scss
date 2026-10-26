@@ -5,6 +5,11 @@
 .profile-hero-copy { min-width: 0; margin-bottom: 10px; }
 .profile-hero-copy h2 { margin: 0; font-size: clamp(22px, 4vw, 30px); letter-spacing: -.025em; overflow-wrap: anywhere; }
 .profile-hero-copy p { margin: 4px 0 10px; color: var(--nivra-muted); overflow-wrap: anywhere; }
+.nivra-id-profile-tag { display: inline-flex; align-items: center; gap: 5px; margin: 6px 8px 10px 0; padding: 5px 9px; border-radius: 20px; background: color-mix(in srgb, var(--nivra-brand) 12%, transparent); color: var(--nivra-brand-2); font-size: 12px; font-weight: 650; }
+.nivra-id-profile-tag ion-icon { font-size: 15px; }
+.alias-inspiration { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.alias-inspiration small { flex: 1 1 180px; color: var(--nivra-muted); line-height: 1.5; }
+.alias-inspiration button { min-height: 36px; }
 .profile-draft-tag { display: inline-flex; align-items: center; gap: 6px; border-radius: 20px; padding: 5px 9px; color: var(--nivra-brand-2); background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); font-size: 12px; }
 .profile-draft-tag.pending { color: var(--nivra-text); background: color-mix(in srgb, var(--nivra-text) 8%, transparent); }
 .profile-draft-tag ion-spinner { width: 13px; height: 13px; }

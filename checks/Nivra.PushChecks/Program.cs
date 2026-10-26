@@ -1,6 +1,8 @@
 using System.Reflection;
 using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Nivra.Api.Domain;
 using Nivra.Api.Infrastructure;
 using Nivra.Api.Services;
@@ -89,12 +91,31 @@ Check(pushDevices.Single(candidate => candidate.Id == "revoked").RevokedAt == no
 using (var pushDb = new NivraDbContext(new DbContextOptionsBuilder<NivraDbContext>()
     .UseNpgsql("Host=127.0.0.1;Database=offline_checks;Username=offline;Password=offline").Options))
 {
+    var uniqueIndexes = pushDb.Model.FindEntityType(typeof(PushTokenRecord))!.GetIndexes().Where(index => index.IsUnique).ToArray();
+    Check(uniqueIndexes.Any(index => index.Properties.Select(property => property.Name).SequenceEqual(new[] { "UserId", "DeviceId", "TokenHash" })) &&
+        !uniqueIndexes.Any(index => index.Properties.Select(property => property.Name).SequenceEqual(new[] { "TokenHash" })),
+        "one physical push address supports independent unique account/device memberships");
+    var migrationSql = pushDb.GetService<IMigrator>().GenerateScript("20261025071607_AccountAppearanceBroadcastLists", "20261025083000_ScopedPushMemberships");
+    Check(migrationSql.Contains("DROP INDEX public.\"IX_push_tokens_TokenHash\"", StringComparison.Ordinal) &&
+        migrationSql.Contains("\"UserId\", \"DeviceId\", \"TokenHash\"", StringComparison.Ordinal),
+        "offline migration removes global token uniqueness and installs scoped uniqueness without deleting memberships");
     var wipeSql = Destinations(pushDb.PushTokens, pushDb.Devices, "alice", Wipe("revoked"), "revoked").ToQueryString();
     var normalSql = Destinations(pushDb.PushTokens, pushDb.Devices, "alice", new() { ["type"] = "message" }).ToQueryString();
     Check(wipeSql.Contains("EXISTS", StringComparison.Ordinal) && wipeSql.Contains("\"RevokedAt\" IS NULL", StringComparison.Ordinal) &&
         wipeSql.Contains("\"DeviceId\"", StringComparison.Ordinal) && normalSql.Contains("\"RevokedAt\" IS NULL", StringComparison.Ordinal),
         "production PostgreSQL translates both destination policies into SQL without a database connection");
 }
+
+var sharedDevices = new[] { PushDevice("alice-phone"), PushDevice("bob-phone", "bob") }.AsQueryable();
+var sharedTokens = new[] { PushDestination("alice-membership", "alice-phone"), PushDestination("bob-membership", "bob-phone", "bob") };
+foreach (var shared in sharedTokens) shared.TokenHash = "same-physical-fcm-token";
+Check(Destinations(sharedTokens.AsQueryable(), sharedDevices, "alice", new() { ["type"] = "message" }).Single().Id == "alice-membership" &&
+    Destinations(sharedTokens.AsQueryable(), sharedDevices, "bob", new() { ["type"] = "incoming_call" }).Single().Id == "bob-membership",
+    "messages and calls independently reach both account memberships sharing one FCM token");
+sharedTokens[0].RevokedAt = now;
+Check(!Destinations(sharedTokens.AsQueryable(), sharedDevices, "alice", new() { ["type"] = "message" }).Any() &&
+    Destinations(sharedTokens.AsQueryable(), sharedDevices, "bob", new() { ["type"] = "message" }).Single().Id == "bob-membership",
+    "revoking one saved account membership preserves the other account's delivery");
 
 var builder = typeof(PushNotificationService).GetMethod("CreateFcmMessage", BindingFlags.NonPublic | BindingFlags.Static)!;
 Dictionary<string, object?> Message(string type) => (Dictionary<string, object?>)builder.Invoke(null, new object[] {

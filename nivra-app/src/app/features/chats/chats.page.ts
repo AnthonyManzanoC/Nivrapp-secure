@@ -23,7 +23,7 @@ import {
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, imageOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, fingerPrintOutline, imageOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
@@ -48,7 +48,7 @@ import { PushService } from '../../core/services/push.service';
 import { Capacitor } from '@capacitor/core';
 
 type ChatSearchScope = 'all' | 'chats' | 'people';
-type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'refresh' | 'settings' | 'enable-alerts';
+type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'refresh' | 'settings' | 'enable-alerts' | 'broadcasts';
 type ConversationMenuAction = 'pin' | 'mute' | 'archive';
 
 @Component({
@@ -278,6 +278,7 @@ export class ChatsPage implements OnDestroy {
       chevronForwardOutline,
       closeOutline,
       ellipsisVerticalOutline,
+      fingerPrintOutline,
       imageOutline,
       notificationsOffOutline,
       notificationsOutline,
@@ -514,6 +515,7 @@ export class ChatsPage implements OnDestroy {
     switch (pending.action) {
       case 'new-chat': this.startNewChat(); break;
       case 'new-group': this.openGroupModal(); break;
+      case 'broadcasts': void this.router.navigateByUrl('/app/broadcasts'); break;
       case 'new-story': this.openStoryComposer(); break;
       case 'share-pass': void this.openShareAccount(); break;
       case 'refresh': void this.refresh(); break;

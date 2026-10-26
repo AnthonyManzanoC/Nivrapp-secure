@@ -113,6 +113,7 @@ export class CallsService implements OnDestroy {
   private readonly router = inject(Router);
   private readonly zone = inject(NgZone);
   private readonly destroyRef = inject(DestroyRef);
+  private observedCallScope = this.callAccountScope();
   private readonly peers = new Map<string, PeerState>();
   private readonly pendingRemoteStreams = new Map<string, MediaStream>();
   private readonly pendingSignals: CallSignalEvent[] = [];
@@ -206,6 +207,29 @@ export class CallsService implements OnDestroy {
   readonly remoteEntries = computed(() => Object.entries(this.remoteStreams()));
 
   constructor() {
+    // Reset before the effects that mirror a live call into native routing or
+    // recovery hints. An A→B transition must never label A's call as B's.
+    effect(() => {
+      const scope = this.callAccountScope();
+      const userId = this.auth.session()?.user.id;
+      untracked(() => {
+        if (scope !== this.observedCallScope) {
+          this.observedCallScope = scope;
+          this.cleanup({ remember: false });
+          this.resumableCall.set(null);
+          this.activeGroupRooms.set({});
+          this.dismissedCallIds.clear();
+          this.directories.clear();
+          this.systemLoggedCallIds.clear();
+          this.recoveryLookupInFlight = '';
+        }
+        this.history.set(userId ? this.loadHistory() : []);
+        if (userId) {
+          void this.loadPersistentHistory();
+          void this.restoreCallRecoveryHint(userId);
+        } else this.cleanup({ remember: false });
+      });
+    });
     effect(() => {
       const call = this.activeCall();
       const userId = this.auth.session()?.user.id;
@@ -328,19 +352,6 @@ export class CallsService implements OnDestroy {
     void this.nativeDevice.onNativeCallAction((event) => {
       void this.handleNativeCallAction(event);
     }).catch(() => undefined);
-
-    effect(() => {
-      const userId = this.auth.session()?.user.id;
-      untracked(() => {
-        if (userId) {
-          this.history.set(this.loadHistory());
-          void this.loadPersistentHistory();
-          void this.restoreCallRecoveryHint(userId);
-        } else {
-          this.cleanup({ remember: false });
-        }
-      });
-    });
 
     effect(() => {
       const callId = this.activeCall()?.id ?? null;
@@ -1986,6 +1997,8 @@ export class CallsService implements OnDestroy {
   }
 
   private async restoreCallRecoveryHint(userId: string): Promise<void> {
+    const scope = this.callAccountScope();
+    if (this.auth.session()?.user.id !== userId) return;
     if (this.activeCall() || this.resumableCall() || this.recoveryLookupInFlight) return;
     let hint: { userId?: string; callId?: string } | null = null;
     try {
@@ -1997,10 +2010,11 @@ export class CallsService implements OnDestroy {
       if (hint?.userId !== userId) localStorage.removeItem(CALL_RECOVERY_HINT_KEY);
       return;
     }
-    this.recoveryLookupInFlight = hint.callId;
+    const lookup = JSON.stringify([scope, hint.callId]);
+    this.recoveryLookupInFlight = lookup;
     try {
       const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(hint.callId)}`));
-      if (this.auth.session()?.user.id !== userId || this.activeCall() || this.resumableCall()) return;
+      if (this.callAccountScope() !== scope || this.activeCall() || this.resumableCall()) return;
       if (call.endedAt || call.status === 'Ended' || call.status === 'Rejected' || call.status === 'Cancelled') {
         localStorage.removeItem(CALL_RECOVERY_HINT_KEY);
       } else {
@@ -2010,15 +2024,16 @@ export class CallsService implements OnDestroy {
     } catch {
       // Keep the hint through temporary network/offline failures.
     } finally {
-      this.recoveryLookupInFlight = '';
+      if (this.recoveryLookupInFlight === lookup) this.recoveryLookupInFlight = '';
     }
   }
 
   private async rejectIncomingCallById(callId: string): Promise<void> {
     const session = this.auth.session();
+    const scope = this.callAccountScope();
     if (!session) return;
     const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`)).catch(() => null);
-    if (this.auth.session()?.user.id !== session.user.id || this.auth.session()?.device.id !== session.device.id || this.activeCall()) return;
+    if (this.callAccountScope() !== scope || this.activeCall()) return;
     if (!call || call.endedAt || call.status === 'Ended') {
       return;
     }
@@ -3512,11 +3527,13 @@ export class CallsService implements OnDestroy {
   }
 
   private async loadPersistentHistory(): Promise<void> {
+    const scope = this.callAccountScope();
     const accountKeys = await this.localAccountKeys();
-    if (!accountKeys.length) {
+    if (this.callAccountScope() !== scope || !accountKeys.length) {
       return;
     }
     const groups = await Promise.all(accountKeys.map((accountKey) => this.historyStore.calls(accountKey).catch(() => [])));
+    if (this.callAccountScope() !== scope) return;
     const merged = this.uniqueHistory([...this.history(), ...groups.flat()]);
     if (merged.length) {
       this.history.set(merged);
@@ -3542,6 +3559,11 @@ export class CallsService implements OnDestroy {
 
   private localAccountKey(): string | null {
     return this.auth.session()?.user.id ?? null;
+  }
+
+  private callAccountScope(): string {
+    const session = this.auth.session();
+    return JSON.stringify([session?.user.id ?? '', session?.device?.id ?? '', this.auth.sessionGeneration?.() ?? 0]);
   }
 
   private async localAccountKeys(): Promise<string[]> {

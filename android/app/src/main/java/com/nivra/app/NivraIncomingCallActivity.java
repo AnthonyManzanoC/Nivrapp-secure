@@ -22,6 +22,8 @@ import androidx.core.app.NotificationManagerCompat;
 
 public class NivraIncomingCallActivity extends Activity {
     private String callId = "";
+    private String recipientUserId = "";
+    private String recipientDeviceId = "";
     private TextView callerView;
     private TextView subtitleView;
     private BroadcastReceiver dismissReceiver;
@@ -127,13 +129,19 @@ public class NivraIncomingCallActivity extends Activity {
             return;
         }
         callId = stringExtra(intent, "callId", callId);
+        recipientUserId = stringExtra(intent, "recipientUserId", "");
+        recipientDeviceId = stringExtra(intent, "recipientDeviceId", "");
+        java.util.Map<String, String> scope = new java.util.HashMap<>();
+        scope.put("recipientUserId", recipientUserId); scope.put("recipientDeviceId", recipientDeviceId);
+        if (!NivraNativePushRegistration.accepts(this, scope)) { finish(); return; }
+        if (!NivraNativePushRegistration.isActive(this, scope)) { routeCallAction(NivraNativePlugin.ACTION_CALL_OPEN); return; }
         expiryHandler.removeCallbacksAndMessages(null);
         long remaining = 75_000;
         try { remaining = Long.parseLong(stringExtra(intent, "expiresAt", String.valueOf(System.currentTimeMillis() + remaining))) - System.currentTimeMillis(); }
         catch (NumberFormatException ignored) { remaining = 0; }
         if (remaining <= 0) { finish(); return; }
         expiryHandler.postDelayed(() -> {
-            NivraNativePlugin.clearIncomingCallNotification(this, callId);
+            NivraNativePlugin.clearIncomingCallNotification(this, callId, recipientUserId, recipientDeviceId);
             finish();
         }, Math.min(remaining, 75_000));
         String callerName = stringExtra(intent, "callerName", "Nivra");
@@ -165,8 +173,12 @@ public class NivraIncomingCallActivity extends Activity {
         routed = true;
         int notificationId = getIntent() == null ? 0 : getIntent().getIntExtra("notificationId", 0);
         if (notificationId != 0) {
-            NotificationManagerCompat.from(this).cancel(notificationId);
+            NotificationManagerCompat.from(this).cancel(NivraPushScopePolicy.notificationTag(recipientUserId, recipientDeviceId), notificationId);
         }
+        java.util.Map<String, String> scope = new java.util.HashMap<>();
+        scope.put("recipientUserId", recipientUserId); scope.put("recipientDeviceId", recipientDeviceId);
+        if (!NivraNativePushRegistration.accepts(this, scope)) { finish(); return; }
+        if (!NivraNativePushRegistration.isActive(this, scope)) action = NivraNativePlugin.ACTION_CALL_OPEN;
         Intent launch = new Intent(this, MainActivity.class);
         launch.setAction(action);
         copyExtras(getIntent(), launch);
@@ -183,7 +195,9 @@ public class NivraIncomingCallActivity extends Activity {
             @Override
             public void onReceive(Context context, Intent intent) {
                 String dismissedCallId = intent == null ? "" : intent.getStringExtra("callId");
-                if ((intent != null && intent.getBooleanExtra("all", false)) || callId.isEmpty() || callId.equals(dismissedCallId)) {
+                boolean sameScope = intent != null && NivraPushScopePolicy.matches(recipientUserId, recipientDeviceId,
+                    intent.getStringExtra("recipientUserId"), intent.getStringExtra("recipientDeviceId"));
+                if ((intent != null && intent.getBooleanExtra("all", false)) || (sameScope && (intent.getBooleanExtra("scopeAll", false) || callId.isEmpty() || callId.equals(dismissedCallId)))) {
                     finish();
                 }
             }

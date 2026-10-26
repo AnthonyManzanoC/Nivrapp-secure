@@ -273,6 +273,7 @@ export class SignalrService implements OnDestroy {
       'conversation.created',
       'conversation.updated',
       'profile.updated',
+      'contacts.updated',
       'friend.requested',
       'friend.updated',
       'story.created',
@@ -306,6 +307,8 @@ export class SignalrService implements OnDestroy {
       'device.revoked',
       'device.listChanged',
       'account.app-lock.updated',
+      'account.appearanceChanged',
+      'broadcast.updated',
       'history.requested',
       'history.available',
     ].forEach((eventName) => connection.on(eventName, forward(eventName)));
@@ -346,6 +349,7 @@ export class SignalrService implements OnDestroy {
       'conversation.created',
       'conversation.updated',
       'profile.updated',
+      'contacts.updated',
       'friend.requested',
       'friend.updated',
       'story.created',
@@ -379,6 +383,8 @@ export class SignalrService implements OnDestroy {
       'device.revoked',
       'device.listChanged',
       'account.app-lock.updated',
+      'account.appearanceChanged',
+      'broadcast.updated',
       'history.requested',
       'history.available',
     ].forEach((eventName) => connection.off(eventName));

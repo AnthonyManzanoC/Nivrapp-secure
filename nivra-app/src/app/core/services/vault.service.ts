@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal, untracked, type WritableSignal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Room, RoomEvent } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
@@ -38,6 +38,7 @@ interface LiveKitRoomTokenResponse {
 }
 
 type VaultVoicePhase = 'idle' | 'connecting' | 'connected' | 'failed';
+interface VaultSessionContext { scope: string; epoch: number; userId: string; deviceId: string; alias: string; }
 
 @Injectable({ providedIn: 'root' })
 export class VaultService {
@@ -51,24 +52,40 @@ export class VaultService {
   private readonly directories = new Map<string, PublicKeyDirectory>();
   private key: CryptoKey | null = null;
   private voiceRoom: Room | null = null;
+  private readonly stateScope = signal(this.sessionScope());
+  private readonly resetters: Array<() => void> = [];
+  private scopeEpoch = 0;
+  private destroyed = false;
+  private searchRevision = 0;
+  private loadRevision = 0;
+  private voiceRevision = 0;
+  private privacyRevision = 0;
+  private privacyDesired = { scope: this.sessionScope(), enabled: false, revision: 0 };
+  private privacyWork: Promise<void> | null = null;
 
-  readonly unlocked = signal(false);
-  readonly items = signal<DecodedVaultItem[]>([]);
-  readonly rooms = signal<VaultRoom[]>([]);
-  readonly messagesByRoom = signal<Record<string, VaultRoomMessageVm[]>>({});
-  readonly mediaPreviews = signal<Record<string, MediaPreview>>({});
-  readonly people = signal<UserSummary[]>([]);
-  readonly activeRoomId = signal<string | null>(localStorage.getItem('nivra.activeVaultRoomId'));
-  readonly loading = signal(false);
-  readonly sending = signal(false);
-  readonly uploading = signal(false);
-  readonly noteBusy = signal(false);
-  readonly voicePhase = signal<VaultVoicePhase>('idle');
-  readonly voiceRoomId = signal<string | null>(null);
-  readonly voiceMuted = signal(false);
-  readonly voiceError = signal('');
-  readonly voiceRemoteStreams = signal<Record<string, MediaStream>>({});
-  readonly voiceActiveSpeakers = signal<string[]>([]);
+  // Reads conceal stale values synchronously, before Angular effects run.
+  // Writable methods are retained for the existing page's local search reset.
+  readonly unlocked = this.scopedSignal(() => false);
+  readonly items = this.scopedSignal<DecodedVaultItem[]>(() => []);
+  readonly rooms = this.scopedSignal<VaultRoom[]>(() => []);
+  readonly messagesByRoom = this.scopedSignal<Record<string, VaultRoomMessageVm[]>>(() => ({}));
+  readonly mediaPreviews = this.scopedSignal<Record<string, MediaPreview>>(() => ({}), previews => {
+    Object.values(previews).forEach(preview => { if (preview.url) URL.revokeObjectURL(preview.url); });
+  });
+  readonly people = this.scopedSignal<UserSummary[]>(() => []);
+  readonly activeRoomId = this.scopedSignal<string | null>(() => null);
+  readonly loading = this.scopedSignal(() => false);
+  readonly sending = this.scopedSignal(() => false);
+  readonly uploading = this.scopedSignal(() => false);
+  readonly noteBusy = this.scopedSignal(() => false);
+  readonly voicePhase = this.scopedSignal<VaultVoicePhase>(() => 'idle');
+  readonly voiceRoomId = this.scopedSignal<string | null>(() => null);
+  readonly voiceMuted = this.scopedSignal(() => false);
+  readonly voiceError = this.scopedSignal(() => '');
+  readonly voiceRemoteStreams = this.scopedSignal<Record<string, MediaStream>>(() => ({}), streams => {
+    Object.values(streams).forEach(stream => stream.getTracks().forEach(track => { track.enabled = false; track.stop(); }));
+  });
+  readonly voiceActiveSpeakers = this.scopedSignal<string[]>(() => []);
   readonly voiceRemoteEntries = computed(() => Object.entries(this.voiceRemoteStreams()));
   readonly voiceConnected = computed(() => this.voicePhase() === 'connected' && Boolean(this.voiceRoomId()));
 
@@ -82,6 +99,7 @@ export class VaultService {
   });
 
   constructor() {
+    this.restoreActiveRoom();
     this.realtime.events$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
@@ -100,87 +118,181 @@ export class VaultService {
     });
 
     effect(() => {
-      if (this.auth.isAuthenticated()) {
-        untracked(() => {
+      const scope = this.sessionScope();
+      untracked(() => {
+        this.ensureCurrentScope();
+        if (scope && this.auth.isAuthenticated()) {
           void this.load();
           void this.rejoinActiveRoom();
-        });
-      }
+        }
+      });
     });
+    this.destroyRef.onDestroy(() => { this.destroyed = true; this.resetScopeState(); });
+  }
+
+  private sessionScope(): string {
+    const session = this.auth.session?.();
+    return session ? JSON.stringify([session.user.id, session.device.id, this.auth.sessionGeneration?.() ?? 0]) : '';
+  }
+
+  private scopedSignal<T>(empty: () => T, discard?: (value: T) => void): WritableSignal<T> {
+    const state = signal(empty());
+    const read = computed(() => this.stateScope() === this.sessionScope() && !this.destroyed ? state() : empty());
+    this.resetters.push(() => { discard?.(state()); state.set(empty()); });
+    return Object.assign(read, {
+      set: (value: T) => { this.ensureCurrentScope(); state.set(value); },
+      update: (update: (value: T) => T) => { this.ensureCurrentScope(); state.update(update); },
+      asReadonly: () => read,
+    }) as WritableSignal<T>;
+  }
+
+  private ensureCurrentScope(): void {
+    const scope = this.sessionScope();
+    if (this.stateScope() === scope) return;
+    this.resetScopeState();
+    this.stateScope.set(scope);
+    this.restoreActiveRoom();
+  }
+
+  private resetScopeState(): void {
+    this.scopeEpoch++;
+    this.searchRevision++;
+    this.loadRevision++;
+    this.voiceRevision++;
+    this.key = null;
+    this.directories.clear();
+    this.disconnectVoiceRoom();
+    for (const reset of this.resetters) reset();
+    void this.setPrivacyScreen(false);
+  }
+
+  private captureContext(): VaultSessionContext {
+    this.ensureCurrentScope();
+    const session = this.auth.session?.();
+    if (!session || this.destroyed) throw new Error('Sesion no disponible.');
+    return { scope: this.sessionScope(), epoch: this.scopeEpoch, userId: session.user.id, deviceId: session.device.id, alias: session.user.alias };
+  }
+
+  private isCurrent(context: VaultSessionContext): boolean {
+    return !this.destroyed && context.scope === this.sessionScope() && context.scope === this.stateScope() && context.epoch === this.scopeEpoch;
+  }
+
+  private checkContext(context: VaultSessionContext): void {
+    if (!this.isCurrent(context)) throw new Error('La cuenta cambió. Vuelve a abrir la bóveda.');
+  }
+
+  private activeRoomStorageKey(): string | null {
+    const session = this.auth.session?.();
+    return session ? `nivra.activeVaultRoomId.v2.${encodeURIComponent(JSON.stringify([session.user.id, session.device.id]))}` : null;
+  }
+
+  private restoreActiveRoom(): void {
+    const key = this.activeRoomStorageKey();
+    try { this.activeRoomId.set(key ? localStorage.getItem(key) : null); }
+    catch { this.activeRoomId.set(null); }
   }
 
   async load(): Promise<void> {
+    this.ensureCurrentScope();
     if (!this.auth.isAuthenticated()) {
       return;
     }
+    const context = this.captureContext();
+    const revision = ++this.loadRevision;
     this.loading.set(true);
     try {
       const [items, rooms] = await Promise.all([
         firstValueFrom(this.api.get<VaultItem[]>('/vault/items')).catch(() => []),
         firstValueFrom(this.api.get<VaultRoom[]>('/vault/rooms')).catch(() => []),
       ]);
+      if (!this.isCurrent(context) || revision !== this.loadRevision) return;
+      const key = this.key;
+      const decoded = key ? await this.decodeItems(items, key, context) : items.map((item) => ({ ...item }));
+      if (!this.isCurrent(context) || revision !== this.loadRevision) return;
       this.rooms.set(rooms);
-      this.items.set(this.key ? await this.decodeItems(items) : items.map((item) => ({ ...item })));
+      this.items.set(decoded);
       const activeId = this.activeRoomId();
       if (activeId && !rooms.some((room) => room.id === activeId && this.currentMember(room)?.status === 'Active')) {
         this.setActiveRoom(null);
       }
+    } catch (error) {
+      if (this.isCurrent(context)) throw error;
     } finally {
-      this.loading.set(false);
+      if (this.isCurrent(context) && revision === this.loadRevision) this.loading.set(false);
     }
   }
 
   async unlock(pin: string): Promise<void> {
-    const userId = this.auth.session()?.user.id;
-    if (!userId) {
-      throw new Error('Sesion no disponible.');
-    }
+    const context = this.captureContext();
+    const userId = context.userId;
     const metaKey = `${VAULT_META_PREFIX}${userId}`;
     const existing = this.loadJson<{ salt: string; verifier: { iv: string; ciphertext: string } }>(metaKey);
     if (!existing) {
       const salt = this.crypto.randomBytes(16);
       const key = await this.crypto.deriveVaultKey(pin, salt);
+      this.checkContext(context);
       const verifier = await this.crypto.encryptWithKey(key, { ok: true, createdAt: new Date().toISOString() });
+      this.checkContext(context);
       localStorage.setItem(metaKey, JSON.stringify({ salt: this.crypto.b64(salt), verifier }));
       this.key = key;
     } else {
       const key = await this.crypto.deriveVaultKey(pin, this.crypto.ub64(existing.salt));
+      this.checkContext(context);
       await this.crypto.decryptWithKey(key, existing.verifier);
+      this.checkContext(context);
       this.key = key;
     }
     this.unlocked.set(true);
     await this.load();
+    this.checkContext(context);
   }
 
   lock(): void {
+    this.ensureCurrentScope();
+    this.scopeEpoch++;
+    this.loadRevision++;
     this.key = null;
     this.unlocked.set(false);
     this.items.update((items) => items.map(({ decoded: _decoded, decodeError: _decodeError, ...item }) => ({ ...item })));
+    this.messagesByRoom.set({});
+    Object.values(this.mediaPreviews()).forEach(preview => { if (preview.url) URL.revokeObjectURL(preview.url); });
+    this.mediaPreviews.set({});
+    this.loading.set(false);
+    this.sending.set(false);
+    this.uploading.set(false);
+    this.noteBusy.set(false);
     this.leaveVoiceChat();
   }
 
   async createNote(title: string, body: string, files: File[] = []): Promise<void> {
-    if (!this.key) {
+    const context = this.captureContext();
+    const key = this.key;
+    if (!key || !this.unlocked()) {
       throw new Error('Desbloquea la boveda primero.');
     }
-    const attachments = await this.encryptNoteAttachments(files);
-    const encryptedMetadata = JSON.stringify(await this.crypto.encryptWithKey(this.key, {
+    const attachments = await this.encryptNoteAttachments(files, context);
+    this.checkContext(context);
+    const encryptedMetadata = JSON.stringify(await this.crypto.encryptWithKey(key, {
       title,
       body,
       attachments,
       schema: 2,
     }));
+    this.checkContext(context);
     await firstValueFrom(this.api.post('/vault/items', {
       kind: 'Note',
       encryptedMetadata,
       parentId: null,
       fileObjectId: null,
     }));
+    this.checkContext(context);
     await this.load();
   }
 
   async deleteItem(itemId: string): Promise<void> {
+    const context = this.captureContext();
     await firstValueFrom(this.api.delete(`/vault/items/${encodeURIComponent(itemId)}`));
+    this.checkContext(context);
     this.items.update((items) => items.filter((item) => item.id !== itemId));
   }
 
@@ -193,6 +305,7 @@ export class VaultService {
     invitedUserIds?: string[];
     ttlSeconds?: number | null;
   }): Promise<VaultRoom> {
+    const context = this.captureContext();
     const room = await firstValueFrom(this.api.post<VaultRoom>('/vault/rooms', {
       name: options.name,
       pin: options.pin || null,
@@ -202,40 +315,50 @@ export class VaultService {
       invitedUserIds: options.invitedUserIds ?? [],
       ttlSeconds: options.retentionMode === 'ExpiresAfterTtl' ? options.ttlSeconds ?? 3600 : null,
     }));
+    this.checkContext(context);
     this.syncRoom(room);
     if (this.currentMember(room)?.status === 'Active') {
       await this.selectRoom(room.id);
+      this.checkContext(context);
     }
-    await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, options.invitedUserIds ?? []), options.pin || null);
+    await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, options.invitedUserIds ?? []), options.pin || null, context);
+    this.checkContext(context);
     return room;
   }
 
   async joinRoom(room: VaultRoom, pin?: string | null): Promise<VaultRoom> {
+    const context = this.captureContext();
     if (!this.canAttemptJoin(room)) {
       throw new Error('No estas invitado a esta sala. Pidele al dueno que te agregue primero.');
     }
     const joined = await firstValueFrom(this.api.post<VaultRoom>(`/vault/rooms/${encodeURIComponent(room.id)}/join`, {
       pin: pin || null,
     }));
+    this.checkContext(context);
     this.syncRoom(joined);
     if (this.currentMember(joined)?.status === 'Active') {
       await this.selectRoom(joined.id);
+      this.checkContext(context);
     }
     return joined;
   }
 
   async selectRoom(roomId: string): Promise<void> {
+    const context = this.captureContext();
     const room = this.rooms().find((candidate) => candidate.id === roomId);
     if (!room || this.currentMember(room)?.status !== 'Active') {
       throw new Error('Debes entrar a la sala primero.');
     }
     this.setActiveRoom(roomId);
     await this.realtime.joinVaultRoom(roomId);
+    this.checkContext(context);
     this.messagesByRoom.update((state) => ({ ...state, [roomId]: state[roomId] ?? [] }));
   }
 
   async leaveRoom(roomId: string): Promise<void> {
+    const context = this.captureContext();
     await firstValueFrom(this.api.post(`/vault/rooms/${encodeURIComponent(roomId)}/leave`, {}));
+    this.checkContext(context);
     if (this.activeRoomId() === roomId) {
       this.setActiveRoom(null);
     }
@@ -247,6 +370,7 @@ export class VaultService {
   }
 
   async inviteUsers(roomId: string, userIds: string[]): Promise<VaultRoom> {
+    const context = this.captureContext();
     const currentRoom = this.rooms().find((candidate) => candidate.id === roomId) ?? this.activeRoom();
     if (!this.canInviteGuests(currentRoom)) {
       throw new Error('Solo el dueno de la sala puede agregar invitados.');
@@ -261,23 +385,29 @@ export class VaultService {
     const room = await firstValueFrom(this.api.post<VaultRoom>(`/vault/rooms/${encodeURIComponent(roomId)}/invite`, {
       userIds: ids,
     }));
+    this.checkContext(context);
     this.syncRoom(room);
-    await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, ids), null);
+    await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, ids), null, context);
+    this.checkContext(context);
     return room;
   }
 
   async createInviteLink(room: VaultRoom, options: { ttlSeconds?: number; maxUses?: number; requireApproval?: boolean } = {}): Promise<VaultInviteLink> {
+    const context = this.captureContext();
     if (!this.canInviteGuests(room)) {
       throw new Error('Solo el dueno de la sala puede crear enlaces.');
     }
-    return firstValueFrom(this.api.post<VaultInviteLink>(`/vault/rooms/${encodeURIComponent(room.id)}/invite-links`, {
+    const invite = await firstValueFrom(this.api.post<VaultInviteLink>(`/vault/rooms/${encodeURIComponent(room.id)}/invite-links`, {
       ttlSeconds: options.ttlSeconds ?? 24 * 60 * 60,
       maxUses: options.maxUses ?? 1,
       requireApproval: options.requireApproval ?? room.accessMode === 'WaitingRoom',
     }));
+    this.checkContext(context);
+    return invite;
   }
 
   async acceptInviteCode(code: string, pin = ''): Promise<VaultRoom> {
+    const context = this.captureContext();
     const value = code.trim();
     if (!value) {
       throw new Error('Codigo de invitacion invalido.');
@@ -285,9 +415,11 @@ export class VaultService {
     const room = await firstValueFrom(this.api.post<VaultRoom>(`/vault/invites/${encodeURIComponent(value)}/accept`, {
       pin: pin || null,
     }));
+    this.checkContext(context);
     this.syncRoom(room);
     if (this.currentMember(room)?.status === 'Active') {
       await this.selectRoom(room.id);
+      this.checkContext(context);
     }
     return room;
   }
@@ -304,20 +436,25 @@ export class VaultService {
   }
 
   async approveMember(roomId: string, memberUserId: string): Promise<VaultRoom> {
+    const context = this.captureContext();
     const room = await firstValueFrom(
       this.api.post<VaultRoom>(`/vault/rooms/${encodeURIComponent(roomId)}/members/${encodeURIComponent(memberUserId)}/approve`, {}),
     );
+    this.checkContext(context);
     this.syncRoom(room);
     return room;
   }
 
   async searchPeople(query: string): Promise<UserSummary[]> {
+    const context = this.captureContext();
+    const revision = ++this.searchRevision;
     const value = query.trim();
     if (value.length < 2) {
       this.people.set([]);
       return [];
     }
     const response = await firstValueFrom(this.api.get<DirectorySearchResponse>(`/directory/search?q=${encodeURIComponent(value)}`));
+    if (!this.isCurrent(context) || revision !== this.searchRevision) return [];
     this.people.set(response.people ?? []);
     return response.people ?? [];
   }
@@ -331,6 +468,7 @@ export class VaultService {
   }
 
   async sendRoomFile(file: File): Promise<void> {
+    const context = this.captureContext();
     const room = this.activeRoom();
     if (!room) {
       throw new Error('Abre una sala Vault primero.');
@@ -341,7 +479,10 @@ export class VaultService {
 
     this.uploading.set(true);
     try {
-      const encrypted = await this.crypto.encryptAttachment(await file.arrayBuffer());
+      const bytes = await file.arrayBuffer();
+      this.checkContext(context);
+      const encrypted = await this.crypto.encryptAttachment(bytes);
+      this.checkContext(context);
       const mime = file.type || 'application/octet-stream';
       const fileRecord = await firstValueFrom(this.api.post<FileResponse>('/files', {
         encryptedSize: encrypted.bytes.byteLength,
@@ -351,7 +492,9 @@ export class VaultService {
         expiresAt: this.vaultFileExpiry(room),
         vaultRoomId: room.id,
       }));
+      this.checkContext(context);
       await firstValueFrom(this.api.putRaw<FileResponse>(`/files/${encodeURIComponent(fileRecord.id)}/blob`, encrypted.bytes));
+      this.checkContext(context);
       this.rememberMediaPreview(fileRecord.id, file, mime, file.name);
       await this.sendVaultPayload({
         type: 'file',
@@ -361,13 +504,15 @@ export class VaultService {
         size: file.size,
         fileKey: encrypted.key,
         fileIv: encrypted.iv,
-      }, this.fileKind(file), fileRecord.id);
+      }, this.fileKind(file), fileRecord.id, context, room);
     } finally {
-      this.uploading.set(false);
+      if (this.isCurrent(context)) this.uploading.set(false);
     }
   }
 
   async ensureMediaPreview(payload: ChatPayload): Promise<MediaPreview | null> {
+    const context = this.captureContext();
+    if (!this.unlocked()) return null;
     const file = this.asFile(payload);
     const fileId = this.fileId(file);
     if (!file || !fileId || !file.fileKey || !file.fileIv) {
@@ -377,16 +522,18 @@ export class VaultService {
     if (cached) {
       return cached;
     }
-    const session = this.auth.session();
-    const current = () => this.auth.session()?.user.id === session?.user.id && this.auth.session()?.device.id === session?.device.id && this.unlocked();
+    const current = () => this.isCurrent(context) && this.unlocked();
     const encrypted = await this.downloads.file(fileId, current);
+    if (!current()) return null;
     const plain = await this.crypto.decryptAttachment(encrypted, file.fileKey, file.fileIv);
     if (!current()) return null;
     return this.rememberMediaPreview(fileId, new Blob([plain], { type: this.fileMime(file) }), this.fileMime(file), this.fileName(file));
   }
 
   async downloadAttachment(payload: ChatPayload): Promise<void> {
+    const context = this.captureContext();
     const preview = await this.ensureMediaPreview(payload);
+    if (!this.isCurrent(context)) return;
     const file = this.asFile(payload);
     if (!preview || !file) {
       return;
@@ -399,6 +546,7 @@ export class VaultService {
   }
 
   noteAttachments(item: DecodedVaultItem | null | undefined): VaultNoteAttachment[] {
+    if (!this.unlocked() || !item?.id || !this.items().some(candidate => candidate.id === item.id)) return [];
     return Array.isArray(item?.decoded?.attachments) ? item.decoded.attachments : [];
   }
 
@@ -416,17 +564,23 @@ export class VaultService {
   }
 
   async ensureNoteAttachmentPreview(item: DecodedVaultItem, attachment: VaultNoteAttachment): Promise<MediaPreview | null> {
+    this.captureContext();
+    const ownedItem = this.items().find(candidate => candidate.id === item.id);
+    const ownedAttachment = this.noteAttachments(ownedItem).find(candidate => candidate.id === attachment.id);
+    if (!ownedItem || !ownedAttachment) return null;
     const key = this.noteAttachmentKey(item, attachment);
     const cached = this.mediaPreviews()[key];
     if (cached) {
       return cached;
     }
-    const blob = this.noteAttachmentBlob(attachment);
-    return this.rememberMediaPreview(key, blob, attachment.mime, attachment.name);
+    const blob = this.noteAttachmentBlob(ownedAttachment);
+    return this.rememberMediaPreview(key, blob, ownedAttachment.mime, ownedAttachment.name);
   }
 
   async downloadNoteAttachment(item: DecodedVaultItem, attachment: VaultNoteAttachment): Promise<void> {
+    const context = this.captureContext();
     const preview = await this.ensureNoteAttachmentPreview(item, attachment);
+    if (!this.isCurrent(context)) return;
     if (!preview) {
       return;
     }
@@ -453,6 +607,9 @@ export class VaultService {
   }
 
   async startVoiceChat(room: VaultRoom | null = this.activeRoom()): Promise<void> {
+    const context = this.captureContext();
+    const revision = ++this.voiceRevision;
+    const current = () => this.isCurrent(context) && revision === this.voiceRevision;
     if (!room?.id) {
       throw new Error('Abre una sala Vault primero.');
     }
@@ -464,50 +621,61 @@ export class VaultService {
     this.disconnectVoiceRoom();
     this.resetVoiceState();
     this.voicePhase.set('connecting');
+    let liveRoom: Room | null = null;
     try {
       const credentials = await firstValueFrom(this.api.get<LiveKitRoomTokenResponse>(`/vault/rooms/${encodeURIComponent(room.id)}/voice-token`));
+      if (!current()) throw new Error('La cuenta o la sala de audio cambió.');
       if (!credentials?.serverUrl || !credentials.token) {
         throw new Error('El servidor no devolvio credenciales LiveKit validas.');
       }
 
-      const liveRoom = new Room();
+      liveRoom = new Room();
       this.voiceRoom = liveRoom;
       liveRoom.on(RoomEvent.TrackSubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
-        this.addVoiceRemoteTrack(participant?.identity || crypto.randomUUID(), track);
+        if (current() && this.voiceRoom === liveRoom) this.addVoiceRemoteTrack(participant?.identity || crypto.randomUUID(), track);
       });
       liveRoom.on(RoomEvent.TrackUnsubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
-        this.removeVoiceRemoteTrack(participant?.identity || '', track);
+        if (current() && this.voiceRoom === liveRoom) this.removeVoiceRemoteTrack(participant?.identity || '', track);
       });
       liveRoom.on(RoomEvent.ActiveSpeakersChanged, (speakers: Array<{ identity?: string }>) => {
-        this.voiceActiveSpeakers.set(speakers.map((speaker) => speaker.identity).filter((id): id is string => Boolean(id)));
+        if (current() && this.voiceRoom === liveRoom) this.voiceActiveSpeakers.set(speakers.map((speaker) => speaker.identity).filter((id): id is string => Boolean(id)));
       });
       liveRoom.on(RoomEvent.Disconnected, () => {
-        if (this.voiceRoom === liveRoom) {
+        if (current() && this.voiceRoom === liveRoom) {
           this.resetVoiceState();
         }
       });
 
       await liveRoom.connect(credentials.serverUrl, credentials.token);
+      if (!current() || this.voiceRoom !== liveRoom) throw new Error('La cuenta o la sala de audio cambió.');
       await (liveRoom.localParticipant as unknown as {
         setMicrophoneEnabled: (enabled: boolean) => Promise<unknown>;
         setCameraEnabled?: (enabled: boolean) => Promise<unknown>;
       }).setMicrophoneEnabled(true);
+      if (!current() || this.voiceRoom !== liveRoom) throw new Error('La cuenta o la sala de audio cambió.');
       await (liveRoom.localParticipant as unknown as {
         setCameraEnabled?: (enabled: boolean) => Promise<unknown>;
       }).setCameraEnabled?.(false);
+      if (!current() || this.voiceRoom !== liveRoom) throw new Error('La cuenta o la sala de audio cambió.');
       this.voiceRoomId.set(room.id);
       this.voiceMuted.set(false);
       this.voicePhase.set('connected');
     } catch (error) {
-      this.disconnectVoiceRoom();
-      this.resetVoiceState();
-      this.voicePhase.set('failed');
-      this.voiceError.set(error instanceof Error ? error.message : 'No se pudo iniciar el chat de voz.');
+      if (current()) {
+        this.disconnectVoiceRoom();
+        this.resetVoiceState();
+        this.voicePhase.set('failed');
+        this.voiceError.set(error instanceof Error ? error.message : 'No se pudo iniciar el chat de voz.');
+      } else if (liveRoom) {
+        liveRoom.removeAllListeners();
+        void liveRoom.disconnect();
+      }
       throw error;
     }
   }
 
   async toggleVoiceMute(): Promise<void> {
+    const context = this.captureContext();
     const room = this.voiceRoom;
     if (!room) {
       return;
@@ -516,10 +684,13 @@ export class VaultService {
     await (room.localParticipant as unknown as {
       setMicrophoneEnabled: (enabled: boolean) => Promise<unknown>;
     }).setMicrophoneEnabled(!nextMuted);
+    if (!this.isCurrent(context) || this.voiceRoom !== room) return;
     this.voiceMuted.set(nextMuted);
   }
 
   leaveVoiceChat(): void {
+    this.ensureCurrentScope();
+    this.voiceRevision++;
     this.disconnectVoiceRoom();
     this.resetVoiceState();
   }
@@ -684,26 +855,31 @@ export class VaultService {
   }
 
   async enablePrivacyShield(): Promise<void> {
+    this.captureContext();
     await this.setPrivacyScreen(true);
   }
 
   async disablePrivacyShield(): Promise<void> {
+    this.ensureCurrentScope();
     await this.setPrivacyScreen(false);
   }
 
-  private async sendVaultPayload(payload: ChatPayload, kind = 'Text', fileObjectId: string | null = null): Promise<void> {
-    const room = this.activeRoom();
+  private async sendVaultPayload(payload: ChatPayload, kind = 'Text', fileObjectId: string | null = null,
+    context = this.captureContext(), targetRoom?: VaultRoom): Promise<void> {
+    this.checkContext(context);
+    const room = targetRoom ?? this.activeRoom();
     if (!room) {
       throw new Error('Abre una sala Vault primero.');
     }
     this.sending.set(true);
     try {
       await this.realtime.joinVaultRoom(room.id);
-      const recipients = await this.encryptedRecipients(room, payload, fileObjectId);
+      this.checkContext(context);
+      const recipients = await this.encryptedRecipients(room, payload, fileObjectId, context);
+      this.checkContext(context);
       if (!recipients.length) {
         throw new Error('No hay llaves publicas disponibles para esta boveda.');
       }
-      const current = this.auth.session();
       const clientMessageId = `vault-${crypto.randomUUID()}`;
       await this.realtime.sendVaultRoomMessage(room.id, {
         clientMessageId,
@@ -711,14 +887,15 @@ export class VaultService {
         recipients,
         fileObjectId,
       });
-      if (current) {
+      this.checkContext(context);
+      if (this.isCurrent(context)) {
         this.upsertMessage({
           id: clientMessageId,
           vaultRoomId: room.id,
           mine: true,
-          senderUserId: current.user.id,
-          senderDeviceId: current.device.id,
-          senderAlias: current.user.alias,
+          senderUserId: context.userId,
+          senderDeviceId: context.deviceId,
+          senderAlias: context.alias,
           at: new Date().toISOString(),
           kind,
           payload,
@@ -726,7 +903,7 @@ export class VaultService {
         });
       }
     } finally {
-      this.sending.set(false);
+      if (this.isCurrent(context)) this.sending.set(false);
     }
   }
 
@@ -734,20 +911,22 @@ export class VaultService {
     room: VaultRoom,
     payload: ChatPayload,
     fileObjectId: string | null = null,
+    context = this.captureContext(),
   ): Promise<RecipientCipherRequest[]> {
-    const current = this.auth.session();
-    if (!current) {
-      return [];
-    }
-    const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+    this.checkContext(context);
+    const own = await this.crypto.currentKeyMaterial(context.alias, context.deviceId);
+    this.checkContext(context);
     const recipients: RecipientCipherRequest[] = [];
     const activeMembers = (room.members ?? []).filter((member) => member.status === 'Active');
-    const directories = await this.directoriesForUsers(activeMembers.map((member) => member.userId));
+    const directories = await this.directoriesForUsers(activeMembers.map((member) => member.userId), context);
+    this.checkContext(context);
 
     for (const member of activeMembers) {
-      const directory = member.userId === current.user.id
-        ? await this.ownKeyDirectory()
-        : directories.get(member.userId) ?? await this.directoryForMember(member).catch(() => null);
+      this.checkContext(context);
+      const directory = member.userId === context.userId
+        ? await this.ownKeyDirectory(context)
+        : directories.get(member.userId) ?? await this.directoryForMember(member, context).catch(() => null);
+      this.checkContext(context);
       const usedDeviceIds = new Set<string>();
 
       for (const device of directory?.devices ?? []) {
@@ -756,6 +935,7 @@ export class VaultService {
           continue;
         }
         const sealed = await this.crypto.encryptForPublicKey(own, publicKey, payload);
+        this.checkContext(context);
         recipients.push({
           userId: member.userId,
           deviceId: device.deviceId,
@@ -766,11 +946,12 @@ export class VaultService {
         usedDeviceIds.add(device.deviceId);
       }
 
-      if (member.userId === current.user.id && !usedDeviceIds.has(current.device.id)) {
+      if (member.userId === context.userId && !usedDeviceIds.has(context.deviceId)) {
         const sealed = await this.crypto.encryptForPublicKey(own, own.publicJwk, payload);
+        this.checkContext(context);
         recipients.push({
-          userId: current.user.id,
-          deviceId: current.device.id,
+          userId: context.userId,
+          deviceId: context.deviceId,
           ciphertext: sealed.ciphertext,
           header: sealed.header,
           fileObjectId,
@@ -781,13 +962,15 @@ export class VaultService {
     return recipients;
   }
 
-  private async directoriesForUsers(userIds: string[]): Promise<Map<string, PublicKeyDirectory>> {
+  private async directoriesForUsers(userIds: string[], context = this.captureContext()): Promise<Map<string, PublicKeyDirectory>> {
+    this.checkContext(context);
     const uniqueIds = [...new Set(userIds.filter(Boolean))];
     const missing = uniqueIds.filter((id) => !this.directories.has(id));
     if (missing.length) {
       const directories = await firstValueFrom(
         this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds: missing, aliases: [] }),
       ).catch(() => []);
+      this.checkContext(context);
       for (const directory of directories ?? []) {
         this.directories.set(directory.userId, directory);
       }
@@ -795,36 +978,41 @@ export class VaultService {
     return new Map(uniqueIds.map((id) => [id, this.directories.get(id)]).filter((entry): entry is [string, PublicKeyDirectory] => Boolean(entry[1])));
   }
 
-  private async ownKeyDirectory(): Promise<PublicKeyDirectory | null> {
-    const session = this.auth.session();
-    if (!session?.user.alias) {
+  private async ownKeyDirectory(context = this.captureContext()): Promise<PublicKeyDirectory | null> {
+    this.checkContext(context);
+    if (!context.alias) {
       return null;
     }
-    const cached = this.directories.get(session.user.id);
+    const cached = this.directories.get(context.userId);
     if (cached) {
       return cached;
     }
-    const directory = await firstValueFrom(this.api.get<PublicKeyDirectory>(`/keys/${encodeURIComponent(session.user.alias)}`)).catch(() => null);
+    const directory = await firstValueFrom(this.api.get<PublicKeyDirectory>(`/keys/${encodeURIComponent(context.alias)}`)).catch(() => null);
+    this.checkContext(context);
     if (directory) {
       this.directories.set(directory.userId, directory);
     }
     return directory;
   }
 
-  private async directoryForMember(member: VaultRoomMember): Promise<PublicKeyDirectory | null> {
+  private async directoryForMember(member: VaultRoomMember, context = this.captureContext()): Promise<PublicKeyDirectory | null> {
+    this.checkContext(context);
     if (this.directories.has(member.userId)) {
       return this.directories.get(member.userId) ?? null;
     }
     const directory = await firstValueFrom(this.api.get<PublicKeyDirectory>(`/keys/${encodeURIComponent(member.alias)}`));
+    this.checkContext(context);
     this.directories.set(directory.userId, directory);
     return directory;
   }
 
   private async ingestRealtimeMessage(message: VaultRealtimeMessageResponse): Promise<void> {
+    this.ensureCurrentScope();
     const current = this.auth.session();
     if (!current || !message?.id) {
       return;
     }
+    const context = this.captureContext();
     if (message.senderDeviceId === current.device.id) {
       return;
     }
@@ -836,8 +1024,11 @@ export class VaultService {
     if (recipient?.ciphertext) {
       try {
         const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
+        if (!this.isCurrent(context)) return;
         payload = await this.crypto.decryptEnvelope<ChatPayload>(own, recipient.header, recipient.ciphertext);
+        if (!this.isCurrent(context)) return;
       } catch {
+        if (!this.isCurrent(context)) return;
         decryptError = true;
         payload = { type: 'system', title: 'Contenido protegido', text: 'No se pudo descifrar en este dispositivo.' };
       }
@@ -845,6 +1036,7 @@ export class VaultService {
       payload = { type: 'system', text: 'Paquete cifrado no disponible para este dispositivo.' };
     }
 
+    if (!this.isCurrent(context)) return;
     this.upsertMessage({
       id: message.id,
       vaultRoomId: message.vaultRoomId,
@@ -869,6 +1061,8 @@ export class VaultService {
   }
 
   private syncRoom(room: VaultRoom | null | undefined): void {
+    this.ensureCurrentScope();
+    if (!this.auth.session?.()) return;
     if (!room?.id) {
       void this.load();
       return;
@@ -878,6 +1072,8 @@ export class VaultService {
   }
 
   private handleRoomClosedOrLeft(payload: unknown): void {
+    this.ensureCurrentScope();
+    if (!this.auth.session?.()) return;
     const value = payload as { roomId?: string; vaultRoomId?: string; closedAt?: string | null };
     const roomId = value?.roomId || value?.vaultRoomId;
     if (!roomId) {
@@ -897,20 +1093,24 @@ export class VaultService {
   }
 
   private async rejoinActiveRoom(): Promise<void> {
+    this.ensureCurrentScope();
+    if (!this.auth.session?.()) return;
+    const context = this.captureContext();
     const roomId = this.activeRoomId();
     const room = roomId ? this.rooms().find((candidate) => candidate.id === roomId) : null;
     if (roomId && (!room || this.currentMember(room)?.status === 'Active')) {
       await this.realtime.joinVaultRoom(roomId).catch(() => undefined);
+      if (!this.isCurrent(context)) return;
     }
   }
 
   private setActiveRoom(roomId: string | null): void {
+    this.ensureCurrentScope();
+    const key = this.activeRoomStorageKey();
     this.activeRoomId.set(roomId);
-    if (roomId) {
-      localStorage.setItem('nivra.activeVaultRoomId', roomId);
-    } else {
-      localStorage.removeItem('nivra.activeVaultRoomId');
-    }
+    if (!key) return;
+    try { if (roomId) localStorage.setItem(key, roomId); else localStorage.removeItem(key); }
+    catch { /* Room selection is optional and never crosses account scopes. */ }
   }
 
   private clearRoomMessages(roomId: string): void {
@@ -940,7 +1140,8 @@ export class VaultService {
     return null;
   }
 
-  private async encryptNoteAttachments(files: File[]): Promise<VaultNoteAttachment[]> {
+  private async encryptNoteAttachments(files: File[], context: VaultSessionContext): Promise<VaultNoteAttachment[]> {
+    this.checkContext(context);
     if (!files.length) {
       return [];
     }
@@ -955,6 +1156,7 @@ export class VaultService {
     const attachments: VaultNoteAttachment[] = [];
     for (const file of files) {
       const bytes = new Uint8Array(await file.arrayBuffer());
+      this.checkContext(context);
       attachments.push({
         id: `vna-${crypto.randomUUID()}`,
         name: file.name || 'archivo-vault',
@@ -975,25 +1177,27 @@ export class VaultService {
     });
   }
 
-  private async decodeItems(items: VaultItem[]): Promise<DecodedVaultItem[]> {
-    if (!this.key) {
-      return items;
-    }
+  private async decodeItems(items: VaultItem[], key: CryptoKey, context: VaultSessionContext): Promise<DecodedVaultItem[]> {
+    this.checkContext(context);
     const decoded: DecodedVaultItem[] = [];
     for (const item of items) {
       try {
+        const content = await this.crypto.decryptWithKey<NonNullable<DecodedVaultItem['decoded']>>(key, JSON.parse(item.encryptedMetadata) as { iv: string; ciphertext: string });
+        this.checkContext(context);
         decoded.push({
           ...item,
-          decoded: await this.crypto.decryptWithKey(this.key, JSON.parse(item.encryptedMetadata) as { iv: string; ciphertext: string }),
+          decoded: content,
         });
       } catch {
+        this.checkContext(context);
         decoded.push({ ...item, decodeError: true });
       }
     }
     return decoded;
   }
 
-  private async notifyVaultInvites(room: VaultRoom, invitedUserIds: string[], pin: string | null): Promise<void> {
+  private async notifyVaultInvites(room: VaultRoom, invitedUserIds: string[], pin: string | null, context: VaultSessionContext): Promise<void> {
+    this.checkContext(context);
     const current = this.auth.session();
     if (!current || !invitedUserIds.length) {
       return;
@@ -1013,10 +1217,13 @@ export class VaultService {
 
     await Promise.all(members.map(async (member) => {
       try {
+        this.checkContext(context);
         const conversation = await this.chat.createDirectConversation(this.memberAsPerson(member));
+        this.checkContext(context);
         await this.chat.sendText(conversation, text, {
           ttlSeconds: this.ttlSecondsForRoom(room),
         });
+        this.checkContext(context);
       } catch {
         // Best-effort E2EE invite: backend push + vault.invited still notify the member.
       }
@@ -1110,17 +1317,36 @@ export class VaultService {
   }
 
   private async setPrivacyScreen(enabled: boolean): Promise<void> {
+    this.privacyDesired = { scope: this.sessionScope(), enabled, revision: ++this.privacyRevision };
+    if (this.privacyWork) return this.privacyWork;
+    const work = (async () => {
+      for (;;) {
+        const desired = this.privacyDesired;
+        await this.applyPrivacyScreen(desired);
+        if (desired.revision === this.privacyDesired.revision) return;
+      }
+    })().finally(() => { if (this.privacyWork === work) this.privacyWork = null; });
+    this.privacyWork = work;
+    return work;
+  }
+
+  private async loadPrivacyScreen(): Promise<Record<string, unknown>> {
+    const loader = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<Record<string, unknown>>;
+    const module = await loader('@capacitor-community/privacy-screen');
+    return (module['PrivacyScreen'] ?? module['default'] ?? module) as Record<string, unknown>;
+  }
+
+  private async applyPrivacyScreen(desired: { scope: string; enabled: boolean; revision: number }): Promise<void> {
     try {
-      const loader = new Function('specifier', 'return import(specifier)') as (specifier: string) => Promise<Record<string, unknown>>;
-      const module = await loader('@capacitor-community/privacy-screen');
-      const privacy = (module['PrivacyScreen'] ?? module['default'] ?? module) as Record<string, unknown>;
-      const methodNames = enabled
+      const privacy = await this.loadPrivacyScreen();
+      if (desired.scope !== this.sessionScope() || desired.revision !== this.privacyDesired.revision) return;
+      const methodNames = desired.enabled
         ? ['enable', 'preventScreenshots', 'setEnabled']
         : ['disable', 'allowScreenshots', 'setDisabled'];
       for (const name of methodNames) {
         const method = privacy[name];
         if (typeof method === 'function') {
-          await (method as (value?: boolean) => Promise<unknown>).call(privacy, enabled);
+          await (method as (value?: boolean) => Promise<unknown>).call(privacy, desired.enabled);
           return;
         }
       }

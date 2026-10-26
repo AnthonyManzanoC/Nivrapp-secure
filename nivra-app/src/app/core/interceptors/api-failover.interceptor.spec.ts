@@ -90,6 +90,7 @@ describe('authenticated HTTP chain with a real endpoint pool', () => {
       { provide: API_POOL_RUNTIME, useValue: { primary, origins: [primary, backup], expectedFingerprint: pin,
         fetch: probes, now: () => 100000, storage: { getItem: () => '', setItem: () => undefined } } },
       { provide: AuthService, useValue: { session: () => ({ user: { id: 'alice' }, device: { id: 'phone' } }),
+        sessionGeneration: () => 0,
         accessToken: () => 'synthetic-access', hasFreshAccessToken: () => true,
         refreshToken: jasmine.createSpy('refresh').and.resolveTo(false), lastRefreshFailedPermanently: () => false } },
       { provide: DeviceWipeService, useValue: { nukeDevice: jasmine.createSpy('wipe') } },

@@ -206,3 +206,7 @@ button:disabled { opacity: .55; cursor: default; }
   .auth-modes button { gap: 4px; font-size: 11px; }
 }
 @media (prefers-reduced-motion: reduce) { .auth-modes button { transition: none; } }
+.add-account-return { display: grid; gap: 8px; margin: 14px 0; padding: 12px 14px; border: 1px solid var(--nivra-line); border-radius: 12px; background: color-mix(in srgb, var(--nivra-brand) 6%, transparent); }
+.add-account-return p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--nivra-muted); }
+.add-account-return button { justify-self: start; padding: 7px 0; border: 0; background: none; color: var(--nivra-brand-2); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
+.add-account-return button:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 3px; }

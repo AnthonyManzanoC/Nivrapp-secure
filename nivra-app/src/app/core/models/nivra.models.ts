@@ -32,6 +32,7 @@ export interface TokenPair {
 export interface NivraUser {
   id: string;
   nivraNumber?: string | null;
+  isPrivateAccount?: boolean;
   alias: string;
   displayName?: string | null;
   email?: string | null;
@@ -71,6 +72,8 @@ export interface PhoneAliasChallenge {
 
 export interface Participant {
   userId: string;
+  nivraNumber?: string | null;
+  isPrivateAccount?: boolean;
   role: string;
   canInvite: boolean;
   canChangePrivacy: boolean;
@@ -131,6 +134,7 @@ export interface Conversation {
 export interface Contact {
   userId: string;
   nivraNumber?: string | null;
+  isPrivateAccount?: boolean;
   alias: string;
   displayName?: string | null;
   phone?: string | null;
@@ -145,6 +149,7 @@ export interface Contact {
 export interface UserSummary {
   id: string;
   nivraNumber?: string | null;
+  isPrivateAccount?: boolean;
   alias: string;
   displayName?: string | null;
   phone?: string | null;
@@ -161,6 +166,7 @@ export interface UserSummary {
 export interface LocalProfile {
   userId: string;
   nivraNumber?: string | null;
+  isPrivateAccount?: boolean;
   id?: string;
   alias?: string | null;
   aliasLower?: string | null;

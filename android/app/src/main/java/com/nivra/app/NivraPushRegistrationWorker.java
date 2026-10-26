@@ -15,22 +15,30 @@ public final class NivraPushRegistrationWorker extends Worker {
 
     @NonNull @Override public Result doWork() {
         Context context = getApplicationContext();
-        JSONObject session = NivraNativePushRegistration.read(context);
-        String token = NivraNativePushRegistration.pendingToken(context);
-        if (session == null || token.isEmpty() || isStopped()) return Result.success();
-        if (!NivraNativePushRegistration.isAllowedApiOrigin(session.optString("apiBaseUrl"))) return Result.failure();
+        boolean retry = false;
+        for (JSONObject session : NivraNativePushRegistration.readAll(context)) {
+            if (isStopped()) return Result.success();
+            String token = session.optString("pendingToken");
+            if (token.isEmpty() || !NivraNativePushRegistration.isCurrent(context, session, token)) continue;
+            retry |= renewAccount(context, session, token);
+        }
+        return retry ? retryBounded() : Result.success();
+    }
+
+    private boolean renewAccount(Context context, JSONObject session, String token) {
+        if (!NivraNativePushRegistration.isAllowedApiOrigin(session.optString("apiBaseUrl"))) return false;
         String currentOrigin = session.optString("apiBaseUrl");
         String alternate = currentOrigin.equals(NivraApiFailover.PRIMARY) ? NivraApiFailover.BACKUP : NivraApiFailover.PRIMARY;
         int first = !currentOrigin.equals(NivraApiFailover.PRIMARY) && !NivraApiFailover.probe(currentOrigin, session.optString("clusterFingerprint"))
             ? 0 : renew(context, session, token, currentOrigin);
-        if (first == 1) return Result.success();
-        if (first == 2) return retryBounded();
+        if (first == 1) return false;
+        if (first == 2) return true;
         if (!isStopped() && NivraNativePushRegistration.isCurrent(context, session, token) &&
             NivraApiFailover.probe(alternate, session.optString("clusterFingerprint"))) {
             // This upsert is idempotent for the same user, device and token; refresh credentials are never rotated here.
-            if (renew(context, session, token, alternate) == 1) return Result.success();
+            if (renew(context, session, token, alternate) == 1) return false;
         }
-        return retryBounded();
+        return true;
     }
 
     private int renew(Context context, JSONObject session, String token, String origin) {

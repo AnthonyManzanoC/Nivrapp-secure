@@ -1,0 +1,59 @@
+<ion-content fullscreen class="page">
+  <main class="surface">
+    <header class="page-head">
+      <div class="title-line"><button type="button" class="back" (click)="back()" [attr.aria-label]="'COMMON.BACK' | translate:'Volver'"><ion-icon name="arrow-back-outline"></ion-icon></button><div><h1>{{ 'BROADCAST.TITLE' | translate:'Listas de difusión' }}</h1><p>{{ 'BROADCAST.SUBTITLE' | translate:'Un mensaje, conversaciones privadas.' }}</p></div></div>
+      <ion-button mode="ios" fill="clear" (click)="refresh()" [disabled]="broadcasts.loading()" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">@if (broadcasts.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }</ion-button>
+    </header>
+    <p class="privacy-copy"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'BROADCAST.PRIVACY_COPY' | translate:'Cada persona recibe el mensaje en su chat privado, cifrado de extremo a extremo. Los destinatarios no ven a los demás.' }}</p>
+    @if (error || broadcasts.error()) { <p class="error" role="alert">{{ error || broadcasts.error() }}</p> }
+    @if (notice) { <p class="notice" role="status">{{ notice }}</p> }
+    <div class="broadcast-layout">
+      <section class="panel lists-panel" [attr.aria-busy]="broadcasts.loading()">
+        <div class="panel-title"><h2>{{ 'BROADCAST.YOUR_LISTS' | translate:'Tus listas' }} <small>{{ broadcasts.lists().length }}</small></h2><button type="button" class="add-list" (click)="openEditor()" [disabled]="broadcasts.saving()" [attr.aria-label]="'BROADCAST.NEW_LIST' | translate:'Nueva lista'"><ion-icon name="add-outline"></ion-icon></button></div>
+        @for (list of broadcasts.lists(); track list.id) {
+          <button type="button" class="list-row" [class.selected]="selectedId() === list.id" [attr.aria-pressed]="selectedId() === list.id" (click)="select(list)"><span class="list-icon"><ion-icon [name]="list.locked ? 'lock-closed-outline' : 'megaphone-outline'"></ion-icon></span><span><strong>{{ list.name }}</strong><small>{{ list.recipientCount }} {{ 'BROADCAST.RECIPIENTS' | translate:'destinatarios' }}@if (list.locked) { · {{ 'BROADCAST.LOCKED' | translate:'Por recuperar' }} }</small></span></button>
+        } @empty { <div class="empty-copy"><ion-icon name="megaphone-outline"></ion-icon><p>{{ broadcasts.loading() ? ('COMMON.LOADING' | translate:'Cargando…') : ('BROADCAST.NO_LISTS' | translate:'Crea una lista con tus contactos guardados. Elegir destinatarios no envía mensajes.') }}</p></div> }
+      </section>
+      <div class="detail-column">
+        @if (editorOpen) {
+          <section class="panel editor-panel">
+            <div class="panel-title"><h2>{{ editingList ? ('BROADCAST.EDIT_LIST' | translate:'Editar lista') : ('BROADCAST.NEW_LIST' | translate:'Nueva lista') }}</h2><button type="button" class="close" (click)="closeEditor()" [disabled]="broadcasts.saving()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline"></ion-icon></button></div>
+            <label class="field"><span>{{ 'BROADCAST.NAME' | translate:'Nombre de la lista' }}</span><input type="text" [(ngModel)]="name" maxlength="80" [disabled]="broadcasts.saving()" [placeholder]="'BROADCAST.NAME_PLACEHOLDER' | translate:'Por ejemplo, Familia'"></label>
+            <div class="recipient-heading"><strong>{{ 'BROADCAST.SELECT_CONTACTS' | translate:'Elige contactos guardados' }}</strong><span>{{ selectedRecipients().length }}/{{ limit }}</span></div>
+            <label class="contact-search"><ion-icon name="search-outline" aria-hidden="true"></ion-icon><input type="search" [ngModel]="recipientQuery()" (ngModelChange)="recipientQuery.set($event)" [attr.aria-label]="'BROADCAST.SEARCH_CONTACTS' | translate:'Buscar en tus contactos'" [placeholder]="'BROADCAST.SEARCH_CONTACTS' | translate:'Buscar en tus contactos'"></label>
+            @if (social.contactsLoading()) { <p class="inline-status" role="status"><ion-spinner name="crescent"></ion-spinner>{{ 'BROADCAST.LOADING_CONTACTS' | translate:'Actualizando contactos…' }}</p> }
+            @if (staleEditor()) { <p class="inline-warning" role="alert">{{ 'BROADCAST.STALE_EDITOR' | translate:'La lista cambió en otro dispositivo. Vuelve a abrirla antes de guardar.' }}</p> }
+            @if (missingRecipients().length && !social.contactsLoading()) { <div class="inline-warning"><p>{{ missingRecipients().length }} {{ 'BROADCAST.MISSING_CONTACTS' | translate:'destinatarios ya no están en tus contactos. Quítalos antes de guardar.' }}</p><button type="button" (click)="removeMissingRecipients()" [disabled]="broadcasts.saving()">{{ 'BROADCAST.REMOVE_MISSING' | translate:'Quitar ausentes' }}</button></div> }
+            <div class="recipient-list">
+              @for (contact of visibleContacts(); track contact.userId) {
+                <label class="recipient-row"><input type="checkbox" [checked]="selectedRecipients().includes(contact.userId)" (change)="toggleRecipient(contact.userId)" [disabled]="broadcasts.saving() || (!selectedRecipients().includes(contact.userId) && selectedRecipients().length >= limit)">@if (contact.profilePhotoDataUrl) { <img [src]="contact.profilePhotoDataUrl" alt="" loading="lazy" decoding="async"> } @else { <span class="initial">{{ personName(contact).slice(0, 1) }}</span> }<span><strong>{{ personName(contact) }}</strong><small>@{{ contact.alias }}</small></span></label>
+              } @empty { <p class="empty-copy">{{ 'BROADCAST.NO_CONTACT_MATCHES' | translate:'No hay contactos guardados que coincidan.' }}</p> }
+            </div>
+            <div class="editor-footer"><small>{{ 'BROADCAST.SAVE_HINT' | translate:'Guardar la lista no envía mensajes.' }}</small><ion-button mode="ios" (click)="save()" [disabled]="broadcasts.saving() || broadcasts.sending() || social.contactsLoading() || !name.trim() || !selectedRecipients().length || !!missingRecipients().length || staleEditor()">@if (broadcasts.saving()) { <ion-spinner name="crescent"></ion-spinner> } @else { {{ 'COMMON.SAVE' | translate:'Guardar' }} }</ion-button></div>
+          </section>
+        } @else if (selectedList(); as list) {
+          <section class="panel compose-panel">
+            <div class="panel-title"><div><h2>{{ list.name }}</h2><small>{{ list.recipientCount }} {{ 'BROADCAST.RECIPIENTS' | translate:'destinatarios' }}</small></div><div class="list-actions"><button type="button" (click)="openEditor(list)" [disabled]="list.locked || broadcasts.saving()" [attr.aria-label]="'BROADCAST.EDIT_LIST' | translate:'Editar lista'"><ion-icon name="create-outline"></ion-icon></button><button type="button" (click)="remove(list)" [disabled]="broadcasts.saving() || broadcasts.sending()" [attr.aria-label]="'BROADCAST.DELETE_LIST' | translate:'Eliminar lista'"><ion-icon name="trash-outline"></ion-icon></button></div></div>
+            @if (list.locked) { <div class="locked-copy"><ion-icon name="lock-closed-outline"></ion-icon><p>{{ 'BROADCAST.LOCKED_COPY' | translate:'Recupera el historial desde un dispositivo autorizado para abrir esta lista.' }}</p><ion-button mode="ios" fill="outline" (click)="openAccount()">{{ 'TABS.ACCOUNT' | translate:'Cuenta' }}</ion-button></div> }
+            @else {
+              <details class="list-recipients"><summary>{{ 'BROADCAST.VIEW_RECIPIENTS' | translate:'Ver destinatarios' }}</summary><div class="recipient-chips">@for (userId of list.recipientUserIds; track userId) { <span>{{ recipientName(userId) }}</span> }</div></details>
+              <label class="field"><span>{{ 'BROADCAST.MESSAGE' | translate:'Mensaje para esta lista' }}</span><ion-textarea mode="ios" [(ngModel)]="draft" rows="4" autoGrow="true" maxlength="10000" [disabled]="broadcasts.sending()" [placeholder]="'BROADCAST.MESSAGE_PLACEHOLDER' | translate:'Escribe el mensaje que recibirá cada persona…'"></ion-textarea></label>
+              @if (auth.session()?.user?.privacySettings?.defaultMessageTtlSeconds) { <p class="inline-status">{{ 'BROADCAST.TEMPORARY_HINT' | translate:'Se aplica tu duración de mensajes temporales. Su seguimiento se conserva sólo mientras esta pantalla siga abierta y el mensaje no haya vencido.' }}</p> }
+              @if (sameUnconfirmedMessage()) { <p class="inline-warning">{{ 'BROADCAST.USE_RETRY' | translate:'Continúa el envío pendiente con el botón de reintento, sin duplicar los mensajes confirmados.' }}</p> }
+              <div class="send-footer"><small>{{ 'BROADCAST.NOT_A_GROUP' | translate:'Se envía por separado. Las respuestas llegan a cada chat.' }}</small><ion-button mode="ios" (click)="send()" [disabled]="broadcasts.sending() || broadcasts.saving() || !draft.trim() || sameUnconfirmedMessage()"><ion-icon name="send-outline"></ion-icon>{{ 'COMMON.SEND' | translate:'Enviar' }} · {{ list.recipientCount }}</ion-button></div>
+            }
+          </section>
+        } @else { <section class="panel select-prompt"><ion-icon name="megaphone-outline"></ion-icon><h2>{{ 'BROADCAST.SELECT_A_LIST' | translate:'Elige una lista o crea una nueva' }}</h2><p>{{ 'BROADCAST.NO_AUTOSEND' | translate:'Revisa los destinatarios y escribe tu mensaje antes de pulsar Enviar.' }}</p><ion-button mode="ios" fill="outline" (click)="openEditor()">{{ 'BROADCAST.NEW_LIST' | translate:'Nueva lista' }}</ion-button></section> }
+        @if (broadcasts.lastDispatch(); as dispatch) {
+          <section class="panel dispatch-panel" [attr.aria-busy]="broadcasts.sending()">
+            <div class="panel-title"><div><h2>{{ 'BROADCAST.LAST_SEND' | translate:'Último envío' }}</h2><small>{{ dispatchName(dispatch) }}</small></div><span class="sent-count">{{ sentCount() }}/{{ dispatch.results.length }}</span></div>
+            <p class="dispatch-text">{{ dispatch.text }}</p>
+            @if (broadcasts.sending() && broadcasts.progress(); as progress) { <div class="send-progress" role="status"><ion-spinner name="crescent"></ion-spinner><span>{{ 'BROADCAST.PROCESSING' | translate:'Procesando' }} {{ progress.completed }}/{{ progress.total }}</span><progress [value]="progress.completed" [max]="progress.total"></progress></div> }
+            <div class="dispatch-results">@for (result of dispatch.results; track result.userId) { <div class="dispatch-result" [class.failed]="result.status === 'failed'"><span><strong>{{ recipientName(result.userId) }}</strong>@if (result.error) { <small>{{ result.error }}</small> }</span><small class="result-status">{{ result.status === 'sent' ? ('BROADCAST.SENT' | translate:'Enviado') : result.status === 'failed' ? ('BROADCAST.UNCONFIRMED' | translate:'Sin confirmar') : ('BROADCAST.PENDING' | translate:'Pendiente') }}</small></div> }</div>
+            @if (remainingCount()) { <div class="retry-footer"><small>{{ 'BROADCAST.RETRY_HINT' | translate:'Reintenta los destinos sin confirmar. Los mensajes ya confirmados no se repiten.' }}</small><ion-button mode="ios" fill="outline" (click)="retryFailed()" [disabled]="broadcasts.sending() || broadcasts.saving()">{{ pendingCount() ? ('BROADCAST.CONTINUE_PENDING' | translate:'Continuar pendientes') : ('BROADCAST.RETRY_FAILED' | translate:'Reintentar fallidos') }} · {{ remainingCount() }}</ion-button></div> }
+          </section>
+        }
+      </div>
+    </div>
+  </main>
+</ion-content>

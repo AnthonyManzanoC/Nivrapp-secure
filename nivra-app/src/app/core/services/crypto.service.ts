@@ -11,10 +11,11 @@ import { NativeSecureVaultService } from './native-secure-vault.service';
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
 const LOCAL_DB_NAME = 'NivraDB';
-const LOCAL_DB_VERSION = 12;
+const LOCAL_DB_VERSION = 13;
 const LOCAL_MESSAGE_STORE = 'messages';
 const LOCAL_KEY_STORE = 'deviceKeys';
 const LOCAL_PROFILE_STORE = 'profilesStore';
+const LOCAL_SCOPED_PROFILE_STORE = 'profilesByAccount';
 const LOCAL_VAULT_KEY_STORE = 'localVaultKeys';
 const LOCAL_CONVERSATION_STORE = 'conversations';
 const LOCAL_CONTACT_STORE = 'contacts';
@@ -291,6 +292,20 @@ export class CryptoService {
     const left = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: probe.publicKey }, privateKey, 256));
     const right = new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: publicKey }, probe.privateKey, 256));
     if (left.some((byte, index) => byte !== right[index])) throw new Error('La llave de historial no coincide con su identidad.');
+  }
+
+  /** Delete only keys with verified ownership. Shared/legacy protectors stay usable. */
+  async destroyLocalDeviceKeysForUser(userId: string): Promise<void> {
+    if (!userId) throw new Error('Falta la cuenta que se debe limpiar.');
+    const db = await this.open();
+    const transaction = db.transaction(LOCAL_KEY_STORE, 'readwrite');
+    const store = transaction.objectStore(LOCAL_KEY_STORE);
+    let cursor = await store.openCursor();
+    while (cursor) {
+      if ((cursor.value as StoredDeviceKeysRecord).userId === userId) await cursor.delete();
+      cursor = await cursor.continue();
+    }
+    await transaction.done;
   }
 
   async destroyLocalDeviceKeyProtector(): Promise<void> {
@@ -951,6 +966,15 @@ export class CryptoService {
         }
         if (!profileStore.indexNames.contains('byUpdated')) {
           profileStore.createIndex('byUpdated', 'updatedAt');
+        }
+
+        // Either service can open NivraDB first. Both upgrades must establish
+        // the viewer-scoped cache without assigning ownerless legacy profiles.
+        const scopedProfileStore = db.objectStoreNames.contains(LOCAL_SCOPED_PROFILE_STORE)
+          ? transaction.objectStore(LOCAL_SCOPED_PROFILE_STORE)
+          : db.createObjectStore(LOCAL_SCOPED_PROFILE_STORE, { keyPath: ['accountKey', 'userId'] });
+        if (!scopedProfileStore.indexNames.contains('byAccount')) {
+          scopedProfileStore.createIndex('byAccount', 'accountKey');
         }
       },
     });

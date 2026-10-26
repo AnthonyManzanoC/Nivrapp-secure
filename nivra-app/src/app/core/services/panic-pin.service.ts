@@ -19,25 +19,33 @@ interface PanicPinRecord {
 export class PanicPinService {
   private readonly auth = inject(AuthService);
   private readonly record = signal<PanicPinRecord | null>(null);
+  private readonly recordAccount = signal('');
+  private operationEpoch = 0;
 
-  readonly isConfigured = computed(() => Boolean(this.record()));
+  readonly isConfigured = computed(() => this.recordAccount() === this.currentAccountKey() && Boolean(this.record()));
 
   constructor() {
     effect(() => {
       const accountKey = this.currentAccountKey();
-      untracked(() => this.record.set(accountKey ? this.readRecord(accountKey) : null));
+      untracked(() => {
+        this.recordAccount.set(accountKey);
+        this.record.set(accountKey ? this.readRecord(accountKey) : null);
+      });
     });
   }
 
   async configure(pin: string): Promise<void> {
     const accountKey = this.requireAccountKey();
+    const deviceId = this.auth.session()?.device.id;
+    const generation = this.auth.sessionGeneration();
+    const operation = ++this.operationEpoch;
     const normalized = this.normalizePin(pin);
     if (!this.isValidPin(normalized)) {
       throw new Error('El PIN de panico debe tener de 4 a 6 digitos.');
     }
 
     const now = new Date().toISOString();
-    const previous = this.record();
+    const previous = this.recordAccount() === accountKey ? this.record() : null;
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const record: PanicPinRecord = {
       v: 1,
@@ -48,28 +56,38 @@ export class PanicPinService {
       createdAt: previous?.createdAt ?? now,
       updatedAt: now,
     };
+    if (this.operationEpoch !== operation || this.auth.sessionGeneration() !== generation
+      || this.currentAccountKey() !== accountKey || this.auth.session()?.device.id !== deviceId) throw new Error('ACCOUNT_SESSION_CHANGED');
     localStorage.setItem(this.storageKey(accountKey), JSON.stringify(record));
+    this.recordAccount.set(accountKey);
     this.record.set(record);
   }
 
   clear(): void {
+    this.operationEpoch++;
     const accountKey = this.currentAccountKey();
     if (accountKey) {
       localStorage.removeItem(this.storageKey(accountKey));
     }
+    this.recordAccount.set(accountKey);
     this.record.set(null);
   }
 
   async matches(pin: string): Promise<boolean> {
     const accountKey = this.currentAccountKey();
+    const deviceId = this.auth.session()?.device.id;
+    const generation = this.auth.sessionGeneration();
+    const operation = this.operationEpoch;
     const record = this.record();
     const normalized = this.normalizePin(pin);
-    if (!accountKey || !record || !this.isValidPin(normalized)) {
+    if (!accountKey || this.recordAccount() !== accountKey || !record || !this.isValidPin(normalized)) {
       return false;
     }
 
     try {
       const candidate = await this.hashPin(normalized, accountKey, this.ub64(record.salt), record.iterations || PANIC_PIN_ITERATIONS);
+      if (this.operationEpoch !== operation || this.auth.sessionGeneration() !== generation
+        || this.currentAccountKey() !== accountKey || this.auth.session()?.device.id !== deviceId) return false;
       return this.constantTimeEqual(this.ub64(candidate), this.ub64(record.hash));
     } catch {
       return false;

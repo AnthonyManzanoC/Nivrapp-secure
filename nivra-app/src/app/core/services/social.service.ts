@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, effect, inject, signal, untracked } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { firstValueFrom } from 'rxjs';
 import {
@@ -21,6 +21,7 @@ import { E2EE_UPLOAD_LIMIT_BYTES, MediaOptimizerService } from './media-optimize
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 import { EncryptedDownloadService } from './encrypted-download.service';
+import { friendRequestStatus, normalizeFriendRequests } from './social-connections.helpers';
 
 const MAX_STORY_MEDIA_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 
@@ -57,6 +58,14 @@ export class SocialService {
   readonly people = signal<UserSummary[]>([]);
   readonly contacts = signal<Contact[]>([]);
   readonly friendRequests = signal<FriendRequest[]>([]);
+  readonly incomingRequests = computed(() => this.friendRequests().filter(request => friendRequestStatus(request) === 'pending' && request.to.id === this.auth.session()?.user.id));
+  readonly outgoingRequests = computed(() => this.friendRequests().filter(request => friendRequestStatus(request) === 'pending' && request.from.id === this.auth.session()?.user.id));
+  readonly requestHistory = computed(() => this.friendRequests().filter(request => friendRequestStatus(request) !== 'pending'));
+  readonly contactsLoading = signal(false);
+  readonly requestsLoading = signal(false);
+  readonly connectionsError = signal('');
+  readonly connectionActions = signal<string[]>([]);
+  readonly searching = signal(false);
   readonly stories = signal<Story[]>([]);
   readonly worldStories = signal<Story[]>([]);
   readonly radarMatches = signal<UserSummary[]>([]);
@@ -86,6 +95,15 @@ export class SocialService {
   private storyActivityRevision = 0;
   private readonly storyMediaInFlight = new Map<string, Promise<StoryMediaPreview | null>>();
   private readonly storyMediaBytes = new Map<string, number>();
+  private socialEpoch = 0;
+  private connectionsRevision = 0;
+  private connectionsInFlight: Promise<void> | null = null;
+  private connectionsQueued = false;
+  private readonly connectionOperations = new Map<string, { kind: string; task: Promise<unknown> }>();
+  private searchRevision = 0;
+  private radarRevision = 0;
+  private profileRevision = 0;
+  private readonly profileOverrides = new Map<string, Partial<Pick<UserSummary, 'profilePhotoDataUrl' | 'phone'>>>();
 
   constructor() {
     effect(() => {
@@ -121,14 +139,20 @@ export class SocialService {
           void this.load().catch(() => undefined);
         }
       }
-      if (event.type === 'friend.requested' ||
-          event.type === 'friend.updated' ||
-          event.type === 'conversation.created' ||
+      if (event.type === 'friend.requested' || event.type === 'friend.updated') {
+        this.applyFriendRequest(event.payload as FriendRequest);
+        void this.loadConnections(true).catch(() => undefined);
+      }
+      if (event.type === 'contacts.updated') void this.loadConnections(true).catch(() => undefined);
+      if (event.type === 'profile.updated') {
+        this.applyProfileUpdate(event.payload);
+        void this.loadConnections(true).catch(() => undefined);
+      }
+      if (event.type === 'conversation.created' ||
           event.type === 'conversation.updated') {
         void this.load().catch(() => undefined);
       }
-      if (event.type === 'profile.updated' ||
-          event.type === 'connected' ||
+      if (event.type === 'connected' ||
           event.type === 'reconnected') {
         void this.load().catch(() => undefined);
       }
@@ -151,17 +175,60 @@ export class SocialService {
     } finally {
       if (this.loadInFlight === task) {
         this.loadInFlight = null;
-      }
-      if (this.loadQueued) {
-        this.loadQueued = false;
-        queueMicrotask(() => void this.load().catch(() => undefined));
+        if (this.loadQueued) {
+          this.loadQueued = false;
+          queueMicrotask(() => void this.load().catch(() => undefined));
+        }
       }
     }
+  }
+
+  loadConnections(refreshAfterCurrent = false): Promise<void> {
+    this.syncSocialAccountState();
+    if (!this.auth.isAuthenticated()) return Promise.resolve();
+    if (this.connectionsInFlight) {
+      if (refreshAfterCurrent) this.connectionsQueued = true;
+      return this.connectionsInFlight;
+    }
+    const assertSession = this.captureSocialSessionGuard();
+    const epoch = this.socialEpoch;
+    const revision = this.connectionsRevision;
+    const current = () => epoch === this.socialEpoch && this.accountDeviceKey() === this.socialAccountDeviceKey;
+    this.contactsLoading.set(true); this.requestsLoading.set(true); this.connectionsError.set('');
+    const contacts = firstValueFrom(this.api.get<Contact[]>('/contacts')).then(items => {
+      assertSession();
+      if (revision !== this.connectionsRevision) { this.connectionsQueued = true; return; }
+      const unique = [...new Map((items ?? []).filter(item => item?.userId).map(item => [item.userId, item])).values()];
+      unique.forEach(item => this.rememberProfile(item.userId, item));
+      this.contacts.set(unique.sort((a, b) => Number(b.isFavorite) - Number(a.isFavorite) || (a.displayName || a.alias).localeCompare(b.displayName || b.alias)));
+      this.refreshProfileCopies();
+    }).finally(() => { if (current()) this.contactsLoading.set(false); });
+    const requests = firstValueFrom(this.api.get<FriendRequest[]>('/friends/requests')).then(items => {
+      assertSession();
+      if (revision !== this.connectionsRevision) { this.connectionsQueued = true; return; }
+      this.friendRequests.set(normalizeFriendRequests(items, this.auth.session()!.user.id).map(request => ({
+        ...request, from: this.withProfileOverride(request.from), to: this.withProfileOverride(request.to),
+      })));
+    }).finally(() => { if (current()) this.requestsLoading.set(false); });
+    const task = Promise.allSettled([contacts, requests]).then(results => {
+      if (current() && results.some(result => result.status === 'rejected')) this.connectionsError.set('No se pudieron actualizar todos tus contactos y solicitudes. Conservamos la información disponible.');
+      else if (current() && revision === this.connectionsRevision) this.reconcileConnections();
+    }).finally(() => {
+      if (this.connectionsInFlight !== task) return;
+      this.connectionsInFlight = null;
+      if (this.connectionsQueued && current()) {
+        this.connectionsQueued = false;
+        queueMicrotask(() => void this.loadConnections().catch(() => undefined));
+      }
+    });
+    this.connectionsInFlight = task;
+    return task;
   }
 
   private async loadOnce(): Promise<void> {
     const sessionAtRequest = this.auth.session();
     const accountDeviceKeyAtRequest = this.accountDeviceKey();
+    const epoch = this.socialEpoch;
     if (!sessionAtRequest || !accountDeviceKeyAtRequest) {
       return;
     }
@@ -171,7 +238,7 @@ export class SocialService {
       if (accountKey) {
         const cached = await this.history.stories(accountKey).catch(() => []);
         this.syncSocialAccountState();
-        if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+        if (accountDeviceKeyAtRequest !== this.accountDeviceKey() || epoch !== this.socialEpoch) {
           return;
         }
         if (cached.length && !this.stories().length) {
@@ -182,21 +249,14 @@ export class SocialService {
         }
       }
       const realtimeVersionAtRequest = this.storyRealtimeVersion;
-      const [contactsResult, requestsResult, feedResult, worldResult] = await Promise.allSettled([
-        firstValueFrom(this.api.get<Contact[]>('/contacts')),
-        firstValueFrom(this.api.get<FriendRequest[]>('/friends/requests')),
+      const [, feedResult, worldResult] = await Promise.allSettled([
+        this.loadConnections(),
         firstValueFrom(this.api.get<Story[]>('/stories/feed')),
         firstValueFrom(this.api.get<Story[]>('/stories/world')),
       ]);
       this.syncSocialAccountState();
-      if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+      if (accountDeviceKeyAtRequest !== this.accountDeviceKey() || epoch !== this.socialEpoch) {
         return;
-      }
-      if (contactsResult.status === 'fulfilled') {
-        this.contacts.set(contactsResult.value);
-      }
-      if (requestsResult.status === 'fulfilled') {
-        this.friendRequests.set(requestsResult.value);
       }
 
       let persisted: Story[] = [];
@@ -224,7 +284,7 @@ export class SocialService {
         this.persistStories(persisted);
       }
     } finally {
-      if (accountDeviceKeyAtRequest === this.accountDeviceKey()) {
+      if (accountDeviceKeyAtRequest === this.accountDeviceKey() && epoch === this.socialEpoch) {
         this.loading.set(false);
       }
     }
@@ -264,25 +324,37 @@ export class SocialService {
   async search(query: string): Promise<UserSummary[]> {
     this.syncSocialAccountState();
     const accountDeviceKeyAtRequest = this.accountDeviceKey();
+    const revision = ++this.searchRevision;
+    const epoch = this.socialEpoch;
+    const profileRevision = this.profileRevision;
     const normalized = query.trim();
-    if (normalized.length < 2) {
+    if (normalized.length < 2 || !accountDeviceKeyAtRequest) {
       this.people.set([]);
+      this.searching.set(false);
       return [];
     }
-    const response = await firstValueFrom(
-      this.api.get<DirectorySearchResponse>(`/directory/search?q=${encodeURIComponent(normalized)}`),
-    );
-    this.syncSocialAccountState();
-    if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
-      return [];
+    this.searching.set(true);
+    try {
+      const response = await firstValueFrom(
+        this.api.get<DirectorySearchResponse>(`/directory/search?q=${encodeURIComponent(normalized)}`),
+      );
+      this.syncSocialAccountState();
+      if (revision !== this.searchRevision || epoch !== this.socialEpoch || accountDeviceKeyAtRequest !== this.accountDeviceKey()) return [];
+      const people = [...new Map((response.people ?? []).map(person => [person.id, person])).values()];
+      if (profileRevision === this.profileRevision) people.filter(person => this.profileOverrides.has(person.id)).forEach(person => this.rememberProfile(person.id, person));
+      const next = people.map(person => this.withProfileOverride(person));
+      this.people.set(next);
+      return next;
+    } finally {
+      if (revision === this.searchRevision && epoch === this.socialEpoch) this.searching.set(false);
     }
-    this.people.set(response.people ?? []);
-    return response.people ?? [];
   }
 
   async scanPhoneRadar(rawPhones: string): Promise<ContactRadarScanResponse> {
     this.syncSocialAccountState();
     const accountDeviceKeyAtRequest = this.accountDeviceKey();
+    const revision = ++this.radarRevision;
+    const profileRevision = this.profileRevision;
     const discarded = (): ContactRadarScanResponse => ({
       submitted: 0, matched: 0, currentUserInRadar: false, people: [],
     });
@@ -303,77 +375,200 @@ export class SocialService {
     try {
       const phoneHashes = await Promise.all(phones.map((phone) => this.hashPhone(phone)));
       this.syncSocialAccountState();
-      if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+      if (accountDeviceKeyAtRequest !== this.accountDeviceKey() || revision !== this.radarRevision) {
         return discarded();
       }
       const response = await firstValueFrom(this.api.post<ContactRadarScanResponse>('/contacts/radar/scan', {
         phoneHashes,
       }));
       this.syncSocialAccountState();
-      if (accountDeviceKeyAtRequest !== this.accountDeviceKey()) {
+      if (accountDeviceKeyAtRequest !== this.accountDeviceKey() || revision !== this.radarRevision) {
         return discarded();
       }
-      this.radarMatches.set(response.people ?? []);
+      if (profileRevision === this.profileRevision) (response.people ?? []).filter(person => this.profileOverrides.has(person.id)).forEach(person => this.rememberProfile(person.id, person));
+      response.people = (response.people ?? []).map(person => this.withProfileOverride(person));
+      this.radarMatches.set(response.people);
       const seen = this.radarSeenIds();
       this.radarNewCount.set((response.people ?? []).filter((person) => !seen.has(person.id)).length);
       this.rememberRadarSeen(response.people ?? []);
       return response;
     } finally {
       this.syncSocialAccountState();
-      if (accountDeviceKeyAtRequest === this.accountDeviceKey()) {
+      if (accountDeviceKeyAtRequest === this.accountDeviceKey() && revision === this.radarRevision) {
         this.radarLoading.set(false);
       }
     }
   }
 
-  async requestFriend(person: UserSummary, message = ''): Promise<void> {
-    await firstValueFrom(this.api.post('/friends/requests', {
-      userId: person.id,
-      alias: person.alias,
-      message: message || null,
-    }));
-    await this.load();
+  requestFriend(person: UserSummary, message = ''): Promise<FriendRequest> {
+    return this.connectionAction(`person:${person.id}`, async assertSession => {
+      const response = await firstValueFrom(this.api.post<FriendRequest>('/friends/requests', {
+        userId: person.id, alias: person.alias, message: message || null,
+      }));
+      assertSession(); this.applyFriendRequest(response);
+      void this.loadConnections(true).catch(() => undefined);
+      return response;
+    }, 'request');
   }
 
-  async addContact(person: UserSummary): Promise<void> {
-    await firstValueFrom(this.api.post('/contacts', {
-      alias: person.alias,
-      nicknameCiphertext: null,
-    }));
-    await this.load();
+  addContact(person: UserSummary): Promise<void> {
+    return this.connectionAction(`person:${person.id}`, async assertSession => {
+      const response = await firstValueFrom(this.api.post<Contact>('/contacts', { alias: person.alias, nicknameCiphertext: null }));
+      assertSession(); ++this.connectionsRevision;
+      this.contacts.update(items => [response, ...items.filter(item => item.userId !== person.id)]);
+      this.rememberProfile(response.userId, response);
+      this.refreshProfileCopies();
+      this.updateRelationship(person.id, { isContact: true });
+      void this.loadConnections(true).catch(() => undefined);
+    }, 'add');
   }
 
-  async toggleFavorite(contact: Contact): Promise<void> {
-    const assertSession = this.captureSocialSessionGuard();
+  toggleFavorite(contact: Contact): Promise<void> {
+    return this.connectionAction(`person:${contact.userId}`, async assertSession => {
     const next = await firstValueFrom(this.api.patch<Contact>(`/contacts/${encodeURIComponent(contact.userId)}`, {
       isFavorite: !contact.isFavorite,
       nicknameCiphertext: null,
     }));
     assertSession();
+    ++this.connectionsRevision;
     this.contacts.update((items) => [next, ...items.filter((item) => item.userId !== contact.userId)]
       .sort((left, right) => Number(right.isFavorite) - Number(left.isFavorite) || left.alias.localeCompare(right.alias)));
+    this.updateRelationship(contact.userId, { isFavorite: next.isFavorite });
+    }, 'favorite');
   }
 
-  async deleteContact(contact: Contact): Promise<void> {
-    const assertSession = this.captureSocialSessionGuard();
+  deleteContact(contact: Contact): Promise<void> {
+    return this.connectionAction(`person:${contact.userId}`, async assertSession => {
     await firstValueFrom(this.api.delete(`/contacts/${encodeURIComponent(contact.userId)}`));
     assertSession();
+    ++this.connectionsRevision;
     this.contacts.update((items) => items.filter((item) => item.userId !== contact.userId));
+    this.updateRelationship(contact.userId, { isContact: false, isMutualContact: false, isFavorite: false, friendshipState: 'none' });
+    void this.loadConnections(true).catch(() => undefined);
+    }, 'delete');
   }
 
-  async accept(requestId: string): Promise<void> {
-    await firstValueFrom(this.api.post(`/friends/requests/${encodeURIComponent(requestId)}/accept`, {}));
-    await this.load();
+  accept(requestId: string): Promise<void> { return this.respondToRequest(requestId, 'accept'); }
+
+  reject(requestId: string): Promise<void> { return this.respondToRequest(requestId, 'reject'); }
+
+  cancel(requestId: string): Promise<void> { return this.respondToRequest(requestId, 'cancel'); }
+
+  private respondToRequest(id: string, action: 'accept' | 'reject' | 'cancel'): Promise<void> {
+    const request = this.friendRequests().find(item => item.id === id);
+    const userId = this.auth.session()?.user.id;
+    if (!request || friendRequestStatus(request) !== 'pending' || (action === 'cancel' ? request.from.id !== userId : request.to.id !== userId)) return Promise.resolve();
+    const other = request.from.id === userId ? request.to : request.from;
+    return this.connectionAction(`person:${other.id}`, async assertSession => {
+      const response = await firstValueFrom(this.api.post<FriendRequest>(`/friends/requests/${encodeURIComponent(id)}/${action}`, {}));
+      assertSession(); this.applyFriendRequest(response);
+      void this.loadConnections(true).catch(() => undefined);
+    }, action);
   }
 
-  async reject(requestId: string): Promise<void> {
-    await firstValueFrom(this.api.post(`/friends/requests/${encodeURIComponent(requestId)}/reject`, {}));
-    await this.load();
+  private connectionAction<T>(key: string, action: (assertSession: () => void) => Promise<T>, kind: string): Promise<T> {
+    const assertSession = this.captureSocialSessionGuard();
+    const pending = this.connectionOperations.get(key);
+    if (pending) return pending.kind === kind ? pending.task as Promise<T> : Promise.reject(new Error('Hay otra acción en curso para este contacto. Espera a que termine.'));
+    this.connectionActions.update(ids => [...ids, key]);
+    const task = action(assertSession).catch(error => {
+      assertSession();
+      const failure = error as { status?: number; error?: { message?: unknown } };
+      if (failure?.status === 404 || failure?.status === 409) void this.loadConnections(true).catch(() => undefined);
+      if (typeof failure?.error?.message === 'string' && failure.error.message.trim()) throw new Error(failure.error.message);
+      if (typeof failure?.status === 'number') throw new Error(failure.status === 0
+        ? 'No se pudo confirmar la acción. Revisa tu conexión y actualiza las solicitudes antes de reintentar.'
+        : failure.status === 404 || failure.status === 409 ? 'Esta solicitud o contacto ya cambió. Estamos actualizando la lista.' : 'No se pudo completar la acción. Vuelve a intentarlo.');
+      throw error;
+    }).finally(() => {
+      if (this.connectionOperations.get(key)?.task !== task) return;
+      this.connectionOperations.delete(key);
+      this.connectionActions.update(ids => ids.filter(id => id !== key));
+    });
+    this.connectionOperations.set(key, { kind, task });
+    return task;
   }
 
-  async cancel(requestId: string): Promise<void> {
-    await firstValueFrom(this.api.post(`/friends/requests/${encodeURIComponent(requestId)}/cancel`, {}));
-    await this.load();
+  private applyFriendRequest(request: FriendRequest): void {
+    this.syncSocialAccountState();
+    const currentUserId = this.auth.session()?.user.id;
+    if (!currentUserId || !request?.from?.id || !request.to?.id || (request.from.id !== currentUserId && request.to.id !== currentUserId)) return;
+    ++this.connectionsRevision;
+    const items = normalizeFriendRequests([request, ...this.friendRequests()], currentUserId);
+    this.friendRequests.set(items.map(item => ({ ...item, from: this.withProfileOverride(item.from), to: this.withProfileOverride(item.to) })));
+    const latest = items.find(item => (item.from.id === request.from.id && item.to.id === request.to.id) || (item.to.id === request.from.id && item.from.id === request.to.id));
+    if (!latest) return;
+    const other = latest.from.id === currentUserId ? latest.to : latest.from;
+    const state = friendRequestStatus(latest);
+    this.updateRelationship(other.id, {
+      friendshipState: state === 'pending' ? (latest.from.id === currentUserId ? 'requested' : 'incoming') : state === 'accepted' && (other.isMutualContact || other.friendshipState === 'friends') ? 'friends' : 'none',
+      ...(state === 'accepted' && (other.isMutualContact || other.friendshipState === 'friends') ? { isContact: true, isMutualContact: true } : {}),
+    });
+  }
+
+  private updateRelationship(userId: string, state: Partial<UserSummary>): void {
+    const update = (items: UserSummary[]) => items.map(person => person.id === userId ? { ...person, ...state } : person);
+    this.people.update(update); this.radarMatches.update(update);
+  }
+
+  private reconcileConnections(): void {
+    const ownerId = this.auth.session()?.user.id;
+    const contacts = new Map(this.contacts().map(contact => [contact.userId, contact]));
+    const pending = new Map(this.friendRequests().filter(request => friendRequestStatus(request) === 'pending')
+      .map(request => [request.from.id === ownerId ? request.to.id : request.from.id, request]));
+    const update = (people: UserSummary[]) => people.map(person => {
+      const contact = contacts.get(person.id); const request = pending.get(person.id);
+      return { ...person, isContact: !!contact, isMutualContact: !!contact?.isMutualContact, isFavorite: !!contact?.isFavorite,
+        friendshipState: contact?.isMutualContact ? 'friends' : request ? request.from.id === ownerId ? 'requested' : 'incoming' : 'none' };
+    });
+    this.people.update(update); this.radarMatches.update(update);
+  }
+
+  private rememberProfile(userId: string, profile: Partial<Pick<UserSummary, 'profilePhotoDataUrl' | 'phone'>>): void {
+    if (!userId) return;
+    const fields: Partial<Pick<UserSummary, 'profilePhotoDataUrl' | 'phone'>> = {};
+    if (Object.prototype.hasOwnProperty.call(profile, 'profilePhotoDataUrl')) fields.profilePhotoDataUrl = profile.profilePhotoDataUrl ?? null;
+    if (Object.prototype.hasOwnProperty.call(profile, 'phone')) fields.phone = profile.phone ?? null;
+    this.profileOverrides.set(userId, { ...this.profileOverrides.get(userId), ...fields });
+  }
+
+  private withProfileOverride(person: UserSummary): UserSummary { return { ...person, ...this.profileOverrides.get(person.id) }; }
+
+  private applyProfileUpdate(payload: unknown): void {
+    this.syncSocialAccountState();
+    const profile = payload as { userId?: string; profilePhotoDataUrl?: string | null; phone?: string | null } | null;
+    if (!profile?.userId) return;
+    ++this.profileRevision; ++this.connectionsRevision;
+    // Legacy hints cannot prove that a previous photo is still authorized.
+    this.rememberProfile(profile.userId, { profilePhotoDataUrl: null, ...profile });
+    this.refreshProfileCopies();
+    const accountKey = this.localAccountKey();
+    const accountDeviceKey = this.accountDeviceKey();
+    const epoch = this.socialEpoch;
+    if (!accountKey) return;
+    // Cached stories can include group stories that are not currently open.
+    // Rewrite their profile copies too, so an offline restart cannot revive
+    // fields revoked by this event after the in-memory overrides are cleared.
+    void this.history.stories(accountKey).then(async cached => {
+      if (epoch !== this.socialEpoch || accountDeviceKey !== this.accountDeviceKey()) return;
+      const active = this.activeStory();
+      const known = new Map([...cached, ...this.stories(), ...this.worldStories(), ...(active ? [active] : [])]
+        .map(story => [story.id, story]));
+      const updated = [...known.values()]
+        .filter(story => !this.deletedStoryIds.has(story.id) && (story.owner.id === profile.userId || story.originalAuthor?.id === profile.userId))
+        .map(story => this.normalizeStory(story));
+      if (updated.length) await this.history.putStories(accountKey, updated);
+    }).catch(() => undefined);
+  }
+
+  private refreshProfileCopies(): void {
+    this.people.update(items => items.map(person => this.withProfileOverride(person)));
+    this.radarMatches.update(items => items.map(person => this.withProfileOverride(person)));
+    this.contacts.update(items => items.map(contact => ({ ...contact, ...this.profileOverrides.get(contact.userId) })));
+    this.friendRequests.update(items => items.map(request => ({ ...request, from: this.withProfileOverride(request.from), to: this.withProfileOverride(request.to) })));
+    this.stories.update(items => items.map(story => this.normalizeStory(story)));
+    this.worldStories.update(items => items.map(story => this.normalizeStory(story)));
+    this.activeStory.update(story => story ? this.normalizeStory(story) : null);
   }
 
   async publishStory(options: {
@@ -1191,8 +1386,12 @@ export class SocialService {
   private captureSocialSessionGuard(): () => void {
     this.syncSocialAccountState();
     const accountDeviceKey = this.accountDeviceKey();
+    const epoch = this.socialEpoch;
     this.assertSocialSession(accountDeviceKey);
-    return () => this.assertSocialSession(accountDeviceKey);
+    return () => {
+      this.assertSocialSession(accountDeviceKey);
+      if (epoch !== this.socialEpoch) throw new Error('La sesión cambió. Vuelve a abrir este contenido desde tu cuenta actual.');
+    };
   }
 
   private assertSocialSession(accountDeviceKey: string | null): void {
@@ -1208,6 +1407,16 @@ export class SocialService {
       return;
     }
     this.socialAccountDeviceKey = accountDeviceKey;
+    ++this.socialEpoch;
+    ++this.connectionsRevision;
+    ++this.searchRevision;
+    ++this.radarRevision;
+    ++this.profileRevision;
+    this.loadInFlight = null; this.loadQueued = false;
+    this.connectionsInFlight = null; this.connectionsQueued = false;
+    this.connectionOperations.clear(); this.connectionActions.set([]);
+    this.profileOverrides.clear();
+    this.contactsLoading.set(false); this.requestsLoading.set(false); this.connectionsError.set(''); this.searching.set(false);
     this.storyActivityRevision += 1;
     this.storyViewerOwner.set('');
     for (const preview of Object.values(this.mediaPreviews())) {
@@ -1249,18 +1458,20 @@ export class SocialService {
         ...user,
         alias: current.alias || user.alias,
         displayName: current.displayName || user.displayName,
-        profilePhotoDataUrl: current.profilePhotoDataUrl || user.profilePhotoDataUrl || null,
+        profilePhotoDataUrl: Object.prototype.hasOwnProperty.call(current, 'profilePhotoDataUrl') ? current.profilePhotoDataUrl ?? null : user.profilePhotoDataUrl ?? null,
+        ...this.profileOverrides.get(user.id),
       };
     }
     const contact = this.contacts().find((item) => item.userId === user.id);
     if (!contact) {
-      return user;
+      return this.withProfileOverride(user);
     }
     return {
       ...user,
       alias: contact.alias || user.alias,
       displayName: contact.displayName || user.displayName,
       profilePhotoDataUrl: contact.profilePhotoDataUrl ?? null,
+      ...this.profileOverrides.get(user.id),
     };
   }
 

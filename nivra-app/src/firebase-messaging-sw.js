@@ -10,16 +10,11 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = normalizeData(event.notification.data || {});
   data.nivraRouteIntent = 'tap';
-  if (event.action) {
-    data.action = event.action;
-  }
-  const type = normalizeType(data.type);
-  const target = data.callId
-    ? '/app/calls'
-    : type === 'contact-joined'
-      ? '/app/world'
-      : data.conversationId ? `/app/chats/${data.conversationId}` : '/app/chats';
+  if (event.action) data.action = event.action;
   event.waitUntil((async () => {
+    const state = await readPushState();
+    if (!registeredScope(state, data)) return;
+    await writePushState('pendingClick', data);
     const clientsList = await clients.matchAll({ type: 'window', includeUncontrolled: true });
     const existing = clientsList.find((client) => 'focus' in client);
     if (existing) {
@@ -27,7 +22,8 @@ self.addEventListener('notificationclick', (event) => {
       existing.postMessage({ type: 'nivra.push', intent: 'click', data });
       return;
     }
-    await clients.openWindow(target);
+    // Protected registry adoption must finish before a recipient-specific route.
+    await clients.openWindow('/app/chats?pushIntent=1');
   })());
 });
 
@@ -77,40 +73,116 @@ try {
 }
 
 async function showNivraNotification(data) {
-  // A network payload is reception, even if it contains an old routing marker.
-  // Only the notificationclick handler can attach the user's navigation intent.
   delete data.nivraRouteIntent;
+  delete data.action;
+  const state = await readPushState();
+  if (!registeredScope(state, data)) return;
   const clientsList = await clients.matchAll({ type: 'window', includeUncontrolled: true });
-  const visibleClient = clientsList.find((client) => client.focused || client.visibilityState === 'visible');
-  if (visibleClient) {
-    // Older foreground clients treat every `nivra.push` as a tap. A distinct
-    // receipt type keeps those tabs passive until they reload the new client.
-    visibleClient.postMessage({ type: 'nivra.push.received', intent: 'receive', data });
+  if (normalizeType(data.type) === 'force-wipe' && data.code === 'FORCE_WIPE') {
+    await markPendingWipe(data);
+    for (const client of clientsList) client.postMessage({ type: 'nivra.push.received', intent: 'receive', data });
     return;
   }
-
-  const visual = await visualForData(data);
+  const visible = clientsList.filter(client => client.focused || client.visibilityState === 'visible');
+  // B's visible tab cannot suppress A's notice. Require exact-scope acknowledgement.
+  const acknowledged = await Promise.all(visible.map(client => deliverReceipt(client, data)));
+  if (acknowledged.some(Boolean)) return;
+  const visual = await visualForData(data, state);
   await self.registration.showNotification(visual.title, {
-    body: visual.body,
-    tag: visual.tag,
-    data,
-    icon: '/assets/icon/favicon.png',
-    badge: '/assets/icon/favicon.png',
+    body: visual.body, tag: visual.tag, data,
+    icon: '/assets/icon/favicon.png', badge: '/assets/icon/favicon.png',
     requireInteraction: visual.requireInteraction,
     renotify: visual.requireInteraction,
-    actions: visual.type === 'incoming-call'
-      ? [
-          { action: 'accept', title: 'Contestar' },
-          { action: 'decline', title: 'Rechazar' }
-        ]
-      : []
+    actions: visual.type === 'incoming-call' && activeScope(state, data)
+      ? [{ action: 'accept', title: 'Contestar' }, { action: 'decline', title: 'Rechazar' }] : []
   });
 }
 
-async function visualForData(data) {
+function deliverReceipt(client, data) {
+  return new Promise(resolve => {
+    const channel = new MessageChannel();
+    const timer = setTimeout(() => { channel.port1.close(); resolve(false); }, 350);
+    channel.port1.onmessage = event => {
+      if (event.data?.handled !== true) return;
+      clearTimeout(timer); channel.port1.close(); resolve(true);
+    };
+    client.postMessage({ type: 'nivra.push.received', intent: 'receive', data }, [channel.port2]);
+  });
+}
+
+function registeredScope(state, data) {
+  return Boolean(data.recipientUserId && data.recipientDeviceId && state?.scopes?.some(scope =>
+    scope.userId === data.recipientUserId && scope.deviceId === data.recipientDeviceId));
+}
+
+function activeScope(state, data) {
+  return state?.activeUserId === data.recipientUserId && state?.activeDeviceId === data.recipientDeviceId;
+}
+
+async function readPushState() {
+  const db = await pushStateDb();
+  try { return await idbGet(db, 'state', 'saved'); } finally { db.close(); }
+}
+
+async function writePushState(key, value) {
+  const db = await pushStateDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('state', 'readwrite');
+      tx.objectStore('state').put(value, key);
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}
+
+async function markPendingWipe(data) {
+  const db = await pushStateDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('state', 'readwrite'); const store = tx.objectStore('state');
+      const request = store.get('pendingWipes');
+      request.onsuccess = () => {
+        const pending = Array.isArray(request.result) ? request.result : [];
+        if (!pending.some(scope => scope.userId === data.recipientUserId && scope.deviceId === data.recipientDeviceId))
+          pending.push({ userId: data.recipientUserId, deviceId: data.recipientDeviceId });
+        store.put(pending, 'pendingWipes');
+        const scopes = store.get('saved');
+        scopes.onsuccess = () => {
+          const state = scopes.result;
+          if (!state) return;
+          state.scopes = (state.scopes || []).filter(scope => scope.userId !== data.recipientUserId || scope.deviceId !== data.recipientDeviceId);
+          if (activeScope(state, data)) { state.activeUserId = ''; state.activeDeviceId = ''; }
+          store.put(state, 'saved');
+        };
+      };
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
+}
+
+function pushStateDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('NivraPushScopes', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('state');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+function idbGet(db, storeName, key) {
+  return new Promise((resolve, reject) => {
+    const request = db.transaction(storeName, 'readonly').objectStore(storeName).get(key);
+    request.onsuccess = () => resolve(request.result || null);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function visualForData(data, state) {
   const type = normalizeType(data.type);
-  const tag = data.tag || data.callId || data.messageId || data.conversationId || 'nivra-event';
-  const preview = await decryptPreviewIfPresent(data).catch(() => null);
+  const tag = `${data.recipientUserId}:${data.recipientDeviceId}:${data.tag || data.callId || data.messageId || data.conversationId || 'nivra-event'}`;
+  const scope = state.scopes.find(item => item.userId === data.recipientUserId && item.deviceId === data.recipientDeviceId);
+  const preview = activeScope(state, data) && scope?.hideNotificationContent !== true
+    ? await decryptPreviewIfPresent(data).catch(() => null) : null;
   if (preview) {
     return {
       title: preview.title || 'Nivra',
@@ -154,7 +226,7 @@ async function decryptPreviewIfPresent(data) {
   if (!header || !ciphertext) {
     return null;
   }
-  const own = await latestDeviceKey();
+  const own = await recipientDeviceKey(data);
   if (!own?.privateJwk) {
     return null;
   }
@@ -192,12 +264,12 @@ async function decryptPreviewIfPresent(data) {
   return typeof value === 'object' && value ? value : null;
 }
 
-async function latestDeviceKey() {
+async function recipientDeviceKey(data) {
   const db = await idbOpen('NivraDB');
   const records = await idbGetAll(db, 'deviceKeys').catch(() => []);
   db.close();
   return records
-    .filter((record) => record && record.privateJwk && record.publicJwk)
+    .filter((record) => record && record.userId === data.recipientUserId && record.deviceId === data.recipientDeviceId && record.privateJwk && record.publicJwk)
     .sort((left, right) => String(right.updatedAt || '').localeCompare(String(left.updatedAt || '')))[0] || null;
 }
 

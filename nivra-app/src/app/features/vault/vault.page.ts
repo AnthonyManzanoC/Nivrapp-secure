@@ -36,6 +36,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { DeviceWipeService } from '../../core/services/device-wipe.service';
+import { AuthService } from '../../core/services/auth.service';
 import { PanicPinService } from '../../core/services/panic-pin.service';
 import { VaultService } from '../../core/services/vault.service';
 import { MediaStreamDirective } from '../../shared/media-stream.directive';
@@ -51,6 +52,9 @@ export class VaultPage implements OnInit, OnDestroy {
   readonly vault = inject(VaultService);
   private readonly translate = inject(TranslateService);
   private readonly deviceWipe = inject(DeviceWipeService);
+  private readonly auth = inject(AuthService);
+  private readonly mountedSession = this.auth.session();
+  private readonly mountedGeneration = this.auth.sessionGeneration();
   private readonly panicPin = inject(PanicPinService);
   private readonly loadingController = inject(LoadingController);
   private readonly route = inject(ActivatedRoute);
@@ -74,6 +78,7 @@ export class VaultPage implements OnInit, OnDestroy {
   selectedInviteIds = new Set<string>();
   isFullscreen = false;
   private searchTimer: number | null = null;
+  private destroyed = false;
   private readonly fullscreenChangeHandler = () => this.syncFullscreenState();
 
   constructor() {
@@ -105,37 +110,56 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async ngOnInit(): Promise<void> {
+    if (!this.isCurrentPage()) return;
     document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
-    await this.vault.enablePrivacyShield();
-    await this.vault.load();
-    await this.acceptIncomingInvite();
+    try {
+      await this.vault.enablePrivacyShield();
+      if (!this.isCurrentPage()) return;
+      await this.vault.load();
+      if (!this.isCurrentPage()) return;
+      await this.acceptIncomingInvite();
+    } catch (error) { if (this.isCurrentPage()) throw error; }
   }
 
   ngOnDestroy(): void {
+    const ownsScope = this.ownsMountedScope();
+    this.destroyed = true;
     document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
     if (this.searchTimer !== null) {
       window.clearTimeout(this.searchTimer);
     }
-    void this.exitVaultFullscreen();
-    void this.vault.disablePrivacyShield();
+    if (ownsScope) {
+      void this.exitVaultFullscreen();
+      void this.vault.disablePrivacyShield();
+    }
   }
 
   async unlock(): Promise<void> {
+    const session = this.auth.session();
+    if (!session) return;
+    const scope = { userId: session.user.id, deviceId: session.device.id };
+    const generation = this.auth.sessionGeneration();
+    const isCurrent = () => !this.destroyed && this.auth.sessionGeneration() === generation
+      && this.auth.session()?.user.id === scope.userId && this.auth.session()?.device.id === scope.deviceId;
     await this.run('unlock', async () => {
       const enteredPin = this.pin;
-      if (await this.panicPin.matches(enteredPin)) {
-        await this.triggerPanicWipe();
+      const isPanicPin = await this.panicPin.matches(enteredPin);
+      if (!isCurrent()) return;
+      if (isPanicPin) {
+        await this.triggerPanicWipe(scope, isCurrent);
         return;
       }
       await this.vault.unlock(enteredPin);
+      if (!isCurrent()) return;
       this.pin = '';
       this.notice = this.tr('VAULT.NOTICE_UNLOCKED', 'Boveda desbloqueada.');
     });
   }
 
   async createNote(): Promise<void> {
-    await this.run('note', async () => {
+    await this.run('note', async isCurrent => {
       await this.vault.createNote(this.title || 'Nota privada', this.body, this.noteAttachments);
+      if (!isCurrent()) return;
       this.title = '';
       this.body = '';
       this.noteAttachments = [];
@@ -162,7 +186,7 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async createRoom(): Promise<void> {
-    await this.run('room:create', async () => {
+    await this.run('room:create', async isCurrent => {
       const room = await this.vault.createRoom({
         name: this.roomName || 'Boveda Nivra',
         pin: this.roomPin,
@@ -171,6 +195,7 @@ export class VaultPage implements OnInit, OnDestroy {
         invitedUserIds: [...this.selectedInviteIds],
         ttlSeconds: 3600,
       });
+      if (!isCurrent()) return;
       this.roomName = '';
       this.roomPin = '';
       this.inviteQuery = '';
@@ -185,10 +210,13 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   searchInvites(): void {
+    if (!this.isCurrentPage()) return;
     if (this.searchTimer !== null) {
       window.clearTimeout(this.searchTimer);
     }
-    this.searchTimer = window.setTimeout(() => void this.vault.searchPeople(this.inviteQuery), 280);
+    this.searchTimer = window.setTimeout(() => {
+      if (this.isCurrentPage()) void this.vault.searchPeople(this.inviteQuery);
+    }, 280);
   }
 
   toggleInvite(person: UserSummary, room: VaultRoom | null = null): void {
@@ -208,8 +236,9 @@ export class VaultPage implements OnInit, OnDestroy {
 
   async openRoom(room: VaultRoom): Promise<void> {
     if (this.vault.currentMember(room)?.status === 'Active') {
-      await this.run(`room:${room.id}`, async () => {
+      await this.run(`room:${room.id}`, async isCurrent => {
         await this.vault.selectRoom(room.id);
+        if (!isCurrent()) return;
         this.notice = this.tr('VAULT.NOTICE_ROOM_OPENED', 'Sala Vault abierta.');
       });
       return;
@@ -218,8 +247,9 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async joinRoom(room: VaultRoom): Promise<void> {
-    await this.run(`join:${room.id}`, async () => {
+    await this.run(`join:${room.id}`, async isCurrent => {
       const joined = await this.vault.joinRoom(room, this.roomPinById[room.id] || null);
+      if (!isCurrent()) return;
       const member = this.vault.currentMember(joined);
       this.roomPinById[room.id] = '';
       this.notice = member?.status === 'Waiting' ? this.tr('VAULT.NOTICE_REQUEST_SENT_OWNER', 'Solicitud enviada al propietario.') : this.tr('VAULT.NOTICE_OPENED', 'Boveda abierta.');
@@ -227,11 +257,13 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async leaveRoom(room: VaultRoom): Promise<void> {
-    await this.run(`leave:${room.id}`, async () => {
+    await this.run(`leave:${room.id}`, async isCurrent => {
       if (this.isFullscreen && this.vault.activeRoomId() === room.id) {
         await this.exitVaultFullscreen();
+        if (!isCurrent()) return;
       }
       await this.vault.leaveRoom(room.id);
+      if (!isCurrent()) return;
       this.notice = this.tr('VAULT.NOTICE_LEFT_ROOM', 'Saliste de la sala.');
     });
   }
@@ -255,8 +287,9 @@ export class VaultPage implements OnInit, OnDestroy {
       this.error = this.tr('VAULT.ERROR_OWNER_INVITES', 'Solo el dueno de la sala puede agregar invitados.');
       return;
     }
-    await this.run(`invite:${room.id}`, async () => {
+    await this.run(`invite:${room.id}`, async isCurrent => {
       await this.vault.inviteUsers(room.id, [...this.selectedInviteIds]);
+      if (!isCurrent()) return;
       this.selectedInviteIds.clear();
       this.inviteQuery = '';
       this.vault.people.set([]);
@@ -265,14 +298,16 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async shareRoomInvite(room: VaultRoom): Promise<void> {
-    await this.run(`share:${room.id}`, async () => {
+    await this.run(`share:${room.id}`, async isCurrent => {
       const invite = await this.vault.createInviteLink(room, {
         ttlSeconds: 24 * 60 * 60,
         maxUses: 1,
         requireApproval: room.accessMode === 'WaitingRoom',
       });
+      if (!isCurrent()) return;
       const text = this.vault.inviteShareText(room, invite);
       await this.shareText(text, invite.acceptUrl);
+      if (!isCurrent()) return;
       this.notice = this.tr('VAULT.NOTICE_INVITE_READY', 'Invitacion Vault lista.');
     });
   }
@@ -281,26 +316,30 @@ export class VaultPage implements OnInit, OnDestroy {
     if (!this.pendingInviteCode) {
       return;
     }
-    await this.run('invite:accept', async () => {
+    await this.run('invite:accept', async isCurrent => {
       const room = await this.vault.acceptInviteCode(this.pendingInviteCode, this.pendingInvitePin);
+      if (!isCurrent()) return;
       this.pendingInviteCode = '';
       this.pendingInvitePin = '';
       await this.clearInviteQuery();
+      if (!isCurrent()) return;
       const member = this.vault.currentMember(room);
       this.notice = member?.status === 'Waiting' ? this.tr('VAULT.NOTICE_REQUEST_SENT_OWNER', 'Solicitud enviada al propietario.') : this.tr('VAULT.NOTICE_ROOM_ADDED', 'Sala Vault agregada.');
     });
   }
 
   async approve(room: VaultRoom, member: VaultRoomMember): Promise<void> {
-    await this.run(`approve:${member.userId}`, async () => {
+    await this.run(`approve:${member.userId}`, async isCurrent => {
       await this.vault.approveMember(room.id, member.userId);
+      if (!isCurrent()) return;
       this.notice = this.tr('VAULT.NOTICE_ACCESS_APPROVED', 'Acceso aprobado.');
     });
   }
 
   async sendMessage(): Promise<void> {
-    await this.run('vault:send', async () => {
+    await this.run('vault:send', async isCurrent => {
       await this.vault.sendRoomText(this.roomMessage);
+      if (!isCurrent()) return;
       this.roomMessage = '';
     });
   }
@@ -312,8 +351,9 @@ export class VaultPage implements OnInit, OnDestroy {
     if (!file) {
       return;
     }
-    await this.run('vault:file', async () => {
+    await this.run('vault:file', async isCurrent => {
       await this.vault.sendRoomFile(file);
+      if (!isCurrent()) return;
       this.notice = this.tr('VAULT.NOTICE_FILE_SENT', 'Archivo cifrado enviado.');
     });
   }
@@ -335,8 +375,9 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async startVoice(room: VaultRoom): Promise<void> {
-    await this.run(`voice:${room.id}`, async () => {
+    await this.run(`voice:${room.id}`, async isCurrent => {
       await this.vault.startVoiceChat(room);
+      if (!isCurrent()) return;
       this.notice = this.tr('VAULT.NOTICE_VOICE_ACTIVE', 'Chat de voz activo.');
     });
   }
@@ -346,6 +387,7 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   leaveVoice(): void {
+    if (!this.isCurrentPage()) return;
     this.vault.leaveVoiceChat();
     this.notice = this.tr('VAULT.NOTICE_LEFT_VOICE', 'Saliste del chat de voz.');
   }
@@ -389,20 +431,31 @@ export class VaultPage implements OnInit, OnDestroy {
     return this.busyId === id;
   }
 
-  private async run(id: string, action: () => Promise<void>): Promise<void> {
+  private ownsMountedScope(): boolean {
+    return Boolean(this.mountedSession && this.auth.sessionGeneration() === this.mountedGeneration
+      && this.auth.session()?.user.id === this.mountedSession.user.id
+      && this.auth.session()?.device.id === this.mountedSession.device.id);
+  }
+
+  private isCurrentPage(): boolean { return !this.destroyed && this.ownsMountedScope(); }
+
+  private async run(id: string, action: (isCurrent: () => boolean) => Promise<void>): Promise<void> {
+    const isCurrent = () => this.isCurrentPage();
+    if (!isCurrent()) return;
     this.busyId = id;
     this.error = '';
     this.notice = '';
     try {
-      await action();
+      await action(isCurrent);
     } catch (error) {
-      this.error = error instanceof Error ? error.message : this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
+      if (isCurrent()) this.error = error instanceof Error ? error.message : this.tr('COMMON.ACTION_ERROR', 'No se pudo completar la accion.');
     } finally {
-      this.busyId = '';
+      if (isCurrent()) this.busyId = '';
     }
   }
 
   private async acceptIncomingInvite(): Promise<void> {
+    if (!this.isCurrentPage()) return;
     const code = this.route.snapshot.queryParamMap.get('invite')?.trim() ?? '';
     if (!code) {
       return;
@@ -416,6 +469,7 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   private async shareText(text: string, url: string): Promise<void> {
+    if (!this.isCurrentPage()) return;
     const share = navigator as Navigator & {
       share?: (data: { title?: string; text?: string; url?: string }) => Promise<void>;
       clipboard?: Clipboard;
@@ -460,6 +514,7 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   private async clearInviteQuery(): Promise<void> {
+    if (!this.isCurrentPage()) return;
     await this.router.navigate([], {
       relativeTo: this.route,
       queryParams: { invite: null },
@@ -472,7 +527,8 @@ export class VaultPage implements OnInit, OnDestroy {
     return this.translate.instant(key, fallback);
   }
 
-  private async triggerPanicWipe(): Promise<void> {
+  private async triggerPanicWipe(scope: { userId: string; deviceId: string }, isCurrent: () => boolean): Promise<void> {
+    if (!isCurrent()) return;
     this.error = '';
     this.notice = this.tr('VAULT.UNLOCKING', 'Desbloqueando...');
     const loading = await this.loadingController.create({
@@ -480,10 +536,13 @@ export class VaultPage implements OnInit, OnDestroy {
       spinner: 'crescent',
       backdropDismiss: false,
     });
-    await loading.present();
     try {
+      if (!isCurrent()) return;
+      await loading.present();
+      if (!isCurrent()) return;
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
-      await this.deviceWipe.nukeDevice('PANIC_PIN');
+      if (!isCurrent()) return;
+      await this.deviceWipe.wipeAccount(scope, 'PANIC_PIN');
     } finally {
       await loading.dismiss().catch(() => undefined);
     }

@@ -46,7 +46,8 @@ public sealed record UserResponse(
     string PlanCode,
     PrivacySettings PrivacySettings,
     DateTimeOffset CreatedAt,
-    string? NivraNumber = null);
+    string? NivraNumber = null,
+    bool IsPrivateAccount = false);
 
 public sealed record PatchProfileRequest(
     string? Alias,
@@ -142,7 +143,8 @@ public sealed record ContactResponse(
     bool IsFavorite,
     bool IsMutualContact,
     DateTimeOffset CreatedAt,
-    string? NivraNumber = null);
+    string? NivraNumber = null,
+    bool IsPrivateAccount = false);
 
 public sealed record PatchContactRequest(bool? IsFavorite, string? NicknameCiphertext);
 
@@ -167,7 +169,8 @@ public sealed record UserSummaryResponse(
     bool IsMutualContact,
     bool IsFavorite,
     string FriendshipState,
-    string? NivraNumber = null);
+    string? NivraNumber = null,
+    bool IsPrivateAccount = false);
 
 public sealed record DirectorySearchResponse(string Query, List<UserSummaryResponse> People);
 
@@ -224,7 +227,8 @@ public sealed record ParticipantResponse(
     bool CanChangePrivacy,
     DateTimeOffset JoinedAt,
     DateTimeOffset? RemovedAt,
-    ParticipantPrivacyPolicyResponse? PrivacyPolicy);
+    ParticipantPrivacyPolicyResponse? PrivacyPolicy,
+    bool IsPrivateAccount = false);
 
 public sealed record ParticipantPrivacyPolicyResponse(
     bool AllowForwarding,
@@ -479,7 +483,7 @@ public sealed record PatchPrivacyRequest(
     string? ProfilePhotoVisibility);
 
 public sealed record RegisterPushTokenRequest(string Provider, string Token);
-public sealed record RenewNativePushTokenRequest(string RefreshToken, string UserId, string DeviceId, string Token);
+public sealed record RenewNativePushTokenRequest(string RefreshToken, string UserId, string DeviceId, string Token, string? Provider = null);
 
 public sealed record PushTokenResponse(string Id, string Provider, DateTimeOffset CreatedAt, DateTimeOffset? RevokedAt, bool ServerReady, bool FcmReady = false, bool WebPushReady = false);
 

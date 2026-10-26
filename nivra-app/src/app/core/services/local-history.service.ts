@@ -1,16 +1,18 @@
 import { Injectable, NgZone, computed, inject, signal } from '@angular/core';
 import { Capacitor } from '@capacitor/core';
 import type { SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
-import { IDBPDatabase, openDB } from 'idb';
-import { CallSession, ChatMessageVm, ChatPayload, Contact, Conversation, LocalProfile, Story } from '../models/nivra.models';
+import { openDB } from 'idb';
+import type { IDBPDatabase } from 'idb';
+import type { CallSession, ChatMessageVm, ChatPayload, Contact, Conversation, LocalProfile, Story } from '../models/nivra.models';
 import { NativeSecureVaultService } from './native-secure-vault.service';
 
 const LOCAL_DB_NAME = 'NivraDB';
-const LOCAL_DB_VERSION = 12;
+const LOCAL_DB_VERSION = 13;
 const NATIVE_SQLITE_DB_NAME = 'nivra_local_vault';
 const LOCAL_MESSAGE_STORE = 'messages';
 const LOCAL_KEY_STORE = 'deviceKeys';
 const LOCAL_PROFILE_STORE = 'profilesStore';
+const LOCAL_SCOPED_PROFILE_STORE = 'profilesByAccount';
 const LOCAL_VAULT_KEY_STORE = 'localVaultKeys';
 const LOCAL_CONVERSATION_STORE = 'conversations';
 const LOCAL_CONTACT_STORE = 'contacts';
@@ -104,6 +106,7 @@ interface StoredContact extends Contact {
 }
 
 interface StoredProfile extends LocalProfile {
+  accountKey: string;
   userId: string;
 }
 
@@ -483,25 +486,31 @@ export class LocalHistoryService {
     } satisfies StoredContact)));
   }
 
-  async profiles(userIds: string[] = []): Promise<LocalProfile[]> {
+  async profiles(accountKey: string, userIds: string[] = []): Promise<LocalProfile[]> {
+    if (!accountKey) return [];
     const db = await this.open();
     if (!db) {
       return [];
     }
     const ids = [...new Set(userIds.filter(Boolean))];
-    const store = db.transaction(LOCAL_PROFILE_STORE, 'readonly').objectStore(LOCAL_PROFILE_STORE);
+    const store = db.transaction(LOCAL_SCOPED_PROFILE_STORE, 'readonly').objectStore(LOCAL_SCOPED_PROFILE_STORE);
+    let records: StoredProfile[];
     if (!ids.length) {
-      return await store.getAll() as LocalProfile[];
+      records = await store.index('byAccount').getAll(accountKey) as StoredProfile[];
+    } else {
+      const selected = await Promise.all(ids.map((userId) => store.get([accountKey, userId]) as Promise<StoredProfile | undefined>));
+      records = selected.filter((record): record is StoredProfile => Boolean(record));
     }
-    const records = await Promise.all(ids.map((userId) => store.get(userId) as Promise<StoredProfile | undefined>));
-    return records.filter((record): record is StoredProfile => Boolean(record));
+    return records.filter(record => record.accountKey === accountKey).map(({ accountKey: _owner, ...profile }) => profile);
   }
 
-  async putProfiles(profiles: LocalProfile[]): Promise<void> {
+  async putProfiles(accountKey: string, profiles: LocalProfile[]): Promise<void> {
+    if (!accountKey) return;
     const records = profiles
       .filter((profile): profile is LocalProfile & { userId: string } => Boolean(profile?.userId))
       .map((profile) => ({
         ...profile,
+        accountKey,
         id: profile.id || profile.userId,
         aliasLower: (profile.alias || '').trim().toLowerCase(),
         cachedAt: new Date().toISOString(),
@@ -513,7 +522,7 @@ export class LocalHistoryService {
     if (!db) {
       return;
     }
-    const store = db.transaction(LOCAL_PROFILE_STORE, 'readwrite').objectStore(LOCAL_PROFILE_STORE);
+    const store = db.transaction(LOCAL_SCOPED_PROFILE_STORE, 'readwrite').objectStore(LOCAL_SCOPED_PROFILE_STORE);
     await Promise.all(records.map((profile) => store.put(profile)));
   }
 
@@ -785,6 +794,47 @@ export class LocalHistoryService {
       } satisfies SyncWatermarkRecord);
   }
 
+  /** Remove records with this account's owner key; never remove shared stores or secrets. */
+  async wipeAccountData(userId: string): Promise<void> {
+    if (!userId) throw new Error('Falta la cuenta que se debe limpiar.');
+    this.vaultKeyInFlight.delete(userId);
+    const belongs = (key: unknown): boolean => {
+      if (typeof key !== 'string') return false;
+      if (key === userId || key.startsWith(`${userId}:`)) return true;
+      // Sync cursors use a structured key with an explicit owning account.
+      try { const value = JSON.parse(key); return Array.isArray(value) && value[0] === 'message-sync-v2' && value[1] === userId; }
+      catch { return false; }
+    };
+    const sqlite = await this.openNativeSqlite();
+    if (sqlite) {
+      // Read candidate owner keys and compare in JS so SQL LIKE wildcards in an
+      // identifier cannot delete another account's history.
+      const tables = ['local_messages', 'local_conversations', 'local_contacts', 'local_calls', 'local_sync_watermarks', 'local_vault_keys'];
+      for (const table of tables) {
+        const rows = await sqlite.query(`SELECT DISTINCT account_key FROM ${table}`);
+        for (const row of rows.values ?? []) {
+          const key = row['account_key'];
+          if (belongs(key)) await sqlite.run(`DELETE FROM ${table} WHERE account_key = ?`, [key]);
+        }
+      }
+    }
+    // Profiles, stories and device keys remain in IDB even on Android.
+    const db = await this.open();
+    if (!db) return;
+    const stores = [LOCAL_MESSAGE_STORE, LOCAL_CONVERSATION_STORE, LOCAL_CONTACT_STORE, LOCAL_CALL_STORE,
+      LOCAL_STORY_STORE, LOCAL_SYNC_STORE, LOCAL_VAULT_KEY_STORE, LOCAL_SCOPED_PROFILE_STORE]
+      .filter(name => db.objectStoreNames.contains(name));
+    const transaction = db.transaction(stores, 'readwrite');
+    for (const name of stores) {
+      let cursor = await transaction.objectStore(name).openCursor();
+      while (cursor) {
+        if (belongs((cursor.value as { accountKey?: string }).accountKey)) await cursor.delete();
+        cursor = await cursor.continue();
+      }
+    }
+    await transaction.done;
+  }
+
   async wipeAllLocalData(): Promise<void> {
     this.wiping = true;
     this.storageGeneration += 1;
@@ -929,6 +979,15 @@ export class LocalHistoryService {
         }
         if (!profileStore.indexNames.contains('byUpdated')) {
           profileStore.createIndex('byUpdated', 'updatedAt');
+        }
+
+        // Legacy profiles have no viewer/owner proof. Keep them physically intact,
+        // but never import photos or contact fields into an arbitrary account.
+        const scopedProfileStore = db.objectStoreNames.contains(LOCAL_SCOPED_PROFILE_STORE)
+          ? transaction.objectStore(LOCAL_SCOPED_PROFILE_STORE)
+          : db.createObjectStore(LOCAL_SCOPED_PROFILE_STORE, { keyPath: ['accountKey', 'userId'] });
+        if (!scopedProfileStore.indexNames.contains('byAccount')) {
+          scopedProfileStore.createIndex('byAccount', 'accountKey');
         }
       },
     }).catch(() => null);

@@ -11,7 +11,7 @@ public class NivraNotificationActionReceiver extends BroadcastReceiver {
     public void onReceive(Context context, Intent intent) {
         int notificationId = intent.getIntExtra("notificationId", 0);
         if (notificationId != 0) {
-            NotificationManagerCompat.from(context).cancel(notificationId);
+            NotificationManagerCompat.from(context).cancel(NivraPushScopePolicy.notificationTag(intent.getStringExtra("recipientUserId"), intent.getStringExtra("recipientDeviceId")), notificationId);
         }
     }
 }

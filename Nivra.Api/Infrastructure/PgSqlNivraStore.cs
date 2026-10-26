@@ -382,18 +382,18 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
             var destinationLock = $"Nivra.PushToken:{pushToken.TokenHash}";
             await db.Database.ExecuteSqlInterpolatedAsync(
                 $"SELECT pg_advisory_xact_lock(hashtextextended({destinationLock}, 0))", cancellationToken);
-            // An uncertain-commit retry must reload ownership instead of using an
-            // entity tracked before another login reassigned this destination.
-            foreach (var entry in db.ChangeTracker.Entries<PushTokenRecord>().Where(entry => entry.Entity.TokenHash == pushToken.TokenHash).ToList())
+            // Each account/device owns a separate membership for this physical
+            // destination. A late worker cannot move another account's row.
+            foreach (var entry in db.ChangeTracker.Entries<PushTokenRecord>().Where(entry => entry.Entity.TokenHash == pushToken.TokenHash &&
+                entry.Entity.UserId == pushToken.UserId && entry.Entity.DeviceId == pushToken.DeviceId).ToList())
                 entry.State = EntityState.Detached;
-            var existing = await db.PushTokens.FirstOrDefaultAsync(candidate => candidate.TokenHash == pushToken.TokenHash, cancellationToken);
-            if (!allowReassignment && !Nivra.Api.Services.NativePushRegistrationPolicy.CanRenewDestination(existing, pushToken.UserId, pushToken.DeviceId))
+            var existing = await db.PushTokens.FirstOrDefaultAsync(candidate => candidate.TokenHash == pushToken.TokenHash &&
+                candidate.UserId == pushToken.UserId && candidate.DeviceId == pushToken.DeviceId, cancellationToken);
+            if (!allowReassignment && !Nivra.Api.Services.NativePushRegistrationPolicy.CanRenewDestination(existing, pushToken.UserId, pushToken.DeviceId, pushToken.Provider))
                 return false;
             if (existing is null) db.PushTokens.Add(pushToken);
             else
             {
-                existing.UserId = pushToken.UserId;
-                existing.DeviceId = pushToken.DeviceId;
                 existing.Provider = pushToken.Provider;
                 existing.TokenCiphertext = pushToken.TokenCiphertext;
                 existing.RevokedAt = null;

@@ -11,11 +11,15 @@ describe('AuthPage access safeguards', () => {
     stopQrLogin: jasmine.Spy;
     loginWithAlias: jasmine.Spy;
     createPrivateAccount: jasmine.Spy;
+    accountsBusy: ReturnType<typeof signal<boolean>>;
+    cancelAddAccount: jasmine.Spy;
   };
 
   beforeEach(() => {
     auth = {
       busy: signal(false),
+      accountsBusy: signal(false),
+      cancelAddAccount: jasmine.createSpy('cancelAddAccount').and.resolveTo(),
       stopQrLogin: jasmine.createSpy('stopQrLogin').and.resolveTo(),
       loginWithAlias: jasmine.createSpy('loginWithAlias').and.resolveTo(),
       createPrivateAccount: jasmine.createSpy('createPrivateAccount').and.resolveTo(),
@@ -43,6 +47,13 @@ describe('AuthPage access safeguards', () => {
     page.passwordVisible = true;
     page.setAliasMode('private');
     expect(page.passwordVisible).toBeFalse();
+  });
+
+  it('clears unsent credentials before returning to the saved account', async () => {
+    page.password = 'unsent private password'; page.code = '123456'; page.passwordVisible = true;
+    await page.cancelAddingAccount();
+    expect(auth.cancelAddAccount).toHaveBeenCalledTimes(1);
+    expect(page.password).toBe(''); expect(page.code).toBe(''); expect(page.passwordVisible).toBeFalse();
   });
 
   it('conceals passwords when the app is hidden and clears the value on leaving access', () => {

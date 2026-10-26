@@ -37,7 +37,8 @@ describe('chat profile continuity during recovery', () => {
     expect(service.profilesByUserId().peer.profilePhotoDataUrl).toBe(rich.profilePhotoDataUrl);
     expect(service.profilesByUserId().peer.cachedAt).toBe(cachedAt);
     expect(service.contacts()[0].profilePhotoDataUrl).toBe(rich.profilePhotoDataUrl);
-    expect(service.history.putProfiles.calls.mostRecent().args[0][0].profilePhotoDataUrl).toBe(rich.profilePhotoDataUrl);
+    expect(service.history.putProfiles.calls.mostRecent().args[0]).toBe('self');
+    expect(service.history.putProfiles.calls.mostRecent().args[1][0].profilePhotoDataUrl).toBe(rich.profilePhotoDataUrl);
   });
 
   it('does not overwrite a hydrated profile when a delayed cache read supplies older fields', () => {
@@ -88,12 +89,50 @@ describe('chat profile continuity during recovery', () => {
     expect(service.contacts()[0].profilePhotoDataUrl).toBeNull();
   });
 
+  it('revokes photo and phone immediately and rejects an older in-flight profile response', async () => {
+    const service = harness();
+    const oldResponse = new Subject();
+    service.api.get.and.returnValues(oldResponse, of({ id: 'peer', alias: 'alias', profilePhotoDataUrl: null, phone: null }));
+    const pending = service.refreshProfile('peer');
+    service.applyProfileUpdate({ userId: 'peer', profilePhotoDataUrl: null, phone: null });
+    expect(service.participantPhoto('peer', rich)).toBe('');
+    expect(service.profilesByUserId().peer.phone).toBeNull();
+    oldResponse.next({ id: 'peer', alias: 'alias', profilePhotoDataUrl: 'old-photo', phone: '+573001234567' });
+    await pending;
+    expect(service.participantPhoto('peer', rich)).toBe('');
+    expect(service.profilesByUserId().peer.phone).toBeNull();
+    expect(service.api.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not restore revoked fields from a search started before the privacy change', async () => {
+    const service = harness();
+    const response = new Subject();
+    service.api.get.and.returnValue(response);
+    const pending = service.searchPeople('alias');
+    service.profileUpdateRevisions = new Map([['peer', 1]]);
+    service.rememberProfiles([{ userId: 'peer', profilePhotoDataUrl: null, phone: null }]);
+    response.next({ people: [{ id: 'peer', alias: 'alias', profilePhotoDataUrl: 'old-photo', phone: '+573001234567' }] });
+    const people = await pending;
+    expect(people[0].profilePhotoDataUrl).toBeNull();
+    expect(people[0].phone).toBeNull();
+  });
+
+  it('does not label a group or an ordinary ghost account as Nivra ID', () => {
+    const service = harness();
+    service.profilesByUserId.set({ peer: { userId: 'peer', alias: 'luna.secreta1234', isPrivateAccount: true, nivraNumber: '619622786' } });
+    const conversation = { type: 'Direct', participants: [{ userId: 'self' }, { userId: 'peer' }] };
+    expect(service.conversationIsNivraId(conversation)).toBeTrue();
+    expect(service.conversationIsNivraId({ ...conversation, type: 'Group' })).toBeFalse();
+    service.profilesByUserId.set({ peer: { userId: 'peer', alias: 'maria', isPrivateAccount: false, isDiscoverable: false } });
+    expect(service.conversationIsNivraId(conversation)).toBeFalse();
+  });
+
   it('does not revive an authoritative removal from a stale nonempty participant summary', () => {
     const service = harness();
     service.rememberProfiles([{ userId: 'peer', profilePhotoDataUrl: null }]);
     service.rememberConversationParticipants([{ participants: [{ ...rich }] }]);
     expect(service.participantPhoto('peer', rich)).toBe('');
-    expect(service.history.putProfiles.calls.mostRecent().args[0][0].profilePhotoDataUrl).toBeNull();
+    expect(service.history.putProfiles.calls.mostRecent().args[1][0].profilePhotoDataUrl).toBeNull();
   });
 
   it('allows a newer SQL profile to enrich a sparse launch snapshot but rejects a later stale cache read', () => {

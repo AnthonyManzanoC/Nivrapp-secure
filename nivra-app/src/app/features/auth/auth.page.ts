@@ -91,6 +91,14 @@ export class AuthPage implements OnDestroy {
     });
   }
 
+  async cancelAddingAccount(): Promise<void> {
+    if (this.submitting || this.auth.accountsBusy()) return;
+    this.password = ''; this.code = ''; this.error = ''; this.notice = '';
+    this.concealPassword();
+    try { await this.auth.cancelAddAccount(); }
+    catch { this.error = this.translate.instant('ACCOUNTS.ERROR', 'No se pudo completar el cambio. Reintenta.'); }
+  }
+
   async verifyOtp(): Promise<void> {
     await this.run(async () => {
       await this.auth.verifyFirebaseOtp(this.phone, this.code);

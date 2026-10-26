@@ -1,5 +1,5 @@
 import { TestBed } from '@angular/core/testing';
-import { Subject } from 'rxjs';
+import { Subject, of } from 'rxjs';
 import { AuthService } from './auth.service';
 import { ChatService } from './chat.service';
 import { CryptoService } from './crypto.service';
@@ -13,9 +13,10 @@ describe('vault room subscriptions after API replacement', () => {
     const events = new Subject<any>();
     const join = jasmine.createSpy('join').and.resolveTo();
     TestBed.configureTestingModule({ providers: [
-      { provide: AuthService, useValue: { isAuthenticated: () => false } },
+      { provide: AuthService, useValue: { isAuthenticated: () => true,
+        session: () => ({ user: { id: 'vault-reconnect-user', alias: 'vault-reconnect' }, device: { id: 'device' } }), sessionGeneration: () => 0 } },
       { provide: ChatService, useValue: {} }, { provide: CryptoService, useValue: {} },
-      { provide: NivraApiService, useValue: {} }, { provide: EncryptedDownloadService, useValue: {} },
+      { provide: NivraApiService, useValue: { get: () => of([]) } }, { provide: EncryptedDownloadService, useValue: {} },
       { provide: SignalrService, useValue: { events$: events, joinVaultRoom: join } },
     ] });
     const vault = TestBed.inject(VaultService);

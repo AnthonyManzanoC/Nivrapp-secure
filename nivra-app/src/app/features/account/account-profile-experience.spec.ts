@@ -48,6 +48,37 @@ describe('Account profile editing experience', () => {
     expect(page.profilePhotoDataUrl).toBe('data:image/jpeg;base64,b2xk');
   });
 
+  it('stages a memorable alias without saving or changing the stable login ID', () => {
+    session.set({ ...owner(), user: { ...owner().user, alias: 'n_010d9af5bd3143b6844e8d5d', displayName: null, nivraNumber: '619622786', isPrivateAccount: true } });
+    (page as any).profileOwnerScope = 'owner-a:device-owner-a';
+    page.alias = session().user.alias;
+    page.displayName = '';
+    expect(page.profileTitle()).toBe('Nivra 619 622 786');
+    expect(page.legacyIdentityAlias()).toBeTrue();
+    page.suggestAlias();
+    expect(page.alias).toMatch(/^[a-z]+\.[a-z]+\d{2}$/);
+    expect(page.aliasStatus).toBe('checking');
+    expect(page.legacyIdentityAlias()).toBeFalse();
+    expect(session().user.nivraNumber).toBe('619622786');
+    expect(account.updateProfile).not.toHaveBeenCalled();
+  });
+
+  it('reports ghost mode from the discovery choice, independent of phone availability', () => {
+    page.phone = '+573001234567';
+    page.isDiscoverable = false;
+    expect(page.identityMode()).toBe('ghost');
+    page.phone = '';
+    page.isDiscoverable = true;
+    expect(page.identityMode()).toBe('public');
+  });
+
+  it('explains that contacts-only photos use the photo owner’s saved contacts', () => {
+    account.privacy.set({ profilePhotoVisibility: 'contacts' });
+    expect(page.photoVisibilityHelp()).toContain('tú guardaste');
+    account.privacy.set({ profilePhotoVisibility: 'nobody' });
+    expect(page.photoVisibilityHelp()).toContain('Sólo tú');
+  });
+
   it('retains a draft while refreshing devices and privacy, and restores all fields on discard', async () => {
     page.displayName = 'Mi edición';
     page.bio = 'Nuevo texto';

@@ -597,6 +597,8 @@ ion-modal.history-storage-modal { --width: min(440px, calc(100vw - 32px)); --hei
 .conversation-title { display: flex; align-items: center; gap: 5px; }
 .conversation-title > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-title > ion-icon { flex: none; color: var(--nivra-muted); font-size: 12px; }
+.conversation-title .nivra-id-badge { display: inline-flex; flex: none; align-items: center; gap: 2px; border: 1px solid color-mix(in srgb, var(--nivra-brand) 24%, transparent); border-radius: 6px; background: color-mix(in srgb, var(--nivra-brand) 8%, transparent); color: var(--nivra-brand-2); padding: 2px 4px; font-size: 9px; line-height: 1; font-weight: 700; letter-spacing: .04em; }
+.nivra-id-badge ion-icon { font-size: 12px; }
 .conversation-tail-actions { display: flex; align-items: center; gap: 3px; }
 .conversation-unread-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--nivra-brand); }
 .list .conversation-item:hover::part(native) {

@@ -57,6 +57,51 @@ describe('call session isolation', () => {
 
   afterEach(() => service.ngOnDestroy());
 
+  it('discards a delayed local call history instead of merging it into the next account', async () => {
+    TestBed.flushEffects(); await Promise.resolve();
+    const history = TestBed.inject(LocalHistoryService);
+    spyOn(history, 'accountKeysForUser').and.resolveTo(['me']);
+    let finish!: (calls: CallSession[]) => void;
+    spyOn(history, 'calls').and.returnValue(new Promise(resolve => { finish = resolve; }));
+    const write = spyOn(history, 'putCalls').and.resolveTo();
+    const pending = (service as any).loadPersistentHistory();
+    await Promise.resolve(); await Promise.resolve();
+    (service as any).auth.session.set({ user: { id: 'other-account' }, device: { id: 'other-device' } });
+    const own = { ...invitation, id: 'other-account-call' };
+    service.history.set([own]);
+    finish([invitation]); await pending;
+    expect(service.history()).toEqual([own]);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('rejects an old history read after leaving and returning to the same account', async () => {
+    TestBed.flushEffects(); await Promise.resolve();
+    const generation = signal(1);
+    (service as any).auth.sessionGeneration = generation;
+    const history = TestBed.inject(LocalHistoryService);
+    spyOn(history, 'accountKeysForUser').and.resolveTo(['me']);
+    let finish!: (calls: CallSession[]) => void;
+    spyOn(history, 'calls').and.returnValue(new Promise(resolve => { finish = resolve; }));
+    const write = spyOn(history, 'putCalls').and.resolveTo();
+    const pending = (service as any).loadPersistentHistory();
+    await Promise.resolve(); await Promise.resolve();
+    generation.set(3);
+    service.history.set([]);
+    finish([invitation]); await pending;
+    expect(service.history()).toEqual([]); expect(write).not.toHaveBeenCalled();
+  });
+
+  it('releases the former account call and recovery state when logout activates another saved account', () => {
+    TestBed.flushEffects();
+    const old = { ...invitation, id: 'old-account-call' };
+    service.activeCall.set(old); service.resumableCall.set(old); service.history.set([old]);
+    (service as any).auth.session.set({ user: { id: 'other-account' }, device: { id: 'other-device' } });
+    TestBed.flushEffects();
+    expect(service.activeCall()).toBeNull(); expect(service.resumableCall()).toBeNull();
+    expect(service.history().some(call => call.id === old.id)).toBeFalse();
+    expect(localStorage.getItem('nivra.callRecoveryHint') || '').not.toContain('old-account-call');
+  });
+
   it('owns communication routing only after capture and releases it when the call ends', () => {
     const audio = TestBed.inject(CallAudioOutputService);
     service.activeCall.set(invitation);
