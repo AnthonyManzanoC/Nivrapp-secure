@@ -424,7 +424,7 @@ ion-action-sheet.nivra-avatar-action-sheet::part(content) {
   }
 }
 
-ion-modal:not(.story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
+ion-modal:not(.story-viewer-modal):not(.nivra-story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
 ion-popover::part(content) {
   color: var(--nivra-text);
   background: var(--nivra-panel-solid);
@@ -869,7 +869,7 @@ body.nivra-light-theme ion-popover {
   color: var(--nivra-text);
 }
 
-body.nivra-light-theme ion-modal:not(.story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
+body.nivra-light-theme ion-modal:not(.story-viewer-modal):not(.nivra-story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
 body.nivra-light-theme ion-popover::part(content) {
   border: 1px solid var(--nivra-line);
   color: var(--nivra-text);
@@ -1858,11 +1858,12 @@ body.nivra-light-theme .message-info-card {
   background: #f8fafc;
 }
 ion-modal.nivra-story-viewer-modal {
-  --width: 100vw;
-  --height: 100dvh;
+  --width: 100%;
+  --height: 100%;
   --max-width: none;
   --max-height: none;
   --border-radius: 0;
+  --border-width: 0;
   --background: transparent;
   --box-shadow: none;
   z-index: 40000;
@@ -1873,12 +1874,15 @@ body.nivra-cropper-open {
 }
 
 ion-modal.nivra-story-viewer-modal::part(content) {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100dvh;
+  position: relative;
+  width: 100%;
+  height: 100%;
   max-width: none;
   max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
   overflow: hidden;
   background: rgba(2, 6, 8, .66);
   backdrop-filter: blur(10px);
@@ -1892,3 +1896,18 @@ ion-modal.nivra-story-viewer-modal::part(content) {
 }
 
 @import "./theme/messenger-polish.scss";
+
+// Keep the page scrollable by touch, wheel and keyboard without a permanent
+// coloured track beside the main app views (Perfil lives inside Cuenta).
+:is(app-world, app-vault, app-calls, app-account) .surface,
+:is(app-world, app-vault, app-calls, app-account) ion-content.page::part(scroll) {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+:is(app-world, app-vault, app-calls, app-account) .surface::-webkit-scrollbar,
+:is(app-world, app-vault, app-calls, app-account) ion-content.page::part(scroll)::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}

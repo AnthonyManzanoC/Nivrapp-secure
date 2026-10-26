@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
 import { ChatService } from './chat.service';
 
 describe('continuous HTTP message synchronization', () => {
@@ -95,6 +96,30 @@ describe('continuous HTTP message synchronization', () => {
     response.next(page('a')); response.complete();
     expect(await pending).toBeFalse();
     expect(h.service.ingestMessageBatch).not.toHaveBeenCalled();
+    expect(h.service.history.setSyncWatermark).not.toHaveBeenCalled();
+  });
+
+  it('rejects the previous account generation even when its account and device return', async () => {
+    const h = harness(); const response = new Subject<any>();
+    h.service.messageLoadGeneration = 0;
+    h.service.api.get.and.returnValue(response);
+    const pending = h.service.syncMissedMessagesCore(30);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    h.service.messageLoadGeneration = 2;
+    response.next(page('a')); response.complete();
+    expect(await pending).toBeFalse();
+    expect(h.service.ingestMessageBatch).not.toHaveBeenCalled();
+    expect(h.service.history.setSyncWatermark).not.toHaveBeenCalled();
+  });
+
+  it('preserves a transient transport error for reconnect backoff without classifying invalid cursors as network loss', async () => {
+    const h = harness(); const failure = new HttpErrorResponse({ status: 0 });
+    h.service.api.get.and.returnValue(throwError(() => failure));
+    expect(await h.service.syncMissedMessagesCore(30)).toBeFalse();
+    expect(h.service.lastMessageSyncError).toBe(failure);
+    h.service.api.get.and.returnValue(of({ messages: [envelope('a')], syncedAt: at }));
+    expect(await h.service.syncMissedMessagesCore(30)).toBeFalse();
+    expect(h.service.lastMessageSyncError).toBeNull();
     expect(h.service.history.setSyncWatermark).not.toHaveBeenCalled();
   });
 

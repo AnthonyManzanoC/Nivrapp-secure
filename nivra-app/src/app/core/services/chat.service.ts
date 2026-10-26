@@ -38,6 +38,7 @@ import { AppSettingsService } from './app-settings.service';
 import { NativeDeviceService } from './native-device.service';
 import { HistoryDeviceSyncService } from './history-device-sync.service';
 import { NetworkPolicyService } from './network-policy.service';
+import { ForegroundSyncRecovery } from './foreground-sync-recovery';
 import { uniqueCallSummaries, validatedCallSummary } from './call-summary.helpers';
 import { identityDisplayName, isNivraIdAccount } from '../utils/nivra-identity';
 
@@ -172,6 +173,7 @@ export class ChatService implements OnDestroy {
   private refreshChatsScope = '';
   private messageSyncInFlight: Promise<boolean> | null = null;
   private messageSyncScope = '';
+  private lastMessageSyncError: unknown = null;
   private syncCatchupPending = false;
   private messageSyncCursors = new Map<string, MessageSyncCursor>();
   private hasBootstrappedSession = false;
@@ -188,6 +190,15 @@ export class ChatService implements OnDestroy {
   private historyRecoveryScope: ChatSendContext | null = null;
   private historyRecoveryRevision = 0;
   private fileSendSequence = 0;
+  private readonly networkRecovery = new ForegroundSyncRecovery({
+    scope: () => {
+      const session = this.auth.session();
+      return session ? `${this.messageLoadGeneration}:${session.user.id}:${session.device.id}` : '';
+    },
+    canRun: () => document.visibilityState !== 'hidden' && this.network.onlineHint() && this.auth.isAuthenticated(),
+    sync: () => this.resumeSoftSync(),
+    retryDelay: attempt => this.network.retryDelayMs(attempt, 2500, 30_000),
+  });
 
   readonly quickReactions = QUICK_REACTIONS;
   readonly conversations = signal<Conversation[]>([]);
@@ -295,16 +306,19 @@ export class ChatService implements OnDestroy {
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
         if (document.visibilityState === 'visible') {
-          void this.resumeSoftSync().catch(() => undefined);
-        }
+          this.networkRecovery.wake();
+        } else this.networkRecovery.pause();
       });
 
     fromEvent(window, 'online')
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe(() => {
         void this.signalr.connect().catch(() => undefined);
-        void this.resumeSoftSync().catch(() => undefined);
+        this.networkRecovery.wake();
       });
+    fromEvent(window, 'offline')
+      .pipe(takeUntilDestroyed(this.destroyRef))
+      .subscribe(() => this.networkRecovery.pause());
 
     effect(() => {
       const session = this.auth.session();
@@ -316,8 +330,12 @@ export class ChatService implements OnDestroy {
           this.activeChatScope = scope;
           this.startTtlSweep();
           this.startAutomaticSync();
-          void this.bootstrap().catch(() => {
-            if (this.activeChatScope === scope) this.syncError.set('refresh');
+          const generation = this.messageLoadGeneration;
+          void this.bootstrap().catch(error => {
+            if (this.activeChatScope === scope && generation === this.messageLoadGeneration) {
+              this.syncError.set('refresh');
+              this.networkRecovery.failed(error);
+            }
           });
           void this.signalr.connect().catch(() => undefined);
         });
@@ -360,28 +378,34 @@ export class ChatService implements OnDestroy {
     const session = this.auth.session();
     if (!session) return Promise.resolve(false);
     const scope = `${session.user.id}:${session.device.id}`;
+    const generation = this.messageLoadGeneration;
     if (this.refreshChatsInFlight && this.refreshChatsScope === scope) return this.refreshChatsInFlight;
     this.refreshChatsScope = scope;
     const operation = this.withListUpdating(async () => {
       const localReady = await this.history.retryNativeStorage();
-      if (this.auth.session()?.user.id !== session.user.id) return false;
+      if (generation !== this.messageLoadGeneration || this.auth.session()?.user.id !== session.user.id) return false;
       await this.auth.ensureDeviceIdentity();
-      if (this.auth.session()?.user.id !== session.user.id) return false;
+      if (generation !== this.messageLoadGeneration || this.auth.session()?.user.id !== session.user.id) return false;
       const context = this.captureSendContext();
       await this.bootstrap();
-      if (!this.isSendContextCurrent(context)) return false;
-      if (!await this.syncMissedMessages()) throw new Error('No se pudieron actualizar todos los mensajes disponibles.');
-      if (!this.isSendContextCurrent(context)) return false;
+      if (generation !== this.messageLoadGeneration || !this.isSendContextCurrent(context)) return false;
+      const updated = await this.syncMissedMessages();
+      if (generation !== this.messageLoadGeneration || !this.isSendContextCurrent(context)) return false;
+      if (!updated) throw this.lastMessageSyncError ?? new Error('No se pudieron actualizar todos los mensajes disponibles.');
       const selected = this.selectedConversationId();
       if (selected) await this.loadMessages(selected);
-      if (!this.isSendContextCurrent(context)) return false;
+      if (generation !== this.messageLoadGeneration || !this.isSendContextCurrent(context)) return false;
       if (this.deviceHistory.state() !== 'idle') this.deviceHistory.retry();
       this.syncError.set('');
       this.lastSyncedAt.set(Date.now());
+      this.networkRecovery?.recovered();
       return localReady && !this.history.storageError();
     }).catch(error => {
       const current = this.auth.session();
-      if (current?.user.id === session.user.id) this.syncError.set('refresh');
+      if (generation === this.messageLoadGeneration && current?.user.id === session.user.id) {
+        this.syncError.set('refresh');
+        this.networkRecovery?.failed(error);
+      }
       throw error;
     }).finally(() => {
       if (this.refreshChatsInFlight === operation) this.refreshChatsInFlight = null;
@@ -410,9 +434,17 @@ export class ChatService implements OnDestroy {
     const session = this.auth.session();
     if (!session) return Promise.resolve();
     const scope = `${session.user.id}:${session.device.id}`;
+    const generation = this.messageLoadGeneration;
     if (this.resumeSyncInFlight && this.resumeSyncScope === scope) return this.resumeSyncInFlight;
     this.resumeSyncScope = scope;
-    const operation = this.resumeSoftSyncCore(take).finally(() => {
+    const operation = this.resumeSoftSyncCore(take).catch(error => {
+      const current = this.auth.session();
+      if (generation === this.messageLoadGeneration && current?.user.id === session.user.id && current?.device.id === session.device.id) {
+        this.syncError.set('refresh');
+        this.networkRecovery?.failed(error);
+      }
+      throw error;
+    }).finally(() => {
       if (this.resumeSyncInFlight === operation) this.resumeSyncInFlight = null;
     });
     this.resumeSyncInFlight = operation;
@@ -423,13 +455,16 @@ export class ChatService implements OnDestroy {
     if (!this.auth.isAuthenticated()) {
       return;
     }
-    if (this.refreshChatsInFlight) {
-      await this.refreshChatsInFlight.catch(() => undefined);
-      return;
-    }
-    if (this.bootstrapInFlight) {
-      await this.bootstrapInFlight.catch(() => undefined);
-      return;
+    const session = this.auth.session();
+    const generation = this.messageLoadGeneration;
+    const current = () => generation === this.messageLoadGeneration
+      && this.auth.session()?.user.id === session?.user.id && this.auth.session()?.device.id === session?.device.id;
+    const pending = this.refreshChatsInFlight ?? this.bootstrapInFlight;
+    if (pending) {
+      // An online/resume event can arrive while the previous offline request
+      // is failing. Joining that failure must not consume the recovery wake.
+      await pending.catch(() => undefined);
+      if (!current()) return;
     }
     if (!this.hasLoadedChatState()) {
       await this.bootstrap();
@@ -438,27 +473,29 @@ export class ChatService implements OnDestroy {
     const userId = this.auth.session()?.user.id;
     try {
       await this.auth.ensureDeviceIdentity();
-      if (this.auth.session()?.user.id !== userId) return;
+      if (generation !== this.messageLoadGeneration || this.auth.session()?.user.id !== userId) return;
       const context = this.captureSendContext();
       // Realtime handshakes may remain pending on mobile networks. HTTP and
       // cached conversations must continue to refresh independently.
       void this.rejoinSelectedConversation().catch(() => undefined);
-      await this.refreshRemoteConversationIndex(context);
+      await this.refreshRemoteConversationIndex(context, generation);
+      if (generation !== this.messageLoadGeneration || !this.isSendContextCurrent(context)) return;
       const updated = await this.syncMissedMessages(take);
-      if (!this.isSendContextCurrent(context)) return;
-      if (!updated) throw new Error('No se pudieron actualizar los mensajes.');
+      if (generation !== this.messageLoadGeneration || !this.isSendContextCurrent(context)) return;
+      if (!updated) throw this.lastMessageSyncError ?? new Error('No se pudieron actualizar los mensajes.');
       this.syncError.set('');
       this.lastSyncedAt.set(Date.now());
+      this.networkRecovery?.recovered();
       void this.refreshPresenceForConversations().catch(() => undefined);
     } catch (error) {
-      if (this.auth.session()?.user.id === userId) this.syncError.set('refresh');
+      if (generation === this.messageLoadGeneration && this.auth.session()?.user.id === userId) this.syncError.set('refresh');
       throw error;
     }
   }
 
-  private async refreshRemoteConversationIndex(context: ChatSendContext): Promise<void> {
+  private async refreshRemoteConversationIndex(context: ChatSendContext, generation = this.messageLoadGeneration): Promise<void> {
     const items = await firstValueFrom(this.api.get<Conversation[]>('/conversations').pipe(timeout(this.chatReadTimeoutMs())));
-    if (!this.isSendContextCurrent(context)) return;
+    if (generation !== this.messageLoadGeneration || !this.isSendContextCurrent(context)) return;
     const conversations = this.applyLocalConversationState(items ?? []).sort(this.compareConversations);
     this.remoteIndexRevision += 1;
     this.rememberConversationParticipants(conversations);
@@ -472,8 +509,9 @@ export class ChatService implements OnDestroy {
     if (this.automaticSyncTimer !== null) return;
     this.automaticSyncTimer = window.setInterval(() => {
       if (document.visibilityState === 'hidden' || navigator.onLine === false || !this.auth.isAuthenticated()) return;
+      if (this.networkRecovery?.pending) return;
       if (this.bootstrapInFlight || this.refreshChatsInFlight || this.resumeSyncInFlight) return;
-      if (!this.syncCatchupPending && this.signalr.connected() && Date.now() - (this.lastSyncedAt() ?? 0) < 60_000) return;
+      if (!this.syncError() && !this.syncCatchupPending && this.signalr.connected() && Date.now() - (this.lastSyncedAt() ?? 0) < 60_000) return;
       void this.resumeSoftSync().catch(() => undefined);
     }, CHAT_AUTO_SYNC_INTERVAL_MS);
   }
@@ -536,6 +574,7 @@ export class ChatService implements OnDestroy {
       this.hasBootstrappedSession = true;
       this.syncError.set('');
       this.lastSyncedAt.set(Date.now());
+      this.networkRecovery?.recovered();
       // Cached placeholders can predate the small bootstrap page after a
       // restart. Recover their original envelopes even without a new key event.
       if (firstBootstrap && Object.values(this.messagesByConversation()).some(items => items.some(item => item.decryptError))) {
@@ -561,10 +600,13 @@ export class ChatService implements OnDestroy {
 
   private async syncMissedMessagesCore(take: number): Promise<boolean> {
     const context = this.captureSendContext();
+    const generation = this.messageLoadGeneration;
+    const current = () => generation === this.messageLoadGeneration && this.isSendContextCurrent(context);
+    this.lastMessageSyncError = null;
     if (!await this.auth.ensureFreshSession()) {
       return false;
     }
-    if (!this.isSendContextCurrent(context)) return false;
+    if (!current()) return false;
     this.syncInFlight = true;
     try {
       const accountKey = this.localAccountKey();
@@ -575,7 +617,7 @@ export class ChatService implements OnDestroy {
       const memoryCursor = memoryCursors.get(cursorKey);
       const saved = memoryCursor ? JSON.stringify(memoryCursor)
         : accountKey ? await this.history.getSyncWatermark(cursorKey).catch(() => null) : null;
-      if (!this.isSendContextCurrent(context)) return false;
+      if (!current()) return false;
       let cursor: MessageSyncCursor = { at: '1970-01-01T00:00:00.000Z', id: '' };
       let completedCursor: MessageSyncCursor | null = null;
       try {
@@ -597,11 +639,11 @@ export class ChatService implements OnDestroy {
         const params = new URLSearchParams({ take: String(limit), cursorVersion: '2', since: cursor.at, sinceId: cursor.id });
         const historyGenerations = new Map(this.conversationHistoryGenerations);
         const sync = await firstValueFrom(this.api.get<MessageSyncResponse>(`/messages/sync?${params.toString()}`).pipe(timeout(this.chatReadTimeoutMs())));
-        if (!this.isSendContextCurrent(context)) return false;
+        if (!current()) return false;
         await this.ingestMessageBatch(sync.messages ?? [], false, context, historyGenerations);
-        if (!this.isSendContextCurrent(context)) return false;
+        if (!current()) return false;
         await this.ackDelivered(sync.messages ?? []);
-        if (!this.isSendContextCurrent(context)) return false;
+        if (!current()) return false;
         // Old APIs remain usable, but cannot certify a stable composite scan.
         // Leave its cursor intact until the updated backend is deployed.
         if (typeof sync.hasMore !== 'boolean') return false;
@@ -620,17 +662,20 @@ export class ChatService implements OnDestroy {
         // an in-memory checkpoint while a retained native database is being
         // migrated; a local write failure is not a failed HTTP update.
         if (accountKey) await this.history.setSyncWatermark(cursorKey, JSON.stringify(cursor)).catch(() => undefined);
-        if (!this.isSendContextCurrent(context)) return false;
+        if (!current()) return false;
         this.syncCatchupPending = sync.hasMore;
         if (!sync.hasMore) break;
       }
       void this.refreshPresenceForConversations().catch(() => undefined);
       return true;
-    } catch {
+    } catch (error) {
+      if (current()) this.lastMessageSyncError = error;
       return false;
     } finally {
-      void this.purgeExpiredLocalMessages().catch(() => undefined);
-      this.syncInFlight = false;
+      if (current()) {
+        void this.purgeExpiredLocalMessages().catch(() => undefined);
+        this.syncInFlight = false;
+      }
     }
   }
 
@@ -4404,6 +4449,8 @@ export class ChatService implements OnDestroy {
   }
 
   private resetRefreshState(): void {
+    this.networkRecovery?.reset();
+    this.lastMessageSyncError = null;
     this.refreshChatsInFlight = null;
     this.resumeSyncInFlight = null;
     this.messageSyncInFlight = null;

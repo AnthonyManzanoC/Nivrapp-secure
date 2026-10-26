@@ -26,7 +26,7 @@
         </article>
       }
 
-      <article class="panel span-4 unlock-panel">
+      <article class="panel unlock-panel" [class.span-4]="vault.unlocked()" [class.span-12]="!vault.unlocked()">
         <div class="panel-title">
           <div>
             <h2>{{ vault.unlocked() ? ('VAULT.LOCAL_KEY_ACTIVE' | translate:'Llave local activa') : ('VAULT.UNLOCK' | translate:'Desbloquear') }}</h2>
@@ -51,7 +51,8 @@
         }
       </article>
 
-      <article class="panel span-8">
+      @if (vault.unlocked() && localNoteScopeIsCurrent()) {
+      <article class="panel span-8 note-composer-panel">
         <div class="panel-title">
           <div>
             <h2>{{ 'VAULT.NEW_NOTE' | translate:'Nueva nota' }}</h2>
@@ -96,6 +97,7 @@
           </div>
         }
       </article>
+      }
 
       <article class="panel span-5">
         <div class="panel-title">

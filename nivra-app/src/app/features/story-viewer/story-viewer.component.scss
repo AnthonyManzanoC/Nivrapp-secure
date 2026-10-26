@@ -1,5 +1,11 @@
 :host {
   display: block;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .story-viewer {
@@ -8,8 +14,8 @@
   inset: 0;
   width: auto;
   height: min(90dvh, 888px);
-  max-width: 500px;
-  max-height: 90dvh;
+  max-width: min(500px, 100%);
+  max-height: min(90dvh, 100%);
   aspect-ratio: 9 / 16;
   margin: auto;
   border: 1px solid rgba(255, 255, 255, .16);
@@ -66,8 +72,9 @@
   gap: 5px;
   padding:
     calc(10px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
-    12px
-    0;
+    max(12px, var(--ion-safe-area-right, env(safe-area-inset-right, 0px)))
+    0
+    max(12px, var(--ion-safe-area-left, env(safe-area-inset-left, 0px)));
   background: linear-gradient(180deg, rgba(0, 0, 0, .86), rgba(0, 0, 0, .48));
 }
 
@@ -95,7 +102,7 @@
   justify-content: space-between;
   align-items: center;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 12px max(14px, var(--ion-safe-area-right, env(safe-area-inset-right, 0px))) 12px max(14px, var(--ion-safe-area-left, env(safe-area-inset-left, 0px)));
   color: #fff;
   background: linear-gradient(180deg, rgba(0, 0, 0, .58), rgba(0, 0, 0, .22));
   text-shadow: 0 2px 10px rgba(0, 0, 0, .76);
@@ -357,7 +364,7 @@ footer.story-action-bar {
   z-index: 6;
   display: block;
   background: linear-gradient(to top, rgba(0, 0, 0, .84), rgba(0, 0, 0, .46) 58%, transparent);
-  padding: 30px 14px calc(14px + env(safe-area-inset-bottom));
+  padding: 30px max(14px, var(--ion-safe-area-right, env(safe-area-inset-right, 0px))) calc(14px + env(safe-area-inset-bottom)) max(14px, var(--ion-safe-area-left, env(safe-area-inset-left, 0px)));
   --background: transparent;
   box-shadow: none;
 }
@@ -510,8 +517,10 @@ footer.story-action-bar {
 
 @media (max-width: 720px) {
   .story-viewer {
-    width: 100vw;
-    height: 100dvh;
+    // The modal already covers the app viewport. Follow its available height
+    // so system bars, browser chrome and the reply keyboard stay independent.
+    width: 100%;
+    height: 100%;
     max-width: none;
     max-height: none;
     aspect-ratio: auto;
@@ -538,11 +547,12 @@ footer.story-action-bar {
 }
 
 @media (max-width: 430px) {
-  .story-viewer-top { gap: 6px; padding-inline: 10px; }
+  .story-viewer-top { gap: 6px; padding-left: max(10px, var(--ion-safe-area-left, env(safe-area-inset-left, 0px))); padding-right: max(10px, var(--ion-safe-area-right, env(safe-area-inset-right, 0px))); }
   .story-top-actions { gap: 3px; }
   .story-top-actions button { width: 40px; height: 40px; }
   footer.story-action-bar {
-    padding-inline: 9px;
+    padding-left: max(9px, var(--ion-safe-area-left, env(safe-area-inset-left, 0px)));
+    padding-right: max(9px, var(--ion-safe-area-right, env(safe-area-inset-right, 0px)));
   }
 
   .story-action-shell {

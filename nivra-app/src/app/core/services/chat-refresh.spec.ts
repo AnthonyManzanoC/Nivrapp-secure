@@ -1,6 +1,7 @@
 import { signal } from '@angular/core';
 import { fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
-import { of, Subject } from 'rxjs';
+import { of, Subject, throwError } from 'rxjs';
+import { HttpErrorResponse } from '@angular/common/http';
 import { ChatService } from './chat.service';
 
 describe('live chat list refresh', () => {
@@ -21,6 +22,7 @@ describe('live chat list refresh', () => {
       messageLoadGeneration: 0, listUpdateCount: 0, listUpdating: signal(false), loading: signal(false),
       syncError: signal(''), lastSyncedAt: signal<number | null>(null), automaticSyncTimer: null,
       refreshChatsInFlight: null, bootstrapInFlight: null, resumeSyncInFlight: null,
+      networkRecovery: { recovered: jasmine.createSpy('recovered'), failed: jasmine.createSpy('failed') },
       conversations: signal<any[]>([conversation()]), contacts: signal([]), remoteIndexRevision: 0,
       selectedConversationId: signal('chat'), messagesByConversation: signal({ chat: [{ id: 'readable', payload: { text: 'Keep me' } }] }),
       bootstrap: jasmine.createSpy('bootstrap').and.resolveTo(), loadMessages: jasmine.createSpy('messages').and.resolveTo(),
@@ -86,6 +88,69 @@ describe('live chat list refresh', () => {
     expect(service.messagesByConversation().chat.length).toBe(1);
   });
 
+  it('reconciles after the offline refresh that was still pending when connectivity returned', async () => {
+    const service = harness();
+    let fail!: (reason: unknown) => void;
+    service.refreshChatsInFlight = new Promise<void>((_resolve, reject) => fail = reject);
+    service.syncError.set('refresh');
+    const recovered = service.resumeSoftSync();
+    expect(service.api.get).not.toHaveBeenCalled();
+    fail(new HttpErrorResponse({ status: 0 }));
+    await recovered;
+    expect(service.api.get).toHaveBeenCalledOnceWith('/conversations');
+    expect(service.syncMissedMessages).toHaveBeenCalledTimes(1);
+    expect(service.syncError()).toBe('');
+    expect(service.messagesByConversation().chat[0].payload.text).toBe('Keep me');
+    expect(service.networkRecovery.recovered).toHaveBeenCalledTimes(1);
+  });
+
+  it('reconciles after a pending bootstrap fails instead of losing its connection wake', async () => {
+    const service = harness();
+    let fail!: (reason: unknown) => void;
+    service.bootstrapInFlight = new Promise<void>((_resolve, reject) => fail = reject);
+    const recovered = service.resumeSoftSync();
+    fail(new HttpErrorResponse({ status: 503 }));
+    await recovered;
+    expect(service.api.get).toHaveBeenCalledOnceWith('/conversations');
+    expect(service.syncError()).toBe('');
+  });
+
+  it('does not transfer a queued connection recovery to another account', async () => {
+    const service = harness(); const previous = deferred<boolean>();
+    service.refreshChatsInFlight = previous.promise;
+    const recovery = service.resumeSoftSync();
+    service.auth.session.set(session('other-device', 'bob'));
+    service.messageLoadGeneration++;
+    previous.resolve(false); await recovery;
+    expect(service.api.get).not.toHaveBeenCalled();
+    expect(service.auth.ensureDeviceIdentity).not.toHaveBeenCalled();
+    expect(service.syncError()).toBe('');
+  });
+
+  it('discards a pre-switch response when the same account returns before it finishes', async () => {
+    const service = harness(); const response = new Subject<any[]>();
+    service.api.get.and.returnValue(response);
+    const recovery = service.resumeSoftSync();
+    for (let index = 0; index < 8; index++) await Promise.resolve();
+    service.messageLoadGeneration += 2;
+    response.next([conversation('old-response')]); response.complete();
+    await recovery;
+    expect(service.conversations().map((item: any) => item.id)).toEqual(['chat']);
+    expect(service.syncMissedMessages).not.toHaveBeenCalled();
+    expect(service.networkRecovery.recovered).not.toHaveBeenCalled();
+  });
+
+  it('leaves the failure visible until an HTTP reconciliation actually succeeds', async () => {
+    const service = harness(); const failure = new HttpErrorResponse({ status: 0 });
+    service.syncError.set('refresh');
+    service.api.get.and.returnValue(throwError(() => failure));
+    await expectAsync(service.resumeSoftSync()).toBeRejectedWith(failure);
+    expect(service.syncError()).toBe('refresh');
+    expect(service.networkRecovery.failed).toHaveBeenCalledOnceWith(failure);
+    expect(service.networkRecovery.recovered).not.toHaveBeenCalled();
+    expect(service.messagesByConversation().chat[0].payload.text).toBe('Keep me');
+  });
+
   it('captures the repaired destination instead of the old QR source when manually refreshing', async () => {
     const service = harness();
     service.auth.ensureDeviceIdentity.and.callFake(async () => { service.auth.session.set(session('repaired-browser')); return {}; });
@@ -120,5 +185,32 @@ describe('live chat list refresh', () => {
     expect(refresh).toHaveBeenCalledTimes(2);
     service.stopAutomaticSync(); tick(60_000);
     expect(refresh).toHaveBeenCalledTimes(2);
+  }));
+
+  it('recovers an error without an online event even while realtime still appears connected', fakeAsync(() => {
+    const service = harness(); const refresh = spyOn(service, 'resumeSoftSync').and.resolveTo();
+    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('visible');
+    const online = spyOnProperty(navigator, 'onLine', 'get').and.returnValue(false);
+    service.signalr.connected = () => true;
+    service.lastSyncedAt.set(Date.now());
+    service.syncError.set('refresh');
+    service.startAutomaticSync(); tick(1000);
+    online.and.returnValue(true);
+    tick(29_000); flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    service.stopAutomaticSync();
+  }));
+
+  it('lets the pending connection recovery own its backoff without a second polling request', fakeAsync(() => {
+    const service = harness(); const refresh = spyOn(service, 'resumeSoftSync').and.resolveTo();
+    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('visible');
+    spyOnProperty(navigator, 'onLine', 'get').and.returnValue(true);
+    service.networkRecovery.pending = true;
+    service.syncError.set('refresh');
+    service.startAutomaticSync(); tick(30_000); flushMicrotasks();
+    expect(refresh).not.toHaveBeenCalled();
+    service.networkRecovery.pending = false; tick(30_000); flushMicrotasks();
+    expect(refresh).toHaveBeenCalledTimes(1);
+    service.stopAutomaticSync();
   }));
 });

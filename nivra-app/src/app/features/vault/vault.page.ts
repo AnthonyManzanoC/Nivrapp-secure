@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, OnDestroy, OnInit, inject } from '@angular/core';
+import { Component, OnDestroy, OnInit, effect, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
@@ -82,6 +82,9 @@ export class VaultPage implements OnInit, OnDestroy {
   private readonly fullscreenChangeHandler = () => this.syncFullscreenState();
 
   constructor() {
+    effect(() => {
+      if (!this.ownsMountedScope()) this.clearLocalNoteDraft();
+    });
     addIcons({
       addCircleOutline,
       attachOutline,
@@ -124,6 +127,7 @@ export class VaultPage implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     const ownsScope = this.ownsMountedScope();
     this.destroyed = true;
+    this.clearLocalNoteDraft();
     document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
     if (this.searchTimer !== null) {
       window.clearTimeout(this.searchTimer);
@@ -171,7 +175,7 @@ export class VaultPage implements OnInit, OnDestroy {
     const input = event.target as HTMLInputElement;
     const files = input.files ? Array.from(input.files) : [];
     input.value = '';
-    if (!files.length) {
+    if (!this.isCurrentPage() || !this.vault.unlocked() || !files.length) {
       return;
     }
     const map = new Map(this.noteAttachments.map((file) => [`${file.name}:${file.size}:${file.lastModified}`, file]));
@@ -429,6 +433,16 @@ export class VaultPage implements OnInit, OnDestroy {
 
   isBusy(id: string): boolean {
     return this.busyId === id;
+  }
+
+  localNoteScopeIsCurrent(): boolean {
+    return this.isCurrentPage();
+  }
+
+  private clearLocalNoteDraft(): void {
+    this.title = '';
+    this.body = '';
+    this.noteAttachments = [];
   }
 
   private ownsMountedScope(): boolean {
