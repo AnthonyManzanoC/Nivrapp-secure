@@ -252,6 +252,7 @@
                 <ion-button mode="ios" fill="clear" [class.control-off]="calls.muted()" [disabled]="!canControlLocalMedia()" (click)="calls.toggleMute()" [attr.aria-pressed]="calls.muted()" [attr.aria-label]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'" [title]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'">
                   <ion-icon [name]="calls.muted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
                 </ion-button>
+                <app-call-translation-panel />
                 @if (call.type === 'Video') {
                   <ion-button
                     mode="ios"

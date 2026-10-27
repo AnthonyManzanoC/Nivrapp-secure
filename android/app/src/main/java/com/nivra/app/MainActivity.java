@@ -17,6 +17,7 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(NivraNativePlugin.class);
         registerPlugin(NivraScreenSharePlugin.class);
         registerPlugin(LauncherAppearancePlugin.class);
+        registerPlugin(CallTranslationPlugin.class);
         super.onCreate(savedInstanceState);
         // Stable aliases keep the installation's selection through APK upgrades.
         // Appearance must never block auth, app links, notifications or sharing.

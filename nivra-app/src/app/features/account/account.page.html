@@ -1,14 +1,25 @@
 <ion-content fullscreen class="page">
-  <main class="surface">
-    <header class="page-head">
-      <div>
+  <main #accountSurface class="surface">
+    <header class="page-head account-head">
+      <div class="account-head-copy">
+        <span class="account-context-name">{{ profileTitle() }}</span>
         <h1>{{ 'ACCOUNT.TITLE' | translate:'Cuenta' }}</h1>
         <p>{{ 'ACCOUNT.PROFILE_HEADER_COPY' | translate:'Tu perfil, tu privacidad y tus dispositivos.' }}</p>
+        @if (hasProfileChanges() || saving || profileError) {
+          <button type="button" class="account-draft-jump" (click)="openAccountSectionById('account-profile')" aria-controls="account-profile">
+            @if (saving) { <ion-spinner name="crescent" aria-hidden="true" /> }
+            @else { <ion-icon [name]="profileError ? 'warning-outline' : 'create-outline'" aria-hidden="true" /> }
+            <span>{{ saving ? ('ACCOUNT.PROFILE_SAVING' | translate:'Guardando tu perfil…') : profileError ? ('ACCOUNT.REVIEW_PROFILE' | translate:'Revisar perfil') : ('ACCOUNT.PROFILE_PENDING' | translate:'Cambios sin guardar') }}</span>
+            <ion-icon name="chevron-forward-outline" aria-hidden="true" />
+          </button>
+        }
       </div>
       <ion-button mode="ios" fill="clear" (click)="reload()" [disabled]="profileLoading || saving" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">
         @if (profileLoading) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
       </ion-button>
     </header>
+
+    <app-account-navigation (openSection)="openAccountSectionById($event)" />
 
     <section class="grid">
       <div class="span-12"><app-account-switcher /></div>
@@ -38,7 +49,7 @@
           </button>
         </div>
       </section>
-      <details class="account-section panel span-7" open>
+      <details id="account-profile" class="account-section panel span-7" open>
         <summary>{{ 'ACCOUNT.PROFILE' | translate:'Perfil' }}</summary>
         <div class="account-section-body">
 
@@ -211,7 +222,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-5 appearance-panel">
+      <details id="account-appearance" class="account-section panel span-5 appearance-panel">
         <summary>{{ 'ACCOUNT.APPEARANCE' | translate:'Apariencia' }}</summary>
         <div class="account-section-body">
         <div class="appearance-heading">
@@ -248,7 +259,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-7 advanced-chat-panel">
+      <details id="account-chats" class="account-section panel span-7 advanced-chat-panel">
         <summary>{{ t('settings.chat.title', 'Ajustes de chats') }}</summary>
         <div class="account-section-body">
         <div class="settings-panel-head">
@@ -371,7 +382,7 @@
       </div>
       </details>
 
-      <details #lockSection class="account-section panel span-5 app-lock-panel" [class.enabled]="appLock.isEnabled()">
+      <details #lockSection id="account-lock" class="account-section panel span-5 app-lock-panel" [class.enabled]="appLock.isEnabled()">
         <summary>{{ 'ACCOUNT.SAFE_MODE' | translate:'Modo Seguro' }}</summary>
         <div class="account-section-body">
         <div class="app-lock-heading">
@@ -455,7 +466,7 @@
       </div>
       </details>
 
-      <details #privacySection class="account-section panel span-6">
+      <details #privacySection id="account-privacy" class="account-section panel span-6">
         <summary>{{ 'ACCOUNT.PRIVACY' | translate:'Privacidad' }}</summary>
         <div class="account-section-body">
 
@@ -572,16 +583,17 @@
         </div>
         <div class="toggles compact-toggles">
           <label class="toggle-row">
-            <span>{{ t('settings.data.savePrivate', 'Guardar chats privados en galeria') }}</span>
+            <span>{{ t('settings.data.galleryPrivateDownloads', 'Descargas de chats privados en galería') }}</span>
             <ion-toggle mode="ios" [checked]="appSettings.settings().savePrivateMedia" (ionChange)="setBooleanSetting('savePrivateMedia', $event.detail.checked)"></ion-toggle>
           </label>
           <label class="toggle-row">
-            <span>{{ t('settings.data.saveGroups', 'Guardar grupos en galeria') }}</span>
+            <span>{{ t('settings.data.galleryGroupDownloads', 'Descargas de grupos en galería') }}</span>
             <ion-toggle mode="ios" [checked]="appSettings.settings().saveGroupMedia" (ionChange)="setBooleanSetting('saveGroupMedia', $event.detail.checked)"></ion-toggle>
           </label>
 
 
         </div>
+        <p class="card-sub">{{ t('settings.data.galleryDownloadsHelp', 'Se aplica cuando descargas fotos o videos. Recibirlos no los guarda automáticamente en la galería.') }}</p>
         <div class="account-actions compact">
           <ion-button mode="ios" fill="outline" (click)="clearDraftsAndPreviews()" [disabled]="saving">
             <ion-icon slot="start" name="trash-outline"></ion-icon>
@@ -623,16 +635,7 @@
         <summary>{{ t('settings.diagnostics.title', 'Ayuda y depuracion') }}</summary>
         <div class="account-section-body">
 
-        <div class="toggles compact-toggles">
-          <label class="toggle-row">
-            <span>{{ t('settings.diagnostics.sendLogs', 'Enviar registros') }}</span>
-            <ion-toggle mode="ios" [checked]="appSettings.settings().diagnosticsSendLogs" (ionChange)="setBooleanSetting('diagnosticsSendLogs', $event.detail.checked)"></ion-toggle>
-          </label>
-          <label class="toggle-row">
-            <span>{{ t('settings.diagnostics.includeRecent', 'Incluir ultimos eventos locales') }}</span>
-            <ion-toggle mode="ios" [checked]="appSettings.settings().diagnosticsIncludeRecent" (ionChange)="setBooleanSetting('diagnosticsIncludeRecent', $event.detail.checked)"></ion-toggle>
-          </label>
-        </div>
+        <p class="card-sub">{{ t('settings.diagnostics.manualCopyHelp', 'El diagnóstico se prepara al pulsar Copiar diagnóstico. No se envían registros automáticamente ni se incluye el contenido de tus chats.') }}</p>
         <div class="account-actions compact">
           <ion-button mode="ios" fill="outline" (click)="copyDiagnostics()" [disabled]="saving">
             <ion-icon slot="start" name="copy-outline"></ion-icon>
@@ -645,7 +648,7 @@
       </div>
       </details>
 
-      <details #devicesSection class="account-section panel span-6 devices-panel">
+      <details #devicesSection id="account-devices" class="account-section panel span-6 devices-panel">
         <summary>{{ 'ACCOUNT.DEVICES' | translate:'Dispositivos' }}</summary>
         <div class="account-section-body">
         <p class="device-access-copy">{{ 'ACCOUNT.DEVICES_HELP' | translate:'Reconoce tus equipos. Revoca el acceso de los que ya no uses.' }}</p>

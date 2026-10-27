@@ -103,7 +103,10 @@ final class NivraNativePushRegistration {
         JSONObject prior = find(root.optJSONArray("accounts"), user, device);
         if (prior != null && api.equals(prior.optString("apiBaseUrl")) && refresh.equals(prior.optString("refreshToken")) && fingerprint.equals(prior.optString("clusterFingerprint"))) return prior;
         JSONObject value = new JSONObject().put("apiBaseUrl", api).put("userId", user).put("deviceId", device)
-            .put("refreshToken", refresh).put("clusterFingerprint", fingerprint).put("epoch", UUID.randomUUID().toString()).put("fcmReady", false);
+            .put("refreshToken", refresh).put("clusterFingerprint", fingerprint).put("epoch", UUID.randomUUID().toString()).put("fcmReady", false)
+            // Rotating credentials must not invalidate a still-ringing PendingIntent.
+            // Removing/re-adding this slot creates a different notification epoch.
+            .put("notificationEpoch", prior == null ? UUID.randomUUID().toString() : prior.optString("notificationEpoch", prior.optString("epoch")));
         String token = root.optString("routingToken", "");
         if (!token.isEmpty()) value.put("pendingToken", token);
         return value;
@@ -206,6 +209,14 @@ final class NivraNativePushRegistration {
 
     private static void removeScope(JSONObject root, String user, String device) throws Exception {
         root.put("accounts", without(root.optJSONArray("accounts"), user, device));
+        JSONObject markers = root.optJSONObject("callIntentMarkers");
+        if (markers != null) {
+            java.util.List<String> remove = new java.util.ArrayList<>();
+            java.util.Iterator<String> keys = markers.keys();
+            while (keys.hasNext()) { String key = keys.next(); JSONObject marker = markers.optJSONObject(key);
+                if (marker != null && user.equals(marker.optString("userId")) && device.equals(marker.optString("deviceId"))) remove.add(key); }
+            for (String key : remove) markers.remove(key);
+        }
         if (user.equals(root.optString("activeUserId")) && device.equals(root.optString("activeDeviceId"))) root.remove("activeUserId");
         JSONObject pending = root.optJSONObject("pendingIntent");
         if (pending != null && user.equals(pending.optString("recipientUserId")) && device.equals(pending.optString("recipientDeviceId"))) root.remove("pendingIntent");
@@ -218,8 +229,62 @@ final class NivraNativePushRegistration {
         write(context, root);
     }
     static synchronized JSONObject pendingIntent(Context context) { return registry(context).optJSONObject("pendingIntent"); }
-    static synchronized void clearPendingIntent(Context context) throws Exception {
-        JSONObject root = registry(context); root.remove("pendingIntent"); write(context, root);
+    static synchronized void clearPendingIntent(Context context, String expectedIntentId) throws Exception {
+        JSONObject root = registry(context);
+        JSONObject pending = root.optJSONObject("pendingIntent");
+        if (pending == null || !NivraNotificationIntentPolicy.sameIntent(pending.optString("nivraIntentId"), expectedIntentId)) return;
+        root.remove("pendingIntent"); write(context, root);
+    }
+
+    /** Bind a call PendingIntent to its exact recipient and command, not its exported entry activity. */
+    static synchronized boolean signCallIntent(Context context, Intent intent) {
+        String callId = intent.getStringExtra("callId");
+        if (callId == null || callId.isEmpty()) return true;
+        try {
+            JSONObject root = registry(context);
+            String user = intent.getStringExtra("recipientUserId"), device = intent.getStringExtra("recipientDeviceId");
+            JSONObject account = find(root.optJSONArray("accounts"), user, device);
+            if (account == null) return false;
+            String type = intent.getStringExtra("type");
+            boolean ringing = type == null || type.replace('_', '-').equalsIgnoreCase("incoming-call") || "incomingcall".equalsIgnoreCase(type);
+            long now = System.currentTimeMillis(), expiry = now + (ringing ? 75_000 : 86_400_000);
+            String declared = intent.getStringExtra("expiresAt");
+            if (ringing && declared != null && !declared.isEmpty()) expiry = Math.min(expiry, Long.parseLong(declared));
+            if (expiry <= now) return false;
+            JSONObject markers = root.optJSONObject("callIntentMarkers");
+            if (markers == null) markers = new JSONObject();
+            java.util.List<String> expired = new java.util.ArrayList<>();
+            java.util.Iterator<String> names = markers.keys();
+            while (names.hasNext()) { String name = names.next(); JSONObject prior = markers.optJSONObject(name);
+                if (prior == null || prior.optLong("expiresAt") <= now || find(root.optJSONArray("accounts"), prior.optString("userId"), prior.optString("deviceId")) == null) expired.add(name); }
+            for (String name : expired) markers.remove(name);
+            String key = NivraNotificationIntentPolicy.key(user, device, callId, intent.getAction() == null ? "" : intent.getAction(), intent.getStringExtra("action") == null ? "" : intent.getStringExtra("action"));
+            JSONObject marker = markers.optJSONObject(key);
+            String notificationEpoch = account.optString("notificationEpoch", account.optString("epoch"));
+            if (marker == null || !notificationEpoch.equals(marker.optString("epoch"))) {
+                if (markers.length() >= 96) return false;
+                marker = new JSONObject().put("token", java.util.UUID.randomUUID().toString()).put("expiresAt", expiry)
+                    .put("userId", user).put("deviceId", device).put("epoch", notificationEpoch);
+                markers.put(key, marker); root.put("callIntentMarkers", markers); write(context, root);
+            }
+            intent.putExtra("nivraCallIntentMarker", marker.getString("token"));
+            return true;
+        } catch (Exception unavailable) { return false; }
+    }
+
+    static synchronized boolean acceptsCallIntent(Context context, Intent intent) {
+        String callId = intent.getStringExtra("callId");
+        if (callId == null || callId.isEmpty()) return true;
+        try {
+            JSONObject root = registry(context);
+            String user = intent.getStringExtra("recipientUserId"), device = intent.getStringExtra("recipientDeviceId");
+            JSONObject account = find(root.optJSONArray("accounts"), user, device);
+            if (account == null) return false;
+            JSONObject markers = root.optJSONObject("callIntentMarkers");
+            String key = NivraNotificationIntentPolicy.key(user, device, callId, intent.getAction() == null ? "" : intent.getAction(), intent.getStringExtra("action") == null ? "" : intent.getStringExtra("action"));
+            JSONObject marker = markers == null ? null : markers.optJSONObject(key);
+            return marker != null && account.optString("notificationEpoch", account.optString("epoch")).equals(marker.optString("epoch")) && NivraNotificationIntentPolicy.validMarker(marker.optString("token"), intent.getStringExtra("nivraCallIntentMarker"), marker.optLong("expiresAt"), System.currentTimeMillis());
+        } catch (Exception unavailable) { return false; }
     }
 
     static boolean isScopeChange(String priorUserId, String priorDeviceId, String nextUserId, String nextDeviceId) {

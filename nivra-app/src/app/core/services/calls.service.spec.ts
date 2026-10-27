@@ -24,6 +24,14 @@ describe('call session isolation', () => {
     type: 'Voice', status: 'Ringing', startedAt: new Date().toISOString(),
   };
 
+  function peer(state: RTCPeerConnectionState = 'connected') {
+    const connection = { connectionState: state, iceConnectionState: state,
+      signalingState: 'stable', remoteDescription: null,
+      getReceivers: () => [], getSenders: () => [], close: jasmine.createSpy('close') };
+    return { connection, pendingIce: [], iceRestartAttempts: 0, disconnectTimer: null,
+      makingOffer: false, ignoreOffer: false, isSettingRemoteAnswerPending: false, negotiationQueued: false };
+  }
+
   beforeEach(() => {
     api = {
       post: jasmine.createSpy().and.returnValue(of(invitation)),
@@ -35,7 +43,7 @@ describe('call session isolation', () => {
       { provide: AuthService, useValue: { session: signal({ user: { id: 'me' }, device: { id: 'shared-device' } }) } },
       { provide: NivraApiService, useValue: api },
       { provide: Router, useValue: { navigateByUrl: jasmine.createSpy() } },
-      { provide: ChatService, useValue: { conversations: signal([]) } },
+      { provide: ChatService, useValue: { conversations: signal([]), participantDisplayName: (id: string) => id } },
       { provide: CryptoService, useValue: {} },
       { provide: LocalHistoryService, useValue: { accountKeysForUser: async () => [], calls: async () => [], putCalls: async () => undefined } },
       { provide: NativeDeviceService, useValue: {
@@ -56,6 +64,12 @@ describe('call session isolation', () => {
   });
 
   afterEach(() => service.ngOnDestroy());
+
+  it('shows transport failure instead of the old server Active status while retry is available', () => {
+    const call = { ...invitation, status: 'Active' };
+    service.activeCall.set(call); service.phase.set('failed');
+    expect(service.callStatusLabel(call)).toBe('Sin conexión');
+  });
 
   it('discards a delayed local call history instead of merging it into the next account', async () => {
     TestBed.flushEffects(); await Promise.resolve();
@@ -146,6 +160,234 @@ describe('call session isolation', () => {
     realtime.next({ type: 'reconnected', payload: null });
     expect(rooms).toHaveBeenCalledTimes(2);
     expect(state.calls.allArgs()).toEqual([[invitation.id], [invitation.id]]);
+  });
+
+  it('clears a late transport failure when the real peer connects without hanging up its media', fakeAsync(() => {
+    service.activeCall.set(invitation); service.phase.set('connecting');
+    spyOn(service, 'retryConnection').and.resolveTo();
+    (service as any).scheduleConnectionWatchdog(invitation.id);
+    tick(30_000); flushMicrotasks();
+    expect(service.phase()).toBe('failed'); expect(service.error()).toContain('No se pudo conectar');
+    const connected = peer(); (service as any).peers.set('peer', connected);
+    (service as any).reconcileHealthyConnection(invitation);
+    expect(service.phase()).toBe('connected'); expect(service.error()).toBe('');
+    expect(connected.connection.close).not.toHaveBeenCalled();
+  }));
+
+  it('keeps a camera-permission warning when healthy audio supersedes a connection warning', () => {
+    service.activeCall.set(invitation); service.phase.set('failed');
+    (service as any).setConnectionError('Transport failed');
+    service.error.set('Permite la cámara; el audio continúa.');
+    (service as any).peers.set('peer', peer());
+    (service as any).reconcileHealthyConnection(invitation);
+    expect(service.phase()).toBe('connected');
+    expect(service.error()).toBe('Permite la cámara; el audio continúa.');
+  });
+
+  it('checks a healthy transport before either watchdog retries or fails a stale connecting label', fakeAsync(() => {
+    service.activeCall.set(invitation); service.phase.set('connecting');
+    const reconnect = spyOn(service, 'retryConnection').and.resolveTo();
+    (service as any).peers.set('peer', peer());
+    (service as any).scheduleConnectionWatchdog(invitation.id);
+    tick(30_000); flushMicrotasks();
+    expect(reconnect).not.toHaveBeenCalled();
+    expect(service.phase()).toBe('connected'); expect(service.error()).toBe('');
+  }));
+
+  it('does not mistake a cached live video track for a connected transport', () => {
+    service.activeCall.set(invitation); service.phase.set('connecting');
+    const stream = document.createElement('canvas').captureStream();
+    service.remoteStreams.set({ peer: stream });
+    (service as any).peers.set('peer', peer('failed'));
+    (service as any).reconcileConnectedUi(invitation.id);
+    expect(service.phase()).toBe('connecting');
+  });
+
+  it('starts the connection deadline after slow answer preparation instead of timing out a permission prompt', fakeAsync(() => {
+    service.activeCall.set(invitation); service.phase.set('ringing');
+    let grant!: () => void;
+    spyOn<any>(service, 'prepareMedia').and.callFake(async () => {
+      await new Promise<void>(resolve => grant = resolve);
+      const stream = new MediaStream(); service.localStream.set(stream); return stream;
+    });
+    spyOn<any>(service, 'loadIceConfiguration').and.resolveTo();
+    spyOn<any>(service, 'broadcastControl').and.resolveTo();
+    spyOn<any>(service, 'sendCallSignal').and.resolveTo();
+    spyOn<any>(service, 'establishCallPeers').and.resolveTo();
+    spyOn<any>(service, 'flushPendingCallSignals').and.resolveTo();
+    spyOn<any>(service, 'scheduleConnectedUiReconcile');
+    const retry = spyOn(service, 'retryConnection').and.resolveTo();
+    void service.accept(); flushMicrotasks(); tick(31_000); flushMicrotasks();
+    expect(service.phase()).toBe('connecting'); expect(service.error()).toBe('');
+    expect(retry).not.toHaveBeenCalled();
+    grant(); flushMicrotasks();
+    tick(29_999); flushMicrotasks(); expect(service.phase()).toBe('connecting');
+    tick(1); flushMicrotasks(); expect(service.phase()).toBe('failed');
+  }));
+
+  it('coalesces forced ICE refreshes while credentials are already loading', async () => {
+    const response = new Subject<any>(); api.get.and.returnValue(response);
+    const first = (service as any).loadIceConfiguration();
+    expect((service as any).loadIceConfiguration(true)).toBe(first);
+    expect((service as any).loadIceConfiguration(true)).toBe(first);
+    expect(api.get).toHaveBeenCalledOnceWith('/calls/ice-config');
+    response.next({ iceServers: [{ urls: 'turn:relay.example.test', username: 'fresh', credential: 'key' }] }); response.complete();
+    await first;
+    expect((service as any).iceServers[0].username).toBe('fresh');
+  });
+
+  it('does not install ICE credentials returned for the previous account', async () => {
+    const previous = new Subject<any>(); const current = new Subject<any>();
+    api.get.and.returnValues(previous, current);
+    const oldRequest = (service as any).loadIceConfiguration();
+    (service as any).auth.session.set({ user: { id: 'other' }, device: { id: 'other-device' } });
+    const newRequest = (service as any).loadIceConfiguration();
+    previous.next({ iceServers: [{ urls: 'turn:old.example.test', username: 'old' }] }); previous.complete();
+    await oldRequest;
+    expect((service as any).iceServers.some((server: RTCIceServer) => server.username === 'old')).toBeFalse();
+    current.next({ iceServers: [{ urls: 'turn:new.example.test', username: 'new' }] }); current.complete();
+    await newRequest; expect((service as any).iceServers[0].username).toBe('new');
+  });
+
+  it('coalesces repeated accepted events during preparation into one peer negotiation', async () => {
+    service.activeCall.set(invitation); service.phase.set('connecting'); service.localStream.set(new MediaStream());
+    let finish!: () => void;
+    const ice = spyOn<any>(service, 'loadIceConfiguration').and.returnValue(new Promise<void>(resolve => finish = resolve));
+    const establish = spyOn<any>(service, 'establishAcceptedCallPeer').and.resolveTo();
+    spyOn<any>(service, 'scheduleConnectedUiReconcile');
+    const events = Array.from({ length: 10 }, (_, index) => (service as any).handleCallSignal({
+      callId: invitation.id, fromUserId: 'peer', signalId: `accepted-${index}`, signalType: 'accepted' }));
+    expect(ice).toHaveBeenCalledTimes(1); finish(); await Promise.all(events);
+    expect(establish).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not replace the pending offer again when acceptance is delivered more than once', async () => {
+    service.activeCall.set(invitation); service.phase.set('connecting'); service.localStream.set(new MediaStream());
+    const original = peer('connecting'); const negotiated = peer('connecting');
+    (service as any).peers.set('peer', original);
+    spyOn<any>(service, 'establishCallPeers').and.callFake(async () => (service as any).peers.set('peer', negotiated));
+    await (service as any).establishAcceptedCallPeer('peer');
+    await (service as any).establishAcceptedCallPeer('peer');
+    expect(original.connection.close).toHaveBeenCalledTimes(1);
+    expect(negotiated.connection.close).not.toHaveBeenCalled();
+    expect((service as any).peers.get('peer')).toBe(negotiated);
+  });
+
+  it('ignores acceptance recovery and exhausted-restart alarms once its peer is healthy', async () => {
+    service.activeCall.set(invitation); service.phase.set('connected');
+    const connected = peer(); connected.iceRestartAttempts = 3; (service as any).peers.set('peer', connected);
+    const ice = spyOn<any>(service, 'loadIceConfiguration');
+    await (service as any).handleCallSignal({ callId: invitation.id, fromUserId: 'peer', signalType: 'accepted' });
+    await (service as any).restartIceForPeer('peer');
+    expect(ice).not.toHaveBeenCalled(); expect(connected.connection.close).not.toHaveBeenCalled();
+    expect(service.phase()).toBe('connected'); expect(service.error()).toBe('');
+  });
+
+  it('keeps a peer that recovers while a manual retry is awaiting ICE credentials', async () => {
+    service.activeCall.set(invitation); service.phase.set('connecting'); service.localStream.set(new MediaStream());
+    let finish!: () => void;
+    spyOn<any>(service, 'loadIceConfiguration').and.returnValue(new Promise<void>(resolve => finish = resolve));
+    const restart = spyOn<any>(service, 'restartIceForPeer').and.resolveTo();
+    const retry = service.retryConnection();
+    const connected = peer(); (service as any).peers.set('peer', connected);
+    finish(); await retry;
+    expect(restart).not.toHaveBeenCalled(); expect(connected.connection.close).not.toHaveBeenCalled();
+    expect(service.phase()).toBe('connected'); expect(service.error()).toBe('');
+  });
+
+  it('does not apply an old retry failure or clear the next call recovery flag', async () => {
+    service.activeCall.set(invitation); service.phase.set('connecting'); service.localStream.set(new MediaStream());
+    let fail!: (reason: unknown) => void;
+    spyOn<any>(service, 'loadIceConfiguration').and.returnValue(new Promise<void>((_resolve, reject) => fail = reject));
+    const retry = service.retryConnection();
+    service.releaseLocalResources();
+    service.activeCall.set({ ...invitation, id: 'next-call' }); service.phase.set('connected');
+    service.error.set('Next camera notice'); (service as any).networkRecoveryInFlight = true;
+    fail(new Error('Old request failed')); await retry;
+    expect(service.phase()).toBe('connected'); expect(service.error()).toBe('Next camera notice');
+    expect((service as any).networkRecoveryInFlight).toBeTrue();
+  });
+
+  it('does not dismiss the new account call when an old claim later reports an ownership conflict', async () => {
+    TestBed.flushEffects();
+    const response = new Subject<CallSession>(); api.post.and.returnValue(response);
+    const capture = spyOn<any>(service, 'prepareMedia');
+    service.activeCall.set(invitation); service.phase.set('ringing');
+    const answer = service.accept();
+    (service as any).auth.session.set({ user: { id: 'other-account' }, device: { id: 'other-device' } });
+    TestBed.flushEffects();
+    const next = { ...invitation, id: 'new-account-call' };
+    service.activeCall.set(next); service.phase.set('ringing'); service.resumableCall.set(next);
+    response.error({ status: 409, error: { code: 'call_owned_elsewhere' } }); await answer;
+    expect(service.activeCall()).toBe(next); expect(service.resumableCall()).toBe(next);
+    expect(service.phase()).toBe('ringing'); expect(capture).not.toHaveBeenCalled();
+  });
+
+  it('coalesces cold answer lookup and preserves the ownership returned by its claim', async () => {
+    const response = new Subject<CallSession>(); api.get.and.returnValue(response);
+    const owner = { deviceId: 'shared-device', clientSessionId: (service as any).callSignalSessionId };
+    api.post.and.returnValue(of({ ...invitation, status: 'Active', participantSessions: { me: owner } }));
+    spyOn<any>(service, 'loadIceConfiguration').and.resolveTo();
+    spyOn<any>(service, 'prepareMedia').and.resolveTo(new MediaStream());
+    spyOn<any>(service, 'sendCallSignal').and.resolveTo();
+    spyOn<any>(service, 'establishCallPeers').and.resolveTo();
+    spyOn<any>(service, 'flushPendingCallSignals').and.resolveTo();
+    spyOn<any>(service, 'scheduleConnectedUiReconcile');
+    const first = service.rejoin(invitation.id, true);
+    expect(service.rejoin(invitation.id, true)).toBe(first);
+    response.next(invitation); response.complete(); await first;
+    expect(api.get).toHaveBeenCalledOnceWith('/calls/incoming'); expect(api.post).toHaveBeenCalledTimes(1);
+    expect(service.activeCall()?.participantSessions?.['me']).toEqual(owner);
+  });
+
+  it('ignores a queued connection callback from a peer replaced in the same call', () => {
+    service.activeCall.set(invitation); service.phase.set('connecting');
+    const old = (service as any).ensurePeerConnection('peer') as RTCPeerConnection;
+    const callback = old.onconnectionstatechange!;
+    (service as any).closePeerConnectionForUser('peer');
+    (service as any).peers.set('peer', peer('connecting'));
+    Object.defineProperty(old, 'connectionState', { get: () => 'connected' });
+    Object.defineProperty(old, 'iceConnectionState', { get: () => 'connected' });
+    callback.call(old, new Event('connectionstatechange'));
+    expect(service.phase()).toBe('connecting');
+  });
+
+  it('discards decrypted SDP that finishes after the same call is reopened', async () => {
+    service.activeCall.set(invitation); service.phase.set('connecting');
+    let finish!: (decoded: unknown) => void;
+    spyOn<any>(service, 'decodeCallSignalPayload').and.returnValue(new Promise(resolve => finish = resolve));
+    const ensure = spyOn<any>(service, 'ensurePeerConnection');
+    const pending = (service as any).handleWebRtcSignal({ callId: invitation.id, fromUserId: 'peer', signalType: 'offer' });
+    service.releaseLocalResources(); service.activeCall.set(invitation); service.phase.set('connected');
+    finish({ payload: { description: { type: 'offer', sdp: 'old' } } }); await pending;
+    expect(ensure).not.toHaveBeenCalled(); expect(service.phase()).toBe('connected');
+  });
+
+  it('opens the exact incoming notification as ringing without claiming or capturing media', async () => {
+    const capture = spyOn<any>(service, 'prepareMedia');
+    await service.handleNotificationCallAction({ action: 'open', callId: invitation.id,
+      recipientUserId: 'me', recipientDeviceId: 'shared-device' });
+    expect(api.get).toHaveBeenCalledOnceWith('/calls/incoming');
+    expect(service.activeCall()?.id).toBe(invitation.id); expect(service.phase()).toBe('ringing');
+    expect(api.post).not.toHaveBeenCalled(); expect(capture).not.toHaveBeenCalled();
+  });
+
+  it('does not accept a caller-self notification as an incoming call on its second installation', async () => {
+    api.get.and.returnValue(of({ ...invitation, initiatorUserId: 'me' }));
+    const capture = spyOn<any>(service, 'prepareMedia');
+    await service.handleNotificationCallAction({ action: 'answer', callId: invitation.id,
+      recipientUserId: 'me', recipientDeviceId: 'shared-device' });
+    expect(service.activeCall()).toBeNull(); expect(api.post).not.toHaveBeenCalled(); expect(capture).not.toHaveBeenCalled();
+  });
+
+  it('does not post signaling encrypted before an account transition', async () => {
+    service.activeCall.set(invitation);
+    let finish!: (ciphertext: string) => void;
+    spyOn<any>(service, 'encryptCallSignalForUser').and.returnValue(new Promise<string>(resolve => finish = resolve));
+    const sending = (service as any).sendCallSignal(invitation, 'peer', 'offer', { description: {} });
+    (service as any).auth.session.set({ user: { id: 'other-account' }, device: { id: 'other-device' } });
+    finish('synthetic-ciphertext'); await sending;
+    expect(api.post).not.toHaveBeenCalled();
   });
 
   it('ignores a native answer addressed to a different account before clearing or loading the call', async () => {

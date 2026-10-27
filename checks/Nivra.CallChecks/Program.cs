@@ -194,6 +194,75 @@ using (var rejectedClient = new HttpClient(rejectedDelivery))
 }
 Check(rejected, "recovery delivery failure is observed by the request instead of a volatile queue");
 Check(ClientCompatibility.RequiresCallProtocol("/calls/start", "POST") && !ClientCompatibility.RequiresCallProtocol("/calls/test/end", "POST"), "legacy clients cannot start calls but can hang up during rollout");
+
+var outboxCall = NewCall();
+db.Calls.Add(outboxCall);
+CallPushOutbox.Enqueue(db, outboxCall);
+CallPushOutbox.Enqueue(db, outboxCall);
+var jobs = db.CallPushOutbox.Local.ToArray();
+Check(jobs.Length == 2 && jobs.All(item => item.RecipientUserId != "alice"), "call creation queues each callee once and never queues the initiating account");
+Check(db.Entry(outboxCall).State == EntityState.Added && jobs.All(item => db.Entry(item).State == EntityState.Added), "call and durable wakeups participate in the same database SaveChanges transaction");
+var job = jobs.Single(item => item.RecipientUserId == "bob");
+var started = outboxCall.StartedAt;
+Check(job.ExpiresAt == started.AddSeconds(75), "retrying a wakeup cannot extend the original invitation lifetime");
+Check(CallPushOutbox.ShouldSend(outboxCall, job, started), "an unanswered callee receives a timely wakeup");
+Check(!CallPushOutbox.ShouldSend(null, job, started) && !CallPushOutbox.ShouldSend(outboxCall, job, job.ExpiresAt), "missing or expired invitations cannot trigger a delayed ring");
+outboxCall.Status = CallStatus.Failed;
+var failedDiscarded = !CallPushOutbox.ShouldSend(outboxCall, job, started);
+outboxCall.Status = CallStatus.Missed;
+Check(failedDiscarded && !CallPushOutbox.ShouldSend(outboxCall, job, started), "failed or missed calls cannot ring even if a legacy record lacks its ended timestamp");
+outboxCall.Status = CallStatus.Ringing;
+outboxCall.ParticipantSessions["bob"] = new("phone-b", "session-b");
+Check(!CallPushOutbox.ShouldSend(outboxCall, job, started), "an answer on any callee device suppresses queued ringing for that account");
+outboxCall.ParticipantSessions.Clear(); outboxCall.EndedAt = started.AddSeconds(1);
+Check(!CallPushOutbox.ShouldSend(outboxCall, job, started.AddSeconds(2)), "a call ended before dispatch cannot send its queued wakeup");
+outboxCall.EndedAt = null; outboxCall.ParticipantUserIds.Remove("bob");
+Check(!CallPushOutbox.ShouldSend(outboxCall, job, started), "a removed participant cannot receive queued call metadata");
+outboxCall.ParticipantUserIds.Add("bob");
+var ready = CallPushOutbox.Ready(started).Compile();
+Check(ready(job), "a new durable wakeup is immediately eligible");
+job.LeaseUntil = started.AddSeconds(20);
+Check(!ready(job), "another API instance cannot lease an in-flight delivery");
+job.LeaseUntil = started;
+Check(ready(job), "an expired lease permits recovery after an API process stops");
+job.CompletedAt = started;
+Check(!ready(job), "completed wakeups are never leased again");
+Check(!CallPushOutbox.ShouldSend(outboxCall, job, started), "an acknowledged invitation cannot ring again after the participant leaves a group");
+job.CompletedAt = null; job.NextAttemptAt = started.AddSeconds(2);
+Check(!ready(job), "transient failures respect their retry delay"); job.NextAttemptAt = started;
+Check(CallPushOutbox.RetryDelay(1) < CallPushOutbox.RetryDelay(3) && CallPushOutbox.RetryDelay(100) <= TimeSpan.FromSeconds(15), "wakeup retries use bounded exponential backoff");
+Check(CallPushOutbox.ShouldExpire(outboxCall, started.AddSeconds(75)) && !CallPushOutbox.ShouldExpire(outboxCall, started.AddSeconds(74)), "the server closes orphaned ringing only after its invitation deadline");
+Check(!CallPushOutbox.ShouldExpire(outboxCall, started.AddSeconds(90), isGroup: true), "a lone participant may keep a group call room open");
+outboxCall.ParticipantSessions["bob"] = new("phone-b", "session-b");
+Check(!CallPushOutbox.ShouldExpire(outboxCall, started.AddSeconds(90)), "an answer claim wins a race against the server ringing expiry");
+outboxCall.ParticipantSessions.Clear();
+var sends = 0;
+var sent = await CallPushOutbox.DispatchAsync(outboxCall, job, started, (expiry, token) => { sends++; Check(expiry == job.ExpiresAt, "dispatch preserves the original signed expiry"); return Task.FromResult(true); }, CancellationToken.None);
+Check(sent == CallPushDelivery.Sent && sends == 1, "durable dispatch records a successful provider result");
+var discarded = await CallPushOutbox.DispatchAsync(outboxCall, job, job.ExpiresAt, (_, _) => { sends++; return Task.FromResult(true); }, CancellationToken.None);
+Check(discarded == CallPushDelivery.Discard && sends == 1, "expired work is discarded before invoking any push provider");
+var bounded = await CallPushOutbox.DispatchAsync(outboxCall, job, started, async (_, token) => { await Task.Delay(Timeout.Infinite, token); return false; }, CancellationToken.None, TimeSpan.FromMilliseconds(20));
+Check(bounded == CallPushDelivery.Retry, "a stalled push provider times out for a later durable retry");
+using (var stopped = new CancellationTokenSource())
+{
+    stopped.Cancel(); var cancelled = false;
+    try { await CallPushOutbox.DispatchAsync(outboxCall, job, started, (_, token) => Task.FromCanceled<bool>(token), stopped.Token); }
+    catch (OperationCanceledException) { cancelled = true; }
+    Check(cancelled, "application shutdown cancellation leaves the durable lease available for recovery");
+}
+var outboxMapping = db.Model.FindEntityType(typeof(CallPushOutboxItem))!;
+Check(outboxMapping.FindPrimaryKey()!.Properties.Select(property => property.Name).SequenceEqual(new[] { "CallId", "RecipientUserId" }), "database uniqueness prevents duplicate per-account call wakeups");
+Check(outboxMapping.GetForeignKeys().All(key => key.DeleteBehavior == DeleteBehavior.Cascade), "deleting a call or account also removes its queued routing metadata");
+var readySql = db.CallPushOutbox.Where(CallPushOutbox.Ready(started)).ToQueryString();
+Check(readySql.Contains("LeaseUntil") && readySql.Contains("CompletedAt") && readySql.Contains("ExpiresAt"), "the actual PostgreSQL provider translates bounded lease eligibility");
+var ackSql = CallPushOutbox.PendingRecipient(db, "cal-fixture", "callee-fixture").ToQueryString();
+Check(ackSql.Contains("callee-fixture") && ackSql.Contains("cal-fixture") && ackSql.Contains("CompletedAt"), "answer acknowledgement is restricted to the exact call and callee account");
+Check(!db.Database.HasPendingModelChanges(), "the committed migration snapshot includes the complete call outbox and expiry index model");
+var latestMigration = db.Database.GetMigrations().Last();
+var outboxMigration = db.GetService<IMigrator>().GenerateScript("20261026060301_StoryMusicFragment", latestMigration);
+Check(outboxMigration.Contains("CREATE TABLE public.call_push_outbox") && outboxMigration.Contains("IX_calls_Status_StartedAt") && !outboxMigration.Contains("DROP TABLE") && !outboxMigration.Contains("DELETE FROM"), "the new migration adds queue and expiry index while preserving histories");
+Check(!new WebRtcOptions().HasConfiguredRelay, "STUN-only configuration cannot advertise a configured relay");
+Check(new WebRtcOptions { IceServers = [new() { Urls = ["turns:relay.example.test:443?transport=tcp"], Username = "fixture", Credential = "fixture" }] }.HasConfiguredRelay, "relay readiness exposes only whether authenticated TURN is configured");
 Console.WriteLine($"{checks} regression checks passed. Physical devices require separate validation.");
 
 sealed class ManualClock : TimeProvider

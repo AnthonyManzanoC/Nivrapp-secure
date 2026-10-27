@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, NgZone, OnDestroy, OnInit, effect, inject } from '@angular/core';
+import { Component, ElementRef, NgZone, OnDestroy, OnInit, ViewChild, effect, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { Subject, Subscription, from, of } from 'rxjs';
@@ -38,6 +38,7 @@ import { RecoveryEmailComponent, RecoveryEmailState } from '../../shared/recover
 import { LauncherAppearanceComponent } from '../../shared/launcher-appearance.component';
 import { AccountSwitcherComponent } from '../../shared/account-switcher.component';
 import { NIVRA_UPDATE_URL } from '../../core/release';
+import { AccountNavigationComponent, type AccountSectionId } from './account-navigation.component';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const PIN_LENGTH = 4;
@@ -51,11 +52,12 @@ interface ProfileDraft {
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent, AccountNavigationComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss', './account-security.scss'],
 })
 export class AccountPage implements OnInit, OnDestroy {
+  @ViewChild('accountSurface') private accountSurface?: ElementRef<HTMLElement>;
   readonly auth = inject(AuthService);
   readonly account = inject(AccountService);
   readonly appLock = inject(AppLockService);
@@ -493,7 +495,9 @@ export class AccountPage implements OnInit, OnDestroy {
       return;
     }
     await this.run(async () => {
-      await this.account.updatePrivacy(privacy);
+      // This form saves a complete snapshot. The API treats null as an omitted
+      // TTL patch and zero as explicitly disabling expiration.
+      await this.account.updatePrivacy({ ...privacy, defaultMessageTtlSeconds: privacy.defaultMessageTtlSeconds ?? 0 });
       this.notice = this.t('ACCOUNT.PRIVACY_UPDATED', 'Privacidad actualizada.');
     });
   }
@@ -1010,6 +1014,11 @@ export class AccountPage implements OnInit, OnDestroy {
     const current = this.auth.session();
     return !!current && device.userId === current.user.id && (device.id === current.device.id
       || (!!device.hardwareId && device.hardwareId === current.device.hardwareId));
+  }
+
+  openAccountSectionById(id: AccountSectionId): void {
+    const section = this.accountSurface?.nativeElement.querySelector<HTMLDetailsElement>(`details[id="${id}"]`);
+    if (section) this.openAccountSection(section);
   }
 
   openAccountSection(section: HTMLDetailsElement): void {

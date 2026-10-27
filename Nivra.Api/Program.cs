@@ -99,6 +99,7 @@ if (infrastructure.Enabled)
 builder.Services.AddSingleton<PushNotificationService>();
 builder.Services.AddSingleton<LiveKitTokenService>();
 builder.Services.AddHostedService<SessionCleanupService>();
+builder.Services.AddHostedService<CallPushOutboxWorker>();
 builder.Services.AddSignalR(options =>
 {
     options.MaximumReceiveMessageSize = 512 * 1024;
@@ -272,7 +273,7 @@ app.MapGet("/client/android-release", (HttpContext context) =>
     var release = AndroidReleaseService.Read(app.Environment.ContentRootPath);
     return release is null ? Results.StatusCode(503) : Results.Ok(release);
 });
-app.MapGet("/health/ready", async (NivraDbContext db, PushNotificationService push, EncryptedFileStorage storage, HttpContext context, CancellationToken cancellationToken) =>
+app.MapGet("/health/ready", async (NivraDbContext db, PushNotificationService push, EncryptedFileStorage storage, Microsoft.Extensions.Options.IOptions<WebRtcOptions> webRtc, HttpContext context, CancellationToken cancellationToken) =>
 {
     context.Response.Headers.CacheControl = "no-store";
     var ready = await db.Database.CanConnectAsync(cancellationToken);
@@ -294,7 +295,7 @@ app.MapGet("/health/ready", async (NivraDbContext db, PushNotificationService pu
         durableSigningKeyReady = infrastructure.DurableSigningKey,
         pushProjectConfigured = infrastructure.PushProjectConfigured,
         push = new { fcm = fcmReady, webPush = webPushReady },
-        pushFcmReady = fcmReady, pushWebReady = webPushReady },
+        pushFcmReady = fcmReady, pushWebReady = webPushReady, webrtcRelayConfigured = webRtc.Value.HasConfiguredRelay },
         statusCode: ready ? StatusCodes.Status200OK : StatusCodes.Status503ServiceUnavailable);
 });
 app.MapHub<NivraHub>("/hubs/realtime");

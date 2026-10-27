@@ -31,6 +31,7 @@ interface PeerState {
   isSettingRemoteAnswerPending: boolean;
   negotiationQueued: boolean;
   negotiationPending?: boolean;
+  acceptanceHandled?: boolean;
 }
 
 interface DecodedCallSignalPayload {
@@ -143,13 +144,20 @@ export class CallsService implements OnDestroy {
   private iceServers: RTCIceServer[] = DEFAULT_ICE_SERVERS;
   private iceTransportPolicy: RTCIceTransportPolicy = 'all';
   private iceConfigPromise: Promise<void> | null = null;
+  private iceConfigInFlight = false;
+  private iceConfigScope = '';
   private iceConfigLoadedAt = 0;
   private signalPollTimer: number | null = null;
   private signalPollInFlight = false;
   private readonly processedSignalIds = new Set<string>();
   private connectionRecoveryTimer: number | null = null;
   private connectionFailureTimer: number | null = null;
+  private connectionWatchdogGeneration = 0;
   private networkRecoveryInFlight = false;
+  private callGeneration = 0;
+  private connectionError = '';
+  private readonly acceptedPeerInFlight = new Map<string, Promise<void>>();
+  private rejoinInFlight: { key: string; promise: Promise<void> } | null = null;
   private groupMigrationCallId: string | null = null;
   private groupMigrationPromise: Promise<void> | null = null;
   private readonly groupRoomRevisions = new Map<string, number>();
@@ -442,10 +450,13 @@ export class CallsService implements OnDestroy {
     if (!call || this.callActionInFlight || this.phase() !== 'ringing') {
       return;
     }
+    const isCurrent = this.currentCallGuard(call);
     this.callActionInFlight = true;
+    this.clearRingTimeout();
+    this.stopRingingTone();
     try {
       this.error.set('');
-      if (!await this.claimCall(call) || this.activeCall()?.id !== call.id) { return; }
+      if (!await this.claimCall(call) || !isCurrent()) { return; }
       this.setConnectingPhase();
       this.clearRingTimeout();
       void this.nativeDevice.clearIncomingCall(call.id);
@@ -453,25 +464,30 @@ export class CallsService implements OnDestroy {
         await this.connectLiveKitRoom(call);
         return;
       }
-      await this.loadIceConfiguration();
-      if (this.activeCall()?.id !== call.id) { return; }
-      await this.prepareMedia(call.type === 'Video');
-      if (this.activeCall()?.id !== call.id) { this.stopLocalMedia(); return; }
+      await Promise.all([this.loadIceConfiguration(), this.prepareMedia(call.type === 'Video')]);
+      if (!isCurrent()) return;
+      this.clearConnectionWatchdog();
+      this.setConnectingPhase();
       await this.broadcastControl('camera', this.cameraOff() ? 'off' : 'on');
+      if (!isCurrent()) return;
       await Promise.all(this.otherParticipantIds(call).map((userId) =>
         this.sendCallSignal(call, userId, 'accepted', { accepted: true }).catch(() => undefined)));
+      if (!isCurrent()) return;
       await this.establishCallPeers();
+      if (!isCurrent()) return;
       await this.flushPendingCallSignals();
+      if (!isCurrent()) return;
       this.scheduleConnectedUiReconcile(call.id);
     } catch (error) {
-      if (this.activeCall()?.id === call.id) {
+      if (isCurrent()) {
+        if (this.reconcileHealthyConnection(call)) return;
         this.phase.set('failed');
         this.stopRingingTone();
         this.clearRingTimeout();
         this.error.set(error instanceof Error ? error.message : 'No se pudo contestar. Revisa el permiso del micrófono y vuelve a intentar.');
       }
     } finally {
-      this.callActionInFlight = false;
+      if (isCurrent()) this.callActionInFlight = false;
     }
   }
 
@@ -556,21 +572,34 @@ export class CallsService implements OnDestroy {
     }
   }
 
-  async rejoin(callId: string): Promise<void> {
+  rejoin(callId: string, incomingOnly = false): Promise<void> {
+    const key = JSON.stringify([this.callAccountScope(), this.callGeneration, callId, incomingOnly]);
+    if (this.rejoinInFlight?.key === key) return this.rejoinInFlight.promise;
+    const promise = this.rejoinCore(callId, incomingOnly).finally(() => {
+      if (this.rejoinInFlight?.promise === promise) this.rejoinInFlight = null;
+    });
+    this.rejoinInFlight = { key, promise };
+    return promise;
+  }
+
+  private async rejoinCore(callId: string, incomingOnly: boolean): Promise<void> {
     if (!callId || this.activeCall()) {
       return;
     }
     const session = this.auth.session();
     if (!session) return;
-    const isCurrent = () => this.auth.session()?.user.id === session.user.id && this.auth.session()?.device.id === session.device.id;
+    const scope = this.callAccountScope();
+    const generation = this.callGeneration;
+    const isCurrent = () => this.callAccountScope() === scope && this.callGeneration === generation;
     const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`));
     if (!isCurrent() || this.activeCall()) return;
+    if (incomingOnly && (call.initiatorUserId === session.user.id || !call.participantUserIds?.includes(session.user.id))) return;
     if (call.status === 'Ended' || call.endedAt) {
       this.addHistory(call);
       return;
     }
-    const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? null, this.isGroupCall(call));
-    if (!await this.claimCall(normalized) || !isCurrent()) { return; }
+    let normalized = this.withGroupRoomMetadata(call, call.conversationId ?? null, this.isGroupCall(call));
+    if (!await this.claimCall(normalized, claimed => normalized = { ...normalized, ...claimed }) || !isCurrent()) { return; }
     this.dismissedCallIds.delete(callId);
     if (this.isGroupCall(normalized)) {
       this.rememberGroupRoom(normalized);
@@ -812,12 +841,15 @@ export class CallsService implements OnDestroy {
     if (!call || this.phase() === 'ringing' || this.networkRecoveryInFlight) {
       return;
     }
+    if (this.reconcileHealthyConnection(call)) return;
+    const isCurrent = this.currentCallGuard(call);
     if (this.isGroupCall(call)) {
       this.setConnectingPhase();
       this.error.set('');
       await this.connectLiveKitRoom(call, true).catch((error) => {
+        if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
         this.phase.set('failed');
-        this.error.set(error instanceof Error ? error.message : 'No se pudo reconectar la sala.');
+        this.setConnectionError(error instanceof Error ? error.message : 'No se pudo reconectar la sala.');
       });
       return;
     }
@@ -827,13 +859,21 @@ export class CallsService implements OnDestroy {
     this.setConnectingPhase();
     try {
       await this.loadIceConfiguration(true);
+      if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
       if (!this.localStream()) {
         await this.prepareMedia(call.type === 'Video');
       }
+      if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
+      this.clearConnectionWatchdog();
+      this.setConnectingPhase();
       await Promise.all(this.otherParticipantIds(call).map((userId) =>
         this.sendCallSignal(call, userId, 'accepted', { accepted: true, recovery: true }).catch(() => undefined)));
+      if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
       await this.establishCallPeers();
+      if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
       for (const [userId, peer] of this.peers.entries()) {
+        if (!isCurrent()) return;
+        if (this.peerConnectionLooksConnected(peer.connection)) continue;
         peer.iceRestartAttempts = 0;
         peer.connection.setConfiguration({
           // setConfiguration replaces the configuration; omitted values use
@@ -846,12 +886,14 @@ export class CallsService implements OnDestroy {
         await this.restartIceForPeer(userId, this.shouldCreateOfferTo(userId));
       }
       await this.pollPersistedSignals(call.id);
+      if (!isCurrent()) return;
       this.scheduleConnectedUiReconcile(call.id);
     } catch (error) {
+      if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
       this.phase.set('failed');
-      this.error.set(error instanceof Error ? error.message : 'No se pudo reintentar la conexion.');
+      this.setConnectionError(error instanceof Error ? error.message : 'No se pudo reintentar la conexion.');
     } finally {
-      this.networkRecoveryInFlight = false;
+      if (isCurrent()) this.networkRecoveryInFlight = false;
     }
   }
 
@@ -1687,6 +1729,7 @@ export class CallsService implements OnDestroy {
 
   callStatusLabel(call: CallSession | null | undefined): string {
     const phase = this.phase();
+    if (phase === 'failed' && call?.id === this.activeCall()?.id) return 'Sin conexión';
     if (phase === 'calling') {
       return 'Llamando';
     }
@@ -1826,17 +1869,25 @@ export class CallsService implements OnDestroy {
     this.addHistory({ ...call, status: 'Active' });
   }
 
-  private async claimCall(call: CallSession): Promise<boolean> {
+  private async claimCall(call: CallSession, onClaimed?: (claimed: CallSession) => void): Promise<boolean> {
+    const scope = this.callAccountScope();
+    const generation = this.callGeneration;
+    const previousCallId = this.activeCall()?.id;
+    const isCurrent = () => this.callAccountScope() === scope && generation === this.callGeneration
+      && this.activeCall()?.id === previousCallId;
     try {
       const claimed = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/claim`, {
         clientSessionId: this.callSignalSessionId,
       }));
+      if (!isCurrent()) return false;
+      onClaimed?.(claimed);
       if (this.activeCall()?.id === call.id) {
         this.activeCall.set({ ...call, ...claimed });
       }
       this.resumableCall.set(null);
       return true;
     } catch (error) {
+      if (!isCurrent()) return false;
       if ((error as { status?: number }).status === 409) {
         this.dismissCallLocally(call);
         const code = (error as { error?: { code?: string } }).error?.code;
@@ -1877,6 +1928,11 @@ export class CallsService implements OnDestroy {
     }
   }
 
+  /** Push routing adopts the exact saved account before dispatching this action. */
+  handleNotificationCallAction(event: NativeCallActionEvent): Promise<void> {
+    return this.handleNativeCallAction(event);
+  }
+
   private async handleNativeCallAction(event: NativeCallActionEvent): Promise<void> {
     const action = event.action;
     const callId = event.callId || '';
@@ -1887,14 +1943,21 @@ export class CallsService implements OnDestroy {
     const session = this.auth.session();
     if (!session || (event.recipientUserId && event.recipientUserId !== session.user.id) ||
         (event.recipientDeviceId && event.recipientDeviceId !== session.device.id)) return;
-    const isCurrent = () => this.auth.session()?.user.id === session.user.id && this.auth.session()?.device.id === session.device.id;
+    const scope = this.callAccountScope();
+    const generation = this.callGeneration;
+    const isCurrent = () => this.callAccountScope() === scope && generation === this.callGeneration;
     await this.nativeDevice.clearIncomingCall(callId).catch(() => undefined);
     if (!isCurrent()) return;
     if (action === 'open') {
       await this.router.navigateByUrl('/app/calls');
       if (!isCurrent()) return;
-      const userId = this.auth.session()?.user.id;
-      if (userId) await this.restoreCallRecoveryHint(userId);
+      if (this.activeCall()) return;
+      const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`)).catch(() => null);
+      if (!isCurrent() || this.activeCall() || !call || call.initiatorUserId === session.user.id
+        || !call.participantUserIds?.includes(session.user.id) || call.endedAt
+        || ['Ended', 'Rejected', 'Cancelled', 'Canceled', 'Missed', 'Busy', 'Failed'].includes(call.status)) return;
+      if (this.ownedElsewhere(call)) this.resumableCall.set(call);
+      else await this.receiveIncoming(call);
       return;
     }
     if (action === 'answer') {
@@ -1904,7 +1967,7 @@ export class CallsService implements OnDestroy {
         await this.accept();
         return;
       }
-      await this.rejoin(callId).catch((error) => {
+      await this.rejoin(callId, true).catch((error) => {
         if (isCurrent()) this.error.set(error instanceof Error ? error.message : 'No se pudo contestar la llamada.');
       });
       return;
@@ -2103,11 +2166,17 @@ export class CallsService implements OnDestroy {
   }
 
   private loadIceConfiguration(force = false): Promise<void> {
-    if (force || (this.iceConfigLoadedAt && Date.now() - this.iceConfigLoadedAt >= ICE_CONFIG_MAX_AGE_MS)) {
+    const scope = this.callAccountScope();
+    if (this.iceConfigScope === scope && this.iceConfigInFlight && this.iceConfigPromise) return this.iceConfigPromise;
+    if (this.iceConfigScope !== scope || force || (this.iceConfigLoadedAt && Date.now() - this.iceConfigLoadedAt >= ICE_CONFIG_MAX_AGE_MS)) {
       this.iceConfigPromise = null;
     }
-    this.iceConfigPromise ??= firstValueFrom(this.api.get<WebRtcIceConfigResponse>('/calls/ice-config'))
+    if (this.iceConfigPromise) return this.iceConfigPromise;
+    this.iceConfigScope = scope;
+    this.iceConfigInFlight = true;
+    const operation = firstValueFrom(this.api.get<WebRtcIceConfigResponse>('/calls/ice-config'))
       .then((response) => {
+        if (this.callAccountScope() !== scope || this.iceConfigPromise !== operation) return;
         const servers = (response?.iceServers ?? [])
           .map((server): RTCIceServer | null => {
             const urls = (Array.isArray(server.urls) ? server.urls : [server.urls])
@@ -2130,14 +2199,21 @@ export class CallsService implements OnDestroy {
         this.iceConfigLoadedAt = Date.now();
       })
       .catch(() => {
+        if (this.callAccountScope() !== scope || this.iceConfigPromise !== operation) return;
         this.iceServers = DEFAULT_ICE_SERVERS;
         this.iceTransportPolicy = 'all';
         this.iceConfigLoadedAt = Date.now();
+      }).finally(() => {
+        if (this.iceConfigPromise === operation) this.iceConfigInFlight = false;
       });
+    this.iceConfigPromise = operation;
     return this.iceConfigPromise;
   }
 
   private async handleCallSignal(signal: CallSignalEvent): Promise<void> {
+    const scope = this.callAccountScope();
+    const generation = this.callGeneration;
+    const isCurrent = () => this.callAccountScope() === scope && generation === this.callGeneration;
     if ((signal.targetDeviceId && signal.targetDeviceId !== this.currentDeviceId()) ||
         (signal.targetClientSessionId && signal.targetClientSessionId !== this.callSignalSessionId)) { return; }
     if (this.dismissedCallIds.has(signal.callId)) { return; }
@@ -2145,8 +2221,10 @@ export class CallsService implements OnDestroy {
     if (signal.fromClientSessionId && expectedSender && expectedSender.clientSessionId !== signal.fromClientSessionId) {
       // A late SDP packet from the previous owner must not rebuild its peer.
       const latest = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(signal.callId)}`)).catch(() => null);
+      if (!isCurrent()) return;
       if (!latest || latest.participantSessions?.[signal.fromUserId]?.clientSessionId !== signal.fromClientSessionId) { return; }
       await this.applyActiveCallUpdate(latest);
+      if (!isCurrent()) return;
     }
     const call = this.activeCall();
     const signalType = (signal.signalType || '').toLowerCase();
@@ -2190,14 +2268,7 @@ export class CallsService implements OnDestroy {
         this.pendingSignals.push(signal);
         return;
       }
-      this.setConnectingPhase();
-      this.clearRingTimeout();
-      await this.loadIceConfiguration(true);
-      if (!this.localStream()) {
-        await this.prepareMedia(call.type === 'Video');
-      }
-      await this.establishAcceptedCallPeer(signal.fromUserId);
-      this.scheduleConnectedUiReconcile(call.id);
+      await this.handleAcceptedCallPeer(call, signal.fromUserId);
       return;
     }
 
@@ -2299,12 +2370,43 @@ export class CallsService implements OnDestroy {
 
   private async establishAcceptedCallPeer(userId: string): Promise<void> {
     const peer = this.peers.get(userId);
-    if (this.shouldCreateOfferTo(userId) && peer?.connection && !peer.connection.remoteDescription) {
-      peer.connection.close();
-      this.peers.delete(userId);
-      this.removeRemoteStream(userId);
+    if (this.shouldCreateOfferTo(userId) && peer?.connection && !peer.acceptanceHandled && !peer.connection.remoteDescription) {
+      this.closePeerConnectionForUser(userId);
     }
     await this.establishCallPeers(userId);
+    const accepted = this.peers.get(userId);
+    if (accepted) accepted.acceptanceHandled = true;
+  }
+
+  private handleAcceptedCallPeer(call: CallSession, userId: string): Promise<void> {
+    const isCurrent = this.currentCallGuard(call);
+    const peer = this.peers.get(userId);
+    if (peer && this.peerConnectionLooksConnected(peer.connection)) {
+      this.reconcileHealthyConnection(call);
+      return Promise.resolve();
+    }
+    const key = JSON.stringify([this.callAccountScope(), this.callGeneration, call.id, userId]);
+    const pending = this.acceptedPeerInFlight.get(key);
+    if (pending) return pending;
+    const operation = (async () => {
+      this.setConnectingPhase();
+      this.clearRingTimeout();
+      await this.loadIceConfiguration();
+      if (!isCurrent()) return;
+      if (!this.localStream()) await this.prepareMedia(call.type === 'Video');
+      if (!isCurrent()) return;
+      if (this.reconcileHealthyConnection(call)) return;
+      await this.establishAcceptedCallPeer(userId);
+      if (isCurrent()) this.scheduleConnectedUiReconcile(call.id);
+    })().catch(error => {
+      if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
+      this.phase.set('failed');
+      this.error.set(error instanceof Error ? error.message : 'No se pudo preparar la llamada. Vuelve a intentar.');
+    }).finally(() => {
+      if (this.acceptedPeerInFlight.get(key) === operation) this.acceptedPeerInFlight.delete(key);
+    });
+    this.acceptedPeerInFlight.set(key, operation);
+    return operation;
   }
 
   private ensurePeerConnection(userId: string): RTCPeerConnection | null {
@@ -2322,6 +2424,9 @@ export class CallsService implements OnDestroy {
       iceTransportPolicy: this.iceTransportPolicy,
       iceCandidatePoolSize: 4,
     });
+    const call = this.activeCall();
+    const callCurrent = call ? this.currentCallGuard(call) : () => false;
+    const peerCurrent = () => callCurrent() && this.peers.get(userId)?.connection === connection;
     this.peers.set(userId, {
       connection,
       pendingIce: [],
@@ -2338,6 +2443,7 @@ export class CallsService implements OnDestroy {
     this.games.transport.attachDirect(userId, connection, this.shouldCreateOfferTo(userId));
 
     connection.onicecandidate = (event) => {
+      if (!peerCurrent()) return;
       if (event.candidate) {
         const call = this.activeCall();
         if (call) {
@@ -2346,6 +2452,7 @@ export class CallsService implements OnDestroy {
       }
     };
     connection.onicecandidateerror = (event) => {
+      if (!peerCurrent()) return;
       const error = event as RTCPeerConnectionIceErrorEvent;
       this.updateRemoteCallState(userId, 'iceError', {
         code: error.errorCode,
@@ -2354,6 +2461,7 @@ export class CallsService implements OnDestroy {
       });
     };
     connection.onsignalingstatechange = () => {
+      if (!peerCurrent()) return;
       if (connection.signalingState === 'stable') this.publishRemoteStreamIfConnected(userId, connection);
       const peer = this.peers.get(userId);
       if (connection.signalingState === 'stable' && peer?.negotiationPending) {
@@ -2361,10 +2469,11 @@ export class CallsService implements OnDestroy {
       }
     };
     connection.onnegotiationneeded = () => {
+      if (!peerCurrent()) return;
       this.queuePeerNegotiation(userId, connection);
     };
     connection.ontrack = (event) => {
-      if (this.peers.get(userId)?.connection !== connection) { return; }
+      if (!peerCurrent()) return;
       const stream = this.pendingRemoteStreams.get(userId) || this.remoteStreams()[userId] || new MediaStream();
       const incomingTracks = [event.track, ...(event.streams ?? []).flatMap(incoming => incoming.getTracks())];
       for (const track of incomingTracks) {
@@ -2373,8 +2482,9 @@ export class CallsService implements OnDestroy {
         }
       }
       this.pendingRemoteStreams.set(userId, stream);
-      event.track.onunmute = () => this.publishRemoteStreamIfConnected(userId, connection);
+      event.track.onunmute = () => { if (peerCurrent()) this.publishRemoteStreamIfConnected(userId, connection); };
       event.track.onended = () => {
+        if (!peerCurrent()) return;
         stream.removeTrack(event.track);
         if (!this.streamHasLiveTracks(stream)) {
           this.removeRemoteStream(userId);
@@ -2385,7 +2495,8 @@ export class CallsService implements OnDestroy {
       this.publishRemoteStreamIfConnected(userId, connection);
     };
     connection.onconnectionstatechange = () => {
-      if (connection.connectionState === 'connected') {
+      if (!peerCurrent()) return;
+      if (connection.connectionState === 'connected' && this.peerConnectionLooksConnected(connection)) {
         this.resetPeerRecovery(userId);
         void this.tuneOutgoingSenders(connection);
         this.setConnectedPhase();
@@ -2399,6 +2510,7 @@ export class CallsService implements OnDestroy {
       }
     };
     connection.oniceconnectionstatechange = () => {
+      if (!peerCurrent()) return;
       this.handlePeerIceState(userId, connection);
     };
 
@@ -2417,6 +2529,8 @@ export class CallsService implements OnDestroy {
     if (!call || !connection || !peer || connection.signalingState !== 'stable' || peer.makingOffer) {
       return;
     }
+    const callCurrent = this.currentCallGuard(call);
+    const isCurrent = () => callCurrent() && this.peers.get(userId) === peer;
     peer.makingOffer = true;
     try {
       // Unified Plan uses transceiver directions. The legacy
@@ -2429,10 +2543,11 @@ export class CallsService implements OnDestroy {
       const offer = await connection.createOffer({
         iceRestart,
       });
-      if (connection.signalingState !== 'stable') {
+      if (!isCurrent() || connection.signalingState !== 'stable') {
         return;
       }
       await connection.setLocalDescription(offer);
+      if (!isCurrent()) return;
       await this.sendCallSignal(call, userId, 'offer', { description: connection.localDescription });
     } finally {
       peer.makingOffer = false;
@@ -2515,6 +2630,7 @@ export class CallsService implements OnDestroy {
   }
 
   private handlePeerIceState(userId: string, connection: RTCPeerConnection): void {
+    if (this.peers.get(userId)?.connection !== connection) return;
     const state = connection.iceConnectionState;
     if (state === 'connected' || state === 'completed') {
       this.resetPeerRecovery(userId);
@@ -2528,7 +2644,7 @@ export class CallsService implements OnDestroy {
       }
       peer.disconnectTimer = window.setTimeout(() => {
         peer.disconnectTimer = null;
-        if (connection.iceConnectionState === 'disconnected') {
+        if (this.peers.get(userId) === peer && connection.iceConnectionState === 'disconnected') {
           void this.restartIceForPeer(userId);
         }
       }, 4_000);
@@ -2548,15 +2664,20 @@ export class CallsService implements OnDestroy {
     if (!call || !peer || peer.connection.connectionState === 'closed') {
       return;
     }
+    if (this.peerConnectionLooksConnected(peer.connection)) {
+      this.reconcileHealthyConnection(call);
+      return;
+    }
     this.clearPeerDisconnectTimer(peer);
     if (peer.iceRestartAttempts >= MAX_ICE_RESTART_ATTEMPTS) {
       this.removeRemoteStream(userId);
-      this.error.set('No se pudo recuperar la conexión de la llamada. Revisa tu red y toca Reintentar.');
+      this.setConnectionError('No se pudo recuperar la conexión de la llamada. Revisa tu red y toca Reintentar.');
       return;
     }
     peer.iceRestartAttempts += 1;
     if (this.phase() === 'connected' && this.remoteEntries().length <= 1) {
       this.phase.set('connecting');
+      this.scheduleConnectionWatchdog(call.id);
     }
 
     if ((forceOffer || this.shouldCreateOfferTo(userId)) && peer.connection.signalingState === 'stable') {
@@ -2585,21 +2706,26 @@ export class CallsService implements OnDestroy {
   }
 
   private async handleWebRtcSignal(signal: CallSignalEvent): Promise<void> {
+    const call = this.activeCall();
+    if (!call || signal.callId !== call.id) return;
+    const callCurrent = this.currentCallGuard(call);
     const signalType = (signal.signalType || '').toLowerCase();
     const payload = (await this.decodeCallSignalPayload(signal))?.payload as { description?: RTCSessionDescriptionInit; candidate?: RTCIceCandidateInit } | undefined;
-    if (!signal.fromUserId || !payload) {
+    if (!callCurrent() || !signal.fromUserId || !payload) {
       return;
     }
-    const call = this.activeCall();
     await this.loadIceConfiguration();
+    if (!callCurrent()) return;
     if (!this.localStream() && call) {
       await this.prepareMedia(call.type === 'Video');
     }
+    if (!callCurrent()) return;
     const connection = this.ensurePeerConnection(signal.fromUserId);
     const peer = this.peers.get(signal.fromUserId);
     if (!connection || !peer || !call) {
       return;
     }
+    const isCurrent = () => callCurrent() && this.peers.get(signal.fromUserId) === peer;
 
     if (signalType === 'offer' && payload.description) {
       const readyForOffer = !peer.makingOffer &&
@@ -2611,11 +2737,16 @@ export class CallsService implements OnDestroy {
       }
       if (offerCollision) {
         await connection.setLocalDescription({ type: 'rollback' } as RTCSessionDescriptionInit).catch(() => undefined);
+        if (!isCurrent()) return;
       }
       await this.setRemoteDescriptionAndFlush(signal.fromUserId, connection, payload.description);
+      if (!isCurrent()) return;
       const answer = await connection.createAnswer();
+      if (!isCurrent()) return;
       await connection.setLocalDescription(answer);
+      if (!isCurrent()) return;
       await this.sendCallSignal(call, signal.fromUserId, 'answer', { description: connection.localDescription });
+      if (!isCurrent()) return;
       this.setConnectingPhase();
       this.clearRingTimeout();
       this.scheduleConnectedUiReconcile(call.id);
@@ -2628,6 +2759,7 @@ export class CallsService implements OnDestroy {
       try {
         if (connection.signalingState !== 'stable') {
           await this.setRemoteDescriptionAndFlush(signal.fromUserId, connection, payload.description);
+          if (!isCurrent()) return;
           this.setConnectingPhase();
           this.clearRingTimeout();
           this.scheduleConnectedUiReconcile(call.id);
@@ -2643,7 +2775,7 @@ export class CallsService implements OnDestroy {
         return;
       }
       await this.addOrQueueRemoteIceCandidate(signal.fromUserId, payload.candidate);
-      this.scheduleConnectedUiReconcile(call.id);
+      if (isCurrent()) this.scheduleConnectedUiReconcile(call.id);
     }
   }
 
@@ -2658,6 +2790,7 @@ export class CallsService implements OnDestroy {
     description: RTCSessionDescriptionInit,
   ): Promise<void> {
     await connection.setRemoteDescription(new RTCSessionDescription(description));
+    if (this.peers.get(userId)?.connection !== connection) return;
     this.publishRemoteStreamIfConnected(userId, connection);
     await this.flushPeerIce(userId);
   }
@@ -2717,10 +2850,12 @@ export class CallsService implements OnDestroy {
     if (this.signalPollInFlight || this.activeCall()?.id !== callId) {
       return;
     }
+    const call = this.activeCall()!;
+    const isCurrent = this.currentCallGuard(call);
     this.signalPollInFlight = true;
     try {
       const state = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`));
-      if (this.activeCall()?.id !== callId) { return; }
+      if (!isCurrent()) return;
       if (state.endedAt || state.status === 'Ended') {
         this.forgetGroupRoom(state);
         this.cleanup({ remember: false });
@@ -2729,12 +2864,13 @@ export class CallsService implements OnDestroy {
       }
       if (this.ownedElsewhere(state)) { this.dismissCallLocally(state); return; }
       await this.applyActiveCallUpdate(state);
+      if (!isCurrent()) return;
       if (this.phase() === 'ringing') { return; }
       const signals = await firstValueFrom(
         this.api.get<CallSignalEvent[]>(`/calls/${encodeURIComponent(callId)}/signals?clientSessionId=${encodeURIComponent(this.callSignalSessionId)}`),
       );
       for (const signal of signals ?? []) {
-        if (this.activeCall()?.id !== callId) {
+        if (!isCurrent()) {
           break;
         }
         await this.handleCallSignal({
@@ -2745,7 +2881,7 @@ export class CallsService implements OnDestroy {
     } catch {
       // SignalR remains the fast path. Polling retries while the call is active.
     } finally {
-      this.signalPollInFlight = false;
+      if (isCurrent()) this.signalPollInFlight = false;
     }
   }
 
@@ -2768,6 +2904,11 @@ export class CallsService implements OnDestroy {
     if (!call?.id || !targetUserId || targetUserId === this.currentUserId()) {
       return Promise.resolve(null);
     }
+    const scope = this.callAccountScope();
+    const generation = this.callGeneration;
+    const isCurrent = () => scope === this.callAccountScope() && generation === this.callGeneration
+      && (signalType === 'left' || this.activeCall()?.id === call.id);
+    if (!isCurrent()) return null;
     const targetDeviceId = this.groupCrypto.isMediaKeySignal(signalType) ? call.participantSessions?.[targetUserId]?.deviceId : undefined;
     if (this.groupCrypto.isMediaKeySignal(signalType) && !targetDeviceId) throw new Error('El participante aún no confirmó su sesión.');
     const payloadCiphertext = await this.encryptCallSignalForUser(targetUserId, {
@@ -2777,6 +2918,7 @@ export class CallsService implements OnDestroy {
       sourceDeviceId: this.currentDeviceId(),
       sourceSessionId: this.callSignalSessionId,
     }, targetDeviceId);
+    if (!isCurrent()) return null;
     return firstValueFrom(this.api.post(`/calls/${encodeURIComponent(call.id)}/signal`, {
       targetUserId,
       signalType,
@@ -3134,10 +3276,9 @@ export class CallsService implements OnDestroy {
   }
 
   private setConnectingPhase(): void {
-    if (this.phase() !== 'connected') {
-      this.phase.set('connecting');
-      this.startRingingTone('connecting');
-    }
+    if (this.phase() === 'connected') return;
+    this.phase.set('connecting');
+    this.startRingingTone('connecting');
     this.scheduleConnectionWatchdog(this.activeCall()?.id);
   }
 
@@ -3152,28 +3293,62 @@ export class CallsService implements OnDestroy {
     this.clearConnectionWatchdog();
     this.clearRingTimeout();
     this.stopRingingTone();
+    if (this.connectionError && this.error() === this.connectionError) this.error.set('');
+    this.connectionError = '';
+  }
+
+  private setConnectionError(message: string): void {
+    this.connectionError = message;
+    this.error.set(message);
+  }
+
+  private reconcileHealthyConnection(call: CallSession): boolean {
+    if (this.activeCall()?.id !== call.id) return false;
+    const healthy = this.isGroupCall(call) ? this.liveKitRoom?.state === 'connected'
+      : this.otherParticipantIds(call).length > 0 && this.otherParticipantIds(call).every(userId => {
+        const peer = this.peers.get(userId);
+        return Boolean(peer && this.peerConnectionLooksConnected(peer.connection));
+      });
+    if (!healthy) return false;
+    this.setConnectedPhase();
+    return true;
   }
 
   private scheduleConnectionWatchdog(callId: string | null | undefined): void {
     if (!callId || this.connectionRecoveryTimer !== null || this.connectionFailureTimer !== null) {
       return;
     }
+    const call = this.activeCall();
+    if (!call || call.id !== callId) return;
+    const isCurrent = this.currentCallGuard(call);
+    const watchdogGeneration = this.connectionWatchdogGeneration;
     this.connectionRecoveryTimer = window.setTimeout(() => {
+      if (watchdogGeneration !== this.connectionWatchdogGeneration) return;
       this.connectionRecoveryTimer = null;
-      if (this.activeCall()?.id === callId && this.phase() === 'connecting') {
+      if (isCurrent() && this.phase() === 'connecting' && !this.callActionInFlight
+          && !this.mediaPreparation && !this.acceptedPeerInFlight.size) {
+        if (this.reconcileHealthyConnection(call)) return;
         void this.retryConnection();
       }
     }, CONNECTION_RECOVERY_DELAY_MS);
     this.connectionFailureTimer = window.setTimeout(() => {
+      if (watchdogGeneration !== this.connectionWatchdogGeneration) return;
       this.connectionFailureTimer = null;
-      if (this.activeCall()?.id === callId && this.phase() === 'connecting') {
+      if (isCurrent() && this.phase() === 'connecting') {
+        if (this.reconcileHealthyConnection(call)) return;
+        if (this.callActionInFlight || this.mediaPreparation || this.networkRecoveryInFlight || this.acceptedPeerInFlight.size) {
+          this.clearConnectionWatchdog();
+          this.scheduleConnectionWatchdog(callId);
+          return;
+        }
         this.phase.set('failed');
-        this.error.set('No se pudo conectar la llamada. Toca Reintentar o prueba con otra red.');
+        this.setConnectionError('No se pudo conectar la llamada. Toca Reintentar o prueba con otra red.');
       }
     }, CONNECTION_FAILURE_DELAY_MS);
   }
 
   private clearConnectionWatchdog(): void {
+    this.connectionWatchdogGeneration += 1;
     if (this.connectionRecoveryTimer !== null) {
       window.clearTimeout(this.connectionRecoveryTimer);
       this.connectionRecoveryTimer = null;
@@ -3188,9 +3363,12 @@ export class CallsService implements OnDestroy {
     if (!callId) {
       return;
     }
+    const call = this.activeCall();
+    if (!call || call.id !== callId) return;
+    const isCurrent = this.currentCallGuard(call);
     this.clearConnectedUiReconcileTimers();
     [0, 80, 220, 600, 1200, 2400].forEach((delay) => {
-      const timer = window.setTimeout(() => this.reconcileConnectedUi(callId), delay);
+      const timer = window.setTimeout(() => { if (isCurrent()) this.reconcileConnectedUi(callId); }, delay);
       this.connectedUiReconcileTimers.push(timer);
     });
   }
@@ -3200,19 +3378,17 @@ export class CallsService implements OnDestroy {
     if (!call || call.id !== callId) {
       return;
     }
-    let connected = Object.values(this.remoteStreams()).some((stream) => this.streamHasLiveTracks(stream));
     for (const [userId, peer] of this.peers.entries()) {
       if (this.peerConnectionLooksConnected(peer.connection)) {
         this.publishRemoteStreamIfConnected(userId, peer.connection);
-        connected = true;
       }
     }
-    if (connected) {
-      this.setConnectedPhase();
-    }
+    this.reconcileHealthyConnection(call);
   }
 
   private peerConnectionLooksConnected(connection: RTCPeerConnection): boolean {
+    if (['disconnected', 'failed', 'closed'].includes(connection.connectionState)
+      || ['disconnected', 'failed', 'closed'].includes(connection.iceConnectionState)) return false;
     return connection.connectionState === 'connected'
       || connection.iceConnectionState === 'connected'
       || connection.iceConnectionState === 'completed';
@@ -3267,6 +3443,12 @@ export class CallsService implements OnDestroy {
   }
 
   private cleanup(options: { remember?: boolean; historyStatus?: string; preserveNativeCall?: boolean } = {}): void {
+    this.callGeneration += 1;
+    this.callActionInFlight = false;
+    this.networkRecoveryInFlight = false;
+    this.rejoinInFlight = null;
+    this.acceptedPeerInFlight.clear();
+    this.connectionError = '';
     const call = this.activeCall();
     if (call?.id) {
       void this.nativeDevice.clearIncomingCall(call.id);
@@ -3564,6 +3746,13 @@ export class CallsService implements OnDestroy {
   private callAccountScope(): string {
     const session = this.auth.session();
     return JSON.stringify([session?.user.id ?? '', session?.device?.id ?? '', this.auth.sessionGeneration?.() ?? 0]);
+  }
+
+  private currentCallGuard(call: CallSession): () => boolean {
+    const scope = this.callAccountScope();
+    const generation = this.callGeneration;
+    return () => this.callAccountScope() === scope && generation === this.callGeneration
+      && this.activeCall()?.id === call.id;
   }
 
   private async localAccountKeys(): Promise<string[]> {

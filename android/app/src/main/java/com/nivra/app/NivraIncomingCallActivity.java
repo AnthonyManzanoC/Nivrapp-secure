@@ -134,7 +134,13 @@ public class NivraIncomingCallActivity extends Activity {
         java.util.Map<String, String> scope = new java.util.HashMap<>();
         scope.put("recipientUserId", recipientUserId); scope.put("recipientDeviceId", recipientDeviceId);
         if (!NivraNativePushRegistration.accepts(this, scope)) { finish(); return; }
-        if (!NivraNativePushRegistration.isActive(this, scope)) { routeCallAction(NivraNativePlugin.ACTION_CALL_OPEN); return; }
+        if (!NivraNativePushRegistration.acceptsCallIntent(this, intent)) { finish(); return; }
+        if (!NivraNativePushRegistration.isActive(this, scope)) {
+            String command = intent.getAction();
+            if (NivraNativePlugin.ACTION_CALL_ANSWER.equals(command) || NivraNativePlugin.ACTION_CALL_REJECT.equals(command)) routeCallAction(command);
+            else finish(); // A full-screen reception must never switch accounts.
+            return;
+        }
         expiryHandler.removeCallbacksAndMessages(null);
         long remaining = 75_000;
         try { remaining = Long.parseLong(stringExtra(intent, "expiresAt", String.valueOf(System.currentTimeMillis() + remaining))) - System.currentTimeMillis(); }
@@ -178,10 +184,10 @@ public class NivraIncomingCallActivity extends Activity {
         java.util.Map<String, String> scope = new java.util.HashMap<>();
         scope.put("recipientUserId", recipientUserId); scope.put("recipientDeviceId", recipientDeviceId);
         if (!NivraNativePushRegistration.accepts(this, scope)) { finish(); return; }
-        if (!NivraNativePushRegistration.isActive(this, scope)) action = NivraNativePlugin.ACTION_CALL_OPEN;
         Intent launch = new Intent(this, MainActivity.class);
         launch.setAction(action);
         copyExtras(getIntent(), launch);
+        if (!NivraNativePushRegistration.signCallIntent(this, launch)) { finish(); return; }
         launch.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
         startActivity(launch);
         finish();

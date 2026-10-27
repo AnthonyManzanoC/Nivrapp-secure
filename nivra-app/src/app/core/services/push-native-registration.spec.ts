@@ -19,7 +19,7 @@ describe('saved account push registration and routing', () => {
   let credentials: ReturnType<typeof signal<any[]>>; let generation: ReturnType<typeof signal<number>>;
   let native: jasmine.SpyObj<NativeDeviceService>; let switchAccount: jasmine.Spy;
   let api: { baseUrl: string; get: jasmine.Spy; post: jasmine.Spy };
-  let calls: { activeCall: jasmine.Spy; resumableCall: jasmine.Spy };
+  let calls: { activeCall: jasmine.Spy; resumableCall: jasmine.Spy; handleNotificationCallAction: jasmine.Spy };
   const account = (id = 'alice', refreshToken = 'refresh-a') => ({
     user: { id, alias: id }, device: { id: `phone-${id}` }, tokens: { accessToken: 'access', refreshToken },
   });
@@ -40,7 +40,7 @@ describe('saved account push registration and routing', () => {
       if (!saved) return false;
       session.set(saved); generation.update(value => value + 1); return true;
     });
-    calls = { activeCall: jasmine.createSpy().and.returnValue(null), resumableCall: jasmine.createSpy().and.returnValue(null) };
+    calls = { activeCall: jasmine.createSpy().and.returnValue(null), resumableCall: jasmine.createSpy().and.returnValue(null), handleNotificationCallAction: jasmine.createSpy().and.resolveTo() };
     TestBed.configureTestingModule({ providers: [
       PushService, { provide: AuthService, useValue: { session, sessionGeneration: generation,
         savedAccounts: computed(() => credentials().map(item => ({ id: item.user.id }))),
@@ -99,11 +99,56 @@ describe('saved account push registration and routing', () => {
     expect(visual.title).toBe('Nivra'); expect(visual.body).toBe('Llamada en tu otra cuenta');
   });
 
-  it('switches to the exact saved recipient on tap and strips inactive call answer actions', async () => {
+  it('adopts the exact callee and native registry before preserving its explicit answer action', async () => {
     credentials.set([account(), account('bob')]); session.set(account('bob'));
-    await (service as any).handlePushData({ type: 'incoming_call', recipientUserId: 'alice', recipientDeviceId: 'phone-alice', nivraRouteIntent: 'tap', action: 'accept' }, 'native-action');
+    const order: string[] = [];
+    native.syncPushRegistrations.and.callFake(async (_accounts, scope) => { if (scope?.userId === 'alice') order.push('native-alice'); });
+    calls.handleNotificationCallAction.and.callFake(async () => { order.push('answer'); });
+    await (service as any).handlePushData({ type: 'incoming_call', callId: 'incoming-alice', recipientUserId: 'alice', recipientDeviceId: 'phone-alice', nivraRouteIntent: 'tap', action: 'accept' }, 'native-action');
     expect(switchAccount).toHaveBeenCalledOnceWith('alice', 'phone-alice');
-    expect(service.lastMessage()?.data?.['nivraRouteIntent']).toBe('tap'); expect(service.lastMessage()?.data?.['action']).toBeUndefined();
+    expect(service.lastMessage()?.data?.['nivraRouteIntent']).toBe('tap'); expect(service.lastMessage()?.data?.['action']).toBe('accept');
+    expect(calls.handleNotificationCallAction).toHaveBeenCalledOnceWith(jasmine.objectContaining({ action: 'answer', callId: 'incoming-alice', recipientUserId: 'alice', recipientDeviceId: 'phone-alice' }));
+    expect(order.indexOf('native-alice')).toBeLessThan(order.indexOf('answer'));
+  });
+
+  it('deduplicates concurrent live and durable native deliveries of the same explicit action', async () => {
+    credentials.set([account(), account('bob')]); session.set(account('bob'));
+    const tap = { type: 'incoming_call', callId: 'call-alice', recipientUserId: 'alice', recipientDeviceId: 'phone-alice', action: 'accept', nivraIntentId: 'native-intent-one' };
+    await Promise.all([(service as any).handlePushData(tap, 'native-action'), (service as any).handlePushData(tap, 'native-action')]);
+    expect(switchAccount).toHaveBeenCalledTimes(1); expect(calls.handleNotificationCallAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('allows the same notification tap to retry after session refresh was temporarily unavailable', async () => {
+    credentials.set([account()]); session.set(account());
+    const fresh = spyOn(TestBed.inject(AuthService), 'ensureFreshSession').and.resolveTo(false);
+    const tap = { type: 'incoming_call', callId: 'call-alice', recipientUserId: 'alice', recipientDeviceId: 'phone-alice', action: 'accept', nivraIntentId: 'retry-this-intent' };
+    await (service as any).handlePushData(tap, 'native-action'); expect(calls.handleNotificationCallAction).not.toHaveBeenCalled();
+    fresh.and.resolveTo(true);
+    await (service as any).handlePushData(tap, 'native-action'); expect(calls.handleNotificationCallAction).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not mistake an outgoing mirror on the caller account for a second incoming call', async () => {
+    credentials.set([account(), account('bob')]); session.set(account('bob'));
+    const toast = spyOn<any>(service, 'showForegroundToast').and.resolveTo();
+    await (service as any).handlePushData({ type: 'incoming_call', callId: 'call-one', callerUserId: 'alice', recipientUserId: 'alice', recipientDeviceId: 'phone-alice' }, 'native-fcm');
+    await (service as any).handlePushData({ type: 'incoming_call', callId: 'call-one', callerUserId: 'alice', recipientUserId: 'alice', recipientDeviceId: 'phone-alice', action: 'accept' }, 'native-action');
+    expect(toast).not.toHaveBeenCalled(); expect(switchAccount).not.toHaveBeenCalled(); expect(calls.handleNotificationCallAction).not.toHaveBeenCalled();
+  });
+
+  it('allows the callee account to answer when the caller account only has a recovery hint elsewhere', async () => {
+    credentials.set([account(), account('bob')]); session.set(account('bob')); calls.resumableCall.and.returnValue({ id: 'outgoing-on-laptop' });
+    await (service as any).handlePushData({ type: 'incoming_call', callId: 'incoming-alice', recipientUserId: 'alice', recipientDeviceId: 'phone-alice', action: 'decline' }, 'native-action');
+    expect(switchAccount).toHaveBeenCalledOnceWith('alice', 'phone-alice');
+    expect(calls.handleNotificationCallAction).toHaveBeenCalledOnceWith(jasmine.objectContaining({ action: 'reject', callId: 'incoming-alice' }));
+  });
+
+  it('discards a queued action if account generation changes while native adoption is pending', async () => {
+    credentials.set([account(), account('bob')]); session.set(account());
+    let release!: () => void; native.syncPushRegistrations.and.returnValue(new Promise<void>(resolve => release = resolve));
+    const tap = (service as any).handlePushData({ type: 'incoming_call', callId: 'call-one', recipientUserId: 'alice', recipientDeviceId: 'phone-alice', action: 'accept' }, 'native-action');
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    session.set(account('bob')); generation.update(value => value + 1); release(); await tap;
+    expect(calls.handleNotificationCallAction).not.toHaveBeenCalled(); expect(service.lastMessage()).toBeNull();
   });
 
   it('does not interrupt an existing call to open the inactive account', async () => {
@@ -137,11 +182,12 @@ describe('saved account push registration and routing', () => {
     };
     Object.defineProperty(window, 'Notification', { value: FakeNotification, configurable: true, writable: true });
     spyOn(window, 'focus');
+    const delivery = spyOn<any>(service, 'handlePushData').and.callThrough();
     try {
       await (service as any).handlePushData({ type: 'message', messageId: 'm-a', recipientUserId: 'alice', recipientDeviceId: 'phone-alice', conversationId: 'chat-a' }, 'desktop-inactive');
       expect(notices.length).toBe(1); expect(notices[0].title).toBe('Nivra'); expect(notices[0].options.body).toBe('Nueva actividad en tu otra cuenta');
       expect(switchAccount).not.toHaveBeenCalled(); expect(service.lastMessage()).toBeNull();
-      notices[0].onclick(); for (let index = 0; index < 12; index++) await Promise.resolve();
+      notices[0].onclick(); await delivery.calls.mostRecent().returnValue;
       expect(switchAccount).toHaveBeenCalledOnceWith('alice', 'phone-alice'); expect(service.lastMessage()?.data?.['nivraRouteIntent']).toBe('tap');
     } finally { Object.defineProperty(window, 'Notification', { value: original, configurable: true, writable: true }); }
   });

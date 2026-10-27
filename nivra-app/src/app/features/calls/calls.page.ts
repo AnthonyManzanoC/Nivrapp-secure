@@ -37,6 +37,7 @@ import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { MediaStreamDirective } from '../../shared/media-stream.directive';
 import { CallGamePanelComponent } from '../../shared/call-game-panel.component';
+import { CallTranslationPanelComponent } from '../../shared/call-translation-panel.component';
 
 type CallIdentityProfile = {
   userId?: string | null;
@@ -58,7 +59,7 @@ interface VideoTile {
 @Component({
   selector: 'app-calls',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent],
+  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent, CallTranslationPanelComponent],
   templateUrl: './calls.page.html',
   styleUrls: ['./calls.page.scss'],
 })

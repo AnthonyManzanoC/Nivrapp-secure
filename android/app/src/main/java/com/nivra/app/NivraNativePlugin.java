@@ -257,7 +257,7 @@ public class NivraNativePlugin extends Plugin {
 
     @PluginMethod
     public void clearPendingPushIntent(PluginCall call) {
-        try { NivraNativePushRegistration.clearPendingIntent(getContext()); call.resolve(); }
+        try { NivraNativePushRegistration.clearPendingIntent(getContext(), call.getString("intentId", "")); call.resolve(); }
         catch (Exception error) { call.reject("No se pudo confirmar el aviso abierto.", error); }
     }
 
@@ -887,6 +887,7 @@ public class NivraNativePlugin extends Plugin {
             return;
         }
         if (!NivraNativePushRegistration.isActive(context, data)) return;
+        if (NivraNotificationIntentPolicy.callerEcho(data.get("recipientUserId"), data.get("callerUserId"))) return;
         String callId = firstNonBlank(data.get("callId"), data.get("tag"), "nivra-call");
         int notificationId = notificationId(callId);
         ensureCallChannel(context);
@@ -895,6 +896,7 @@ public class NivraNativePlugin extends Plugin {
         PendingIntent openIntent = activityIntent(context, ACTION_CALL_OPEN, data, notificationId);
         PendingIntent answerIntent = activityIntent(context, ACTION_CALL_ANSWER, data, notificationId);
         PendingIntent rejectIntent = activityIntent(context, ACTION_CALL_REJECT, data, notificationId);
+        if (openIntent == null || answerIntent == null || rejectIntent == null) return;
         String callerName = firstNonBlank(data.get("callerName"), data.get("title"), "Nivra");
         String callType = firstNonBlank(data.get("callType"), "Voice", "Voice");
         boolean video = "Video".equalsIgnoreCase(callType);
@@ -910,7 +912,7 @@ public class NivraNativePlugin extends Plugin {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setAutoCancel(false)
-            .setOnlyAlertOnce(false)
+            .setOnlyAlertOnce(true)
             .setSound(RingtoneManager.getDefaultUri(RingtoneManager.TYPE_RINGTONE))
             .setVibrate(new long[] { 320, 140, 320, 140, 480 })
             .setTimeoutAfter(remainingIncomingRingTime(data))
@@ -971,7 +973,8 @@ public class NivraNativePlugin extends Plugin {
         scope.put("recipientUserId", intent.getStringExtra("recipientUserId"));
         scope.put("recipientDeviceId", intent.getStringExtra("recipientDeviceId"));
         if (!NivraNativePushRegistration.accepts(context, scope)) return false;
-        boolean active = NivraNativePushRegistration.isActive(context, scope);
+        if (!NivraNativePushRegistration.acceptsCallIntent(context, intent)) return false;
+        if (hasCallId(intent) && NivraNotificationIntentPolicy.callerEcho(scope.get("recipientUserId"), intent.getStringExtra("callerUserId"))) return false;
         String mappedAction = "";
         if (ACTION_CALL_ANSWER.equals(action)) {
             mappedAction = "answer";
@@ -987,32 +990,26 @@ public class NivraNativePlugin extends Plugin {
                 mappedAction = "open";
             }
         }
-        if (!active && !mappedAction.isEmpty()) mappedAction = "open";
         JSObject route = new JSObject();
         // Only routing metadata is durable; caller/message text is never copied
         // into another account's pending navigation record.
-        for (String key : new String[] { "type", "callId", "callType", "conversationId", "messageId", "tag", "recipientUserId", "recipientDeviceId", "google.message_id", "expiresAt" }) {
+        for (String key : new String[] { "type", "callId", "callerUserId", "callType", "conversationId", "messageId", "tag", "recipientUserId", "recipientDeviceId", "google.message_id", "expiresAt" }) {
             String value = intent.getStringExtra(key); if (value != null) route.put(key, value);
         }
         route.put("nivraRouteIntent", "tap");
-        route.put("action", active && "answer".equals(mappedAction) ? "accept" : active && "reject".equals(mappedAction) ? "decline" : "tap");
+        route.put("action", "answer".equals(mappedAction) ? "accept" : "reject".equals(mappedAction) ? "decline" : "tap");
+        String intentId = intent.getStringExtra("nivraIntentId");
+        if (intentId == null || intentId.isEmpty()) { intentId = java.util.UUID.randomUUID().toString(); intent.putExtra("nivraIntentId", intentId); }
+        route.put("nivraIntentId", intentId);
         try { NivraNativePushRegistration.savePendingIntent(context, route); }
         catch (Exception error) { return false; }
         NivraNativePlugin plugin = activePlugin.get();
-        if (plugin != null && ("com.nivra.app.OPEN_PUSH".equals(action) || !active)) {
+        if (plugin != null) {
             JSObject event = new JSObject(); event.put("data", route); plugin.notifyListeners("nativePushIntent", event, true);
         }
-        if (mappedAction.isEmpty() || !active) return true;
-        JSObject payload = callPayload(intent, mappedAction);
-        if (plugin != null && plugin.hasListeners("nativeCallAction")) {
-            plugin.notifyListeners("nativeCallAction", payload, false);
-            return true;
-        } else {
-            synchronized (pendingCallActions) {
-                pendingCallActions.add(payload);
-            }
-        }
-        return false;
+        // A single durable path adopts the exact account before JS executes
+        // answer/reject. Do not also emit nativeCallAction for the same tap.
+        return true;
     }
 
     public static boolean handleShareIntent(Context context, Intent intent) {
@@ -1538,6 +1535,7 @@ public class NivraNativePlugin extends Plugin {
         intent.setAction(action);
         intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NEW_TASK);
         putCallExtras(intent, data, notificationId);
+        if (!NivraNativePushRegistration.signCallIntent(context, intent)) return null;
         return PendingIntent.getActivity(
             context,
             notificationId + action.hashCode(),

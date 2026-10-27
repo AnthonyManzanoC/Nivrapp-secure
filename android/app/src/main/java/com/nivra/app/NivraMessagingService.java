@@ -50,6 +50,10 @@ public class NivraMessagingService extends MessagingService {
 
     private void handleCurrentMessage(RemoteMessage remoteMessage, Map<String, String> data) {
 
+        String receivedType = normalizeType(data.get("type"));
+        if ((receivedType.equals("incoming-call") || receivedType.equals("incomingcall")) &&
+            NivraNotificationIntentPolicy.callerEcho(data.get("recipientUserId"), firstNonBlank(data.get("callerUserId"), data.get("initiatorUserId"), data.get("callerId"), ""))) return;
+
         if (isForceWipeEvent(data)) {
             try {
                 NivraNativePushRegistration.retireForWipe(this, data);
@@ -95,14 +99,15 @@ public class NivraMessagingService extends MessagingService {
 
         String callId = stringValue(data, "callId");
         String tag = firstNonBlank(stringValue(data, "tag"), callId, stringValue(data, "messageId"), "nivra-event");
-        // Another saved account has a generic alert with a scoped tap. It never
-        // exposes call actions or opens a full-screen activity on receipt.
-        boolean incomingCall = (type.equals("incoming-call") || type.equals("incomingcall")) && NivraNativePushRegistration.isActive(this, data);
+        // The other saved account keeps a private generic call alert. Its
+        // explicit actions adopt the account in JS; receipt never opens a UI.
+        boolean incomingCall = type.equals("incoming-call") || type.equals("incomingcall");
         boolean missedCall = type.equals("missed-call");
         boolean isCall = incomingCall || missedCall || type.contains("call");
         int id = notificationId(isCall && !callId.isEmpty() ? callId : tag);
 
         PendingIntent openIntent = openIntent(remoteMessage, data, "tap", id);
+        if (openIntent == null) return;
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, incomingCall ? CHANNEL_CALLS : CHANNEL_MESSAGES)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Nivra")
@@ -110,7 +115,7 @@ public class NivraMessagingService extends MessagingService {
             .setContentIntent(openIntent)
             .setAutoCancel(!incomingCall)
             .setOngoing(incomingCall)
-            .setOnlyAlertOnce(!incomingCall)
+            .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPriority(incomingCall ? NotificationCompat.PRIORITY_MAX : NotificationCompat.PRIORITY_HIGH)
             .setCategory(incomingCall ? NotificationCompat.CATEGORY_CALL : NotificationCompat.CATEGORY_MESSAGE);
@@ -118,9 +123,9 @@ public class NivraMessagingService extends MessagingService {
         if (incomingCall) {
             builder
                 .setVibrate(new long[] { 320, 140, 320, 140, 480 })
-                .setTimeoutAfter(75000)
+                .setTimeoutAfter(remainingRingTime(data))
                 .addAction(android.R.drawable.ic_menu_call, "Contestar", openIntent(remoteMessage, data, "accept", id))
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Rechazar", declineIntent(data, callId, id));
+                .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Rechazar", openIntent(remoteMessage, data, "decline", id));
         }
 
         NotificationManagerCompat.from(this).notify(scopeTag(data), id, builder.build());
@@ -137,12 +142,20 @@ public class NivraMessagingService extends MessagingService {
         intent.putExtra("action", action);
         intent.putExtra("nivraRouteIntent", "tap");
         intent.putExtra("google.message_id", firstNonBlank(remoteMessage.getMessageId(), stringValue(data, "tag"), String.valueOf(notificationId), "nivra-event"));
+        if (!NivraNativePushRegistration.signCallIntent(this, intent)) return null;
         return PendingIntent.getActivity(
             this,
             notificationId + action.hashCode(),
             intent,
             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE
         );
+    }
+
+    private long remainingRingTime(Map<String, String> data) {
+        String expiry = data.get("expiresAt");
+        if (expiry == null || expiry.isEmpty()) return 75_000;
+        try { return Math.max(1, Math.min(75_000, Long.parseLong(expiry) - System.currentTimeMillis())); }
+        catch (NumberFormatException ignored) { return 1; }
     }
 
     private PendingIntent declineIntent(Map<String, String> data, String callId, int notificationId) {

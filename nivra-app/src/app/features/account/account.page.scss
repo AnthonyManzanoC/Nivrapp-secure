@@ -1,5 +1,15 @@
 @use "../shared-page";
 
+.account-head { align-items: flex-start; margin-bottom: 18px; }
+.account-head-copy { min-width: 0; }
+.account-context-name { display: block; max-width: 50ch; margin-bottom: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--nivra-brand-2); font-size: 12px; font-weight: 650; letter-spacing: .015em; }
+.account-head h1 { font-size: clamp(30px, 5vw, 38px); letter-spacing: -.04em; }
+.account-head p { margin: 9px 0 0; max-width: 54ch; font-size: 14px; line-height: 1.6; }
+.account-head > ion-button { flex-shrink: 0; margin: 0; border: 1px solid var(--nivra-line); border-radius: 15px; background: var(--nivra-panel-solid); }
+.account-draft-jump { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-height: 44px; margin-top: 12px; padding: 8px 12px; border: 1px solid color-mix(in srgb,var(--nivra-brand) 30%,var(--nivra-line)); border-radius: 13px; color: var(--nivra-text); background: color-mix(in srgb,var(--nivra-brand) 8%,var(--nivra-panel-solid)); font: inherit; font-size: 12px; text-align: start; cursor: pointer; }
+.account-draft-jump ion-icon,.account-draft-jump ion-spinner { flex: 0 0 16px; width: 16px; height: 16px; color: var(--nivra-brand-2); }
+.account-draft-jump:focus-visible { outline: 3px solid var(--nivra-brand); outline-offset: 2px; }
+
 .profile-hero { padding: 20px; border: 1px solid var(--nivra-line); border-radius: 22px; background: linear-gradient(120deg, color-mix(in srgb, var(--nivra-brand) 9%, transparent), transparent); }
 .profile-hero .profile-photo { width: 88px; height: 88px; flex: 0 0 88px; border-radius: 50%; }
 .profile-hero-copy { min-width: 0; margin-bottom: 10px; }

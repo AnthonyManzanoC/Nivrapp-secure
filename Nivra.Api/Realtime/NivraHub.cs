@@ -415,11 +415,11 @@ public sealed class NivraHub(
         };
         CallCoordination.TryClaim(call, currentUser.UserId, currentUser.DeviceId, request.ClientSessionId);
 
+        CallPushOutbox.Enqueue(db, call);
         await store.AddCallAsync(call, Context.ConnectionAborted);
         await transaction.CommitAsync(Context.ConnectionAborted);
         var response = ToCallResponse(call);
         await NotifyUsersAsync(participants, "call.started", response);
-        await SendIncomingCallPushesAsync(call, currentUser.UserId, participants);
         return response;
     });
 

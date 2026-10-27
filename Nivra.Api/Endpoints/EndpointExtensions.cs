@@ -3748,15 +3748,11 @@ public static partial class EndpointExtensions
             };
             CallCoordination.TryClaim(call, current.UserId, current.DeviceId, request.ClientSessionId);
 
+            CallPushOutbox.Enqueue(db, call);
             await store.AddCallAsync(call, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             var response = ToCallResponse(call);
-            var callerName = await GetCallerNameAsync(store, current.UserId, cancellationToken);
             await NotifyUsers(hub, participants, "call.started", response);
-            foreach (var userId in participants.Where(userId => userId != current.UserId))
-            {
-                await pushNotifications.SendIncomingCallAsync(userId, call.ConversationId, call.Id, current.UserId, callerName, call.Type, cancellationToken);
-            }
 
             return Results.Created($"/calls/{call.Id}", response);
         }));
@@ -3786,6 +3782,7 @@ public static partial class EndpointExtensions
             if (!claimed) return CallOwnedElsewhere();
             if (current.UserId != call.InitiatorUserId || call.ParticipantSessions.Count > 1) call.Status = CallStatus.Active;
             await store.SaveChangesAsync(cancellationToken);
+            await CallPushOutbox.AcknowledgeAsync(db, call.Id, current.UserId, timeProvider.GetUtcNow(), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("call_answered_elsewhere", new
             {
@@ -3981,6 +3978,8 @@ public static partial class EndpointExtensions
             };
             db.CallSignals.Add(signal);
             await store.SaveChangesAsync(cancellationToken);
+            if (signalType is "accepted" or "answer")
+                await CallPushOutbox.AcknowledgeAsync(db, call.Id, current.UserId, now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             var recipientGroup = targetSession is null ? GroupsFor.User(request.TargetUserId) : GroupsFor.Device(targetSession.DeviceId);
             await hub.Clients.Group(recipientGroup).SendAsync("call.signal", new

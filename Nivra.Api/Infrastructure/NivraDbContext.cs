@@ -55,6 +55,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     public DbSet<VaultRoomInvite> VaultRoomInvites => Set<VaultRoomInvite>();
     public DbSet<CallSession> Calls => Set<CallSession>();
     public DbSet<CallSignalRecord> CallSignals => Set<CallSignalRecord>();
+    public DbSet<CallPushOutboxItem> CallPushOutbox => Set<CallPushOutboxItem>();
     public DbSet<PushTokenRecord> PushTokens => Set<PushTokenRecord>();
     public DbSet<AdCampaign> AdCampaigns => Set<AdCampaign>();
     public DbSet<AdImpressionAggregate> AdImpressions => Set<AdImpressionAggregate>();
@@ -535,6 +536,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
                 .HasConversion(stringSetConverter)
                 .Metadata.SetValueComparer(stringSetComparer);
             entity.HasIndex(call => new { call.InitiatorUserId, call.StartedAt });
+            entity.HasIndex(call => new { call.Status, call.StartedAt });
             entity.HasIndex(call => call.ConversationId);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(call => call.InitiatorUserId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<ConversationRecord>().WithMany().HasForeignKey(call => call.ConversationId).OnDelete(DeleteBehavior.SetNull);
@@ -557,6 +559,19 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasIndex(signal => new { signal.CallId, signal.TargetUserId, signal.CreatedAt });
             entity.HasIndex(signal => signal.ExpiresAt);
             entity.HasOne<CallSession>().WithMany().HasForeignKey(signal => signal.CallId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<CallPushOutboxItem>(entity =>
+        {
+            entity.ToTable("call_push_outbox");
+            entity.HasKey(item => new { item.CallId, item.RecipientUserId });
+            entity.Property(item => item.CallId).HasMaxLength(64);
+            entity.Property(item => item.RecipientUserId).HasMaxLength(64);
+            entity.Property(item => item.LeaseId).HasMaxLength(32);
+            entity.HasIndex(item => new { item.CompletedAt, item.NextAttemptAt, item.LeaseUntil });
+            entity.HasIndex(item => item.ExpiresAt);
+            entity.HasOne<CallSession>().WithMany().HasForeignKey(item => item.CallId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<UserAccount>().WithMany().HasForeignKey(item => item.RecipientUserId).OnDelete(DeleteBehavior.Cascade);
         });
 
         modelBuilder.Entity<PushTokenRecord>(entity =>

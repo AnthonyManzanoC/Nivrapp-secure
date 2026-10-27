@@ -21,8 +21,11 @@ public class NivraCallActionReceiver extends BroadcastReceiver {
         scope.put("recipientUserId", intent.getStringExtra("recipientUserId"));
         scope.put("recipientDeviceId", intent.getStringExtra("recipientDeviceId"));
         if (!NivraNativePushRegistration.accepts(context, scope)) return;
+        if (!NivraNativePushRegistration.acceptsCallIntent(context, intent)) return;
         if (!NivraPushScopePolicy.permitsCallAction(true, NivraNativePushRegistration.isActive(context, scope))) {
-            launchCallAction(context, intent, NivraNativePlugin.ACTION_CALL_OPEN);
+            String pendingAction = intent.getAction();
+            if (NivraNativePlugin.ACTION_CALL_ANSWER.equals(pendingAction) || NivraNativePlugin.ACTION_CALL_REJECT.equals(pendingAction))
+                launchCallAction(context, intent, pendingAction);
             return;
         }
 

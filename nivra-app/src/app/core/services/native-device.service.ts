@@ -115,7 +115,7 @@ export interface NivraNativePlugin {
   getPendingPushAccountWipes(): Promise<{ scopes: Array<{ userId: string; deviceId: string }> }>;
   acknowledgePushAccountWipe(options: { userId: string; deviceId: string }): Promise<void>;
   getPendingPushIntent(): Promise<{ data?: Record<string, string> | null }>;
-  clearPendingPushIntent(): Promise<void>;
+  clearPendingPushIntent(options?: { intentId?: string }): Promise<void>;
   openNotificationSettings(options: { section: 'app' | 'calls' | 'full-screen' }): Promise<void>;
   getAppUpdateState(): Promise<NativeAppUpdateState>;
   downloadAppUpdate(options: AndroidRelease): Promise<NativeAppUpdateState>;
@@ -182,8 +182,8 @@ export class NativeDeviceService {
   async pendingPushIntent(): Promise<Record<string, string> | null> {
     return Capacitor.getPlatform() === 'android' ? (await NivraNative.getPendingPushIntent()).data ?? null : null;
   }
-  async clearPendingPushIntent(): Promise<void> {
-    if (Capacitor.getPlatform() === 'android') await NivraNative.clearPendingPushIntent();
+  async clearPendingPushIntent(intentId = ''): Promise<void> {
+    if (Capacitor.getPlatform() === 'android') await NivraNative.clearPendingPushIntent({ intentId });
   }
   async addPushIntentListener(listener: (event: { data?: Record<string, string> }) => void): Promise<PluginListenerHandle | null> {
     return Capacitor.getPlatform() === 'android' ? NivraNative.addListener('nativePushIntent', listener) : null;

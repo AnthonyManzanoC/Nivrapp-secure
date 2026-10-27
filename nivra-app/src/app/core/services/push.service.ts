@@ -68,6 +68,8 @@ export class PushService {
   private webConfigPromise?: Promise<ResolvedFirebaseWebConfig | null>;
   private readonly visualDedupe = new Map<string, number>();
   private readonly browserCallNotifications = new Map<string, Notification>();
+  private pushClickQueue: Promise<void> = Promise.resolve();
+  private readonly pushClicks = new Map<string, { at: number; promise: Promise<void> }>();
 
   readonly supported = signal(false);
   readonly permission = signal<NotificationPermission | 'unsupported'>('default');
@@ -85,7 +87,7 @@ export class PushService {
     void this.consumePendingPushIntent().catch(() => undefined);
     void this.nativeDevice.addPushIntentListener(event => {
       if (event.data) void this.handlePushData({ ...event.data, nivraRouteIntent: 'tap' }, 'native-action').then(async () => {
-        if (this.isCurrentRecipient(event.data!)) await this.nativeDevice.clearPendingPushIntent();
+        if (this.isCurrentRecipient(event.data!)) await this.nativeDevice.clearPendingPushIntent(event.data?.['nivraIntentId']);
       }).catch(() => undefined);
     }).catch(() => undefined);
     effect(() => {
@@ -316,7 +318,7 @@ export class PushService {
     // Auth restoration owns account adoption; wait for its protected registry.
     await this.auth.storedSessionCredentials();
     await this.handlePushData({ ...data, nivraRouteIntent: 'tap' }, 'native-action');
-    if (this.isCurrentRecipient(data)) await this.nativeDevice.clearPendingPushIntent();
+    if (this.isCurrentRecipient(data)) await this.nativeDevice.clearPendingPushIntent(data['nivraIntentId']);
   }
 
   private async consumePendingWebPushIntent(): Promise<void> {
@@ -738,19 +740,12 @@ export class PushService {
       return;
     }
     if (!savedRecipient) return;
+    const incoming = type === 'incoming-call' || type === 'incomingcall';
+    // A caller's other installation may receive an outgoing mirror. It must
+    // never ring or offer to answer as though it were a callee account.
+    if (incoming && (data['callerUserId'] || data['initiatorUserId']) === userId) return;
+    if (clicked) return this.routePushClick(data, userId, deviceId);
     const active = () => this.auth.session()?.user.id === userId && this.auth.session()?.device.id === deviceId;
-    if (clicked && !active()) {
-      if (this.calls.activeCall() || this.calls.resumableCall()) {
-        this.error.set('Finaliza la llamada actual antes de abrir la otra cuenta.');
-        return;
-      }
-      // Receipt never changes accounts. An explicit tap must finish exact-scope
-      // adoption before routing or a call action is exposed to app services.
-      if (!await this.auth.switchToStoredAccount(userId, deviceId) || !active()) return;
-      // An inactive call notification opens the correct account's call screen;
-      // it cannot carry an accept/decline command across credentials.
-      delete data['action'];
-    }
     if (active()) this.lastMessage.set({ data } as MessagePayload);
 
     if (type === 'contact-joined' && active()) {
@@ -782,6 +777,57 @@ export class PushService {
       return;
     }
     await this.showBrowserNotification(data);
+  }
+
+  private routePushClick(data: Record<string, string>, userId: string, deviceId: string): Promise<void> {
+    const action = data['action'] === 'accept' || data['action'] === 'answer' ? 'answer'
+      : data['action'] === 'decline' || data['action'] === 'reject' ? 'reject' : 'open';
+    const identity = data['nivraIntentId'] || '';
+    const key = JSON.stringify([userId, deviceId, data['callId'] || data['tag'], action, identity]);
+    const now = Date.now();
+    for (const [id, entry] of this.pushClicks) if (now - entry.at > 300_000) this.pushClicks.delete(id);
+    const prior = this.pushClicks.get(key);
+    if (prior && now - prior.at < (identity ? 300_000 : 4500)) return prior.promise;
+    const operation = this.pushClickQueue.catch(() => undefined).then(async () => {
+      const saved = await this.auth.storedSessionCredentials();
+      if (!saved.some(account => account.user.id === userId && account.device.id === deviceId)) return false;
+      const active = () => this.isCurrentRecipient(data);
+      if (!active()) {
+        // A call continued on a different device is only a recovery hint. It
+        // must not block answering the callee account on this phone.
+        if (this.calls.activeCall()) {
+          this.error.set('Finaliza la llamada actual antes de abrir la otra cuenta.');
+          return false;
+        }
+        if (!await this.auth.switchToStoredAccount(userId, deviceId) || !active()) return false;
+      }
+      const generation = this.auth.sessionGeneration?.();
+      const current = () => active() && this.auth.sessionGeneration?.() === generation;
+      if (!await this.auth.ensureFreshSession() || !current()) return false;
+      await this.syncNativeRegistration();
+      // An auth effect may have queued a newer native snapshot while adopting
+      // the account. Complete that snapshot before delivering its call action.
+      await this.scopeSync;
+      if (!current()) return false;
+      if (data['callId']) {
+        await this.cancelCallNotification(data['callId'], { userId, deviceId });
+        if (!current()) return false;
+        await this.calls.handleNotificationCallAction({ action, callId: data['callId'],
+          recipientUserId: userId, recipientDeviceId: deviceId,
+          callerUserId: data['callerUserId'] || data['initiatorUserId'], callType: data['callType'],
+          conversationId: data['conversationId'] });
+      }
+      if (!current()) return false;
+      this.lastMessage.set({ data } as MessagePayload);
+      return true;
+    });
+    const tracked = operation.then(delivered => {
+      if (!delivered) this.pushClicks.delete(key);
+    }).catch(error => { this.pushClicks.delete(key); throw error; });
+    this.pushClickQueue = tracked;
+    this.pushClicks.set(key, { at: now, promise: tracked });
+    while (this.pushClicks.size > 100) this.pushClicks.delete(this.pushClicks.keys().next().value!);
+    return tracked;
   }
 
   private async ensureNativeChannels(requestLocalPermission: boolean): Promise<void> {
@@ -1127,15 +1173,18 @@ export class PushService {
   }
 
   private shouldSkipVisual(data: Record<string, string>): boolean {
-    const key = `${data['recipientUserId'] || ''}:${data['recipientDeviceId'] || ''}:${data['tag'] || data['messageId'] || data['callId'] || JSON.stringify(data)}`;
+    const type = this.normalizePushType(data['type']);
+    const incoming = type === 'incoming-call' || type === 'incomingcall';
+    const key = JSON.stringify([data['recipientUserId'], data['recipientDeviceId'], incoming ? 'incoming' : type,
+      data['callId'] || data['tag'] || data['messageId'] || JSON.stringify(data)]);
     const now = Date.now();
     for (const [tag, at] of this.visualDedupe.entries()) {
-      if (now - at > 9000) {
+      if (now - at > 90_000) {
         this.visualDedupe.delete(tag);
       }
     }
     const previous = this.visualDedupe.get(key);
-    if (previous && now - previous < 4500) {
+    if (previous && now - previous < (incoming ? 75_000 : 4500)) {
       return true;
     }
     this.visualDedupe.set(key, now);

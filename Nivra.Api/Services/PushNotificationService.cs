@@ -199,6 +199,18 @@ public sealed class PushNotificationService(
             silentDataOnly: true);
     }
 
+    public Task<bool> DispatchIncomingCallAsync(string userId, string? conversationId, string callId,
+        string callerUserId, string callerName, CallType callType, DateTimeOffset expiresAt, CancellationToken cancellationToken) =>
+        SendToUserAsync(userId, "Nivra", callType == CallType.Video ? $"{callerName} te llama por video" : $"{callerName} te llama",
+            new Dictionary<string, string>
+            {
+                ["type"] = "incoming_call", ["callId"] = callId, ["callerId"] = callerUserId,
+                ["callerUserId"] = callerUserId, ["callerName"] = callerName, ["callType"] = callType.ToString(),
+                ["expiresAt"] = expiresAt.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
+                ["conversationId"] = conversationId ?? "", ["pushIntent"] = "wake_call", ["silent"] = "1",
+                ["tag"] = $"nivra-call-{callId}"
+            }, cancellationToken, silentDataOnly: true, parallelDelivery: true);
+
     public async Task SendCallEndedAsync(
         string userId,
         string? conversationId,
@@ -313,7 +325,7 @@ public sealed class PushNotificationService(
             targetDeviceId: deviceId);
     }
 
-    private async Task SendToUserAsync(
+    private async Task<bool> SendToUserAsync(
         string userId,
         string title,
         string body,
@@ -321,7 +333,8 @@ public sealed class PushNotificationService(
         CancellationToken cancellationToken,
         bool? includeNotificationPayloadOverride = null,
         bool silentDataOnly = false,
-        string? targetDeviceId = null)
+        string? targetDeviceId = null,
+        bool parallelDelivery = false)
     {
         var pushOptions = options.CurrentValue;
         FcmRuntimeConfig? fcmConfig = null;
@@ -337,7 +350,7 @@ public sealed class PushNotificationService(
         var webPushConfig = ResolveStandardWebPushRuntimeConfig(pushOptions);
         if (fcmConfig is null && webPushConfig is null)
         {
-            return;
+            return false;
         }
 
         using var scope = scopeFactory.CreateScope();
@@ -346,7 +359,7 @@ public sealed class PushNotificationService(
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
         {
-            return;
+            return false;
         }
 
         var changed = false;
@@ -354,19 +367,21 @@ public sealed class PushNotificationService(
         var invalidCount = 0;
         var unreadableCount = 0;
         var skippedCount = 0;
+        var transientCount = 0;
         var pushType = data.TryGetValue("type", out var pushedType) ? pushedType : "unknown";
         var includeNotificationPayload = includeNotificationPayloadOverride ?? pushOptions.IncludeNotificationPayload;
-        foreach (var token in tokens)
+        async Task DeliverAsync(PushTokenRecord token)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var rawToken = TryUnprotectToken(token.TokenCiphertext);
             if (string.IsNullOrWhiteSpace(rawToken))
             {
-                unreadableCount += 1;
+                Interlocked.Increment(ref unreadableCount);
                 logger.LogWarning(
                     "Push destination {PushTokenId} for user {UserId} needs re-registration. Legacy DataProtection keys may not be persisted.",
                     token.Id,
                     userId);
-                continue;
+                return;
             }
 
             FcmSendResult result;
@@ -375,35 +390,48 @@ public sealed class PushNotificationService(
                 ["recipientUserId"] = token.UserId,
                 ["recipientDeviceId"] = token.DeviceId
             };
+            using var budget = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            if (parallelDelivery) budget.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
             if (IsStandardWebPushProvider(token.Provider))
             {
                 if (webPushConfig is null)
                 {
-                    skippedCount += 1;
-                    continue;
+                    Interlocked.Increment(ref skippedCount);
+                    return;
                 }
-                result = await SendStandardWebPushAsync(webPushConfig, rawToken, title, body, scopedData, includeNotificationPayload, silentDataOnly, cancellationToken);
+                result = await SendStandardWebPushAsync(webPushConfig, rawToken, title, body, scopedData, includeNotificationPayload, silentDataOnly, budget.Token);
             }
             else
             {
                 if (fcmConfig is null)
                 {
-                    skippedCount += 1;
-                    continue;
+                    Interlocked.Increment(ref skippedCount);
+                    return;
                 }
-                result = await SendFcmAsync(fcmConfig, rawToken, title, body, scopedData, includeNotificationPayload, silentDataOnly, cancellationToken);
+                result = await SendFcmAsync(fcmConfig, rawToken, title, body, scopedData, includeNotificationPayload, silentDataOnly, budget.Token);
             }
+            }
+            catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) { result = FcmSendResult.TransientFailure; }
             if (result.Sent)
             {
-                sentCount += 1;
+                Interlocked.Increment(ref sentCount);
             }
             if (result.InvalidToken)
             {
                 token.RevokedAt = DateTimeOffset.UtcNow;
-                invalidCount += 1;
+                Interlocked.Increment(ref invalidCount);
                 changed = true;
             }
+            else if (!result.Sent) Interlocked.Increment(ref transientCount);
         }
+
+        if (parallelDelivery)
+        {
+            foreach (var batch in tokens.Chunk(4)) await Task.WhenAll(batch.Select(DeliverAsync));
+        }
+        else foreach (var token in tokens) await DeliverAsync(token);
 
         if (changed)
         {
@@ -422,6 +450,7 @@ public sealed class PushNotificationService(
                 unreadableCount,
                 skippedCount);
         }
+        return transientCount == 0 && unreadableCount == 0 && skippedCount == 0;
     }
 
     private static IQueryable<PushTokenRecord> PushDestinations(
@@ -533,7 +562,7 @@ public sealed class PushNotificationService(
 
             var client = httpClientFactory.CreateClient();
             using var request = new HttpRequestMessage(HttpMethod.Post, subscription.Endpoint);
-            request.Headers.TryAddWithoutValidation("TTL", webPushConfig.TtlSeconds.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            request.Headers.TryAddWithoutValidation("TTL", NotificationTtlSeconds(data, webPushConfig.TtlSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture));
             request.Headers.TryAddWithoutValidation("Urgency", "high");
             request.Headers.TryAddWithoutValidation("Authorization", CreateVapidAuthorizationHeader(webPushConfig, subscription.Endpoint));
             request.Content = new ByteArrayContent(encrypted);
@@ -580,8 +609,9 @@ public sealed class PushNotificationService(
             : "";
         var isTerminalCall = normalizedType is "end-call" or "missed-call" or "call-ended" or "call-rejected" or "call-timeout" or "call-failed";
         var isIncomingCall = normalizedType.Contains("call", StringComparison.Ordinal) && !isTerminalCall;
-        var androidTtl = isIncomingCall ? "75s" : isTerminalCall ? "300s" : "86400s";
-        var webTtl = isIncomingCall ? "75" : isTerminalCall ? "300" : "86400";
+        var ttl = NotificationTtlSeconds(data, isIncomingCall ? 75 : isTerminalCall ? 300 : 86400);
+        var webTtl = ttl.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var androidTtl = $"{webTtl}s";
         var pushData = data.ToDictionary(pair => pair.Key, pair => pair.Value ?? "", StringComparer.Ordinal);
         pushData.Remove("title");
         pushData.Remove("body");
@@ -638,6 +668,13 @@ public sealed class PushNotificationService(
     {
         return string.Equals(provider, "webpush", StringComparison.OrdinalIgnoreCase) ||
             string.Equals(provider, "web-push", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static int NotificationTtlSeconds(IReadOnlyDictionary<string, string> data, int fallback)
+    {
+        if (!data.TryGetValue("expiresAt", out var raw) || !long.TryParse(raw, out var expires)) return fallback;
+        var remaining = Math.Ceiling((expires - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()) / 1000d);
+        return (int)Math.Clamp(remaining, 0, fallback);
     }
 
     private static byte[] EncryptStandardWebPushPayload(

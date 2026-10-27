@@ -247,6 +247,49 @@ namespace Nivra.Api.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.CallPushOutboxItem", b =>
+                {
+                    b.Property<string>("CallId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("RecipientUserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LeaseId")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("CallId", "RecipientUserId");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("RecipientUserId");
+
+                    b.HasIndex("CompletedAt", "NextAttemptAt", "LeaseUntil");
+
+                    b.ToTable("call_push_outbox", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.CallSession", b =>
                 {
                     b.Property<string>("Id")
@@ -304,6 +347,8 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasIndex("ConversationId");
 
                     b.HasIndex("InitiatorUserId", "StartedAt");
+
+                    b.HasIndex("Status", "StartedAt");
 
                     b.ToTable("calls", "public");
                 });
@@ -1395,6 +1440,21 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.UserAccount", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.CallPushOutboxItem", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.CallSession", null)
+                        .WithMany()
+                        .HasForeignKey("CallId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("RecipientUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
