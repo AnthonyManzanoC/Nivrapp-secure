@@ -5,8 +5,9 @@ import { AuthService } from './auth.service';
 import { CryptoService, HistoricalDeviceKeyMaterial } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
-import { MessageResponse, NivraDevice } from '../models/nivra.models';
+import { MessageResponse, NivraDevice, StoredDeviceKeys } from '../models/nivra.models';
 import { NetworkPolicyService } from './network-policy.service';
+import { IdentityTrustService, IdentityTrustTransfer } from './identity-trust.service';
 
 interface TransferRequest { id: string; userId: string; targetDeviceId: string; targetIdentityKey: string; targetDeviceName?: string; expiresAt: string; }
 export interface PendingHistoryApproval extends TransferRequest { fingerprint: string; }
@@ -18,7 +19,7 @@ export interface PreferredHistorySource {
 }
 interface TransferResponse { sourceDeviceId: string; sourceIdentityKey: string; header: string; ciphertext: string; }
 interface TransferStatus extends TransferRequest { responses: TransferResponse[]; }
-interface KeyringPayload { v: 1; purpose: 'history-keyring'; requestId: string; userId: string; targetDeviceId: string; sourceDeviceId: string; targetPublicJwk: JsonWebKey; expiresAt: string; keys: HistoricalDeviceKeyMaterial[]; }
+interface KeyringPayload { v: 1; purpose: 'history-keyring'; requestId: string; userId: string; targetDeviceId: string; sourceDeviceId: string; targetPublicJwk: JsonWebKey; expiresAt: string; keys: HistoricalDeviceKeyMaterial[]; identityTrust?: IdentityTrustTransfer; }
 interface SessionScope { userId: string; deviceId: string; alias: string; epoch: number; }
 export interface HistoryRecoveryEvidence {
   userId: string;
@@ -29,6 +30,7 @@ export interface HistoryRecoveryEvidence {
 const TRANSFER_HTTP_TIMEOUT_MS = 15_000;
 const RECOVERY_RETRY_DELAYS_MS = [2500, 5000, 10_000];
 const SOURCE_DIRECTORY_CACHE_MS = 60_000;
+const LOCAL_RECOVERY_CHECK_MS = 30_000;
 
 @Injectable({ providedIn: 'root' })
 export class HistoryDeviceSyncService implements OnDestroy {
@@ -37,6 +39,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private readonly api = inject(NivraApiService);
   private readonly network = inject(NetworkPolicyService);
   private readonly realtime = inject(SignalrService);
+  private readonly identityTrust = inject(IdentityTrustService);
   private readonly destroyRef = inject(DestroyRef);
   private epoch = 0;
   private scopeId = '';
@@ -60,10 +63,15 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private sourceDirectory: { epoch: number; expiresAt: number; devices: NivraDevice[] } | null = null;
   private sourceDirectoryCheck: { epoch: number; promise: Promise<void> } | null = null;
   private sourceDirectoryRevision = 0;
+  private localRecoveryCheckAt = 0;
+  private localRecoveryStamp = '';
+  private localReplayAwaitingAck = false;
+  private localRecoveryProved = false;
   // This is an actionable candidate, never a claim that a remote installation
   // still possesses private keys. The current API intentionally exposes none.
   readonly preferredSource = signal<PreferredHistorySource | null>(null);
   readonly sourceCapability = signal<'unknown' | 'persisted-keys' | 'unavailable'>('unknown');
+  readonly sourceAvailability = signal<'unknown' | 'available' | 'local-only'>('unknown');
   readonly pendingRequests = signal<PendingHistoryApproval[]>([]);
   readonly targetFingerprint = signal('');
   readonly approvingRequestId = signal<string | null>(null);
@@ -114,7 +122,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
       // Failure to open the local key store is not evidence that another device
       // must send history. Never generate or rotate an identity from this path.
       const own = await this.crypto.recoverDeviceIdentity(scope.userId, scope.alias, scope.deviceId, null, () => this.isCurrent(scope));
-      await this.crypto.deviceKeyMaterialsForUser(scope.userId, scope.alias, { requireReadable: true });
+      const materials = await this.crypto.deviceKeyMaterialsForUser(scope.userId, scope.alias, { requireReadable: true });
       this.assertCurrent(scope);
       if (revision !== this.requestRevision) return;
       const candidate = this.evidenceCheck?.epoch === scope.epoch ? this.evidenceCheck.evidence : evidence;
@@ -127,6 +135,9 @@ export class HistoryDeviceSyncService implements OnDestroy {
       if (revision !== this.requestRevision) return;
       if (!this.validEvidence(candidate, scope)) return;
       this.requestEvidence = candidate;
+      if (await this.tryRecoverLocally(scope, candidate, materials)) return;
+      this.assertCurrent(scope);
+      if (revision !== this.requestRevision) return;
       this.beginRequest(false);
     })().catch(() => { /* The caller keeps local storage/key errors separate. */ }).finally(() => {
       if (this.evidenceCheck?.promise === promise) this.evidenceCheck = null;
@@ -161,10 +172,13 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.requestRevision = (this.requestRevision ?? 0) + 1;
     this.recoveryRetryAt = this.recoveryRetryAttempts = 0;
     this.requested = false; this.replayRequested = this.recoveryIncomplete = false; this.state.set('idle');
+    this.localReplayAwaitingAck = false;
+    this.localRecoveryProved = false;
     this.requestEvidence = null;
     this.evidenceCheck = null;
     this.recoveryStatus.set('approval');
     this.preferredSource.set(null);
+    this.sourceAvailability.set('unknown');
   }
   markHistoryRecoveryIncomplete(options: { retryable?: boolean } = {}): void {
     if (!this.scope() || !this.requested || !this.requestEvidence) return;
@@ -176,11 +190,17 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.recoveryStatus.set(options.retryable ? 'retryable' : this.importedResponses.size ? 'partial' : 'approval');
     // A transient refresh failure after approval can recover with the keys we
     // already own. Missing historical keys require a new approval, not a loop.
-    this.recoveryRetryAt = options.retryable && this.importedResponses.size
+    this.recoveryRetryAt = options.retryable && (this.importedResponses.size || this.localRecoveryProved)
       && this.recoveryRetryAttempts < RECOVERY_RETRY_DELAYS_MS.length
       ? Date.now() + RECOVERY_RETRY_DELAYS_MS[this.recoveryRetryAttempts++] : 0;
     this.state.set('waiting');
     if (!this.checking()) this.recoveryIncomplete = false;
+    if (this.localReplayAwaitingAck) {
+      this.localReplayAwaitingAck = false;
+      // A readable probe is only a reason to retry known messages. The chat
+      // consumer alone can acknowledge that the complete history is readable.
+      void this.pump();
+    }
   }
 
   dismissRequest(id: string): void { this.dismissedRequests.add(id); this.pendingRequests.update(items => items.filter(item => item.id !== id)); }
@@ -229,7 +249,9 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.dismissedRequests.clear();
     this.sourceDirectory = this.sourceDirectoryCheck = null;
     this.sourceDirectoryRevision = (this.sourceDirectoryRevision ?? 0) + 1;
+    this.localRecoveryCheckAt = 0; this.localRecoveryStamp = ''; this.localReplayAwaitingAck = false; this.localRecoveryProved = false;
     this.preferredSource.set(null); this.sourceCapability.set('unknown');
+    this.sourceAvailability.set('unknown');
     this.pendingRequests.set([]); this.targetFingerprint.set(''); this.approvingRequestId.set(null); this.approvalError.set('');
     this.state.set('idle');
     this.recoveryStatus.set('approval');
@@ -303,7 +325,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
         if (this.recoveryIncomplete && this.requested) {
           this.state.set('waiting'); this.recoveryIncomplete = false;
         }
-        let delay = this.pumpAgain ? 0 : this.requested
+        let delay = this.pumpAgain ? 0 : this.requested && this.sourceAvailability() === 'local-only' ? 30_000 : this.requested
           ? (Date.now() - this.requestedAt < 60_000 ? 2500 : 15_000) : 30_000;
         if (this.requested && this.recoveryRetryAt) delay = Math.min(delay, Math.max(0, this.recoveryRetryAt - Date.now()));
         this.pumpAgain = false;
@@ -328,11 +350,19 @@ export class HistoryDeviceSyncService implements OnDestroy {
       }
       this.assertCurrent(scope);
       if (this.requested) {
+        if (this.requestEvidence && Date.now() >= this.localRecoveryCheckAt
+          && await this.tryRecoverLocally(scope, this.requestEvidence)) return;
+        this.assertCurrent(scope);
+        if (!this.requested) return;
         const own = await this.persistedIdentity(scope);
         this.assertCurrent(scope);
         const fingerprint = await this.publicFingerprint(own.publicJwk);
         this.assertCurrent(scope); this.targetFingerprint.set(fingerprint);
         if (!this.requested) return;
+        // A directory-confirmed sole installation has no device to approve a
+        // fresh request. Keep existing approved packages eligible until expiry,
+        // but do not create a new impossible approval on every expiration.
+        if (this.sourceAvailability() === 'local-only' && (!this.requestId || this.requestExpiresAt <= Date.now())) return;
         const status = await this.requestStatus(scope);
         this.assertCurrent(scope);
         if (!this.requested) return;
@@ -367,6 +397,40 @@ export class HistoryDeviceSyncService implements OnDestroy {
     } catch {
       if (this.isCurrent(scope) && this.requested && this.state() !== 'syncing') this.state.set('unavailable');
     } finally { await approvals; }
+  }
+
+  private async tryRecoverLocally(scope: SessionScope, evidence: HistoryRecoveryEvidence, saved?: StoredDeviceKeys[]): Promise<boolean> {
+    this.localRecoveryCheckAt = Date.now() + LOCAL_RECOVERY_CHECK_MS;
+    if (!this.validEvidence(evidence, scope)) return false;
+    const materials = saved ?? await this.crypto.deviceKeyMaterialsForUser(scope.userId, scope.alias, { requireReadable: true });
+    this.assertCurrent(scope);
+    // Alias-only legacy records are not authority to automate recovery. This
+    // path never generates, publishes, imports, replaces or exports any key.
+    const keys = materials.filter(key => key.userId === scope.userId);
+    const stamp = JSON.stringify([evidence.message.id, keys.map(key => [key.id, key.publicJwk.x, key.publicJwk.y, key.updatedAt])]);
+    if (stamp === this.localRecoveryStamp) return false;
+    const revision = this.requestRevision;
+    for (const recipient of evidence.message.recipients) {
+      if (recipient.userId !== scope.userId || !this.evidenceSenderKey(recipient.header, recipient.ciphertext)) continue;
+      for (const key of keys) {
+        let readable = false;
+        try {
+          await this.crypto.decryptEnvelope(key, recipient.header, recipient.ciphertext);
+          readable = true;
+        } catch { /* A different retained identity may open this envelope. */ }
+        this.assertCurrent(scope);
+        if (revision !== this.requestRevision || !this.validEvidence(evidence, scope)) return false;
+        if (!readable) continue;
+        this.localRecoveryStamp = stamp;
+        this.requested = true; this.requestedAt ||= Date.now();
+        this.localRecoveryProved = true;
+        this.localReplayAwaitingAck = true;
+        this.state.set('syncing'); this.recovered$.next();
+        return true;
+      }
+    }
+    if (revision === this.requestRevision) this.localRecoveryStamp = stamp;
+    return false;
   }
 
   private async refreshPendingRequests(scope: SessionScope): Promise<void> {
@@ -418,6 +482,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
       if (this.isCurrent(scope) && revision === this.sourceDirectoryRevision) {
         this.sourceDirectory = { epoch: scope.epoch, expiresAt: Date.now() + SOURCE_DIRECTORY_CACHE_MS, devices: [] };
         this.preferredSource.set(null);
+        this.sourceAvailability.set('unknown');
       }
     }).finally(() => {
       if (this.sourceDirectoryCheck?.promise === promise) this.sourceDirectoryCheck = null;
@@ -429,11 +494,15 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private invalidateSourcePreference(): void {
     this.sourceDirectory = null; this.sourceDirectoryRevision++;
     this.preferredSource.set(null);
+    this.sourceAvailability.set('unknown');
   }
 
   private updatePreferredSource(scope: SessionScope): void {
     if (!this.isCurrent(scope) || !this.requested || !this.requestEvidence || this.sourceDirectory?.epoch !== scope.epoch) return;
     const addressed = new Set(this.requestEvidence.message.recipients.filter(recipient => recipient.userId === scope.userId).map(recipient => recipient.deviceId));
+    const trusted = this.sourceDirectory.devices.filter(device => device.userId === scope.userId && device.isTrusted && !device.revokedAt);
+    this.sourceAvailability.set(trusted.some(device => device.id !== scope.deviceId) ? 'available'
+      : trusted.some(device => device.id === scope.deviceId) ? 'local-only' : 'unknown');
     const candidates = this.sourceDirectory.devices.filter(device => device.userId === scope.userId && device.id !== scope.deviceId
       && device.isTrusted && !device.revokedAt && typeof device.name === 'string' && device.name.trim());
     const android = (device: NivraDevice) => /^Android\s+Nivra Mobile$/i.test(device.name.trim());
@@ -481,6 +550,9 @@ export class HistoryDeviceSyncService implements OnDestroy {
     const keys = materials.map(key => ({ publicJwk: key.publicJwk, privateJwk: key.privateJwk, createdAt: key.createdAt }));
     if (!keys.length) throw new Error('Este dispositivo no conserva llaves de historial vinculadas a tu cuenta.');
     const payload: KeyringPayload = { v: 1, purpose: 'history-keyring', requestId: request.id, userId: scope.userId, targetDeviceId: request.targetDeviceId, sourceDeviceId: scope.deviceId, targetPublicJwk: target, expiresAt: request.expiresAt, keys };
+    try { payload.identityTrust = await this.identityTrust.exportForLinkedDevice(scope.userId, scope.deviceId); }
+    catch { /* Optional contact continuity must not prevent approved history transfer. */ }
+    this.assertCurrent(scope);
     const sealed = await this.crypto.encryptForPublicKey(own, target, payload);
     this.assertCurrent(scope);
     await firstValueFrom(this.api.post(`/devices/history-transfer/${encodeURIComponent(request.id)}/response`, sealed).pipe(timeout(this.transferTimeoutMs())));
@@ -507,6 +579,11 @@ export class HistoryDeviceSyncService implements OnDestroy {
     if (payload.v !== 1 || payload.purpose !== 'history-keyring' || payload.requestId !== request.id || payload.userId !== scope.userId || payload.targetDeviceId !== scope.deviceId || payload.sourceDeviceId !== response.sourceDeviceId || payload.expiresAt !== request.expiresAt || !this.crypto.samePublicKey(payload.targetPublicJwk, own.publicJwk) || !Array.isArray(payload.keys) || !payload.keys.length) throw new Error('El historial cifrado no corresponde a esta solicitud.');
     await this.crypto.importHistoricalDeviceKeys(scope.userId, scope.alias, payload.keys, () => this.isCurrent(scope));
     this.assertCurrent(scope);
+    if (payload.identityTrust) {
+      try { await this.identityTrust.importFromLinkedDevice(`${scope.userId}:${scope.deviceId}`, response.sourceDeviceId, payload.identityTrust, () => this.isCurrent(scope)); }
+      catch { /* Keep valid history keys even if optional continuity is unsupported. */ }
+      this.assertCurrent(scope);
+    }
     this.state.set('syncing');
     this.recoveryIncomplete = false;
     this.recoveryRetryAt = this.recoveryRetryAttempts = 0;

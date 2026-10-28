@@ -151,6 +151,8 @@ public class NivraIncomingCallActivity extends Activity {
             finish();
         }, Math.min(remaining, 75_000));
         String callerName = stringExtra(intent, "callerName", "Nivra");
+        scope.put("conversationId", stringExtra(intent, "conversationId", ""));
+        if (NivraNativePushRegistration.hideNotificationContent(this, scope)) callerName = "Nivra";
         String callType = stringExtra(intent, "callType", "Voice");
         if (callerView != null) {
             callerView.setText(callerName);
@@ -203,12 +205,22 @@ public class NivraIncomingCallActivity extends Activity {
                 String dismissedCallId = intent == null ? "" : intent.getStringExtra("callId");
                 boolean sameScope = intent != null && NivraPushScopePolicy.matches(recipientUserId, recipientDeviceId,
                     intent.getStringExtra("recipientUserId"), intent.getStringExtra("recipientDeviceId"));
+                if (intent != null && NivraNativePushRegistration.ACTION_PRIVACY_CHANGED.equals(intent.getAction())) {
+                    if (sameScope) {
+                        java.util.Map<String, String> route = new java.util.HashMap<>();
+                        route.put("recipientUserId", recipientUserId); route.put("recipientDeviceId", recipientDeviceId);
+                        route.put("conversationId", stringExtra(getIntent(), "conversationId", ""));
+                        if (NivraNativePushRegistration.hideNotificationContent(context, route) && callerView != null) callerView.setText("Nivra");
+                    }
+                    return;
+                }
                 if ((intent != null && intent.getBooleanExtra("all", false)) || (sameScope && (intent.getBooleanExtra("scopeAll", false) || callId.isEmpty() || callId.equals(dismissedCallId)))) {
                     finish();
                 }
             }
         };
         IntentFilter filter = new IntentFilter(NivraNativePlugin.ACTION_CALL_DISMISS);
+        filter.addAction(NivraNativePushRegistration.ACTION_PRIVACY_CHANGED);
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             registerReceiver(dismissReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         } else {

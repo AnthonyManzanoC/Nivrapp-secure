@@ -265,14 +265,16 @@
                   </span>
                   <ion-label class="item-copy">
                     <strong class="conversation-title"><span>{{ chat.conversationTitle(conversation) }}</span>@if (chat.conversationIsNivraId(conversation)) { <small class="nivra-id-badge" [title]="'CHATS.NIVRA_ID_ACCOUNT' | translate:'Cuenta Nivra ID'" [attr.aria-label]="'CHATS.NIVRA_ID_ACCOUNT' | translate:'Cuenta Nivra ID'"><ion-icon name="finger-print-outline" aria-hidden="true"></ion-icon><span>ID</span></small> }@if (chat.isConversationPinned(conversation.id)) { <ion-icon name="pin-outline" [attr.aria-label]="'CHATS.PINNED_TAG' | translate:'Fijado'"></ion-icon> }@if (chat.isConversationMuted(conversation.id)) { <ion-icon name="notifications-off-outline" [attr.aria-label]="'CHATS.MUTED_TAG' | translate:'Silenciado'"></ion-icon> }</strong>
-                    @if (conversationPreviewLoading(conversation)) {
+                    @if (privateChats.isProtected(conversation.id)) {
+                      <small><ion-icon name="lock-closed-outline" aria-hidden="true" /> {{ 'PRIVATE_CHAT.LOCKED' | translate:'Conversación protegida' }}</small>
+                    } @else if (conversationPreviewLoading(conversation)) {
                       <span class="conversation-preview-loading" aria-hidden="true"></span>
                     } @else if (conversationHistoryPending(conversation)) {
                       <small class="conversation-history-pending">{{ 'HISTORY_DEVICE.PENDING' | translate:'Historial cifrado pendiente' }}</small>
                     } @else {
                       <small>{{ chat.conversationSubtitle(conversation) }}</small>
                     }
-                    @if (appSettings.settings().chatListDensity === 'three-line') {
+                    @if (appSettings.settings().chatListDensity === 'three-line' && !privateChats.isProtected(conversation.id)) {
                       <em>{{ chat.presenceLabel(conversation) }}</em>
                     }
                   </ion-label>

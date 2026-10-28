@@ -18,7 +18,7 @@
       <p class="launcher-hint">
         @switch (launcher.platform()) {
           @case ('windows') { {{ 'LAUNCHER_ACCOUNT.WINDOWS_HINT' | translate:'En Windows cambia el icono del acceso directo y de la ventana.' }} }
-          @case ('web') { {{ 'LAUNCHER_ACCOUNT.WEB_HINT' | translate:'En la web cambia al momento el icono de la pestaña. El navegador controla el icono de la app instalada; puede requerir revisar o reinstalar la app.' }} }
+          @case ('web') { {{ 'LAUNCHER.WEB_HINT' | translate:'La pestaña cambia al instante y el PWA actualiza el manifiesto de tu cuenta. El icono instalado puede tardar en renovarse según el navegador; si sigue igual, vuelve a abrir Nivra o quita y añade de nuevo el acceso directo.' }} }
           @default { {{ 'LAUNCHER_ACCOUNT.ANDROID_HINT' | translate:'En Android, el icono puede tardar unos instantes en aparecer en la pantalla de inicio.' }} }
         }
       </p>

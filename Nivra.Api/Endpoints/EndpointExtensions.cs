@@ -66,6 +66,7 @@ public static partial class EndpointExtensions
         app.MapDeviceAndKeyEndpoints();
         app.MapHistoryKeyTransferEndpoints();
         app.MapContactEndpoints();
+        app.MapContactBlockEndpoints();
         app.MapDirectoryAndFriendEndpoints();
         app.MapConversationAndMessageEndpoints();
         app.MapMessageHistoryRecoveryEndpoints();
@@ -1102,6 +1103,8 @@ public static partial class EndpointExtensions
             {
                 return Error("invalid_friend_request", "No puedes enviarte solicitud a ti mismo.");
             }
+            if (await ContactBlockPolicy.BetweenAsync(db, current.UserId, target.Id, cancellationToken))
+                return Error("communication_unavailable", "No se puede enviar esta solicitud.", StatusCodes.Status403Forbidden);
 
             return await CallCoordination.RunAsync(db, async Task<IResult> () =>
             {
@@ -1190,7 +1193,7 @@ public static partial class EndpointExtensions
             return Results.Ok(result);
         });
 
-        conversations.MapPost("/", async Task<IResult> (CreateConversationRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        conversations.MapPost("/", async Task<IResult> (CreateConversationRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1213,6 +1216,9 @@ public static partial class EndpointExtensions
             {
                 return Error("invalid_participants", "Uno o mas participantes no existen.");
             }
+
+            if (request.Type == ConversationType.Direct && await ContactBlockPolicy.BetweenAsync(db, participantIds[0], participantIds[1], cancellationToken))
+                return Error("communication_unavailable", "No se puede abrir este chat.", StatusCodes.Status403Forbidden);
 
             var groupName = request.Type == ConversationType.Group
                 ? NormalizeOptional(request.GroupName) ?? await DefaultGroupNameAsync(store, participantIds.Where(id => id != current.UserId), cancellationToken)
@@ -1644,6 +1650,8 @@ public static partial class EndpointExtensions
             {
                 return Results.NotFound();
             }
+            if (await ContactBlockPolicy.BlocksConversationAsync(db, conversation, current.UserId, cancellationToken))
+                return Error("communication_unavailable", "No se puede enviar a este chat. Revisa tus contactos bloqueados.", StatusCodes.Status403Forbidden);
             if (string.IsNullOrWhiteSpace(request.ClientMessageId) || request.Recipients.Count == 0)
             {
                 return Error("invalid_message", "ClientMessageId y recipients son obligatorios.");
@@ -1652,6 +1660,11 @@ public static partial class EndpointExtensions
             {
                 return Error("invalid_message", "El identificador o la cantidad de destinatarios excede el limite permitido.");
             }
+
+            var directPeer = conversation.Type == ConversationType.Direct ? conversation.Participants.FirstOrDefault(person => person.UserId != current.UserId && person.RemovedAt is null)?.UserId : null;
+            await using var directBlockTransaction = directPeer is not null ? await CallCoordination.LockAsync(db, ContactBlockPolicy.LockKey(current.UserId, directPeer), cancellationToken) : null;
+            if (directPeer is not null && await ContactBlockPolicy.BetweenAsync(db, current.UserId, directPeer, cancellationToken))
+                return Error("communication_unavailable", "No se puede enviar a este chat.", StatusCodes.Status403Forbidden);
 
             var callSummary = request.ClientMessageId.StartsWith(CallSummaryPolicy.Prefix, StringComparison.Ordinal);
             if (callSummary)
@@ -1672,7 +1685,7 @@ public static partial class EndpointExtensions
 
             // Every participant may observe the room ending, including after
             // its initiator left. One persisted encrypted summary wins globally.
-            await using var summaryTransaction = callSummary
+            await using var summaryTransaction = callSummary && directBlockTransaction is null
                 ? await CallCoordination.LockAsync(db, $"call-summary:{conversationId}:{request.ClientMessageId}", cancellationToken)
                 : null;
 
@@ -1779,6 +1792,7 @@ public static partial class EndpointExtensions
             }
 
             if (summaryTransaction is not null) await summaryTransaction.CommitAsync(cancellationToken);
+            if (directBlockTransaction is not null) await directBlockTransaction.CommitAsync(cancellationToken);
 
             foreach (var recipient in message.Recipients)
             {
@@ -3639,7 +3653,7 @@ public static partial class EndpointExtensions
         group.MapGet("/room-token/{groupId}", RoomToken);
         app.MapGet("/api/calls/room-token/{groupId}", RoomToken);
 
-        group.MapGet("/{callId}/room-token", async Task<IResult> (string callId, HttpContext http, INivraStore store, LiveKitTokenService liveKit, CancellationToken cancellationToken) =>
+        group.MapGet("/{callId}/room-token", async Task<IResult> (string callId, HttpContext http, INivraStore store, NivraDbContext db, LiveKitTokenService liveKit, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3656,6 +3670,8 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
+            if (await ContactBlockPolicy.BlocksCallAsync(db, call, cancellationToken))
+                return Error("communication_unavailable", "Esta llamada ya no está disponible.", StatusCodes.Status403Forbidden);
             var roomConversation = call.ConversationId is null ? null : await store.GetConversationAsync(call.ConversationId, cancellationToken);
             if (roomConversation?.Type == ConversationType.Group &&
                 !roomConversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null)) return Results.NotFound();
@@ -3721,9 +3737,19 @@ public static partial class EndpointExtensions
                 return Error("livekit_not_configured", "Las llamadas grupales requieren LiveKit configurado en el servidor.", StatusCodes.Status503ServiceUnavailable);
             }
 
+            if (!isGroupConversation && participants.Count == 2 &&
+                await ContactBlockPolicy.BetweenAsync(db, participants.First(), participants.Last(), cancellationToken))
+                return Error("communication_unavailable", "No se puede iniciar esta llamada. Revisa tus contactos bloqueados.", StatusCodes.Status403Forbidden);
+
             // Both HTTP and SignalR creation use this database lock; concurrent starts reuse one group room.
             await using var transaction = await CallCoordination.LockAsync(db,
                 isGroupConversation ? $"group-call:{request.ConversationId}" : $"call-start:{current.UserId}:{current.DeviceId}:{request.ClientSessionId}", cancellationToken);
+            if (!isGroupConversation && participants.Count == 2)
+            {
+                await ContactBlockPolicy.LockWithinTransactionAsync(db, participants.First(), participants.Last(), cancellationToken);
+                if (await ContactBlockPolicy.BetweenAsync(db, participants.First(), participants.Last(), cancellationToken))
+                    return Error("communication_unavailable", "No se puede iniciar esta llamada.", StatusCodes.Status403Forbidden);
+            }
             if (isGroupConversation)
             {
                 var existing = await CallCoordination.FindActiveGroupCallAsync(db, request.ConversationId!, cancellationToken);
@@ -3774,6 +3800,13 @@ public static partial class EndpointExtensions
                 if (conversation?.Type != ConversationType.Group || !conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt is null)) return Results.NotFound();
                 call.ParticipantUserIds.Add(current.UserId);
             }
+            if (claimConversation?.Type != ConversationType.Group && call.ParticipantUserIds.Count == 2)
+            {
+                var directPair = call.ParticipantUserIds.ToArray();
+                await ContactBlockPolicy.LockWithinTransactionAsync(db, directPair[0], directPair[1], cancellationToken);
+            }
+            if (await ContactBlockPolicy.BlocksCallAsync(db, call, cancellationToken))
+                return Error("communication_unavailable", "Esta llamada ya no está disponible.", StatusCodes.Status403Forbidden);
             if (call.EndedAt is not null || call.Status == CallStatus.Ended) return Error("call_ended", "La llamada ya finalizó.", StatusCodes.Status409Conflict);
             var resume = http.Request.Path.Value?.EndsWith("/resume", StringComparison.Ordinal) == true;
             var claimed = resume
@@ -3947,6 +3980,8 @@ public static partial class EndpointExtensions
                 return Error("invalid_call_signal", "La señal de llamada no es válida.");
             }
 
+            if (signalType is not ("declined" or "busy" or "left") && await ContactBlockPolicy.BlocksCallAsync(db, call, cancellationToken))
+                return Error("communication_unavailable", "Esta llamada ya no está disponible.", StatusCodes.Status403Forbidden);
             // Even decline, ICE and timeout-related signals from a losing session must not reach the active peer.
             if (!CallCoordination.TryAuthorizeSignal(call, current.UserId, current.DeviceId, request.ClientSessionId, signalType)) return CallOwnedElsewhere();
             if (signalType is "accepted" or "answer")

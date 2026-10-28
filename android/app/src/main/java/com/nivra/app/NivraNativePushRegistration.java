@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
@@ -40,6 +41,7 @@ final class NivraNativePushRegistration {
     private static final String KEY = "nivra.native.push.v1";
     static final String WORK_NAME = "nivra-native-push-registration";
     static final String MAINTENANCE_WORK_NAME = "nivra-native-push-maintenance";
+    static final String ACTION_PRIVACY_CHANGED = "com.nivra.app.NOTIFICATION_PRIVACY_CHANGED";
     private static final String TOKEN_REPAIR_WORK_NAME = "nivra-native-push-token-repair";
     private static final long REGISTRATION_FRESH_MS = TimeUnit.HOURS.toMillis(24);
     private NivraNativePushRegistration() { }
@@ -47,6 +49,7 @@ final class NivraNativePushRegistration {
     /** Legacy bridge upserts only its scope; it must never remove the other account. */
     static synchronized void sync(Context context, JSObject options) throws Exception {
         JSONObject root = registry(context);
+        Map<String, String> previousPrivacy = notificationPrivacySnapshots(root);
         String previousUser = root.optString("activeUserId"), previousDevice = root.optString("activeDeviceId");
         JSONArray accounts = root.optJSONArray("accounts");
         JSONObject next = registration(options, root);
@@ -56,6 +59,7 @@ final class NivraNativePushRegistration {
         if (existing >= 0) accounts.put(existing, next); else accounts.put(next);
         root.put("activeUserId", next.optString("userId")).put("activeDeviceId", next.optString("deviceId"));
         write(context, root);
+        clearNewlyProtectedNotifications(context, root, previousPrivacy);
         if (isScopeChange(previousUser, previousDevice, next.optString("userId"), next.optString("deviceId"))) clearCallNotifications(context, previousUser, previousDevice);
         schedule(context);
     }
@@ -64,6 +68,7 @@ final class NivraNativePushRegistration {
         JSONArray requested = options.optJSONArray("accounts");
         if (requested == null || requested.length() > 2) throw new IllegalArgumentException("At most two saved accounts are required.");
         JSONObject root = registry(context);
+        Map<String, String> previousPrivacy = notificationPrivacySnapshots(root);
         String previousUser = root.optString("activeUserId"), previousDevice = root.optString("activeDeviceId");
         JSONArray previous = root.optJSONArray("accounts");
         JSONArray next = new JSONArray();
@@ -83,6 +88,7 @@ final class NivraNativePushRegistration {
         if (indexOf(next, activeUser, activeDevice) < 0) { activeUser = ""; activeDevice = ""; }
         root.put("accounts", next).put("activeUserId", activeUser).put("activeDeviceId", activeDevice);
         write(context, root);
+        clearNewlyProtectedNotifications(context, root, previousPrivacy);
         if (isScopeChange(previousUser, previousDevice, activeUser, activeDevice)) clearCallNotifications(context, previousUser, previousDevice);
         for (int i = 0; i < previous.length(); i++) {
             JSONObject prior = previous.getJSONObject(i);
@@ -101,7 +107,10 @@ final class NivraNativePushRegistration {
         if (indexOf(root.optJSONArray("pendingWipes"), user, device) >= 0) return null;
         String fingerprint = NivraApiFailover.canonicalFingerprint(options.optString("clusterFingerprint", ""));
         JSONObject prior = find(root.optJSONArray("accounts"), user, device);
-        if (prior != null && api.equals(prior.optString("apiBaseUrl")) && refresh.equals(prior.optString("refreshToken")) && fingerprint.equals(prior.optString("clusterFingerprint"))) return prior;
+        if (prior != null && api.equals(prior.optString("apiBaseUrl")) && refresh.equals(prior.optString("refreshToken")) && fingerprint.equals(prior.optString("clusterFingerprint"))) {
+            copyNotificationPrivacy(prior, options, prior);
+            return prior;
+        }
         JSONObject value = new JSONObject().put("apiBaseUrl", api).put("userId", user).put("deviceId", device)
             .put("refreshToken", refresh).put("clusterFingerprint", fingerprint).put("epoch", UUID.randomUUID().toString()).put("fcmReady", false)
             // Rotating credentials must not invalidate a still-ringing PendingIntent.
@@ -109,7 +118,97 @@ final class NivraNativePushRegistration {
             .put("notificationEpoch", prior == null ? UUID.randomUUID().toString() : prior.optString("notificationEpoch", prior.optString("epoch")));
         String token = root.optString("routingToken", "");
         if (!token.isEmpty()) value.put("pendingToken", token);
+        copyNotificationPrivacy(value, options, prior);
         return value;
+    }
+
+    private static void copyNotificationPrivacy(JSONObject target, JSONObject options, JSONObject prior) throws Exception {
+        target.put("hideNotificationContent", options.has("hideNotificationContent") ? options.optBoolean("hideNotificationContent", true) : prior != null && prior.optBoolean("hideNotificationContent", false));
+        Object raw = options.has("protectedConversationIds") ? options.opt("protectedConversationIds") : prior == null ? new JSONArray() : prior.opt("protectedConversationIds");
+        // A legacy registration may have no policy yet; malformed metadata hides content.
+        if (raw == null) raw = new JSONArray();
+        JSONArray ids = raw instanceof JSONArray ? (JSONArray) raw : null;
+        if (ids == null || ids.length() > 4096) { target.put("protectedConversationIds", new JSONArray().put("*")); return; }
+        JSONArray validated = new JSONArray();
+        for (int i = 0; i < ids.length(); i++) {
+            Object id = ids.opt(i);
+            if (!(id instanceof String) || ((String) id).isEmpty() || ((String) id).length() > 128) {
+                target.put("protectedConversationIds", new JSONArray().put("*")); return;
+            }
+            validated.put(id);
+        }
+        target.put("protectedConversationIds", validated);
+    }
+
+    static synchronized boolean hideNotificationContent(Context context, Map<String, String> data) {
+        if (context == null || data == null) return true;
+        try {
+            JSONObject account = find(registry(context).optJSONArray("accounts"), data.get("recipientUserId"), data.get("recipientDeviceId"));
+            if (account == null) return true;
+            JSONArray stored = account.optJSONArray("protectedConversationIds");
+            List<String> ids = new ArrayList<>();
+            if (stored != null) {
+                for (int i = 0; i < stored.length(); i++) {
+                    Object id = stored.opt(i);
+                    if (!(id instanceof String)) return true;
+                    ids.add((String) id);
+                }
+            } else if (account.has("protectedConversationIds")) return true;
+            return NivraNotificationPrivacyPolicy.hide(account.optBoolean("hideNotificationContent", false), ids, data.get("conversationId"));
+        } catch (Exception unavailable) { return true; }
+    }
+
+    private static Map<String, String> notificationPrivacySnapshots(JSONObject root) {
+        Map<String, String> snapshots = new HashMap<>();
+        JSONArray accounts = root.optJSONArray("accounts");
+        if (accounts == null) return snapshots;
+        for (int i = 0; i < accounts.length(); i++) {
+            JSONObject account = accounts.optJSONObject(i);
+            if (account != null) snapshots.put(NivraPushScopePolicy.notificationTag(account.optString("userId"), account.optString("deviceId")), privacyStamp(account));
+        }
+        return snapshots;
+    }
+
+    private static String privacyStamp(JSONObject account) {
+        return account.optBoolean("hideNotificationContent", false) + ":" + account.optString("protectedConversationIds", "[]");
+    }
+
+    private static boolean previousPrivacyHid(String stamp, String conversationId) {
+        if (stamp == null) return false;
+        try {
+            JSONArray ids = new JSONArray(stamp.substring(stamp.indexOf(':') + 1));
+            List<String> protectedIds = new ArrayList<>();
+            for (int i = 0; i < ids.length(); i++) protectedIds.add(ids.getString(i));
+            return NivraNotificationPrivacyPolicy.hide(stamp.startsWith("true:"), protectedIds, conversationId);
+        } catch (Exception malformed) { return true; }
+    }
+
+    /** Remove already visible previews without terminating a call or invalidating its actions. */
+    private static void clearNewlyProtectedNotifications(Context context, JSONObject root, Map<String, String> previousPrivacy) {
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        JSONArray accounts = root.optJSONArray("accounts");
+        if (accounts == null) return;
+        for (int i = 0; i < accounts.length(); i++) {
+            JSONObject account = accounts.optJSONObject(i);
+            if (account == null) continue;
+            String user = account.optString("userId"), device = account.optString("deviceId");
+            String tag = NivraPushScopePolicy.notificationTag(user, device);
+            if (privacyStamp(account).equals(previousPrivacy.get(tag))) continue;
+            if (manager != null) try {
+                for (StatusBarNotification active : manager.getActiveNotifications()) {
+                    android.app.Notification notification = active.getNotification();
+                    // Foreground-service notifications are mandatory; never remove their call ownership.
+                    if (!tag.equals(active.getTag()) || (notification.flags & android.app.Notification.FLAG_FOREGROUND_SERVICE) != 0) continue;
+                    Map<String, String> route = new HashMap<>();
+                    route.put("recipientUserId", user); route.put("recipientDeviceId", device);
+                    route.put("conversationId", notification.extras == null ? "" : notification.extras.getString("nivraConversationId", ""));
+                    if (hideNotificationContent(context, route) && !previousPrivacyHid(previousPrivacy.get(tag), route.get("conversationId")))
+                        NotificationManagerCompat.from(context).cancel(tag, active.getId());
+                }
+            } catch (RuntimeException ignored) { }
+            context.sendBroadcast(new Intent(ACTION_PRIVACY_CHANGED).setPackage(context.getPackageName())
+                .putExtra("recipientUserId", user).putExtra("recipientDeviceId", device));
+        }
     }
 
     /** Returns only the active account for the existing foreground call bridge. */

@@ -13,6 +13,7 @@ import { NativeDeviceService } from './native-device.service';
 import { NivraApiService } from './nivra-api.service';
 import { PushService } from './push.service';
 import { SignalrService } from './signalr.service';
+import { PrivateChatLockService } from './private-chat-lock.service';
 
 describe('saved account push registration and routing', () => {
   let service: PushService; let session: ReturnType<typeof signal<any>>;
@@ -20,6 +21,7 @@ describe('saved account push registration and routing', () => {
   let native: jasmine.SpyObj<NativeDeviceService>; let switchAccount: jasmine.Spy;
   let api: { baseUrl: string; get: jasmine.Spy; post: jasmine.Spy };
   let calls: { activeCall: jasmine.Spy; resumableCall: jasmine.Spy; handleNotificationCallAction: jasmine.Spy };
+  let protectedChats: ReturnType<typeof signal<Record<string, readonly string[]>>>;
   const account = (id = 'alice', refreshToken = 'refresh-a') => ({
     user: { id, alias: id }, device: { id: `phone-${id}` }, tokens: { accessToken: 'access', refreshToken },
   });
@@ -28,6 +30,7 @@ describe('saved account push registration and routing', () => {
   beforeEach(() => {
     spyOn(Capacitor, 'isNativePlatform').and.returnValue(true);
     session = signal<any>(null); credentials = signal<any[]>([]); generation = signal(0);
+    protectedChats = signal<Record<string, readonly string[]>>({});
     native = jasmine.createSpyObj<NativeDeviceService>('NativeDeviceService', [
       'syncPushRegistrations', 'clearPushRegistration', 'pendingPushIntent', 'clearPendingPushIntent', 'addPushIntentListener', 'clearIncomingCall',
     ]);
@@ -49,6 +52,7 @@ describe('saved account push registration and routing', () => {
       { provide: NativeDeviceService, useValue: native }, { provide: NivraApiService, useValue: api },
       { provide: ContactSyncService, useValue: {} }, { provide: CryptoService, useValue: {} },
       { provide: CallsService, useValue: calls },
+      { provide: PrivateChatLockService, useValue: { protectedIdsForUser: (id: string) => protectedChats()[id] ?? [] } },
       { provide: DesktopInactivePushService, useValue: { events$: new Subject<Record<string, string>>(), enable: jasmine.createSpy('desktopEnable') } },
       { provide: DeviceWipeService, useValue: { processPendingAccountWipes: async () => undefined, wipeAccount: jasmine.createSpy().and.resolveTo() } },
       { provide: SignalrService, useValue: { connected: () => true } }, { provide: ToastController, useValue: {} },
@@ -75,6 +79,54 @@ describe('saved account push registration and routing', () => {
     credentials.set([account('bob')]); session.set(account('bob')); await flush();
     expect(native.syncPushRegistrations.calls.mostRecent().args[0].map(item => item.userId)).toEqual(['bob']);
     expect(native.clearPushRegistration).not.toHaveBeenCalled();
+  });
+
+  it('updates both accounts local protected-chat metadata without rotating or uploading credentials', async () => {
+    credentials.set([account(), account('bob')]); session.set(account()); await flush();
+    protectedChats.set({alice:['private-a'],bob:['private-b']});await flush();
+    const accounts=native.syncPushRegistrations.calls.mostRecent().args[0];
+    expect(accounts[0].protectedConversationIds).toEqual(['private-a']);expect(accounts[1].protectedConversationIds).toEqual(['private-b']);
+    expect(accounts[0].refreshToken).toBe('refresh-a');expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('does not decrypt a protected chat preview while leaving other chat previews available', async () => {
+    session.set(account());protectedChats.set({alice:['private-chat']});
+    const decrypt=spyOn<any>(service,'decryptPreviewIfPresent').and.resolveTo({title:'Ruth',body:'private fixture text'});
+    const data={type:'message',conversationId:'private-chat',recipientUserId:'alice',recipientDeviceId:'phone-alice'};
+    const hidden=await (service as any).visualForData(data);
+    expect(hidden.title).toBe('Nivra');expect(hidden.body).not.toContain('private fixture text');expect(decrypt).not.toHaveBeenCalled();
+    const normal=await (service as any).visualForData({...data,conversationId:'normal-chat'});
+    expect(normal.title).toBe('Ruth');expect(normal.body).toBe('private fixture text');expect(decrypt).toHaveBeenCalledTimes(1);
+  });
+
+  it('drops a decrypted preview if protection was enabled while decrypting', async () => {
+    session.set(account());let release!:(value:{title:string;body:string})=>void;
+    const decrypt=spyOn<any>(service,'decryptPreviewIfPresent').and.returnValue(new Promise(resolve=>release=resolve));
+    const pending=(service as any).visualForData({type:'incoming_call',conversationId:'private-chat',recipientUserId:'alice',recipientDeviceId:'phone-alice'});
+    expect(decrypt).toHaveBeenCalledTimes(1);protectedChats.set({alice:['private-chat']});release({title:'Ruth',body:'private fixture text'});
+    const hidden=await pending;expect(hidden.title).toBe('Nivra');expect(hidden.body).not.toContain('private fixture text');
+  });
+
+  it('fails closed for unreadable local policy and unknown chat routing without losing a call alert', async () => {
+    session.set(account());protectedChats.set({alice:['*']});
+    const decrypt=spyOn<any>(service,'decryptPreviewIfPresent').and.resolveTo({title:'private sender',body:'private text'});
+    const hidden=await (service as any).visualForData({type:'incoming_call',conversationId:'normal-chat',recipientUserId:'alice',recipientDeviceId:'phone-alice'});
+    expect(hidden.title).toBe('Nivra');expect(hidden.requireInteraction).toBeTrue();expect(decrypt).not.toHaveBeenCalled();
+    protectedChats.set({alice:['private-chat']});
+    await (service as any).visualForData({type:'message',recipientUserId:'alice',recipientDeviceId:'phone-alice'});
+    expect(decrypt).not.toHaveBeenCalled();
+  });
+
+  it('closes only previous browser previews newly protected in their exact account',()=>{
+    const notice=(id:string,user='alice')=>({data:{conversationId:id,recipientUserId:user,recipientDeviceId:`phone-${user}`},close:jasmine.createSpy(`close-${user}-${id}`)});
+    const newlyProtected=notice('private-chat'),normal=notice('normal-chat'),alreadyProtected=notice('already-private'),other=notice('private-chat','bob');
+    for(const item of [newlyProtected,normal,alreadyProtected,other])(service as any).browserNotifications.add(item);
+    (service as any).closeProtectedBrowserNotifications([
+      {userId:'alice',deviceId:'phone-alice',hideNotificationContent:false,protectedConversationIds:['private-chat','already-private']},
+      {userId:'bob',deviceId:'phone-bob',hideNotificationContent:false,protectedConversationIds:[]},
+    ],[{userId:'alice',deviceId:'phone-alice',hideNotificationContent:false,protectedConversationIds:['already-private']}]);
+    expect(newlyProtected.close).toHaveBeenCalledTimes(1);expect(normal.close).not.toHaveBeenCalled();expect(alreadyProtected.close).not.toHaveBeenCalled();expect(other.close).not.toHaveBeenCalled();
+    (service as any).browserNotifications.clear();
   });
 
   it('does not mistake web push readiness for Android FCM readiness', async () => {

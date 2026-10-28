@@ -7,6 +7,7 @@ import {
 import { AuthService } from './auth.service';
 import { AccountLockPolicy, AccountLockPolicyService, validSharedPin } from './account-lock-policy.service';
 import { PlatformUnlockService } from './platform-unlock.service';
+import { readPrivateChatLocks } from './private-chat-lock-metadata';
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder();
@@ -48,6 +49,16 @@ interface PinVerifierPayload {
   createdAt: string;
 }
 
+interface ProtectedActionContext {
+  accountKey: string;
+  deviceId: string;
+  generation: number | undefined;
+  version: number;
+  policyRevision: number;
+  pin: PinEnvelope;
+  pinStamp: string;
+}
+
 @Injectable({ providedIn: 'root' })
 export class AppLockService implements OnDestroy {
   private readonly auth = inject(AuthService);
@@ -60,6 +71,7 @@ export class AppLockService implements OnDestroy {
   private stateVersion = 0;
   private operationSequence = 0;
   private activeOperation = 0;
+  private activeProtectedOperation = 0;
   private pinRetryAt = 0;
   private pinRetryTimer?: ReturnType<typeof setTimeout>;
   private readonly accountAttempts = new Map<string, PinAttempts>();
@@ -146,6 +158,7 @@ export class AppLockService implements OnDestroy {
     const accountKey = this.requireAccountKey();
     const version = this.stateVersion;
     if (this.isLocked()) throw new Error('Desbloquea Nivra antes de cambiar Modo Seguro.');
+    this.requireNoProtectedChats(accountKey);
     const normalized = this.normalizePin(pin);
     if (!this.isValidPin(normalized)) {
       throw new Error('El PIN debe tener exactamente 4 digitos.');
@@ -159,6 +172,7 @@ export class AppLockService implements OnDestroy {
       await this.authenticateBiometrics('Confirma tu identidad para activar Modo Seguro.');
       this.requireUnchangedAccount(accountKey, version);
     }
+    this.requireNoProtectedChats(accountKey);
     this.configuringAccount = accountKey;
     try {
       const policy = await this.accountPolicy.save(true, envelope);
@@ -172,6 +186,7 @@ export class AppLockService implements OnDestroy {
   async disable(): Promise<void> {
     const accountKey = this.requireAccountKey();
     if (this.isLocked()) throw new Error('Desbloquea Nivra antes de cambiar Modo Seguro.');
+    this.requireNoProtectedChats(accountKey);
     this.configuringAccount = accountKey;
     try {
       const policy = await this.accountPolicy.save(false, null);
@@ -275,6 +290,93 @@ export class AppLockService implements OnDestroy {
     } finally {
       this.finishVerification(operation);
     }
+  }
+
+  /** Fresh authentication for a protected chat; never releases the app lock. */
+  verifyProtectedAction(pin: string | undefined): Promise<boolean> {
+    return this.verifyProtectedActionUsing('pin', this.normalizePin(pin));
+  }
+
+  verifyProtectedActionWithBiometrics(reason = 'Abrir chat protegido'): Promise<boolean> {
+    return this.verifyProtectedActionUsing('biometric', '', reason);
+  }
+
+  cancelProtectedActionVerification(): void {
+    if (!this.activeProtectedOperation || this.activeOperation !== this.activeProtectedOperation) return;
+    this.activeProtectedOperation = 0; this.activeOperation = 0;
+    this.busy.set(false); this.statusMessage.set('');
+    this.platformUnlock.cancel();
+  }
+
+  private async verifyProtectedActionUsing(mode: AppLockMode, pin: string, reason = ''): Promise<boolean> {
+    if (this.busy()) return false;
+    const context = this.protectedActionContext();
+    if (!context) {
+      this.unlockError.set('Activa Modo Seguro y desbloquea Nivra para acceder a tus chats protegidos.');
+      return false;
+    }
+    this.refreshPinRetry();
+    if (this.pinRetrySeconds() > 0) return false;
+    if (mode === 'pin' && !this.isValidPin(pin)) {
+      this.unlockError.set('Introduce los 4 dígitos de tu PIN de Nivra.'); return false;
+    }
+    if (mode === 'biometric' && !this.canUseBiometric()) {
+      this.unlockError.set('El desbloqueo del dispositivo no está disponible. Usa tu PIN de Nivra.'); return false;
+    }
+    const operation = this.beginVerification();
+    this.activeProtectedOperation = operation;
+    this.unlockError.set('');
+    this.statusMessage.set(mode === 'pin' ? 'Verificando PIN...' : 'Verificando identidad...');
+    try {
+      // Do not reuse unlockWithPin/Biometrics: those intentionally succeed
+      // without a new prompt when the application is already unlocked.
+      const valid = mode === 'pin'
+        ? await this.verifyPinEnvelope(pin, context.pin, context.accountKey)
+        : await this.platformUnlock.verify(context.accountKey, reason);
+      if (!this.isCurrentProtectedAction(context, operation)) return false;
+      if (!valid) {
+        if (mode === 'pin') this.recordPinFailure(context.accountKey);
+        this.unlockError.set(mode === 'pin' ? 'PIN incorrecto.' : 'Verificación cancelada. Puedes usar tu PIN de Nivra.');
+        this.statusMessage.set(''); return false;
+      }
+      this.pinFailureCount = 0; this.pinRetryAt = 0;
+      this.persistPinAttempts(context.accountKey); this.refreshPinRetry();
+      this.unlockError.set(''); this.statusMessage.set('');
+      return true;
+    } catch (error) {
+      if (!this.isCurrentProtectedAction(context, operation)) return false;
+      this.unlockError.set(mode === 'biometric'
+        ? this.biometricErrorMessage(error, 'No se pudo verificar tu identidad. Usa tu PIN de Nivra.')
+        : 'No se pudo comprobar el PIN. Vuelve a intentar.');
+      this.statusMessage.set(''); return false;
+    } finally {
+      if (this.activeProtectedOperation === operation) this.activeProtectedOperation = 0;
+      this.finishVerification(operation);
+    }
+  }
+
+  private protectedActionContext(): ProtectedActionContext | null {
+    const session = this.auth.session();
+    const settings = this.settings();
+    const policy = this.accountPolicy.policy();
+    if (!session?.user.id || !session.device?.id || !session.device.isTrusted || session.device.revokedAt
+      || this.loadedAccountKey !== session.user.id || this.isContentLocked() || this.configuringAccount
+      || !settings?.enabled || !settings.policyRevision || !validSharedPin(settings.pin)
+      || !policy?.enabled || policy.userId !== session.user.id || policy.revision !== settings.policyRevision
+      || !validSharedPin(policy.pinEnvelope) || this.pinStamp(policy.pinEnvelope) !== this.pinStamp(settings.pin)) return null;
+    return { accountKey: session.user.id, deviceId: session.device.id, generation: this.auth.sessionGeneration?.(),
+      version: this.stateVersion, policyRevision: settings.policyRevision, pin: settings.pin, pinStamp: this.pinStamp(settings.pin) };
+  }
+
+  private isCurrentProtectedAction(context: ProtectedActionContext, operation: number): boolean {
+    const current = this.protectedActionContext();
+    return this.activeOperation === operation && !!current && current.accountKey === context.accountKey
+      && current.deviceId === context.deviceId && current.generation === context.generation
+      && current.version === context.version && current.policyRevision === context.policyRevision && current.pinStamp === context.pinStamp;
+  }
+
+  private pinStamp(pin: PinEnvelope): string {
+    return JSON.stringify([pin.v, pin.alg, pin.iterations, pin.salt, pin.iv, pin.ciphertext]);
   }
 
   async refreshBiometryAvailability(): Promise<void> {
@@ -406,6 +508,12 @@ export class AppLockService implements OnDestroy {
     return accountKey;
   }
 
+  private requireNoProtectedChats(accountKey: string): void {
+    if (readPrivateChatLocks(accountKey).length) {
+      throw new Error('Quita primero la protección de tus chats con tu PIN actual antes de cambiar o desactivar Modo Seguro.');
+    }
+  }
+
   private requireUnchangedAccount(accountKey: string, version: number): void {
     if (this.currentAccountKey() !== accountKey || this.stateVersion !== version) {
       throw new Error('La cuenta cambio. Vuelve a configurar Modo Seguro.');
@@ -413,6 +521,8 @@ export class AppLockService implements OnDestroy {
   }
 
   private invalidateVerification(): void {
+    if (this.activeProtectedOperation && this.activeOperation === this.activeProtectedOperation) this.platformUnlock.cancel();
+    this.activeProtectedOperation = 0;
     this.stateVersion += 1;
     this.activeOperation = 0;
     this.busy.set(false);

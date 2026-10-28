@@ -15,6 +15,7 @@ describe('history device fingerprint comparison controls', () => {
     approvalEpoch: ReturnType<typeof signal<number>>;
     checking: ReturnType<typeof signal<boolean>>;
     preferredSource: ReturnType<typeof signal<PreferredHistorySource | null>>;
+    sourceAvailability: ReturnType<typeof signal<'unknown' | 'available' | 'local-only'>>;
     recoveryStatus: ReturnType<typeof signal<'approval' | 'partial' | 'retryable'>>;
     approveRequest: jasmine.Spy; dismissRequest: jasmine.Spy; retry: jasmine.Spy;
   };
@@ -34,6 +35,7 @@ describe('history device fingerprint comparison controls', () => {
       targetFingerprint: signal(''), approvingRequestId: signal<string | null>(null),
       approvalError: signal(''), approvalEpoch: signal(1), checking: signal(false),
       preferredSource: signal<PreferredHistorySource | null>(null),
+      sourceAvailability: signal<'unknown' | 'available' | 'local-only'>('unknown'),
       recoveryStatus: signal<'approval' | 'partial' | 'retryable'>('approval'),
       approveRequest: jasmine.createSpy('approveRequest').and.resolveTo(),
       dismissRequest: jasmine.createSpy('dismissRequest'), retry: jasmine.createSpy('retry'),
@@ -161,6 +163,24 @@ describe('history device fingerprint comparison controls', () => {
     await settle();
     expect(root().querySelector('.history-notice:not(.history-approval)')).toBeNull();
     expect(history.approveRequest).not.toHaveBeenCalled();
+  });
+
+  it('explains unavailable original keys without asking a sole-device user to approve an impossible code', async () => {
+    fixture.componentInstance.showApprovals = false;
+    history.state.set('waiting'); history.sourceAvailability.set('local-only');
+    history.targetFingerprint.set('abcd ef01 2345 6789 abcd ef01');
+    await settle();
+    expect(root().textContent).toContain('llave original');
+    expect(root().textContent).toContain('Tus chats se conservan');
+    expect(root().querySelector('.history-code')).toBeNull();
+    root().querySelector<HTMLButtonElement>('.history-retry')!.click();
+    expect(history.retry).toHaveBeenCalledTimes(1);
+    history.sourceAvailability.set('available'); await settle();
+    expect(root().querySelector('.history-code')).not.toBeNull();
+    expect(root().textContent).toContain('autoriza');
+    history.sourceAvailability.set('local-only'); history.recoveryStatus.set('retryable'); await settle();
+    expect(root().textContent).toContain('No pudimos comprobar');
+    expect(root().textContent).not.toContain('llave original');
   });
 
   it('replaces the authorization code with progress once the approved history starts recovering', async () => {

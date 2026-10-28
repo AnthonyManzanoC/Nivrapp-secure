@@ -511,8 +511,8 @@
         }
         <div class="panic-pin-box">
           <div class="panic-pin-heading">
-            <ion-icon name="warning-outline"></ion-icon>
-            <span>
+            <span class="panic-pin-mark" aria-hidden="true"><ion-icon name="warning-outline"></ion-icon></span>
+            <span class="panic-pin-copy">
               <strong>{{ 'ACCOUNT.PANIC_PIN' | translate:'PIN de Panico (Opcional)' }}</strong>
               <small>{{ panicPin.isConfigured() ? ('ACCOUNT.CONFIGURED_DEVICE' | translate:'Configurado en este dispositivo.') : ('ACCOUNT.NOT_CONFIGURED' | translate:'Sin configurar.') }}</small>
             </span>

@@ -1,6 +1,7 @@
 import { CommonModule } from '@angular/common';
 import { Component, EffectRef, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { PrivateChatLockService } from '../../core/services/private-chat-lock.service';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import {
   ActionSheetController,
@@ -23,7 +24,7 @@ import {
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, fingerPrintOutline, imageOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, fingerPrintOutline, imageOutline, lockClosedOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
@@ -90,6 +91,7 @@ type ConversationMenuAction = 'pin' | 'mute' | 'archive';
   styleUrls: ['./chats.page.scss'],
 })
 export class ChatsPage implements OnDestroy {
+  readonly privateChats = inject(PrivateChatLockService);
   readonly chat = inject(ChatService);
   readonly social = inject(SocialService);
   readonly appSettings = inject(AppSettingsService);
@@ -293,6 +295,7 @@ export class ChatsPage implements OnDestroy {
       ellipsisVerticalOutline,
       fingerPrintOutline,
       imageOutline,
+      lockClosedOutline,
       notificationsOffOutline,
       notificationsOutline,
       peopleOutline,
@@ -421,6 +424,7 @@ export class ChatsPage implements OnDestroy {
     if (this.auth.deviceIdentityError()) return this.tr('CHATS.HISTORY_UNAVAILABLE', 'Historial temporalmente no disponible');
     if (this.visibleStorageError()) return this.tr('CHATS.HISTORY_UNAVAILABLE', 'Historial temporalmente no disponible');
     if (this.chat.syncError()) return this.tr('CHATS.SYNC_ERROR', 'No se pudo actualizar. Inténtalo cuando tengas conexión.');
+    if (this.chat.deviceHistory.sourceAvailability?.() === 'local-only' && this.chat.deviceHistory.state() !== 'syncing') return this.tr('HISTORY_DEVICE.ORIGINAL_KEY_NEEDED', 'Parte del historial necesita su llave original');
     return this.chat.deviceHistory.state() === 'syncing'
       ? this.tr('HISTORY_DEVICE.SYNCING', 'Sincronizando tu historial')
       : this.tr('HISTORY_DEVICE.PENDING', 'Historial cifrado pendiente');

@@ -15,10 +15,10 @@ import { FormsModule } from '@angular/forms';
       <div class="history-copy">
         <strong>{{ titleKey() | translate:titleFallback() }}</strong>
         <p>{{ descriptionKey() | translate:descriptionFallback() }}</p>
-        @if (!identityError && history.state() !== 'syncing' && history.recoveryStatus?.() !== 'retryable' && history.preferredSource(); as source) {
+        @if (!identityError && !missingSource() && history.state() !== 'syncing' && history.recoveryStatus() !== 'retryable' && history.preferredSource(); as source) {
           <p class="history-source-hint">{{ 'HISTORY_DEVICE.SOURCE_SUGGESTION' | translate:'Prueba primero en:' }} {{ source.deviceName }}. {{ 'HISTORY_DEVICE.SOURCE_HINT' | translate:'Si conserva tus chats, compara el código y aprueba allí. También puedes usar otro equipo que aún tenga el historial.' }}</p>
         }
-        @if (history.targetFingerprint() && history.state() !== 'syncing' && history.recoveryStatus?.() !== 'retryable' && !identityError) {
+        @if (history.targetFingerprint() && !missingSource() && history.state() !== 'syncing' && history.recoveryStatus() !== 'retryable' && !identityError) {
           <div class="history-code"><span>{{ 'HISTORY_DEVICE.CODE_LABEL' | translate:'Código de vinculación' }}</span><code dir="ltr">{{ history.targetFingerprint() }}</code></div>
         }
       </div>
@@ -70,9 +70,14 @@ export class HistorySyncNoticeComponent {
     addIcons({ chevronForwardOutline, closeOutline, lockClosedOutline, shieldCheckmarkOutline });
     effect(() => { this.history.approvalEpoch(); this.detailsOpen = false; for (const id of Object.keys(this.compared)) delete this.compared[id]; });
   }
+  missingSource(): boolean {
+    return !this.identityError && !this.needsRelink && this.history.state() !== 'syncing'
+      && this.history.recoveryStatus?.() !== 'retryable' && this.history.sourceAvailability?.() === 'local-only';
+  }
   titleKey(): string {
     if (this.needsRelink) return 'HISTORY_DEVICE.RELINK_REQUIRED';
     if (this.identityError) return 'CHATS.HISTORY_UNAVAILABLE';
+    if (this.missingSource()) return 'HISTORY_DEVICE.ORIGINAL_KEY_TITLE';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'HISTORY_DEVICE.PARTIAL_TITLE';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'HISTORY_DEVICE.REFRESH_FAILED_TITLE';
     return this.history.state() === 'syncing' ? 'HISTORY_DEVICE.SYNCING'
@@ -81,6 +86,7 @@ export class HistorySyncNoticeComponent {
   titleFallback(): string {
     if (this.needsRelink) return 'Vuelve a vincular este equipo';
     if (this.identityError) return 'Historial temporalmente no disponible';
+    if (this.missingSource()) return 'Parte del historial necesita su llave original';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'Parte del historial sigue protegida';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'Falta comprobar algunos mensajes';
     return this.history.state() === 'syncing' ? 'Sincronizando tu historial'
@@ -88,6 +94,7 @@ export class HistorySyncNoticeComponent {
   }
   descriptionKey(): string {
     if (this.identityError) return this.needsRelink ? 'HISTORY_DEVICE.RELINK_COPY' : 'HISTORY_DEVICE.IDENTITY_ERROR_COPY';
+    if (this.missingSource()) return 'HISTORY_DEVICE.ORIGINAL_KEY_COPY';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'HISTORY_DEVICE.PARTIAL_COPY';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'HISTORY_DEVICE.REFRESH_FAILED_COPY';
     return this.history.state() === 'syncing' ? 'HISTORY_DEVICE.SYNCING_COPY'
@@ -97,6 +104,7 @@ export class HistorySyncNoticeComponent {
     if (this.identityError) return this.needsRelink
       ? 'Vuelve a vincular este equipo desde tu teléfono para recuperar los chats. El historial guardado se conserva.'
       : 'No se pudo abrir la identidad de este equipo. Comprueba la conexión, desbloquea el dispositivo y vuelve a intentar.';
+    if (this.missingSource()) return 'Comprobamos las llaves guardadas en este equipo. Algunos mensajes antiguos necesitan una llave que aquí no está disponible. Tus chats se conservan y los mensajes nuevos siguen funcionando. Si aún tienes otro equipo con ese historial, vuelve a vincularlo para recuperarlo.';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'Las llaves aprobadas ya están guardadas. Algunos mensajes necesitan otras llaves: prueba un equipo que todavía pueda leerlos y compara el código.';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'No pudimos comprobar todos los mensajes. Reintenta con las llaves guardadas en este equipo; no se ha borrado tu historial.';
     return this.history.state() === 'syncing' ? 'Estamos comprobando las llaves y preparando tus mensajes disponibles.'

@@ -66,6 +66,9 @@ foreach ($path in $monochrome.vector.path) {
 
 # Launcher alias migration must never disable the real deep-link/share/call activity.
 [xml]$manifest = [System.IO.File]::ReadAllText((Join-Path $Root 'android\app\src\main\AndroidManifest.xml'))
+$launcherEntry = @(@($manifest.manifest.application.activity) | Where-Object { $_.GetAttribute('name', $AndroidNs) -eq '.LauncherEntryActivity' })
+Assert-Icon ($launcherEntry.Count -eq 1 -and $launcherEntry[0].GetAttribute('enabled', $AndroidNs) -eq 'true' -and $launcherEntry[0].GetAttribute('exported', $AndroidNs) -eq 'false') 'Launcher aliases must enter through the stable private trampoline.'
+Assert-Icon ($launcherEntry[0].GetAttribute('noHistory', $AndroidNs) -eq 'true' -and $launcherEntry[0].GetAttribute('excludeFromRecents', $AndroidNs) -eq 'true' -and $null -eq $launcherEntry[0].'intent-filter') 'Launcher trampoline must stay private, transient and out of recents.'
 $main = @($manifest.manifest.application.activity) | Where-Object { $_.GetAttribute('name', $AndroidNs) -eq '.MainActivity' }
 Assert-Icon ($main.GetAttribute('enabled', $AndroidNs) -eq 'true') 'MainActivity must remain enabled for links, sharing and calls.'
 $mainActions = @($main.'intent-filter'.action | ForEach-Object { $_.GetAttribute('name', $AndroidNs) })
@@ -79,7 +82,7 @@ foreach ($entry in @(@('original', 'Original'), @('emerald', 'Emerald'), @('ivor
     $id = $entry[0]
     $suffix = if ($id -eq 'original') { '' } else { "_$id" }
     $alias = $aliases | Where-Object { $_.GetAttribute('name', $AndroidNs) -eq ".Launcher$($entry[1])" }
-    Assert-Icon ($null -ne $alias -and $alias.GetAttribute('targetActivity', $AndroidNs) -eq '.MainActivity') "Invalid stable alias: $id"
+    Assert-Icon ($null -ne $alias -and $alias.GetAttribute('targetActivity', $AndroidNs) -eq '.LauncherEntryActivity') "Invalid stable alias: $id"
     Assert-Icon ($alias.GetAttribute('enabled', $AndroidNs) -eq $(if ($id -eq 'original') { 'true' } else { 'false' })) "Wrong default alias state: $id"
     Assert-Icon ($alias.'intent-filter'.action.GetAttribute('name', $AndroidNs) -eq 'android.intent.action.MAIN' -and $alias.'intent-filter'.category.GetAttribute('name', $AndroidNs) -eq 'android.intent.category.LAUNCHER') "Wrong launcher intent: $id"
     Assert-Icon ($alias.GetAttribute('icon', $AndroidNs) -eq "@mipmap/ic_launcher$suffix") "Wrong alias icon: $id"

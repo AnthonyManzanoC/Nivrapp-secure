@@ -57,7 +57,7 @@ export type FirebaseSigningDiagnostics = {
 
 export type NativeAppUpdateState = { phase: 'idle' | 'downloading' | 'ready' | 'permission' | 'error'; progress: number; error?: string };
 export type AndroidRelease = { version: string; versionCode: number; url: string; sha256: string; size: number };
-export type NativePushRegistration = { apiBaseUrl: string; clusterFingerprint?: string; userId: string; deviceId: string; accessToken?: string; refreshToken: string };
+export type NativePushRegistration = { apiBaseUrl: string; clusterFingerprint?: string; userId: string; deviceId: string; accessToken?: string; refreshToken: string; hideNotificationContent?: boolean; protectedConversationIds?: readonly string[] };
 
 interface NativeDiagnostics {
   platform?: string;

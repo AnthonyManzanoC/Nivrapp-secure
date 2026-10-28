@@ -255,6 +255,15 @@ describe('Identity verification return and comparison', () => {
     expect(page.verified).toBeFalse();
     expect(trust.confirm).not.toHaveBeenCalled();
   });
+  it('uses a linked comparison as continuity and keeps repeated QR comparison optional', async () => {
+    const page=createPage();
+    trust.continuity.and.resolveTo({state:'verified',source:'linked-device',verifiedAt:'2026-10-09T12:00:00Z'});
+    await page.loadIdentity();
+    expect(page.verified).toBeTrue();expect(page.continuitySource).toBe('linked-device');expect(page.comparisonExpanded).toBeFalse();
+    expect(trust.confirm).not.toHaveBeenCalled();
+    trust.continuity.and.resolveTo({state:'changed'});await page.loadIdentity();
+    expect(page.verified).toBeFalse();expect(page.continuitySource).toBeUndefined();expect(page.comparisonExpanded).toBeTrue();
+  });
 
   it('compares a matching QR and saves it without a second button tap', async () => {
     const page = createPage();

@@ -6,6 +6,23 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data?.type !== 'nivra.push.privacyChanged') return;
+  // The current policy is read locally; prior routing metadata avoids canceling unchanged call alerts.
+  event.waitUntil(closeProtectedNotifications(event.data.previousScopes).catch(() => undefined));
+});
+
+async function closeProtectedNotifications(previousScopes) {
+  const state = await readPushState();
+  const notifications = await self.registration.getNotifications();
+  for (const notification of notifications) {
+    const data = normalizeData(notification.data || {});
+    const scope = state?.scopes?.find(item => item.userId === data.recipientUserId && item.deviceId === data.recipientDeviceId);
+    const prior = Array.isArray(previousScopes) ? previousScopes.find(item => item?.userId === data.recipientUserId && item?.deviceId === data.recipientDeviceId) : null;
+    if (scope && protectedPreview(scope, data) && (!prior || !protectedPreview(prior, data))) notification.close();
+  }
+}
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = normalizeData(event.notification.data || {});
@@ -181,9 +198,13 @@ async function visualForData(data, state) {
   const type = normalizeType(data.type);
   const tag = `${data.recipientUserId}:${data.recipientDeviceId}:${data.tag || data.callId || data.messageId || data.conversationId || 'nivra-event'}`;
   const scope = state.scopes.find(item => item.userId === data.recipientUserId && item.deviceId === data.recipientDeviceId);
-  const preview = activeScope(state, data) && scope?.hideNotificationContent !== true
+  const hidden = protectedPreview(scope, data);
+  const preview = activeScope(state, data) && !hidden
     ? await decryptPreviewIfPresent(data).catch(() => null) : null;
-  if (preview) {
+  // Protection can change while the worker awaits a preview decryption.
+  const latest = preview ? await readPushState().catch(() => null) : null;
+  const latestScope = latest?.scopes?.find(item => item.userId === data.recipientUserId && item.deviceId === data.recipientDeviceId);
+  if (preview && latestScope && activeScope(latest, data) && !protectedPreview(latestScope, data)) {
     return {
       title: preview.title || 'Nivra',
       body: preview.body || genericBody(type),
@@ -199,6 +220,14 @@ async function visualForData(data, state) {
     type,
     requireInteraction: type === 'incoming-call'
   };
+}
+
+function protectedPreview(scope, data) {
+  if (!scope || scope.hideNotificationContent === true) return true;
+  const ids = scope.protectedConversationIds;
+  if (ids === undefined) return false; // Compatible with registries written before private chats existed.
+  if (!Array.isArray(ids) || ids.length > 4096 || ids.some(id => typeof id !== 'string' || !id || id.length > 128)) return true;
+  return ids.includes('*') || (data.conversationId ? ids.includes(data.conversationId) : ids.length > 0);
 }
 
 function genericBody(type) {

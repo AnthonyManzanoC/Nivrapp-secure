@@ -1,12 +1,32 @@
 import { Injectable, signal } from '@angular/core';
 import { PublicKeyDirectory } from '../models/nivra.models';
-import { deriveDirectoryFingerprint } from '../utils/identity-fingerprint';
+import { DirectoryFingerprint, deriveDirectoryFingerprint } from '../utils/identity-fingerprint';
 
-interface Pin { digest: string; verified: boolean; verifiedAt?: string; }
+interface Pin {
+  digest: string;
+  verified: boolean;
+  verifiedAt?: string;
+  devices?: DirectoryFingerprint['deviceIdentities'];
+  linkedFromDeviceId?: string;
+}
+
+export interface IdentityTrustTransferEntry { userId: string; digest: string; verified: boolean; verifiedAt?: string; }
+/** Public pins only, transported inside an explicitly approved E2EE handoff. */
+export interface IdentityTrustTransfer {
+  v: 1;
+  purpose: 'identity-continuity';
+  userId: string;
+  sourceDeviceId: string;
+  entries: IdentityTrustTransferEntry[];
+}
 export interface IdentityContinuity {
   state: 'unknown' | 'unchanged' | 'verified' | 'changed';
   verifiedAt?: string;
+  source?: 'this-device' | 'linked-device';
 }
+const MAX_TRANSFER_ENTRIES = 512;
+const MAX_TRANSFER_BYTES = 96 * 1024;
+const DIGEST = /^[a-f0-9]{64}$/;
 @Injectable({providedIn:'root'})
 export class IdentityTrustService {
   private readonly changed = signal<ReadonlySet<string>>(new Set());
@@ -16,18 +36,19 @@ export class IdentityTrustService {
     return this.database ??= new Promise((resolve,reject)=>{
       const request=indexedDB.open('nivra-identity-trust',1);
       request.onupgradeneeded=()=>request.result.createObjectStore('pins');
-      request.onsuccess=()=>resolve(request.result);request.onerror=()=>reject(request.error);
+      request.onsuccess=()=>resolve(request.result);request.onerror=()=>{this.database=undefined;reject(request.error);};
     });
   }
   async check(scope:string,directory:PublicKeyDirectory):Promise<void>{
     const fingerprint=await deriveDirectoryFingerprint(directory);
     await this.update(scope,directory.userId,current=>{
-      if(current && current.digest!==fingerprint.digest) {
+      if(current && current.digest!==fingerprint.digest && !this.onlyRemovedKnownDevices(current,fingerprint)) {
         this.changed.update(previous=>new Set([...previous,JSON.stringify([scope,directory.userId])]));
         throw new Error('La identidad de este contacto ha cambiado. Abre Verificar identidad y compara el código antes de continuar.');
       }
-      return current || {digest:fingerprint.digest,verified:false};
+      return {...current,digest:fingerprint.digest,verified:current?.verified??false,devices:fingerprint.deviceIdentities};
     });
+    this.clearChanged(scope,directory.userId);
   }
   /** Read-only continuity against a local pin; this never establishes new trust. */
   async continuity(scope:string,directory:PublicKeyDirectory):Promise<IdentityContinuity>{
@@ -39,17 +60,96 @@ export class IdentityTrustService {
       tx.onabort=()=>reject(tx.error || new Error('No se pudo comprobar la identidad.'));
     });
     if(!pin)return {state:'unknown'};
-    if(pin.digest!==fingerprint.digest)return {state:'changed'};
-    return {state:pin.verified?'verified':'unchanged',...(pin.verifiedAt?{verifiedAt:pin.verifiedAt}:{})};
+    if(pin.digest!==fingerprint.digest && !this.onlyRemovedKnownDevices(pin,fingerprint))return {state:'changed'};
+    return {state:pin.verified?'verified':'unchanged',...(pin.verifiedAt?{verifiedAt:pin.verifiedAt}:{}),source:pin.linkedFromDeviceId?'linked-device':'this-device'};
   }
   async confirm(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true):Promise<void>{
     const fingerprint=await deriveDirectoryFingerprint(directory);
     if(!isCurrent())throw new Error('La comparación ya no está activa.');
     await this.update(scope,directory.userId,()=>{
       if(!isCurrent())throw new Error('La comparación ya no está activa.');
-      return {digest:fingerprint.digest,verified:true,verifiedAt:new Date().toISOString()};
+      return {digest:fingerprint.digest,devices:fingerprint.deviceIdentities,verified:true,verifiedAt:new Date().toISOString()};
     });
-    this.changed.update(previous=>{const next=new Set(previous);next.delete(JSON.stringify([scope,directory.userId]));return next;});
+    this.clearChanged(scope,directory.userId);
+  }
+
+  /** Export this owner's exact source-device namespace; never another account's pins. */
+  async exportForLinkedDevice(userId:string,sourceDeviceId:string):Promise<IdentityTrustTransfer>{
+    if(!this.validId(userId)||!this.validId(sourceDeviceId))throw new Error('La cuenta de origen no es válida.');
+    const scope=JSON.stringify([userId,sourceDeviceId]);
+    const db=await this.open();
+    const entries=await new Promise<IdentityTrustTransferEntry[]>((resolve,reject)=>{
+      const prefix=`[${JSON.stringify(scope)},`;
+      const tx=db.transaction('pins','readonly');const request=tx.objectStore('pins').openCursor(IDBKeyRange.bound(prefix,`${prefix}\uffff`));
+      const found:IdentityTrustTransferEntry[]=[];
+      request.onsuccess=()=>{
+        const cursor=request.result;if(!cursor)return;
+        try{
+          const [ownerScope,contactId]=JSON.parse(String(cursor.key));const pin=cursor.value as Pin;
+          if(ownerScope===scope && contactId!==userId && this.validEntry({...pin,userId:contactId}) && !this.isChanged(scope,contactId)){
+            found.push({userId:contactId,digest:pin.digest,verified:pin.verified,...(pin.verifiedAt?{verifiedAt:pin.verifiedAt}:{})});
+          }
+        }catch{/* Unrelated legacy keys cannot establish continuity for this account. */}
+        cursor.continue();
+      };
+      tx.oncomplete=()=>resolve(found);tx.onabort=()=>reject(tx.error||new Error('No se pudo preparar la continuidad de los contactos.'));tx.onerror=()=>reject(tx.error);
+    });
+    entries.sort((a,b)=>Number(b.verified)-Number(a.verified)||(b.verifiedAt??'').localeCompare(a.verifiedAt??'')||a.userId.localeCompare(b.userId));
+    const transfer:IdentityTrustTransfer={v:1,purpose:'identity-continuity',userId,sourceDeviceId,entries:[]};
+    const encoder=new TextEncoder();let bytes=encoder.encode(JSON.stringify(transfer)).byteLength;
+    for(const entry of entries.slice(0,MAX_TRANSFER_ENTRIES)){
+      const added=encoder.encode(JSON.stringify(entry)).byteLength+(transfer.entries.length?1:0);
+      if(bytes+added>MAX_TRANSFER_BYTES)break;
+      transfer.entries.push(entry);bytes+=added;
+    }
+    return transfer;
+  }
+
+  /** Use only after validating/decrypting the owner's approved QR/history handoff. */
+  async importFromLinkedDevice(targetScope:string,sourceDeviceId:string,transfer:IdentityTrustTransfer,isCurrent:()=>boolean=()=>true):Promise<number>{
+    let scope:unknown;
+    try{scope=JSON.parse(targetScope);}catch{throw new Error('La cuenta de destino no es válida.');}
+    if(!Array.isArray(scope)||scope.length!==2||!this.validId(scope[0])||!this.validId(scope[1])||!this.validId(sourceDeviceId)
+      ||!transfer||transfer.v!==1||transfer.purpose!=='identity-continuity'||transfer.userId!==scope[0]||transfer.sourceDeviceId!==sourceDeviceId
+      ||!Array.isArray(transfer.entries)||transfer.entries.length>MAX_TRANSFER_ENTRIES||new TextEncoder().encode(JSON.stringify(transfer)).byteLength>MAX_TRANSFER_BYTES)
+      throw new Error('La continuidad de los contactos no corresponde a esta cuenta.');
+    const entries=transfer.entries;const ids=new Set<string>();
+    for(const entry of entries){
+      if(!this.validEntry(entry)||entry.userId===transfer.userId||ids.has(entry.userId))throw new Error('El paquete de continuidad de los contactos no es válido.');
+      ids.add(entry.userId);
+    }
+    if(!isCurrent())throw new Error('La vinculación ya no está activa.');
+    const db=await this.open();
+    return new Promise<number>((resolve,reject)=>{
+      const tx=db.transaction('pins','readwrite');const store=tx.objectStore('pins');let imported=0;let error:unknown;
+      for(const entry of entries){
+        const key=JSON.stringify([targetScope,entry.userId]);const request=store.get(key);
+        request.onsuccess=()=>{
+          try{
+            if(!isCurrent())throw new Error('La vinculación ya no está activa.');
+            const current=request.result as Pin|undefined;
+            // A delayed handoff must not erase a different identity already observed here.
+            if(current&&(current.digest!==entry.digest||current.verified||!entry.verified))return;
+            store.put({...current,digest:entry.digest,verified:entry.verified,...(entry.verifiedAt?{verifiedAt:entry.verifiedAt}:{}),linkedFromDeviceId:sourceDeviceId} satisfies Pin,key);imported++;
+          }catch(reason){error=reason;tx.abort();}
+        };
+      }
+      tx.oncomplete=()=>resolve(imported);tx.onabort=()=>reject(error||tx.error||new Error('No se pudo guardar la continuidad de los contactos.'));tx.onerror=()=>reject(tx.error);
+    });
+  }
+
+  private onlyRemovedKnownDevices(pin:Pin,fingerprint:DirectoryFingerprint):boolean{
+    if(!pin.devices?.length||!fingerprint.deviceIdentities.length||fingerprint.deviceIdentities.length>=pin.devices.length)return false;
+    return fingerprint.deviceIdentities.every(device=>pin.devices!.some(known=>known.deviceId===device.deviceId&&known.identity===device.identity));
+  }
+  private validId(value:unknown):value is string{return typeof value==='string'&&value.length>0&&value.length<=128&&value.trim()===value;}
+  private validEntry(value:IdentityTrustTransferEntry):boolean{
+    return this.validId(value?.userId)&&typeof value.digest==='string'&&DIGEST.test(value.digest)&&typeof value.verified==='boolean'
+      &&(!value.verified||typeof value.verifiedAt==='string')
+      &&(value.verifiedAt===undefined||typeof value.verifiedAt==='string'&&/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(value.verifiedAt)&&value.verifiedAt.length<=32&&Number.isFinite(Date.parse(value.verifiedAt))&&Date.parse(value.verifiedAt)<=Date.now()+60_000);
+  }
+  private clearChanged(scope:string,userId:string):void{
+    this.changed.update(previous=>{const next=new Set(previous);next.delete(JSON.stringify([scope,userId]));return next;});
   }
   private async update(scope:string,userId:string,change:(pin:Pin|undefined)=>Pin):Promise<void>{
     const db=await this.open();

@@ -47,6 +47,7 @@ describe('Chat voice recording lifecycle', () => {
     internal = page;
     Object.assign(page, {
       auth: { session: () => scope }, chat: { sendFile, uploading: () => false },
+      privateChats: { relock: jasmine.createSpy('relock') },
       conversation: () => ({ id: 'chat' }), canSendMessages: () => true, isBlocked: () => false,
       appSettings: { settings: () => ({ pauseMediaOnRecord: false }) },
       nativeDevice: { setAudioFocus: jasmine.createSpy('focus').and.resolveTo() },
@@ -157,6 +158,7 @@ describe('Chat voice recording lifecycle', () => {
     await pending;
     expect(microphone.stop).toHaveBeenCalled();
     expect(sendFile).not.toHaveBeenCalled();
+    expect(page.privateChats.relock).toHaveBeenCalledTimes(1);
   });
 
   it('does not record into a different account after permission resolves', async () => {

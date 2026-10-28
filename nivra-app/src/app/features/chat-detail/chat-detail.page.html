@@ -1,4 +1,8 @@
 <section class="chat-detail ion-page">
+  @if (privateChatLocked()) {
+    <ion-header class="chat-header"><ion-toolbar><ion-buttons slot="start"><ion-button mode="ios" fill="clear" (click)="back()" [attr.aria-label]="'COMMON.BACK' | translate:'Volver'"><ion-icon name="arrow-back-outline" /></ion-button></ion-buttons></ion-toolbar></ion-header>
+    <ion-content><app-private-chat-lock [conversationId]="privateConversationId()" (completed)="privateChatOpened()" (cancelled)="back()" /></ion-content>
+  } @else {
   <ion-header class="chat-header">
     <ion-toolbar>
       <ion-buttons slot="start">
@@ -27,10 +31,10 @@
       </button>
       <ion-buttons slot="end">
         @if (!calls.activeGroupRoomForConversation(conversation()?.id)) {
-        <ion-button mode="ios" fill="clear" [disabled]="busyAction !== ''" (click)="startCall('Voice')" [attr.aria-label]="'COMMON.CALL' | translate:'Llamada'">
+        <ion-button mode="ios" fill="clear" [disabled]="busyAction !== '' || isBlocked()" (click)="startCall('Voice')" [attr.aria-label]="'COMMON.CALL' | translate:'Llamada'">
           <ion-icon name="call-outline"></ion-icon>
         </ion-button>
-        <ion-button mode="ios" fill="clear" [disabled]="busyAction !== ''" (click)="startCall('Video')" [attr.aria-label]="'COMMON.VIDEO' | translate:'Video'">
+        <ion-button mode="ios" fill="clear" [disabled]="busyAction !== '' || isBlocked()" (click)="startCall('Video')" [attr.aria-label]="'COMMON.VIDEO' | translate:'Video'">
           <ion-icon name="videocam-outline"></ion-icon>
         </ion-button>
         } @else {
@@ -558,7 +562,7 @@
       </div>
     }
     @if (isBlocked()) {
-      <p class="composer-notice">{{ 'CHAT.BLOCKED_DEVICE' | translate:'Chat bloqueado en este dispositivo.' }}</p>
+      <p class="composer-notice">{{ (chat.isGroup(conversation()) ? 'CHAT.BLOCKED_DEVICE' : 'CHAT.CONTACT_BLOCKED') | translate:(chat.isGroup(conversation()) ? 'Chat bloqueado en este dispositivo.' : 'Contacto bloqueado en tu cuenta.') }}</p>
     }
     @if (!isBlocked() && !canSendMessages()) {
       <p class="composer-notice">{{ 'CHAT.ADMINS_ONLY_MESSAGES' | translate:'Solo los admins pueden enviar mensajes en este grupo.' }}</p>
@@ -640,6 +644,7 @@
     (didDismiss)="closeChatMenu()">
     <ng-template>
       <div class="popover-menu">
+        <button type="button" (click)="openPrivateChatProtection()"><ion-icon name="lock-closed-outline" />{{ privateChats.isProtected(privateConversationId()) ? ('PRIVATE_CHAT.REMOVE' | translate:'Quitar protección') : ('PRIVATE_CHAT.PROTECT' | translate:'Proteger conversación') }}</button>
         <button type="button" (click)="openSearch()"><ion-icon name="search-outline"></ion-icon>{{ 'CHAT.SEARCH_CHAT' | translate:'Buscar en este chat' }}</button>
         @if (!isGroupConversation()) {
           <button type="button" (click)="closeChatMenu(); verifyIdentity()"><ion-icon name="shield-checkmark-outline"></ion-icon>{{ 'IDENTITY.TITLE' | translate:'Verificar identidad' }}</button>
@@ -654,7 +659,7 @@
         </button>
         <button type="button" (click)="toggleBlock()">
           <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'"></ion-icon>
-          {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : ('CHAT.BLOCK' | translate:'Bloquear') }}
+          {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : (chat.isGroup(conversation()) ? ('CHAT.BLOCK' | translate:'Bloquear') : ('CHAT.BLOCK_CONTACT' | translate:'Bloquear contacto')) }}
         </button>
         <button type="button" (click)="clearChat('me')">
           <ion-icon name="trash-outline"></ion-icon>
@@ -1314,7 +1319,7 @@
               (click)="toggleBlock()"
               [disabled]="!!busyAction">
               <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'" aria-hidden="true"></ion-icon>
-              {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : ('CHAT.BLOCK' | translate:'Bloquear') }}
+              {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : (chat.isGroup(conversation()) ? ('CHAT.BLOCK' | translate:'Bloquear') : ('CHAT.BLOCK_CONTACT' | translate:'Bloquear contacto')) }}
             </button>
           }
         </div>
@@ -1550,4 +1555,8 @@
     (cancelled)="cancelGroupAvatarCrop()"
     (cropped)="applyGroupAvatarCrop($event)">
   </app-image-cropper>
+  <ion-modal class="private-chat-modal" [isOpen]="privateChatProtectionOpen" (didDismiss)="privateChatProtectionOpen = false">
+    <ng-template><app-private-chat-lock [conversationId]="privateConversationId()" [action]="privateChatProtectionAction" (completed)="privateChatOpened()" (cancelled)="privateChatProtectionOpen = false" /></ng-template>
+  </ion-modal>
+  }
 </section>

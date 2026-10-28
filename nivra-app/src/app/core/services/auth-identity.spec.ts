@@ -140,8 +140,9 @@ describe('hybrid login preserves device key identity', () => {
     });
     spyOn(window, 'fetch').and.resolveTo(new Response(JSON.stringify([{ userId: 'alice', devices: [{ deviceId: 'target', keyBundle: { identityKey: JSON.stringify(local.publicJwk) } }] }]), { status: 200 }));
     const current = () => true;
-    await linked.completeLocalQrAuth(auth, { keyMaterial: source }, local, current);
-    expect(linked.completeImportedAuth).toHaveBeenCalledOnceWith(auth, local, [source], current);
+    const payload = { keyMaterial: source };
+    await linked.completeLocalQrAuth(auth, payload, local, current);
+    expect(linked.completeImportedAuth).toHaveBeenCalledOnceWith(auth, local, [source], current, payload);
   });
 
   it('rejects a server QR identity mismatch or cancellation without importing or replacing the source key', async () => {
@@ -170,5 +171,60 @@ describe('hybrid login preserves device key identity', () => {
     expect(payload.alias).toBeUndefined();
     expect(payload.phone).toBeUndefined();
     expect(payload.email).toBeUndefined();
+  });
+});
+
+describe('approved QR contact continuity handoff',()=>{
+  const auth={user:{id:'owner',alias:'owner'},device:{id:'phone'},tokens:{accessToken:'fixture-token'}};
+  const continuity={v:1,purpose:'identity-continuity',userId:'owner',sourceDeviceId:'phone',entries:[]};
+  function sourceHarness(){
+    const encrypt=jasmine.createSpy('seal').and.resolveTo('encrypted-fixture');
+    const post=jasmine.createSpy('post').and.returnValue(of({}));
+    const exporter=jasmine.createSpy('export').and.resolveTo(continuity);
+    const service:any=Object.assign(Object.create(AuthService.prototype),{
+      session:signal<any>(auth),parseQrLoginChallenge:()=>({qrId:'qr',code:'code',publicSpki:'fixture-public-key'}),
+      crypto:{currentKeyMaterial:async()=>({privateJwk:{},publicJwk:{}}),exportDeviceKeyMaterialsForUser:async()=>[],encryptQrPayload:encrypt},
+      identityTrust:{exportForLinkedDevice:exporter},deviceProfile:async()=>({name:'phone',hardwareId:'fixture-hardware'}),api:{post},
+    });
+    return {service,encrypt,post,exporter};
+  }
+  it('seals only the approved current owner namespace alongside the QR key history',async()=>{
+    const {service,encrypt,post,exporter}=sourceHarness();await service.authorizeQrLoginText('fixture-qr');
+    expect(exporter).toHaveBeenCalledOnceWith('owner','phone');
+    expect(encrypt.calls.first().args[1].identityTrust).toBe(continuity);
+    expect(encrypt.calls.first().args[1].sourceDeviceId).toBe('phone');
+    expect(post.calls.first().args[1]).toEqual({qrId:'qr',code:'code',encryptedPayload:'encrypted-fixture'});
+  });
+  it('does not authorize the former account after a delayed continuity export',async()=>{
+    const {service,encrypt,post,exporter}=sourceHarness();
+    exporter.and.callFake(async()=>{service.session.set({...auth,user:{id:'other',alias:'other'}});return continuity;});
+    await expectAsync(service.authorizeQrLoginText('fixture-qr')).toBeRejectedWithError(/sesión cambió/);
+    expect(encrypt).not.toHaveBeenCalled();expect(post).not.toHaveBeenCalled();
+  });
+  it('keeps QR linking functional when optional local continuity metadata is unavailable',async()=>{
+    const {service,encrypt,post,exporter}=sourceHarness();exporter.and.rejectWith(new Error('fixture unavailable'));
+    await service.authorizeQrLoginText('fixture-qr');
+    expect(encrypt.calls.first().args[1].identityTrust).toBeUndefined();expect(post).toHaveBeenCalledTimes(1);
+  });
+  function targetHarness(){
+    const imported=jasmine.createSpy('import').and.resolveTo(1);const persist=jasmine.createSpy('persist').and.resolveTo(true);
+    const service:any=Object.assign(Object.create(AuthService.prototype),{
+      allowAccountActivation:async()=>true,crypto:{materialToDeviceKeys:(key:unknown)=>key,saveDeviceKeys:async()=>undefined},
+      identityTrust:{importFromLinkedDevice:imported},persistSession:persist,addingAccount:signal(false),markFreshAuthNavigation:()=>undefined,
+      consumePostAuthUrl:()=>'/app/chats',router:{navigateByUrl:jasmine.createSpy('navigate').and.resolveTo(true)},
+    });
+    return {service,imported,persist};
+  }
+  it('restores optional continuity before activating the destination account',async()=>{
+    const {service,imported,persist}=targetHarness();const current=()=>true;const target={...auth,device:{id:'laptop'}};
+    imported.and.callFake(async()=>{expect(persist).not.toHaveBeenCalled();return 1;});
+    await service.completeImportedAuth(target,{publicJwk:{},privateJwk:{}},undefined,current,{identityTrust:continuity,sourceDeviceId:'phone'});
+    expect(imported).toHaveBeenCalledOnceWith(JSON.stringify(['owner','laptop']),'phone',continuity,current);expect(persist).toHaveBeenCalledOnceWith(target,current);
+  });
+  it('does not activate a canceled destination after the optional metadata import returns',async()=>{
+    const {service,imported,persist}=targetHarness();let current=true;
+    imported.and.callFake(async()=>{current=false;return 0;});
+    await service.completeImportedAuth(auth,{publicJwk:{},privateJwk:{}},undefined,()=>current,{identityTrust:continuity,sourceDeviceId:'phone'});
+    expect(persist).not.toHaveBeenCalled();expect(service.router.navigateByUrl).not.toHaveBeenCalled();
   });
 });

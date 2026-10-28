@@ -4,6 +4,7 @@ export interface PushAccountScope {
   userId: string;
   deviceId: string;
   hideNotificationContent: boolean;
+  protectedConversationIds?: readonly string[];
 }
 
 /** Contains routing/privacy metadata only; no tokens, aliases or key material. */

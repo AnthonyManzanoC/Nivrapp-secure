@@ -1,6 +1,8 @@
 import { CommonModule } from '@angular/common';
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { PrivateChatLockService } from '../../core/services/private-chat-lock.service';
+import { PrivateChatLockComponent } from '../../shared/private-chat-lock.component';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Camera, CameraResultType, CameraSource } from '@capacitor/camera';
 import { Keyboard } from '@capacitor/keyboard';
@@ -163,11 +165,32 @@ interface MessageTextPart {
     HistorySyncNoticeComponent,
     ChatLoadingComponent,
     ChatIdentityChangeNoticeComponent,
+    PrivateChatLockComponent,
   ],
   templateUrl: './chat-detail.page.html',
   styleUrls: ['./chat-detail.page.scss', './chat-thread.scss', './chat-profile.scss'],
 })
 export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
+  readonly privateChats = inject(PrivateChatLockService);
+  privateChatProtectionOpen = false;
+  privateChatProtectionAction: 'protect' | 'remove' = 'protect';
+  privateConversationId(): string { return this.route?.snapshot?.paramMap?.get('conversationId') || this.conversation()?.id || ''; }
+  privateChatLocked(): boolean { return this.privateChats.isLocked(this.privateConversationId()); }
+  openPrivateChatProtection(): void {
+    if (!this.privateConversationId()) return;
+    this.closeChatMenu();
+    this.privateChatProtectionAction = this.privateChats.isProtected(this.privateConversationId()) ? 'remove' : 'protect';
+    this.privateChatProtectionOpen = true;
+  }
+  privateChatOpened(): void {
+    this.privateChatProtectionOpen = false;
+    window.requestAnimationFrame(() => {
+      if (this.destroyed || this.privateChatLocked()) return;
+      this.cdr.detectChanges(); this.bindVoiceGesture();
+      const id = this.privateConversationId();
+      if (id) { void this.chat.markConversationRead(id); this.scheduleInitialScroll(id, { force: true }); }
+    });
+  }
   private readonly identityTrust = inject(IdentityTrustService);
   private readonly verificationDraft = inject(ChatVerificationDraftService);
   identityChanged(): boolean {
@@ -354,6 +377,20 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private groupRoomRefreshTimer: number | null = null;
 
   constructor() {
+    effect(() => {
+      const locked = this.privateChatLocked();
+      untracked(() => {
+        if (!locked) return;
+        this.privateChatProtectionOpen = false;
+        this.closeChatMenu(); this.closeMessageActions(); this.closeAttachmentMenu();
+        this.closeReactionViewer(); this.closeMessageInfo(); this.closeContactInfo();
+        this.closeProfilePhotoViewer(); this.closeMediaGallery(); this.closeForward(); this.closeSearch();
+        this.closeStoryViewer(); this.closeStoryStats();
+        this.emojiPanelOpen = false; this.policyPanelOpen = false;
+        this.clearPendingAttachments(false); ++this.composerGeneration;
+        void this.cancelVoiceNote();
+      });
+    });
     addIcons({
       arrowBackOutline,
       callOutline,
@@ -486,6 +523,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ionViewWillLeave(): void {
+    this.privateChats.relock();
     this.stopGroupRoomRefresh();
     ++this.composerGeneration;
     void this.cancelVoiceNote();
@@ -1721,16 +1759,19 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     const blocked = !this.chat.isConversationBlocked(conversation.id);
+    if (blocked && !this.chat.isGroup(conversation) && !window.confirm(this.tr('CHAT.CONFIRM_BLOCK_CONTACT', '¿Bloquear este contacto? No podrán enviarse mensajes ni llamadas directas. Los grupos compartidos se conservan.'))) return;
     await this.runAction(`block:${conversation.id}`, async () => {
       await this.chat.setConversationBlocked(conversation, blocked);
       this.closeChatMenu();
-      this.notice = blocked ? this.tr('CHAT.BLOCKED_DEVICE', 'Chat bloqueado en este dispositivo.') : this.tr('CHAT.UNBLOCKED', 'Chat desbloqueado.');
+      this.notice = blocked
+        ? this.chat.isGroup(conversation) ? this.tr('CHAT.BLOCKED_DEVICE', 'Chat bloqueado en este dispositivo.') : this.tr('CHAT.CONTACT_BLOCKED', 'Contacto bloqueado en tu cuenta.')
+        : this.tr('CHAT.UNBLOCKED', 'Chat desbloqueado.');
     });
   }
 
   async startCall(type: 'Voice' | 'Video'): Promise<void> {
     const conversation = this.conversation();
-    if (!conversation) {
+    if (!conversation || this.isBlocked()) {
       return;
     }
     const currentUserId = this.auth.session()?.user.id;
@@ -2419,7 +2460,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   isBlocked(): boolean {
-    return this.chat.isConversationBlocked(this.conversation()?.id);
+    return this.privateChatLocked() || this.chat.isConversationBlocked(this.conversation()?.id);
   }
 
   isArchived(): boolean {

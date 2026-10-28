@@ -2135,3 +2135,5 @@ ion-modal.media-review-modal {
     --border-radius: 0;
   }
 }
+ion-modal.private-chat-modal { --width: min(480px, calc(100vw - 24px)); --height: auto; --max-height: 90dvh; --border-radius: 24px; --background: var(--nivra-panel-solid); }
+ion-modal.private-chat-modal::part(content) { max-height: 90dvh; overflow: auto; }

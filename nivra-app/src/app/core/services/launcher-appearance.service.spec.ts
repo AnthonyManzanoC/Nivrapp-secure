@@ -224,17 +224,20 @@ describe('account launcher appearance synchronization', () => {
     expect(api.put).toHaveBeenCalledOnceWith('/account/appearance', { icon: 'ivory', expectedRevision: 0 });
   });
 
-  it('updates the bundled web favicon without invoking a native bridge', async () => {
+  it('updates favicon, Apple touch icon and account-specific PWA manifest without a native bridge', async () => {
     runtime.platform = 'web'; runtime.bridge = null;
     server.set(accountA, { icon: 'emerald', revision: 3 });
     const service = TestBed.inject(LauncherAppearanceService); await service.refresh();
     expect(service.platform()).toBe('web'); expect(service.supported()).toBeTrue();
-    expect(page.querySelector<HTMLLinkElement>('link[rel="icon"]')!.href).toBe('https://nivra.example/assets/brand/launcher-emerald.png');
-    expect(page.querySelector<HTMLLinkElement>('link[rel="manifest"]')!.href).toBe('https://nivra.example/assets/brand/manifest-emerald.webmanifest');
+    expect(page.querySelector<HTMLLinkElement>('link[rel="icon"]')!.href).toBe('https://nivra.example/assets/brand/launcher-emerald.png?v=3');
+    expect(page.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')!.href).toBe('https://nivra.example/assets/brand/launcher-emerald.png?v=3');
+    expect(page.querySelector<HTMLLinkElement>('link[rel="mask-icon"]')!.href).toBe('https://nivra.example/assets/brand/launcher-emerald.svg?v=3');
+    expect(page.querySelector<HTMLLinkElement>('link[rel="manifest"]')!.href).toBe('https://nivra.example/assets/brand/manifest-emerald.webmanifest?v=3');
     expect(getState).not.toHaveBeenCalled(); expect(setIcon).not.toHaveBeenCalled();
     expect(await service.selectIcon('ivory')).toBeTrue();
-    expect(page.querySelector<HTMLLinkElement>('link[rel="icon"]')!.href).toContain('launcher-ivory.png');
-    expect(page.querySelector<HTMLLinkElement>('link[rel="manifest"]')!.href).toContain('manifest-ivory.webmanifest');
+    expect(page.querySelector<HTMLLinkElement>('link[rel="icon"]')!.href).toBe('https://nivra.example/assets/brand/launcher-ivory.png?v=4');
+    expect(page.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]')!.href).toBe('https://nivra.example/assets/brand/launcher-ivory.png?v=4');
+    expect(page.querySelector<HTMLLinkElement>('link[rel="manifest"]')!.href).toBe('https://nivra.example/assets/brand/manifest-ivory.webmanifest?v=4');
   });
 
   it('treats appearance events as authorized refresh hints and ignores their untrusted payload', async () => {

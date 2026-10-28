@@ -355,6 +355,7 @@ public sealed class PushNotificationService(
 
         using var scope = scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
+        if (await ContactBlockPolicy.SuppressPushAsync(db, userId, data, cancellationToken)) return true;
         var tokens = await PushDestinations(db.PushTokens, db.Devices, userId, data, targetDeviceId)
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)

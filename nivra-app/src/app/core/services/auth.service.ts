@@ -34,6 +34,7 @@ import { normalizeNivraNumber } from '../utils/nivra-number';
 import { AccountSessionsService } from './account-sessions.service';
 import { NivraNative } from './native-plugin';
 import { markWebPushAccountWipe, pendingWebPushAccountWipes } from './push-account-scopes';
+import { IdentityTrustService, IdentityTrustTransfer } from './identity-trust.service';
 
 export class StoredAccountWipeRequiredError extends Error {
   constructor(readonly scope: { userId: string; deviceId: string }) { super('STORED_ACCOUNT_FORCE_WIPE'); }
@@ -75,6 +76,8 @@ interface ProtectedAuthSessionEnvelope {
 
 interface QrHistoryPayload {
   userId?: string;
+  sourceDeviceId?: string;
+  identityTrust?: IdentityTrustTransfer;
   keyring?: HistoricalDeviceKeyMaterial[];
   keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>;
 }
@@ -94,6 +97,7 @@ const authTextDecoder = new TextDecoder();
 export class AuthService implements OnDestroy {
   private readonly api = inject(NivraApiService);
   private readonly crypto = inject(CryptoService);
+  private readonly identityTrust = inject(IdentityTrustService);
   private readonly secureVault = inject(NativeSecureVaultService);
   private readonly launchCache = inject(ChatLaunchCacheService);
   private readonly accountSessions = inject(AccountSessionsService);
@@ -773,10 +777,13 @@ export class AuthService implements OnDestroy {
     }
     const keyMaterial = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
     const keyring = await this.crypto.exportDeviceKeyMaterialsForUser(current.user.id, current.user.alias);
+    const identityTrust = await this.identityTrust.exportForLinkedDevice(current.user.id, current.device.id).catch(() => undefined);
     if (this.session()?.user.id !== current.user.id || this.session()?.device.id !== current.device.id) throw new Error('La sesión cambió durante la vinculación.');
     const device = await this.deviceProfile();
     const payload = {
       userId: current.user.id,
+      sourceDeviceId: current.device.id,
+      ...(identityTrust ? { identityTrust } : {}),
       keyring: keyring.map(key => ({ privateJwk: key.privateJwk, publicJwk: key.publicJwk, createdAt: key.createdAt })),
       keyMaterial: {
         privateJwk: keyMaterial.privateJwk,
@@ -1428,7 +1435,7 @@ export class AuthService implements OnDestroy {
     if (!this.crypto.samePublicKey(localKeys.publicJwk, this.crypto.parsePublicJwk(published?.keyBundle?.identityKey))) throw new Error('Actualiza Nivra y renueva el QR. No se pudo comprobar la identidad local de este dispositivo.');
     const historical = [...(payload.keyring ?? [])];
     if (!historical.some(key => this.crypto.samePublicKey(key.publicJwk, payload.keyMaterial!.publicJwk))) historical.push(payload.keyMaterial);
-    await this.completeImportedAuth(auth, localKeys, historical, isCurrent);
+    await this.completeImportedAuth(auth, localKeys, historical, isCurrent, payload);
   }
 
   private async completeImportedAuth(
@@ -1436,6 +1443,7 @@ export class AuthService implements OnDestroy {
     keyMaterial: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>,
     keyring?: HistoricalDeviceKeyMaterial[],
     isCurrent: () => boolean = () => true,
+    handoff?: Pick<QrHistoryPayload, 'identityTrust' | 'sourceDeviceId'>,
   ): Promise<void> {
     if (!isCurrent() || !await this.allowAccountActivation(auth, isCurrent)) return;
     if (keyring?.length) await this.crypto.importHistoricalDeviceKeys(auth.user.id, auth.user.alias, keyring, isCurrent);
@@ -1443,6 +1451,12 @@ export class AuthService implements OnDestroy {
     const keys = this.crypto.materialToDeviceKeys(keyMaterial);
     await this.crypto.saveDeviceKeys(auth.user.alias, auth.device.id, keys, { userId: auth.user.id }, isCurrent);
     if (!isCurrent()) return;
+    if (handoff?.identityTrust && handoff.sourceDeviceId) {
+      // Optional public pins cannot prevent importing a valid private-key history.
+      // The payload was opened only after the user approved this destination QR.
+      await this.identityTrust.importFromLinkedDevice(JSON.stringify([auth.user.id, auth.device.id]), handoff.sourceDeviceId, handoff.identityTrust, isCurrent).catch(() => undefined);
+      if (!isCurrent()) return;
+    }
     if (!await this.persistSession(auth, isCurrent) || !isCurrent()) return;
     this.addingAccount.set(false);
     this.addingReturnUserId = null;

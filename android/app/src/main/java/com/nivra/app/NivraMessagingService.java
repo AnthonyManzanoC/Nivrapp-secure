@@ -108,7 +108,10 @@ public class NivraMessagingService extends MessagingService {
 
         PendingIntent openIntent = openIntent(remoteMessage, data, "tap", id);
         if (openIntent == null) return;
+        android.os.Bundle privacyRoute = new android.os.Bundle();
+        privacyRoute.putString("nivraConversationId", stringValue(data, "conversationId"));
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, incomingCall ? CHANNEL_CALLS : CHANNEL_MESSAGES)
+            .addExtras(privacyRoute)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle("Nivra")
             .setContentText(bodyForType(type))

@@ -72,7 +72,7 @@ export class DeviceWipeService {
       `nivra.radar.contactJoined.${userId}`, `nivra.radar.seen.${userId}`,
       `nivra.callHistory.${userId}`, `nivra.selectedConversationId.${userId}`,
       `nivra.pinnedConversations.${userId}`, `nivra.archivedConversations.${userId}`, `nivra.mutedConversations.${userId}`,
-      `nivra.blockedConversations.${userId}`,
+      `nivra.blockedConversations.${userId}`, `nivra.contactBlocks.v1.${userId}`,
       `nivra.settings.v2.${userId}`, `nivra.vault.${userId}`,
       `nivra.appLock.v1.${userId}`, `nivra.panicPin.v1.${userId}`, `nivra.accountLock.v1.${userId}`,
       `nivra.appLock.attempts.v1.${userId}`,

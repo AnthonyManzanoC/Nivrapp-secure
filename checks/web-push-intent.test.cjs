@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 const { MessageChannel } = require('node:worker_threads');
 
-function workerHarness({ visible = true, existing = true, acknowledge = true, active = 'alice', scopes, records = [] } = {}) {
+function workerHarness({ visible = true, existing = true, acknowledge = true, active = 'alice', scopes, records = [], existingNotifications=[] } = {}) {
   const handlers = new Map(); const posted = []; const shown = []; const opened = []; const saved = new Map();
   let focused = 0;
   const windowClient = {
@@ -23,7 +23,7 @@ function workerHarness({ visible = true, existing = true, acknowledge = true, ac
   };
   const self = {
     clients, addEventListener: (name, handler) => handlers.set(name, handler), skipWaiting: async () => undefined,
-    registration: { showNotification: async (title, options) => shown.push({ title, ...JSON.parse(JSON.stringify(options)) }) },
+    registration: { showNotification: async (title, options) => shown.push({ title, ...JSON.parse(JSON.stringify(options)) }),getNotifications:async()=>existingNotifications },
   };
   const state = { scopes: scopes || ['alice', 'bob'].map(userId => ({ userId, deviceId: `browser-${userId}` })), activeUserId: active, activeDeviceId: `browser-${active}` };
   const context = vm.createContext({ self, clients, state, saved, records,
@@ -111,4 +111,62 @@ test('preview selection uses both verified owner and device, never latest global
   worker.context.fixtureData = privateMessage;
   const selected = await vm.runInContext('recipientDeviceKey(fixtureData)', worker.context);
   assert.equal(selected.privateJwk.d, 'a');
+});
+
+test('protected conversation skips preview decryption without disabling another conversation preview', async () => {
+  const worker=workerHarness({existing:false,scopes:[{userId:'alice',deviceId:'browser-alice',protectedConversationIds:['private-chat']}]});
+  vm.runInContext(`previewReads=0;decryptPreviewIfPresent=async()=>{previewReads++;return {title:'Ruth',body:'private fixture text'};};`,worker.context);
+  await worker.dispatch('push',receive(privateMessage));
+  assert.equal(worker.context.previewReads,0);assert.equal(worker.shown[0].title,'Nivra');assert.equal(worker.shown[0].body,'Nuevo mensaje privado');
+  await worker.dispatch('push',receive({...privateMessage,conversationId:'normal-chat'}));
+  assert.equal(worker.context.previewReads,1);assert.equal(worker.shown[1].title,'Ruth');assert.equal(worker.shown[1].body,'private fixture text');
+});
+
+test('unreadable policy and missing chat routing fail closed while preserving call actions',async()=>{
+  for(const protectedConversationIds of [['*'],['private-chat'],'malformed']){
+    const worker=workerHarness({existing:false,scopes:[{userId:'alice',deviceId:'browser-alice',protectedConversationIds}]});
+    vm.runInContext(`previewReads=0;decryptPreviewIfPresent=async()=>{previewReads++;return {title:'private sender',body:'private text'};};`,worker.context);
+    await worker.dispatch('push',receive({...privateMessage,type:'incoming_call',callId:'call-one',conversationId:''}));
+    assert.equal(worker.context.previewReads,0);assert.equal(worker.shown[0].title,'Nivra');assert.equal(worker.shown[0].requireInteraction,true);
+    assert.deepEqual(worker.shown[0].actions,[{action:'accept',title:'Contestar'},{action:'decline',title:'Rechazar'}]);
+  }
+});
+
+test('new protection invalidates a preview already being decrypted in a sleeping worker',async()=>{
+  const worker=workerHarness({existing:false,scopes:[{userId:'alice',deviceId:'browser-alice',protectedConversationIds:[]}]});
+  vm.runInContext(`decryptPreviewIfPresent=async()=>{state.scopes[0].protectedConversationIds=['private-chat'];return {title:'private sender',body:'private text'};};`,worker.context);
+  await worker.dispatch('push',receive(privateMessage));
+  assert.equal(worker.shown[0].title,'Nivra');assert.equal(worker.shown[0].body,'Nuevo mensaje privado');
+});
+
+test('protection metadata is per recipient account and never exposes the inactive account caller',async()=>{
+  const worker=workerHarness({existing:false,active:'bob',scopes:[
+    {userId:'alice',deviceId:'browser-alice',protectedConversationIds:['private-chat']},
+    {userId:'bob',deviceId:'browser-bob',protectedConversationIds:[]},
+  ]});
+  vm.runInContext(`previewReads=0;decryptPreviewIfPresent=async()=>{previewReads++;return {title:'Bob contact',body:'normal text'};};`,worker.context);
+  await worker.dispatch('push',receive({...privateMessage,type:'incoming_call',callId:'call-one'}));
+  assert.equal(worker.shown[0].title,'Nivra');assert.equal(worker.context.previewReads,0);assert.deepEqual(worker.shown[0].actions,[]);
+  await worker.dispatch('push',receive({...privateMessage,recipientUserId:'bob',recipientDeviceId:'browser-bob'}));
+  assert.equal(worker.shown[1].title,'Bob contact');assert.equal(worker.context.previewReads,1);
+});
+
+test('activating protection closes previous OS previews only for the newly protected recipient chat',async()=>{
+  const closed=[];const notice=(id,user='alice')=>({data:{...privateMessage,conversationId:id,recipientUserId:user,recipientDeviceId:`browser-${user}`},close:()=>closed.push(`${user}:${id}`)});
+  const worker=workerHarness({scopes:[
+    {userId:'alice',deviceId:'browser-alice',protectedConversationIds:['private-chat','already-private']},
+    {userId:'bob',deviceId:'browser-bob',protectedConversationIds:[]},
+  ],existingNotifications:[notice('private-chat'),notice('normal-chat'),notice('already-private'),notice('private-chat','bob')]});
+  await worker.dispatch('message',{data:{type:'nivra.push.privacyChanged',previousScopes:[
+    {userId:'alice',deviceId:'browser-alice',protectedConversationIds:['already-private']},
+    {userId:'bob',deviceId:'browser-bob',protectedConversationIds:[]},
+  ]}});
+  assert.deepEqual(closed,['alice:private-chat']);assert.deepEqual(worker.opened,[]);
+});
+
+test('privacy refresh never trusts a message-supplied current policy instead of the local registry',async()=>{
+  let closed=0;
+  const worker=workerHarness({scopes:[{userId:'alice',deviceId:'browser-alice',protectedConversationIds:[]}],existingNotifications:[{data:privateMessage,close:()=>closed++}]});
+  await worker.dispatch('message',{data:{type:'nivra.push.privacyChanged',scopes:[{userId:'alice',deviceId:'browser-alice',protectedConversationIds:['*']}]}});
+  assert.equal(closed,0);
 });

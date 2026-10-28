@@ -253,7 +253,7 @@ export class LauncherAppearanceService {
       }
       if (!current()) return false;
       this.physicalIcon = preference.icon;
-      this.applyBrowserMetadata(preference.icon);
+      this.applyBrowserMetadata(preference.icon, preference.revision);
       this.selected.set(preference.icon);
       return true;
     });
@@ -288,7 +288,7 @@ export class LauncherAppearanceService {
     this.writing = false;
     this.refreshRequested = false;
     this.refreshInFlight = null;
-    this.applyBrowserMetadata('original');
+    this.applyBrowserMetadata('original', 0);
     return true;
   }
 
@@ -311,19 +311,42 @@ export class LauncherAppearanceService {
     } catch { return null; }
   }
 
-  private applyBrowserMetadata(icon: LauncherIconId): void {
-    const href = new URL(`assets/brand/launcher-${icon}.png`, this.document.baseURI).href;
+  private applyBrowserMetadata(icon: LauncherIconId, revision: number): void {
+    // Include the server revision in each browser-visible URL. The icon files
+    // remain bundled and allowlisted; the query only prompts icon/manifest
+    // caches to observe an account change promptly.
+    const version = `?v=${revision}`;
+    const href = new URL(`assets/brand/launcher-${icon}.png${version}`, this.document.baseURI).href;
     let icons = Array.from(this.document.head.querySelectorAll<HTMLLinkElement>('link[rel="icon"]'));
     if (!icons.length) {
       const link = this.document.createElement('link'); link.rel = 'icon'; this.document.head.append(link); icons = [link];
     }
     for (const link of icons) { link.type = 'image/png'; link.href = href; }
+    let appleIcon = this.document.head.querySelector<HTMLLinkElement>('link[rel="apple-touch-icon"]');
+    if (!appleIcon) {
+      appleIcon = this.document.createElement('link');
+      appleIcon.rel = 'apple-touch-icon';
+      appleIcon.sizes = '180x180';
+      this.document.head.append(appleIcon);
+    }
+    appleIcon.type = 'image/png';
+    appleIcon.href = href;
+    let maskIcon = this.document.head.querySelector<HTMLLinkElement>('link[rel="mask-icon"]');
+    if (!maskIcon) {
+      maskIcon = this.document.createElement('link');
+      maskIcon.rel = 'mask-icon';
+      this.document.head.append(maskIcon);
+    }
+    maskIcon.href = new URL(`assets/brand/launcher-${icon}.svg${version}`, this.document.baseURI).href;
+    maskIcon.setAttribute('color', '#00a880');
     if (this.runtime.platform === 'web') {
       let manifest = this.document.head.querySelector<HTMLLinkElement>('link[rel="manifest"]');
       if (!manifest) { manifest = this.document.createElement('link'); manifest.rel = 'manifest'; this.document.head.append(manifest); }
-      // Durable, bundled manifests share the original app identity/start URL.
-      // Installed icon updates still depend on browser support and user review.
-      manifest.href = new URL(`assets/brand/manifest-${icon}.webmanifest`, this.document.baseURI).href;
+      // Each manifest variant keeps Nivra's stable PWA identity/start URL while
+      // pointing at this account's launcher artwork. Browsers refresh installed
+      // icons on their own schedule; versioning the manifest URL prevents stale
+      // HTTP caches from pinning the previous account selection.
+      manifest.href = new URL(`assets/brand/manifest-${icon}.webmanifest${version}`, this.document.baseURI).href;
     }
   }
 

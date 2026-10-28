@@ -65,6 +65,16 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        modelBuilder.Entity<ContactBlockRecord>(b =>
+        {
+            b.ToTable("contact_blocks");
+            b.HasKey(row => new { row.OwnerUserId, row.ContactUserId });
+            b.Property(row => row.OwnerUserId).HasMaxLength(64);
+            b.Property(row => row.ContactUserId).HasMaxLength(64);
+            b.HasIndex(row => new { row.ContactUserId, row.OwnerUserId });
+            b.HasOne<UserAccount>().WithMany().HasForeignKey(row => row.OwnerUserId).OnDelete(DeleteBehavior.Cascade);
+            b.HasOne<UserAccount>().WithMany().HasForeignKey(row => row.ContactUserId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<AccountAppearance>(b =>
         {
             b.ToTable("account_appearances", table => table.HasCheckConstraint("CK_account_appearances_Icon", "\"Icon\" IN ('original','emerald','ivory')"));

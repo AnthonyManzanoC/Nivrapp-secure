@@ -37,6 +37,11 @@ describe('approved encrypted history recovery', () => {
       requestEvidence: null, evidenceCheck: null, requestRevision: 0, recoveryStatus: signal('approval'),
       sourceDirectory: null, sourceDirectoryCheck: null, sourceDirectoryRevision: 0,
       preferredSource: signal(null), sourceCapability: signal('unknown'),
+      sourceAvailability: signal('unknown'), localRecoveryCheckAt: 0, localRecoveryStamp: '', localReplayAwaitingAck: false, localRecoveryProved: false,
+      identityTrust: {
+        exportForLinkedDevice: jasmine.createSpy('exportIdentityTrust').and.resolveTo({ v: 1, purpose: 'identity-continuity', userId: 'alice', sourceDeviceId: id, entries: [] }),
+        importFromLinkedDevice: jasmine.createSpy('importIdentityTrust').and.resolveTo(0),
+      },
       checkingState: checking, checking: checking.asReadonly(),
       recovered$: { next: jasmine.createSpy('recovered'), complete: () => undefined },
     });
@@ -72,6 +77,127 @@ describe('approved encrypted history recovery', () => {
   const registeredDevice = (id: string, name: string, overrides: Record<string, unknown> = {}) => ({
     id, userId: 'alice', name, isTrusted: true, revokedAt: null,
     createdAt: '2025-01-01T00:00:00Z', lastSeenAt: new Date().toISOString(), ...overrides,
+  });
+
+  it('automatically replays a readable saved account key without requesting another device or replacing the identity', async () => {
+    const local = cryptoHarness(); const own = await local.service.createDeviceKeys();
+    const old = await local.service.createDeviceKeys(); const peer = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', own, { userId: 'alice' });
+    await local.service.importHistoricalDeviceKeys('alice', 'alice', [old]);
+    const before = JSON.stringify([...local.records.values()]);
+    const sealed = await local.service.encryptForPublicKey(peer, old.publicJwk, { text: 'Retained history' });
+    const proof = evidence(peer.publicJwk); Object.assign(proof.message.recipients[0], sealed);
+    const { service, api } = syncHarness(local.service, 'target');
+    service.recovered$.next.and.callFake(() => service.markHistoryReadable());
+    await service.requestHistory(proof);
+    expect(service.recovered$.next).toHaveBeenCalledTimes(1);
+    expect(service.state()).toBe('idle'); expect(api.post).not.toHaveBeenCalled();
+    expect(JSON.stringify([...local.records.values()])).toBe(before);
+    expect(local.service.samePublicKey((await local.service.currentKeyMaterial('alice', 'target')).publicJwk, own.publicJwk)).toBeTrue();
+  });
+
+  it('automatically retries newly available local keys after a pending single-device recovery', async () => {
+    const local = cryptoHarness(); const own = await local.service.createDeviceKeys();
+    const old = await local.service.createDeviceKeys(); const peer = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', own, { userId: 'alice' });
+    const sealed = await local.service.encryptForPublicKey(peer, old.publicJwk, { text: 'Recovered locally' });
+    const proof = evidence(peer.publicJwk); Object.assign(proof.message.recipients[0], sealed);
+    const { service, api } = syncHarness(local.service, 'target');
+    service.requested = true; service.requestEvidence = proof; service.state.set('waiting');
+    api.get.and.callFake((url: string) => of(url === '/devices' ? [registeredDevice('target', 'Android Nivra Mobile')] : []));
+    await service.refreshSourcePreference(service.scope());
+    expect(await service.tryRecoverLocally(service.scope(), proof)).toBeFalse();
+    await local.service.importHistoricalDeviceKeys('alice', 'alice', [old]);
+    service.localRecoveryCheckAt = 0;
+    service.recovered$.next.and.callFake(() => service.markHistoryReadable());
+    await service.pump();
+    expect(service.recovered$.next).toHaveBeenCalledTimes(1);
+    expect(service.state()).toBe('idle'); expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('schedules bounded transient refresh recovery for a proven local key without requiring a remote import', async () => {
+    const local = cryptoHarness(); const own = await local.service.createDeviceKeys();
+    const peer = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', own, { userId: 'alice' });
+    const sealed = await local.service.encryptForPublicKey(peer, own.publicJwk, { text: 'Local readable evidence' });
+    const proof = evidence(peer.publicJwk); Object.assign(proof.message.recipients[0], sealed);
+    const { service, api } = syncHarness(local.service, 'target');
+    service.recovered$.next.and.callFake(() => service.markHistoryRecoveryIncomplete({ retryable: true }));
+    api.get.and.callFake((url: string) => of(url === '/devices' ? [registeredDevice('target', 'Android Nivra Mobile')] : []));
+    await service.requestHistory(proof); await service.pumpPromise;
+    expect(service.importedResponses.size).toBe(0);
+    expect(service.recoveryStatus()).toBe('retryable');
+    expect(service.recoveryRetryAttempts).toBe(1);
+    expect(service.recoveryRetryAt).toBeGreaterThan(Date.now());
+    for (let index = 0; index < 10; index++) service.markHistoryRecoveryIncomplete({ retryable: true });
+    expect(service.recoveryRetryAttempts).toBe(3); expect(service.recoveryRetryAt).toBe(0);
+  });
+
+  it('avoids an impossible approval loop only when the authenticated directory confirms this sole device', async () => {
+    const local = cryptoHarness(); const own = await local.service.createDeviceKeys();
+    const missing = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', own, { userId: 'alice' });
+    const { service, api } = syncHarness(local.service, 'target');
+    service.requested = true; service.requestEvidence = evidence(missing.publicJwk); service.state.set('waiting');
+    api.get.and.callFake((url: string) => of(url === '/devices' ? [
+      registeredDevice('target', 'Android Nivra Mobile'),
+      registeredDevice('revoked', 'Windows', { revokedAt: new Date().toISOString() }),
+      registeredDevice('untrusted', 'Windows', { isTrusted: false }),
+      registeredDevice('foreign', 'Windows', { userId: 'someone-else' }),
+    ] : []));
+    await service.refreshSourcePreference(service.scope());
+    await service.pump(); await service.pump();
+    expect(service.sourceAvailability()).toBe('local-only');
+    expect(service.state()).toBe('waiting'); expect(service.targetFingerprint()).toBeTruthy();
+    expect(api.post).not.toHaveBeenCalled();
+    expect(api.get.calls.allArgs().some(args => String(args[0]).startsWith('/devices/history-transfer/') && !String(args[0]).endsWith('/pending'))).toBeFalse();
+    service.invalidateSourcePreference();
+    api.get.and.callFake((url: string) => of(url === '/devices' ? [registeredDevice('target', 'Android Nivra Mobile'), registeredDevice('old-device', 'Windows')] : []));
+    await service.refreshSourcePreference(service.scope());
+    expect(service.sourceAvailability()).toBe('available');
+    expect(service.preferredSource()?.deviceId).toBe('old-device');
+  });
+
+  it('treats a failed or empty device directory as unknown rather than proof that keys cannot arrive', async () => {
+    const { service, api } = syncHarness(cryptoHarness().service, 'target');
+    service.requested = true; service.requestEvidence = evidence({});
+    for (const response of [of([]), throwError(() => ({ status: 503 }))]) {
+      service.invalidateSourcePreference(); api.get.and.returnValue(response);
+      await service.refreshSourcePreference(service.scope());
+      expect(service.sourceAvailability()).toBe('unknown');
+    }
+    api.get.and.returnValue(of([registeredDevice('target', 'Android Nivra Mobile')]));
+    service.invalidateSourcePreference(); await service.refreshSourcePreference(service.scope());
+    expect(service.sourceAvailability()).toBe('local-only');
+    service.invalidateSourcePreference(); expect(service.sourceAvailability()).toBe('unknown');
+  });
+
+  it('does not repeat failed cryptographic probes with an unchanged keyring or use an alias-only key', async () => {
+    const local = cryptoHarness(); const own = await local.service.createDeviceKeys();
+    const legacy = await local.service.createDeviceKeys(); const peer = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', own, { userId: 'alice' });
+    await local.service.saveDeviceKeys('alice', 'legacy', legacy);
+    const sealed = await local.service.encryptForPublicKey(peer, legacy.publicJwk, { text: 'Legacy ownership unknown' });
+    const proof = evidence(peer.publicJwk); Object.assign(proof.message.recipients[0], sealed);
+    const { service } = syncHarness(local.service, 'target');
+    const decrypt = spyOn(local.service, 'decryptEnvelope').and.callThrough();
+    expect(await service.tryRecoverLocally(service.scope(), proof)).toBeFalse();
+    for (let index = 0; index < 100; index++) expect(await service.tryRecoverLocally(service.scope(), proof)).toBeFalse();
+    expect(decrypt).toHaveBeenCalledTimes(1);
+    expect(service.recovered$.next).not.toHaveBeenCalled();
+    expect((await local.service.getDeviceKeys('alice', 'legacy')).userId).toBeUndefined();
+  });
+
+  it('discards a local decryption that completes after the account changes', async () => {
+    const local = cryptoHarness(); const own = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', own, { userId: 'alice' });
+    const { service, auth, api } = syncHarness(local.service, 'target');
+    spyOn(local.service, 'decryptEnvelope').and.callFake(async () => {
+      auth.session.set(session('bob-device', 'bob')); service.reset('bob:bob-device'); return { text: 'Old account' };
+    });
+    await service.requestHistory(evidence(own.publicJwk));
+    expect(service.recovered$.next).not.toHaveBeenCalled(); expect(service.state()).toBe('idle');
+    expect(api.post).not.toHaveBeenCalled(); expect(service.requestEvidence).toBeNull();
   });
 
   it('recommends the habitual APK addressed by the unreadable message without declaring remote key possession', async () => {
@@ -335,6 +461,38 @@ describe('approved encrypted history recovery', () => {
     expect(target.service.samePublicKey((await target.service.currentKeyMaterial('alice', 'target')).publicJwk, fresh.publicJwk)).toBeTrue();
     await targetSync.service.importResponse({ ...transfer, responses: [response] }, response, targetSync.service.scope());
     expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+  });
+
+  it('carries optional contact continuity only inside the approved encrypted package and applies it to this exact account device', async () => {
+    const { targetSync, sourceSync, status, response } = await approvedTarget();
+    expect(sourceSync.service.identityTrust.exportForLinkedDevice).toHaveBeenCalledOnceWith('alice', 'source');
+    expect(JSON.stringify(response)).not.toContain('identity-continuity');
+    await targetSync.service.pump();
+    expect(targetSync.service.identityTrust.importFromLinkedDevice).toHaveBeenCalledOnceWith('alice:target', 'source', {
+      v: 1, purpose: 'identity-continuity', userId: 'alice', sourceDeviceId: 'source', entries: [],
+    }, jasmine.any(Function));
+    await targetSync.service.pump();
+    expect(targetSync.service.identityTrust.importFromLinkedDevice).toHaveBeenCalledTimes(1);
+    expect(status.responses.length).toBe(1);
+  });
+
+  it('keeps valid historical keys when optional continuity metadata cannot be imported', async () => {
+    const { targetSync, target } = await approvedTarget();
+    targetSync.service.identityTrust.importFromLinkedDevice.and.rejectWith(new Error('Unsupported continuity'));
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    expect((await target.service.exportDeviceKeyMaterialsForUser('alice', 'alice')).length).toBe(2);
+    expect(targetSync.service.state()).toBe('syncing');
+  });
+
+  it('still imports an already approved package after its source is no longer in the device directory', async () => {
+    const { targetSync, status } = await approvedTarget();
+    targetSync.service.sourceAvailability.set('local-only');
+    targetSync.api.get.and.callFake((url: string) => of(url === '/devices'
+      ? [registeredDevice('target', 'Android Nivra Mobile')] : url.endsWith('/pending') ? [] : status));
+    await targetSync.service.pump();
+    expect(targetSync.service.recovered$.next).toHaveBeenCalledTimes(1);
+    expect(targetSync.service.state()).toBe('syncing');
   });
 
   it('calculates the target code from its own local identity, independently of server metadata', async () => {

@@ -389,8 +389,16 @@ public sealed class NivraHub(
         {
             throw new HubException("Las llamadas grupales requieren LiveKit configurado en el servidor.");
         }
+        if (!isGroup && participants.Count == 2 &&
+            await ContactBlockPolicy.BetweenAsync(db, participants.First(), participants.Last(), Context.ConnectionAborted))
+            throw new HubException("No se puede iniciar esta llamada.");
         await using var transaction = await CallCoordination.LockAsync(db,
             isGroup ? $"group-call:{request.ConversationId}" : $"call-start:{currentUser.UserId}:{currentUser.DeviceId}:{request.ClientSessionId}", Context.ConnectionAborted);
+        if (!isGroup && participants.Count == 2)
+        {
+            await ContactBlockPolicy.LockWithinTransactionAsync(db, participants.First(), participants.Last(), Context.ConnectionAborted);
+            if (await ContactBlockPolicy.BetweenAsync(db, participants.First(), participants.Last(), Context.ConnectionAborted)) throw new HubException("No se puede iniciar esta llamada.");
+        }
         if (isGroup)
         {
             var existing = await CallCoordination.FindActiveGroupCallAsync(db, request.ConversationId!, Context.ConnectionAborted);

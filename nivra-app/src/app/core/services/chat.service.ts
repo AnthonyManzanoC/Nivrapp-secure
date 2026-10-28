@@ -26,6 +26,8 @@ import {
   UserSummary,
 } from '../models/nivra.models';
 import { AuthService } from './auth.service';
+import { ContactBlockService } from './contact-block.service';
+import { PrivateChatLockService } from './private-chat-lock.service';
 import { IdentityTrustService } from './identity-trust.service';
 import { CryptoService, PublicKeyRecipient } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
@@ -50,6 +52,7 @@ const DEFAULT_GROUP_SETTINGS: GroupSettings = {
   sendMessages: 'all',
   addMembers: 'admins',
 };
+const INTERNAL_CALL_SUMMARY = Symbol('authenticated-call-summary-path');
 
 type ProfileSource = {
   id?: string | null;
@@ -77,6 +80,7 @@ interface SendPayloadOptions {
   encryptedPolicy?: string | null;
   expiresAt?: string | null;
   deleteAfterRead?: boolean;
+  internalCallSummary?: symbol;
 }
 
 interface ChatSendContext {
@@ -129,6 +133,8 @@ export class ChatService implements OnDestroy {
   private readonly network = inject(NetworkPolicyService);
   private readonly downloads = inject(EncryptedDownloadService);
   private readonly auth = inject(AuthService);
+  private readonly contactBlocks = inject(ContactBlockService);
+  readonly privateChats = inject(PrivateChatLockService);
   private readonly identityTrust = inject(IdentityTrustService);
   private readonly crypto = inject(CryptoService);
   private readonly history = inject(LocalHistoryService);
@@ -237,6 +243,7 @@ export class ChatService implements OnDestroy {
     effect(() => {
       const userId = this.auth.session()?.user.id;
       const conversations = this.conversations();
+      this.privateChats.protectedIdsForUser(userId ?? '');
       this.contacts();
       this.profilesByUserId();
       this.messagesByConversation();
@@ -1115,6 +1122,7 @@ export class ChatService implements OnDestroy {
     file: File,
     options: { forwardedFrom?: unknown; voiceNote?: boolean; sticker?: boolean; policy?: MessagePolicyOptions; mode?: EncryptedUploadMode; caption?: string } = {},
   ): Promise<MessageResponse | null> {
+    this.assertPrivateChatUnlocked(conversation.id);
     const requestedUserId = this.auth.session()?.user.id;
     const identity = await this.auth.ensureDeviceIdentity();
     if (this.auth.session()?.user.id !== requestedUserId || identity.userId !== requestedUserId
@@ -1122,6 +1130,7 @@ export class ChatService implements OnDestroy {
       throw new Error('La cuenta o el dispositivo cambió durante el envío. Vuelve al chat y reintenta.');
     }
     const context = this.captureSendContext();
+    this.assertPrivateChatUnlocked(conversation.id);
     const uploadSequence = this.fileSendSequence = (this.fileSendSequence || 0) + 1;
     this.uploading.set(true);
     this.uploadStatus.set('Optimizando y sellando (E2EE)...');
@@ -1132,6 +1141,7 @@ export class ChatService implements OnDestroy {
         maxBytes: MAX_ATTACHMENT_BYTES,
       });
       this.assertSendContext(context);
+      this.assertPrivateChatUnlocked(conversation.id);
       const uploadFile = prepared.file;
       let encrypted;
       if (uploadFile.size > LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES) {
@@ -1145,9 +1155,11 @@ export class ChatService implements OnDestroy {
       } else {
         const plain = await uploadFile.arrayBuffer();
         this.assertSendContext(context);
+        this.assertPrivateChatUnlocked(conversation.id);
         encrypted = await this.crypto.encryptAttachment(plain);
       }
       this.assertSendContext(context);
+      this.assertPrivateChatUnlocked(conversation.id);
       const allowedUserIds = conversation.participants
         .filter((participant) => !participant.removedAt)
         .map((participant) => participant.userId);
@@ -1160,12 +1172,14 @@ export class ChatService implements OnDestroy {
         expiresAt: sendOptions.expiresAt,
       }));
       this.assertSendContext(context);
+      this.assertPrivateChatUnlocked(conversation.id);
       this.uploadStatus.set(uploadFile.size > LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES ? 'Subiendo archivo grande cifrado...' : 'Subiendo archivo cifrado...');
       await firstValueFrom(this.api.putRaw<FileResponse>(
         `/files/${encodeURIComponent(fileRecord.id)}/blob`,
         'body' in encrypted ? encrypted.body : encrypted.bytes,
       ));
       this.assertSendContext(context);
+      this.assertPrivateChatUnlocked(conversation.id);
       this.rememberMediaPreview(fileRecord.id, uploadFile, mime, uploadFile.name);
 
       return await this.sendPayload(
@@ -1203,6 +1217,13 @@ export class ChatService implements OnDestroy {
     fileObjectId: string | null = null,
     options: SendPayloadOptions = {},
   ): Promise<MessageResponse | null> {
+    // The private module capability is granted only by recordCallSystemMessage.
+    // A reserved-looking clientMessageId can never authorize a text/control send.
+    const internalSummary = options.internalCallSummary === INTERNAL_CALL_SUMMARY
+      && !!options.clientMessageId?.startsWith('call-summary:')
+      && !!validatedCallSummary(options.clientMessageId, payload, conversation.id);
+    const requireAccess = () => { if (!internalSummary) this.assertPrivateChatUnlocked(conversation.id); };
+    requireAccess();
     const requestedUserId = this.auth.session()?.user.id;
     const identity = await this.auth.ensureDeviceIdentity();
     if (this.auth.session()?.user.id !== requestedUserId || identity.userId !== requestedUserId
@@ -1210,8 +1231,9 @@ export class ChatService implements OnDestroy {
       throw new Error('La cuenta o el dispositivo cambió durante el envío. Vuelve al chat y reintenta.');
     }
     const context = this.captureSendContext();
+    requireAccess();
     if (this.isConversationBlocked(conversation.id)) {
-      throw new Error('Este chat esta bloqueado en este dispositivo.');
+      throw new Error('Desbloquea este contacto o chat antes de enviar mensajes.');
     }
     if (!this.canSendToConversation(conversation) && !options.clientMessageId?.startsWith('call-summary:')) {
       throw new Error('Solo los admins pueden enviar mensajes en este grupo.');
@@ -1221,6 +1243,7 @@ export class ChatService implements OnDestroy {
     const wirePayload = this.withUniformMessagePadding(outgoingPayload);
     const recipients = await this.encryptedRecipients(conversation, wirePayload, fileObjectId, context);
     this.assertSendContext(context);
+    requireAccess();
     if (!recipients.length) {
       throw new Error('No hay llaves publicas disponibles para enviar.');
     }
@@ -1240,11 +1263,13 @@ export class ChatService implements OnDestroy {
       response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
     } catch (error) {
       this.assertSendContext(context);
+      requireAccess();
       if (!this.isTransientMessageSendError(error)) {
         throw error;
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
       this.assertSendContext(context);
+      requireAccess();
       response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
     }
     this.assertSendContext(context);
@@ -1256,6 +1281,7 @@ export class ChatService implements OnDestroy {
   }
 
   async sendReaction(conversation: Conversation, message: ChatMessageVm, emoji: string): Promise<void> {
+    this.assertPrivateChatUnlocked(conversation.id);
     const current = this.auth.session();
     if (!current || !emoji) {
       return;
@@ -1354,10 +1380,12 @@ export class ChatService implements OnDestroy {
       encryptedPolicy: null,
       deleteAfterRead: false,
       suppressLocalMessage: false,
+      internalCallSummary: INTERNAL_CALL_SUMMARY,
     });
   }
 
   async editMessage(conversation: Conversation, message: ChatMessageVm, newText: string): Promise<void> {
+    this.assertPrivateChatUnlocked(conversation.id);
     const text = newText.trim();
     if (!message.mine || !text || this.asFile(message.payload) || message.payload.type === 'system') {
       throw new Error('Ese mensaje no se puede editar.');
@@ -1378,6 +1406,7 @@ export class ChatService implements OnDestroy {
   }
 
   async deleteMessage(message: ChatMessageVm, forEveryone: boolean): Promise<void> {
+    this.assertPrivateChatUnlocked(message.conversationId);
     await firstValueFrom(this.api.delete(`/api/messages/${encodeURIComponent(message.id)}?forEveryone=${forEveryone ? 'true' : 'false'}`));
     this.applyMessageDeleted({ messageId: message.id, conversationId: message.conversationId });
     const accountKey = this.localAccountKey();
@@ -1426,6 +1455,9 @@ export class ChatService implements OnDestroy {
     if (!message) {
       return { ok: false, reason: 'Mensaje no disponible.' };
     }
+    if (this.privateChats?.isLocked(message.conversationId)) {
+      return { ok: false, reason: 'Desbloquea el chat protegido antes de reenviar mensajes.' };
+    }
     if (['reaction', 'edit', 'delete', 'system', 'view-once-opened'].includes(message.payload?.type)) {
       return { ok: false, reason: 'Ese evento no se puede reenviar.' };
     }
@@ -1442,15 +1474,19 @@ export class ChatService implements OnDestroy {
     const normalized = query.trim().toLowerCase();
     return [...this.visibleConversations()]
       .filter((conversation) => conversation.id !== sourceConversationId)
+      .filter((conversation) => !this.privateChats?.isLocked(conversation.id))
       .filter((conversation) => conversation.participants.some((participant) => !participant.removedAt))
       .sort(this.compareConversations)
       .filter((conversation) => !normalized || this.conversationTitle(conversation).toLowerCase().includes(normalized));
   }
 
   async forwardMessageToConversations(message: ChatMessageVm, conversationIds: string[]): Promise<number> {
+    const context = this.captureSendContext();
+    const generation = this.auth.sessionGeneration?.();
     const uniqueIds = [...new Set(conversationIds.filter(Boolean))];
     let sent = 0;
     for (const conversationId of uniqueIds) {
+      if (!this.isSendContextCurrent(context) || generation !== this.auth.sessionGeneration?.() || !this.forwardAvailability(message).ok) break;
       const target = this.conversations().find((conversation) => conversation.id === conversationId);
       if (!target) {
         continue;
@@ -1475,9 +1511,14 @@ export class ChatService implements OnDestroy {
   }
 
   async localMessageById(conversationId: string | null | undefined, messageId: string | null | undefined): Promise<ChatMessageVm | null> {
-    if (!conversationId || !messageId) {
+    if (!conversationId || !messageId || this.privateChats?.isLocked(conversationId)) {
       return null;
     }
+    const current = this.auth.session();
+    if (!current) return null;
+    const generation = this.auth.sessionGeneration?.();
+    const stillOpen = () => this.auth.session()?.user.id === current.user.id && this.auth.session()?.device.id === current.device.id
+      && generation === this.auth.sessionGeneration?.() && !this.privateChats?.isLocked(conversationId);
 
     const inMemory = this.messagesByConversation()[conversationId]?.find((message) => message.id === messageId);
     if (inMemory?.payload && !inMemory.decryptError) {
@@ -1485,8 +1526,10 @@ export class ChatService implements OnDestroy {
     }
 
     const accountKeys = await this.localAccountKeys();
+    if (!stillOpen()) return null;
     for (const accountKey of accountKeys) {
       const cached = await this.history.messageById(accountKey, conversationId, messageId).catch(() => null);
+      if (!stillOpen()) return null;
       if (cached?.payload && !cached.decryptError) {
         return cached;
       }
@@ -1601,6 +1644,7 @@ export class ChatService implements OnDestroy {
   }
 
   conversationSubtitle(conversation: Conversation): string {
+    if (this.privateChats?.isProtected(conversation.id)) return 'Chat protegido';
     const messages = this.messagesByConversation()[conversation.id] ?? [];
     const last = messages[messages.length - 1];
     const state = this.isConversationBlocked(conversation.id)
@@ -1777,11 +1821,32 @@ export class ChatService implements OnDestroy {
     if (!conversationId) {
       return false;
     }
-    return Boolean(this.conversations().find((conversation) => conversation.id === conversationId)?.blockedAt)
+    const conversation = this.conversations().find(item => item.id === conversationId);
+    const self = this.auth.session()?.user.id;
+    const peer = conversation && !this.isGroupConversation(conversation)
+      ? conversation.participants.find(person => person.userId !== self && !person.removedAt)?.userId : null;
+    return Boolean(peer && this.contactBlocks?.isBlocked(peer)) || Boolean(conversation?.blockedAt)
       || this.readConversationFlag('blocked').has(conversationId);
   }
 
   async setConversationBlocked(conversation: Conversation, blocked: boolean): Promise<void> {
+    if (!this.isGroupConversation(conversation)) {
+      const scope = this.captureSendContext();
+      const peer = conversation.participants.find(person => person.userId !== scope.userId && !person.removedAt)?.userId;
+      if (!peer) throw new Error('No se encontró el contacto de este chat.');
+      await this.contactBlocks.setBlocked(peer, blocked);
+      this.assertSendContext(scope);
+      // Retire old device-only flags only after the server confirms this edit.
+      // New direct blocks belong to the account and follow it to other devices.
+      const related = this.conversations().filter(item => !this.isGroupConversation(item) &&
+        item.participants.some(person => person.userId === peer && !person.removedAt));
+      for (const item of related) {
+        this.assertSendContext(scope);
+        this.writeConversationFlag('blocked', item.id, false);
+        await this.updateConversationLocalState(item, { blockedAt: null });
+      }
+      return;
+    }
     this.writeConversationFlag('blocked', conversation.id, blocked);
     await this.updateConversationLocalState(conversation, {
       blockedAt: blocked ? new Date().toISOString() : null,
@@ -2484,9 +2549,12 @@ export class ChatService implements OnDestroy {
 
   async markConversationRead(conversationId: string): Promise<void> {
     const current = this.auth.session();
-    if (!current || document.visibilityState === 'hidden') {
+    if (!current || document.visibilityState === 'hidden' || this.privateChats?.isLocked(conversationId)) {
       return;
     }
+    const generation = this.auth.sessionGeneration?.();
+    const stillOpen = () => this.auth.session()?.user.id === current.user.id && this.auth.session()?.device.id === current.device.id
+      && generation === this.auth.sessionGeneration?.() && document.visibilityState !== 'hidden' && !this.privateChats?.isLocked(conversationId);
     const unread = (this.messagesByConversation()[conversationId] ?? []).filter((message) => {
       if (
         message.mine ||
@@ -2508,11 +2576,13 @@ export class ChatService implements OnDestroy {
     await this.signalr.syncReadReceipts(conversationId, unread.map((message) => message.id), {
       openedMessageIds: [],
     }).catch(() => undefined);
+    if (!stillOpen()) return;
     const shouldSendReceipts = current.user.privacySettings?.readReceipts !== false;
     const receiptIds = new Set(unread
       .filter(() => shouldSendReceipts)
       .map((message) => message.id));
     for (const message of unread.filter((item) => receiptIds.has(item.id))) {
+      if (!stillOpen()) return;
       await this.sendReceipt(message.id, 'Read')
         .catch(() => this.readReceiptSentIds.delete(message.id));
     }
@@ -2539,20 +2609,25 @@ export class ChatService implements OnDestroy {
   }
 
   async markMessageOpened(message: ChatMessageVm | null | undefined): Promise<void> {
-    if (!message?.deleteAfterRead || message.mine) {
+    if (!message?.deleteAfterRead || message.mine || this.privateChats?.isLocked(message.conversationId)) {
       return;
     }
     const current = this.auth.session();
     if (!current) {
       return;
     }
+    const generation = this.auth.sessionGeneration?.();
+    const stillOpen = () => this.auth.session()?.user.id === current.user.id && this.auth.session()?.device.id === current.device.id
+      && generation === this.auth.sessionGeneration?.() && !this.privateChats?.isLocked(message.conversationId);
     const openedAt = new Date().toISOString();
     this.readReceiptSentIds.add(message.id);
     try {
       await this.sendReceipt(message.id, 'Read', { opened: true });
+      if (!stillOpen()) return;
       await this.signalr.syncReadReceipts(message.conversationId, [message.id], {
         openedMessageIds: [message.id],
       }).catch(() => undefined);
+      if (!stillOpen()) return;
       this.applyViewOnceTombstones(message.conversationId, [message.id], openedAt, {
         includeMine: true,
         deletedByUserId: current.user.id,
@@ -4536,6 +4611,10 @@ export class ChatService implements OnDestroy {
     }
   }
 
+  private assertPrivateChatUnlocked(conversationId: string): void {
+    if (this.privateChats?.isLocked(conversationId)) throw new Error('Desbloquea el chat protegido antes de continuar.');
+  }
+
   private async encryptedRecipients(
     conversation: Conversation,
     payload: ChatPayload,
@@ -4652,6 +4731,9 @@ export class ChatService implements OnDestroy {
     if (!availability.ok) {
       throw new Error(availability.reason || 'No se puede reenviar.');
     }
+    this.assertPrivateChatUnlocked(conversation.id);
+    const context = this.captureSendContext();
+    const generation = this.auth.sessionGeneration?.();
     const current = this.auth.session();
     const forwardedFrom = {
       messageId: message.id,
@@ -4661,6 +4743,9 @@ export class ChatService implements OnDestroy {
     const file = this.asFile(message.payload);
     if (file) {
       const forwardedFile = await this.fileFromForwardPayload(file);
+      this.assertSendContext(context);
+      if (generation !== this.auth.sessionGeneration?.() || !this.forwardAvailability(message).ok) throw new Error('La sesión o el acceso al chat cambió durante el reenvío.');
+      this.assertPrivateChatUnlocked(conversation.id);
       await this.sendFile(conversation, forwardedFile, {
         forwardedFrom,
         voiceNote: Boolean(file.voiceNote),

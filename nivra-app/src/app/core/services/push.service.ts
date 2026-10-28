@@ -17,7 +17,8 @@ import { SignalrService } from './signalr.service';
 import { DeviceWipeService } from './device-wipe.service';
 import { CallsService } from './calls.service';
 import { DesktopInactivePushService } from './desktop-inactive-push.service';
-import { clearPendingWebPushClick, pendingWebPushAccountWipes, readPendingWebPushClick, savePushAccountScopes } from './push-account-scopes';
+import { clearPendingWebPushClick, pendingWebPushAccountWipes, readPendingWebPushClick, savePushAccountScopes, PushAccountScope } from './push-account-scopes';
+import { PrivateChatLockService } from './private-chat-lock.service';
 
 type PushSource = 'web-fcm' | 'native-fcm' | 'service-worker-click' | 'native-action' | 'realtime' | 'desktop-inactive';
 type PushRegistration = { provider: 'fcm' | 'fcm-fid' | 'webpush'; token: string };
@@ -57,6 +58,7 @@ export class PushService {
   private readonly deviceWipe = inject(DeviceWipeService);
   private readonly calls = inject(CallsService);
   private readonly desktop = inject(DesktopInactivePushService);
+  private readonly privateChats = inject(PrivateChatLockService);
   private readonly destroyRef = inject(DestroyRef);
   private foregroundBound = false;
   private serviceWorkerBound = false;
@@ -65,9 +67,12 @@ export class PushService {
   private observedNativeSession = false;
   private registrationEpoch = 0;
   private scopeSync: Promise<void> = Promise.resolve();
+  private notificationPrivacySnapshot = '';
+  private notificationPrivacyScopes: PushAccountScope[] = [];
   private webConfigPromise?: Promise<ResolvedFirebaseWebConfig | null>;
   private readonly visualDedupe = new Map<string, number>();
   private readonly browserCallNotifications = new Map<string, Notification>();
+  private readonly browserNotifications = new Set<Notification>();
   private pushClickQueue: Promise<void> = Promise.resolve();
   private readonly pushClicks = new Map<string, { at: number; promise: Promise<void> }>();
 
@@ -82,7 +87,7 @@ export class PushService {
 
   constructor() {
     const desktopEvents = this.desktop.events$.subscribe(data => void this.handlePushData(data, 'desktop-inactive').catch(() => undefined));
-    this.destroyRef.onDestroy(() => { desktopEvents.unsubscribe(); for (const notification of this.browserCallNotifications.values()) notification.close(); });
+    this.destroyRef.onDestroy(() => { desktopEvents.unsubscribe(); for (const notification of this.browserNotifications) notification.close(); });
     void this.deviceWipe.processPendingAccountWipes().catch(() => undefined);
     void this.consumePendingPushIntent().catch(() => undefined);
     void this.nativeDevice.addPushIntentListener(event => {
@@ -93,6 +98,9 @@ export class PushService {
     effect(() => {
       const session = this.auth.session();
       const saved = this.auth.savedAccounts();
+      // Observe local protection changes synchronously, including the inactive account.
+      for (const account of saved) this.privateChats.protectedIdsForUser(account.id);
+      if (session) this.privateChats.protectedIdsForUser(session.user.id);
       // Endpoint changes and the first verified cluster pin must reach the sleeping native worker.
       this.api.baseUrl;
       this.api.clusterFingerprint;
@@ -300,13 +308,29 @@ export class PushService {
       if (epoch !== this.registrationEpoch) return;
       const active = this.auth.session();
       const scope = active ? { userId: active.user.id, deviceId: active.device.id } : undefined;
-      await savePushAccountScopes(sessions.map(session => ({ userId: session.user.id, deviceId: session.device.id,
-        hideNotificationContent: session.user.privacySettings?.hideNotificationContent === true })), scope);
+      const privacyScopes = sessions.map(session => ({ userId: session.user.id, deviceId: session.device.id,
+        hideNotificationContent: session.user.privacySettings?.hideNotificationContent === true,
+        protectedConversationIds: this.privateChats.protectedIdsForUser(session.user.id) }));
+      await savePushAccountScopes(privacyScopes, scope);
+      if (epoch !== this.registrationEpoch) return;
+      const privacySnapshot = JSON.stringify(privacyScopes.map(item => [item.userId,item.deviceId,item.hideNotificationContent,[...item.protectedConversationIds].sort()]).sort((a,b)=>String(a[0]).localeCompare(String(b[0]))));
+      if (privacySnapshot !== this.notificationPrivacySnapshot) {
+        this.closeProtectedBrowserNotifications(privacyScopes, this.notificationPrivacyScopes);
+        if (!Capacitor.isNativePlatform() && 'serviceWorker' in navigator) {
+          const worker = await navigator.serviceWorker.getRegistration('/').catch(() => undefined);
+          if (epoch !== this.registrationEpoch) return;
+          worker?.active?.postMessage({ type: 'nivra.push.privacyChanged', previousScopes: this.notificationPrivacyScopes });
+        }
+        this.notificationPrivacySnapshot = privacySnapshot;
+        this.notificationPrivacyScopes = privacyScopes;
+      }
       if (epoch !== this.registrationEpoch || !Capacitor.isNativePlatform()) return;
       await this.nativeDevice.syncPushRegistrations(sessions.filter(session => session.tokens.refreshToken).map(session => ({
         apiBaseUrl: this.api.baseUrl, clusterFingerprint: this.api.clusterFingerprint,
         userId: session.user.id, deviceId: session.device.id,
         accessToken: session.tokens.accessToken, refreshToken: session.tokens.refreshToken,
+        hideNotificationContent: session.user.privacySettings?.hideNotificationContent === true,
+        protectedConversationIds: this.privateChats.protectedIdsForUser(session.user.id),
       })), scope);
     });
     return this.scopeSync;
@@ -915,17 +939,35 @@ export class PushService {
     };
     (options as NotificationOptions & { renotify?: boolean }).renotify = visual.requireInteraction;
     const notification = new Notification(visual.title, options);
+    this.browserNotifications.add(notification);
+    const callKey = data['callId'] ? JSON.stringify([data['recipientUserId'], data['recipientDeviceId'], data['callId']]) : '';
+    notification.onclose = () => {
+      this.browserNotifications.delete(notification);
+      if (callKey && this.browserCallNotifications.get(callKey) === notification) this.browserCallNotifications.delete(callKey);
+    };
     if (data['callId']) {
-      const key = JSON.stringify([data['recipientUserId'], data['recipientDeviceId'], data['callId']]);
-      this.browserCallNotifications.get(key)?.close();
-      this.browserCallNotifications.set(key, notification);
-      notification.onclose = () => { if (this.browserCallNotifications.get(key) === notification) this.browserCallNotifications.delete(key); };
+      this.browserCallNotifications.get(callKey)?.close();
+      this.browserCallNotifications.set(callKey, notification);
     }
     notification.onclick = () => {
       window.focus();
       notification.close();
       this.openFromPush(data);
     };
+  }
+
+  private closeProtectedBrowserNotifications(scopes: PushAccountScope[], previous: PushAccountScope[] = []): void {
+    for (const notification of this.browserNotifications) {
+      const data = notification.data as Record<string,string> | undefined;
+      if (!data) continue;
+      const scope = scopes.find(item => item.userId === data['recipientUserId'] && item.deviceId === data['recipientDeviceId']);
+      if (!scope) continue;
+      const ids = scope.protectedConversationIds ?? [];
+      const prior = previous.find(item => item.userId === scope.userId && item.deviceId === scope.deviceId);
+      const oldIds = prior?.protectedConversationIds ?? [];
+      const wasHidden = prior?.hideNotificationContent || oldIds.includes('*') || (data['conversationId'] ? oldIds.includes(data['conversationId']) : oldIds.length > 0);
+      if (!wasHidden && (scope.hideNotificationContent || ids.includes('*') || (data['conversationId'] ? ids.includes(data['conversationId']) : ids.length > 0))) notification.close();
+    }
   }
 
   private openFromPush(data: Record<string, string>): void {
@@ -1006,13 +1048,14 @@ export class PushService {
       return { title: 'Nivra', body: type.includes('call') ? 'Llamada en tu otra cuenta' : 'Nueva actividad en tu otra cuenta', tag,
         requireInteraction: type === 'incoming-call' || type === 'incomingcall' };
     }
-    if (this.hideNotificationContent() && type === 'message') {
-      return { title: 'Nivra', body: 'Nuevo mensaje', tag, requireInteraction: false };
+    if (this.hideNotificationContent(data)) {
+      return { title: 'Nivra', body: type.includes('call') ? 'Llamada privada' : type === 'message' ? 'Nuevo mensaje privado' : 'Nueva actividad privada', tag,
+        requireInteraction: type === 'incoming-call' || type === 'incomingcall' };
     }
     const preview = await this.decryptPreviewIfPresent(data);
     if (this.auth.sessionGeneration?.() !== generation || this.auth.session()?.user.id !== current.user.id
-      || this.auth.session()?.device.id !== current.device.id || this.hideNotificationContent()) {
-      return { title: 'Nivra', body: 'Nueva actividad privada', tag, requireInteraction: false };
+      || this.auth.session()?.device.id !== current.device.id || this.hideNotificationContent(data)) {
+      return { title: 'Nivra', body: 'Nueva actividad privada', tag, requireInteraction: type === 'incoming-call' || type === 'incomingcall' };
     }
     if (preview) {
       return {
@@ -1040,8 +1083,12 @@ export class PushService {
     return { title: 'Nivra', body: 'Nueva actividad privada', tag, requireInteraction: false };
   }
 
-  private hideNotificationContent(): boolean {
-    return this.auth.session()?.user.privacySettings?.hideNotificationContent === true;
+  private hideNotificationContent(data: Record<string,string>): boolean {
+    if (this.auth.session()?.user.privacySettings?.hideNotificationContent === true) return true;
+    try {
+      const ids = this.privateChats.protectedIdsForUser(data['recipientUserId']);
+      return ids.includes('*') || (data['conversationId'] ? ids.includes(data['conversationId']) : ids.length > 0);
+    } catch { return true; }
   }
 
   private async decryptPreviewIfPresent(data: Record<string, string>): Promise<{ title?: string; body?: string } | null> {

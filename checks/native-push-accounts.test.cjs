@@ -87,3 +87,27 @@ test('both native FCM and foreground call UI suppress caller-account echoes with
   assert.match(read('NivraMessagingService'), /NivraNotificationIntentPolicy\.callerEcho\(data\.get\("recipientUserId"\)/);
   assert.match(read('NivraNativePlugin'), /NivraNotificationIntentPolicy\.callerEcho\(data\.get\("recipientUserId"\)/);
 });
+
+test('native protected chat metadata stays local and redacts ringing UI before building intents',()=>{
+  const registry=read('NivraNativePushRegistration');
+  const sameCredentials=registry.slice(registry.indexOf('if (prior != null && api.equals'),registry.indexOf('JSONObject value = new JSONObject().put("apiBaseUrl"'));
+  assert.match(sameCredentials,/copyNotificationPrivacy\(prior, options, prior\)/);
+  assert.match(registry,/NivraNotificationPrivacyPolicy\.hide\(account\.optBoolean\("hideNotificationContent"/);
+  assert.match(registry,/find\(registry\(context\)\.optJSONArray\("accounts"\), data\.get\("recipientUserId"\), data\.get\("recipientDeviceId"\)\)/);
+  const plugin=read('NivraNativePlugin');const incoming=plugin.slice(plugin.indexOf('public static void showIncomingCallNotification'),plugin.indexOf('private static long remainingIncomingRingTime'));
+  assert.ok(incoming.indexOf('hideNotificationContent(context, data)')<incoming.indexOf('activityIntent(context, ACTION_CALL_OPEN'));
+  assert.match(incoming,/data\.put\("callerName", "Nivra"\)/);
+  assert.match(read('NivraIncomingCallActivity'),/hideNotificationContent\(this, scope\)\) callerName = "Nivra"/);
+  assert.doesNotMatch(read('NivraPushRegistrationWorker'),/protectedConversationIds/);
+});
+
+test('new native protection removes prior scoped previews without terminating the ongoing call or its actions',()=>{
+  const registry=read('NivraNativePushRegistration');
+  const cleanup=registry.slice(registry.indexOf('private static void clearNewlyProtectedNotifications'),registry.indexOf('/** Returns only the active account'));
+  assert.match(cleanup,/FLAG_FOREGROUND_SERVICE/);assert.match(cleanup,/notification\.extras\.getString\("nivraConversationId"/);
+  assert.match(cleanup,/tag\.equals\(active\.getTag\(\)\)/);assert.match(cleanup,/!previousPrivacyHid/);
+  assert.doesNotMatch(cleanup,/stopScope|discardPendingCallActions|ACTION_CALL_DISMISS/);
+  assert.match(read('NivraNativePlugin'),/privacyRoute\.putString\("nivraConversationId"/);
+  assert.match(read('NivraMessagingService'),/privacyRoute\.putString\("nivraConversationId"/);
+  const activity=read('NivraIncomingCallActivity');assert.match(activity,/ACTION_PRIVACY_CHANGED/);assert.match(activity,/callerView\.setText\("Nivra"\)/);
+});

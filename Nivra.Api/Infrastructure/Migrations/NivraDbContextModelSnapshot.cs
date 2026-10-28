@@ -414,6 +414,26 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.ToTable("call_signals", "public");
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.ContactBlockRecord", b =>
+                {
+                    b.Property<string>("OwnerUserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ContactUserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("OwnerUserId", "ContactUserId");
+
+                    b.HasIndex("ContactUserId", "OwnerUserId");
+
+                    b.ToTable("contact_blocks", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.ContactRecord", b =>
                 {
                     b.Property<string>("Id")
@@ -1478,6 +1498,21 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.CallSession", null)
                         .WithMany()
                         .HasForeignKey("CallId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.ContactBlockRecord", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("ContactUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("OwnerUserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

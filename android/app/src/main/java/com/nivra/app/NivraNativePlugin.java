@@ -888,6 +888,12 @@ public class NivraNativePlugin extends Plugin {
         }
         if (!NivraNativePushRegistration.isActive(context, data)) return;
         if (NivraNotificationIntentPolicy.callerEcho(data.get("recipientUserId"), data.get("callerUserId"))) return;
+        if (NivraNativePushRegistration.hideNotificationContent(context, data)) {
+            // Keep scoped routing and answer capabilities while omitting the caller's identity.
+            data = new HashMap<>(data);
+            data.put("callerName", "Nivra");
+            data.remove("title");
+        }
         String callId = firstNonBlank(data.get("callId"), data.get("tag"), "nivra-call");
         int notificationId = notificationId(callId);
         ensureCallChannel(context);
@@ -900,8 +906,11 @@ public class NivraNativePlugin extends Plugin {
         String callerName = firstNonBlank(data.get("callerName"), data.get("title"), "Nivra");
         String callType = firstNonBlank(data.get("callType"), "Voice", "Voice");
         boolean video = "Video".equalsIgnoreCase(callType);
+        android.os.Bundle privacyRoute = new android.os.Bundle();
+        privacyRoute.putString("nivraConversationId", firstNonBlank(data.get("conversationId"), "", ""));
 
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, CHANNEL_CALLS)
+            .addExtras(privacyRoute)
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(callerName)
             .setContentText(video ? "Videollamada entrante" : "Llamada entrante")

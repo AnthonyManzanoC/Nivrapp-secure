@@ -87,6 +87,8 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   loading = true;
   verified = false;
   continuity: IdentityContinuity['state'] | 'idle' = 'idle';
+  continuitySource: IdentityContinuity['source'];
+  comparisonExpanded = true;
   verifiedAt = '';
   checkedAt = '';
   contactAlias = '';
@@ -136,6 +138,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
     this.message = '';
     this.verified = false;
     this.continuity = 'idle';
+    this.continuitySource = undefined;
     this.code = '';
     this.qr = '';
     this.comparison = '';
@@ -152,6 +155,8 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
         this.qr = qr;
         this.contactAlias = pair[1].alias;
         this.continuity = continuity.state;
+        this.continuitySource = continuity.source;
+        this.comparisonExpanded = continuity.state === 'unknown' || continuity.state === 'changed';
         this.verified = continuity.state === 'verified';
         this.verifiedAt = continuity.verifiedAt ?? '';
         this.checkedAt = new Date().toISOString();
@@ -182,6 +187,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   private clearComparison(): void {
     this.code = ''; this.qr = ''; this.comparison = ''; this.message = ''; this.contactAlias = '';
     this.verified = false; this.verifiedAt = ''; this.checkedAt = ''; this.continuity = 'idle';
+    this.continuitySource = undefined; this.comparisonExpanded = true;
     this.loading = false; this.busy = false; this.scanning = false;
   }
 
@@ -231,6 +237,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
       if (active()) {
         this.verified = true;
         this.continuity = 'verified';
+        this.continuitySource = 'this-device';
         this.verifiedAt = new Date().toISOString();
         this.message = this.t('IDENTITY.SAVED', 'Código comparado y verificación guardada en este dispositivo.');
       }

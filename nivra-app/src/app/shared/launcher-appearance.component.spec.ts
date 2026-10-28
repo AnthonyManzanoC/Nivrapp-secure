@@ -116,16 +116,16 @@ describe('LauncherAppearanceComponent confirmed account preferences', () => {
     expect(fixture.nativeElement.querySelector('.launcher-hint').textContent).toContain('ventana');
   });
 
-  it('shows account preferences on the web and distinguishes the favicon from installed app behavior', () => {
+  it('updates the web favicon and points PWA installation metadata at the selected account icon', () => {
     launcher.platform.set('web');
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelectorAll('.launcher-option').length).toBe(3);
     expect(fixture.nativeElement.querySelector('.device-chip').textContent).toContain('Tu cuenta');
     expect(fixture.nativeElement.querySelector('.launcher-heading').textContent).toContain('Android, Windows y la web');
     const hint = fixture.nativeElement.querySelector('.launcher-hint').textContent;
-    expect(hint).toContain('al momento el icono de la pestaña');
-    expect(hint).toContain('El navegador controla');
-    expect(hint).toContain('revisar o reinstalar');
+    expect(hint).toContain('La pestaña cambia al instante');
+    expect(hint).toContain('PWA actualiza el manifiesto');
+    expect(hint).toContain('vuelve a abrir Nivra');
     expect(hint).not.toContain('pantalla de inicio');
   });
 

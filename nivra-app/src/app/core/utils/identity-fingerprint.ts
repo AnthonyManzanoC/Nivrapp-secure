@@ -13,6 +13,8 @@ export interface DirectoryFingerprint {
   deviceIds: string[];
   digest: string;
   display: string;
+  /** Canonical public identities, used only to prove removal of known devices. */
+  deviceIdentities: Array<{ deviceId: string; identity: string }>;
 }
 
 export interface UnverifiedSafetyNumber {
@@ -43,6 +45,7 @@ export async function deriveDirectoryFingerprint(directory: PublicKeyDirectory):
     deviceIds: canonical.devices.map((device) => device.deviceId),
     digest,
     display: groupHex(digest),
+    deviceIdentities: canonical.devices.map(device => ({ deviceId: device.deviceId, identity: `${device.x}:${device.y}` })),
   };
 }
 
