@@ -1,6 +1,7 @@
 import { TestBed, fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
 import { API_POOL_RUNTIME, ApiEndpointPool, ApiPoolRuntime, apiOrigin } from './api-endpoint-pool.service';
 import { NETWORK_POLICY_RUNTIME } from './network-policy.service';
+import { environment as productionEnvironment } from '../../../environments/environment.prod';
 
 describe('API endpoint pool isolation and failover', () => {
   const primary = 'https://primary.nivra.test', backup = 'https://backup.nivra.test', third = 'https://third.nivra.test';
@@ -22,6 +23,15 @@ describe('API endpoint pool isolation and failover', () => {
     pool = TestBed.inject(ApiEndpointPool);
   };
   afterEach(() => TestBed.resetTestingModule());
+
+  it('keeps the primary API first, then the existing and new Render backups', () => {
+    expect(productionEnvironment.apiBaseUrl).toBe('https://nivrapp-secure.onrender.com');
+    expect(productionEnvironment.apiEndpoints).toEqual([
+      'https://nivrapp-secure.onrender.com',
+      'https://nivra-webapp-secure.onrender.com',
+      'https://nivrapp-secure-eaqi.onrender.com',
+    ]);
+  });
 
   it('rejects unpinned origin, userinfo, insecure remote transport and origin-prefix tricks', () => {
     build();

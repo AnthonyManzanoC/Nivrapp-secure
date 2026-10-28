@@ -1,5 +1,5 @@
 param(
-    [string[]]$ApiBaseUrl = @('https://nivra-webapp-secure.onrender.com', 'https://nivrapp-secure.onrender.com'),
+    [string[]]$ApiBaseUrl = @('https://nivrapp-secure.onrender.com', 'https://nivra-webapp-secure.onrender.com', 'https://nivrapp-secure-eaqi.onrender.com'),
     [ValidateRange(1,2147483647)][int]$ExpectedCallProtocol = 2,
     [ValidatePattern('(?-i)\A[0-9a-f]{64}\z')][string]$ExpectedClusterFingerprint
 )
