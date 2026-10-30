@@ -31,6 +31,7 @@ const TRANSFER_HTTP_TIMEOUT_MS = 15_000;
 const RECOVERY_RETRY_DELAYS_MS = [2500, 5000, 10_000];
 const SOURCE_DIRECTORY_CACHE_MS = 60_000;
 const LOCAL_RECOVERY_CHECK_MS = 30_000;
+const SOURCE_DIRECTORY_GRACE_MS = 750;
 
 @Injectable({ providedIn: 'root' })
 export class HistoryDeviceSyncService implements OnDestroy {
@@ -340,9 +341,9 @@ export class HistoryDeviceSyncService implements OnDestroy {
     // Fetch our approved package independently. A stalled request list for
     // other devices must not hold up an approval that has already arrived.
     const approvals = this.refreshPendingRequests(scope);
-    // Directory availability must never delay creating a request or importing
-    // an already approved package from any capable platform.
-    if (this.requested && this.requestEvidence) void this.refreshSourcePreference(scope);
+    // Existing approvals remain independent from the directory. Before a new
+    // request, allow a short lookup to rule out an impossible self-approval.
+    const sourceCheck = this.requested && this.requestEvidence ? this.refreshSourcePreference(scope) : null;
     try {
       if (this.requested && this.recoveryRetryAt && this.recoveryRetryAt <= Date.now()) {
         this.recoveryRetryAt = 0;
@@ -357,8 +358,17 @@ export class HistoryDeviceSyncService implements OnDestroy {
         const own = await this.persistedIdentity(scope);
         this.assertCurrent(scope);
         const fingerprint = await this.publicFingerprint(own.publicJwk);
-        this.assertCurrent(scope); this.targetFingerprint.set(fingerprint);
+        this.assertCurrent(scope);
         if (!this.requested) return;
+        if (sourceCheck && (!this.requestId || this.requestExpiresAt <= Date.now())) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([sourceCheck, new Promise<void>(resolve => { timer = setTimeout(resolve, SOURCE_DIRECTORY_GRACE_MS); })]);
+          } finally { if (timer !== undefined) clearTimeout(timer); }
+          this.assertCurrent(scope);
+          if (!this.requested) return;
+        }
+        this.targetFingerprint.set(fingerprint);
         // A directory-confirmed sole installation has no device to approve a
         // fresh request. Keep existing approved packages eligible until expiry,
         // but do not create a new impossible approval on every expiration.

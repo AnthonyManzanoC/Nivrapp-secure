@@ -195,6 +195,10 @@ export class ChatService implements OnDestroy {
   private historyRecoveryInFlight: Promise<void> | null = null;
   private historyRecoveryScope: ChatSendContext | null = null;
   private historyRecoveryRevision = 0;
+  readonly localHistoryCheckState = signal<'idle' | 'checking' | 'retryable' | 'unavailable'>('idle');
+  private lastHistoryRecoveryError: unknown = null;
+  private historyRecoveryAutomaticAttempts = 0;
+  private readonly historyRecoveryNetwork = this.createHistoryRecoveryNetwork();
   private fileSendSequence = 0;
   private readonly networkRecovery = new ForegroundSyncRecovery({
     scope: () => {
@@ -314,7 +318,8 @@ export class ChatService implements OnDestroy {
       .subscribe(() => {
         if (document.visibilityState === 'visible') {
           this.networkRecovery.wake();
-        } else this.networkRecovery.pause();
+          this.wakeHistoryRecovery();
+        } else { this.networkRecovery.pause(); this.historyRecoveryNetwork.pause(); }
       });
 
     fromEvent(window, 'online')
@@ -322,10 +327,11 @@ export class ChatService implements OnDestroy {
       .subscribe(() => {
         void this.signalr.connect().catch(() => undefined);
         this.networkRecovery.wake();
+        this.wakeHistoryRecovery();
       });
     fromEvent(window, 'offline')
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe(() => this.networkRecovery.pause());
+      .subscribe(() => { this.networkRecovery.pause(); this.historyRecoveryNetwork.pause(); });
 
     effect(() => {
       const session = this.auth.session();
@@ -403,6 +409,7 @@ export class ChatService implements OnDestroy {
       if (selected) await this.loadMessages(selected);
       if (generation !== this.messageLoadGeneration || !this.isSendContextCurrent(context)) return false;
       if (this.deviceHistory.state() !== 'idle') this.deviceHistory.retry();
+      else if (this.hasUnreadableHistory()) void this.checkLocalHistory();
       this.syncError.set('');
       this.lastSyncedAt.set(Date.now());
       this.networkRecovery?.recovered();
@@ -2085,7 +2092,7 @@ export class ChatService implements OnDestroy {
           payload = cached.payload;
         } else {
           decryptError = true;
-          payload = { type: 'system', title: 'Historial protegido', text: 'Pendiente de sincronizar desde otro dispositivo de tu cuenta.' };
+          payload = { type: 'system', title: 'Historial protegido', text: 'Este mensaje aún no se pudo abrir con las llaves disponibles.' };
         }
       }
     } else if (message.senderUserId === current.user.id) {
@@ -2178,6 +2185,36 @@ export class ChatService implements OnDestroy {
     return !decryptError;
   }
 
+  private createHistoryRecoveryNetwork(): ForegroundSyncRecovery {
+    return new ForegroundSyncRecovery({
+      scope: () => {
+        const session = this.auth.session();
+        return session ? `${this.messageLoadGeneration}:${session.user.id}:${session.device.id}` : '';
+      },
+      canRun: () => this.historyRecoveryAutomaticAttempts < 3 && document.visibilityState !== 'hidden'
+        && this.network.onlineHint() && this.auth.isAuthenticated(),
+      sync: async () => {
+        this.historyRecoveryAutomaticAttempts++;
+        await this.retryRecoveredHistory();
+        if (this.localHistoryCheckState() === 'retryable' && this.lastHistoryRecoveryError) throw this.lastHistoryRecoveryError;
+      },
+      retryDelay: attempt => this.network.retryDelayMs(attempt, 2500, 10_000),
+    });
+  }
+
+  private wakeHistoryRecovery(): void {
+    if (this.localHistoryCheckState() !== 'retryable') return;
+    this.historyRecoveryAutomaticAttempts = 0;
+    this.historyRecoveryNetwork.wake();
+  }
+
+  /** Recheck known messages using this account's retained keys; never approve a transfer. */
+  checkLocalHistory(): Promise<void> {
+    this.historyRecoveryAutomaticAttempts = 0;
+    this.historyRecoveryNetwork?.recovered();
+    return this.retryRecoveredHistory();
+  }
+
   private retryRecoveredHistory(): Promise<void> {
     if (!this.auth.session()) return Promise.resolve();
     const context = this.captureSendContext();
@@ -2185,6 +2222,8 @@ export class ChatService implements OnDestroy {
     if (this.historyRecoveryInFlight && this.historyRecoveryScope?.userId === context.userId
       && this.historyRecoveryScope.deviceId === context.deviceId) return this.historyRecoveryInFlight;
     this.historyRecoveryScope = context;
+    this.localHistoryCheckState.set('checking');
+    this.lastHistoryRecoveryError = null;
     const generation = this.messageLoadGeneration;
     const current = () => generation === this.messageLoadGeneration && this.isSendContextCurrent(context);
     const recovery = (async () => {
@@ -2236,12 +2275,20 @@ export class ChatService implements OnDestroy {
           }
           const unreadable = this.hasUnreadableHistory();
           if (revision === this.historyRecoveryRevision) {
+            this.lastHistoryRecoveryError = null;
+            this.historyRecoveryAutomaticAttempts = 0;
+            this.historyRecoveryNetwork?.recovered();
             if (!unreadable) this.deviceHistory.markHistoryReadable();
             else this.deviceHistory.markHistoryRecoveryIncomplete();
+            // Omitted ciphertext is not proof of a missing key, nor success.
+            this.localHistoryCheckState.set(unreadable && this.deviceHistory.state?.() === 'idle' ? 'unavailable' : 'idle');
           }
-        } catch {
+        } catch (error) {
           if (current() && revision === this.historyRecoveryRevision) {
+            this.lastHistoryRecoveryError = error;
+            this.localHistoryCheckState.set('retryable');
             this.deviceHistory.markHistoryRecoveryIncomplete({ retryable: true });
+            this.historyRecoveryNetwork?.failed(error);
           }
         }
       } while (current() && revision !== this.historyRecoveryRevision);
@@ -2268,7 +2315,12 @@ export class ChatService implements OnDestroy {
   private reconcileHistoryReadability(): void {
     // Normal HTTP/cache loads can resolve the final placeholder after a reload,
     // without a new transfer event. A network receipt alone proves nothing.
-    if (!this.historyRecoveryInFlight && !this.hasUnreadableHistory()) this.deviceHistory?.markHistoryReadable?.();
+    if (!this.historyRecoveryInFlight && !this.hasUnreadableHistory()) {
+      this.deviceHistory?.markHistoryReadable?.();
+      this.localHistoryCheckState?.set('idle');
+      this.lastHistoryRecoveryError = null;
+      this.historyRecoveryNetwork?.recovered();
+    }
   }
 
   private async ingestMessageBatch(messages: MessageResponse[], markDelivered: boolean, context = this.captureSendContext(), historyGenerations: ReadonlyMap<string, number> = new Map(this.conversationHistoryGenerations)): Promise<boolean> {
@@ -2348,6 +2400,8 @@ export class ChatService implements OnDestroy {
         continue;
       }
       for (const key of keys) {
+        if (own && key.publicJwk.x === own.publicJwk.x && key.publicJwk.y === own.publicJwk.y
+          && key.privateJwk.d === own.privateJwk.d) continue;
         try {
           return await this.crypto.decryptEnvelope<ChatPayload>(key, recipient.header, recipient.ciphertext);
         } catch {
@@ -4529,6 +4583,10 @@ export class ChatService implements OnDestroy {
 
   private resetRefreshState(): void {
     this.networkRecovery?.reset();
+    this.historyRecoveryNetwork?.reset();
+    this.localHistoryCheckState?.set('idle');
+    this.lastHistoryRecoveryError = null;
+    this.historyRecoveryAutomaticAttempts = 0;
     this.lastMessageSyncError = null;
     this.refreshChatsInFlight = null;
     this.resumeSyncInFlight = null;

@@ -95,6 +95,7 @@ import { ImageCropperComponent } from '../image-cropper/image-cropper.component'
 import { canQuoteMessage, insertComposerEmoji, isReplySwipe, localMessageDay, messageDeliveryState, searchThreadMessages } from './chat-thread.helpers';
 import { ChatExpressionPickerComponent } from '../../shared/chat-expression-picker/chat-expression-picker.component';
 import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.component';
+import { HistoryLocalCheckComponent } from '../../shared/history-local-check.component';
 import { ChatLoadingComponent } from '../../shared/chat-loading.component';
 import { ChatVerificationDraftService } from './chat-verification-draft.service';
 import { ChatIdentityChangeNoticeComponent } from './chat-identity-change-notice.component';
@@ -175,6 +176,7 @@ interface MessageTextPart {
     FailedTextSendComponent,
     ChatExpressionPickerComponent,
     HistorySyncNoticeComponent,
+    HistoryLocalCheckComponent,
     ChatLoadingComponent,
     ChatIdentityChangeNoticeComponent,
     PrivateChatLockComponent,

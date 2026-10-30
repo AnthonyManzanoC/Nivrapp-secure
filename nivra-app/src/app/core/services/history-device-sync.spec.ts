@@ -158,6 +158,36 @@ describe('approved encrypted history recovery', () => {
     expect(service.preferredSource()?.deviceId).toBe('old-device');
   });
 
+  it('waits for a fast sole-device directory before creating the very first approval request', fakeAsync(() => {
+    const { service, api } = syncHarness(cryptoHarness().service, 'target');
+    const directory = new Subject<any[]>();
+    service.requested = true; service.requestEvidence = evidence({}); service.state.set('waiting');
+    spyOn(service, 'tryRecoverLocally').and.resolveTo(false);
+    spyOn(service, 'persistedIdentity').and.resolveTo({ publicJwk: {} });
+    spyOn(service, 'publicFingerprint').and.resolveTo('local-fingerprint');
+    api.get.and.callFake((url: string) => url === '/devices' ? directory : of([]));
+    void service.pump(); flushMicrotasks(); tick(100);
+    expect(api.post).not.toHaveBeenCalled(); expect(service.targetFingerprint()).toBe('');
+    directory.next([registeredDevice('target', 'Android Nivra Mobile')]); directory.complete(); flushMicrotasks();
+    expect(service.sourceAvailability()).toBe('local-only'); expect(api.post).not.toHaveBeenCalled();
+    expect(service.state()).toBe('waiting'); service.ngOnDestroy();
+  }));
+
+  it('bounds the directory grace period so a stalled directory cannot prevent a legitimate transfer', fakeAsync(() => {
+    const { service, api } = syncHarness(cryptoHarness().service, 'target');
+    const directory = new Subject<any[]>();
+    service.requested = true; service.requestEvidence = evidence({}); service.state.set('waiting');
+    spyOn(service, 'tryRecoverLocally').and.resolveTo(false);
+    spyOn(service, 'persistedIdentity').and.resolveTo({ publicJwk: {} });
+    spyOn(service, 'publicFingerprint').and.resolveTo('local-fingerprint');
+    api.get.and.callFake((url: string) => url === '/devices' ? directory : of([]));
+    api.post.and.returnValue(throwError(() => ({ status: 503 })));
+    void service.pump(); flushMicrotasks(); tick(749); expect(api.post).not.toHaveBeenCalled();
+    tick(1); flushMicrotasks(); expect(api.post).toHaveBeenCalledTimes(1);
+    expect(service.sourceAvailability()).toBe('unknown');
+    service.ngOnDestroy(); directory.complete(); flushMicrotasks();
+  }));
+
   it('treats a failed or empty device directory as unknown rather than proof that keys cannot arrive', async () => {
     const { service, api } = syncHarness(cryptoHarness().service, 'target');
     service.requested = true; service.requestEvidence = evidence({});

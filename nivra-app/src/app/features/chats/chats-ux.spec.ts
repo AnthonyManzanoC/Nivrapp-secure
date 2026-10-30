@@ -25,13 +25,22 @@ describe('Chats actions and scoped search', () => {
     return { promise, resolve };
   };
 
+  it('keeps a local history check visible instead of claiming that an idle transfer means everything is synced', () => {
+    chat.localHistoryCheckState.set('checking');
+    expect(page.hasHistoryStatus()).toBeTrue(); expect(page.canSnoozeHistoryStatus()).toBeFalse();
+    expect(page.historyStatusTitle()).toContain('Revisando tus mensajes');
+    chat.localHistoryCheckState.set('retryable');
+    expect(page.historyStatusTitle()).toContain('por comprobar');
+    chat.localHistoryCheckState.set('idle'); expect(page.hasHistoryStatus()).toBeFalse();
+  });
+
   beforeEach(() => {
     auth = { session: signal({ user: { id: 'ux-me', alias: 'maria' }, device: { id: 'ux-device' } }), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), relinkDevice: jasmine.createSpy('relinkDevice').and.resolveTo() };
     router = { events: EMPTY, url: '/app/chats', navigate: jasmine.createSpy().and.resolveTo(true), navigateByUrl: jasmine.createSpy().and.resolveTo(true), parseUrl: () => ({ root: { children: {} } }) };
     chat = {
       conversations: signal([{ id: 'family', title: 'Familía' }, { id: 'archived', title: 'Equipo' }]),
       loading: signal(false), bootstrap: jasmine.createSpy().and.resolveTo(),
-      listUpdating: signal(false), syncError: signal(''),
+      listUpdating: signal(false), syncError: signal(''), localHistoryCheckState: signal('idle'),
       deviceHistory: { state: signal('idle'), recoveryStatus: signal('approval'), targetFingerprint: signal('ux-fixture-fingerprint') },
       messagesByConversation: signal({}),
       clearSelectedConversation: () => undefined,

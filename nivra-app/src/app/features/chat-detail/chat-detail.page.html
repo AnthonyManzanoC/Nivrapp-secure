@@ -49,7 +49,10 @@
       </ion-buttons>
     </ion-toolbar>
   </ion-header>
-  <app-history-sync-notice [showApprovals]="false" [compact]="true" [identityError]="!!auth.deviceIdentityError()" [needsRelink]="auth.deviceIdentityNeedsRelink()" (relinkRequested)="auth.relinkDevice()" />
+  @if (!auth.deviceIdentityError() && !auth.deviceIdentityNeedsRelink()) {
+    <app-history-local-check [state]="chat.localHistoryCheckState()" [compact]="true" (retry)="chat.checkLocalHistory()" />
+  }
+  <app-history-sync-notice [showApprovals]="false" [compact]="true" [showWaiting]="chat.localHistoryCheckState() === 'idle' || !!auth.deviceIdentityError() || auth.deviceIdentityNeedsRelink()" [identityError]="!!auth.deviceIdentityError()" [needsRelink]="auth.deviceIdentityNeedsRelink()" (relinkRequested)="auth.relinkDevice()" />
   @if (searchOpen) {
     <section class="thread-search" [attr.aria-label]="'CHAT.SEARCH_CHAT' | translate:'Buscar en este chat'">
       <div class="thread-search-input">

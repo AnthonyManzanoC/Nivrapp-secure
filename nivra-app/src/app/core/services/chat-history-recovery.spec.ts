@@ -1,9 +1,12 @@
 import { signal } from '@angular/core';
 import { of, Subject, throwError } from 'rxjs';
 import { fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
+import { HttpErrorResponse } from '@angular/common/http';
 import { ChatService } from './chat.service';
 
 describe('chat history recovery and loading continuity', () => {
+  const recoveryControllers: any[] = [];
+  afterEach(() => recoveryControllers.splice(0).forEach(controller => controller.reset()));
   const session = (id = 'alice') => ({ user: { id, alias: id }, device: { id: `${id}-browser` } });
   const message = (id = 'old', conversationId = 'chat') => ({ id, conversationId,
     at: '2026-10-01T12:00:00Z', payload: { type: 'text', text: 'Recovered text' }, decryptError: false });
@@ -17,12 +20,13 @@ describe('chat history recovery and loading continuity', () => {
       auth: { session: signal<any>(session()) }, loading: signal(false),
       messageLoadGeneration: 0, messageLoadCounts: signal({}), historyRecoveryRevision: 0,
       historyRecoveryInFlight: null, historyRecoveryScope: null, bootstrapInFlight: null,
+      localHistoryCheckState: signal('idle'), historyRecoveryAutomaticAttempts: 0, lastHistoryRecoveryError: null,
       selectedConversationId: signal<string | null>('chat'), selectedConversationLoadId: 0,
       messagesByConversation: signal<any>({}), pendingHistoryEnvelopes: new Map(), removedHistoryMessageIds: new Set(),
       conversationHistoryGenerations: new Map(),
       conversations: signal<any[]>([]), conversationPaging: signal({}),
       deviceHistory: { markHistoryReadable: jasmine.createSpy('readable'),
-        markHistoryRecoveryIncomplete: jasmine.createSpy('incomplete'), requestHistory: jasmine.createSpy('requestHistory') },
+        markHistoryRecoveryIncomplete: jasmine.createSpy('incomplete'), requestHistory: jasmine.createSpy('requestHistory'), state: () => 'idle' },
       api: { post: jasmine.createSpy('post').and.returnValue(of({ messages: [], deletedMessages: [] })) },
       bootstrap: jasmine.createSpy('bootstrap').and.resolveTo(),
       loadMessages: jasmine.createSpy('loadMessages').and.resolveTo(),
@@ -44,6 +48,70 @@ describe('chat history recovery and loading continuity', () => {
     service.viewOnceOpenedReceipt = () => null;
     service.yieldToMainThread = async () => undefined;
   }
+
+  function enableAutomaticRecovery(service: any, online = () => true) {
+    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('visible');
+    service.auth.isAuthenticated = () => !!service.auth.session();
+    service.network = { onlineHint: online, readTimeoutMs: () => 0, retryDelayMs: (attempt: number, base: number, maximum: number) => Math.min(base * 2 ** attempt, maximum) };
+    service.historyRecoveryNetwork = service.createHistoryRecoveryNetwork();
+    recoveryControllers.push(service.historyRecoveryNetwork);
+  }
+
+  it('automatically recovers cache-only history after an HTTP failure with no transfer or other device', fakeAsync(() => {
+    const service = harness(); useRealIngestion(service); enableAutomaticRecovery(service);
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }] });
+    service.api.post.and.returnValues(throwError(() => new HttpErrorResponse({ status: 503 })),
+      of({ messages: [envelope('old')], deletedMessages: [] }));
+    void service.retryRecoveredHistory(); flushMicrotasks();
+    expect(service.localHistoryCheckState()).toBe('retryable');
+    tick(2500); flushMicrotasks();
+    expect(service.api.post).toHaveBeenCalledTimes(2);
+    expect(service.api.post.calls.allArgs().every((args: any[]) => args[0] === '/messages/history-recovery')).toBeTrue();
+    expect(service.deviceHistory.requestHistory).not.toHaveBeenCalled();
+    expect(service.messagesByConversation().chat[0].decryptError).toBeFalse();
+    expect(service.localHistoryCheckState()).toBe('idle');
+  }));
+
+  it('resumes cache-only recovery when connection returns, even without history evidence or a new key', fakeAsync(() => {
+    const service = harness(); useRealIngestion(service); let online = false; enableAutomaticRecovery(service, () => online);
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }] });
+    service.api.post.and.returnValues(throwError(() => new HttpErrorResponse({ status: 0 })), of({ messages: [envelope('old')], deletedMessages: [] }));
+    void service.retryRecoveredHistory(); flushMicrotasks(); tick(30_000);
+    expect(service.api.post).toHaveBeenCalledTimes(1);
+    online = true; service.wakeHistoryRecovery(); tick(400); flushMicrotasks();
+    expect(service.api.post).toHaveBeenCalledTimes(2); expect(service.localHistoryCheckState()).toBe('idle');
+  }));
+
+  it('limits automatic HTTP attempts and does not repeatedly decrypt when an original key is missing', fakeAsync(() => {
+    const service = harness(); enableAutomaticRecovery(service);
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }] });
+    service.api.post.and.returnValue(throwError(() => new HttpErrorResponse({ status: 503 })));
+    void service.retryRecoveredHistory(); flushMicrotasks(); tick(2500); flushMicrotasks(); tick(5000); flushMicrotasks(); tick(10_000); flushMicrotasks(); tick(60_000);
+    expect(service.api.post).toHaveBeenCalledTimes(4);
+    expect(service.localHistoryCheckState()).toBe('retryable');
+    service.api.post.and.returnValue(of({ messages: [], deletedMessages: [] }));
+    void service.checkLocalHistory(); flushMicrotasks(); tick(60_000);
+    expect(service.api.post).toHaveBeenCalledTimes(5);
+    expect(service.localHistoryCheckState()).toBe('unavailable');
+    expect(service.deviceHistory.markHistoryReadable).not.toHaveBeenCalled();
+  }));
+
+  it('never executes a queued history retry for a different account', fakeAsync(() => {
+    const service = harness(); enableAutomaticRecovery(service);
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }] });
+    service.api.post.and.returnValue(throwError(() => new HttpErrorResponse({ status: 503 })));
+    void service.retryRecoveredHistory(); flushMicrotasks();
+    service.auth.session.set(session('bob')); tick(30_000); flushMicrotasks();
+    expect(service.api.post).toHaveBeenCalledTimes(1);
+  }));
+
+  it('does not automatically retry an authorization rejection', fakeAsync(() => {
+    const service = harness(); enableAutomaticRecovery(service);
+    service.messagesByConversation.set({ chat: [{ ...message('old'), decryptError: true }] });
+    service.api.post.and.returnValue(throwError(() => new HttpErrorResponse({ status: 403 })));
+    void service.retryRecoveredHistory(); flushMicrotasks(); tick(60_000);
+    expect(service.api.post).toHaveBeenCalledTimes(1); expect(service.localHistoryCheckState()).toBe('retryable');
+  }));
 
   it('never replaces a readable message with a delayed failed decryption', () => {
     const service = harness(); const readable = message();

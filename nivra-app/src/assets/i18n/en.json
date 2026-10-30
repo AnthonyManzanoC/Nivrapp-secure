@@ -1,4 +1,11 @@
 {
+  "HISTORY_LOCAL.DEVICE": "On this device",
+  "HISTORY_LOCAL.CHECKING": "Checking your saved messages",
+  "HISTORY_LOCAL.PENDING": "Some messages still need checking",
+  "HISTORY_LOCAL.CHECKING_COPY": "We look for available copies and try the keys saved here. This check does not require another device.",
+  "HISTORY_LOCAL.RETRY_COPY": "The check did not finish. We will try again when the connection returns. Your history is preserved.",
+  "HISTORY_LOCAL.UNAVAILABLE_COPY": "Some older copies are not available yet. You can check again and keep using your chats.",
+  "HISTORY_LOCAL.RETRY": "Check now",
   "ACCOUNT.SEARCH_SETTINGS": "Search settings",
   "ACCOUNT.CLEAR_SEARCH": "Clear search",
   "ACCOUNT.SETTINGS_FOUND": "settings found",

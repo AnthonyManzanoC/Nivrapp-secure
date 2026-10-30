@@ -19,6 +19,7 @@ describe('live chat list refresh', () => {
         ensureFreshSession: async () => true },
       history: { retryNativeStorage: jasmine.createSpy('localRetry').and.resolveTo(true), storageError: signal('') },
       deviceHistory: { state: signal('idle'), retry: jasmine.createSpy('historyRetry') },
+      pendingHistoryEnvelopes: new Map(), removedHistoryMessageIds: new Set(),
       messageLoadGeneration: 0, listUpdateCount: 0, listUpdating: signal(false), loading: signal(false),
       syncError: signal(''), lastSyncedAt: signal<number | null>(null), automaticSyncTimer: null,
       refreshChatsInFlight: null, bootstrapInFlight: null, resumeSyncInFlight: null,
@@ -61,6 +62,15 @@ describe('live chat list refresh', () => {
     expect(service.bootstrap).toHaveBeenCalled();
     expect(service.listUpdating()).toBeFalse();
     expect(service.history.storageError()).toBe('Local vault is still locked');
+  });
+
+  it('checks old cached placeholders on manual refresh even when no device transfer exists', async () => {
+    const service = harness();
+    service.messagesByConversation.set({ chat: [{ id: 'old', conversationId: 'chat', decryptError: true }] });
+    service.checkLocalHistory = jasmine.createSpy('checkLocalHistory').and.resolveTo();
+    await service.refreshChats();
+    expect(service.checkLocalHistory).toHaveBeenCalledTimes(1);
+    expect(service.deviceHistory.retry).not.toHaveBeenCalled();
   });
 
   it('refreshes the HTTP list and messages even while realtime has a stalled handshake', async () => {

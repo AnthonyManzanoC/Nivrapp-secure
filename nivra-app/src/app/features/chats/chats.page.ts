@@ -42,6 +42,7 @@ import { LocalHistoryService } from '../../core/services/local-history.service';
 import { ChatStoryHighlight, chatStoryRingColor, groupChatStoryHighlights, withOwnChatStoryHighlight } from './chat-story-highlights';
 import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
 import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.component';
+import { HistoryLocalCheckComponent } from '../../shared/history-local-check.component';
 import { ChatLoadingComponent } from '../../shared/chat-loading.component';
 import { ChatWelcomeComponent } from './chat-welcome.component';
 import { ChatPassComponent } from './chat-pass.component';
@@ -65,6 +66,7 @@ type ConversationMenuAction = 'pin' | 'mute' | 'archive';
     StoryViewerComponent, StoryActivityComponent,
     StoryComposerComponent,
     HistorySyncNoticeComponent,
+    HistoryLocalCheckComponent,
     ChatLoadingComponent,
     ChatWelcomeComponent,
     ChatPassComponent,
@@ -357,7 +359,7 @@ export class ChatsPage implements OnDestroy {
       // A successful remote refresh never proves that local encrypted storage opened.
       const notice = !localReady || this.localHistory.storageError()
         ? this.tr('HISTORY_LOADING.LOCAL_PENDING', 'Conexión actualizada. El historial local sigue pendiente.')
-        : this.chat.deviceHistory.state() === 'idle'
+        : !this.hasHistoryStatus()
           ? this.tr('CHATS.SYNCED', 'Tus chats están al día.')
           : '';
       this.showSyncNotice(notice, scope);
@@ -382,8 +384,10 @@ export class ChatsPage implements OnDestroy {
 
   hasHistoryStatus(): boolean {
     return Boolean(this.auth.deviceIdentityError() || this.auth.deviceIdentityNeedsRelink() || this.visibleStorageError()
-      || this.chat.syncError() || this.chat.deviceHistory.state() !== 'idle');
+      || this.chat.syncError() || this.localHistoryStatus() !== 'idle' || this.chat.deviceHistory.state() !== 'idle');
   }
+
+  localHistoryStatus(): 'idle' | 'checking' | 'retryable' | 'unavailable' { return this.chat.localHistoryCheckState?.() ?? 'idle'; }
 
   showHistoryStatus(): boolean { return this.hasHistoryStatus() && !this.isHistoryStatusSnoozed(); }
 
@@ -391,7 +395,7 @@ export class ChatsPage implements OnDestroy {
     const session = this.auth.session();
     if (!session?.user.id || !session.device?.id || session.device.isTrusted === false || session.device.revokedAt
       || this.auth.deviceIdentityError() || this.auth.deviceIdentityNeedsRelink() || this.visibleStorageError()
-      || this.localHistory.storageBusy() || this.chat.syncError() || this.refreshing) return false;
+      || this.localHistory.storageBusy() || this.chat.syncError() || this.localHistoryStatus() !== 'idle' || this.refreshing) return false;
     const history = this.chat.deviceHistory;
     const fingerprint = history.targetFingerprint?.();
     // Both unavailable and retryable can represent fresh HTTP, storage or
@@ -424,6 +428,8 @@ export class ChatsPage implements OnDestroy {
     if (this.auth.deviceIdentityError()) return this.tr('CHATS.HISTORY_UNAVAILABLE', 'Historial temporalmente no disponible');
     if (this.visibleStorageError()) return this.tr('CHATS.HISTORY_UNAVAILABLE', 'Historial temporalmente no disponible');
     if (this.chat.syncError()) return this.tr('CHATS.SYNC_ERROR', 'No se pudo actualizar. Inténtalo cuando tengas conexión.');
+    if (this.localHistoryStatus() === 'checking') return this.tr('HISTORY_LOCAL.CHECKING', 'Revisando tus mensajes guardados');
+    if (this.localHistoryStatus() !== 'idle') return this.tr('HISTORY_LOCAL.PENDING', 'Quedan mensajes por comprobar');
     if (this.chat.deviceHistory.sourceAvailability?.() === 'local-only' && this.chat.deviceHistory.state() !== 'syncing') return this.tr('HISTORY_DEVICE.ORIGINAL_KEY_NEEDED', 'Parte del historial necesita su llave original');
     return this.chat.deviceHistory.state() === 'syncing'
       ? this.tr('HISTORY_DEVICE.SYNCING', 'Sincronizando tu historial')

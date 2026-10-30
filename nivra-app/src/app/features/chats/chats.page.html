@@ -201,7 +201,7 @@
           @if (showHistoryStatus()) {
             <div class="history-status-row">
               <button class="history-status-trigger" type="button" (click)="historyPanelOpen = true" aria-haspopup="dialog" [attr.aria-label]="historyStatusTitle()">
-                @if (localHistory.storageBusy() || chat.deviceHistory.state() === 'syncing') { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
+                @if (localHistory.storageBusy() || localHistoryStatus() === 'checking' || chat.deviceHistory.state() === 'syncing') { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
                 @else { <span class="history-status-dot" aria-hidden="true"></span> }
                 <span>{{ historyStatusTitle() }}</span>
                 <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
@@ -351,7 +351,10 @@
           </div>
         }
         @if (chat.syncError() && !auth.deviceIdentityError()) { <div class="history-connection-error" role="status"><p>{{ 'CHATS.SYNC_ERROR' | translate:'No se pudo actualizar. Inténtalo cuando tengas conexión.' }}</p><button type="button" [disabled]="showConversationSkeleton()" (click)="refresh()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button></div> }
-        <app-history-sync-notice [showApprovals]="false" [showWaiting]="!auth.deviceIdentityError() && !auth.deviceIdentityNeedsRelink()" />
+        @if (!auth.deviceIdentityError() && !auth.deviceIdentityNeedsRelink() && !visibleStorageError()) {
+          <app-history-local-check [state]="localHistoryStatus()" (retry)="chat.checkLocalHistory()" />
+        }
+        <app-history-sync-notice [showApprovals]="false" [showWaiting]="!auth.deviceIdentityError() && !auth.deviceIdentityNeedsRelink() && localHistoryStatus() === 'idle'" />
         @if (showConversationSkeleton()) { <app-chat-loading [compact]="true" /> }
         @else if (!hasHistoryStatus()) { <p class="history-ready" role="status"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.SYNCED' | translate:'Tus chats están al día.' }}</p> }
       </section>

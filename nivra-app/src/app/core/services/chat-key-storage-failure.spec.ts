@@ -1,5 +1,6 @@
 import { signal } from '@angular/core';
 import { ChatService } from './chat.service';
+import { CryptoService } from './crypto.service';
 
 describe('local key availability and remote history requests', () => {
   const key = { publicJwk: { kty: 'EC' }, privateJwk: { kty: 'EC', d: 'local-private' } };
@@ -48,6 +49,25 @@ describe('local key availability and remote history requests', () => {
     const service = harness();
     expect(await service.ingestMessageBatch([], false)).toBeTrue();
     expect(service.crypto.currentKeyMaterial).not.toHaveBeenCalled();
+    expect(service.deviceHistory.requestHistory).not.toHaveBeenCalled();
+  });
+
+  it('tries each retained identity once with real authenticated encryption and keeps the original keys intact', async () => {
+    const service = harness();
+    const cryptography: any = Object.assign(Object.create(CryptoService.prototype), { yieldToMainThread: async () => undefined });
+    const own = await cryptography.createDeviceKeys(), older = await cryptography.createDeviceKeys(), peer = await cryptography.createDeviceKeys();
+    const before = JSON.stringify([own, older]);
+    const sealed = await cryptography.encryptForPublicKey(peer, older.publicJwk, { type: 'text', text: 'Older readable history' });
+    service.crypto.currentKeyMaterial.and.resolveTo(own);
+    service.crypto.deviceKeyMaterialsForUser.and.resolveTo([own, older]);
+    service.crypto.decryptEnvelope.and.callFake((key: any, header: string, ciphertext: string) => cryptography.decryptEnvelope(key, header, ciphertext));
+    const recipients = [{ userId: 'alice', deviceId: 'old-phone', ...sealed }];
+    expect(await service.decryptOwnRecipientPayload('alice', 'alice', 'phone', recipients)).toEqual({ type: 'text', text: 'Older readable history' });
+    expect(service.crypto.decryptEnvelope).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify([own, older])).toBe(before);
+    service.crypto.decryptEnvelope.calls.reset(); service.crypto.deviceKeyMaterialsForUser.and.resolveTo([own]);
+    expect(await service.decryptOwnRecipientPayload('alice', 'alice', 'phone', recipients)).toBeNull();
+    expect(service.crypto.decryptEnvelope).toHaveBeenCalledTimes(1);
     expect(service.deviceHistory.requestHistory).not.toHaveBeenCalled();
   });
 });
