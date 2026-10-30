@@ -92,6 +92,19 @@ describe('Attachment review files and upload boundaries', () => {
     expect(sendFile).toHaveBeenCalledTimes(1);
     expect(page.attachmentError).toBe('nuevo estado');
   });
+
+  it('explains a provider quota refusal and retains the selected files and caption for retry', async () => {
+    const file = new File(['photo'], 'photo.jpg', { type: 'image/jpeg' });
+    internal.preparePendingAttachments([file], 'media'); page.pendingAttachmentCaption = 'Mi historia';
+    sendFile.and.rejectWith({ status: 402, error: { code: 'storage_payment_required', message: 'private provider details' } });
+    await page.sendPendingAttachments();
+    expect(page.attachmentError).toContain('cuota o facturación');
+    expect(page.attachmentError).not.toContain('private provider');
+    expect(page.pendingAttachmentFiles.map(item => item.file)).toEqual([file]);
+    expect(page.pendingAttachmentCaption).toBe('Mi historia'); expect(page.sending).toBeFalse();
+    sendFile.and.resolveTo({ id: 'restored' }); await page.sendPendingAttachments();
+    expect(page.pendingAttachmentFiles).toEqual([]);
+  });
 });
 
 describe('Attachment image edits', () => {

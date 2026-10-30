@@ -54,8 +54,9 @@ async function mainFixture() {
     getVersion: () => '4.0.1', getPath: () => 'C:\\Nivra-Test-Profile', quit: () => calls.push('quit'),
   });
   class FakeWindow extends EventEmitter {
-    constructor() {
+    constructor(options) {
       super(); window = this;
+      this.options = options;
       this.webContents = new EventEmitter();
       this.webContents.mainFrame = { url: '' };
       this.webContents.setWindowOpenHandler = () => {};
@@ -63,6 +64,8 @@ async function mainFixture() {
       this.webContents.send = (...args) => calls.push(['event', ...args]);
     }
     removeMenu() {}
+    isFocused() { return true; }
+    setContentProtection(enabled) { this.contentProtected = enabled; }
     isDestroyed() { return false; }
     loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
     static getAllWindows() { return [window]; }
@@ -97,6 +100,8 @@ async function mainFixture() {
 
 test('all update IPC rejects remote frames, child frames and renderer-supplied update parameters', async () => {
   const { handlers, calls, window } = await mainFixture();
+  assert.equal(window.options.webPreferences.devTools, false);
+  assert.equal(window.contentProtected, true);
   const valid = { sender: window.webContents, senderFrame: window.webContents.mainFrame };
   for (const channel of ['nivra-updates:check', 'nivra-updates:download', 'nivra-updates:install', 'nivra-updates:get-state']) {
     const handler = handlers.get(channel); assert.equal(typeof handler, 'function');

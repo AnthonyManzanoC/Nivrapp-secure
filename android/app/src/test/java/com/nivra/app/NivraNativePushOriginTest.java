@@ -8,8 +8,17 @@ public class NivraNativePushOriginTest {
     @Test public void acceptsOnlyPinnedProductionOrigin() {
         assertTrue(NivraNativePushRegistration.isAllowedApiOrigin("https://nivra-webapp-secure.onrender.com"));
         assertTrue(NivraNativePushRegistration.isAllowedApiOrigin("https://nivrapp-secure.onrender.com"));
+        assertTrue(NivraNativePushRegistration.isAllowedApiOrigin(NivraApiFailover.THIRD));
+        assertFalse(NivraNativePushRegistration.isAllowedApiOrigin(NivraApiFailover.THIRD + ".evil.test"));
         assertFalse(NivraNativePushRegistration.isAllowedApiOrigin("https://attacker.test"));
         assertFalse(NivraNativePushRegistration.isAllowedApiOrigin("http://nivra-webapp-secure.onrender.com"));
+    }
+
+    @Test public void renewalCanReachThirdHostWithoutLosingTheFixedTrustAnchor() {
+        assertArrayEquals(new String[] { NivraApiFailover.PRIMARY, NivraApiFailover.BACKUP, NivraApiFailover.THIRD }, NivraApiFailover.recoveryOrigins());
+        String[] copy = NivraApiFailover.recoveryOrigins(); copy[0] = "https://attacker.test";
+        assertEquals(NivraApiFailover.PRIMARY, NivraApiFailover.recoveryOrigins()[0]);
+        assertFalse(NivraApiFailover.compatible("", "b".repeat(64), 1, true));
     }
 
     @Test public void failoverRequiresTheCompiledClusterAndCurrentCoreReadiness() {

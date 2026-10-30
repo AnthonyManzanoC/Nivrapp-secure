@@ -291,6 +291,7 @@ export interface MessageReaction {
 
 export interface ChatMessageVm {
   id: string;
+  clientMessageId?: string;
   conversationId: string;
   mine: boolean;
   senderUserId: string;

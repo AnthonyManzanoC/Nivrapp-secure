@@ -137,6 +137,7 @@
             [attr.data-message-id]="message.id"
             tabindex="0"
             [class.mine]="message.mine"
+            [attr.aria-busy]="message.status === 'sending' ? 'true' : null"
             [class.sticker-message]="message.payload['sticker'] === true && !message.deleteAfterRead"
             [class.search-hit]="isSearchResult(message.id)"
             [class.decrypt-error]="message.decryptError"
@@ -147,7 +148,7 @@
             (touchmove)="moveMessagePress($event)"
             (touchend)="finishMessagePress(message, $event)"
             (touchcancel)="cancelMessagePress()">
-            <button type="button" class="message-more" (click)="toggleActions(message, $event)" [attr.aria-label]="'COMMON.ACTIONS' | translate:'Acciones'">
+            <button type="button" class="message-more" [disabled]="message.status === 'sending'" (click)="toggleActions(message, $event)" [attr.aria-label]="'COMMON.ACTIONS' | translate:'Acciones'">
               <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
             </button>
             @if (isGroupConversation() && !message.mine && !message.decryptError) {
@@ -392,7 +393,7 @@
                 <span>{{ 'CHAT.EDITED' | translate:'editado' }}</span>
               }
               @if (message.mine) {
-                <span class="message-receipt" [class.receipt-read]="deliveryState(message) === 'read'" [title]="deliveryLabel(message)" [attr.aria-label]="deliveryLabel(message)"><ion-icon [name]="deliveryState(message) === 'sent' ? 'checkmark-outline' : 'checkmark-done-outline'"></ion-icon></span>
+                <span class="message-receipt" [class.receipt-read]="deliveryState(message) === 'read'" [title]="deliveryLabel(message)" [attr.aria-label]="deliveryLabel(message)"><ion-icon [name]="deliveryState(message) === 'pending' ? 'time-outline' : deliveryState(message) === 'sent' ? 'checkmark-outline' : 'checkmark-done-outline'"></ion-icon></span>
               }
             </footer>
           </article>

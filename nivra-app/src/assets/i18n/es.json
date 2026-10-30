@@ -1,4 +1,9 @@
 {
+  "DEVICE_SECURITY.SCREEN_SHIELD": "Con Modo Seguro, Android y Windows protegen las capturas de la app. La vista de apps recientes se oculta en los equipos compatibles. El navegador no puede impedir todas las capturas.",
+  "DEVICE_SECURITY.LIMITS": "Usa también un código de pantalla fuerte. Un teléfono desbloqueado o comprometido puede exponer datos; este bloqueo no sustituye la seguridad del dispositivo.",
+  "CHAT.ERROR_UPLOAD_STORAGE_BLOCKED": "El proveedor de archivos ha bloqueado las subidas por cuota o facturación. Conservamos tus archivos seleccionados.",
+  "CHAT.ERROR_UPLOAD_OFFLINE": "No hay conexión para subir el archivo. Tu selección sigue aquí; vuelve a intentar cuando tengas señal.",
+  "CHAT.ERROR_UPLOAD_SERVICE": "El servicio de archivos no está disponible ahora. Conservamos tu selección para reintentar.",
   "BROADCAST.TEMPORARY_HINT": "Se aplica tu duración de mensajes temporales. Su seguimiento se conserva sólo mientras esta pantalla siga abierta y el mensaje no haya vencido.",
   "ACCOUNTS.TITLE": "Tus cuentas",
   "ACCOUNTS.COPY": "Mantén dos cuentas abiertas y cambia entre ellas al instante.",
@@ -473,6 +478,7 @@
   "CHAT.SEND_MESSAGES": "Enviar mensajes",
   "CHAT.SEND_VOICE_NOTE": "Enviar nota de voz",
   "CHAT.SENT": "Enviado",
+  "CHAT.SENDING": "Enviando…",
   "CHAT.SLIDE_CANCEL": "< Desliza para cancelar",
   "CHAT.STORIES": "Historias",
   "CHAT.STORIES_RING_COPY": "Cuando existan, se abriran desde este anillo.",

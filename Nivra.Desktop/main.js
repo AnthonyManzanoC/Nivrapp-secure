@@ -5,6 +5,7 @@ const path = require("path");
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('url');
 const { PINNED_API_ORIGINS, allowedApiOrigin } = require('./api-origins');
+const { installWindowPrivacy } = require('./window-privacy');
 const { isBundledEntry, isTrustedIpc } = require('./renderer-security');
 const { createElectronRequest, createUpdateManager, updateErrorCode } = require('./update-manager');
 const { createLauncherAppearanceManager, installLauncherAppearanceHandlers } = require('./launcher-appearance');
@@ -13,6 +14,7 @@ let mainWindow = null;
 let isQuitting = false;
 let trustedEntryUrl = '';
 let launcherAppearance = null;
+let windowPrivacy = null;
 
 function assertTrustedRenderer(event) {
   if (!isTrustedIpc(event, mainWindow, trustedEntryUrl)) throw new Error('Untrusted IPC sender.');
@@ -120,7 +122,7 @@ function installContentProtectionHandlers() {
     assertTrustedRenderer(event);
     const enabled = Boolean(options && options.enabled);
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setContentProtection(enabled);
+      windowPrivacy?.setProtected(enabled);
     }
     return { enabled };
   });
@@ -217,11 +219,13 @@ function createWindow(webRoot, apiBaseUrl) {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      devTools: !app.isPackaged,
       preload: path.join(__dirname, "preload.js"),
       backgroundThrottling: false
     }
   });
 
+  windowPrivacy = installWindowPrivacy(mainWindow);
   mainWindow.removeMenu();
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("https://") || url.startsWith("http://")) {

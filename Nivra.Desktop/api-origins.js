@@ -1,6 +1,7 @@
 const PINNED_API_ORIGINS = Object.freeze([
   'https://nivrapp-secure.onrender.com',
-  'https://nivra-webapp-secure.onrender.com'
+  'https://nivra-webapp-secure.onrender.com',
+  'https://nivrapp-secure-eaqi.onrender.com'
 ]);
 
 function allowedApiOrigin(value, development = false) {

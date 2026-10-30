@@ -48,6 +48,7 @@ import {
   banOutline,
   cameraOutline,
   checkmarkOutline,
+  timeOutline,
   chevronDownOutline,
   chevronUpOutline,
   chevronForwardOutline,
@@ -348,7 +349,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     { label: '7 dias', labelKey: 'COMMON.7_DAYS', value: 604800 },
   ];
   readonly conversation = computed(() => this.chat.selectedConversation());
-  readonly messages = computed(() => this.chat.selectedMessages());
+  private readonly pendingTextPreview = signal<{
+    userId: string; deviceId: string; generation: number; message: ChatMessageVm;
+  } | null>(null);
+  readonly messages = computed(() => this.displayedMessages());
   readonly hasReadableMessages = computed(() => this.messages().some(message => !message.decryptError));
   private voiceRecorder: MediaRecorder | null = null;
   private voiceStream: MediaStream | null = null;
@@ -410,6 +414,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       banOutline,
       cameraOutline,
       checkmarkOutline,
+      timeOutline,
       chevronDownOutline,
       chevronUpOutline,
       chevronForwardOutline,
@@ -597,22 +602,52 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.attachmentError = this.tr('CHAT.ADMINS_ONLY_MESSAGES', 'Solo los admins pueden enviar mensajes en este grupo.');
       return;
     }
+    const session = this.auth.session();
+    if (!session) return;
     const text = this.draft;
+    const policy = this.currentPolicy();
+    const clientMessageId = `web-${crypto.randomUUID()}`;
+    const preview = {
+      userId: session.user.id, deviceId: session.device.id, generation: this.composerGeneration,
+      message: {
+        id: `local-${clientMessageId}`, clientMessageId, conversationId: conversation.id,
+        senderUserId: session.user.id, senderDeviceId: session.device.id, mine: true,
+        at: new Date().toISOString(), status: 'sending',
+        payload: { type: 'text', text: text.trim(), ...(policy.replyTo ? { replyTo: policy.replyTo } : {}) },
+        deleteAfterRead: Boolean(policy.deleteAfterRead),
+      } satisfies ChatMessageVm,
+    };
+    const current = () => this.composerContextCurrent(conversation.id, preview.userId, preview.deviceId, preview.generation);
+    this.pendingTextPreview.set(preview);
     this.draft = '';
     this.sending = true;
     this.attachmentError = '';
+    this.scrollBottom();
     try {
-      await this.chat.sendTyping(conversation.id, 'stopped', { force: true });
-      await this.chat.sendText(conversation, text, this.currentPolicy());
+      // Typing is best effort and must never hold up the actual encrypted send.
+      void this.chat.sendTyping(conversation.id, 'stopped', { force: true }).catch(() => undefined);
+      await this.chat.sendText(conversation, text, policy, clientMessageId);
+      if (!current()) return;
       this.replyingMessage = null;
       this.emojiPanelOpen = false;
       this.scrollBottom();
     } catch (error) {
-      this.draft = text;
-      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_MESSAGE', 'No se pudo enviar el mensaje.');
+      if (current() && !this.chat.selectedMessages().some(message => message.mine && message.clientMessageId === clientMessageId)) {
+        this.draft = text;
+        this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_MESSAGE', 'No se pudo enviar el mensaje.');
+      }
     } finally {
-      this.sending = false;
+      if (this.pendingTextPreview() === preview) this.pendingTextPreview.set(null);
+      if (current()) this.sending = false;
     }
+  }
+
+  private displayedMessages(): ChatMessageVm[] {
+    const confirmed = this.chat.selectedMessages();
+    const preview = this.pendingTextPreview();
+    if (!preview || this.privateChatLocked() || !this.composerContextCurrent(preview.message.conversationId, preview.userId, preview.deviceId, preview.generation)
+      || confirmed.some(message => message.mine && message.clientMessageId === preview.message.clientMessageId)) return confirmed;
+    return [...confirmed, preview.message];
   }
 
   async back(): Promise<void> {
@@ -700,7 +735,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
           this.removePendingAttachment(item.id, true);
         } catch (error) {
           if (!current()) return;
-          lastError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_UPLOAD_ATTACHMENT', 'No se pudo subir el adjunto.');
+          lastError = this.attachmentFailureMessage(error);
           if (this.isUploadLimitError(lastError)) {
             await this.showPremiumToast(lastError);
           }
@@ -718,7 +753,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.scrollBottom();
       }
     } catch (error) {
-      if (current()) this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_UPLOAD_ATTACHMENT', 'No se pudo subir el adjunto.');
+      if (current()) this.attachmentError = this.attachmentFailureMessage(error);
     } finally {
       if (current()) this.sending = false;
     }
@@ -727,6 +762,14 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   cancelPendingAttachments(): void {
     if (this.sending || this.chat.uploading()) return;
     this.clearPendingAttachments(true);
+  }
+
+  private attachmentFailureMessage(error: unknown): string {
+    const status = typeof error === 'object' && error !== null && 'status' in error ? Number(error.status) : NaN;
+    if (status === 402) return this.tr('CHAT.ERROR_UPLOAD_STORAGE_BLOCKED', 'El proveedor de archivos ha bloqueado las subidas por cuota o facturación. Conservamos tus archivos seleccionados.');
+    if (status === 0) return this.tr('CHAT.ERROR_UPLOAD_OFFLINE', 'No hay conexión para subir el archivo. Tu selección sigue aquí; vuelve a intentar cuando tengas señal.');
+    if (status === 429 || status >= 500) return this.tr('CHAT.ERROR_UPLOAD_SERVICE', 'El servicio de archivos no está disponible ahora. Conservamos tu selección para reintentar.');
+    return error instanceof Error ? error.message : this.tr('CHAT.ERROR_UPLOAD_ATTACHMENT', 'No se pudo subir el adjunto.');
   }
 
   addPendingAttachments(files: File[]): void {
@@ -1013,6 +1056,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async react(message: ChatMessageVm, emoji: string): Promise<void> {
+    if (message.status === 'sending') return;
     const conversation = this.conversation();
     if (!conversation) {
       return;
@@ -1032,6 +1076,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   openMessageActions(message: ChatMessageVm, event?: Event): void {
     event?.preventDefault();
     event?.stopPropagation();
+    if (message.status === 'sending') return;
     this.actionMessage = message;
     this.actionMessageId = message.id;
     this.messageActionEvent = event ?? null;
@@ -1041,6 +1086,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async openMessageActionSheet(message: ChatMessageVm): Promise<void> {
+    if (message.status === 'sending') return;
     this.actionMessage = message;
     this.actionMessageId = message.id;
     this.messageActionsOpen = false;
@@ -1500,7 +1546,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   canEdit(message: ChatMessageVm): boolean {
-    return message.mine && !this.chat.asFile(message.payload) && message.payload.type !== 'system';
+    return message.status !== 'sending' && message.mine && !this.chat.asFile(message.payload) && message.payload.type !== 'system';
   }
 
   canForward(message: ChatMessageVm | null | undefined): boolean {
@@ -2069,7 +2115,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     return index === 0 || localMessageDay(messages[index]?.at || '') !== localMessageDay(messages[index - 1]?.at || '');
   }
 
-  deliveryState(message: ChatMessageVm): 'sent' | 'delivered' | 'read' {
+  deliveryState(message: ChatMessageVm): 'pending' | 'sent' | 'delivered' | 'read' {
+    if (message.status === 'sending') return 'pending';
     const at = Date.parse(message.at);
     const recipients = (this.conversation()?.participants ?? []).filter(p =>
       (!p.joinedAt || Date.parse(p.joinedAt) <= at) && (!p.removedAt || Date.parse(p.removedAt) > at));
@@ -2078,6 +2125,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   deliveryLabel(message: ChatMessageVm): string {
     const state = this.deliveryState(message);
+    if (state === 'pending') return this.tr('CHAT.SENDING', 'Enviando…');
     return state === 'read' ? this.tr('CHAT.READ', 'Leído') : state === 'delivered' ? this.tr('CHAT.DELIVERED', 'Entregado') : this.tr('CHAT.SENT', 'Enviado');
   }
 
@@ -2201,7 +2249,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   canReply(message: ChatMessageVm): boolean {
-    return canQuoteMessage(message) && message.conversationId === this.conversation()?.id && this.canSendMessages() && !this.isBlocked();
+    return message.status !== 'sending' && canQuoteMessage(message) && message.conversationId === this.conversation()?.id && this.canSendMessages() && !this.isBlocked();
   }
 
   quotedReply(message: ChatMessageVm): QuotedReplyVm | null {

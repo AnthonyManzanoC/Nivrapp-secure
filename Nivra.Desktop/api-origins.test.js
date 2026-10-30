@@ -1,7 +1,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { PINNED_API_ORIGINS, allowedApiOrigin } = require('./api-origins');
-test('both compiled APIs are eligible for the desktop CORS bridge', () => {
+test('all three compiled APIs are eligible for the desktop CORS bridge', () => {
+  assert.equal(PINNED_API_ORIGINS[2], 'https://nivrapp-secure-eaqi.onrender.com');
   for (const origin of PINNED_API_ORIGINS) assert.equal(allowedApiOrigin(origin), origin);
 });
 test('URLs controlled by environment/query cannot add credential targets', () => {

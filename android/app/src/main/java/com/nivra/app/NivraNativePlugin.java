@@ -356,7 +356,9 @@ public class NivraNativePlugin extends Plugin {
         }
         activity.runOnUiThread(() -> {
             Window window = activity.getWindow();
-            if (enabled) {
+            if (activity instanceof MainActivity) {
+                ((MainActivity) activity).setScreenCaptureAllowed(!enabled);
+            } else if (enabled) {
                 window.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
             } else {
                 window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE);

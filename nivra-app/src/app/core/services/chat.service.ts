@@ -1101,7 +1101,7 @@ export class ChatService implements OnDestroy {
     return normalized;
   }
 
-  async sendText(conversation: Conversation, text: string, policy: MessagePolicyOptions = {}): Promise<MessageResponse | null> {
+  async sendText(conversation: Conversation, text: string, policy: MessagePolicyOptions = {}, clientMessageId?: string): Promise<MessageResponse | null> {
     const body = text.trim();
     if (!body) {
       return null;
@@ -1114,7 +1114,9 @@ export class ChatService implements OnDestroy {
     if (policy.replyTo) {
       payload.replyTo = policy.replyTo;
     }
-    return this.sendPayload(conversation, payload, 'Text', null, this.policyToSendOptions(policy));
+    return this.sendPayload(conversation, payload, 'Text', null, {
+      ...this.policyToSendOptions(policy), ...(clientMessageId ? { clientMessageId } : {}),
+    });
   }
 
   async sendFile(
@@ -2109,6 +2111,7 @@ export class ChatService implements OnDestroy {
 
     let vm: ChatMessageVm = {
       id: message.id,
+      clientMessageId: message.clientMessageId,
       conversationId: message.conversationId,
       mine: message.senderUserId === current.user.id,
       senderUserId: message.senderUserId,
@@ -2417,6 +2420,7 @@ export class ChatService implements OnDestroy {
     }
     this.upsertMessage(this.withLocalReadReceipt({
       id: response.id,
+      clientMessageId: response.clientMessageId,
       conversationId: response.conversationId,
       mine: true,
       senderUserId: current.user.id,

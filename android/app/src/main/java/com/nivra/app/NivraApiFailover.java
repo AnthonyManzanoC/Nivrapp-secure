@@ -8,6 +8,10 @@ import java.net.URL;
 final class NivraApiFailover {
     static final String PRIMARY = "https://nivrapp-secure.onrender.com";
     static final String BACKUP = "https://nivra-webapp-secure.onrender.com";
+    static final String THIRD = "https://nivrapp-secure-eaqi.onrender.com";
+    static String[] recoveryOrigins() {
+        return new String[] { PRIMARY, BACKUP, THIRD };
+    }
     static final String CLUSTER_FINGERPRINT = "c761492c31e3e9346640c94da63c476eea907d2aad8a26b6d830c60cd5d7fc64";
     private NivraApiFailover() { }
 

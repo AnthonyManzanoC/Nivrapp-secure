@@ -1,4 +1,9 @@
 {
+  "DEVICE_SECURITY.SCREEN_SHIELD": "With Safe Mode, Android and Windows protect app screenshots. The recent apps preview is hidden on supported devices. Browsers cannot prevent every screenshot.",
+  "DEVICE_SECURITY.LIMITS": "Also use a strong device passcode. An unlocked or compromised phone may expose data; this lock does not replace device security.",
+  "CHAT.ERROR_UPLOAD_STORAGE_BLOCKED": "The file provider has blocked uploads due to quota or billing. Your selected files are preserved.",
+  "CHAT.ERROR_UPLOAD_OFFLINE": "No connection to upload the file. Your selection is still here; retry when you have a signal.",
+  "CHAT.ERROR_UPLOAD_SERVICE": "The file service is unavailable right now. Your selection is preserved for retry.",
   "BROADCAST.TEMPORARY_HINT": "Your temporary message duration applies. Delivery tracking is kept only while this screen stays open and the message has not expired.",
   "ACCOUNTS.TITLE": "Your accounts",
   "ACCOUNTS.COPY": "Keep two accounts signed in and switch between them instantly.",
@@ -473,6 +478,7 @@
   "CHAT.SEND_MESSAGES": "Send messages",
   "CHAT.SEND_VOICE_NOTE": "Send voice note",
   "CHAT.SENT": "Sent",
+  "CHAT.SENDING": "Sending…",
   "CHAT.SLIDE_CANCEL": "< Slide to cancel",
   "CHAT.STORIES": "Stories",
   "CHAT.STORIES_RING_COPY": "Stories will open from this ring when available.",

@@ -408,6 +408,8 @@
           <span></span>
           <span></span>
         </div>
+        <p class="card-sub">{{ 'DEVICE_SECURITY.SCREEN_SHIELD' | translate:'Con Modo Seguro, Android y Windows protegen las capturas de la app. La vista de apps recientes se oculta en los equipos compatibles. El navegador no puede impedir todas las capturas.' }}</p>
+        <p class="card-sub">{{ 'DEVICE_SECURITY.LIMITS' | translate:'Usa también un código de pantalla fuerte. Un teléfono desbloqueado o comprometido puede exponer datos; este bloqueo no sustituye la seguridad del dispositivo.' }}</p>
         @if (appLock.needsSharedPinSetup()) {
           <p class="card-sub">Tu bloqueo anterior sigue activo en este equipo. Crea el PIN común para extenderlo a tu cuenta.</p>
           <ion-button mode="ios" fill="outline" (click)="openPinSetupModal()" [disabled]="saving">Configurar PIN común</ion-button>

@@ -27,3 +27,6 @@ obj/
 artifacts/
 android/app/build/
 tools/jdk/
+*.keystore
+*.jks
+Nivra.Desktop/dist-*/

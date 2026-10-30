@@ -132,6 +132,9 @@ function Assert-AndroidApkIdentity {
   param([string]$Badging, [string]$SignerOutput, [int]$SignerExitCode, [string]$ExpectedVersion, [long]$ExpectedVersionCode, $AssetLinks)
   $packageLines = [regex]::Matches($Badging, '(?m)^package:\s+(.+)$')
   if ($packageLines.Count -ne 1) { throw 'Android APK does not contain exactly one readable package manifest.' }
+  if ([version]$ExpectedVersion -ge [version]'7.1.0' -and $Badging -match '(?m)^application-debuggable\s*$') {
+    throw 'Production releases 7.1+ must not be debuggable. Build/sign the release variant; the legacy download filename does not determine its build type.'
+  }
   $fields = @{}
   foreach ($field in @('name', 'versionCode', 'versionName')) {
     $matches = [regex]::Matches($packageLines[0].Groups[1].Value, '(?:^|\s)' + $field + '=[''"]([^''"]+)[''"]')

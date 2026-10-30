@@ -28,15 +28,18 @@ public final class NivraPushRegistrationWorker extends Worker {
     private boolean renewAccount(Context context, JSONObject session, String token) {
         if (!NivraNativePushRegistration.isAllowedApiOrigin(session.optString("apiBaseUrl"))) return false;
         String currentOrigin = session.optString("apiBaseUrl");
-        String alternate = currentOrigin.equals(NivraApiFailover.PRIMARY) ? NivraApiFailover.BACKUP : NivraApiFailover.PRIMARY;
         int first = !currentOrigin.equals(NivraApiFailover.PRIMARY) && !NivraApiFailover.probe(currentOrigin, session.optString("clusterFingerprint"))
             ? 0 : renew(context, session, token, currentOrigin);
         if (first == 1) return false;
         if (first == 2) return true;
-        if (!isStopped() && NivraNativePushRegistration.isCurrent(context, session, token) &&
-            NivraApiFailover.probe(alternate, session.optString("clusterFingerprint"))) {
-            // This upsert is idempotent for the same user, device and token; refresh credentials are never rotated here.
-            if (renew(context, session, token, alternate) == 1) return false;
+        for (String alternate : NivraApiFailover.recoveryOrigins()) {
+            if (alternate.equals(currentOrigin)) continue;
+            if (isStopped() || !NivraNativePushRegistration.isCurrent(context, session, token)) return false;
+            if (!NivraApiFailover.probe(alternate, session.optString("clusterFingerprint"))) continue;
+            // Idempotent for the same scope/token; refresh credentials never rotate here.
+            int result = renew(context, session, token, alternate);
+            if (result == 1) return false;
+            if (result == 2) return true;
         }
         return true;
     }

@@ -513,7 +513,7 @@ final class NivraNativePushRegistration {
         try {
             URI origin = URI.create(value);
             return "https".equalsIgnoreCase(origin.getScheme()) &&
-                ("nivra-webapp-secure.onrender.com".equalsIgnoreCase(origin.getHost()) || "nivrapp-secure.onrender.com".equalsIgnoreCase(origin.getHost())) &&
+                ("nivra-webapp-secure.onrender.com".equalsIgnoreCase(origin.getHost()) || "nivrapp-secure.onrender.com".equalsIgnoreCase(origin.getHost()) || "nivrapp-secure-eaqi.onrender.com".equalsIgnoreCase(origin.getHost())) &&
                 (origin.getPort() == -1 || origin.getPort() == 443) && origin.getUserInfo() == null && origin.getRawQuery() == null && origin.getRawFragment() == null &&
                 (origin.getRawPath() == null || origin.getRawPath().isEmpty());
         } catch (RuntimeException ignored) { return false; }

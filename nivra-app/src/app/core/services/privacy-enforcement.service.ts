@@ -2,14 +2,17 @@ import { Injectable, computed, effect, inject, signal, untracked } from '@angula
 import { Conversation } from '../models/nivra.models';
 import { AuthService } from './auth.service';
 import { NativeDeviceService } from './native-device.service';
+import { AppLockService } from './app-lock.service';
 
 @Injectable({ providedIn: 'root' })
 export class PrivacyEnforcementService {
   private readonly auth = inject(AuthService);
   private readonly nativeDevice = inject(NativeDeviceService);
+  private readonly appLock = inject(AppLockService);
   private readonly activeConversation = signal<Conversation | null>(null);
 
   readonly screenshotsAllowed = computed(() => {
+    if (this.appLock.isEnabled() || this.appLock.isContentLocked()) return false;
     const conversation = this.activeConversation();
     if (!conversation) {
       return true;
