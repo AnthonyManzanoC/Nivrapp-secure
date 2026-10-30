@@ -1,4 +1,11 @@
 {
+  "ACCOUNT.SEARCH_SETTINGS": "Buscar en ajustes",
+  "ACCOUNT.CLEAR_SEARCH": "Borrar búsqueda",
+  "ACCOUNT.SETTINGS_FOUND": "ajustes encontrados",
+  "ACCOUNT.SEARCH_EMPTY": "Prueba con otra palabra, como foto, privacidad o notificaciones.",
+  "CHAT.TEXT_NOT_SENT": "Mensaje sin enviar",
+  "CHAT.TEXT_RETRY_HINT": "Reintenta o descarta este mensaje para continuar. El texto nuevo que escribiste se conserva.",
+  "CHAT.DISCARD_FAILED_TEXT": "Descartar mensaje",
   "DEVICE_SECURITY.SCREEN_SHIELD": "Con Modo Seguro, Android y Windows protegen las capturas de la app. La vista de apps recientes se oculta en los equipos compatibles. El navegador no puede impedir todas las capturas.",
   "DEVICE_SECURITY.LIMITS": "Usa también un código de pantalla fuerte. Un teléfono desbloqueado o comprometido puede exponer datos; este bloqueo no sustituye la seguridad del dispositivo.",
   "CHAT.ERROR_UPLOAD_STORAGE_BLOCKED": "El proveedor de archivos ha bloqueado las subidas por cuota o facturación. Conservamos tus archivos seleccionados.",

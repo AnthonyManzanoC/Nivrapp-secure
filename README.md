@@ -5,6 +5,8 @@ Backend MVP para Nivra: una app de mensajería privada, gratuita primero, con ba
 La capa de datos ya usa PostgreSQL/Supabase con Entity Framework Core y migraciones automáticas al arrancar.
 El backend funciona como API pura + SignalR. El SPA vanilla original se conserva en `Nivra.Api/wwwroot_legacy` como historial y guia de migracion; el nuevo frontend vive en `nivra-app` con Angular + Ionic.
 
+La versión 7.2.0, Android build 44, incorpora búsqueda de ajustes con navegación directa y recupera envíos fallidos sin sobrescribir el siguiente texto que el usuario esté redactando. Conserva los identificadores de reintento y el aislamiento entre cuentas. Véanse [los cambios y validación de 7.2.0](docs/release-7.2.0.md).
+
 La versión 6.1.3, Android build 40, corrige la aceptación de llamadas desde la segunda cuenta, los errores de conexión que permanecían sobre video conectado y los reintentos que interferían con la preparación del audio. Añade traducción local opcional de llamadas por subtítulos, voz o ambos en dispositivos compatibles. La API utiliza una cola persistente para que un proveedor de notificaciones lento no retrase la creación de la llamada. Véanse [los cambios, requisitos y validación de 6.1.3](docs/release-6.1.3.md).
 
 La versión 6.1.1, Android build 38, añadió navegación táctil entre pestañas, doble toque para cambiar de cuenta y aviso de historial ocultable durante 24 horas. Separó la entrada del launcher de la actividad principal Android para corregir el cierre al cambiar entre cuentas con iconos distintos. Véanse [los cambios y validación de 6.1.1](docs/release-6.1.1.md).

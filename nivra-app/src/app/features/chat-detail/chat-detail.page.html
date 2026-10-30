@@ -419,6 +419,11 @@
   </ion-content>
 
   <ion-footer class="composer-footer">
+    @if (failedTextAttempt(); as failed) {
+      <app-failed-text-send [text]="failed.text" [busy]="sending"
+        [retryDisabled]="sending || isBlocked() || !canSendMessages()"
+        (retry)="retryFailedText()" (discard)="discardFailedText()" />
+    }
     @if (identityChanged()) {
       <app-chat-identity-change-notice [disabled]="sending || profileActionBusy" (verify)="verifyIdentity()" />
     }
@@ -546,7 +551,7 @@
         </ion-button>
       }
       @if (!voiceComposerActive()) {
-        <ion-button type="submit" mode="ios" class="send" [disabled]="sending || isBlocked() || !canSendMessages() || !draft.trim()" [attr.aria-label]="'COMMON.SEND' | translate:'Enviar'">
+        <ion-button type="submit" mode="ios" class="send" [disabled]="sending || !!failedTextAttempt() || isBlocked() || !canSendMessages() || !draft.trim()" [attr.aria-label]="'COMMON.SEND' | translate:'Enviar'">
           <ion-icon [name]="editingMessage ? 'checkmark-outline' : 'send-outline'"></ion-icon>
         </ion-button>
       }

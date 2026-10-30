@@ -209,7 +209,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-5 identity-mode-panel" [class.ghost]="identityMode() === 'ghost'">
+      <details id="account-identity" class="account-section panel span-5 identity-mode-panel" [class.ghost]="identityMode() === 'ghost'">
         <summary>{{ identityMode() === 'ghost' ? ('ACCOUNT.IDENTITY_GHOST' | translate:'Fantasma') : ('ACCOUNT.IDENTITY_PUBLIC' | translate:'Publico controlado') }}</summary>
         <div class="account-section-body">
         <div class="identity-mode-icon">
@@ -352,7 +352,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-5 language-panel">
+      <details id="account-language" class="account-section panel span-5 language-panel">
         <summary>{{ t('settings.language.title', 'Idioma') }}</summary>
         <div class="account-section-body">
         <div class="settings-panel-head">
@@ -424,7 +424,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-5 share-account-panel">
+      <details id="account-share" class="account-section panel span-5 share-account-panel">
         <summary>{{ 'ACCOUNT.SHARE_NIVRA' | translate:'Compartir Nivra' }}</summary>
         <div class="account-section-body">
         <div>
@@ -452,7 +452,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-5 launch-plan-panel">
+      <details id="account-plan" class="account-section panel span-5 launch-plan-panel">
         <summary>{{ 'ACCOUNT.PLAN' | translate:'Plan' }}</summary>
         <div class="account-section-body">
 
@@ -546,7 +546,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-6">
+      <details id="account-notifications" class="account-section panel span-6">
         <summary>{{ 'ACCOUNT.NOTIFICATIONS' | translate:'Notificaciones' }}</summary>
         <div class="account-section-body">
 
@@ -571,7 +571,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-6 data-storage-panel">
+      <details id="account-storage" class="account-section panel span-6 data-storage-panel">
         <summary>{{ t('settings.data.title', 'Datos y almacenamiento') }}</summary>
         <div class="account-section-body">
         <div class="settings-panel-head">
@@ -605,7 +605,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-6 behavior-panel">
+      <details id="account-behavior" class="account-section panel span-6 behavior-panel">
         <summary>{{ t('settings.behavior.title', 'Otros ajustes') }}</summary>
         <div class="account-section-body">
 
@@ -633,7 +633,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-6 diagnostics-panel">
+      <details id="account-help" class="account-section panel span-6 diagnostics-panel">
         <summary>{{ t('settings.diagnostics.title', 'Ayuda y depuracion') }}</summary>
         <div class="account-section-body">
 
@@ -678,7 +678,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-6">
+      <details id="account-link" class="account-section panel span-6">
         <summary>{{ 'ACCOUNT.LINK_QR' | translate:'Vincular por QR' }}</summary>
         <div class="account-section-body">
 
@@ -715,7 +715,7 @@
       </div>
       </details>
 
-      <details class="account-section panel span-6 danger-zone">
+      <details id="account-danger" class="account-section panel span-6 danger-zone">
         <summary>{{ 'ACCOUNT.DANGER_ZONE' | translate:'Zona sensible' }}</summary>
         <div class="account-section-body">
 

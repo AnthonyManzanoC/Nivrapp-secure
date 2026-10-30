@@ -1,8 +1,9 @@
-import { Component, EventEmitter, Output } from '@angular/core';
+import { Component, EventEmitter, Output, computed, inject, signal } from '@angular/core';
 import { IonIcon } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { chatbubbleEllipsesOutline, createOutline, lockClosedOutline, phonePortraitOutline, shieldCheckmarkOutline, sunnyOutline } from 'ionicons/icons';
+import { chatbubbleEllipsesOutline, createOutline, lockClosedOutline, phonePortraitOutline, shieldCheckmarkOutline, sunnyOutline, searchOutline, closeOutline, chevronForwardOutline, eyeOffOutline, languageOutline, shareSocialOutline, sparklesOutline, notificationsOutline, folderOpenOutline, optionsOutline, helpCircleOutline, qrCodeOutline, warningOutline } from 'ionicons/icons';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { TranslateService } from '../../core/services/translate.service';
 
 export const ACCOUNT_SECTION_LINKS = [
   { id: 'account-profile', icon: 'create-outline', labelKey: 'ACCOUNT.PROFILE', label: 'Perfil' },
@@ -12,31 +13,52 @@ export const ACCOUNT_SECTION_LINKS = [
   { id: 'account-privacy', icon: 'shield-checkmark-outline', labelKey: 'ACCOUNT.PRIVACY', label: 'Privacidad' },
   { id: 'account-devices', icon: 'phone-portrait-outline', labelKey: 'ACCOUNT.DEVICES', label: 'Dispositivos' },
 ] as const;
-export type AccountSectionId = typeof ACCOUNT_SECTION_LINKS[number]['id'];
+export const ACCOUNT_SEARCH_SECTIONS = [
+  ...ACCOUNT_SECTION_LINKS.map((section, index) => ({ ...section, keywords: [
+    'nombre alias foto avatar contraseña recuperar name photo password recovery',
+    'tema oscuro claro icono launcher color tamaño theme dark light icon font size',
+    'mensajes fondo enter stickers mensajes temporales messages wallpaper',
+    'pin huella rostro bloqueo seguridad fingerprint face lock security',
+    'lectura capturas reenviar panico read receipts screenshot forwarding panic',
+    'sesiones equipos vinculados sessions linked devices',
+  ][index] })),
+  { id: 'account-identity', icon: 'eye-off-outline', labelKey: 'ACCOUNT.IDENTITY_GHOST', label: 'Fantasma', keywords: 'identidad publico visibilidad buscar identity public visibility discovery ghost' },
+  { id: 'account-language', icon: 'language-outline', labelKey: 'settings.language.title', label: 'Idioma', keywords: 'traducir traduccion language translate translation' },
+  { id: 'account-share', icon: 'share-social-outline', labelKey: 'ACCOUNT.SHARE_NIVRA', label: 'Compartir Nivra', keywords: 'invitar pase share invite pass' },
+  { id: 'account-plan', icon: 'sparkles-outline', labelKey: 'ACCOUNT.PLAN', label: 'Plan', keywords: 'limites suscripcion premium limits subscription' },
+  { id: 'account-notifications', icon: 'notifications-outline', labelKey: 'ACCOUNT.NOTIFICATIONS', label: 'Notificaciones', keywords: 'avisos alertas sonido push llamadas notifications sound calls alerts' },
+  { id: 'account-storage', icon: 'folder-open-outline', labelKey: 'settings.data.title', label: 'Datos y almacenamiento', keywords: 'galeria archivos espacio borradores data storage gallery files drafts' },
+  { id: 'account-behavior', icon: 'options-outline', labelKey: 'settings.behavior.title', label: 'Otros ajustes', keywords: 'levantar escuchar hablar pausar musica audio raise listen speak pause music behavior' },
+  { id: 'account-help', icon: 'help-circle-outline', labelKey: 'settings.diagnostics.title', label: 'Ayuda y depuración', keywords: 'diagnostico registros restaurar help diagnostics logs restore' },
+  { id: 'account-link', icon: 'qr-code-outline', labelKey: 'ACCOUNT.LINK_QR', label: 'Vincular por QR', keywords: 'autorizar camara escanear link authorize scan camera qr' },
+  { id: 'account-danger', icon: 'warning-outline', labelKey: 'ACCOUNT.DANGER_ZONE', label: 'Zona sensible', keywords: 'borrar eliminar desactivar cuenta delete deactivate account' },
+] as const;
+export type AccountSectionId = typeof ACCOUNT_SEARCH_SECTIONS[number]['id'];
 
 @Component({
   selector: 'app-account-navigation', standalone: true, imports: [IonIcon, TranslatePipe],
-  template: `<nav [attr.aria-label]="'ACCOUNT.SECTIONS' | translate:'Secciones de cuenta'">
-    @for (section of sections; track section.id) {
-      <button type="button" [attr.aria-controls]="section.id" (click)="openSection.emit(section.id)">
-        <ion-icon [name]="section.icon" aria-hidden="true" />
-        <span>{{ section.labelKey | translate:section.label }}</span>
-      </button>
-    }
-  </nav>`,
-  styles: [`:host{display:block;max-width:1040px;margin:0 auto 20px;container-type:inline-size}
-    nav{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:8px}
-    button{display:flex;align-items:center;justify-content:center;gap:9px;min-width:0;min-height:52px;padding:10px;border:1px solid var(--nivra-line);border-radius:15px;background:var(--nivra-panel-solid);color:var(--nivra-text);font:inherit;font-weight:600;font-size:13px;line-height:1.3;cursor:pointer;transition:border-color .16s,background .16s}
-    button:hover{border-color:var(--nivra-brand-2);background:color-mix(in srgb,var(--nivra-brand) 6%,var(--nivra-panel-solid))}
-    button:focus-visible{outline:3px solid var(--nivra-brand);outline-offset:2px}
-    ion-icon{flex:0 0 20px;color:var(--nivra-brand-2);font-size:20px}
-    span{overflow-wrap:anywhere}
-    @media(max-width:680px){nav{grid-template-columns:repeat(3,minmax(0,1fr))}button{flex-direction:column;gap:6px;min-height:68px;padding:10px 6px;font-size:12px}}
-    @container(max-width:680px){nav{grid-template-columns:repeat(3,minmax(0,1fr))}button{flex-direction:column;gap:6px;min-height:68px;padding:10px 6px;font-size:12px}}
-    @media(prefers-reduced-motion:reduce){button{transition:none}}`],
+  templateUrl: './account-navigation.component.html',
+  styleUrl: './account-navigation.component.scss',
 })
 export class AccountNavigationComponent {
+  private readonly translate = inject(TranslateService);
   readonly sections = ACCOUNT_SECTION_LINKS;
+  readonly query = signal('');
+  readonly searching = computed(() => !!this.query().trim());
+  readonly results = computed(() => {
+    const terms = this.normalize(this.query()).split(/\s+/).filter(Boolean);
+    return ACCOUNT_SEARCH_SECTIONS.filter(section => {
+      const searchable = this.normalize(`${this.translate.instant(section.labelKey, section.label)} ${section.label} ${section.keywords}`);
+      return terms.every(term => searchable.includes(term));
+    });
+  });
   @Output() openSection = new EventEmitter<AccountSectionId>();
-  constructor() { addIcons({ chatbubbleEllipsesOutline, createOutline, lockClosedOutline, phonePortraitOutline, shieldCheckmarkOutline, sunnyOutline }); }
+  constructor() { addIcons({ chatbubbleEllipsesOutline, createOutline, lockClosedOutline, phonePortraitOutline, shieldCheckmarkOutline, sunnyOutline, searchOutline, closeOutline, chevronForwardOutline, eyeOffOutline, languageOutline, shareSocialOutline, sparklesOutline, notificationsOutline, folderOpenOutline, optionsOutline, helpCircleOutline, qrCodeOutline, warningOutline }); }
+  openFirst(event: Event): void {
+    event.preventDefault();
+    if (this.searching() && this.results().length) this.openSection.emit(this.results()[0].id);
+  }
+  private normalize(value: string): string {
+    return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().trim();
+  }
 }

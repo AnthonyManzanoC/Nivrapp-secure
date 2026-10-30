@@ -1,0 +1,37 @@
+<div class="search-field" role="search">
+  <ion-icon name="search-outline" aria-hidden="true" />
+  <input #searchInput type="search" autocomplete="off" spellcheck="false" maxlength="100"
+    [attr.aria-label]="'ACCOUNT.SEARCH_SETTINGS' | translate:'Buscar en ajustes'"
+    [placeholder]="'ACCOUNT.SEARCH_SETTINGS' | translate:'Buscar en ajustes'"
+    [value]="query()" (input)="query.set(searchInput.value)" (keydown.enter)="openFirst($event)"
+    (keydown.escape)="query.set(''); $event.stopPropagation()">
+  @if (query()) {
+    <button class="clear-search" type="button" (click)="query.set(''); searchInput.focus()"
+      [attr.aria-label]="'ACCOUNT.CLEAR_SEARCH' | translate:'Borrar búsqueda'">
+      <ion-icon name="close-outline" aria-hidden="true" />
+    </button>
+  }
+</div>
+@if (searching()) {
+  <p class="search-summary" role="status" aria-live="polite">{{ results().length }} · {{ 'ACCOUNT.SETTINGS_FOUND' | translate:'ajustes encontrados' }}</p>
+  <div class="search-results">
+    @for (section of results(); track section.id) {
+      <button class="search-result" type="button" [attr.aria-controls]="section.id" (click)="openSection.emit(section.id)">
+        <ion-icon [name]="section.icon" aria-hidden="true" />
+        <span>{{ section.labelKey | translate:section.label }}</span>
+        <ion-icon class="arrow" name="chevron-forward-outline" aria-hidden="true" />
+      </button>
+    } @empty {
+      <p class="search-empty">{{ 'ACCOUNT.SEARCH_EMPTY' | translate:'Prueba con otra palabra, como foto, privacidad o notificaciones.' }}</p>
+    }
+  </div>
+} @else {
+  <nav [attr.aria-label]="'ACCOUNT.SECTIONS' | translate:'Secciones de cuenta'">
+    @for (section of sections; track section.id) {
+      <button type="button" [attr.aria-controls]="section.id" (click)="openSection.emit(section.id)">
+        <ion-icon [name]="section.icon" aria-hidden="true" />
+        <span>{{ section.labelKey | translate:section.label }}</span>
+      </button>
+    }
+  </nav>
+}

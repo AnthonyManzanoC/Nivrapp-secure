@@ -45,6 +45,33 @@ describe('Account section navigation', () => {
     }
   });
 
+  it('finds settings by accent-insensitive terms and opens the first result with Enter', () => {
+    const chosen = jasmine.createSpy('openSection'); fixture.componentInstance.openSection.subscribe(chosen);
+    const input: HTMLInputElement = fixture.nativeElement.querySelector('input');
+    input.value = '  TRADUCCIÓN '; input.dispatchEvent(new Event('input')); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('.search-result').length).toBe(1);
+    expect(fixture.nativeElement.querySelector('.search-result').getAttribute('aria-controls')).toBe('account-language');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(chosen).toHaveBeenCalledOnceWith('account-language');
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); fixture.detectChanges();
+    expect(input.value).toBe(''); expect(fixture.nativeElement.querySelectorAll('nav button').length).toBe(6);
+  });
+
+  it('supports actual translated labels, multiple words, clearing and empty search feedback', () => {
+    const translator = TestBed.inject(TranslateService);
+    spyOn(translator, 'instant').and.callFake((key, fallback) => key === 'ACCOUNT.NOTIFICATIONS' ? 'Benachrichtigungen' : fallback || key);
+    fixture.componentInstance.query.set('Benachrichtigungen'); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.search-result').getAttribute('aria-controls')).toBe('account-notifications');
+    fixture.componentInstance.query.set('foto avatar'); fixture.detectChanges();
+    expect(fixture.componentInstance.results().map(section => section.id)).toEqual(['account-profile']);
+    fixture.componentInstance.query.set('no existe este ajuste'); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('[role="status"]').textContent).toContain('0');
+    expect(fixture.nativeElement.querySelector('.search-empty')).not.toBeNull();
+    fixture.nativeElement.querySelector('.clear-search').click(); fixture.detectChanges();
+    expect(fixture.componentInstance.query()).toBe('');
+    expect(document.activeElement).toBe(fixture.nativeElement.querySelector('input'));
+  });
+
   it('opens and focuses only this page’s accordion while preserving a draft and honoring reduced motion', () => {
     const foreign = document.createElement('details');
     foreign.id = 'account-privacy'; foreign.innerHTML = '<summary>Otra instancia</summary>';

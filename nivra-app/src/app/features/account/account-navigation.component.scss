@@ -1,0 +1,22 @@
+:host { display: block; max-width: 1040px; margin: 0 auto 20px; container-type: inline-size; }
+nav { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; }
+button { display: flex; align-items: center; justify-content: center; gap: 9px; min-width: 0; min-height: 52px; padding: 10px; border: 1px solid var(--nivra-line); border-radius: 15px; background: var(--nivra-panel-solid); color: var(--nivra-text); font: inherit; font-weight: 600; font-size: 13px; line-height: 1.3; cursor: pointer; transition: border-color .16s, background .16s; }
+button:hover { border-color: var(--nivra-brand-2); background: color-mix(in srgb, var(--nivra-brand) 6%, var(--nivra-panel-solid)); }
+button:focus-visible { outline: 3px solid var(--nivra-brand); outline-offset: 2px; }
+ion-icon { flex: 0 0 20px; color: var(--nivra-brand-2); font-size: 20px; }
+span { overflow-wrap: anywhere; }
+.search-field { display: flex; align-items: center; gap: 10px; padding: 4px 6px 4px 16px; margin-bottom: 12px; border: 1px solid var(--nivra-line); border-radius: 18px; background: var(--nivra-panel-solid); }
+.search-field:focus-within { border-color: var(--nivra-brand-2); box-shadow: 0 0 0 3px color-mix(in srgb, var(--nivra-brand) 15%, transparent); }
+input { width: 100%; min-width: 0; min-height: 44px; border: 0; outline: 0; background: transparent; color: var(--nivra-text); font: inherit; font-size: 16px; }
+input::placeholder { color: var(--nivra-muted); }
+input::-webkit-search-cancel-button { display: none; }
+.clear-search { flex: 0 0 44px; min-height: 44px; padding: 8px; border: 0; background: transparent; }
+.search-summary { margin: 4px 4px 10px; color: var(--nivra-muted); font-size: 12px; }
+.search-results { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.search-result { justify-content: flex-start; text-align: start; padding-inline: 14px; }
+.arrow { margin-inline-start: auto; color: var(--nivra-muted); font-size: 16px; }
+.search-empty { grid-column: 1 / -1; margin: 0; padding: 18px; border: 1px dashed var(--nivra-line); border-radius: 15px; color: var(--nivra-muted); line-height: 1.6; }
+@mixin compact { nav { grid-template-columns: repeat(3, minmax(0, 1fr)); } nav button { flex-direction: column; gap: 6px; min-height: 68px; padding: 10px 6px; font-size: 12px; } .search-results { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 680px) { @include compact; }
+@container (max-width: 680px) { @include compact; }
+@media (prefers-reduced-motion: reduce) { button { transition: none; } }

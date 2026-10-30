@@ -1,4 +1,11 @@
 {
+  "ACCOUNT.SEARCH_SETTINGS": "Search settings",
+  "ACCOUNT.CLEAR_SEARCH": "Clear search",
+  "ACCOUNT.SETTINGS_FOUND": "settings found",
+  "ACCOUNT.SEARCH_EMPTY": "Try another word, such as photo, privacy or notifications.",
+  "CHAT.TEXT_NOT_SENT": "Message not sent",
+  "CHAT.TEXT_RETRY_HINT": "Retry or discard this message to continue. The new text you typed is preserved.",
+  "CHAT.DISCARD_FAILED_TEXT": "Discard message",
   "DEVICE_SECURITY.SCREEN_SHIELD": "With Safe Mode, Android and Windows protect app screenshots. The recent apps preview is hidden on supported devices. Browsers cannot prevent every screenshot.",
   "DEVICE_SECURITY.LIMITS": "Also use a strong device passcode. An unlocked or compromised phone may expose data; this lock does not replace device security.",
   "CHAT.ERROR_UPLOAD_STORAGE_BLOCKED": "The file provider has blocked uploads due to quota or billing. Your selected files are preserved.",

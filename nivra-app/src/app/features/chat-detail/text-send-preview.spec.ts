@@ -14,7 +14,7 @@ describe('Immediate text send feedback', () => {
       auth: { session }, conversation: () => ({ id: 'chat', participants: [] }),
       chat: { selectedMessages: confirmed, sendText: jasmine.createSpy().and.returnValue(send),
         sendTyping: jasmine.createSpy().and.returnValue(new Promise(() => undefined)) },
-      privateChatLocked: locked, pendingTextPreview: signal(null),
+      privateChatLocked: locked, pendingTextPreview: signal(null), failedTextSend: signal(null),
       composerGeneration: 0, destroyed: false, sending: false, draft: ' Hola ', attachmentError: '',
       canSendMessages: () => true, isBlocked: () => false, currentPolicy: () => ({ ttlSeconds: null }),
       scrollBottom: jasmine.createSpy(), tr: (_key: string, fallback: string) => fallback,
@@ -38,11 +38,53 @@ describe('Immediate text send feedback', () => {
     expect(h.page.pendingTextPreview()).toBeNull(); expect(h.page.sending).toBeFalse();
   });
 
-  it('restores the draft on failure without leaving a sent checkmark or phantom bubble', async () => {
+  it('retains failed text separately without a sent checkmark or replacing the next draft', async () => {
     const h = harness(); const sending = h.page.send();
+    h.page.draft = 'Siguiente mensaje';
     h.reject(new Error('offline')); await sending;
-    expect(h.page.draft).toBe(' Hola '); expect(h.page.attachmentError).toBe('offline');
+    expect(h.page.draft).toBe('Siguiente mensaje');
+    expect(h.page.failedTextAttempt().text).toBe(' Hola ');
     expect(h.page.displayedMessages()).toEqual([]); expect(h.page.sending).toBeFalse();
+    await h.page.send(); expect(h.page.chat.sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('retries with the same identity and policy, preserving new text and reply choice', async () => {
+    const h = harness(); h.page.currentPolicy = () => ({ ttlSeconds: 3600, replyTo: { messageId: 'original' } });
+    const sending = h.page.send(); const original = h.page.chat.sendText.calls.mostRecent().args;
+    h.reject(new Error('offline')); await sending;
+    h.page.draft = 'Otro texto'; h.page.replyingMessage = { id: 'next-reply' };
+    h.page.currentPolicy = () => ({ ttlSeconds: null });
+    h.page.chat.sendText.and.resolveTo({ id: 'accepted' });
+    await h.page.retryFailedText();
+    const retried = h.page.chat.sendText.calls.mostRecent().args;
+    expect(retried[1]).toBe(original[1]); expect(retried[2]).toEqual(original[2]); expect(retried[3]).toBe(original[3]);
+    expect(h.page.draft).toBe('Otro texto'); expect(h.page.replyingMessage.id).toBe('next-reply');
+    expect(h.page.failedTextAttempt()).toBeNull();
+  });
+
+  it('dismisses a late-confirmed failure and never retries an already confirmed message', async () => {
+    const h = harness(); const sending = h.page.send(); const bubble = h.page.displayedMessages()[0];
+    h.reject(new Error('response lost')); await sending;
+    expect(h.page.failedTextAttempt()).not.toBeNull();
+    h.confirmed.set([{ ...bubble, id: 'accepted', status: 'enviado' }]);
+    expect(h.page.failedTextAttempt()).toBeNull();
+    await h.page.retryFailedText(); expect(h.page.chat.sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('prevents retries across accounts, locked chats and stale composer generations', async () => {
+    const h = harness(); const sending = h.page.send(); h.reject(new Error('offline')); await sending;
+    h.locked.set(true); expect(h.page.failedTextAttempt()).toBeNull(); await h.page.retryFailedText();
+    h.locked.set(false); h.session.set({ user: { id: 'b' }, device: { id: 'phone-b' } });
+    expect(h.page.failedTextAttempt()).toBeNull(); await h.page.retryFailedText();
+    h.session.set({ user: { id: 'a' }, device: { id: 'phone-a' } }); h.page.composerGeneration++;
+    expect(h.page.failedTextAttempt()).toBeNull(); await h.page.retryFailedText();
+    expect(h.page.chat.sendText).toHaveBeenCalledTimes(1);
+  });
+
+  it('discards only the failed attempt, leaving the next draft intact', async () => {
+    const h = harness(); const sending = h.page.send(); h.reject(new Error('offline')); await sending;
+    h.page.draft = 'Siguiente'; h.page.discardFailedText();
+    expect(h.page.failedTextAttempt()).toBeNull(); expect(h.page.draft).toBe('Siguiente');
   });
 
   it('does not recreate a draft when realtime already confirmed that exact send', async () => {
