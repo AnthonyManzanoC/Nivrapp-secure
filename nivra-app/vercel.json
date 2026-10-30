@@ -91,7 +91,7 @@
     },
     {
       "source": "/downloads/Nivra-:version([0-9]+[.][0-9]+[.][0-9]+)-Setup.exe",
-      "destination": "https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v:version/Nivra-:version-Setup.exe"
+      "destination": "/api/download-windows?version=:version"
     },
     {
       "source": "/(.*)",
@@ -101,6 +101,9 @@
   "functions": {
     "api/updates.js": {
       "maxDuration": 30
+    },
+    "api/download-windows.js": {
+      "maxDuration": 300
     }
   }
 }
