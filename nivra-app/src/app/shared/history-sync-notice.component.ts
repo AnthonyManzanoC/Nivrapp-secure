@@ -4,28 +4,35 @@ import { IonIcon, IonModal, IonSpinner } from '@ionic/angular/standalone';
 import { HistoryDeviceSyncService, PendingHistoryApproval } from '../core/services/history-device-sync.service';
 import { TranslatePipe } from '../core/pipes/translate.pipe';
 import { addIcons } from 'ionicons';
-import { chevronForwardOutline, closeOutline, lockClosedOutline, shieldCheckmarkOutline } from 'ionicons/icons';
+import { chevronForwardOutline, closeOutline, lockClosedOutline, shieldCheckmarkOutline, phonePortraitOutline } from 'ionicons/icons';
 import { FormsModule } from '@angular/forms';
 
 @Component({
   selector: 'app-history-sync-notice', standalone: true, imports: [NgTemplateOutlet, IonIcon, IonModal, IonSpinner, TranslatePipe, FormsModule],
   template: `<ng-template #waitingNotice>
     <aside class="history-notice" [class.history-unavailable]="history.state() === 'unavailable'" [class.history-syncing]="history.state() === 'syncing'" role="status" aria-live="polite" aria-atomic="true" [attr.aria-busy]="retryBusy()">
-      <span class="history-notice-icon" aria-hidden="true">@if (retryBusy()) {<ion-spinner name="crescent" />} @else {<ion-icon name="lock-closed-outline" />}</span>
+      <span class="history-notice-icon" aria-hidden="true">@if (retryBusy()) {<ion-spinner name="crescent" />} @else {<ion-icon [name]="localPhone() ? 'phone-portrait-outline' : 'lock-closed-outline'" />}</span>
       <div class="history-copy">
         <strong>{{ titleKey() | translate:titleFallback() }}</strong>
         <p>{{ descriptionKey() | translate:descriptionFallback() }}</p>
-        @if (!identityError && !missingSource() && history.state() !== 'syncing' && history.recoveryStatus() !== 'retryable' && history.preferredSource(); as source) {
+        @if (!identityError && !localPhone() && !missingSource() && history.state() !== 'syncing' && history.recoveryStatus() !== 'retryable' && history.preferredSource(); as source) {
           <p class="history-source-hint">{{ 'HISTORY_DEVICE.SOURCE_SUGGESTION' | translate:'Prueba primero en:' }} {{ source.deviceName }}. {{ 'HISTORY_DEVICE.SOURCE_HINT' | translate:'Si conserva tus chats, compara el código y aprueba allí. También puedes usar otro equipo que aún tenga el historial.' }}</p>
         }
-        @if (history.targetFingerprint() && !missingSource() && history.state() !== 'syncing' && history.recoveryStatus() !== 'retryable' && !identityError) {
+        @if (history.targetFingerprint() && !localPhone() && !missingSource() && history.state() !== 'syncing' && history.recoveryStatus() !== 'retryable' && !identityError) {
           <div class="history-code"><span>{{ 'HISTORY_DEVICE.CODE_LABEL' | translate:'Código de vinculación' }}</span><code dir="ltr">{{ history.targetFingerprint() }}</code></div>
+        }
+        @if (localPhone() && history.state() !== 'syncing') {
+          <details class="history-alternative">
+            <summary>{{ 'HISTORY_DEVICE.PHONE_OPTIONS' | translate:'Opciones para historial antiguo' }}</summary>
+            <p>{{ 'HISTORY_DEVICE.PHONE_OPTIONS_COPY' | translate:'Si reinstalaste Nivra o cambiaste de teléfono, otro equipo que aún pueda abrir esos mensajes puede ayudarte a recuperar sus llaves.' }}</p>
+            <button class="history-remote" type="button" [disabled]="retryBusy()" (click)="history.requestOtherDevice()">{{ 'HISTORY_DEVICE.PHONE_REMOTE' | translate:'Recuperar desde otro equipo' }}</button>
+          </details>
         }
       </div>
       @if (needsRelink) {
         <button class="history-retry" type="button" (click)="relinkRequested.emit()">{{ 'HISTORY_DEVICE.RELINK' | translate:'Volver a vincular' }}</button>
       } @else if (history.state() !== 'syncing') {
-        <button class="history-retry" type="button" [disabled]="retryBusy()" (click)="history.retry()">{{ (retryBusy() ? 'HISTORY_DEVICE.CHECKING' : 'COMMON.RETRY') | translate:(retryBusy() ? 'Comprobando…' : 'Reintentar') }}</button>
+        <button class="history-retry" type="button" [disabled]="retryBusy()" (click)="history.retry()">{{ (retryBusy() ? 'HISTORY_DEVICE.CHECKING' : localPhone() ? 'HISTORY_LOCAL.RETRY' : 'COMMON.RETRY') | translate:(retryBusy() ? 'Comprobando…' : localPhone() ? 'Comprobar ahora' : 'Reintentar') }}</button>
       }
     </aside>
   </ng-template>
@@ -67,9 +74,10 @@ export class HistorySyncNoticeComponent {
   @Output() readonly relinkRequested = new EventEmitter<void>();
   detailsOpen = false;
   constructor() {
-    addIcons({ chevronForwardOutline, closeOutline, lockClosedOutline, shieldCheckmarkOutline });
+    addIcons({ chevronForwardOutline, closeOutline, lockClosedOutline, shieldCheckmarkOutline, phonePortraitOutline });
     effect(() => { this.history.approvalEpoch(); this.detailsOpen = false; for (const id of Object.keys(this.compared)) delete this.compared[id]; });
   }
+  localPhone(): boolean { return !this.identityError && !this.needsRelink && !!this.history.usesLocalRecovery?.(); }
   missingSource(): boolean {
     return !this.identityError && !this.needsRelink && this.history.state() !== 'syncing'
       && this.history.recoveryStatus?.() !== 'retryable' && this.history.sourceAvailability?.() === 'local-only';
@@ -77,6 +85,7 @@ export class HistorySyncNoticeComponent {
   titleKey(): string {
     if (this.needsRelink) return 'HISTORY_DEVICE.RELINK_REQUIRED';
     if (this.identityError) return 'CHATS.HISTORY_UNAVAILABLE';
+    if (this.localPhone() && this.history.state() !== 'syncing') return 'HISTORY_DEVICE.PHONE_TITLE';
     if (this.missingSource()) return 'HISTORY_DEVICE.ORIGINAL_KEY_TITLE';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'HISTORY_DEVICE.PARTIAL_TITLE';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'HISTORY_DEVICE.REFRESH_FAILED_TITLE';
@@ -86,6 +95,7 @@ export class HistorySyncNoticeComponent {
   titleFallback(): string {
     if (this.needsRelink) return 'Vuelve a vincular este equipo';
     if (this.identityError) return 'Historial temporalmente no disponible';
+    if (this.localPhone() && this.history.state() !== 'syncing') return 'Tu historial, desde este teléfono';
     if (this.missingSource()) return 'Parte del historial necesita su llave original';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'Parte del historial sigue protegida';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'Falta comprobar algunos mensajes';
@@ -94,6 +104,7 @@ export class HistorySyncNoticeComponent {
   }
   descriptionKey(): string {
     if (this.identityError) return this.needsRelink ? 'HISTORY_DEVICE.RELINK_COPY' : 'HISTORY_DEVICE.IDENTITY_ERROR_COPY';
+    if (this.localPhone() && this.history.state() !== 'syncing') return 'HISTORY_DEVICE.PHONE_COPY';
     if (this.missingSource()) return 'HISTORY_DEVICE.ORIGINAL_KEY_COPY';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'HISTORY_DEVICE.PARTIAL_COPY';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'HISTORY_DEVICE.REFRESH_FAILED_COPY';
@@ -104,6 +115,7 @@ export class HistorySyncNoticeComponent {
     if (this.identityError) return this.needsRelink
       ? 'Vuelve a vincular este equipo desde tu teléfono para recuperar los chats. El historial guardado se conserva.'
       : 'No se pudo abrir la identidad de este equipo. Comprueba la conexión, desbloquea el dispositivo y vuelve a intentar.';
+    if (this.localPhone() && this.history.state() !== 'syncing') return 'Nivra comprueba las llaves guardadas aquí sin pedir ayuda automáticamente a otros equipos. Algunos mensajes antiguos siguen protegidos. Este teléfono puede compartir las llaves que conserva cuando tú autorices una vinculación.';
     if (this.missingSource()) return 'Comprobamos las llaves guardadas en este equipo. Algunos mensajes antiguos necesitan una llave que aquí no está disponible. Tus chats se conservan y los mensajes nuevos siguen funcionando. Si aún tienes otro equipo con ese historial, vuelve a vincularlo para recuperarlo.';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'Las llaves aprobadas ya están guardadas. Algunos mensajes necesitan otras llaves: prueba un equipo que todavía pueda leerlos y compara el código.';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'No pudimos comprobar todos los mensajes. Reintenta con las llaves guardadas en este equipo; no se ha borrado tu historial.';

@@ -6,7 +6,7 @@ ion-modal.history-sync-modal { --width: min(440px, calc(100vw - 32px)); --height
 .history-sync-details { padding: 16px 6px; max-height: 85dvh; overflow: auto; color: var(--nivra-text); }
 .history-sync-details > header { display: flex; align-items: center; justify-content: space-between; padding: 0 12px 8px; }
 .history-sync-details h2 { margin: 0; font-size: 20px; font-weight: 650; letter-spacing: -.025em; }
-.history-sync-details > header button { width: 38px; min-height: 38px; padding: 0; border: 0; border-radius: 50%; background: var(--nivra-panel-2); }
+.history-sync-details > header button { width: 44px; min-height: 44px; padding: 0; border: 0; border-radius: 50%; background: var(--nivra-panel-2); flex: none; }
 .history-notice { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: start; gap: 10px; margin: 10px 12px; padding: 14px; border: 1px solid var(--nivra-line, #d9e4d6); border-radius: 16px; background: var(--nivra-panel-solid, #f6f8ef); color: var(--nivra-text, #193c2c); }
 .history-notice-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px; background: color-mix(in srgb, var(--nivra-brand-2, #a6cc98) 13%, transparent); color: var(--nivra-brand-2, #376b49); }
 .history-notice-icon ion-icon, .history-notice-icon ion-spinner { width: 19px; height: 19px; }
@@ -17,7 +17,7 @@ p { margin: 5px 0 0; font-size: 11px; line-height: 1.65; color: var(--nivra-mute
 .history-code > span { display: block; margin-bottom: 4px; font-size: 10px; color: var(--nivra-muted, #667b69); }
 code { display: block; font-family: ui-monospace, 'Cascadia Code', Consolas, monospace; font-size: 11px; line-height: 1.8; letter-spacing: .06em; font-weight: 600; color: var(--nivra-text, #193c2c); overflow-wrap: anywhere; unicode-bidi: isolate; text-align: start; }
 button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; min-height: 38px; padding: 8px 11px; border: 1px solid var(--nivra-line, #d9e4d6); border-radius: 10px; background: transparent; color: var(--nivra-text, #193c2c); font: inherit; font-size: 11px; line-height: 1.5; font-weight: 600; cursor: pointer; }
-button:focus-visible, input:focus-visible { outline: 2px solid var(--nivra-brand-2, #376b49); outline-offset: 3px; }
+button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--nivra-brand-2, #376b49); outline-offset: 3px; }
 button:disabled { opacity: .55; cursor: default; }
 .history-retry { border-color: transparent; color: var(--nivra-brand-2, #376b49); }
 .history-unavailable { border-color: color-mix(in srgb, var(--nivra-amber, #c5965b) 35%, var(--nivra-line, #d9e4d6)); }
@@ -40,5 +40,10 @@ button:disabled { opacity: .55; cursor: default; }
 .history-approval-actions .history-share { flex: 1; background: #c1e9b6; color: #173421; border-color: transparent; }
 .history-share ion-spinner { width: 16px; height: 16px; flex: none; }
 .history-error { margin-top: 12px; color: var(--nivra-danger, #bc5a50); }
-@media (max-width: 420px) { .history-notice { grid-template-columns: 30px minmax(0, 1fr); gap: 9px; padding: 12px; margin-inline: 10px; }.history-notice-icon { width: 30px; height: 30px; }.history-retry { grid-column: 2; justify-self: start; padding-inline: 0; min-height: 32px; }.history-approval { grid-template-columns: minmax(0, 1fr); padding: 16px; }.history-approval code { font-size: 12px; letter-spacing: .04em; } }
+.history-alternative { margin-top: 14px; border-top: 1px solid var(--nivra-line, #d9e4d6); }
+.history-alternative summary { padding-block: 12px; min-height: 44px; font-size: 11px; font-weight: 600; line-height: 1.6; color: var(--nivra-muted, #667b69); cursor: pointer; }
+.history-alternative p { margin: 0 0 12px; }
+.history-remote { width: 100%; min-height: 44px; white-space: normal; }
+.history-retry { min-height: 44px; }
+@media (max-width: 420px) { .history-notice { grid-template-columns: 30px minmax(0, 1fr); gap: 9px; padding: 12px; margin-inline: 10px; }.history-notice-icon { width: 30px; height: 30px; }.history-retry { grid-column: 2; justify-self: start; padding-inline: 0; min-height: 44px; }.history-approval { grid-template-columns: minmax(0, 1fr); padding: 16px; }.history-approval code { font-size: 12px; letter-spacing: .04em; } }
 @media (prefers-reduced-motion: reduce) { ion-spinner { --duration: 0s; } }

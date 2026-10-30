@@ -8,6 +8,7 @@ import { SignalrService } from './signalr.service';
 import { MessageResponse, NivraDevice, StoredDeviceKeys } from '../models/nivra.models';
 import { NetworkPolicyService } from './network-policy.service';
 import { IdentityTrustService, IdentityTrustTransfer } from './identity-trust.service';
+import { Capacitor } from '@capacitor/core';
 
 interface TransferRequest { id: string; userId: string; targetDeviceId: string; targetIdentityKey: string; targetDeviceName?: string; expiresAt: string; }
 export interface PendingHistoryApproval extends TransferRequest { fingerprint: string; }
@@ -68,6 +69,9 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private localRecoveryStamp = '';
   private localReplayAwaitingAck = false;
   private localRecoveryProved = false;
+  // Runtime identity only: a server-supplied device name is not authority.
+  private readonly nativeAndroid = Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android';
+  private readonly otherDeviceRecovery = signal(false);
   // This is an actionable candidate, never a claim that a remote installation
   // still possesses private keys. The current API intentionally exposes none.
   readonly preferredSource = signal<PreferredHistorySource | null>(null);
@@ -108,6 +112,17 @@ export class HistoryDeviceSyncService implements OnDestroy {
   }
 
   ngOnDestroy(): void { this.reset(''); this.recovered$.complete(); }
+
+  usesLocalRecovery(): boolean { return this.nativeAndroid && !this.otherDeviceRecovery(); }
+
+  requestOtherDevice(): void {
+    const scope = this.scope();
+    if (!scope || !this.requested || !this.validEvidence(this.requestEvidence, scope)) return;
+    // Deliberate recovery of old keys, scoped to this account and this incident.
+    this.otherDeviceRecovery.set(true);
+    this.invalidateSourcePreference();
+    this.beginRequest(true);
+  }
 
   requestHistory(evidence: HistoryRecoveryEvidence): Promise<void> {
     const scope = this.scope();
@@ -170,6 +185,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
     }
   }
   markHistoryReadable(): void {
+    this.otherDeviceRecovery.set(false);
     this.requestRevision = (this.requestRevision ?? 0) + 1;
     this.recoveryRetryAt = this.recoveryRetryAttempts = 0;
     this.requested = false; this.replayRequested = this.recoveryIncomplete = false; this.state.set('idle');
@@ -236,6 +252,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
   }
 
   private reset(scopeId: string): void {
+    this.otherDeviceRecovery.set(false);
     this.epoch++;
     this.approvalEpoch.set(this.epoch);
     this.scopeId = scopeId;
@@ -326,7 +343,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
         if (this.recoveryIncomplete && this.requested) {
           this.state.set('waiting'); this.recoveryIncomplete = false;
         }
-        let delay = this.pumpAgain ? 0 : this.requested && this.sourceAvailability() === 'local-only' ? 30_000 : this.requested
+        let delay = this.pumpAgain ? 0 : this.requested && (this.usesLocalRecovery() || this.sourceAvailability() === 'local-only') ? 30_000 : this.requested
           ? (Date.now() - this.requestedAt < 60_000 ? 2500 : 15_000) : 30_000;
         if (this.requested && this.recoveryRetryAt) delay = Math.min(delay, Math.max(0, this.recoveryRetryAt - Date.now()));
         this.pumpAgain = false;
@@ -343,7 +360,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
     const approvals = this.refreshPendingRequests(scope);
     // Existing approvals remain independent from the directory. Before a new
     // request, allow a short lookup to rule out an impossible self-approval.
-    const sourceCheck = this.requested && this.requestEvidence ? this.refreshSourcePreference(scope) : null;
+    const sourceCheck = this.requested && this.requestEvidence && !this.usesLocalRecovery() ? this.refreshSourcePreference(scope) : null;
     try {
       if (this.requested && this.recoveryRetryAt && this.recoveryRetryAt <= Date.now()) {
         this.recoveryRetryAt = 0;
@@ -355,6 +372,9 @@ export class HistoryDeviceSyncService implements OnDestroy {
           && await this.tryRecoverLocally(scope, this.requestEvidence)) return;
         this.assertCurrent(scope);
         if (!this.requested) return;
+        // The APK is a local recovery source by default. Incoming requests are
+        // still listed above; no new outbound transfer is created implicitly.
+        if (this.usesLocalRecovery() && (!this.requestId || this.requestExpiresAt <= Date.now())) return;
         const own = await this.persistedIdentity(scope);
         this.assertCurrent(scope);
         const fingerprint = await this.publicFingerprint(own.publicJwk);
@@ -529,10 +549,15 @@ export class HistoryDeviceSyncService implements OnDestroy {
   }
 
   private async requestStatus(scope: SessionScope): Promise<TransferStatus> {
+    const revision = this.requestRevision;
     for (let attempt = 0; attempt < 2; attempt++) {
+      this.assertCurrent(scope);
+      if (revision !== this.requestRevision) throw new Error('La recuperación ya terminó.');
       if (!this.requestId || this.requestExpiresAt <= Date.now()) {
+        if (!this.requested || this.usesLocalRecovery()) throw new Error('No se solicitó recuperación desde otro equipo.');
         const request = await firstValueFrom(this.api.post<TransferRequest>('/devices/history-transfer/', {}).pipe(timeout(this.transferTimeoutMs())));
         this.assertCurrent(scope);
+        if (revision !== this.requestRevision) throw new Error('La recuperación ya terminó.');
         if (!request.id || request.userId !== scope.userId || request.targetDeviceId !== scope.deviceId
           || !Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) throw new Error('Solicitud de historial inválida.');
         this.requestId = request.id; this.requestExpiresAt = Date.parse(request.expiresAt);

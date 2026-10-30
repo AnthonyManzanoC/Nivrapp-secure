@@ -1,4 +1,9 @@
 {
+  "HISTORY_DEVICE.PHONE_TITLE": "Your history, from this phone",
+  "HISTORY_DEVICE.PHONE_COPY": "Nivra checks the keys saved here without automatically asking other devices for help. Some older messages are still protected. This phone can share the keys it holds when you approve a device link.",
+  "HISTORY_DEVICE.PHONE_OPTIONS": "Options for older history",
+  "HISTORY_DEVICE.PHONE_OPTIONS_COPY": "If you reinstalled Nivra or changed phones, another device that can still open those messages can help recover their keys.",
+  "HISTORY_DEVICE.PHONE_REMOTE": "Recover from another device",
   "HISTORY_LOCAL.DEVICE": "On this device",
   "HISTORY_LOCAL.CHECKING": "Checking your saved messages",
   "HISTORY_LOCAL.PENDING": "Some messages still need checking",

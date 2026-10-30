@@ -430,6 +430,7 @@ export class ChatsPage implements OnDestroy {
     if (this.chat.syncError()) return this.tr('CHATS.SYNC_ERROR', 'No se pudo actualizar. Inténtalo cuando tengas conexión.');
     if (this.localHistoryStatus() === 'checking') return this.tr('HISTORY_LOCAL.CHECKING', 'Revisando tus mensajes guardados');
     if (this.localHistoryStatus() !== 'idle') return this.tr('HISTORY_LOCAL.PENDING', 'Quedan mensajes por comprobar');
+    if (this.chat.deviceHistory.usesLocalRecovery?.() && this.chat.deviceHistory.state() !== 'syncing') return this.tr('HISTORY_DEVICE.PHONE_TITLE', 'Tu historial, desde este teléfono');
     if (this.chat.deviceHistory.sourceAvailability?.() === 'local-only' && this.chat.deviceHistory.state() !== 'syncing') return this.tr('HISTORY_DEVICE.ORIGINAL_KEY_NEEDED', 'Parte del historial necesita su llave original');
     return this.chat.deviceHistory.state() === 'syncing'
       ? this.tr('HISTORY_DEVICE.SYNCING', 'Sincronizando tu historial')

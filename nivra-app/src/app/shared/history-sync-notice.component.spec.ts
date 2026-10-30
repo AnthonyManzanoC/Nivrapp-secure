@@ -17,6 +17,7 @@ describe('history device fingerprint comparison controls', () => {
     preferredSource: ReturnType<typeof signal<PreferredHistorySource | null>>;
     sourceAvailability: ReturnType<typeof signal<'unknown' | 'available' | 'local-only'>>;
     recoveryStatus: ReturnType<typeof signal<'approval' | 'partial' | 'retryable'>>;
+    usesLocalRecovery: ReturnType<typeof signal<boolean>>; requestOtherDevice: jasmine.Spy;
     approveRequest: jasmine.Spy; dismissRequest: jasmine.Spy; retry: jasmine.Spy;
   };
   const request = (id: string, fingerprint = '1234 5678 90ab cdef 1234 5678'): PendingHistoryApproval => ({
@@ -37,6 +38,7 @@ describe('history device fingerprint comparison controls', () => {
       preferredSource: signal<PreferredHistorySource | null>(null),
       sourceAvailability: signal<'unknown' | 'available' | 'local-only'>('unknown'),
       recoveryStatus: signal<'approval' | 'partial' | 'retryable'>('approval'),
+      usesLocalRecovery: signal(false), requestOtherDevice: jasmine.createSpy('requestOtherDevice'),
       approveRequest: jasmine.createSpy('approveRequest').and.resolveTo(),
       dismissRequest: jasmine.createSpy('dismissRequest'), retry: jasmine.createSpy('retry'),
     };
@@ -60,6 +62,35 @@ describe('history device fingerprint comparison controls', () => {
     expect(share().disabled).toBeFalse();
     share().click();
     expect(history.approveRequest).toHaveBeenCalledOnceWith('first');
+  });
+
+  it('shows local APK recovery without an automatic approval instruction, keeping old-key recovery optional', async () => {
+    history.usesLocalRecovery.set(true); history.state.set('waiting');
+    history.targetFingerprint.set('1111 2222 3333 4444');
+    history.preferredSource.set({ deviceId: 'browser', deviceName: 'Browser', kind: 'other', basis: 'active-device' });
+    fixture.componentInstance.showApprovals = false;
+    await settle();
+    expect(root().textContent).toContain('Tu historial, desde este teléfono');
+    expect(root().querySelector('.history-source-hint')).toBeNull();
+    expect(root().querySelector('.history-code')).toBeNull();
+    const options = root().querySelector<HTMLDetailsElement>('.history-alternative')!;
+    expect(options.open).toBeFalse();
+    root().querySelector<HTMLButtonElement>('.history-retry')!.click();
+    expect(history.retry).toHaveBeenCalledTimes(1);
+    expect(history.requestOtherDevice).not.toHaveBeenCalled();
+    options.open = true;
+    root().querySelector<HTMLButtonElement>('.history-remote')!.click();
+    expect(history.requestOtherDevice).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps incoming fingerprint approval mandatory on the APK and preserves identity error priority', async () => {
+    history.usesLocalRecovery.set(true); history.state.set('waiting');
+    await settle();
+    expect(share().disabled).toBeTrue(); await confirmCode(); expect(share().disabled).toBeFalse();
+    fixture.componentInstance.identityError = true; fixture.componentInstance.needsRelink = true;
+    await settle();
+    expect(root().querySelector('.history-alternative')).toBeNull();
+    expect(root().textContent).toContain('Vuelve a vincular este equipo');
   });
 
   it('requires a new comparison if the same request is replaced with a different fingerprint', async () => {

@@ -5,6 +5,8 @@ Backend MVP para Nivra: una app de mensajería privada, gratuita primero, con ba
 La capa de datos ya usa PostgreSQL/Supabase con Entity Framework Core y migraciones automáticas al arrancar.
 El backend funciona como API pura + SignalR. El SPA vanilla original se conserva en `Nivra.Api/wwwroot_legacy` como historial y guia de migracion; el nuevo frontend vive en `nivra-app` con Angular + Ionic.
 
+La versión 7.4.0, Android build 46, recupera el historial localmente en el APK sin pedir ayuda automáticamente a otros equipos. Mantiene la aprobación de solicitudes entrantes y ofrece recuperación externa explícita para llaves antiguas. Véanse [los cambios, validación y límites de 7.4.0](docs/release-7.4.0.md).
+
 La versión 7.3.0, Android build 45, recupera automáticamente las comprobaciones de historial local interrumpidas por la red, evita solicitudes de vinculación imposibles cuando el directorio confirma un único dispositivo y distingue los avisos de recuperación local de las llaves originales no disponibles. Véanse [los cambios, validación y límites de 7.3.0](docs/release-7.3.0.md).
 
 La versión 7.2.0, Android build 44, incorpora búsqueda de ajustes con navegación directa y recupera envíos fallidos sin sobrescribir el siguiente texto que el usuario esté redactando. Conserva los identificadores de reintento y el aislamiento entre cuentas. Véanse [los cambios y validación de 7.2.0](docs/release-7.2.0.md).

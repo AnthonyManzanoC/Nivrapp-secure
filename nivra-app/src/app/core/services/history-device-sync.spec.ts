@@ -34,6 +34,7 @@ describe('approved encrypted history recovery', () => {
       approvalError: signal(''), approvalEpoch: signal(1), state: signal('idle'),
       pumpPromise: null, pumpAgain: false, replayRequested: false, recoveryIncomplete: false,
       recoveryRetryAt: 0, recoveryRetryAttempts: 0,
+      nativeAndroid: false, otherDeviceRecovery: signal(false),
       requestEvidence: null, evidenceCheck: null, requestRevision: 0, recoveryStatus: signal('approval'),
       sourceDirectory: null, sourceDirectoryCheck: null, sourceDirectoryRevision: 0,
       preferredSource: signal(null), sourceCapability: signal('unknown'),
@@ -77,6 +78,72 @@ describe('approved encrypted history recovery', () => {
   const registeredDevice = (id: string, name: string, overrides: Record<string, unknown> = {}) => ({
     id, userId: 'alice', name, isTrusted: true, revokedAt: null,
     createdAt: '2025-01-01T00:00:00Z', lastSeenAt: new Date().toISOString(), ...overrides,
+  });
+
+  it('keeps APK recovery local while still receiving requests from another device', async () => {
+    const local = cryptoHarness(); const own = await local.service.createDeviceKeys();
+    const missing = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', own, { userId: 'alice' });
+    const { service, api } = syncHarness(local.service, 'target'); service.nativeAndroid = true;
+    const inbound = { ...request(missing.publicJwk), targetDeviceId: 'browser', id: 'inbound' };
+    api.get.and.callFake((url: string) => of(url.endsWith('/pending') ? [inbound] : []));
+    await service.requestHistory(evidence(missing.publicJwk)); await service.pumpPromise;
+    expect(service.usesLocalRecovery()).toBeTrue();
+    expect(service.pendingRequests().map((r: any) => r.id)).toEqual(['inbound']);
+    expect(api.get.calls.allArgs().some(([url]) => url === '/devices')).toBeFalse();
+    expect(api.post).not.toHaveBeenCalled();
+    service.retry(); await service.pumpPromise;
+    expect(service.usesLocalRecovery()).toBeTrue(); expect(api.post).not.toHaveBeenCalled();
+    await service.approveRequest('inbound');
+    expect(api.post).toHaveBeenCalledOnceWith('/devices/history-transfer/inbound/response', jasmine.any(Object));
+  });
+
+  it('recovers a saved APK key automatically without opting in to remote recovery', async () => {
+    const local = cryptoHarness(); const own = await local.service.createDeviceKeys();
+    const old = await local.service.createDeviceKeys(); const peer = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', own, { userId: 'alice' });
+    await local.service.importHistoricalDeviceKeys('alice', 'alice', [old]);
+    const proof = evidence(peer.publicJwk);
+    Object.assign(proof.message.recipients[0], await local.service.encryptForPublicKey(peer, old.publicJwk, { text: 'Saved on phone' }));
+    const { service, api } = syncHarness(local.service, 'target'); service.nativeAndroid = true;
+    service.recovered$.next.and.callFake(() => service.markHistoryReadable());
+    await service.requestHistory(proof);
+    expect(service.recovered$.next).toHaveBeenCalledTimes(1);
+    expect(service.state()).toBe('idle'); expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('requires explicit APK recovery before creating a request and forgets that choice after recovery or account changes', async () => {
+    const local = cryptoHarness(); const own = await local.service.createDeviceKeys();
+    const missing = await local.service.createDeviceKeys();
+    await local.service.saveDeviceKeys('alice', 'target', own, { userId: 'alice' });
+    const { service, api, auth } = syncHarness(local.service, 'target'); service.nativeAndroid = true;
+    const transfer = request(own.publicJwk);
+    api.post.and.returnValue(of(transfer));
+    api.get.and.callFake((url: string) => of(url === '/devices' ? [registeredDevice('browser', 'Browser')] : url.endsWith('/pending') ? [] : { ...transfer, responses: [] }));
+    await service.requestHistory(evidence(missing.publicJwk)); await service.pumpPromise;
+    expect(api.post).not.toHaveBeenCalled();
+    service.requestOtherDevice(); await service.pumpPromise;
+    expect(service.usesLocalRecovery()).toBeFalse();
+    expect(api.post).toHaveBeenCalledOnceWith('/devices/history-transfer/', {});
+    service.markHistoryReadable(); expect(service.usesLocalRecovery()).toBeTrue();
+    service.otherDeviceRecovery.set(true); service.reset('bob:phone'); auth.session.set(session('phone', 'bob'));
+    expect(service.usesLocalRecovery()).toBeTrue();
+    service.requestOtherDevice(); expect(service.usesLocalRecovery()).toBeTrue();
+  });
+
+  it('does not recreate an expired transfer when history became readable while the status request was in flight', async () => {
+    const { service, api } = syncHarness(cryptoHarness().service, 'target');
+    service.requested = true; service.requestId = 'old'; service.requestExpiresAt = Date.now() + 60_000;
+    const response = new Subject<any>(); api.get.and.returnValue(response);
+    const status = service.requestStatus(service.scope());
+    service.markHistoryReadable(); response.error({ status: 410 });
+    await expectAsync(status).toBeRejected(); expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('does not use a remote device name as authority to suppress browser recovery', () => {
+    const { service, auth } = syncHarness(cryptoHarness().service, 'target');
+    auth.session.set({ ...session('target'), device: { ...session('target').device, name: 'Android Nivra Mobile' } });
+    expect(service.usesLocalRecovery()).toBeFalse();
   });
 
   it('automatically replays a readable saved account key without requesting another device or replacing the identity', async () => {

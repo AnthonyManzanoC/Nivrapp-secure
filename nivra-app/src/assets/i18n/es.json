@@ -1,4 +1,9 @@
 {
+  "HISTORY_DEVICE.PHONE_TITLE": "Tu historial, desde este teléfono",
+  "HISTORY_DEVICE.PHONE_COPY": "Nivra comprueba las llaves guardadas aquí sin pedir ayuda automáticamente a otros equipos. Algunos mensajes antiguos siguen protegidos. Este teléfono puede compartir las llaves que conserva cuando tú autorices una vinculación.",
+  "HISTORY_DEVICE.PHONE_OPTIONS": "Opciones para historial antiguo",
+  "HISTORY_DEVICE.PHONE_OPTIONS_COPY": "Si reinstalaste Nivra o cambiaste de teléfono, otro equipo que aún pueda abrir esos mensajes puede ayudarte a recuperar sus llaves.",
+  "HISTORY_DEVICE.PHONE_REMOTE": "Recuperar desde otro equipo",
   "HISTORY_LOCAL.DEVICE": "En este dispositivo",
   "HISTORY_LOCAL.CHECKING": "Revisando tus mensajes guardados",
   "HISTORY_LOCAL.PENDING": "Quedan mensajes por comprobar",
