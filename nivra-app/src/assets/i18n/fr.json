@@ -1079,7 +1079,7 @@
   "CHAT.RETURN_CALL": "Revenir à l’appel",
   "CALLS.END_ROOM_ERROR": "Impossible de terminer le salon. Réessayez.",
   "IDENTITY.AUTO_TITLE": "Vérification de sécurité",
-  "IDENTITY.AUTO_COPY": "Nous vérifions si les clés correspondent à celles enregistrées sur cet appareil. Pour confirmer votre contact, comparez le QR en personne ou par un canal de confiance.",
+  "IDENTITY.AUTO_COPY": "Les clés connues sont vérifiées automatiquement. Vous pouvez comparer le QR pour confirmer votre contact par un autre canal de confiance.",
   "IDENTITY.AUTO_CHECKING": "Vérification des clés…",
   "IDENTITY.STATE_VERIFIED": "Identité comparée",
   "IDENTITY.STATE_VERIFIED_COPY": "Les clés de votre contact correspondent à celles que vous avez déjà comparées sur cet appareil.",
@@ -1196,5 +1196,16 @@
   "HISTORY_DEVICE.CHECKING": "Vérification…",
   "HISTORY_DEVICE.SHARING": "Partage sécurisé…",
   "HISTORY_DEVICE.APPROVAL_TAG": "Association d’un appareil",
-  "HISTORY_LOADING.OPENING_LOCAL": "Ouverture de votre historique chiffré…"
+  "HISTORY_LOADING.OPENING_LOCAL": "Ouverture de votre historique chiffré…",
+  "CHAT.DELIVERY_STATUS": "État de l’envoi",
+  "CHAT.INFO_READ_BY": "Lu par",
+  "CHAT.INFO_DELIVERED_TO": "Remis à",
+  "CHAT.INFO_PENDING": "Remise non confirmée",
+  "CHAT.INFO_PRIVACY": "Les confirmations de lecture peuvent être indisponibles selon les paramètres de confidentialité. Sans confirmation, impossible de savoir si le message a été ouvert.",
+  "CHAT.SELECT_MESSAGES": "Sélectionner des messages",
+  "CHAT.SELECTION": "Sélection",
+  "CHAT.SELECTION_LIMIT": "Vous pouvez sélectionner jusqu’à 100 messages.",
+  "CHAT.CONFIRM_SELECTED_ALL": "Supprimer les messages sélectionnés pour tout le monde ?",
+  "CHAT.CONFIRM_SELECTED_ME": "Supprimer les messages sélectionnés uniquement pour vous ?",
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Certains messages ne peuvent pas être transférés."
 }

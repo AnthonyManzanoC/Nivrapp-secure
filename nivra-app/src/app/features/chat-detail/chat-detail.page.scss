@@ -2141,3 +2141,10 @@ ion-modal.private-chat-modal::part(content) { max-height: 90dvh; overflow: auto;
 .voice-save ion-icon, .voice-save ion-spinner { width: 20px; height: 20px; }
 .voice-save:focus-visible { outline: 2px solid var(--nivra-brand-2); outline-offset: 2px; }
 .voice-save:disabled { opacity: .55; cursor: default; }
+.selection-toolbar { display: grid; grid-template-columns: 44px minmax(0,1fr) 44px 44px; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--nivra-line); background: var(--nivra-panel-solid); color: var(--nivra-text); }
+.selection-toolbar > button { display: grid; place-items: center; width: 44px; height: 44px; padding: 10px; border: 1px solid var(--nivra-line); border-radius: 12px; background: transparent; color: var(--nivra-brand-2); cursor: pointer; }
+.selection-toolbar ion-icon { width: 21px; height: 21px; }.selection-toolbar strong { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }.selection-toolbar ion-spinner { width: 18px; height: 18px; }.selection-toolbar button:disabled { opacity: .4; cursor: default; }.selection-toolbar button:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 2px; }
+.selection-toolbar small { grid-column: 1/-1; font-size: 12px; line-height: 1.5; color: var(--nivra-muted); }.selection-toolbar .selection-error { color: var(--nivra-danger); }
+.message.message-selected { outline: 2px solid var(--nivra-brand); outline-offset: 1px; }
+.message-selection-hit { position: absolute; inset: -1px; z-index: 7; padding: 0; border: 0; border-radius: inherit; background: transparent; cursor: pointer; }
+.message-selection-hit > span { position: absolute; top: 6px; inset-inline-end: 6px; display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--nivra-muted); border-radius: 50%; background: var(--nivra-panel-solid); color: #052b22; }.message-selected .message-selection-hit > span { background: var(--nivra-brand); border-color: var(--nivra-brand); }.message-selection-hit ion-icon { width: 17px; height: 17px; }.message-selection-hit:focus-visible { outline: 2px solid var(--nivra-brand-2); outline-offset: 3px; }

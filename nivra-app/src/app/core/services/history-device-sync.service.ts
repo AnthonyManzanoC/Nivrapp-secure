@@ -615,7 +615,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
     await this.crypto.importHistoricalDeviceKeys(scope.userId, scope.alias, payload.keys, () => this.isCurrent(scope));
     this.assertCurrent(scope);
     if (payload.identityTrust) {
-      try { await this.identityTrust.importFromLinkedDevice(`${scope.userId}:${scope.deviceId}`, response.sourceDeviceId, payload.identityTrust, () => this.isCurrent(scope)); }
+      try { await this.identityTrust.importFromLinkedDevice(JSON.stringify([scope.userId, scope.deviceId]), response.sourceDeviceId, payload.identityTrust, () => this.isCurrent(scope)); }
       catch { /* Keep valid history keys even if optional continuity is unsupported. */ }
       this.assertCurrent(scope);
     }

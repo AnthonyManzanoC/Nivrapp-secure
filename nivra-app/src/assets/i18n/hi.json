@@ -1079,7 +1079,7 @@
   "CHAT.RETURN_CALL": "कॉल पर वापस जाएँ",
   "CALLS.END_ROOM_ERROR": "रूम समाप्त नहीं हो सका। फिर कोशिश करें।",
   "IDENTITY.AUTO_TITLE": "सुरक्षा जाँच",
-  "IDENTITY.AUTO_COPY": "हम जाँचते हैं कि कुंजियाँ इस उपकरण पर सहेजी गई कुंजियों से मेल खाती हैं या नहीं। अपने संपर्क की पुष्टि के लिए QR कोड की तुलना आमने-सामने या किसी विश्वसनीय माध्यम से करें।",
+  "IDENTITY.AUTO_COPY": "पहचानी गई कुंजियों की जाँच अपने आप होती है। संपर्क की पुष्टि के लिए किसी अन्य भरोसेमंद माध्यम से QR कोड की तुलना कर सकते हैं।",
   "IDENTITY.AUTO_CHECKING": "कुंजियाँ जाँच रहे हैं…",
   "IDENTITY.STATE_VERIFIED": "पहचान की तुलना की गई",
   "IDENTITY.STATE_VERIFIED_COPY": "आपके संपर्क की कुंजियाँ उन कुंजियों से मेल खाती हैं जिनकी आपने इस उपकरण पर पहले तुलना की थी।",
@@ -1196,5 +1196,16 @@
   "HISTORY_DEVICE.CHECKING": "जाँच हो रही है…",
   "HISTORY_DEVICE.SHARING": "सुरक्षित रूप से साझा हो रहा है…",
   "HISTORY_DEVICE.APPROVAL_TAG": "डिवाइस लिंक करना",
-  "HISTORY_LOADING.OPENING_LOCAL": "आपका एन्क्रिप्ट किया गया इतिहास खुल रहा है…"
+  "HISTORY_LOADING.OPENING_LOCAL": "आपका एन्क्रिप्ट किया गया इतिहास खुल रहा है…",
+  "CHAT.DELIVERY_STATUS": "भेजने की स्थिति",
+  "CHAT.INFO_READ_BY": "इन्होंने पढ़ा",
+  "CHAT.INFO_DELIVERED_TO": "इन्हें पहुँचा",
+  "CHAT.INFO_PENDING": "पहुँचने की पुष्टि नहीं",
+  "CHAT.INFO_PRIVACY": "गोपनीयता सेटिंग के कारण पढ़ने की पुष्टि उपलब्ध नहीं हो सकती। पुष्टि के बिना यह नहीं बताया जा सकता कि संदेश खोला गया है या नहीं।",
+  "CHAT.SELECT_MESSAGES": "संदेश चुनें",
+  "CHAT.SELECTION": "चयन",
+  "CHAT.SELECTION_LIMIT": "आप अधिकतम 100 संदेश चुन सकते हैं।",
+  "CHAT.CONFIRM_SELECTED_ALL": "चुने हुए संदेश सभी के लिए हटाएँ?",
+  "CHAT.CONFIRM_SELECTED_ME": "चुने हुए संदेश सिर्फ़ अपने लिए हटाएँ?",
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "कुछ संदेश आगे नहीं भेजे जा सकते।"
 }

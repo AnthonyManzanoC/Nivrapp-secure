@@ -2233,7 +2233,7 @@ public static partial class EndpointExtensions
             switch (request.Kind)
             {
                 case ReceiptKind.Delivered:
-                    receipt.DeliveredAt = now;
+                    receipt.DeliveredAt ??= now;
                     break;
                 case ReceiptKind.Read:
                     foreach (var userReceipt in message.Receipts.Where(candidate => candidate.UserId == current.UserId))

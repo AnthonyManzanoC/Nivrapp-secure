@@ -3,12 +3,12 @@
     <button type="button" class="back-action" (click)="back()"><ion-icon name="arrow-back-outline" aria-hidden="true"></ion-icon>{{ 'IDENTITY.BACK' | translate:'Volver' }}</button>
     <span class="privacy-label"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'IDENTITY.PRIVATE_CHECK' | translate:'Comparación privada' }}</span>
   </header>
-  <section class="identity-card" aria-labelledby="identity-title">
+  <section class="identity-card" [attr.data-state]="continuity" [attr.aria-busy]="loading || busy" aria-labelledby="identity-title">
     <div class="identity-heading">
       <span class="identity-mark" aria-hidden="true"><ion-icon name="shield-checkmark-outline"></ion-icon></span>
       <h1 id="identity-title">{{ 'IDENTITY.AUTO_TITLE' | translate:'Comprobación de seguridad' }}</h1>
       @if (contactAlias) { <span class="contact-alias" dir="ltr">@{{ contactAlias }}</span> }
-      <p>{{ 'IDENTITY.AUTO_COPY' | translate:'Revisamos si las llaves coinciden con las guardadas en este dispositivo. Para confirmar a tu contacto, compara el QR en persona o por un canal de confianza.' }}</p>
+      <p>{{ 'IDENTITY.AUTO_COPY' | translate:'Las llaves conocidas se comprueban automáticamente. Puedes comparar el QR para confirmar a tu contacto por otro canal de confianza.' }}</p>
     </div>
     @if (loading) {
       <div class="identity-loading" role="status"><ion-spinner name="crescent" aria-hidden="true"></ion-spinner><span>{{ 'IDENTITY.AUTO_CHECKING' | translate:'Comprobando las llaves…' }}</span></div>
@@ -29,10 +29,12 @@
       @if (continuity !== 'changed') {
         <button type="button" class="confirm-action" (click)="back()">{{ 'IDENTITY.CONTINUE_CHAT' | translate:'Volver al chat' }}</button>
       }
-      @if (!comparisonExpanded) {
-        <button type="button" class="image-action" (click)="comparisonExpanded = true">{{ 'IDENTITY.COMPARE_AGAIN' | translate:'Comparar el QR de forma opcional' }}</button>
+      <button type="button" class="image-action comparison-toggle" (click)="comparisonExpanded = !comparisonExpanded" [disabled]="busy || scanning || cameraOpen" [attr.aria-expanded]="comparisonExpanded" aria-controls="identity-comparison-panel">@if (continuity === 'changed') { {{ 'CHAT.IDENTITY_VERIFY_ACTION' | translate:'Verificar identidad' }} } @else { {{ 'IDENTITY.COMPARE_AGAIN' | translate:'Comparar el QR de forma opcional' }} }<span aria-hidden="true">{{ comparisonExpanded ? '−' : '+' }}</span></button>
+      @if (continuity === 'changed') {
+        <button type="button" class="image-action recheck-action" (click)="loadIdentity()" [disabled]="busy || scanning || cameraOpen">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button>
       }
       @if (comparisonExpanded || cameraOpen) {
+      <section id="identity-comparison-panel" class="comparison-panel">
       @if (cameraOpen) {
         <section class="camera-section" (keydown.escape)="cancelCamera()" [attr.aria-label]="'IDENTITY.CAMERA_ACTION' | translate:'Escanear QR del contacto'">
           <div id="identity-camera-reader" class="camera-reader"></div>
@@ -53,6 +55,7 @@
           <button type="button" class="confirm-action" [disabled]="busy || scanning || !comparison.trim()" (click)="confirm()">@if (busy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="checkmark-circle-outline" aria-hidden="true"></ion-icon> }{{ 'IDENTITY.CONFIRM' | translate:'Comparar y guardar verificación' }}</button>
         </details>
       }
+      </section>
       }
       <div id="identity-file-reader" class="file-reader" aria-hidden="true"></div>
     } @else {

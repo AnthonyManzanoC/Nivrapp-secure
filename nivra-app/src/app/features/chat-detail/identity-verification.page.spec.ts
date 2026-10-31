@@ -34,7 +34,7 @@ describe('Identity verification return and comparison', () => {
   let own: PublicKeyDirectory;
   let other: PublicKeyDirectory;
   let api: { post: jasmine.Spy };
-  let trust: { confirm: jasmine.Spy; continuity: jasmine.Spy };
+  let trust: { confirm: jasmine.Spy; continuity: jasmine.Spy; check: jasmine.Spy };
   let lock: { isLocked: ReturnType<typeof signal<boolean>> };
   let scanner: { start: jasmine.Spy; stop: jasmine.Spy; clear: jasmine.Spy; scanFile: jasmine.Spy };
   let pages: IdentityVerificationPage[];
@@ -53,7 +53,7 @@ describe('Identity verification return and comparison', () => {
     own = directory('alice', 'A');
     other = directory('bob', 'C');
     api = { post: jasmine.createSpy('post').and.callFake(() => of([own, other])) };
-    trust = { confirm: jasmine.createSpy('confirm').and.resolveTo(), continuity: jasmine.createSpy('continuity').and.resolveTo({ state: 'unknown' }) };
+    trust = { confirm: jasmine.createSpy('confirm').and.resolveTo(), continuity: jasmine.createSpy('continuity').and.resolveTo({ state: 'unknown' }), check: jasmine.createSpy('check').and.resolveTo() };
     lock = { isLocked: signal(false) };
     pages = [];
     scanner = { start: jasmine.createSpy('start').and.resolveTo(), stop: jasmine.createSpy('stop').and.resolveTo(), clear: jasmine.createSpy('clear'), scanFile: jasmine.createSpy('scanFile') };
@@ -240,6 +240,17 @@ describe('Identity verification return and comparison', () => {
     expect(page.verified).toBeFalse();
     expect(page.checkedAt).toBeTruthy();
     expect(trust.continuity).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other);
+    expect(trust.check).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other, jasmine.any(Function));
+    expect(trust.confirm).not.toHaveBeenCalled();
+  });
+
+  it('does not reconcile a new or changed key as an automatic match', async () => {
+    const page = createPage();
+    for (const state of ['unknown', 'changed']) {
+      trust.continuity.and.resolveTo({ state });
+      await page.loadIdentity();
+    }
+    expect(trust.check).not.toHaveBeenCalled();
     expect(trust.confirm).not.toHaveBeenCalled();
   });
 

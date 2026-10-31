@@ -6,6 +6,67 @@ const directory = (coordinate: string): PublicKeyDirectory => ({userId:'peer',al
   keyBundle:{identityKey:JSON.stringify({kty:'EC',crv:'P-256',x:coordinate.repeat(43),y:'B'.repeat(43)}),signedPreKey:null,preKeySignature:null,oneTimePreKeys:[]},
 }]});
 describe('persistent identity pins',()=>{
+  it('automatically accepts an additional device only when it uses the exact known encryption key',async()=>{
+    const scope=crypto.randomUUID();const service=new IdentityTrustService();const original=directory('A');
+    await service.confirm(scope,original);
+    const linked={...original,devices:[...original.devices,{...original.devices[0],deviceId:'linked-laptop'}]};
+    expect((await service.continuity(scope,linked)).state).toBe('verified');
+    await expectAsync(service.check(scope,linked)).toBeResolved();
+    expect(service.isChanged(scope,'peer')).toBeFalse();
+    expect((await service.continuity(scope,linked)).verifiedAt).toBeTruthy();
+    const unknown={...linked,devices:[...linked.devices,{...directory('C').devices[0],deviceId:'unknown-device'}]};
+    await expectAsync(service.check(scope,unknown)).toBeRejected();
+    expect(service.isChanged(scope,'peer')).toBeTrue();
+  });
+  it('does not accept replacement of a known device even with a key known on another device',async()=>{
+    const scope=crypto.randomUUID();const service=new IdentityTrustService();const original=directory('A');
+    original.devices.push({...directory('C').devices[0],deviceId:'laptop'});
+    await service.confirm(scope,original);
+    await expectAsync(service.check(scope,{...original,devices:[{...directory('C').devices[0]},original.devices[1]]})).toBeRejected();
+  });
+  it('never presents automatic same-key continuity as a human identity comparison',async()=>{
+    const scope=crypto.randomUUID();const service=new IdentityTrustService();const original=directory('A');
+    await service.check(scope,original);
+    const linked={...original,devices:[...original.devices,{...original.devices[0],deviceId:'linked-laptop'}]};
+    await service.check(scope,linked);
+    const state=await service.continuity(scope,linked);
+    expect(state.state).toBe('unchanged');expect(state.verifiedAt).toBeUndefined();
+  });
+  it('cancels an automatic check inside the transaction and preserves the stored identity',async()=>{
+    const scope=crypto.randomUUID();const service=new IdentityTrustService();await service.check(scope,directory('A'));
+    let activeChecks=0;
+    await expectAsync(service.check(scope,directory('C'),()=>++activeChecks===1)).toBeRejected();
+    expect(activeChecks).toBe(2);
+    expect((await service.continuity(scope,directory('A'))).state).toBe('unchanged');
+    expect(service.isChanged(scope,'peer')).toBeFalse();
+  });
+  it('preserves known encryption keys across an approved handoff and automatically handles the same key on a linked device',async()=>{
+    const owner=crypto.randomUUID();const service=new IdentityTrustService();
+    await service.confirm(JSON.stringify([owner,'phone']),directory('A'));
+    const transfer=await service.exportForLinkedDevice(owner,'phone');
+    const target=JSON.stringify([owner,'laptop']);await service.importFromLinkedDevice(target,'phone',transfer);
+    const original=directory('A');const linked={...original,devices:[...original.devices,{...original.devices[0],deviceId:'peer-laptop'}]};
+    await expectAsync(service.check(target,linked)).toBeResolved();
+    const state=await service.continuity(target,linked);
+    expect(state.state).toBe('verified');expect(state.source).toBe('linked-device');
+  });
+  it('rejects mismatched key metadata in a handoff before importing any contact',async()=>{
+    const owner=crypto.randomUUID();const service=new IdentityTrustService();
+    await service.confirm(JSON.stringify([owner,'phone']),directory('A'));
+    const transfer=await service.exportForLinkedDevice(owner,'phone');
+    const target=JSON.stringify([owner,'laptop']);
+    transfer.entries[0].devices![0].identity=['C'.repeat(43),'B'.repeat(43)].join(':');
+    await expectAsync(service.importFromLinkedDevice(target,'phone',transfer)).toBeRejected();
+    expect((await service.continuity(target,directory('A'))).state).toBe('unknown');
+  });
+  it('reads older approved handoffs that contain a fingerprint without device metadata',async()=>{
+    const owner=crypto.randomUUID();const service=new IdentityTrustService();
+    await service.confirm(JSON.stringify([owner,'phone']),directory('A'));
+    const transfer=await service.exportForLinkedDevice(owner,'phone');delete transfer.entries[0].devices;
+    const target=JSON.stringify([owner,'laptop']);
+    await expectAsync(service.importFromLinkedDevice(target,'phone',transfer)).toBeResolvedTo(1);
+    expect((await service.continuity(target,directory('A'))).state).toBe('verified');
+  });
   it('remembers the first directory after service recreation and blocks a changed identity',async()=>{
     const scope=crypto.randomUUID();await new IdentityTrustService().check(scope,directory('A'));
     await expectAsync(new IdentityTrustService().check(scope,directory('A'))).toBeResolved();

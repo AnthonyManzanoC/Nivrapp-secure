@@ -1,0 +1,32 @@
+<section class="message-info-content" aria-labelledby="message-info-title">
+  <header>
+    <div><span class="info-eyebrow">{{ 'CHAT.DELIVERY_STATUS' | translate:'Estado del envío' }}</span><h2 id="message-info-title">{{ 'CHAT.MESSAGE_INFO' | translate:'Info. del mensaje' }}</h2></div>
+    <button type="button" class="info-close" (click)="close.emit()" [attr.aria-label]="'CHAT.CLOSE_INFO' | translate:'Cerrar info'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
+  </header>
+  @if (current(); as info) {
+    <div class="info-scroll">
+      <div class="sent-card"><ion-icon [name]="info.status === 'sending' ? 'time-outline' : 'checkmark-outline'" aria-hidden="true"></ion-icon><div><span>{{ (info.status === 'sending' ? 'CHAT.SENDING' : 'CHAT.SENT') | translate:(info.status === 'sending' ? 'Enviando…' : 'Enviado') }}</span>@if (info.status !== 'sending') { <strong>{{ info.at | localizedDate:'medium' }}</strong> }</div></div>
+      <div class="receipt-totals" aria-live="polite" aria-atomic="true">
+        <div class="total-read"><ion-icon name="checkmark-done-outline" aria-hidden="true"></ion-icon><strong>{{ readCount() }}<span> / {{ rows().length }}</span></strong><small>{{ 'CHAT.READ' | translate:'Leído' }}</small></div>
+        <div><ion-icon name="checkmark-done-outline" aria-hidden="true"></ion-icon><strong>{{ deliveredCount() }}<span> / {{ rows().length }}</span></strong><small>{{ 'CHAT.DELIVERED' | translate:'Entregado' }}</small></div>
+      </div>
+      @for (group of groups(); track group.state) {
+        <section class="receipt-group" [class.group-read]="group.state === 'read'" [attr.data-state]="group.state">
+          <h3>
+            <ion-icon [name]="group.state === 'pending' ? 'time-outline' : 'checkmark-done-outline'" aria-hidden="true"></ion-icon>
+            @switch (group.state) {
+              @case ('read') { {{ 'CHAT.INFO_READ_BY' | translate:'Leído por' }} }
+              @case ('delivered') { {{ 'CHAT.INFO_DELIVERED_TO' | translate:'Entregado a' }} }
+              @default { {{ 'CHAT.INFO_PENDING' | translate:'Sin entrega confirmada' }} }
+            }
+            <span>{{ group.rows.length }}</span>
+          </h3>
+          @for (row of group.rows; track row.userId) {
+            <article>@if (photo(row.userId)) { <img class="receipt-avatar" [src]="photo(row.userId)" alt=""> } @else { <span class="receipt-avatar fallback" aria-hidden="true">{{ initials(row.userId) }}</span> }<div><strong>{{ name(row.userId) }}</strong>@if (row.readAt) { <p class="read-time">{{ 'CHAT.READ' | translate:'Leído' }} · <time [attr.datetime]="row.readAt">{{ row.readAt | localizedDate:'medium' }}</time></p> }@if (row.deliveredAt) { <p>{{ 'CHAT.DELIVERED' | translate:'Entregado' }} · <time [attr.datetime]="row.deliveredAt">{{ row.deliveredAt | localizedDate:'medium' }}</time></p> }@if (row.state === 'pending') { <p>{{ 'CHAT.INFO_PENDING' | translate:'Sin entrega confirmada' }}</p> }</div></article>
+          }
+        </section>
+      } @empty { <p class="receipt-empty">{{ 'CHAT.NO_READ_RECEIPTS' | translate:'Aún no hay confirmaciones de lectura para este mensaje.' }}</p> }
+      <p class="receipt-privacy"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'CHAT.INFO_PRIVACY' | translate:'La lectura puede no compartirse según los ajustes de privacidad. Sin confirmación no se puede saber si se abrió.' }}</p>
+    </div>
+  }
+</section>

@@ -29,7 +29,7 @@
           <p>{{ chat.presenceLabel(conversation()) }}</p>
         </div>
       </button>
-      <ion-buttons slot="end">
+      <ion-buttons slot="end" [style.visibility]="selectionMode ? 'hidden' : null">
         @if (!calls.activeGroupRoomForConversation(conversation()?.id)) {
         <ion-button mode="ios" fill="clear" [disabled]="busyAction !== '' || isBlocked()" (click)="startCall('Voice')" [attr.aria-label]="'COMMON.CALL' | translate:'Llamada'">
           <ion-icon name="call-outline"></ion-icon>
@@ -49,6 +49,15 @@
       </ion-buttons>
     </ion-toolbar>
   </ion-header>
+  @if (selectionMode) {
+    <section class="selection-toolbar" [attr.aria-label]="'CHAT.SELECT_MESSAGES' | translate:'Seleccionar mensajes'">
+      <button type="button" (click)="cancelSelection()" [attr.aria-label]="'COMMON.CANCEL' | translate:'Cancelar'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
+      <strong aria-live="polite">{{ 'CHAT.SELECTION' | translate:'Selección' }} · {{ selectedMessages().length }}@if (bulkBusy) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }</strong>
+      <button type="button" (click)="openSelectionForward()" [disabled]="bulkBusy || !canForwardSelection()" [attr.aria-label]="'CHAT_ACTIONS.FORWARD' | translate:'Reenviar'"><ion-icon name="arrow-redo-outline" aria-hidden="true"></ion-icon></button>
+      <button type="button" (click)="openSelectionDelete()" [disabled]="bulkBusy || !selectedMessages().length" [attr.aria-label]="'CHAT.DELETE_FOR_ME' | translate:'Eliminar para mí'"><ion-icon name="trash-outline" aria-hidden="true"></ion-icon></button>
+      @if (selectionError) { <small class="selection-error" role="alert">{{ selectionError }}</small> } @else if (selectedMessages().length && !canForwardSelection()) { <small>{{ 'CHAT.SELECTION_FORWARD_RESTRICTED' | translate:'Algunos mensajes no permiten reenvío.' }}</small> }
+    </section>
+  }
   @if (!auth.deviceIdentityError() && !auth.deviceIdentityNeedsRelink()) {
     <app-history-local-check [state]="chat.localHistoryCheckState()" [compact]="true" (retry)="chat.checkLocalHistory()" />
   }
@@ -119,7 +128,7 @@
             [attr.data-message-id]="message.id"
             [class.search-hit]="isSearchResult(message.id)"
             [class.missed]="message.payload.event === 'missed-call' || message.payload['status'] === 'missed'">
-            <button type="button" class="call-log-bubble" [disabled]="busyAction !== '' || !canSendMessages() || isBlocked()" (click)="startCall(message.payload.callType === 'Video' ? 'Video' : 'Voice')" [attr.aria-label]="('CHAT.RECALL' | translate:'Volver a llamar') + ': ' + chat.callLogTitle(message.payload)">
+            <button type="button" class="call-log-bubble" [disabled]="selectionMode || busyAction !== '' || !canSendMessages() || isBlocked()" (click)="startCall(message.payload.callType === 'Video' ? 'Video' : 'Voice')" [attr.aria-label]="('CHAT.RECALL' | translate:'Volver a llamar') + ': ' + chat.callLogTitle(message.payload)">
               <span class="call-log-icon"><ion-icon [name]="message.payload.callType === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon></span>
               <div>
                 <strong>{{ chat.callLogTitle(message.payload) }}</strong>
@@ -146,12 +155,15 @@
             [class.decrypt-error]="message.decryptError"
             [class.has-reactions]="reactions(message).length"
             [class.actions-open]="actionMessageId === message.id"
+            [class.selection-active]="selectionMode"
+            [class.message-selected]="selectionMode && selectedMessageIds().has(message.id)"
             (contextmenu)="openMessageActions(message, $event)"
             (touchstart)="startMessagePress(message, $event)"
             (touchmove)="moveMessagePress($event)"
             (touchend)="finishMessagePress(message, $event)"
             (touchcancel)="cancelMessagePress()">
-            <button type="button" class="message-more" [disabled]="message.status === 'sending'" (click)="toggleActions(message, $event)" [attr.aria-label]="'COMMON.ACTIONS' | translate:'Acciones'">
+            @if (selectionMode && canSelectMessage(message)) { <button type="button" class="message-selection-hit" [disabled]="bulkBusy" [attr.aria-pressed]="selectedMessageIds().has(message.id)" [attr.aria-label]="'CHAT.SELECT_MESSAGES' | translate:'Seleccionar mensajes'" (click)="toggleMessageSelection(message)"><span>@if (selectedMessageIds().has(message.id)) { <ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon> }</span></button> }
+            <button type="button" class="message-more" [disabled]="selectionMode || message.status === 'sending'" (click)="toggleActions(message, $event)" [attr.aria-label]="'COMMON.ACTIONS' | translate:'Acciones'">
               <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
             </button>
             @if (isGroupConversation() && !message.mine && !message.decryptError) {
@@ -426,7 +438,7 @@
     }
   </ion-content>
 
-  <ion-footer class="composer-footer">
+  <ion-footer class="composer-footer" [style.display]="selectionMode ? 'none' : null">
     @if (failedTextAttempt(); as failed) {
       <app-failed-text-send [text]="failed.text" [busy]="sending"
         [retryDisabled]="sending || isBlocked() || !canSendMessages()"
@@ -658,6 +670,7 @@
     (didDismiss)="closeChatMenu()">
     <ng-template>
       <div class="popover-menu">
+        <button type="button" (click)="beginSelection()"><ion-icon name="checkmark-outline"></ion-icon>{{ 'CHAT.SELECT_MESSAGES' | translate:'Seleccionar mensajes' }}</button>
         <button type="button" (click)="openPrivateChatProtection()"><ion-icon name="lock-closed-outline" />{{ privateChats.isProtected(privateConversationId()) ? ('PRIVATE_CHAT.REMOVE' | translate:'Quitar protección') : ('PRIVATE_CHAT.PROTECT' | translate:'Proteger conversación') }}</button>
         <button type="button" (click)="openSearch()"><ion-icon name="search-outline"></ion-icon>{{ 'CHAT.SEARCH_CHAT' | translate:'Buscar en este chat' }}</button>
         @if (!isGroupConversation()) {
@@ -712,6 +725,7 @@
             }
           </div>
           <div class="popover-menu compact">
+            @if (canSelectMessage(actionMessage)) { <button type="button" (click)="beginSelection(actionMessage)"><ion-icon name="checkmark-outline"></ion-icon>{{ 'CHAT.SELECT_MESSAGES' | translate:'Seleccionar mensajes' }}</button> }
             @if (canReply(actionMessage)) {
             <button type="button" (click)="beginReply(actionMessage)">
               <ion-icon name="return-down-back-outline"></ion-icon>
@@ -831,44 +845,9 @@
     </ng-template>
   </ion-modal>
 
-  <ion-modal class="message-info-modal" [isOpen]="!!messageInfoMessage" (didDismiss)="closeMessageInfo()">
+  <ion-modal class="message-info-modal" [isOpen]="!!messageInfoCurrent()" (didDismiss)="closeMessageInfo()">
     <ng-template>
-      <section class="message-info-sheet">
-        <header>
-          <div>
-            <strong>{{ 'CHAT.MESSAGE_INFO' | translate:'Info. del mensaje' }}</strong>
-            @if (messageInfoMessage; as infoMessage) {
-              <small>{{ messageInfoSummary(infoMessage) || ('CHAT.LOCAL_STATUS' | translate:'Estado local') }}</small>
-            }
-          </div>
-          <ion-button mode="ios" fill="clear" (click)="closeMessageInfo()" [attr.aria-label]="'CHAT.CLOSE_INFO' | translate:'Cerrar info'">
-            <ion-icon name="close-outline"></ion-icon>
-          </ion-button>
-        </header>
-        @if (messageInfoMessage; as infoMessage) {
-          <div class="message-info-card">
-            <span>{{ 'CHAT.SENT' | translate:'Enviado' }}</span>
-            <strong>{{ infoMessage.at | localizedDate:'medium' }}</strong>
-          </div>
-          <div class="receipt-list">
-            @for (receipt of messageInfoRows(infoMessage); track receipt.userId + receipt.deviceId) {
-              <article>
-                @if (receiptAvatar(receipt)) {
-                  <img class="sheet-avatar" [src]="receiptAvatar(receipt)" alt="">
-                } @else {
-                  <span class="sheet-avatar fallback">{{ receiptInitials(receipt) }}</span>
-                }
-                <div>
-                  <strong>{{ receiptDisplayName(receipt) }}</strong>
-                  <small>{{ receiptStatus(receipt) }}</small>
-                </div>
-              </article>
-            } @empty {
-              <p class="sheet-empty">{{ 'CHAT.NO_READ_RECEIPTS' | translate:'Aun no hay confirmaciones de lectura para este mensaje.' }}</p>
-            }
-          </div>
-        }
-      </section>
+      <app-message-info-content [message]="messageInfoCurrent()" [participants]="conversation()?.participants || []" (close)="closeMessageInfo()"></app-message-info-content>
     </ng-template>
   </ion-modal>
 
@@ -1519,7 +1498,8 @@
         <header>
           <div>
             <h2>{{ 'CHAT_ACTIONS.FORWARD' | translate:'Reenviar' }}</h2>
-            <p>{{ chat.preview(forwardingMessage.payload) }}</p>
+            @if (forwardingSelectionIds.length) { <p>{{ 'CHAT.SELECTION' | translate:'Selección' }} · {{ forwardingSelectionIds.length }}</p> } @else { <p>{{ chat.preview(forwardingMessage.payload) }}</p> }
+            @if (forwardingSelectionIds.length && selectionError) { <p role="alert">{{ selectionError }}</p> }
           </div>
           <ion-button mode="ios" fill="clear" (click)="closeForward()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
             <ion-icon name="close-outline"></ion-icon>
@@ -1531,7 +1511,7 @@
         </div>
         <div class="forward-list">
           @for (target of forwardTargets(); track target.id) {
-            <button type="button" [class.selected]="selectedForwardIds.has(target.id)" (click)="toggleForwardTarget(target)">
+            <button type="button" [class.selected]="selectedForwardIds.has(target.id)" [disabled]="bulkBusy" (click)="toggleForwardTarget(target)">
               @if (chat.conversationPhoto(target)) {
                 <img class="avatar avatar-img" [src]="chat.conversationPhoto(target)" alt="">
               } @else {
@@ -1551,8 +1531,8 @@
         </div>
         <footer>
           <ion-button mode="ios" fill="outline" (click)="closeForward()">{{ 'COMMON.CANCEL' | translate:'Cancelar' }}</ion-button>
-          <ion-button mode="ios" (click)="sendForward()" [disabled]="!selectedForwardIds.size || busyAction === 'forward'">
-            @if (busyAction === 'forward') { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
+          <ion-button mode="ios" (click)="sendForward()" [disabled]="bulkBusy || !selectedForwardIds.size || busyAction === 'forward'">
+            @if (bulkBusy || busyAction === 'forward') { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
             {{ 'COMMON.SEND' | translate:'Enviar' }}
           </ion-button>
         </footer>

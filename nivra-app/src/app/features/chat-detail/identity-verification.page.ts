@@ -88,7 +88,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   verified = false;
   continuity: IdentityContinuity['state'] | 'idle' = 'idle';
   continuitySource: IdentityContinuity['source'];
-  comparisonExpanded = true;
+  comparisonExpanded = false;
   verifiedAt = '';
   checkedAt = '';
   contactAlias = '';
@@ -149,6 +149,13 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
       const code = (await deriveUnverifiedSafetyNumber(pair[0], pair[1])).display;
       if (!active()) return;
       const continuity = await this.trust.continuity(JSON.stringify([scope!.user.id, scope!.device.id]), pair[1]);
+      if (!active()) return;
+      if (continuity.state === 'verified' || continuity.state === 'unchanged') {
+        // Reconcile a safe match atomically so a restored/known key also clears
+        // a stale chat warning. Unknown or changed keys never enter this path.
+        await this.trust.check(JSON.stringify([scope!.user.id, scope!.device.id]), pair[1], active);
+        if (!active()) return;
+      }
       const qr = await this.qrForComparison(code);
       if (active()) {
         this.code = code;
@@ -156,7 +163,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
         this.contactAlias = pair[1].alias;
         this.continuity = continuity.state;
         this.continuitySource = continuity.source;
-        this.comparisonExpanded = continuity.state === 'unknown' || continuity.state === 'changed';
+        this.comparisonExpanded = continuity.state === 'changed';
         this.verified = continuity.state === 'verified';
         this.verifiedAt = continuity.verifiedAt ?? '';
         this.checkedAt = new Date().toISOString();
@@ -187,7 +194,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   private clearComparison(): void {
     this.code = ''; this.qr = ''; this.comparison = ''; this.message = ''; this.contactAlias = '';
     this.verified = false; this.verifiedAt = ''; this.checkedAt = ''; this.continuity = 'idle';
-    this.continuitySource = undefined; this.comparisonExpanded = true;
+    this.continuitySource = undefined; this.comparisonExpanded = false;
     this.loading = false; this.busy = false; this.scanning = false;
   }
 

@@ -1207,7 +1207,7 @@
   "CHAT.RETURN_CALL": "Volver a la llamada",
   "CALLS.END_ROOM_ERROR": "No se pudo finalizar la sala. Inténtalo otra vez.",
   "IDENTITY.AUTO_TITLE": "Comprobación de seguridad",
-  "IDENTITY.AUTO_COPY": "Revisamos si las llaves coinciden con las guardadas en este dispositivo. Para confirmar a tu contacto, compara el QR en persona o por un canal de confianza.",
+  "IDENTITY.AUTO_COPY": "Las llaves conocidas se comprueban automáticamente. Puedes comparar el QR para confirmar a tu contacto por otro canal de confianza.",
   "IDENTITY.AUTO_CHECKING": "Comprobando las llaves…",
   "IDENTITY.STATE_VERIFIED": "Identidad comparada",
   "IDENTITY.STATE_VERIFIED_COPY": "Las llaves de tu contacto coinciden con las que ya comparaste en este dispositivo.",
@@ -1382,5 +1382,16 @@
   "PRIVATE_CHAT.WAIT": "Espera antes de volver a intentar.",
   "PRIVATE_CHAT.CONFIRM": "Confirmar con PIN",
   "PRIVATE_CHAT.BIOMETRIC": "Usar verificación del dispositivo",
-  "PRIVATE_CHAT.LOCAL_COPY": "Se vuelve a cerrar al salir del chat, cambiar de cuenta o poner la app en segundo plano. Sus notificaciones no muestran remitente ni contenido."
+  "PRIVATE_CHAT.LOCAL_COPY": "Se vuelve a cerrar al salir del chat, cambiar de cuenta o poner la app en segundo plano. Sus notificaciones no muestran remitente ni contenido.",
+  "CHAT.DELIVERY_STATUS": "Estado del envío",
+  "CHAT.INFO_READ_BY": "Leído por",
+  "CHAT.INFO_DELIVERED_TO": "Entregado a",
+  "CHAT.INFO_PENDING": "Sin entrega confirmada",
+  "CHAT.INFO_PRIVACY": "La lectura puede no compartirse según los ajustes de privacidad. Sin confirmación no se puede saber si se abrió.",
+  "CHAT.SELECT_MESSAGES": "Seleccionar mensajes",
+  "CHAT.SELECTION": "Selección",
+  "CHAT.SELECTION_LIMIT": "Puedes seleccionar hasta 100 mensajes.",
+  "CHAT.CONFIRM_SELECTED_ALL": "¿Eliminar los mensajes seleccionados para todos?",
+  "CHAT.CONFIRM_SELECTED_ME": "¿Eliminar los mensajes seleccionados sólo para ti?",
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Algunos mensajes no permiten reenvío."
 }

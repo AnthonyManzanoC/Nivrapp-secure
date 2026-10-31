@@ -1079,7 +1079,7 @@
   "CHAT.RETURN_CALL": "Zurück zum Anruf",
   "CALLS.END_ROOM_ERROR": "Der Raum konnte nicht beendet werden. Versuche es erneut.",
   "IDENTITY.AUTO_TITLE": "Sicherheitsprüfung",
-  "IDENTITY.AUTO_COPY": "Wir prüfen, ob die Schlüssel mit den auf diesem Gerät gespeicherten übereinstimmen. Um deinen Kontakt zu bestätigen, vergleiche den QR-Code persönlich oder über einen vertrauenswürdigen Kanal.",
+  "IDENTITY.AUTO_COPY": "Bekannte Schlüssel werden automatisch geprüft. Du kannst den QR-Code über einen anderen vertrauenswürdigen Kanal mit deinem Kontakt vergleichen.",
   "IDENTITY.AUTO_CHECKING": "Schlüssel werden geprüft…",
   "IDENTITY.STATE_VERIFIED": "Identität verglichen",
   "IDENTITY.STATE_VERIFIED_COPY": "Die Schlüssel deines Kontakts stimmen mit denen überein, die du auf diesem Gerät bereits verglichen hast.",
@@ -1196,5 +1196,16 @@
   "HISTORY_DEVICE.CHECKING": "Wird geprüft…",
   "HISTORY_DEVICE.SHARING": "Wird sicher geteilt…",
   "HISTORY_DEVICE.APPROVAL_TAG": "Gerät verknüpfen",
-  "HISTORY_LOADING.OPENING_LOCAL": "Dein verschlüsselter Verlauf wird geöffnet…"
+  "HISTORY_LOADING.OPENING_LOCAL": "Dein verschlüsselter Verlauf wird geöffnet…",
+  "CHAT.DELIVERY_STATUS": "Zustellstatus",
+  "CHAT.INFO_READ_BY": "Gelesen von",
+  "CHAT.INFO_DELIVERED_TO": "Zugestellt an",
+  "CHAT.INFO_PENDING": "Zustellung nicht bestätigt",
+  "CHAT.INFO_PRIVACY": "Lesebestätigungen können aufgrund der Datenschutzeinstellungen fehlen. Ohne Bestätigung lässt sich nicht erkennen, ob die Nachricht geöffnet wurde.",
+  "CHAT.SELECT_MESSAGES": "Nachrichten auswählen",
+  "CHAT.SELECTION": "Auswahl",
+  "CHAT.SELECTION_LIMIT": "Du kannst bis zu 100 Nachrichten auswählen.",
+  "CHAT.CONFIRM_SELECTED_ALL": "Ausgewählte Nachrichten für alle löschen?",
+  "CHAT.CONFIRM_SELECTED_ME": "Ausgewählte Nachrichten nur für dich löschen?",
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Einige Nachrichten können nicht weitergeleitet werden."
 }

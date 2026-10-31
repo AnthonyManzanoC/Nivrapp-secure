@@ -1,4 +1,4 @@
-export const NIVRA_VERSION = '7.6.0';
+export const NIVRA_VERSION = '7.7.0';
 export const NIVRA_CALL_PROTOCOL = 2;
 export const NIVRA_UPDATE_URL = 'https://nivrapp-secure.vercel.app';
 export const NIVRA_ANDROID_DOWNLOAD_URL = `/downloads/Nivra-${NIVRA_VERSION}-debug.apk`;

@@ -23,12 +23,12 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
   styles: [`
     :host { display: block; }
     .identity-change-notice { margin: 8px 10px; padding: 12px; display: grid; grid-template-columns: 28px minmax(0,1fr) auto; gap: 10px; align-items: center; border: 1px solid rgba(213,174,81,.28); border-radius: 16px; color: var(--nivra-text); background: rgba(213,174,81,.07); }
-    .identity-change-mark { align-self: start; width: 28px; height: 30px; display: grid; place-items: center; color: #cda653; }
+    .identity-change-mark { align-self: start; width: 28px; height: 30px; display: grid; place-items: center; color: var(--nivra-amber, #cda653); }
     .identity-change-mark ion-icon { font-size: 24px; }
     .identity-change-copy { min-width: 0; }
     .identity-change-copy strong { display: block; font-size: 13px; font-weight: 650; line-height: 1.4; }
     .identity-change-copy p { margin: 4px 0 0; color: var(--nivra-muted); font-size: 12px; line-height: 1.45; }
-    .identity-change-notice .identity-verify-action { min-height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 11px; border: 1px solid rgba(var(--ion-color-primary-rgb),.2); border-radius: 11px; color: var(--nivra-brand-2); background: rgba(var(--ion-color-primary-rgb),.1) !important; font: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; cursor: pointer; box-shadow: none; }
+    .identity-change-notice .identity-verify-action { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 11px; border: 1px solid rgba(var(--ion-color-primary-rgb),.2); border-radius: 11px; color: var(--nivra-brand-2); background: rgba(var(--ion-color-primary-rgb),.1) !important; font: inherit; font-size: 12px; font-weight: 650; white-space: nowrap; cursor: pointer; box-shadow: none; }
     .identity-verify-action ion-icon { width: 15px; height: 15px; flex: 0 0 auto; }
     .identity-verify-action:disabled { opacity: .55; cursor: default; }
     .identity-verify-action:focus-visible { outline: 2px solid var(--nivra-brand-2); outline-offset: 3px; }

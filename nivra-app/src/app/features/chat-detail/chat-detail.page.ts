@@ -73,7 +73,7 @@ import {
   volumeHighOutline,
 } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
-import { ChatMessageVm, Contact, Conversation, DeliveryReceipt, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
+import { ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -101,8 +101,10 @@ import { ChatVerificationDraftService } from './chat-verification-draft.service'
 import { ChatIdentityChangeNoticeComponent } from './chat-identity-change-notice.component';
 import { AttachmentReviewComponent, AttachmentReviewItem } from './attachment-review.component';
 import { FailedTextSendComponent } from './failed-text-send.component';
+import { MessageInfoContentComponent } from './message-info-content.component';
 
 type AttachmentMode = 'media' | 'document' | 'audio';
+interface MessageSelectionScope { conversationId: string; userId: string; deviceId: string; generation: number; sessionGeneration?: number; }
 
 interface TextSendAttempt {
   userId: string;
@@ -174,6 +176,7 @@ interface MessageTextPart {
     ImageCropperComponent,
     AttachmentReviewComponent,
     FailedTextSendComponent,
+    MessageInfoContentComponent,
     ChatExpressionPickerComponent,
     HistorySyncNoticeComponent,
     HistoryLocalCheckComponent,
@@ -275,6 +278,14 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   replyingMessage: ChatMessageVm | null = null;
   forwardQuery = '';
   selectedForwardIds = new Set<string>();
+  selectionMode = false;
+  readonly selectedMessageIds = signal<ReadonlySet<string>>(new Set());
+  selectionError = '';
+  bulkBusy = false;
+  private selectionScope: MessageSelectionScope | null = null;
+  private selectionEpoch = 0;
+  forwardingSelectionIds: string[] = [];
+  private forwardingCompleted = new Set<string>();
   chatMenuOpen = false;
   chatMenuEvent: Event | null = null;
   attachmentMenuOpen = false;
@@ -403,6 +414,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.closeReactionViewer(); this.closeMessageInfo(); this.closeContactInfo();
         this.closeProfilePhotoViewer(); this.closeMediaGallery(); this.closeForward(); this.closeSearch();
         this.closeStoryViewer(); this.closeStoryStats();
+        this.cancelSelection();
         this.emojiPanelOpen = false; this.policyPanelOpen = false;
         this.clearPendingAttachments(false); this.failedTextSend.set(null); ++this.composerGeneration;
         void this.cancelVoiceNote();
@@ -456,6 +468,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       const conversation = this.conversation();
       untracked(() => this.privacyEnforcement.setActiveConversation(conversation));
     });
+    effect(() => {
+      this.auth.session(); this.conversation();
+      untracked(() => { if (this.selectionMode && !this.selectionCurrent()) this.cancelSelection(); });
+    });
 
     effect(() => {
       const conversationId = this.conversation()?.id ?? '';
@@ -468,6 +484,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.routeSub = this.route.paramMap.subscribe((params) => {
       const id = params.get('conversationId');
       if (id) {
+        this.cancelSelection();
         void this.cancelVoiceNote();
         this.clearPendingAttachments(false);
         this.failedTextSend.set(null);
@@ -586,6 +603,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   ngOnDestroy(): void {
     this.stopGroupRoomRefresh();
     this.destroyed = true;
+    this.cancelSelection();
     this.failedTextSend.set(null);
     ++this.composerGeneration;
     this.finishContactInfoDismiss();
@@ -702,6 +720,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async back(): Promise<void> {
+    if(this.selectionMode){this.cancelSelection();return;}
     await this.router.navigateByUrl('/app/chats');
   }
 
@@ -1127,6 +1146,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   openMessageActions(message: ChatMessageVm, event?: Event): void {
     event?.preventDefault();
     event?.stopPropagation();
+    if (this.selectionMode) return;
     if (message.status === 'sending') return;
     this.actionMessage = message;
     this.actionMessageId = message.id;
@@ -1145,6 +1165,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.closeChatMenu();
     this.emojiPanelOpen = false;
     const buttons = [
+      ...(this.canSelectMessage(message) ? [{text:this.tr('CHAT.SELECT_MESSAGES','Seleccionar mensajes'),icon:'checkmark-outline',handler:()=>this.beginSelection(message)}] : []),
       ...(this.canReply(message) ? [{
         text: this.tr('CHAT_ACTIONS.REPLY', 'Responder'),
         icon: 'return-down-back-outline',
@@ -1245,6 +1266,92 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   closeMessageInfo(): void {
     this.messageInfoMessage = null;
+  }
+
+  canSelectMessage(message: ChatMessageVm): boolean {
+    return Boolean(message.id && message.status !== 'sending' && !['system','call-log','call','reaction','edit','delete'].includes(message.payload.type));
+  }
+  beginSelection(message?: ChatMessageVm): void {
+    const session=this.auth.session(), conversation=this.conversation();
+    if (!session || !conversation || (message&&message.conversationId!==conversation.id) || this.privateChatLocked() || this.bulkBusy || this.busyAction || this.sending || this.recordingVoice || this.voiceStarting) return;
+    this.closeChatMenu(); this.closeMessageActions(); this.closeSearch(); this.closeForward();
+    this.selectionScope={conversationId:conversation.id,userId:session.user.id,deviceId:session.device.id,generation:this.composerGeneration,sessionGeneration:this.auth.sessionGeneration?.()};
+    this.selectionMode=true;this.selectionError='';this.selectedMessageIds.set(new Set(message&&this.canSelectMessage(message)?[message.id]:[]));
+  }
+  cancelSelection(): void {
+    this.selectionEpoch++;this.bulkBusy=false;this.selectionMode=false;this.selectionScope=null;this.selectionError='';
+    this.selectedMessageIds?.set(new Set());
+    if(this.forwardingSelectionIds?.length)this.closeForward();
+  }
+  @HostListener('document:keydown.escape',['$event'])
+  cancelSelectionWithKeyboard(event: KeyboardEvent): void { if(this.selectionMode){event.preventDefault();this.cancelSelection();} }
+  private selectionCurrent(): boolean {
+    const scope=this.selectionScope;
+    return Boolean(scope && this.composerContextCurrent(scope.conversationId,scope.userId,scope.deviceId,scope.generation)
+      && scope.sessionGeneration===this.auth.sessionGeneration?.() && !this.privateChatLocked());
+  }
+  selectedMessages(): ChatMessageVm[] {
+    return this.selectionCurrent()?this.messages().filter(message=>this.selectedMessageIds().has(message.id)&&this.canSelectMessage(message)):[];
+  }
+  toggleMessageSelection(message: ChatMessageVm): void {
+    if(!this.selectionMode||!this.selectionCurrent()||!this.canSelectMessage(message)||this.bulkBusy)return;
+    const ids=new Set(this.selectedMessageIds());
+    if(ids.has(message.id))ids.delete(message.id);
+    else {if(ids.size>=100){this.selectionError=this.tr('CHAT.SELECTION_LIMIT','Puedes seleccionar hasta 100 mensajes.');return;}ids.add(message.id);}
+    this.selectionError='';this.selectedMessageIds.set(ids);
+  }
+  canForwardSelection(): boolean {const messages=this.selectedMessages();return messages.length>0&&messages.every(message=>this.canForward(message));}
+  canDeleteSelectionForEveryone(): boolean {const messages=this.selectedMessages();return messages.length>0&&messages.every(message=>message.mine&&message.senderUserId===this.auth.session()?.user.id);}
+  async openSelectionDelete(): Promise<void> {
+    if(!this.selectedMessages().length||this.bulkBusy)return;
+    const scope=this.selectionScope,epoch=this.selectionEpoch;
+    const apply=(everyone:boolean)=>{if(scope===this.selectionScope&&epoch===this.selectionEpoch)void this.deleteSelection(everyone);};
+    const sheet=await this.actionSheetController.create({header:this.tr('CHAT.SELECT_MESSAGES','Seleccionar mensajes'),cssClass:'nivra-message-action-sheet',buttons:[
+      {text:this.tr('CHAT.DELETE_FOR_ME','Eliminar para mí'),role:'destructive',handler:()=>apply(false)},
+      ...(this.canDeleteSelectionForEveryone()?[{text:this.tr('CHAT.DELETE_FOR_EVERYONE','Eliminar para todos'),role:'destructive',handler:()=>apply(true)}]:[]),
+      {text:this.tr('COMMON.CANCEL','Cancelar'),role:'cancel'},
+    ]});await sheet.present();
+  }
+  async deleteSelection(forEveryone: boolean): Promise<void> {
+    if(this.bulkBusy||!this.selectionCurrent()||(forEveryone&&!this.canDeleteSelectionForEveryone()))return;
+    const messages=this.selectedMessages();if(!messages.length)return;
+    if(!window.confirm(forEveryone?this.tr('CHAT.CONFIRM_SELECTED_ALL','¿Eliminar los mensajes seleccionados para todos?'):this.tr('CHAT.CONFIRM_SELECTED_ME','¿Eliminar los mensajes seleccionados sólo para ti?')))return;
+    const epoch=++this.selectionEpoch;this.bulkBusy=true;this.selectionError='';
+    try {
+      for(const message of messages){
+        if(epoch!==this.selectionEpoch||!this.selectionCurrent())return;
+        const live=this.messages().find(item=>item.id===message.id);
+        if(!live){const ids=new Set(this.selectedMessageIds());ids.delete(message.id);this.selectedMessageIds.set(ids);continue;}
+        if(forEveryone&&(!live.mine||live.senderUserId!==this.auth.session()?.user.id))throw new Error(this.tr('COMMON.ACTION_ERROR','No se pudo completar la acción.'));
+        await this.chat.deleteMessage(live,forEveryone);
+        if(epoch!==this.selectionEpoch||!this.selectionCurrent())return;
+        const ids=new Set(this.selectedMessageIds());ids.delete(message.id);this.selectedMessageIds.set(ids);
+      }
+      if(epoch===this.selectionEpoch&&this.selectionCurrent())this.cancelSelection();
+    } catch(error){if(epoch===this.selectionEpoch&&this.selectionCurrent())this.selectionError=error instanceof Error?error.message:this.tr('COMMON.ACTION_ERROR','No se pudo completar la acción.');}
+    finally {if(epoch===this.selectionEpoch)this.bulkBusy=false;}
+  }
+  openSelectionForward(): void {
+    if(this.bulkBusy||!this.canForwardSelection())return;
+    const messages=this.selectedMessages();this.openForward(messages[0]);this.forwardingSelectionIds=messages.map(message=>message.id);this.forwardingCompleted.clear();
+  }
+  private async sendSelectionForward(): Promise<void> {
+    if(this.bulkBusy||!this.selectionCurrent()||!this.forwardingSelectionIds.length||!this.selectedForwardIds.size)return;
+    const epoch=++this.selectionEpoch, ids=[...this.forwardingSelectionIds],targets=[...this.selectedForwardIds];this.bulkBusy=true;this.selectionError='';
+    try {
+      for(const id of ids){for(const target of targets){
+        if(epoch!==this.selectionEpoch||!this.selectionCurrent())return;
+        const key=JSON.stringify([id,target]);if(this.forwardingCompleted.has(key))continue;
+        const message=this.messages().find(item=>item.id===id);
+        if(!message||!this.canForward(message))throw new Error(this.tr('CHAT.CANNOT_FORWARD','Ese mensaje no se puede reenviar.'));
+        const count=await this.chat.forwardMessageToConversations(message,[target]);
+        if(epoch!==this.selectionEpoch||!this.selectionCurrent())return;
+        if(count!==1)throw new Error(this.tr('CHAT.ERROR_FORWARD','No se pudo reenviar.'));
+        this.forwardingCompleted.add(key);
+      }}
+      if(epoch===this.selectionEpoch&&this.selectionCurrent()){this.closeForward();this.cancelSelection();}
+    }catch(error){if(epoch===this.selectionEpoch&&this.selectionCurrent())this.selectionError=error instanceof Error?error.message:this.tr('CHAT.ERROR_FORWARD','No se pudo reenviar.');}
+    finally {if(epoch===this.selectionEpoch)this.bulkBusy=false;}
   }
 
   openChatMenu(event: Event): void {
@@ -1563,6 +1670,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   startMessagePress(message: ChatMessageVm, event: TouchEvent): void {
+    if(this.selectionMode)return;
     if ((event.target as HTMLElement | null)?.closest('button, a, input, audio, video') || event.touches.length !== 1) return;
     event.stopPropagation();
     this.cancelMessagePress();
@@ -1587,6 +1695,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   finishMessagePress(message: ChatMessageVm, event: TouchEvent): void {
+    if(this.selectionMode){this.cancelMessagePress();return;}
     const start = this.messageTouch;
     const touch = event.changedTouches[0];
     this.cancelMessagePress();
@@ -1784,6 +1893,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     this.forwardingMessage = message;
+    this.forwardingSelectionIds=[];this.forwardingCompleted?.clear();
     this.forwardQuery = '';
     this.selectedForwardIds.clear();
     this.closeMessageActions();
@@ -1791,9 +1901,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   closeForward(): void {
+    if(this.bulkBusy&&this.forwardingSelectionIds?.length){this.selectionEpoch++;this.bulkBusy=false;}
     this.forwardingMessage = null;
     this.forwardQuery = '';
     this.selectedForwardIds.clear();
+    this.forwardingSelectionIds=[];this.forwardingCompleted?.clear();
   }
 
   forwardTargets(): Conversation[] {
@@ -1802,6 +1914,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   toggleForwardTarget(conversation: Conversation): void {
+    if(this.bulkBusy)return;
     if (this.selectedForwardIds.has(conversation.id)) {
       this.selectedForwardIds.delete(conversation.id);
     } else {
@@ -1810,6 +1923,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async sendForward(): Promise<void> {
+    if(this.forwardingSelectionIds?.length){await this.sendSelectionForward();return;}
     const message = this.forwardingMessage;
     if (!message || !this.selectedForwardIds.size) {
       return;
@@ -2227,72 +2341,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     return this.initialsFromName(this.reactionDisplayName(reaction));
   }
 
-  messageInfoRows(message: ChatMessageVm | null = this.messageInfoMessage): DeliveryReceipt[] {
-    if (!message?.mine) {
-      return [];
-    }
-    const currentUserId = this.auth.session()?.user.id;
-    const grouped = new Map<string, DeliveryReceipt>();
-    for (const receipt of message.receipts ?? []) {
-      if (!receipt.userId || receipt.userId === currentUserId) {
-        continue;
-      }
-      const previous = grouped.get(receipt.userId);
-      grouped.set(receipt.userId, {
-        userId: receipt.userId,
-        deviceId: 'recipient',
-        deliveredAt: this.latestIso(previous?.deliveredAt, receipt.deliveredAt),
-        readAt: this.latestIso(previous?.readAt, receipt.readAt),
-        deletedAt: this.latestIso(previous?.deletedAt, receipt.deletedAt),
-      });
-    }
-    return [...grouped.values()].sort((left, right) =>
-      this.receiptDisplayName(left).localeCompare(this.receiptDisplayName(right)));
-  }
-
-  receiptDisplayName(receipt: DeliveryReceipt): string {
-    return this.chat.participantDisplayName(receipt.userId) || this.tr('COMMON.DEVICE', 'Dispositivo');
-  }
-
-  receiptAvatar(receipt: DeliveryReceipt): string {
-    return this.chat.participantPhoto(receipt.userId);
-  }
-
-  receiptInitials(receipt: DeliveryReceipt): string {
-    return this.initialsFromName(this.receiptDisplayName(receipt));
-  }
-
-  receiptStatus(receipt: DeliveryReceipt): string {
-    if (receipt.deletedAt) {
-      return `${this.tr('CHAT.DELETED', 'Eliminado')} ${this.shortDateTime(receipt.deletedAt)}`;
-    }
-    if (receipt.readAt) {
-      return `${this.tr('CHAT.READ', 'Leido')} ${this.shortDateTime(receipt.readAt)}`;
-    }
-    if (receipt.deliveredAt) {
-      return `${this.tr('CHAT.DELIVERED', 'Entregado')} ${this.shortDateTime(receipt.deliveredAt)}`;
-    }
-    return this.tr('CHAT.PENDING', 'Pendiente');
-  }
-
-  messageInfoSummary(message: ChatMessageVm | null = this.messageInfoMessage): string {
-    if (!message?.mine) {
-      return '';
-    }
-    const rows = this.messageInfoRows(message);
-    const read = rows.filter((receipt) => receipt.readAt).length;
-    const delivered = rows.filter((receipt) => receipt.deliveredAt).length;
-    return `${delivered} ${delivered === 1 ? this.tr('CHAT.DELIVERED_ONE', 'entregado') : this.tr('CHAT.DELIVERED_MANY', 'entregados')} - ${read} ${read === 1 ? this.tr('CHAT.READ_ONE', 'leido') : this.tr('CHAT.READ_MANY', 'leidos')}`;
-  }
-
-  private latestIso(left?: string | null, right?: string | null): string | null {
-    if (!left) {
-      return right ?? null;
-    }
-    if (!right) {
-      return left;
-    }
-    return Date.parse(right) > Date.parse(left) ? right : left;
+  messageInfoCurrent(): ChatMessageVm | null {
+    const selected = this.messageInfoMessage, owner = this.auth.session()?.user.id;
+    if (!selected || selected.senderUserId !== owner || this.privateChatLocked() || this.conversation()?.id !== selected.conversationId) return null;
+    return this.messages().find(message => message.mine && message.senderUserId === owner &&
+      (message.id === selected.id || Boolean(selected.clientMessageId && message.clientMessageId === selected.clientMessageId))) ?? null;
   }
 
   forwardedLabel(message: ChatMessageVm): string {

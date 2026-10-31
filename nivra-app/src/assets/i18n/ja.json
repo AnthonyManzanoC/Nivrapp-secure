@@ -1079,7 +1079,7 @@
   "CHAT.RETURN_CALL": "通話に戻る",
   "CALLS.END_ROOM_ERROR": "ルームを終了できませんでした。再試行してください。",
   "IDENTITY.AUTO_TITLE": "セキュリティ確認",
-  "IDENTITY.AUTO_COPY": "鍵がこの端末に保存された鍵と一致するか確認します。相手を確認するには、対面または信頼できる経路でQRコードを比較してください。",
+  "IDENTITY.AUTO_COPY": "既知の鍵は自動的に確認されます。別の信頼できる経路で連絡先とQRコードを比較することもできます。",
   "IDENTITY.AUTO_CHECKING": "鍵を確認中…",
   "IDENTITY.STATE_VERIFIED": "本人確認を比較済み",
   "IDENTITY.STATE_VERIFIED_COPY": "相手の鍵は、この端末で以前に比較した鍵と一致しています。",
@@ -1196,5 +1196,16 @@
   "HISTORY_DEVICE.CHECKING": "確認しています…",
   "HISTORY_DEVICE.SHARING": "安全に共有しています…",
   "HISTORY_DEVICE.APPROVAL_TAG": "デバイスのリンク",
-  "HISTORY_LOADING.OPENING_LOCAL": "暗号化された履歴を開いています…"
+  "HISTORY_LOADING.OPENING_LOCAL": "暗号化された履歴を開いています…",
+  "CHAT.DELIVERY_STATUS": "送信状況",
+  "CHAT.INFO_READ_BY": "既読",
+  "CHAT.INFO_DELIVERED_TO": "配信済み",
+  "CHAT.INFO_PENDING": "配信未確認",
+  "CHAT.INFO_PRIVACY": "プライバシー設定により既読通知が共有されない場合があります。通知がなければ、メッセージが開かれたかは分かりません。",
+  "CHAT.SELECT_MESSAGES": "メッセージを選択",
+  "CHAT.SELECTION": "選択",
+  "CHAT.SELECTION_LIMIT": "最大100件のメッセージを選択できます。",
+  "CHAT.CONFIRM_SELECTED_ALL": "選択したメッセージを全員から削除しますか？",
+  "CHAT.CONFIRM_SELECTED_ME": "選択したメッセージを自分からのみ削除しますか？",
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "一部のメッセージは転送できません。"
 }

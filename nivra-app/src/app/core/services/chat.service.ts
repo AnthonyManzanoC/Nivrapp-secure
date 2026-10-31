@@ -1,5 +1,6 @@
 import { DestroyRef, Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { HttpErrorResponse } from '@angular/common/http';
+import { earliestReceiptTime, mergeReceiptEvidence } from '../utils/receipt-time';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { firstValueFrom, fromEvent, timeout } from 'rxjs';
 import {
@@ -1415,8 +1416,11 @@ export class ChatService implements OnDestroy {
   }
 
   async deleteMessage(message: ChatMessageVm, forEveryone: boolean): Promise<void> {
+    const current=this.auth.session(),generation=this.auth.sessionGeneration?.();
+    if(!current)throw new Error('Inicia sesión para eliminar mensajes.');
     this.assertPrivateChatUnlocked(message.conversationId);
     await firstValueFrom(this.api.delete(`/api/messages/${encodeURIComponent(message.id)}?forEveryone=${forEveryone ? 'true' : 'false'}`));
+    if(this.auth.session()?.user.id!==current.user.id||this.auth.session()?.device.id!==current.device.id||this.auth.sessionGeneration?.()!==generation)return;
     this.applyMessageDeleted({ messageId: message.id, conversationId: message.conversationId });
     const accountKey = this.localAccountKey();
     if (accountKey) {
@@ -1464,6 +1468,7 @@ export class ChatService implements OnDestroy {
     if (!message) {
       return { ok: false, reason: 'Mensaje no disponible.' };
     }
+    if(message.status==='sending'||message.decryptError||(message.expiresAt&&Date.parse(message.expiresAt)<=Date.now()))return {ok:false,reason:'Este mensaje no está disponible para reenviar.'};
     if (this.privateChats?.isLocked(message.conversationId)) {
       return { ok: false, reason: 'Desbloquea el chat protegido antes de reenviar mensajes.' };
     }
@@ -2594,7 +2599,8 @@ export class ChatService implements OnDestroy {
     // A delayed cache read must not undo a message already supplied by the
     // network or recovered from an approved key transfer in this session.
     if (options.persist === false && existing && (!existing.decryptError || message.decryptError)) return;
-    const messageWithPendingReactions = this.applyPendingReactions(message);
+    const withReceipts = existing?.receipts?.length ? { ...message, receipts: mergeReceiptEvidence(existing.receipts, message.receipts ?? []) } : message;
+    const messageWithPendingReactions = this.applyPendingReactions(withReceipts);
     this.messagesByConversation.update((state) => {
       const current = state[messageWithPendingReactions.conversationId] ?? [];
       const next = [...current.filter((item) => item.id !== messageWithPendingReactions.id), messageWithPendingReactions]
@@ -3552,7 +3558,7 @@ export class ChatService implements OnDestroy {
             return message;
           }
           changed = true;
-          return { ...message, receipts };
+          return { ...message, receipts: mergeReceiptEvidence(message.receipts ?? [], receipts) };
         });
       }
       return changed ? nextState : state;
@@ -3688,10 +3694,10 @@ export class ChatService implements OnDestroy {
     const index = next.indexOf(receipt);
     const updated: DeliveryReceipt = { ...receipt };
     if (kind.includes('read')) {
-      updated.readAt = at;
-      updated.deliveredAt ||= at;
+      updated.readAt = earliestReceiptTime(updated.readAt, at);
+      updated.deliveredAt = earliestReceiptTime(updated.deliveredAt, at);
     } else if (kind.includes('deliver')) {
-      updated.deliveredAt ||= at;
+      updated.deliveredAt = earliestReceiptTime(updated.deliveredAt, at);
     } else if (kind.includes('delete')) {
       updated.deletedAt = at;
     }

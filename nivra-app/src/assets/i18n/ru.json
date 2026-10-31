@@ -1079,7 +1079,7 @@
   "CHAT.RETURN_CALL": "Вернуться к звонку",
   "CALLS.END_ROOM_ERROR": "Не удалось завершить комнату. Повторите попытку.",
   "IDENTITY.AUTO_TITLE": "Проверка безопасности",
-  "IDENTITY.AUTO_COPY": "Мы проверяем, совпадают ли ключи с сохранёнными на этом устройстве. Чтобы подтвердить контакт, сравните QR-код лично или через доверенный канал.",
+  "IDENTITY.AUTO_COPY": "Известные ключи проверяются автоматически. Вы можете сравнить QR-код с контактом по другому доверенному каналу.",
   "IDENTITY.AUTO_CHECKING": "Проверяем ключи…",
   "IDENTITY.STATE_VERIFIED": "Личность сопоставлена",
   "IDENTITY.STATE_VERIFIED_COPY": "Ключи вашего контакта совпадают с теми, которые вы ранее сравнили на этом устройстве.",
@@ -1196,5 +1196,16 @@
   "HISTORY_DEVICE.CHECKING": "Проверяем…",
   "HISTORY_DEVICE.SHARING": "Передаём безопасно…",
   "HISTORY_DEVICE.APPROVAL_TAG": "Привязка устройства",
-  "HISTORY_LOADING.OPENING_LOCAL": "Открываем зашифрованную историю…"
+  "HISTORY_LOADING.OPENING_LOCAL": "Открываем зашифрованную историю…",
+  "CHAT.DELIVERY_STATUS": "Статус отправки",
+  "CHAT.INFO_READ_BY": "Прочитано",
+  "CHAT.INFO_DELIVERED_TO": "Доставлено",
+  "CHAT.INFO_PENDING": "Доставка не подтверждена",
+  "CHAT.INFO_PRIVACY": "Уведомления о прочтении могут не передаваться из-за настроек конфиденциальности. Без подтверждения нельзя узнать, открыто ли сообщение.",
+  "CHAT.SELECT_MESSAGES": "Выбрать сообщения",
+  "CHAT.SELECTION": "Выбрано",
+  "CHAT.SELECTION_LIMIT": "Можно выбрать до 100 сообщений.",
+  "CHAT.CONFIRM_SELECTED_ALL": "Удалить выбранные сообщения у всех?",
+  "CHAT.CONFIRM_SELECTED_ME": "Удалить выбранные сообщения только у вас?",
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Некоторые сообщения нельзя пересылать."
 }

@@ -1079,7 +1079,7 @@
   "CHAT.RETURN_CALL": "العودة إلى المكالمة",
   "CALLS.END_ROOM_ERROR": "تعذر إنهاء الغرفة. حاول مجددًا.",
   "IDENTITY.AUTO_TITLE": "فحص الأمان",
-  "IDENTITY.AUTO_COPY": "نتحقق مما إذا كانت المفاتيح تطابق المفاتيح المحفوظة على هذا الجهاز. لتأكيد جهة اتصالك، قارن رمز QR شخصيًا أو عبر قناة موثوقة.",
+  "IDENTITY.AUTO_COPY": "يتم التحقق من المفاتيح المعروفة تلقائيًا. يمكنك مقارنة رمز QR لتأكيد هوية جهة الاتصال عبر قناة موثوقة أخرى.",
   "IDENTITY.AUTO_CHECKING": "جارٍ فحص المفاتيح…",
   "IDENTITY.STATE_VERIFIED": "تمت مقارنة الهوية",
   "IDENTITY.STATE_VERIFIED_COPY": "تطابق مفاتيح جهة اتصالك المفاتيح التي قارنتها سابقًا على هذا الجهاز.",
@@ -1196,5 +1196,16 @@
   "HISTORY_DEVICE.CHECKING": "جارٍ التحقق…",
   "HISTORY_DEVICE.SHARING": "جارٍ المشاركة بأمان…",
   "HISTORY_DEVICE.APPROVAL_TAG": "ربط جهاز",
-  "HISTORY_LOADING.OPENING_LOCAL": "جارٍ فتح سجلّك المشفّر…"
+  "HISTORY_LOADING.OPENING_LOCAL": "جارٍ فتح سجلّك المشفّر…",
+  "CHAT.DELIVERY_STATUS": "حالة الإرسال",
+  "CHAT.INFO_READ_BY": "تمت القراءة بواسطة",
+  "CHAT.INFO_DELIVERED_TO": "تم التسليم إلى",
+  "CHAT.INFO_PENDING": "التسليم غير مؤكد",
+  "CHAT.INFO_PRIVACY": "قد لا تتم مشاركة إيصالات القراءة بحسب إعدادات الخصوصية. من دون إيصال لا يمكن معرفة ما إذا كانت الرسالة قد فُتحت.",
+  "CHAT.SELECT_MESSAGES": "تحديد رسائل",
+  "CHAT.SELECTION": "التحديد",
+  "CHAT.SELECTION_LIMIT": "يمكنك تحديد ما يصل إلى 100 رسالة.",
+  "CHAT.CONFIRM_SELECTED_ALL": "هل تريد حذف الرسائل المحددة لدى الجميع؟",
+  "CHAT.CONFIRM_SELECTED_ME": "هل تريد حذف الرسائل المحددة لديك فقط؟",
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "لا يمكن إعادة توجيه بعض الرسائل."
 }

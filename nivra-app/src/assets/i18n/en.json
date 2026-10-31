@@ -1207,7 +1207,7 @@
   "CHAT.RETURN_CALL": "Return to call",
   "CALLS.END_ROOM_ERROR": "The room could not be ended. Try again.",
   "IDENTITY.AUTO_TITLE": "Security check",
-  "IDENTITY.AUTO_COPY": "We check whether the keys match those saved on this device. To confirm your contact, compare the QR code in person or through a trusted channel.",
+  "IDENTITY.AUTO_COPY": "Known keys are checked automatically. You can compare the QR code to confirm your contact through another trusted channel.",
   "IDENTITY.AUTO_CHECKING": "Checking keys…",
   "IDENTITY.STATE_VERIFIED": "Identity compared",
   "IDENTITY.STATE_VERIFIED_COPY": "Your contact’s keys match the ones you previously compared on this device.",
@@ -1382,5 +1382,16 @@
   "PRIVATE_CHAT.WAIT": "Wait before trying again.",
   "PRIVATE_CHAT.CONFIRM": "Confirm with PIN",
   "PRIVATE_CHAT.BIOMETRIC": "Use device verification",
-  "PRIVATE_CHAT.LOCAL_COPY": "The chat locks again when you leave it, switch accounts, or put the app in the background. Its notifications hide the sender and content."
+  "PRIVATE_CHAT.LOCAL_COPY": "The chat locks again when you leave it, switch accounts, or put the app in the background. Its notifications hide the sender and content.",
+  "CHAT.DELIVERY_STATUS": "Delivery status",
+  "CHAT.INFO_READ_BY": "Read by",
+  "CHAT.INFO_DELIVERED_TO": "Delivered to",
+  "CHAT.INFO_PENDING": "Delivery not confirmed",
+  "CHAT.INFO_PRIVACY": "Read receipts may be unavailable because of privacy settings. Without a receipt, you cannot tell whether the message was opened.",
+  "CHAT.SELECT_MESSAGES": "Select messages",
+  "CHAT.SELECTION": "Selection",
+  "CHAT.SELECTION_LIMIT": "You can select up to 100 messages.",
+  "CHAT.CONFIRM_SELECTED_ALL": "Delete the selected messages for everyone?",
+  "CHAT.CONFIRM_SELECTED_ME": "Delete the selected messages only for you?",
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Some messages cannot be forwarded."
 }

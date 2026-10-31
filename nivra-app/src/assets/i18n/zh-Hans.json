@@ -1079,7 +1079,7 @@
   "CHAT.RETURN_CALL": "返回通话",
   "CALLS.END_ROOM_ERROR": "无法结束房间。请重试。",
   "IDENTITY.AUTO_TITLE": "安全检查",
-  "IDENTITY.AUTO_COPY": "我们会检查密钥是否与此设备上保存的密钥一致。要确认联系人的身份，请当面或通过可信渠道比较二维码。",
+  "IDENTITY.AUTO_COPY": "已知密钥会自动检查。你也可以通过其他可信渠道与联系人比较二维码，以确认其身份。",
   "IDENTITY.AUTO_CHECKING": "正在检查密钥…",
   "IDENTITY.STATE_VERIFIED": "已比较身份",
   "IDENTITY.STATE_VERIFIED_COPY": "联系人的密钥与您此前在此设备上比较的密钥一致。",
@@ -1196,5 +1196,16 @@
   "HISTORY_DEVICE.CHECKING": "正在检查…",
   "HISTORY_DEVICE.SHARING": "正在安全共享…",
   "HISTORY_DEVICE.APPROVAL_TAG": "关联设备",
-  "HISTORY_LOADING.OPENING_LOCAL": "正在打开加密聊天记录…"
+  "HISTORY_LOADING.OPENING_LOCAL": "正在打开加密聊天记录…",
+  "CHAT.DELIVERY_STATUS": "发送状态",
+  "CHAT.INFO_READ_BY": "已读成员",
+  "CHAT.INFO_DELIVERED_TO": "已送达成员",
+  "CHAT.INFO_PENDING": "尚未确认送达",
+  "CHAT.INFO_PRIVACY": "隐私设置可能不允许分享已读回执。没有回执时，无法判断消息是否已被打开。",
+  "CHAT.SELECT_MESSAGES": "选择消息",
+  "CHAT.SELECTION": "已选择",
+  "CHAT.SELECTION_LIMIT": "最多可选择100条消息。",
+  "CHAT.CONFIRM_SELECTED_ALL": "为所有人删除所选消息？",
+  "CHAT.CONFIRM_SELECTED_ME": "仅为自己删除所选消息？",
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "部分消息不允许转发。"
 }

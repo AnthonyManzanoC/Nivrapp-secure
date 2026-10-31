@@ -1868,6 +1868,8 @@ ion-modal.nivra-story-viewer-modal {
   --box-shadow: none;
   z-index: 40000;
 }
+ion-modal.message-info-modal { --width: min(520px, 100vw); --max-height: min(86dvh, 800px); --border-radius: 24px 24px 0 0; }
+@media (min-width: 700px) { ion-modal.message-info-modal { align-items: center; --border-radius: 24px; } }
 
 body.nivra-cropper-open {
   overflow: hidden !important;

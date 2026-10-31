@@ -5,6 +5,10 @@ Backend MVP para Nivra: una app de mensajería privada, gratuita primero, con ba
 La capa de datos ya usa PostgreSQL/Supabase con Entity Framework Core y migraciones automáticas al arrancar.
 El backend funciona como API pura + SignalR. El SPA vanilla original se conserva en `Nivra.Api/wwwroot_legacy` como historial y guia de migracion; el nuevo frontend vive en `nivra-app` con Angular + Ionic.
 
+La versión 7.7.0, Android build 49, restaura la confianza de contactos al vincular historial y conserva automáticamente las llaves conocidas. Rediseña la información del mensaje con estados por persona en directo y grupos, y añade selección múltiple para borrar o reenviar. Una llave nueva sin continuidad comprobable sigue requiriendo comparación. Véanse [los cambios y límites de 7.7.0](docs/release-7.7.0.md).
+
+La versión 7.6.0, Android build 48, mueve las acciones de chats a la izquierda, corrige el acceso al perfil y el tema del acceso, y reduce lecturas redundantes en la sincronización de PostgreSQL. Véanse [los cambios y límites de 7.6.0](docs/release-7.6.0.md).
+
 La versión 7.5.0, Android build 47, unifica el idioma de entrada y Cuenta, adapta Recuperación al idioma y tema del sistema, regresa a Bienvenida al cerrar la última cuenta y añade una tarjeta rápida de contacto. Reúne las acciones de chat a la derecha, pule Llamadas y permite guardar adjuntos autorizados en el dispositivo. Véanse [los cambios, validación y límites de 7.5.0](docs/release-7.5.0.md).
 
 La versión 7.4.0, Android build 46, recupera el historial localmente en el APK sin pedir ayuda automáticamente a otros equipos. Mantiene la aprobación de solicitudes entrantes y ofrece recuperación externa explícita para llaves antiguas. Véanse [los cambios, validación y límites de 7.4.0](docs/release-7.4.0.md).

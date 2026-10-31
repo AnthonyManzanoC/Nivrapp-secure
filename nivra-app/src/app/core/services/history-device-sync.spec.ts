@@ -3,6 +3,8 @@ import { fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
 import { of, Subject, throwError } from 'rxjs';
 import { CryptoService } from './crypto.service';
 import { HistoryDeviceSyncService, HistoryRecoveryEvidence } from './history-device-sync.service';
+import { IdentityTrustService } from './identity-trust.service';
+import { PublicKeyDirectory } from '../models/nivra.models';
 
 function cryptoHarness(protector?: () => string | null): { service: any; records: Map<string, any> } {
   const records = new Map<string, any>();
@@ -55,12 +57,13 @@ describe('approved encrypted history recovery', () => {
     message: { id: 'old-message', conversationId: 'chat', recipients: [{ userId: 'alice', deviceId: 'old-device',
       header: JSON.stringify({ v: 1, alg: 'ECDH-P256-A256GCM', senderPublicKey: publicKey, iv: btoa(String.fromCharCode(...new Uint8Array(12))) }),
       ciphertext: btoa(String.fromCharCode(...new Uint8Array(16))) }] } });
-  async function approvedTarget() {
+  async function approvedTarget(identityTrust?: IdentityTrustService) {
     const source = cryptoHarness(); const target = cryptoHarness();
     const sourceKey = await source.service.createDeviceKeys(); const targetKey = await target.service.createDeviceKeys();
     await source.service.saveDeviceKeys('alice', 'source', sourceKey, { userId: 'alice' });
     await target.service.saveDeviceKeys('alice', 'target', targetKey, { userId: 'alice' });
     const sourceSync = syncHarness(source.service); const targetSync = syncHarness(target.service, 'target');
+    if(identityTrust){sourceSync.service.identityTrust=identityTrust;targetSync.service.identityTrust=identityTrust;}
     const transfer = request(targetKey.publicJwk);
     sourceSync.service.pendingRequests.set([{ ...transfer, fingerprint: await sourceSync.service.publicFingerprint(targetKey.publicJwk) }]);
     sourceSync.api.get.and.returnValue(of([transfer]));
@@ -565,12 +568,28 @@ describe('approved encrypted history recovery', () => {
     expect(sourceSync.service.identityTrust.exportForLinkedDevice).toHaveBeenCalledOnceWith('alice', 'source');
     expect(JSON.stringify(response)).not.toContain('identity-continuity');
     await targetSync.service.pump();
-    expect(targetSync.service.identityTrust.importFromLinkedDevice).toHaveBeenCalledOnceWith('alice:target', 'source', {
+    expect(targetSync.service.identityTrust.importFromLinkedDevice).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'target']), 'source', {
       v: 1, purpose: 'identity-continuity', userId: 'alice', sourceDeviceId: 'source', entries: [],
     }, jasmine.any(Function));
     await targetSync.service.pump();
     expect(targetSync.service.identityTrust.importFromLinkedDevice).toHaveBeenCalledTimes(1);
     expect(status.responses.length).toBe(1);
+  });
+
+  it('restores actual contact trust through the encrypted history handoff and still rejects an unknown key', async () => {
+    const trust=new IdentityTrustService();const keys=cryptoHarness();const peer=await keys.service.createDeviceKeys();
+    const directory: PublicKeyDirectory={userId:crypto.randomUUID(),alias:'contact',devices:[{deviceId:'phone',deviceName:'Phone',lastRotatedAt:'2026-10-30T00:00:00Z',keyBundle:peer.keyBundle}]};
+    await trust.confirm(JSON.stringify(['alice','source']),directory);
+    const {targetSync,response}=await approvedTarget(trust);
+    expect(JSON.stringify(response)).not.toContain(directory.userId);
+    await targetSync.service.pump();
+    const targetScope=JSON.stringify(['alice','target']);
+    const continuity=await trust.continuity(targetScope,directory);
+    expect(continuity.state).toBe('verified');expect(continuity.source).toBe('linked-device');
+    const linked={...directory,devices:[...directory.devices,{...directory.devices[0],deviceId:'laptop'}]};
+    await expectAsync(trust.check(targetScope,linked)).toBeResolved();
+    const unknown=await keys.service.createDeviceKeys();
+    await expectAsync(trust.check(targetScope,{...directory,devices:[{...directory.devices[0],keyBundle:unknown.keyBundle}]})).toBeRejected();
   });
 
   it('keeps valid historical keys when optional continuity metadata cannot be imported', async () => {
