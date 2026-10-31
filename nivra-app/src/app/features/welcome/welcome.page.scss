@@ -97,3 +97,13 @@ h1 { max-width: 440px; margin: 0 auto 18px; font-size: clamp(30px, 5.8vw, 42px);
   .welcome-copy { margin-bottom: 22px; }
 }
 @media (prefers-reduced-motion: reduce) { .next-button { transition: none; } }
+:host-context(.ion-palette-dark) { color-scheme: dark; }
+:host-context(.ion-palette-dark) .welcome-page { --background: #0d1815; --color: #e3f1eb; }
+:host-context(.ion-palette-dark) .welcome-shell { color: #e3f1eb; background: radial-gradient(ellipse at 25% 40%, #173a2c80, transparent 52%); }
+:host-context(.ion-palette-dark) .soft-disc { background: #1c3a2c; }
+:host-context(.ion-palette-dark) .orbit { border-color: #385b49; }
+:host-context(.ion-palette-dark) .art-message, :host-context(.ion-palette-dark) .language-picker { background: #192c23; color: #bcead0; border-color: #385b49; }
+:host-context(.ion-palette-dark) .art-lock { border-color: #0d1815; }
+:host-context(.ion-palette-dark) .welcome-copy, :host-context(.ion-palette-dark) .language-label, :host-context(.ion-palette-dark) .welcome-footer { color: #a4b9ae; }
+:host-context(.ion-palette-dark) .eyebrow, :host-context(.ion-palette-dark) .language-picker > ion-icon { color: #74ddb8; }
+:host-context(.ion-palette-dark) select, :host-context(.ion-palette-dark) option { background: #192c23; color: #e3f1eb; }

@@ -45,6 +45,32 @@ describe('Chat profile interactions', () => {
     return { page, navigate, setSession: (userId: string, deviceId = 'phone') => { session = { user: { id: userId }, device: { id: deviceId } }; }, setConversation: (value: Conversation) => { conversation = value; } };
   }
 
+  it('opens requested profile only after the correct protected chat is unlocked', () => {
+    const { page, navigate } = fixture();
+    let locked = true;
+    const route = { snapshot: { paramMap: { get: () => 'chat' } } };
+    Object.assign(page, { route, pendingContactInfoId: 'chat', privateChats: { isLocked: () => locked } });
+    const open = spyOn(page, 'openContactInfo');
+    const attempt = () => (page as any).openPendingContactInfo();
+    attempt();
+    expect(open).not.toHaveBeenCalled();
+    locked = false;
+    attempt();
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(navigate).toHaveBeenCalledOnceWith([], { relativeTo: route, queryParams: { info: null }, queryParamsHandling: 'merge', replaceUrl: true });
+    attempt();
+    expect(open).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not open a pending profile against a different loaded chat', () => {
+    const { page, navigate } = fixture();
+    Object.assign(page, { route: { snapshot: { paramMap: { get: () => 'another-chat' } } }, pendingContactInfoId: 'another-chat', privateChats: { isLocked: () => false } });
+    const open = spyOn(page, 'openContactInfo');
+    (page as any).openPendingContactInfo();
+    expect(open).not.toHaveBeenCalled();
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it('finds active members by names, aliases and phone while ignoring accents', () => {
     const { page, setConversation } = fixture();
     setConversation({ id: 'chat', type: 'Group', privacySettings: {}, participants: [member('active', 'Lucía Gómez', { alias: '@luci', phone: '+593123' }), member('removed', 'Lucía', { removedAt: 'now' })], createdAt: 'now', updatedAt: 'now' });

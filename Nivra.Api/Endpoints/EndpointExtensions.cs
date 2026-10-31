@@ -2097,7 +2097,9 @@ public static partial class EndpointExtensions
             var activeConversations = db.Conversations
                 .Where(conversation => conversation.Participants.Any(participant => participant.UserId == current.UserId && participant.RemovedAt == null))
                 .Select(conversation => conversation.Id);
-            var query = db.Messages
+            // Avoid multiplying ciphertext rows when messages have multiple
+            // recipients and receipts; retain the existing sync cursor semantics.
+            var query = db.Messages.AsNoTracking().AsSplitQuery()
                 .Where(message => activeConversations.Contains(message.ConversationId))
                 .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId))
                 .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
@@ -4491,7 +4493,7 @@ public static partial class EndpointExtensions
             var messageLimit = Math.Clamp(messageTake ?? 30, 1, 100);
             List<MessageEnvelope> recentMessages = conversationIds.Count == 0
                 ? []
-                : await db.Messages
+                : await db.Messages.AsNoTracking().AsSplitQuery()
                     .Where(message => conversationIds.Contains(message.ConversationId))
                     .Where(message => message.ExpiresAt == null || message.ExpiresAt > now)
                     .Where(message => message.Recipients.Any(recipient => recipient.UserId == current.UserId))
@@ -4506,7 +4508,7 @@ public static partial class EndpointExtensions
                     .Take(messageLimit)
                     .ToListAsync(cancellationToken);
             recentMessages.Reverse();
-            List<MessageEnvelope> deletedMessageRows = conversationIds.Count == 0
+            List<MessageDeletionResponse> deletedMessages = conversationIds.Count == 0
                 ? []
                 : await db.Messages
                     .Where(message => conversationIds.Contains(message.ConversationId))
@@ -4515,18 +4517,15 @@ public static partial class EndpointExtensions
                         receipt.DeletedAt != null))
                     .OrderByDescending(message => message.ServerReceivedAt)
                     .Take(500)
-                    .ToListAsync(cancellationToken);
-            var deletedMessages = deletedMessageRows
-                .Select(message => new MessageDeletionResponse(
+                    .Select(message => new MessageDeletionResponse(
                     message.Id,
                     message.ConversationId,
                     "me",
                     message.Receipts
                         .Where(receipt => receipt.UserId == current.UserId && receipt.DeletedAt != null)
-                        .Select(receipt => receipt.DeletedAt!.Value)
-                        .DefaultIfEmpty(message.ServerReceivedAt)
-                        .Max()))
-                .ToList();
+                        .Select(receipt => receipt.DeletedAt)
+                        .Max() ?? message.ServerReceivedAt))
+                    .ToListAsync(cancellationToken);
 
             var vault = (await store.VaultItemsForUserAsync(current.UserId, cancellationToken))
                 .Select(ToVaultItemResponse)

@@ -8,8 +8,33 @@ using Nivra.Api.Infrastructure;
 using Nivra.Api.Services;
 using Npgsql;
 
+// SQL generation can be checked without connecting to any database.
+if (args.Contains("--sql-only"))
+{
+    var sqlOptions = new DbContextOptionsBuilder<NivraDbContext>()
+        .UseNpgsql("Host=localhost;Database=nivra_sql_only;Username=unused;Password=unused").Options;
+    await using var sqlDb = new NivraDbContext(sqlOptions);
+    var probeUser = "user-probe";
+    var sql = sqlDb.Messages
+        .Where(message => message.Receipts.Any(receipt => receipt.UserId == probeUser && receipt.DeletedAt != null))
+        .OrderByDescending(message => message.ServerReceivedAt)
+        .Take(500)
+        .Select(message => new Nivra.Api.Contracts.MessageDeletionResponse(
+            message.Id, message.ConversationId, "me",
+            message.Receipts.Where(receipt => receipt.UserId == probeUser && receipt.DeletedAt != null)
+                .Select(receipt => receipt.DeletedAt).Max() ?? message.ServerReceivedAt))
+        .ToQueryString();
+    if (!sql.Contains("max(", StringComparison.OrdinalIgnoreCase) || sql.Contains("Ciphertext", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("Unexpected deletion projection SQL.");
+    var splitSql = sqlDb.Messages.AsNoTracking().AsSplitQuery().Take(30).ToQueryString();
+    if (!splitSql.Contains("split", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException("Expected a split message query.");
+    Console.WriteLine("PASS: Npgsql translates the deletion projection without ciphertext and uses split message queries; no database connection was opened.");
+    return;
+}
+
 // Explicit opt-in tool: no application host, users, messages or production calls are created.
-if (!args.Contains("--check") && !args.Contains("--migrate")) { Console.WriteLine("Use --check (read/locks) or --migrate (apply pending migrations). Run from repository root."); return; }
+if (!args.Contains("--check") && !args.Contains("--migrate")) { Console.WriteLine("Use --sql-only (no connection), --check (read/locks) or --migrate (apply pending migrations). Run from repository root."); return; }
 try
 {
     var configurationPath = File.Exists("Nivra.Api/appsettings.Development.json") ? "Nivra.Api/appsettings.Development.json" : "Nivra.Api/appsettings.json";

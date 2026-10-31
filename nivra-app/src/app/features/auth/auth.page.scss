@@ -210,3 +210,15 @@ button:disabled { opacity: .55; cursor: default; }
 .add-account-return p { margin: 0; font-size: 12px; line-height: 1.5; color: var(--nivra-muted); }
 .add-account-return button { justify-self: start; padding: 7px 0; border: 0; background: none; color: var(--nivra-brand-2); font: inherit; font-size: 12px; font-weight: 650; cursor: pointer; }
 .add-account-return button:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 3px; }
+:host-context(.ion-palette-dark) { color-scheme: dark; --access-ink: #e3f1eb; --access-muted: #a4b9ae; --access-line: #30483e; --access-green: #74ddb8; --access-mint: #21c997; }
+:host-context(.ion-palette-dark) .auth-page { --background: #0d1815; }
+:host-context(.ion-palette-dark) .auth-shell { background: #0d1815; }
+:host-context(.ion-palette-dark) .language-picker, :host-context(.ion-palette-dark) .language-picker option, :host-context(.ion-palette-dark) .auth-modes button.active { background: #1b2e27; color: var(--access-ink); }
+:host-context(.ion-palette-dark) .auth-modes, :host-context(.ion-palette-dark) .sms-preview { background: #16251f; }
+:host-context(.ion-palette-dark) .auth-form label > span { color: #c2d8cb; }
+:host-context(.ion-palette-dark) ion-input { --background: #172923; --color: var(--access-ink); border-color: var(--access-line); }
+:host-context(.ion-palette-dark) .password-toggle { color: var(--access-muted); }
+:host-context(.ion-palette-dark) .password-toggle:hover { background: #263d32; }
+:host-context(.ion-palette-dark) .auth-visual { background: radial-gradient(ellipse at 75% 70%, #16493380, transparent 55%), #13231c; border-color: var(--access-line); }
+:host-context(.ion-palette-dark) .editorial-intro h2 { color: var(--access-ink); }
+:host-context(.ion-palette-dark) .editorial-intro p, :host-context(.ion-palette-dark) .editorial-intro small { color: var(--access-muted); }

@@ -285,7 +285,7 @@
                   </div>
                 </ion-item>
 
-                <ion-item-options side="end">
+                <ion-item-options side="start">
                   <ion-item-option color="primary" [disabled]="!!conversationActionBusy" (click)="togglePinned(conversation, $event)">
                     <ion-icon slot="start" name="pin-outline"></ion-icon>
                     {{ chat.isConversationPinned(conversation.id) ? ('CHATS.UNPIN' | translate:'Desfijar') : ('CHATS.PIN' | translate:'Fijar') }}

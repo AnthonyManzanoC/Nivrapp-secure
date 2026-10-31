@@ -187,6 +187,7 @@ interface MessageTextPart {
 export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   readonly privateChats = inject(PrivateChatLockService);
   privateChatProtectionOpen = false;
+  private pendingContactInfoId: string | null = null;
   privateChatProtectionAction: 'protect' | 'remove' = 'protect';
   privateConversationId(): string { return this.route?.snapshot?.paramMap?.get('conversationId') || this.conversation()?.id || ''; }
   privateChatLocked(): boolean { return this.privateChats.isLocked(this.privateConversationId()); }
@@ -202,7 +203,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       if (this.destroyed || this.privateChatLocked()) return;
       this.cdr.detectChanges(); this.bindVoiceGesture();
       const id = this.privateConversationId();
-      if (id) { void this.chat.markConversationRead(id); this.scheduleInitialScroll(id, { force: true }); }
+      if (id) { void this.chat.markConversationRead(id); this.scheduleInitialScroll(id, { force: true }); this.openPendingContactInfo(); }
     });
   }
   private readonly identityTrust = inject(IdentityTrustService);
@@ -485,11 +486,16 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
           void this.refreshConversationStories(conversation);
           if (requestId === this.initialScrollRequestId) {
             this.scheduleInitialScroll(id, { force: true });
-            if (this.route.snapshot.queryParamMap?.get('info') === '1' && !this.privateChatLocked()) this.openContactInfo();
+            this.openPendingContactInfo();
           }
         });
       }
     });
+    const infoSubscription = this.route.queryParamMap?.subscribe(params => {
+      this.pendingContactInfoId = params.get('info') === '1' ? this.privateConversationId() : null;
+      this.openPendingContactInfo();
+    });
+    if (infoSubscription) this.routeSub.add(infoSubscription);
     void this.bindKeyboard();
     void this.bindRaiseGestures();
     queueMicrotask(() => this.cdr.detectChanges());
@@ -1390,6 +1396,14 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.closeMessageActions();
     void this.chat.hydrateConversationProfile(conversation);
     void this.refreshConversationStories(conversation);
+  }
+
+  private openPendingContactInfo(): void {
+    const id = this.pendingContactInfoId;
+    if (!id || this.destroyed || this.privateChatLocked() || this.privateConversationId() !== id || this.conversation()?.id !== id) return;
+    this.pendingContactInfoId = null;
+    this.openContactInfo();
+    void this.router.navigate([], { relativeTo: this.route, queryParams: { info: null }, queryParamsHandling: 'merge', replaceUrl: true });
   }
 
   closeContactInfo(): void {
