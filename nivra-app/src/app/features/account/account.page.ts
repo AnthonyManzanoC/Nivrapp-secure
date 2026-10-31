@@ -1073,7 +1073,6 @@ export class AccountPage implements OnInit, OnDestroy {
       }
       this.calls.releaseLocalResources();
       await this.auth.logout();
-      await this.router.navigateByUrl(this.auth.session() ? '/app/chats' : '/auth');
     });
   }
 

@@ -32,6 +32,7 @@ import { ChatLaunchCacheService } from './chat-launch-cache.service';
 import { authErrorMessage } from '../utils/auth-error';
 import { normalizeNivraNumber } from '../utils/nivra-number';
 import { AccountSessionsService } from './account-sessions.service';
+import { NativeOnboardingService } from './native-onboarding.service';
 import { NivraNative } from './native-plugin';
 import { markWebPushAccountWipe, pendingWebPushAccountWipes } from './push-account-scopes';
 import { IdentityTrustService, IdentityTrustTransfer } from './identity-trust.service';
@@ -95,6 +96,7 @@ const authTextDecoder = new TextDecoder();
 
 @Injectable({ providedIn: 'root' })
 export class AuthService implements OnDestroy {
+  private readonly onboarding = inject(NativeOnboardingService);
   private readonly api = inject(NivraApiService);
   private readonly crypto = inject(CryptoService);
   private readonly identityTrust = inject(IdentityTrustService);
@@ -305,13 +307,16 @@ export class AuthService implements OnDestroy {
       if (!snapshot || !isCurrent()) return;
       this.launchCache.clear(userId);
       const wasActive = this.session()?.user.id === userId || this.addingReturnUserId === userId;
-      if (wasActive) {
+      if (wasActive || snapshot.sessions.length === 0) {
         await this.stopAuthenticationTransports();
         if (!isCurrent()) return;
         const active = snapshot.sessions.find(auth => auth.user.id === snapshot.activeUserId);
         if (active && await this.allowAccountActivation(active, isCurrent) && isCurrent()) this.finishAccountActivation(active);
         else if (isCurrent()) this.finishAccountActivation(null);
-        if (isCurrent()) await this.router.navigateByUrl(this.session() ? '/app/chats' : '/auth', { replaceUrl: true });
+        if (isCurrent()) {
+          if (!this.session()) this.onboarding?.restart();
+          await this.router.navigateByUrl(this.session() ? '/app/chats' : '/welcome', { replaceUrl: true });
+        }
       }
       if (snapshot.sessions.length === 0 && isCurrent()) await this.nativeFirebaseSignOut();
       // Use the removed session's credentials directly. An inactive logout
@@ -1128,7 +1133,8 @@ export class AuthService implements OnDestroy {
       await this.nativeFirebaseSignOut();
       if (!isCurrent()) return;
       this.finishAccountActivation(null);
-      await this.router.navigateByUrl('/auth', { replaceUrl: true });
+      this.onboarding?.restart();
+      await this.router.navigateByUrl('/welcome', { replaceUrl: true });
     } finally { if (isCurrent()) this.accountsBusy.set(false); }
   }
 

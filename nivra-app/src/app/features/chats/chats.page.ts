@@ -1,5 +1,5 @@
 import { CommonModule } from '@angular/common';
-import { Component, EffectRef, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, Injector, EffectRef, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PrivateChatLockService } from '../../core/services/private-chat-lock.service';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
@@ -24,12 +24,14 @@ import {
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, fingerPrintOutline, imageOutline, lockClosedOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { callOutline, videocamOutline, informationCircleOutline, addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, fingerPrintOutline, imageOutline, lockClosedOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { ChatFolderFilter, ChatService } from '../../core/services/chat.service';
+import { QuickContactCardComponent, QuickContactAction } from '../../shared/quick-contact-card.component';
+import { CallsService } from '../../core/services/calls.service';
 import { SocialService } from '../../core/services/social.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
@@ -68,7 +70,7 @@ type ConversationMenuAction = 'pin' | 'mute' | 'archive';
     HistorySyncNoticeComponent,
     HistoryLocalCheckComponent,
     ChatLoadingComponent,
-    ChatWelcomeComponent,
+    ChatWelcomeComponent, QuickContactCardComponent,
     ChatPassComponent,
     ImageCropperComponent,
     IonAvatar,
@@ -93,6 +95,7 @@ type ConversationMenuAction = 'pin' | 'mute' | 'archive';
   styleUrls: ['./chats.page.scss'],
 })
 export class ChatsPage implements OnDestroy {
+  private readonly injector = inject(Injector);
   readonly privateChats = inject(PrivateChatLockService);
   readonly chat = inject(ChatService);
   readonly social = inject(SocialService);
@@ -287,7 +290,7 @@ export class ChatsPage implements OnDestroy {
     document.addEventListener('pointerdown', this.onDocumentPointerDown, true);
     document.addEventListener('keydown', this.onDocumentKeydown, true);
     document.addEventListener('visibilitychange', this.onHistoryVisibility);
-    addIcons({
+    addIcons({ callOutline, videocamOutline, informationCircleOutline,
       addOutline,
       archiveOutline,
       chatbubbleEllipsesOutline,
@@ -933,6 +936,12 @@ export class ChatsPage implements OnDestroy {
     if (Date.now() < this.suppressAvatarClickUntil) {
       return;
     }
+    if (this.chat.conversationPhoto(conversation)) {
+      this.avatarActionsConversation = conversation;
+      this.avatarActionsEvent = null;
+      this.avatarActionsOpen = true;
+      return;
+    }
     if (this.chat.isGroup(conversation)) {
       await this.social.loadGroupStories(conversation.id).catch(() => []);
     } else {
@@ -991,6 +1000,34 @@ export class ChatsPage implements OnDestroy {
     if (conversation) {
       this.openListPhoto(conversation);
     }
+  }
+
+  handleQuickContactAction(action: QuickContactAction): void {
+    if (action === 'close') this.closeListAvatarActions();
+    else if (action === 'photo') this.chooseListAvatarPhoto();
+    else if (action === 'story') void this.chooseListAvatarStory();
+    else void this.quickContactAction(action);
+  }
+
+  async quickContactAction(action: 'chat' | 'info' | 'Voice' | 'Video'): Promise<void> {
+    const conversation = this.avatarActionsConversation;
+    const scope = this.searchContext();
+    this.closeListAvatarActions();
+    if (!conversation || !this.isCurrentScope(scope)) return;
+    if (action === 'chat' || action === 'info' || this.privateChats.isProtected(conversation.id)) {
+      await this.router.navigate(['/app/chats', conversation.id], { queryParams: action === 'info' ? { info: '1' } : {} });
+      if (this.isCurrentScope(scope)) void this.chat.selectConversation(conversation.id);
+      return;
+    }
+    if (this.chat.isConversationBlocked(conversation.id)) return;
+    try {
+      const calls = this.injector.get(CallsService);
+      const participants = conversation.participants.filter(p => !p.removedAt && p.userId !== this.auth.session()?.user.id).map(p => p.userId);
+      const room = this.chat.isGroup(conversation) ? await calls.refreshActiveGroupRoom(conversation.id) : null;
+      if (!this.isCurrentScope(scope)) return;
+      if (room) await calls.joinGroupRoom(room); else await calls.start(action, conversation.id, participants);
+      if (this.isCurrentScope(scope) && calls.activeCall()) await this.router.navigateByUrl('/app/calls');
+    } catch { if (this.isCurrentScope(scope)) this.syncNotice = this.tr('CALLS.START_ERROR', 'No se pudo iniciar la llamada.'); }
   }
 
   closeListAvatarActions(): void {

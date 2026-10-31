@@ -104,6 +104,7 @@ export class AppComponent {
   });
 
   constructor() {
+    effect(() => this.appSettings.publicSurface?.set(!this.currentUrl().startsWith('/app')));
     void this.translate;
     void this.performanceMode;
     void this.privacyEnforcement;

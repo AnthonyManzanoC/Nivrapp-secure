@@ -3,6 +3,7 @@ import { Location } from '@angular/common';
 import { ActivatedRoute } from '@angular/router';
 import { of, throwError } from 'rxjs';
 import { NivraApiService } from '../../core/services/nivra-api.service';
+import { TranslateService } from '../../core/services/translate.service';
 import { RecoveryPage } from './recovery.page';
 
 describe('account recovery form', () => {
@@ -11,6 +12,7 @@ describe('account recovery form', () => {
   function page(fragment: string | null) {
     api = { post: jasmine.createSpy().and.returnValue(of({ message: 'Actualizado' })) };
     TestBed.configureTestingModule({ providers: [
+      { provide: TranslateService, useValue: { instant: (_: string, fallback: string) => fallback } },
       { provide: NivraApiService, useValue: api },
       { provide: ActivatedRoute, useValue: { snapshot: { fragment } } },
       { provide: Location, useValue: { replaceState: jasmine.createSpy() } },
@@ -35,7 +37,7 @@ describe('account recovery form', () => {
   });
   it('displays expired-link errors without claiming a password changed', async () => {
     const form = page('token=' + token + '&purpose=verify-email');
-    api.post.and.returnValue(throwError(() => ({ error: { message: 'Enlace vencido' } })));
-    await form.submit(); expect(form.error).toBe('Enlace vencido'); expect(form.completed).toBeFalse();
+    api.post.and.returnValue(throwError(() => ({ status: 400, error: { message: 'Enlace vencido' } })));
+    await form.submit(); expect(form.error).toContain('venció'); expect(form.completed).toBeFalse();
   });
 });

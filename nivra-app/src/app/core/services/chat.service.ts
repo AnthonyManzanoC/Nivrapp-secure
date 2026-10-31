@@ -1582,10 +1582,11 @@ export class ChatService implements OnDestroy {
     return this.rememberMediaPreview(fileId, new Blob([plain], { type: this.fileMime(file) }), this.fileMime(file), this.fileName(file));
   }
 
-  async downloadAttachment(payload: ChatPayload, conversation?: Conversation | null): Promise<void> {
+  async downloadAttachment(payload: ChatPayload, conversation?: Conversation | null, saveToDevice = false): Promise<void> {
+    const context = this.captureSendContext();
     const preview = await this.ensureMediaPreview(payload);
     const file = this.asFile(payload);
-    if (!preview || !file) {
+    if (!preview || !file || !this.isSendContextCurrent(context)) {
       return;
     }
 
@@ -1593,12 +1594,14 @@ export class ChatService implements OnDestroy {
     const fileName = this.fileName(file);
     if (this.nativeDevice.native) {
       const blob = await fetch(preview.url).then((response) => response.blob());
+      if (!this.isSendContextCurrent(context)) return;
       await this.nativeDevice.saveBlob(
         blob,
         fileName,
         mimeType,
-        this.shouldSaveAttachmentPublic(file, conversation ?? this.selectedConversation()),
+        saveToDevice || this.shouldSaveAttachmentPublic(file, conversation ?? this.selectedConversation()),
         this.mediaKindForMime(mimeType),
+        () => this.isSendContextCurrent(context),
       );
       return;
     }

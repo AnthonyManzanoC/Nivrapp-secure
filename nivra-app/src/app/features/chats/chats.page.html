@@ -222,12 +222,7 @@
           <ion-list #conversationList class="list ion-content-scroll-host" lines="none" [attr.inert]="showConversationSkeleton() ? '' : null" [attr.aria-hidden]="showConversationSkeleton() ? 'true' : null" (scroll)="onChatListScroll($event)">
             @for (conversation of conversationsForFolder(); track conversation.id) {
               <ion-item-sliding>
-                <ion-item-options side="start">
-                  <ion-item-option color="primary" [disabled]="!!conversationActionBusy" (click)="togglePinned(conversation, $event)">
-                    <ion-icon slot="start" name="pin-outline"></ion-icon>
-                    {{ chat.isConversationPinned(conversation.id) ? ('CHATS.UNPIN' | translate:'Desfijar') : ('CHATS.PIN' | translate:'Fijar') }}
-                  </ion-item-option>
-                </ion-item-options>
+
 
                 <ion-item
                   button
@@ -291,6 +286,11 @@
                 </ion-item>
 
                 <ion-item-options side="end">
+                  <ion-item-option color="primary" [disabled]="!!conversationActionBusy" (click)="togglePinned(conversation, $event)">
+                    <ion-icon slot="start" name="pin-outline"></ion-icon>
+                    {{ chat.isConversationPinned(conversation.id) ? ('CHATS.UNPIN' | translate:'Desfijar') : ('CHATS.PIN' | translate:'Fijar') }}
+                  </ion-item-option>
+
                   <ion-item-option color="medium" [disabled]="!!conversationActionBusy" (click)="toggleMuted(conversation, $event)">
                     <ion-icon slot="start" [name]="chat.isConversationMuted(conversation.id) ? 'notifications-outline' : 'notifications-off-outline'"></ion-icon>
                     {{ chat.isConversationMuted(conversation.id) ? ('CHATS.UNMUTE' | translate:'Activar') : ('CHATS.MUTE' | translate:'Silenciar') }}
@@ -466,39 +466,14 @@
     </ng-template>
   </ion-modal>
 
-  <ion-popover
-    class="avatar-actions-popover"
-    [isOpen]="avatarActionsOpen"
-    [event]="avatarActionsEvent"
-    [showBackdrop]="false"
-    side="bottom"
-    alignment="center"
-    (didDismiss)="closeListAvatarActions()">
+  <ion-modal class="quick-contact-modal" [isOpen]="avatarActionsOpen" (didDismiss)="closeListAvatarActions()">
     <ng-template>
-      <div class="avatar-action-menu">
-        <div class="avatar-action-heading">
-          <strong>{{ 'CHAT.CHOOSE_AVATAR_ACTION' | translate:'¿Qué quieres ver?' }}</strong>
-          <small>{{ 'CHAT.PHOTO_OR_STORY_HINT' | translate:'La foto y las historias están disponibles.' }}</small>
-        </div>
-        <button type="button" (click)="chooseListAvatarStory()">
-          <span class="avatar-action-icon story"><ion-icon name="play-circle-outline"></ion-icon></span>
-          <span>
-            <strong>{{ 'CHAT.OPEN_STORIES' | translate:'Ver historia' }}</strong>
-            <small>{{ 'CHAT.OPEN_ACTIVE_STORIES' | translate:'Abrir historias activas' }}</small>
-          </span>
-          <ion-icon name="chevron-forward-outline"></ion-icon>
-        </button>
-        <button type="button" (click)="chooseListAvatarPhoto()">
-          <span class="avatar-action-icon photo"><ion-icon name="image-outline"></ion-icon></span>
-          <span>
-            <strong>{{ avatarActionsConversation && chat.isGroup(avatarActionsConversation) ? ('CHAT.VIEW_GROUP_PHOTO' | translate:'Ver foto del grupo') : ('CHAT.VIEW_PROFILE_PHOTO' | translate:'Ver foto de perfil') }}</strong>
-            <small>{{ 'CHAT.OPEN_FULL_SIZE' | translate:'Abrir en tamaño completo' }}</small>
-          </span>
-          <ion-icon name="chevron-forward-outline"></ion-icon>
-        </button>
-      </div>
+      @if (avatarActionsConversation; as person) {
+        <app-quick-contact-card [name]="chat.conversationTitle(person)" [photo]="chat.conversationPhoto(person)" [hasStories]="conversationHasStory(person)" (action)="handleQuickContactAction($event)" />
+      }
     </ng-template>
-  </ion-popover>
+  </ion-modal>
+
 
   <ion-modal class="list-photo-viewer-modal" [isOpen]="!!profilePhotoViewerUrl" (didDismiss)="closeListPhoto()">
     <ng-template>

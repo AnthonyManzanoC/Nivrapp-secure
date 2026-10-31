@@ -485,6 +485,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
           void this.refreshConversationStories(conversation);
           if (requestId === this.initialScrollRequestId) {
             this.scheduleInitialScroll(id, { force: true });
+            if (this.route.snapshot.queryParamMap?.get('info') === '1' && !this.privateChatLocked()) this.openContactInfo();
           }
         });
       }
@@ -878,7 +879,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.downloadingId = message.id;
     this.attachmentError = '';
     try {
-      await this.chat.downloadAttachment(message.payload, this.conversation());
+      await this.chat.downloadAttachment(message.payload, this.conversation(), true);
       if (this.shouldMarkViewOnceOpened(message)) {
         await this.chat.markMessageOpened(message);
       }

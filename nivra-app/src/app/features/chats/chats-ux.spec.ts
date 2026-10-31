@@ -34,6 +34,29 @@ describe('Chats actions and scoped search', () => {
     chat.localHistoryCheckState.set('idle'); expect(page.hasHistoryStatus()).toBeFalse();
   });
 
+  it('opens a quick contact immediately and opens the original photo viewer only after selecting its photo', async () => {
+    const photo = 'data:image/png;base64,AAA=';
+    chat.conversationPhoto = () => photo;
+    const person = { id: 'family', title: 'Family' } as any;
+    const event = { stopPropagation: () => {}, preventDefault: () => {} } as Event;
+    await page.abrirHistoria(person, event);
+    expect(page.avatarActionsOpen).toBeTrue(); expect(page.profilePhotoViewerUrl).toBe('');
+    page.chooseListAvatarPhoto();
+    expect(page.avatarActionsOpen).toBeFalse(); expect(page.profilePhotoViewerUrl).toBe(photo);
+    expect(router.navigate).not.toHaveBeenCalled();
+  });
+
+  it('keeps a quick contact action scoped to its account while navigation is pending', async () => {
+    const pending = deferred<boolean>(); router.navigate.and.returnValue(pending.promise);
+    (page as any).privateChats = { isProtected: () => false };
+    chat.selectConversation = jasmine.createSpy('select');
+    page.avatarActionsConversation = { id: 'family' } as any;
+    const action = page.quickContactAction('info');
+    auth.session.set({ user: { id: 'ux-other' }, device: { id: 'other-device' } });
+    pending.resolve(true); await action;
+    expect(chat.selectConversation).not.toHaveBeenCalled(); expect(page.avatarActionsOpen).toBeFalse();
+  });
+
   beforeEach(() => {
     auth = { session: signal({ user: { id: 'ux-me', alias: 'maria' }, device: { id: 'ux-device' } }), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), relinkDevice: jasmine.createSpy('relinkDevice').and.resolveTo() };
     router = { events: EMPTY, url: '/app/chats', navigate: jasmine.createSpy().and.resolveTo(true), navigateByUrl: jasmine.createSpy().and.resolveTo(true), parseUrl: () => ({ root: { children: {} } }) };

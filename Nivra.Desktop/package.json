@@ -1,6 +1,6 @@
 {
   "name": "nivra-desktop",
-  "version": "7.4.0",
+  "version": "7.5.0",
   "private": true,
   "description": "Nivra desktop shell for Windows.",
   "main": "main.js",

@@ -1650,3 +1650,7 @@ ion-modal.story-stats-modal {
     border-inline: 0;
   }
 }
+:host ion-item-option { min-width: 68px; max-width: 92px; font-size: 12px; font-weight: 600; }
+:host ion-item-option ion-icon { width: 20px; height: 20px; margin: 0 0 5px; }
+:host ion-item-option::part(native) { flex-direction: column; gap: 4px; padding: 12px 9px; }
+ion-modal.quick-contact-modal { --width: min(360px, calc(100vw - 40px)); --height: auto; --border-radius: 22px; --background: var(--nivra-panel-solid); --box-shadow: var(--nivra-shadow-soft); }

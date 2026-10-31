@@ -138,6 +138,16 @@ describe('two saved authenticated accounts', () => {
     expect(request.headers).toEqual(jasmine.objectContaining({ Authorization: 'Bearer access-alice', 'X-Nivra-Device-Id': 'device-alice' }));
   });
 
+  it('returns to welcome after closing the final account without erasing shared device keys', async () => {
+    const test = harness(['alice']);
+    test.service.onboarding = { restart: jasmine.createSpy('restart') };
+    await test.service.logout();
+    expect(test.service.session()).toBeNull();
+    expect(test.service.onboarding.restart).toHaveBeenCalledTimes(1);
+    expect(test.navigate).toHaveBeenCalledWith('/welcome', { replaceUrl: true });
+    expect(test.clearSecret).not.toHaveBeenCalled();
+  });
+
   it('removes the inactive slot without navigating or changing the active session', async () => {
     const test = harness();
     await test.service.removeAccount('bob');

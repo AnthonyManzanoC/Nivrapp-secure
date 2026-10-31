@@ -73,7 +73,7 @@ describe('web and packaged app entry guards', () => {
     completed.and.returnValue(true);
     expect(destination(await enter())).toBe('/auth');
     expect(await enter(guest)).toBeTrue();
-    expect(destination(await enter(welcomeGuest))).toBe('/auth');
+    expect(await enter(welcomeGuest)).toBeTrue();
   });
 
   it('opens auth directly after Electron onboarding has been completed', async () => {
@@ -106,9 +106,9 @@ describe('web and packaged app entry guards', () => {
     expect(await enter(guest)).toBeTrue();
   });
 
-  it('keeps browser auth direct and does not expose the app welcome', async () => {
+  it('keeps browser auth direct and permits returning to welcome after logout', async () => {
     expect(await enter(guest)).toBeTrue();
-    expect(destination(await enter(welcomeGuest))).toBe('/auth');
+    expect(await enter(welcomeGuest)).toBeTrue();
   });
 
   it('does not erase pending invitations while routing a native guest through the welcome', async () => {

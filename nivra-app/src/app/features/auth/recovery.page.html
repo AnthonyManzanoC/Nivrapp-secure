@@ -1,0 +1,27 @@
+<ion-content fullscreen><main class="recovery-surface"><section class="recovery-card">
+  <a routerLink="/auth" class="brand">NIVRA <span>{{ 'LAUNCH.PRIVATE_SPACE' | translate:'Tu espacio privado' }}</span></a>
+  <div class="recovery-symbol" aria-hidden="true">✦</div>
+  <p class="eyebrow">{{ t('EYEBROW', 'Seguridad de tu cuenta') }}</p>
+  <h1>{{ title() }}</h1>
+  @if (!completed) {
+    <p class="copy">{{ token ? (purpose === 'verify-email' ? t('VERIFY_COPY', 'Confirma este correo para recuperar tu acceso cuando lo necesites.') : t('RESET_COPY', 'Tu nueva contraseña cerrará las sesiones anteriores. Tus llaves privadas se conservan en los dispositivos donde ya estaban.')) : t('COPY', 'Ingresa tu ID Nivra o alias. Enviaremos un enlace al correo de recuperación que verificaste en Cuenta.') }}</p>
+    <form (ngSubmit)="submit()">
+      @if (!token) {
+        <label>{{ 'LOGIN.IDENTIFIER' | translate:'ID Nivra o @alias' }}<input name="identifier" [(ngModel)]="identifier" autocomplete="username" autocapitalize="off" spellcheck="false" maxlength="40" required></label>
+      } @else if (purpose !== 'verify-email') {
+        <label>{{ t('NEW_PASSWORD', 'Nueva contraseña') }}<input name="newPassword" [(ngModel)]="password" type="password" autocomplete="new-password" minlength="10" maxlength="1024" required></label>
+        <label>{{ t('CONFIRM_PASSWORD', 'Repite la contraseña') }}<input name="confirmPassword" [(ngModel)]="confirmation" type="password" autocomplete="new-password" maxlength="1024" required></label>
+        <small>{{ t('PASSWORD_HINT', 'Al menos 10 caracteres. Puedes pegar una contraseña de tu gestor.') }}</small>
+      }
+      <ion-button expand="block" type="submit" [disabled]="busy">@if (busy) { <ion-spinner name="crescent" /> }{{ token ? (purpose === 'verify-email' ? t('VERIFY_ACTION', 'Confirmar mi correo') : t('SAVE', 'Guardar contraseña')) : t('SEND', 'Enviar enlace seguro') }}</ion-button>
+    </form>
+  }
+  @if (notice) { <p class="notice" role="status">{{ notice }}</p> }
+  @if (error) { <p class="error" role="alert">{{ error }}</p> }
+  @if (token && error) { <button class="text-link" type="button" (click)="startAgain()">{{ t('AGAIN', 'Solicitar otro enlace') }}</button> }
+  <a class="back-link" routerLink="/auth">{{ t('BACK', 'Volver a Nivra') }}</a>
+  @if (!completed && !token) {
+    <details><summary>{{ t('NO_EMAIL', 'No configuré un correo de recuperación') }}</summary><p class="copy">{{ t('NO_EMAIL_COPY', 'Necesitas un correo previamente verificado para recuperar tu contraseña. Si conservas una sesión abierta, revisa las opciones en Cuenta.') }}</p></details>
+  }
+  <p class="privacy-note">{{ t('PRIVACY', 'El correo recupera tu acceso. Las conversaciones cifradas siguen necesitando las llaves guardadas en tus dispositivos.') }}</p>
+</section></main></ion-content>

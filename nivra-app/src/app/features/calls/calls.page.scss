@@ -1759,3 +1759,24 @@ ion-modal.call-audio-modal {
 .call-audio-route:disabled { opacity: .6; }
 .call-audio-route.output-mute { margin-top: 14px; }
 .call-audio-sheet .call-audio-hint { margin-bottom: 0; font-size: 12px; }
+.surface:not(.call-mode) .agenda-hero { padding: 18px; border-radius: 18px; box-shadow: none; border: 1px solid var(--nivra-line); }
+.surface:not(.call-mode) .agenda-hero-icon { width: 52px; height: 52px; }
+.surface:not(.call-mode) .agenda-hero-icon ion-icon { width: 28px; height: 28px; }
+.surface:not(.call-mode) .agenda-hero strong { font-size: 20px; letter-spacing: -.4px; }
+.surface:not(.call-mode) .agenda-hero span { display: block; margin-top: 6px; font-size: 13px; line-height: 1.6; }
+.surface:not(.call-mode) .agenda-list { scrollbar-width: none; gap: 0; max-height: 480px; }
+.surface:not(.call-mode) .agenda-list::-webkit-scrollbar { display: none; }
+.surface:not(.call-mode) .agenda-row { border: 0; border-bottom: 1px solid var(--nivra-line); border-radius: 0; min-height: 78px; padding: 12px 4px; background: transparent; box-shadow: none; transform: none; }
+.surface:not(.call-mode) .contact-face { border-radius: 50%; font-weight: 650; }
+.surface:not(.call-mode) .agenda-actions ion-button { width: 44px; height: 44px; --padding-start: 10px; --padding-end: 10px; }
+.surface:not(.call-mode) .agenda-actions ion-icon { width: 22px; height: 22px; flex: none; }
+.surface:not(.call-mode) .history-row { min-height: 82px; border: 0; border-bottom: 1px solid var(--nivra-line); border-radius: 0; background: transparent; box-shadow: none; padding: 14px 0; gap: 12px; }
+.surface:not(.call-mode) .history-copy span { font-size: 12px; margin-top: 3px; }
+.surface:not(.call-mode) .history-copy small { font-size: 11px; }
+.surface:not(.call-mode) .history-actions { flex: none; }
+.surface:not(.call-mode) .history-actions .direction { width: 18px; height: 18px; }
+.surface:not(.call-mode) .history-actions .kind { width: 22px; height: 22px; }
+.surface:not(.call-mode) .call-search { --background: var(--nivra-panel-2); --box-shadow: none; margin-block: 12px; }
+.surface:not(.call-mode) .agenda-row { grid-template-columns: 48px minmax(0, 1fr) auto; }
+.surface:not(.call-mode) .agenda-actions { grid-column: auto; justify-content: flex-end; }
+.surface:not(.call-mode) .agenda-actions ion-button { flex: none; }

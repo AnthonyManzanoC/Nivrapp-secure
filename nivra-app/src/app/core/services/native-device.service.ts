@@ -421,10 +421,11 @@ export class NativeDeviceService {
     };
   }
 
-  async saveBlob(blob: Blob, fileName: string, mimeType: string, savePublic: boolean, mediaKind: MediaKind): Promise<SaveFileResponse | null> {
+  async saveBlob(blob: Blob, fileName: string, mimeType: string, savePublic: boolean, mediaKind: MediaKind, isCurrent: () => boolean = () => true): Promise<SaveFileResponse | null> {
     if (!this.native) {
       return null;
     }
+    if (!isCurrent()) throw new Error('La cuenta cambió antes de guardar el archivo.');
 
     const session = await NivraNative.saveFileChunkedStart({
       fileName,
@@ -436,12 +437,16 @@ export class NativeDeviceService {
     try {
       const chunkSize = 512 * 1024;
       for (let offset = 0; offset < blob.size; offset += chunkSize) {
+        if (!isCurrent()) throw new Error('La cuenta cambió durante el guardado.');
         const chunk = blob.slice(offset, Math.min(blob.size, offset + chunkSize));
+        const base64 = await this.blobToBase64(chunk);
+        if (!isCurrent()) throw new Error('La cuenta cambió durante el guardado.');
         await NivraNative.saveFileChunk({
           sessionId,
-          base64: await this.blobToBase64(chunk),
+          base64,
         });
       }
+      if (!isCurrent()) throw new Error('La cuenta cambió durante el guardado.');
       return await NivraNative.saveFileChunkedFinish({ sessionId });
     } catch (error) {
       await NivraNative.saveFileChunkedAbort({ sessionId }).catch(() => undefined);

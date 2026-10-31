@@ -228,6 +228,11 @@
                       <strong>{{ file.voiceNote ? ('CHAT.VOICE_NOTE' | translate:'Nota de voz') : chat.fileName(file) }}</strong>
                       <small>{{ chat.fileSize(file) }}</small>
                     </span>
+                    @if (!message.deleteAfterRead && canExportMessage(message)) {
+                      <button type="button" class="voice-save" (click)="download(message)" [disabled]="downloadingId === message.id" [attr.aria-label]="'CHAT.SAVE_DEVICE' | translate:'Guardar en el dispositivo'" [title]="'CHAT.SAVE_DEVICE' | translate:'Guardar en el dispositivo'">
+                        @if (downloadingId === message.id) { <ion-spinner name="crescent" /> } @else { <ion-icon name="download-outline" /> }
+                      </button>
+                    }
                   </div>
                   @if (chat.mediaPreview(file.fileId || file.downloadFile || file.previewFile); as media) {
                     <div class="voice-inline">
@@ -303,7 +308,7 @@
                       <small>{{ chat.fileSize(file) }}</small>
                     </span>
                     @if (!message.deleteAfterRead && canExportMessage(message)) {
-                      <button type="button" class="media-download" (click)="download(message); $event.stopPropagation()" [disabled]="downloadingId === message.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
+                      <button type="button" class="media-download" (click)="download(message); $event.stopPropagation()" [disabled]="downloadingId === message.id" [attr.aria-label]="'CHAT.SAVE_DEVICE' | translate:'Guardar en el dispositivo'">
                         @if (downloadingId === message.id) {
                           <ion-spinner name="crescent"></ion-spinner>
                         } @else {
@@ -346,7 +351,7 @@
                     <span>{{ chat.fileSize(file) }}</span>
                   </div>
                   @if (canExportMessage(message)) {
-                    <ion-button mode="ios" fill="clear" type="button" (click)="download(message)" [disabled]="downloadingId === message.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
+                    <ion-button mode="ios" fill="clear" type="button" (click)="download(message)" [disabled]="downloadingId === message.id" [attr.aria-label]="'CHAT.SAVE_DEVICE' | translate:'Guardar en el dispositivo'">
                       @if (downloadingId === message.id) {
                         <ion-spinner name="crescent"></ion-spinner>
                       } @else {
@@ -1427,7 +1432,7 @@
             <strong>{{ chat.fileName(activeMediaFile) }}</strong>
             <div class="viewer-actions">
               @if (activeMediaMessage && !activeMediaMessage.deleteAfterRead) {
-                <ion-button mode="ios" fill="clear" (click)="downloadActiveMedia()" [disabled]="downloadingId === activeMediaMessage.id" [attr.aria-label]="'COMMON.DOWNLOAD' | translate:'Descargar'">
+                <ion-button mode="ios" fill="clear" (click)="downloadActiveMedia()" [disabled]="downloadingId === activeMediaMessage.id" [attr.aria-label]="'CHAT.SAVE_DEVICE' | translate:'Guardar en el dispositivo'">
                   @if (downloadingId === activeMediaMessage.id) {
                     <ion-spinner name="crescent"></ion-spinner>
                   } @else {

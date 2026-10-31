@@ -64,7 +64,7 @@ describe('welcome language and account preferences', () => {
     expect(reopened.settings().language).toBe('ar');
   });
 
-  it('restores an existing account language ahead of the guest language', () => {
+  it('applies the selected login language to an existing account while preserving other preferences', () => {
     localStorage.setItem(guestKey, JSON.stringify({ language: 'ar' }));
     localStorage.setItem(accountKey, JSON.stringify({ language: 'fr', chatWallpaper: 'silk' }));
     const settings = TestBed.inject(AppSettingsService);
@@ -73,8 +73,33 @@ describe('welcome language and account preferences', () => {
 
     session.set({ user: { id: 'welcome-language-test' } });
     TestBed.flushEffects();
-    expect(settings.settings().language).toBe('fr');
+    expect(settings.settings().language).toBe('ar');
     expect(settings.settings().chatWallpaper).toBe('silk');
-    expect(document.documentElement.dir).toBe('ltr');
+    expect(document.documentElement.dir).toBe('rtl');
+  });
+
+  it('uses the system theme on a public recovery screen without changing the account theme', () => {
+    const settings = TestBed.inject(AppSettingsService);
+    session.set({ user: { id: 'welcome-language-test' } }); TestBed.flushEffects();
+    settings.set('themeMode', 'dark');
+    (settings as any).systemLightTheme.set(true);
+    expect(settings.resolvedLightTheme()).toBeFalse();
+    settings.publicSurface.set(true); TestBed.flushEffects();
+    expect(settings.resolvedLightTheme()).toBeTrue();
+    expect(settings.settings().themeMode).toBe('dark');
+    settings.publicSurface.set(false); TestBed.flushEffects();
+    expect(settings.resolvedLightTheme()).toBeFalse();
+  });
+
+  it('keeps the last visible language when returning to welcome and preserves it on the next login', () => {
+    const settings = TestBed.inject(AppSettingsService); TestBed.flushEffects();
+    session.set({ user: { id: 'welcome-language-test' } }); TestBed.flushEffects();
+    settings.set('language', 'de'); TestBed.flushEffects();
+    session.set(null); TestBed.flushEffects();
+    expect(settings.settings().language).toBe('de');
+    expect(JSON.parse(localStorage.getItem(guestKey)!).language).toBe('de');
+    settings.set('language', 'ja'); TestBed.flushEffects();
+    session.set({ user: { id: 'welcome-language-test' } }); TestBed.flushEffects();
+    expect(settings.settings().language).toBe('ja');
   });
 });

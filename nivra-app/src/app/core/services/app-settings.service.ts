@@ -119,6 +119,7 @@ const ACCENTS: Record<string, AccentTheme> = {
 
 @Injectable({ providedIn: 'root' })
 export class AppSettingsService {
+  readonly publicSurface = signal(false);
   private readonly auth = inject(AuthService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly ionicConfig = inject(Config, { optional: true });
@@ -166,7 +167,7 @@ export class AppSettingsService {
 
   resolvedLightTheme(settings = this.settings()): boolean {
     // The public login follows this device, while each account keeps its own preference.
-    if (!this.auth.isAuthenticated()) {
+    if ((this.publicSurface?.() ?? false) || !this.auth.isAuthenticated()) {
       return this.systemLightTheme();
     }
     if (settings.themeMode === 'light') {
@@ -263,8 +264,11 @@ export class AppSettingsService {
     if (nextKey === this.currentStorageKey) {
       return;
     }
+    const loginLanguage = this.currentStorageKey === SETTINGS_STORAGE_PREFIX || nextKey === SETTINGS_STORAGE_PREFIX
+      ? this.settings().language : null;
     this.currentStorageKey = nextKey;
-    this.settings.set(this.loadSettings(nextKey));
+    const loaded = this.loadSettings(nextKey);
+    this.settings.set(loginLanguage ? { ...loaded, language: loginLanguage } : loaded);
   }
 
   private persist(settings: NivraAppSettings): void {
@@ -371,7 +375,7 @@ export class AppSettingsService {
     document.body.classList.toggle('nivra-animations-off', !settings.animationsEnabled);
     root.classList.toggle('nivra-animations-off', !settings.animationsEnabled);
     this.syncIonicAnimations(settings.animationsEnabled);
-    const themeMode = this.auth.isAuthenticated() ? settings.themeMode : 'system';
+    const themeMode = !(this.publicSurface?.() ?? false) && this.auth.isAuthenticated() ? settings.themeMode : 'system';
     document.body.dataset['nivraThemeMode'] = themeMode;
     root.dataset['nivraThemeMode'] = themeMode;
     root.style.colorScheme = light ? 'light' : 'dark';

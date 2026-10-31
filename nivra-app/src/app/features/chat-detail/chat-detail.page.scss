@@ -2137,3 +2137,7 @@ ion-modal.media-review-modal {
 }
 ion-modal.private-chat-modal { --width: min(480px, calc(100vw - 24px)); --height: auto; --max-height: 90dvh; --border-radius: 24px; --background: var(--nivra-panel-solid); }
 ion-modal.private-chat-modal::part(content) { max-height: 90dvh; overflow: auto; }
+.voice-save { display: grid; place-items: center; margin-inline-start: auto; width: 44px; height: 44px; padding: 10px; border: 0; border-radius: 50%; background: transparent; color: var(--nivra-brand-2); flex: none; cursor: pointer; }
+.voice-save ion-icon, .voice-save ion-spinner { width: 20px; height: 20px; }
+.voice-save:focus-visible { outline: 2px solid var(--nivra-brand-2); outline-offset: 2px; }
+.voice-save:disabled { opacity: .55; cursor: default; }

@@ -30,4 +30,9 @@ export class NativeOnboardingService {
       // The welcome may appear next launch, but can be dismissed this session.
     }
   }
+
+  restart(): void {
+    this.completedInMemory = false;
+    try { localStorage.removeItem(ONBOARDING_KEY); } catch { /* Memory still follows this logout. */ }
+  }
 }

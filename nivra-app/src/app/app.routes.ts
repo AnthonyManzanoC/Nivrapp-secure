@@ -22,7 +22,7 @@ export const welcomeGuest = async () => {
   const router = inject(Router);
   const onboarding = inject(NativeOnboardingService);
   if (await auth.ensureSessionRestored()) return router.parseUrl('/app/chats');
-  return onboarding.isPackagedApp() && !onboarding.isComplete() ? true : router.parseUrl('/auth');
+  return true;
 };
 
 export const landingGuest = async () => {

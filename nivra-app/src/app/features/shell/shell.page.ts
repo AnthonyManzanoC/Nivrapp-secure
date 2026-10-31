@@ -187,7 +187,6 @@ export class ShellPage implements AfterViewInit, OnDestroy {
     }
     this.calls.releaseLocalResources();
     await this.auth.logout();
-    await this.router.navigateByUrl(this.auth.session() ? '/app/chats' : '/auth');
   }
 
   private isMobileImmersiveRoute(url: string): boolean {
