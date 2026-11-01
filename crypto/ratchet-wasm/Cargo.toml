@@ -14,6 +14,7 @@ crate-type = ["cdylib"]
 libsignal-protocol = { git = "https://github.com/signalapp/libsignal", rev = "904c8dc8216073b078a5f2f5090e3da8382e6a92" }
 rand = "=0.9.4"
 getrandom = { version = "=0.3.4", features = ["wasm_js"] }
+getrandom04 = { package = "getrandom", version = "=0.4.3", features = ["wasm_js"] }
 wasm-bindgen = "=0.2.130"
 
 [profile.release]
@@ -21,3 +22,11 @@ overflow-checks = true
 lto = true
 codegen-units = 1
 panic = "abort"
+
+# Match the upstream Signal release profiles for the cryptographic crates.
+[profile.release.package.curve25519-dalek]
+overflow-checks = false
+[profile.release.package.sha2]
+overflow-checks = false
+[profile.release.package.hmac]
+overflow-checks = false
