@@ -1,0 +1,42 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'com.nivra.ratchetlab'
+    compileSdk rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId 'com.nivra.ratchetlab'
+        minSdk 24
+        targetSdk rootProject.ext.targetSdkVersion
+        versionCode 1
+        versionName '0.1-laboratory'
+        testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
+    }
+    sourceSets.main.assets.srcDir layout.buildDirectory.dir('generated/ratchet-assets')
+}
+
+dependencies {
+    implementation "androidx.webkit:webkit:${rootProject.ext.androidxWebkitVersion}"
+    implementation 'net.zetetic:sqlcipher-android:4.10.0@aar'
+    implementation 'androidx.sqlite:sqlite:2.4.0'
+    androidTestImplementation "androidx.test.ext:junit:${rootProject.ext.androidxJunitVersion}"
+    androidTestImplementation 'androidx.test:runner:1.7.0'
+}
+
+def bridgeRoot = rootProject.file('../crypto/ratchet-wasm')
+tasks.register('prepareRatchetAssets', Copy) {
+    doFirst {
+        if (!new File(bridgeRoot, 'pkg/web/nivra_ratchet_wasm_bg.wasm').isFile()) {
+            throw new GradleException('Build/download the verified laboratory WASM artifact first')
+        }
+    }
+    from(bridgeRoot) {
+        include 'web-device.mjs', 'pkg/web/*.js', 'pkg/web/*.wasm'
+    }
+    from('src/main/lab-web')
+    into layout.buildDirectory.dir('generated/ratchet-assets')
+}
+tasks.named('preBuild').configure { dependsOn 'prepareRatchetAssets' }

@@ -3,3 +3,8 @@ include ':capacitor-cordova-android-plugins'
 project(':capacitor-cordova-android-plugins').projectDir = new File('./capacitor-cordova-android-plugins/')
 
 apply from: 'capacitor.settings.gradle'
+
+// Explicit laboratory build only; excluded from normal client/installer builds.
+if (providers.gradleProperty('nivraRatchetLab').orNull == 'true') {
+    include ':ratchet-lab'
+}
