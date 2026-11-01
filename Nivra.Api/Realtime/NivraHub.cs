@@ -507,7 +507,7 @@ public sealed class NivraHub(
         if (request.Recipients.Count > 1024 || string.IsNullOrWhiteSpace(request.ClientMessageId) || request.ClientMessageId.Length > 128) throw new HubException("Mensaje de sala inválido.");
         var activeUsers = await db.VaultRoomMembers.Where(member => member.VaultRoomId == roomId && member.Status == VaultMemberStatus.Active).Select(member => member.UserId).ToListAsync(Context.ConnectionAborted);
         var deviceIds = request.Recipients.Select(recipient => recipient.DeviceId).Distinct().ToArray();
-        var devices = await db.Devices.AsNoTracking().Where(device => deviceIds.Contains(device.Id) && device.RevokedAt == null && device.IsTrusted).ToDictionaryAsync(device => device.Id, Context.ConnectionAborted);
+        var devices = await db.Devices.AsNoTracking().Where(device => deviceIds.Contains(device.Id) && device.RevokedAt == null && device.IsTrusted && db.Users.Any(user => user.Id == device.UserId && user.DisabledAt == null)).ToDictionaryAsync(device => device.Id, Context.ConnectionAborted);
         if (!request.Recipients.Select(recipient => recipient.UserId).ToHashSet(StringComparer.Ordinal).SetEquals(activeUsers) ||
             request.Recipients.Select(recipient => (recipient.UserId, recipient.DeviceId)).Distinct().Count() != request.Recipients.Count ||
             request.Recipients.Any(recipient => !devices.TryGetValue(recipient.DeviceId, out var device) || device.UserId != recipient.UserId || string.IsNullOrWhiteSpace(recipient.Ciphertext)) ||

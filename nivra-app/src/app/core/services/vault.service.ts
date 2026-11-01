@@ -28,6 +28,7 @@ import { SignalrService } from './signalr.service';
 import { EncryptedDownloadService } from './encrypted-download.service';
 import { RatchetMessagingService, RatchetTarget } from './ratchet-messaging.service';
 import { ratchetTransport } from './ratchet-runtime';
+import { IdentityTrustService } from './identity-trust.service';
 
 const VAULT_META_PREFIX = 'nivra.vault.';
 const MAX_VAULT_FILE_BYTES = 256 * 1024 * 1024;
@@ -924,8 +925,11 @@ export class VaultService {
     }
     const targets: RatchetTarget[] = [];
     for (const member of members) {
-      const published = directories.find(directory => directory.userId === member.userId)?.devices.filter(device => device.keyBundle?.identityKey) ?? [];
+      const directory = directories.find(directory => directory.userId === member.userId);
+      const published = directory?.devices.filter(device => device.keyBundle?.identityKey) ?? [];
       if (!published.length && member.userId !== context.userId) throw Error('Un miembro necesita abrir Nivra y completar la actualización del cifrado.');
+      if (directory && member.userId !== context.userId) await this.injector.get(IdentityTrustService).check(JSON.stringify([context.userId, context.deviceId]), directory, () => this.isCurrent(context));
+      this.checkContext(context);
       for (const device of published) {
         const publicJwk = this.crypto.parsePublicJwk(device.keyBundle.identityKey);
         if (!publicJwk || !device.deviceId) throw Error('No se pudo comprobar un dispositivo de la sala.');
