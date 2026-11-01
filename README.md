@@ -1,6 +1,6 @@
 # Nivra Backend
 
-La versión 8.0.1, Android build 51, añade una cola cifrada de textos con reintentos automáticos y el botón Cerrar chat; alinea las tarjetas de escritorio y corrige navegación y etiquetas en la lista de tres líneas. El piloto Double Ratchet incorpora persistencia cifrada de laboratorio con pruebas de reapertura y fallos; todavía no está activado en producción. Véanse [los cambios y límites de 8.0.1](docs/release-8.0.1.md).
+La versión 8.1.0, Android build 52, integra un motor común Double Ratchet basado en vodozemac y un saludo híbrido X25519 + ML-KEM-768. Los mensajes nuevos requieren dispositivos actualizados; se conserva la lectura del historial anterior y la transferencia cifrada aprobada entre dispositivos. Mantiene la cola de textos, el diseño de escritorio y Cerrar chat. Véanse [el protocolo, las pruebas y el despliegue de 8.1.0](docs/release-8.1.0.md).
 
 Backend MVP para Nivra: una app de mensajería privada, gratuita primero, con base técnica para cifrado extremo a extremo en cliente, paquetes opacos en servidor, bóveda cifrada, archivos cifrados, llamadas WebRTC y sincronización segura.
 

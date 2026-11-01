@@ -20,14 +20,14 @@ if (process.argv[2] === 'assemble') {
   let notices = readFileSync(resolve(root, 'THIRD-PARTY-NOTICES.md'), 'utf8') + '\n\n';
   for (const pkg of metadata.packages.filter(pkg => pkg.name !== 'nivra-ratchet-olm').sort((a, b) => a.name.localeCompare(b.name))) {
     const directory = dirname(pkg.manifest_path);
-    const paths = readdirSync(directory, { withFileTypes: true }).filter(entry => /^(licen[cs]e|copying|notice|copyright)(?:[._-]|$)/i.test(entry.name))
+    const paths = readdirSync(directory, { withFileTypes: true }).filter(entry => /^(licen[cs]es?|copying|notice|copyright|authors)(?:[._-]|$)/i.test(entry.name))
       .flatMap(entry => entry.isDirectory() ? files(resolve(directory, entry.name)) : [resolve(directory, entry.name)]);
     if (pkg.license_file) paths.push(resolve(directory, pkg.license_file));
     // These two crates omit the workspace LICENSE from their crates.io archive.
     // Retain the exact upstream 0.2.3 license (commit recorded in licenses/README).
     if (!paths.length && ['matrix-pickle', 'matrix-pickle-derive'].includes(pkg.name) && pkg.version === '0.2.3' && pkg.license === 'Apache-2.0') paths.push(resolve(root, 'licenses/matrix-pickle-0.2.3-LICENSE.txt'));
     if (!paths.length) throw Error(`Missing distribution license text: ${pkg.name} ${pkg.version}`);
-    notices += `\n===== ${pkg.name} ${pkg.version} (${pkg.license}) =====\n`;
+    notices += `\n===== ${pkg.name} ${pkg.version} (${pkg.license}) =====\n${pkg.repository ?? ''}\n${(pkg.authors ?? []).join(', ')}\nFor alternative licenses, Nivra selects the permissive MIT/Apache/BSD alternative.\n`;
     for (const path of [...new Set(paths)].sort()) notices += `\n--- ${relative(directory, path)} ---\n${readFileSync(path, 'utf8')}\n`;
   }
   mkdirSync(resolve(output, 'pkg'), { recursive: true });

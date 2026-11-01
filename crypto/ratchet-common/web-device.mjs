@@ -1,6 +1,7 @@
-// Experimental WebCrypto composition, isolated from all production clients.
-// Optional encrypted snapshot storage is experimental; no platform key vault
-// or production device directory is provided here.
+// Shared transactional WebCrypto capsule and retry coordinator.
+// Production callers supply the encrypted platform storage and device directory.
+// SUITE is retained only as the old laboratory bridge's default; new bridges
+// must announce their own distinct protocolSuite and snapshots bind that suite.
 export const SUITE = 'NIVRA-LIBSIGNAL-A256GCM-PILOT-1';
 const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', { fatal: true });
 const MAX_PAYLOAD = 1024 * 1024;

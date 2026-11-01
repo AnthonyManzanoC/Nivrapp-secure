@@ -192,7 +192,7 @@ export class RatchetMessagingService implements OnDestroy {
     await engine.pinIdentity({ name: target.deviceId, device: 1 }, ratchetBinary(entry.identityKey, 64), state); owner.assert();
   }
 
-  /** null means this deployment has never enabled this device. Pinned peers never downgrade. */
+  /** New messages always use the hybrid ratchet; unavailable peers remain queued. */
   async encrypt(conversationId: string, clientMessageId: string, payload: ChatPayload, targets: RatchetTarget[], fileObjectId: string | null): Promise<RecipientCipherRequest[] | null> {
     return this.run(async () => {
       const owner = this.owner();
