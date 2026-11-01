@@ -322,7 +322,7 @@ impl Session {
         session_keys: SessionKeys,
         root_key: [u8; 32],
         chain_key: [u8; 32],
-        ratchet_public_key: crate::Curve25519PublicKey,
+        ratchet_public_key: Curve25519PublicKey,
     ) -> Self {
         let remote = RemoteRatchetKey::from(ratchet_public_key);
         let sending_ratchet = DoubleRatchet::inactive_from_prekey_data(
@@ -331,7 +331,7 @@ impl Session {
         let mut receiving_chains = ChainStore::new();
         receiving_chains.push(ReceiverChain::new(
             remote, RemoteChainKey::new(Box::new(chain_key)),
-            double_ratchet::RatchetCount::new(),
+            RatchetCount::new(),
         ));
         Self { session_keys, sending_ratchet, receiving_chains, config }
     }
