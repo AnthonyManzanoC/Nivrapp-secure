@@ -41,7 +41,17 @@ app.UseExceptionHandler(handler => handler.Run(context =>
 app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapRatchetHybridEndpoints(); app.MapHistoryArchiveEndpoints();
 app.MapPost("/fixture/message-policy", async (SendMessageRequest request, HttpContext http, NivraDbContext db, CancellationToken ct) => {
     if (http.GetCurrentUser() is not { } user) return Results.Unauthorized();
-    return await RatchetMessagePolicy.ValidAsync(db, user.UserId, user.DeviceId, "chat-lab", request.ClientMessageId, request.Recipients, ct, requireHybrid: true) ? Results.NoContent() : Results.BadRequest();
+    if (!await RatchetMessagePolicy.ValidAsync(db, user.UserId, user.DeviceId, "chat-lab", request.ClientMessageId, request.Recipients, ct, requireHybrid: true, request.SharedPayloadIv, request.SharedPayloadCiphertext)) return Results.BadRequest();
+    if (request.SharedPayloadIv is not null) {
+        var id = "msg-policy-" + Guid.NewGuid().ToString("N");
+        db.Messages.Add(new MessageEnvelope { Id = id, ClientMessageId = id, ConversationId = "chat-lab", SenderUserId = user.UserId, SenderDeviceId = user.DeviceId, ServerReceivedAt = DateTimeOffset.UtcNow,
+            SharedPayloadIv = request.SharedPayloadIv, SharedPayloadCiphertext = request.SharedPayloadCiphertext,
+            Recipients = request.Recipients.Select(row => new RecipientCiphertext { UserId = row.UserId, DeviceId = row.DeviceId, Header = row.Header, Ciphertext = row.Ciphertext }).ToList() });
+        await db.SaveChangesAsync(ct); db.ChangeTracker.Clear();
+        var restored = await db.Messages.AsNoTracking().SingleAsync(row => row.Id == id, ct);
+        if (restored.SharedPayloadCiphertext != request.SharedPayloadCiphertext || restored.SharedPayloadIv != request.SharedPayloadIv || restored.Recipients.Any(row => row.Header!.Contains(request.SharedPayloadCiphertext!))) throw new InvalidOperationException("Shared ciphertext persistence changed or duplicated the body");
+    }
+    return Results.NoContent();
 });
 var tokens = new Dictionary<string, string>();
 await using (var scope = app.Services.CreateAsyncScope())

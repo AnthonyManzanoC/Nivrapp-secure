@@ -225,6 +225,8 @@ export interface MessageResponse {
   senderDeviceId: string;
   kind: 'Text' | 'File' | 'System' | string;
   recipients: RecipientCipherRequest[];
+  sharedPayloadIv?: string | null;
+  sharedPayloadCiphertext?: string | null;
   encryptedPolicy?: string | null;
   serverReceivedAt: string;
   expiresAt?: string | null;

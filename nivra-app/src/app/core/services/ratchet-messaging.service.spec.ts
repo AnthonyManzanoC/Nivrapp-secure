@@ -2,7 +2,7 @@ import { of, throwError, Subject } from 'rxjs';
 import { HistoryArchiveService } from './history-archive.service';
 import { CryptoService } from './crypto.service';
 import { RatchetMessagingService, RatchetTarget } from './ratchet-messaging.service';
-import { RatchetBundle, openRatchetRuntime } from './ratchet-runtime';
+import { RatchetBundle, openRatchetRuntime, ratchetTransport } from './ratchet-runtime';
 import { MessageResponse } from '../models/nivra.models';
 
 describe('actual application Double Ratchet delivery', () => {
@@ -96,9 +96,13 @@ describe('actual application Double Ratchet delivery', () => {
     await expectAsync(alice.service.encrypt('chat-test', 'group-message', payload, targets, null)).toBeRejected();
     for (const peer of peers) await peer.service.pump();
     const packets = await alice.service.encrypt('chat-test', 'group-message', payload, targets, null);
+    const transport = ratchetTransport(packets);
+    expect(JSON.stringify(transport).length).toBeLessThan(payload.text.length * 4);
+    const sharedMessage = { ...response(alice, transport.recipients, 'group-message'), ...transport };
     for (let index = 0; index < peers.length; index++) {
       expect(packets[index + 1].ciphertext.length).toBeLessThan(8192);
-      expect(await peers[index].service.decrypt(response(alice, packets, 'group-message'), packets[index + 1])).toEqual(payload);
+      if (index === 0) await expectAsync(peers[index].service.decrypt({ ...sharedMessage, sharedPayloadCiphertext: sharedMessage.sharedPayloadCiphertext!.slice(4) }, transport.recipients[index + 1])).toBeRejected();
+      expect(await peers[index].service.decrypt(sharedMessage, transport.recipients[index + 1])).toEqual(payload);
     }
     const older = await alice.service.crypto.encryptForPublicKey(alice.keys, legacy.keys.publicJwk, payload);
     expect(await legacy.service.crypto.decryptEnvelope(legacy.keys, older.header, older.ciphertext)).toEqual(payload);

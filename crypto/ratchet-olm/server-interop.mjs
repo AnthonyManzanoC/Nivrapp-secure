@@ -43,6 +43,11 @@ try {
     await post(token, '/fixture/message-policy', body, 204);
     await post(token, '/fixture/message-policy', { ...body, clientMessageId: 'changed-context' }, 400);
     await post(token, '/fixture/message-policy', { ...body, recipients: [{ ...recipient, header: '{"v":1}' }] }, 400);
+    const { payloadIv, payloadCiphertext, ...compactHeader } = JSON.parse(recipient.header);
+    const compact = { ...body, sharedPayloadIv: payloadIv, sharedPayloadCiphertext: payloadCiphertext, recipients: [{ ...recipient, header: JSON.stringify({ ...compactHeader, payloadRef: 'message' }) }] };
+    await post(token, '/fixture/message-policy', compact, 204);
+    await post(token, '/fixture/message-policy', { ...compact, sharedPayloadCiphertext: null }, 400);
+    await post(token, '/fixture/message-policy', { ...compact, recipients: [recipient] }, 400);
   }
   assert.deepEqual(await bob.pendingConsumedPreKeys(), [publicBundle.preKeyId]);
   await post(fixture.bobToken, '/ratchet/olm/prekeys/consumed', { preKeyIds: await bob.pendingConsumedPreKeys() }, 204);

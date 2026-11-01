@@ -46,6 +46,7 @@ import { uniqueCallSummaries, validatedCallSummary } from './call-summary.helper
 import { identityDisplayName, isNivraIdAccount } from '../utils/nivra-identity';
 import { TextOutboxService } from './text-outbox.service';
 import { RatchetMessagingService, RatchetTarget } from './ratchet-messaging.service';
+import { ratchetTransport } from './ratchet-runtime';
 
 const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 const LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
@@ -1305,7 +1306,7 @@ export class ChatService implements OnDestroy {
       // El tipo funcional vive dentro del payload E2EE; el transporte usa una
       // categoria uniforme para no revelar si es texto, audio, archivo o control.
       kind: options.clientMessageId?.startsWith('call-summary:') ? 'System' : 'Text',
-      recipients,
+      ...ratchetTransport(recipients),
       encryptedPolicy: options.encryptedPolicy ?? null,
       expiresAt: options.expiresAt ?? null,
       deleteAfterRead: options.deleteAfterRead ?? false,

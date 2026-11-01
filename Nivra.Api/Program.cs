@@ -211,8 +211,8 @@ app.UseExceptionHandler(exceptionApp =>
         var exception = context.Features.Get<IExceptionHandlerFeature>()?.Error;
         var isBadRequest = exception is BadHttpRequestException;
         var storeUnavailable = PostgresAvailability.IsUnavailable(exception);
-        context.Response.StatusCode = storeUnavailable ? StatusCodes.Status503ServiceUnavailable : isBadRequest
-            ? StatusCodes.Status400BadRequest
+        context.Response.StatusCode = storeUnavailable ? StatusCodes.Status503ServiceUnavailable : exception is BadHttpRequestException badRequest
+            ? badRequest.StatusCode
             : StatusCodes.Status500InternalServerError;
         if (storeUnavailable) context.Response.Headers.RetryAfter = "3";
         context.Response.ContentType = "application/json";
@@ -227,6 +227,18 @@ app.UseExceptionHandler(exceptionApp =>
 });
 
 app.UseCors("NivraClients");
+app.Use(async (context, next) =>
+{
+    // Bound message JSON before binding it; encrypted file uploads keep their own limit.
+    if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/conversations") && context.Request.Path.Value!.EndsWith("/messages", StringComparison.OrdinalIgnoreCase))
+    {
+        const long messageLimit = 8L * 1024 * 1024;
+        if (context.Request.ContentLength > messageLimit) { context.Response.StatusCode = 413; await context.Response.WriteAsJsonAsync(new { code = "message_too_large" }); return; }
+        var feature = context.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>();
+        if (feature is { IsReadOnly: false }) feature.MaxRequestBodySize = messageLimit;
+    }
+    await next();
+});
 app.UseNivraAuth();
 if (infrastructure.Enabled)
 {

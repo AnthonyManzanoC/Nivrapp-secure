@@ -240,7 +240,9 @@ public sealed record SendMessageRequest(
     List<RecipientCipherRequest> Recipients,
     string? EncryptedPolicy,
     DateTimeOffset? ExpiresAt,
-    bool DeleteAfterRead);
+    bool DeleteAfterRead,
+    string? SharedPayloadIv = null,
+    string? SharedPayloadCiphertext = null);
 
 public sealed record RecipientCipherRequest(
     string UserId,
@@ -261,7 +263,9 @@ public sealed record MessageResponse(
     DateTimeOffset ServerReceivedAt,
     DateTimeOffset? ExpiresAt,
     bool DeleteAfterRead,
-    List<DeliveryReceipt> Receipts);
+    List<DeliveryReceipt> Receipts,
+    string? SharedPayloadIv = null,
+    string? SharedPayloadCiphertext = null);
 
 public sealed record ReceiptRequest(ReceiptKind Kind, bool? Opened);
 

@@ -20,10 +20,10 @@ interface Peer { userId: string; identityKey: string; registrationId: number; le
 interface ContentFrame { key: string; iv: string; ciphertext: string; }
 interface PendingSend { conversationId: string; payloadHash: string; payload: ChatPayload; body: ContentFrame; targetsHash?: string; recipients?: RecipientCipherRequest[]; }
 interface ApplicationState { v: 1; registrationId: number; peers: Record<string, Peer>; outgoing: Record<string, PendingSend>; confirmed: Record<string, { conversationId: string; serverId: string }>; reservations?: Record<string, { conversationId: string; requestId: string }>; }
-interface MessageHeader { v: 4; alg: typeof ALGORITHM; senderDeviceId: string; recipientDeviceId: string; identityKey: string; registrationId: number; binding?: Binding; local?: boolean; payloadIv?: string; payloadCiphertext?: string; }
+interface MessageHeader { v: 4; alg: typeof ALGORITHM; senderDeviceId: string; recipientDeviceId: string; identityKey: string; registrationId: number; binding?: Binding; local?: boolean; payloadIv?: string; payloadCiphertext?: string; payloadRef?: 'message'; }
 const pendingRatchet = (message: string): Error => Object.assign(new Error(message), { retryable: true, status: 503 });
 
-/** One independently persisted Signal session per actual device. Legacy keys remain read-only for old history. */
+/** One independently persisted hybrid ratchet session per actual device. */
 @Injectable({ providedIn: 'root' })
 export class RatchetMessagingService implements OnDestroy {
   private readonly api = inject(NivraApiService);
@@ -324,7 +324,11 @@ export class RatchetMessagingService implements OnDestroy {
       if (!current()) throw Error('El historial cambió durante la recepción.');
       const owner = this.owner(), header = JSON.parse(recipient.header || '{}') as MessageHeader;
       if (!this.isEnvelope(recipient.header) || header.senderDeviceId !== message.senderDeviceId || header.recipientDeviceId !== owner.deviceId || recipient.deviceId !== owner.deviceId || recipient.userId !== owner.userId) throw Error('Sobre cifrado destinado a otro dispositivo.');
-      const digest = await ratchetHash([recipient.header, recipient.ciphertext]);
+      if (header.payloadRef) {
+        if (header.payloadRef !== 'message' || header.local || header.payloadIv || header.payloadCiphertext || !message.sharedPayloadIv || !message.sharedPayloadCiphertext) throw Error('Falta el cuerpo cifrado del mensaje.');
+        header.payloadIv = message.sharedPayloadIv; header.payloadCiphertext = message.sharedPayloadCiphertext;
+      }
+      const digest = await ratchetHash([recipient.header, recipient.ciphertext, message.sharedPayloadIv ?? null, message.sharedPayloadCiphertext ?? null]);
       const cached = await this.history.messageById(owner.userId, this.receiptConversation(message.conversationId), message.id); owner.assert();
       if (cached?.senderUserId === message.senderUserId && cached.senderDeviceId === message.senderDeviceId && cached.clientMessageId === message.clientMessageId && cached.payload['content'] && (cached.payload['envelopeHash'] === digest ||
         (cached.payload['envelopeHash'] === 'sent' && header.local && message.senderUserId === owner.userId && message.senderDeviceId === owner.deviceId && cached.clientMessageId === message.clientMessageId))) return cached.payload['content'] as ChatPayload;

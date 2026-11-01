@@ -1,6 +1,18 @@
 /** Runtime boundary shared by browser, Capacitor WebView and Electron. */
 import { environment } from '../../../environments/environment';
-import type { MessageResponse } from '../models/nivra.models';
+import type { MessageResponse, RecipientCipherRequest } from '../models/nivra.models';
+export function ratchetTransport(recipients: RecipientCipherRequest[]): { recipients: RecipientCipherRequest[]; sharedPayloadIv?: string; sharedPayloadCiphertext?: string } {
+  const headers = recipients.map(recipient => { try { return JSON.parse(recipient.header || '{}'); } catch { return {}; } });
+  if (!headers.length || headers.some(header => header.v !== 4 || header.alg !== 'NIVRA-HYBRID-RATCHET-MESSAGE-1')) return { recipients };
+  const bodies = headers.filter(header => !header.local);
+  if (!bodies.length) return { recipients };
+  const { payloadIv, payloadCiphertext } = bodies[0];
+  if (!payloadIv || !payloadCiphertext || bodies.some(header => header.payloadIv !== payloadIv || header.payloadCiphertext !== payloadCiphertext)) throw Error('Los cuerpos cifrados del mensaje no coinciden.');
+  return { sharedPayloadIv: payloadIv, sharedPayloadCiphertext: payloadCiphertext, recipients: recipients.map((recipient, index) => {
+    const { payloadIv: _iv, payloadCiphertext: _body, ...header } = headers[index];
+    return header.local ? recipient : { ...recipient, header: JSON.stringify({ ...header, payloadRef: 'message' }) };
+  }) };
+}
 export const ratchetArchiveContext = (message: Pick<MessageResponse, 'id' | 'clientMessageId' | 'conversationId' | 'senderUserId' | 'senderDeviceId' | 'serverReceivedAt'>): string =>
   JSON.stringify([message.id, message.clientMessageId, message.conversationId, message.senderUserId, message.senderDeviceId, message.serverReceivedAt]);
 export interface RatchetAddress { name: string; device: number; }

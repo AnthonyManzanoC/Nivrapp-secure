@@ -867,6 +867,12 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Property<DateTimeOffset>("ServerReceivedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<string>("SharedPayloadCiphertext")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SharedPayloadIv")
+                        .HasColumnType("text");
+
                     b.HasKey("Id");
 
                     b.HasIndex("ExpiresAt");

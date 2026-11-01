@@ -10,7 +10,7 @@ function files(directory) {
   return readdirSync(directory, { withFileTypes: true }).flatMap(entry => entry.isDirectory() ? files(resolve(directory, entry.name)) : [resolve(directory, entry.name)]);
 }
 function sourceHash() {
-  const names = ['Cargo.toml', 'Cargo.lock', 'vendor-upstream.json', 'check-dependencies.mjs', 'distribution.mjs', ...files(resolve(root, 'src')).map(name => relative(root, name)), ...files(resolve(root, 'vendor')).map(name => relative(root, name))].sort();
+  const names = ['Cargo.toml', 'Cargo.lock', 'vendor-upstream.json', 'check-dependencies.mjs', 'distribution.mjs', ...['src', 'vendor', 'licenses'].flatMap(directory => files(resolve(root, directory)).map(name => relative(root, name)))].map(name => name.replaceAll('\\', '/')).sort();
   return hash(names.map(name => name.replaceAll('\\', '/') + '\0' + readFileSync(resolve(root, name), 'utf8').replaceAll('\r\n', '\n')).join('\0'));
 }
 const packageNames = ['nivra_ratchet_olm.js', 'nivra_ratchet_olm_bg.wasm'];
@@ -23,6 +23,9 @@ if (process.argv[2] === 'assemble') {
     const paths = readdirSync(directory, { withFileTypes: true }).filter(entry => /^(licen[cs]e|copying|notice|copyright)(?:[._-]|$)/i.test(entry.name))
       .flatMap(entry => entry.isDirectory() ? files(resolve(directory, entry.name)) : [resolve(directory, entry.name)]);
     if (pkg.license_file) paths.push(resolve(directory, pkg.license_file));
+    // These two crates omit the workspace LICENSE from their crates.io archive.
+    // Retain the exact upstream 0.2.3 license (commit recorded in licenses/README).
+    if (!paths.length && ['matrix-pickle', 'matrix-pickle-derive'].includes(pkg.name) && pkg.version === '0.2.3' && pkg.license === 'Apache-2.0') paths.push(resolve(root, 'licenses/matrix-pickle-0.2.3-LICENSE.txt'));
     if (!paths.length) throw Error(`Missing distribution license text: ${pkg.name} ${pkg.version}`);
     notices += `\n===== ${pkg.name} ${pkg.version} (${pkg.license}) =====\n`;
     for (const path of [...new Set(paths)].sort()) notices += `\n--- ${relative(directory, path)} ---\n${readFileSync(path, 'utf8')}\n`;

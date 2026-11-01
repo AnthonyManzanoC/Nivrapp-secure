@@ -282,6 +282,8 @@ public sealed class MessageEnvelope
     public MessageKind Kind { get; set; }
     public List<RecipientCiphertext> Recipients { get; set; } = [];
     public string? EncryptedPolicy { get; set; }
+    public string? SharedPayloadIv { get; set; }
+    public string? SharedPayloadCiphertext { get; set; }
     public DateTimeOffset ServerReceivedAt { get; init; }
     public DateTimeOffset? ExpiresAt { get; set; }
     public bool DeleteAfterRead { get; set; }
