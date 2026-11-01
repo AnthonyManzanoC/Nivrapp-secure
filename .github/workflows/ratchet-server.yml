@@ -1,0 +1,40 @@
+name: Ratchet PostgreSQL pilot
+on:
+  push:
+    branches: [codex/ratchet-bridge]
+    paths: [Nivra.Api/**, checks/Nivra.RatchetChecks/**, crypto/ratchet-pilot/server-interop.mjs, .github/workflows/ratchet-server.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ratchet-server-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  postgres:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17@sha256:3b0cda93be7c8dba2ed484d19393d93845dc3dafb88973e248ba8e6d99d784e1
+        env:
+          POSTGRES_DB: nivra_ratchet_tests
+          POSTGRES_USER: ratchet_test
+          POSTGRES_PASSWORD: isolated-ci-fixture
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      NIVRA_RATCHET_TEST_POSTGRES: Host=127.0.0.1;Port=5432;Database=nivra_ratchet_tests;Username=ratchet_test;Password=isolated-ci-fixture
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: 9.0.310
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.18.1
+      - run: dotnet build checks/Nivra.RatchetChecks/Nivra.RatchetChecks.csproj --nologo -v quiet
+      - run: npm ci --prefix crypto/ratchet-pilot --ignore-scripts
+      - run: node crypto/ratchet-pilot/server-interop.mjs

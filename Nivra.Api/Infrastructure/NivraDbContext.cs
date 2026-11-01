@@ -65,6 +65,41 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        modelBuilder.Entity<RatchetPilotDevice>(entity =>
+        {
+            entity.ToTable("ratchet_pilot_devices", table =>
+            {
+                table.HasCheckConstraint("CK_ratchet_device_number", "\"SignalDeviceNumber\" BETWEEN 1 AND 127");
+                table.HasCheckConstraint("CK_ratchet_registration", "\"RegistrationId\" BETWEEN 1 AND 16379");
+                table.HasCheckConstraint("CK_ratchet_watermark", "\"HighWatermark\" BETWEEN 0 AND 4294967295");
+            });
+            entity.HasKey(row => row.DeviceId);
+            entity.Property(row => row.DeviceId).HasMaxLength(64);
+            entity.Property(row => row.UserId).HasMaxLength(64);
+            entity.Property(row => row.IdentityKey).HasMaxLength(44);
+            entity.HasIndex(row => new { row.UserId, row.SignalDeviceNumber }).IsUnique();
+            entity.HasOne<DeviceRecord>().WithMany().HasForeignKey(row => row.DeviceId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<UserAccount>().WithMany().HasForeignKey(row => row.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<RatchetPilotPreKey>(entity =>
+        {
+            entity.ToTable("ratchet_pilot_prekeys", table =>
+            {
+                table.HasCheckConstraint("CK_ratchet_prekey_id", "\"PreKeyId\" BETWEEN 1 AND 4294967295");
+                table.HasCheckConstraint("CK_ratchet_prekey_claim", "(\"ClaimRequestId\" IS NULL AND \"ClaimantDeviceId\" IS NULL AND \"ConversationId\" IS NULL AND \"ClaimedAt\" IS NULL) OR (\"ClaimRequestId\" IS NOT NULL AND \"ClaimantDeviceId\" IS NOT NULL AND \"ConversationId\" IS NOT NULL AND \"ClaimedAt\" IS NOT NULL)");
+                table.HasCheckConstraint("CK_ratchet_bundle_size", "octet_length(\"BundleJson\"::text) <= 16384");
+            });
+            entity.HasKey(row => new { row.DeviceId, row.PreKeyId });
+            entity.Property(row => row.DeviceId).HasMaxLength(64);
+            entity.Property(row => row.BundleJson).HasColumnType("jsonb");
+            entity.Property(row => row.BundleHash).HasMaxLength(64);
+            entity.Property(row => row.ClaimantDeviceId).HasMaxLength(64);
+            entity.Property(row => row.ConversationId).HasMaxLength(64);
+            entity.HasIndex(row => new { row.DeviceId, row.PreKeyId }).HasDatabaseName("IX_ratchet_prekeys_available").HasFilter("\"ClaimRequestId\" IS NULL");
+            entity.HasIndex(row => new { row.DeviceId, row.ClaimantDeviceId, row.ClaimRequestId }).IsUnique().HasFilter("\"ClaimRequestId\" IS NOT NULL");
+            entity.HasIndex(row => new { row.ClaimantDeviceId, row.ClaimedAt });
+            entity.HasOne<RatchetPilotDevice>().WithMany().HasForeignKey(row => row.DeviceId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<ContactBlockRecord>(b =>
         {
             b.ToTable("contact_blocks");

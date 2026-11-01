@@ -899,6 +899,106 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.ToTable("push_tokens", "public");
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.RatchetPilotDevice", b =>
+                {
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("HighWatermark")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("IdentityKey")
+                        .IsRequired()
+                        .HasMaxLength(44)
+                        .HasColumnType("character varying(44)");
+
+                    b.Property<int>("RegistrationId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("SignalDeviceNumber")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("DeviceId");
+
+                    b.HasIndex("UserId", "SignalDeviceNumber")
+                        .IsUnique();
+
+                    b.ToTable("ratchet_pilot_devices", "public", t =>
+                        {
+                            t.HasCheckConstraint("CK_ratchet_device_number", "\"SignalDeviceNumber\" BETWEEN 1 AND 127");
+
+                            t.HasCheckConstraint("CK_ratchet_registration", "\"RegistrationId\" BETWEEN 1 AND 16379");
+
+                            t.HasCheckConstraint("CK_ratchet_watermark", "\"HighWatermark\" BETWEEN 0 AND 4294967295");
+                        });
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.RatchetPilotPreKey", b =>
+                {
+                    b.Property<string>("DeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<long>("PreKeyId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("BundleHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("BundleJson")
+                        .IsRequired()
+                        .HasColumnType("jsonb");
+
+                    b.Property<Guid?>("ClaimRequestId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("ClaimantDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset?>("ClaimedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("ConversationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("DeviceId", "PreKeyId");
+
+                    b.HasIndex("ClaimantDeviceId", "ClaimedAt");
+
+                    b.HasIndex("DeviceId", "PreKeyId")
+                        .HasDatabaseName("IX_ratchet_prekeys_available")
+                        .HasFilter("\"ClaimRequestId\" IS NULL");
+
+                    b.HasIndex("DeviceId", "ClaimantDeviceId", "ClaimRequestId")
+                        .IsUnique()
+                        .HasFilter("\"ClaimRequestId\" IS NOT NULL");
+
+                    b.ToTable("ratchet_pilot_prekeys", "public", t =>
+                        {
+                            t.HasCheckConstraint("CK_ratchet_bundle_size", "octet_length(\"BundleJson\"::text) <= 16384");
+
+                            t.HasCheckConstraint("CK_ratchet_prekey_claim", "(\"ClaimRequestId\" IS NULL AND \"ClaimantDeviceId\" IS NULL AND \"ConversationId\" IS NULL AND \"ClaimedAt\" IS NULL) OR (\"ClaimRequestId\" IS NOT NULL AND \"ClaimantDeviceId\" IS NOT NULL AND \"ConversationId\" IS NOT NULL AND \"ClaimedAt\" IS NOT NULL)");
+
+                            t.HasCheckConstraint("CK_ratchet_prekey_id", "\"PreKeyId\" BETWEEN 1 AND 4294967295");
+                        });
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.SecurityAuditEvent", b =>
                 {
                     b.Property<string>("Id")
@@ -1894,6 +1994,30 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.UserAccount", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.RatchetPilotDevice", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.DeviceRecord", null)
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.RatchetPilotPreKey", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.RatchetPilotDevice", null)
+                        .WithMany()
+                        .HasForeignKey("DeviceId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
