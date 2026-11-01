@@ -31,11 +31,12 @@ public static partial class EndpointExtensions
         group.MapGet("/", async Task<IResult> (string id, string sourceDeviceId, HttpContext http, NivraDbContext db, TimeProvider clock, CancellationToken ct) =>
         {
             var current = http.GetCurrentUser(); if (current is null) return Results.Unauthorized();
-            if (await ApprovedArchive(db, current, id, sourceDeviceId, clock.GetUtcNow(), ct) is null) return Results.NotFound();
+            var approved = await ApprovedArchive(db, current, id, sourceDeviceId, clock.GetUtcNow(), ct);
+            if (approved is null) return Results.NotFound();
             var stream = await db.Set<HistoryArchiveStream>().AsNoTracking().SingleOrDefaultAsync(row => row.TransferId == id && row.SourceDeviceId == sourceDeviceId, ct);
             var pages = await db.Set<HistoryArchivePage>().AsNoTracking().Where(row => row.TransferId == id && row.SourceDeviceId == sourceDeviceId).OrderBy(row => row.Sequence).Take(8).ToListAsync(ct);
             http.Response.Headers.CacheControl = "no-store";
-            return Results.Ok(new { nextSequence = stream?.NextSequence ?? 0, acknowledgedSequence = stream?.AcknowledgedSequence ?? -1, finished = stream?.Finished ?? false,
+            return Results.Ok(new { leaseExpiresAt = ArchiveLease(approved.Value.Request, stream), nextSequence = stream?.NextSequence ?? 0, acknowledgedSequence = stream?.AcknowledgedSequence ?? -1, finished = stream?.Finished ?? false,
                 pages = current.DeviceId == sourceDeviceId ? [] : pages.Select(row => new { row.Sequence, row.Header, row.Ciphertext, row.Final }).ToArray() });
         });
         group.MapPost("/", async Task<IResult> (string id, string sourceDeviceId, HttpContext http, NivraDbContext db, TimeProvider clock, IHubContext<NivraHub> hub, CancellationToken ct) =>
@@ -53,7 +54,7 @@ public static partial class EndpointExtensions
                 using (var header = System.Text.Json.JsonDocument.Parse(body.Header))
                     if (header.RootElement.GetProperty("v").GetInt32() != 4) return Results.BadRequest();
                 var stream = await db.Set<HistoryArchiveStream>().SingleOrDefaultAsync(row => row.TransferId == id && row.SourceDeviceId == sourceDeviceId, ct);
-                if (stream is null) { stream = new() { TransferId = id, SourceDeviceId = sourceDeviceId }; db.Add(stream); }
+                if (stream is null) { stream = new() { TransferId = id, SourceDeviceId = sourceDeviceId, LastActivityAt = clock.GetUtcNow() }; db.Add(stream); }
                 if (body.Sequence <= stream.AcknowledgedSequence) { await tx.CommitAsync(ct); return Results.NoContent(); }
                 if (body.Sequence < stream.NextSequence)
                 {
@@ -82,19 +83,28 @@ public static partial class EndpointExtensions
                 var stream = await db.Set<HistoryArchiveStream>().SingleOrDefaultAsync(row => row.TransferId == id && row.SourceDeviceId == sourceDeviceId, ct);
                 if (stream is null || body.Sequence < 0 || body.Sequence >= stream.NextSequence) return Results.BadRequest();
                 stream.AcknowledgedSequence = Math.Max(body.Sequence, stream.AcknowledgedSequence);
+                stream.LastActivityAt = clock.GetUtcNow();
                 await db.Set<HistoryArchivePage>().Where(row => row.TransferId == id && row.SourceDeviceId == sourceDeviceId && row.Sequence <= stream.AcknowledgedSequence).ExecuteDeleteAsync(ct);
-                await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return Results.NoContent();
+                await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return Results.Ok(new { leaseExpiresAt = ArchiveLease(approved.Value.Request, stream) });
             });
         });
     }
     internal static string ArchiveMessageId(string id, string sourceDeviceId, int sequence) => $"archive_{id}_{sourceDeviceId}_{sequence}";
+    private static DateTimeOffset ArchiveLease(HistoryKeyTransfer request, HistoryArchiveStream? stream)
+    {
+        var activityExpiry = stream?.LastActivityAt.AddMinutes(15) ?? request.ExpiresAt;
+        var limit = request.CreatedAt.AddHours(24);
+        return activityExpiry < limit ? activityExpiry : limit;
+    }
     private static async Task<(HistoryKeyTransfer Request, DeviceRecord Source)?> ApprovedArchive(NivraDbContext db, CurrentUser current, string id, string sourceDeviceId, DateTimeOffset now, CancellationToken ct)
     {
         var request = await db.HistoryKeyTransfers.AsNoTracking().SingleOrDefaultAsync(row => row.Id == id && row.UserId == current.UserId, ct);
         if (request is null || current.DeviceId != sourceDeviceId && current.DeviceId != request.TargetDeviceId) return null;
         var source = await db.Devices.AsNoTracking().SingleOrDefaultAsync(row => row.Id == sourceDeviceId, ct);
         var target = await db.Devices.AsNoTracking().SingleOrDefaultAsync(row => row.Id == request.TargetDeviceId, ct);
-        if (!HistoryTransferAllowed(request, source, target, now) || !await db.Users.AnyAsync(user => user.Id == current.UserId && user.DisabledAt == null, ct)) return null;
+        if (source?.Id == request.TargetDeviceId || !HistoryTransferDeviceAllowed(source, current.UserId) || !HistoryTransferDeviceAllowed(target, current.UserId) || target!.KeyBundle.IdentityKey != request.TargetIdentityKey || !await db.Users.AnyAsync(user => user.Id == current.UserId && user.DisabledAt == null, ct)) return null;
+        var stream = await db.Set<HistoryArchiveStream>().AsNoTracking().SingleOrDefaultAsync(row => row.TransferId == id && row.SourceDeviceId == sourceDeviceId, ct);
+        if (ArchiveLease(request, stream) <= now) return null;
         if (!await db.HistoryKeyTransferResponses.AnyAsync(row => row.TransferId == id && row.SourceDeviceId == sourceDeviceId && row.SourceIdentityKey == source!.KeyBundle.IdentityKey, ct)) return null;
         return (request, source!);
     }

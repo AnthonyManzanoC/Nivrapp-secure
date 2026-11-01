@@ -4,6 +4,7 @@
 
 export const environment = {
   production: false,
+  ratchetLaboratory: true,
   apiBaseUrl: 'http://localhost:5055',
   apiEndpoints: ['http://localhost:5055'],
   apiClusterFingerprint: '',

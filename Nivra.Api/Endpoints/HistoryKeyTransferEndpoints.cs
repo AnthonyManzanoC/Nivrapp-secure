@@ -23,7 +23,8 @@ public static partial class EndpointExtensions
             var target = await db.Devices.AsNoTracking().FirstOrDefaultAsync(x => x.Id == current.DeviceId, ct);
             if (!HistoryTransferDeviceAllowed(target, current.UserId)) return Results.Unauthorized();
             var now = clock.GetUtcNow();
-            await db.HistoryKeyTransfers.Where(x => x.UserId == current.UserId && x.ExpiresAt <= now).ExecuteDeleteAsync(ct);
+            await db.HistoryKeyTransfers.Where(x => x.UserId == current.UserId && x.ExpiresAt <= now &&
+                (x.CreatedAt.AddHours(24) <= now || !db.Set<HistoryArchiveStream>().Any(stream => stream.TransferId == x.Id && stream.LastActivityAt.AddMinutes(15) > now))).ExecuteDeleteAsync(ct);
             var request = await db.HistoryKeyTransfers.FirstOrDefaultAsync(x => x.UserId == current.UserId && x.TargetDeviceId == current.DeviceId && x.TargetIdentityKey == target!.KeyBundle.IdentityKey && x.ExpiresAt > now, ct);
             if (request is null)
             {

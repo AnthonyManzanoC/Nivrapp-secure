@@ -1,4 +1,5 @@
 /** Runtime boundary shared by browser, Capacitor WebView and Electron. */
+import { environment } from '../../../environments/environment';
 export interface RatchetAddress { name: string; device: number; }
 export interface RatchetContext { conversationId: string; messageId: string; }
 export interface RatchetBundle {
@@ -38,6 +39,7 @@ export type RatchetRuntimeFactory = (name: string, storage: RatchetStorage, crea
 
 let loaded: Promise<{ bridge: unknown; Device: { open: (...args: unknown[]) => Promise<RatchetDeviceRuntime> } }> | undefined;
 export const openRatchetRuntime: RatchetRuntimeFactory = async (name, storage, create) => {
+  if (!environment.ratchetLaboratory) throw Error('El motor de cifrado avanzado está disponible solo en pruebas hasta completar su sustitución.');
   loaded ??= (async () => {
     const root = location.protocol === 'file:' ? new URL('nivra-crypto://app/') : new URL('assets/ratchet/', document.baseURI);
     const bridge = await import(/* webpackIgnore: true */ new URL('pkg/nivra_ratchet_wasm.js', root).href);

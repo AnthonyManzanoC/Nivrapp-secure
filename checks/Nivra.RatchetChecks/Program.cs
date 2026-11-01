@@ -189,8 +189,11 @@ for (var index = 1; index < 8; index++) await Status("alice-client", archivePath
 await Status("alice-client", archivePath, Page(8), HttpStatusCode.TooManyRequests, "archive backpressure bounds unacknowledged ciphertext");
 await Status("alice-client", archivePath + "ack", new HistoryArchiveAcknowledgement(7), HttpStatusCode.NotFound, "source cannot forge target history acknowledgement");
 await Status("alice-client-two", archivePath + "ack", new HistoryArchiveAcknowledgement(8), HttpStatusCode.BadRequest, "target cannot acknowledge unsent history");
-await Status("alice-client-two", archivePath + "ack", new HistoryArchiveAcknowledgement(7), HttpStatusCode.NoContent, "target acknowledges durable imported history");
-await Status("alice-client", archivePath, Page(8, true), HttpStatusCode.NoContent, "archive continues after acknowledgement and marks final page");
+await Status("alice-client-two", archivePath + "ack", new HistoryArchiveAcknowledgement(7), HttpStatusCode.OK, "target acknowledges durable imported history");
+await Status("alice-client", archivePath, new { sequence = 8, header = "x", ciphertext = "x", final = false, privateState = "reject" }, HttpStatusCode.BadRequest, "archive rejects unknown private fields");
+await Status("alice-client", archivePath, new { padding = new string('x', 600001) }, HttpStatusCode.RequestEntityTooLarge, "archive body rejected before unbounded deserialization");
+await Mutate(async db => (await db.HistoryKeyTransfers.SingleAsync(row => row.Id == archiveId)).ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(-1));
+await Status("alice-client", archivePath, Page(8, true), HttpStatusCode.NoContent, "acknowledged archive continues beyond original approval window with bounded lease");
 await Status("alice-client", archivePath, Page(9), HttpStatusCode.Conflict, "completed archive cannot append pages");
 await Mutate(async db => (await db.Devices.SingleAsync(row => row.Id == "dev-lab-alice-client-two")).RevokedAt = DateTimeOffset.UtcNow);
 await Status("alice-client", archivePath, Page(8, true), HttpStatusCode.NotFound, "revocation blocks archive retries immediately");

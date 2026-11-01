@@ -751,6 +751,9 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Property<bool>("Finished")
                         .HasColumnType("boolean");
 
+                    b.Property<DateTimeOffset>("LastActivityAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("NextSequence")
                         .HasColumnType("integer");
 

@@ -29,6 +29,7 @@ public sealed class HistoryArchiveStream
     public int NextSequence { get; set; }
     public int AcknowledgedSequence { get; set; } = -1;
     public bool Finished { get; set; }
+    public DateTimeOffset LastActivityAt { get; set; }
 }
 public sealed class HistoryArchivePage
 {

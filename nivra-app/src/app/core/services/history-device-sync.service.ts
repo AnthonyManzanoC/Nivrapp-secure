@@ -406,6 +406,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
         // fresh request. Keep existing approved packages eligible until expiry,
         // but do not create a new impossible approval on every expiration.
         if (this.sourceAvailability() === 'local-only' && (!this.requestId || this.requestExpiresAt <= Date.now())) return;
+        if (this.requestId && this.requestExpiresAt <= Date.now() && this.archive?.hasActiveIncoming(this.requestId)) return;
         const status = await this.requestStatus(scope);
         this.assertCurrent(scope);
         if (!this.requested) return;

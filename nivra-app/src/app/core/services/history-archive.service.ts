@@ -1,5 +1,6 @@
 import { Injectable, OnDestroy, inject } from '@angular/core';
 import { firstValueFrom, Subject, timeout } from 'rxjs';
+import { environment } from '../../../environments/environment';
 import { ChatMessageVm, ChatPayload, MessageHistoryRecoveryResponse, MessageResponse } from '../models/nivra.models';
 import { AuthService } from './auth.service';
 import { AppLockService } from './app-lock.service';
@@ -11,12 +12,13 @@ import { RatchetMessagingService } from './ratchet-messaging.service';
 export interface ArchiveTransfer { id: string; userId: string; targetDeviceId: string; targetIdentityKey: string; expiresAt: string; }
 interface Cursor { chat: number; before?: string; beforeId?: string; }
 interface ArchivePage { sequence: number; header: string; ciphertext: string; final: boolean; }
-interface ArchiveStatus { nextSequence: number; acknowledgedSequence: number; finished: boolean; pages: ArchivePage[]; }
+interface ArchiveStatus { nextSequence: number; acknowledgedSequence: number; finished: boolean; pages: ArchivePage[]; leaseExpiresAt?: string; }
 interface Progress {
   v: 1; transfer: ArchiveTransfer; sourceDeviceId: string; sourceIdentityKey: string; direction: 'send' | 'receive'; sequence: number;
   conversations: string[]; cursor: Cursor; batch?: { id: string; text: string; parts: number; part: number; after: Cursor; final: boolean };
   pending?: ArchivePage; incoming?: { id: string; text: string; nextPart: number; parts: number }; complete?: boolean;
   ackPending?: number;
+  leaseExpiresAt?: string; accounts?: string[];
 }
 const CHUNK_CHARS = 24000;
 
@@ -31,13 +33,15 @@ export class HistoryArchiveService implements OnDestroy {
   private readonly ratchet = inject(RatchetMessagingService);
   readonly imported$ = new Subject<void>();
   private running = false;
+  private readonly receiving = new Map<string, number>();
   private readonly timer = window.setInterval(() => { void this.pump().catch(() => undefined); }, 2500);
   ngOnDestroy(): void { window.clearInterval(this.timer); this.imported$.complete(); }
   private owner() {
     const session = this.auth.session();
     if (!session || this.lock.isContentLocked()) throw Error('Desbloquea Nivra para transferir el historial.');
     const userId = session.user.id, deviceId = session.device.id;
-    return { userId, deviceId, assert: () => { const now = this.auth.session(); if (this.lock.isContentLocked() || now?.user.id !== userId || now.device.id !== deviceId) throw Error('La cuenta o el dispositivo cambió.'); } };
+    const generation = this.auth.sessionGeneration?.();
+    return { userId, deviceId, assert: () => { const now = this.auth.session(); if (generation !== this.auth.sessionGeneration?.() || this.lock.isContentLocked() || now?.user.id !== userId || now.device.id !== deviceId) throw Error('La cuenta o el dispositivo cambió.'); } };
   }
   private conversation(deviceId: string): string { return `history-archive-progress:${deviceId}`; }
   private id(progress: Progress): string { return `${progress.transfer.id}:${progress.sourceDeviceId}:${progress.direction}`; }
@@ -46,10 +50,11 @@ export class HistoryArchiveService implements OnDestroy {
   private async save(progress: Progress): Promise<void> {
     const owner = this.owner();
     await this.history.putMessages(owner.userId, [{ id: this.id(progress), conversationId: this.conversation(owner.deviceId), mine: true, senderUserId: owner.userId,
-      at: new Date().toISOString(), expiresAt: progress.transfer.expiresAt, payload: { type: 'history-archive-progress', progress } }]); owner.assert();
+      at: new Date().toISOString(), expiresAt: progress.leaseExpiresAt ?? progress.transfer.expiresAt, payload: { type: 'history-archive-progress', progress } }]); owner.assert();
     if (!await this.history.messageById(owner.userId, this.conversation(owner.deviceId), this.id(progress))) throw Error('No se pudo guardar el avance del historial.');
   }
   async beginSend(transfer: ArchiveTransfer): Promise<boolean> {
+    if (!environment.ratchetLaboratory) return false;
     const owner = this.owner();
     const configuration = await firstValueFrom(this.api.get<{ enabled: boolean }>('/ratchet/config').pipe(timeout(15000))).catch(() => null); owner.assert();
     if (!configuration?.enabled) return false;
@@ -57,8 +62,9 @@ export class HistoryArchiveService implements OnDestroy {
     const existing = await this.history.messageById(owner.userId, this.conversation(owner.deviceId), `${transfer.id}:${owner.deviceId}:send`);
     if (existing) return true;
     const own = await this.auth.ensureDeviceIdentity(); owner.assert();
-    const conversations = (await this.history.conversations(owner.userId)).map(chat => chat.id).filter(id => /^[a-zA-Z0-9_-]{1,128}$/.test(id)).sort(); owner.assert();
-    await this.save({ v: 1, transfer, sourceDeviceId: owner.deviceId, sourceIdentityKey: JSON.stringify(own.publicJwk), direction: 'send', sequence: 0, conversations, cursor: { chat: 0 } });
+    const accounts = [...new Set([owner.userId, ...await this.history.accountKeysForUser(owner.userId)])].filter(key => key === owner.userId || key.startsWith(`${owner.userId}:`)); owner.assert();
+    const conversations = [...new Set((await Promise.all(accounts.map(account => this.history.conversations(account)))).flat().map(chat => chat.id))].filter(id => /^[a-zA-Z0-9_-]{1,128}$/.test(id)).sort(); owner.assert();
+    await this.save({ v: 1, transfer, sourceDeviceId: owner.deviceId, sourceIdentityKey: JSON.stringify(own.publicJwk), direction: 'send', sequence: 0, conversations, accounts, cursor: { chat: 0 } });
     return true;
   }
   async beginReceive(transfer: ArchiveTransfer, sourceDeviceId: string, sourceIdentityKey: string): Promise<void> {
@@ -66,6 +72,10 @@ export class HistoryArchiveService implements OnDestroy {
     if (transfer.userId !== owner.userId || transfer.targetDeviceId !== owner.deviceId || sourceDeviceId === owner.deviceId) throw Error('Destino del historial inválido.');
     const id = `${transfer.id}:${sourceDeviceId}:receive`;
     if (!await this.history.messageById(owner.userId, this.conversation(owner.deviceId), id)) await this.save({ v: 1, transfer, sourceDeviceId, sourceIdentityKey, direction: 'receive', sequence: 0, conversations: [], cursor: { chat: 0 } });
+  }
+  hasActiveIncoming(requestId: string): boolean {
+    const owner = this.owner();
+    return (this.receiving.get(JSON.stringify([owner.userId, owner.deviceId, requestId])) ?? 0) > Date.now();
   }
   async pump(): Promise<void> {
     if (this.running || !this.auth.session() || this.lock.isContentLocked() || document.visibilityState === 'hidden') return;
@@ -77,7 +87,8 @@ export class HistoryArchiveService implements OnDestroy {
       const records = await this.history.conversationMessagesPage(owner.userId, this.conversation(owner.deviceId), { limit: 100 }); owner.assert();
       for (const record of records) {
         const progress = record.payload['progress'] as Progress;
-        if (progress?.v !== 1 || progress.transfer.userId !== owner.userId || (progress.complete && progress.ackPending === undefined) || Date.parse(progress.transfer.expiresAt) <= Date.now()) continue;
+        if (progress?.v !== 1 || progress.transfer.userId !== owner.userId || (progress.complete && progress.ackPending === undefined) || Date.parse(progress.leaseExpiresAt ?? progress.transfer.expiresAt) <= Date.now()) continue;
+        if (progress.direction === 'receive') this.receiving.set(JSON.stringify([owner.userId, owner.deviceId, progress.transfer.id]), Date.parse(progress.leaseExpiresAt ?? progress.transfer.expiresAt));
         try { if (progress.direction === 'send') await this.send(progress); else await this.receive(progress); } catch { owner.assert(); }
       }
       });
@@ -87,7 +98,10 @@ export class HistoryArchiveService implements OnDestroy {
     const owner = this.owner(); let cursor = { ...progress.cursor };
     while (cursor.chat < progress.conversations.length) {
       const conversationId = progress.conversations[cursor.chat];
-      const records = await this.history.conversationMessagesPage(owner.userId, conversationId, { before: cursor.before, beforeId: cursor.beforeId, limit: 8 }); owner.assert();
+      const groups = await Promise.all((progress.accounts ?? [owner.userId]).map(account => this.history.conversationMessagesPage(account, conversationId, { before: cursor.before, beforeId: cursor.beforeId, limit: 8 }))); owner.assert();
+      const byId = new Map<string, ChatMessageVm>();
+      for (const group of groups.reverse()) for (const message of group) byId.set(message.id, message);
+      const records = [...byId.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id === b.id ? 0 : 1)).slice(-8);
       if (!records.length) { cursor = { chat: cursor.chat + 1 }; continue; }
       const first = [...records].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id === b.id ? 0 : 1))[0], after = { chat: cursor.chat, before: first.at, beforeId: first.id };
       const messages = records.filter(message => !message.decryptError && !message.deleteAfterRead && (!message.expiresAt || Date.parse(message.expiresAt) > Date.now()) &&
@@ -103,6 +117,7 @@ export class HistoryArchiveService implements OnDestroy {
     const owner = this.owner();
     if (progress.sourceDeviceId !== owner.deviceId) throw Error('Origen del historial inválido.');
     const status = await firstValueFrom(this.api.get<ArchiveStatus>(this.path(progress)).pipe(timeout(15000))); owner.assert();
+    if (status.leaseExpiresAt && Date.parse(status.leaseExpiresAt) > Date.now()) { progress.leaseExpiresAt = status.leaseExpiresAt; await this.save(progress); }
     if (status.finished && status.acknowledgedSequence === status.nextSequence - 1) { progress.complete = true; progress.batch = undefined; progress.pending = undefined; await this.save(progress); return; }
     if (status.nextSequence - status.acknowledgedSequence > 8) return;
     for (let turn = 0; turn < 8; turn++) {
@@ -131,13 +146,14 @@ export class HistoryArchiveService implements OnDestroy {
   private envelope(progress: Progress, page: ArchivePage): MessageResponse {
     return { id: this.messageId(progress, page.sequence), clientMessageId: this.messageId(progress, page.sequence), conversationId: `history_${progress.transfer.id}`,
       senderUserId: progress.transfer.userId, senderDeviceId: progress.sourceDeviceId, kind: 'Text', serverReceivedAt: new Date().toISOString(),
-      expiresAt: progress.transfer.expiresAt, deleteAfterRead: false, receipts: [], recipients: [{ userId: progress.transfer.userId, deviceId: progress.transfer.targetDeviceId, ciphertext: page.ciphertext, header: page.header }] };
+      expiresAt: progress.leaseExpiresAt ?? progress.transfer.expiresAt, deleteAfterRead: false, receipts: [], recipients: [{ userId: progress.transfer.userId, deviceId: progress.transfer.targetDeviceId, ciphertext: page.ciphertext, header: page.header }] };
   }
   private async receive(progress: Progress): Promise<void> {
     const owner = this.owner();
     if (progress.transfer.targetDeviceId !== owner.deviceId) throw Error('Destino del historial inválido.');
     if (progress.ackPending !== undefined) { await this.ack(progress, progress.ackPending); progress.ackPending = undefined; await this.save(progress); if (progress.complete) return; }
     const status = await firstValueFrom(this.api.get<ArchiveStatus>(this.path(progress)).pipe(timeout(15000))); owner.assert();
+    if (status.leaseExpiresAt && Date.parse(status.leaseExpiresAt) > Date.now()) { progress.leaseExpiresAt = status.leaseExpiresAt; await this.save(progress); }
     if (!Array.isArray(status.pages) || status.pages.length > 8) throw Error('Bloque de historial inválido.');
     for (const page of status.pages) {
       if (page.sequence < progress.sequence) { await this.ack(progress, page.sequence); continue; }
@@ -158,10 +174,13 @@ export class HistoryArchiveService implements OnDestroy {
       progress.sequence++; progress.complete = page.final; progress.ackPending = page.sequence; await this.save(progress); owner.assert();
       await this.ack(progress, page.sequence);
       progress.ackPending = undefined; await this.save(progress);
-      if (page.final) this.imported$.next();
+      if (page.final) { this.receiving.delete(JSON.stringify([owner.userId, owner.deviceId, progress.transfer.id])); this.imported$.next(); }
     }
   }
-  private async ack(progress: Progress, sequence: number): Promise<void> { await firstValueFrom(this.api.post(this.path(progress) + 'ack', { sequence }).pipe(timeout(15000))); }
+  private async ack(progress: Progress, sequence: number): Promise<void> {
+    const response = await firstValueFrom(this.api.post<{ leaseExpiresAt?: string }>(this.path(progress) + 'ack', { sequence }).pipe(timeout(15000)));
+    if (response?.leaseExpiresAt && Date.parse(response.leaseExpiresAt) > Date.now()) progress.leaseExpiresAt = response.leaseExpiresAt;
+  }
   private async importMessages(values: unknown): Promise<void> {
     const owner = this.owner();
     if (!Array.isArray(values) || values.length > 8) throw Error('Historial recibido inválido.');

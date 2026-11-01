@@ -1,5 +1,7 @@
 export const environment = {
   production: true,
+  // Keep the current application license. The AGPL prototype is test-only.
+  ratchetLaboratory: false,
   apiBaseUrl: 'https://nivrapp-secure-eaqi.onrender.com',
   // Prefer the healthy shared cluster; the other same-cluster APIs remain failover candidates.
   apiEndpoints: [

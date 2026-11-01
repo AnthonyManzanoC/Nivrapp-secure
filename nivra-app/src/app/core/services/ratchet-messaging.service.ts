@@ -1,5 +1,6 @@
 import { Injectable, InjectionToken, OnDestroy, effect, inject } from '@angular/core';
 import { firstValueFrom, timeout } from 'rxjs';
+import { environment } from '../../../environments/environment';
 import { ChatPayload, MessageHistoryRecoveryResponse, MessageResponse, PublicKeyDirectory, RecipientCipherRequest } from '../models/nivra.models';
 import { AuthService } from './auth.service';
 import { CryptoService } from './crypto.service';
@@ -79,6 +80,7 @@ export class RatchetMessagingService implements OnDestroy {
     return { userId: session.user.id, deviceId: session.device.id, alias: session.user.alias, scope, assert };
   }
   private async enabled(): Promise<boolean> {
+    if (!environment.ratchetLaboratory) return false;
     const owner = this.owner();
     if (this.enabledCache?.scope === owner.scope && Date.now() - this.enabledCache.at < 30000) return this.enabledCache.enabled;
     let enabled: boolean;
@@ -279,6 +281,7 @@ export class RatchetMessagingService implements OnDestroy {
   }
 
   async confirmed(conversationId: string, clientMessageId: string): Promise<MessageResponse | null> {
+    if (!environment.ratchetLaboratory) return null;
     return this.run(async () => {
       const owner = this.owner();
       if (!await this.history.readRatchetState(owner.userId, owner.deviceId)) return null;

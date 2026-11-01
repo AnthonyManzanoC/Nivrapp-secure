@@ -115,6 +115,7 @@ describe('actual application Double Ratchet delivery', () => {
     for (const record of [source, linked]) {
       const originalGet = record.service.api.get, originalPost = record.service.api.post;
       record.service.history.conversations = async () => [{ id: 'chat-test' }];
+      record.service.history.accountKeysForUser = async () => [source.target.userId];
       record.service.history.conversationMessagesPage = async (_user: string, chat: string, options: any) => [...record.messages.values()]
         .filter(message => message.conversationId === chat && (!options.before || message.at < options.before || message.at === options.before && message.id < options.beforeId))
         .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id)).slice(-options.limit).map(value => structuredClone(value));
@@ -129,7 +130,7 @@ describe('actual application Double Ratchet delivery', () => {
     const transfer = { id: 'transfer_real_archive', userId: source.target.userId, targetDeviceId: linked.target.deviceId, targetIdentityKey: JSON.stringify(linked.keys.publicJwk), expiresAt: new Date(Date.now() + 600000).toISOString() };
     const createArchive = (record: any): any => {
       const archive: any = Object.create(HistoryArchiveService.prototype);
-      Object.assign(archive, { auth: record.service.auth, lock: record.service.appLock, crypto: record.service.crypto, history: record.service.history, api: record.service.api, ratchet: record.service, imported$: new Subject(), running: false });
+      Object.assign(archive, { auth: record.service.auth, lock: record.service.appLock, crypto: record.service.crypto, history: record.service.history, api: record.service.api, ratchet: record.service, imported$: new Subject(), running: false, receiving: new Map() });
       return archive;
     };
     const sending = createArchive(source), receiving = createArchive(linked);
