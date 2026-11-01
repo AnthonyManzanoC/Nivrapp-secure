@@ -11,6 +11,26 @@ function memory() {
   } };
 }
 const context = messageId => ({ conversationId: 'olm-chat', messageId });
+
+test('a copied live session loses access after an honest two-way DH ratchet rotation', async () => {
+  const { alice, bob, storage } = await pair(); let compromised;
+  try {
+    await alice.establish(bob.address, await bob.bundle());
+    const first = await alice.encrypt(bob.address, context('compromise-0'), { text: 'before snapshot' });
+    await bob.decrypt(alice.address, context('compromise-0'), first);
+    await alice.releaseOutgoing('olm-chat', 'compromise-0');
+    const fork = memory(); for (const [key, value] of storage.rows) fork.rows.set(key, structuredClone(value));
+    compromised = await LabWebDevice.open(bridge, 'olm-alice', 1, fork);
+    const exposed = await bob.encrypt(alice.address, context('compromise-1'), { text: 'current state is exposed' });
+    assert.deepEqual(await compromised.decrypt(bob.address, context('compromise-1'), exposed), { text: 'current state is exposed' });
+    await alice.decrypt(bob.address, context('compromise-1'), exposed);
+    const rotated = await alice.encrypt(bob.address, context('compromise-2'), { text: 'fresh sender secret' });
+    await bob.decrypt(alice.address, context('compromise-2'), rotated);
+    const recovered = await bob.encrypt(alice.address, context('compromise-3'), { text: 'recovered session' });
+    await assert.rejects(compromised.decrypt(bob.address, context('compromise-3'), recovered));
+    assert.deepEqual(await alice.decrypt(bob.address, context('compromise-3'), recovered), { text: 'recovered session' });
+  } finally { await compromised?.close(); await alice.close(); await bob.close(); }
+});
 test('ML-KEM-768 matches the independent noble implementation for seeded keys, ciphertexts and shared secrets', () => {
   for (let vector = 0; vector < 8; vector++) {
     const seed = Uint8Array.from({ length: 64 }, (_, index) => (index * 7 + vector * 31) & 255);

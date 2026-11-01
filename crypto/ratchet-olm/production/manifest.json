@@ -1,0 +1,14 @@
+{
+  "protocol": 5,
+  "suite": "NIVRA-PQXDH-MLKEM768-A256GCM-1",
+  "rust": "1.93.1",
+  "wasmBindgen": "0.2.130",
+  "sourceHash": "2d2830983472e9fff241b529a7b6600413b13ec6515e302e3fff46e15ef54864",
+  "commit": "25ca68de5a10c871477c83661091e11b03c664c9",
+  "runId": "41351105509",
+  "files": {
+    "pkg/nivra_ratchet_olm.js": "ddaa39b294b1b183a67849da17b35ee2c5a78fd245f461a9590eab3ddefac540",
+    "pkg/nivra_ratchet_olm_bg.wasm": "9330e0c0b7b7b2933d3068871ca7350340f16864c4676bee6cfe4d8838acd96b",
+    "THIRD-PARTY-LICENSES.txt": "2a1c616243529539976d6a612c7b261eb2d561e82f5cbf4508e560bf5abb8c5a"
+  }
+}

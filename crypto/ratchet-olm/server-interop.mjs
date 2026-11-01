@@ -19,7 +19,8 @@ try {
   if (!fixture) throw Error('Synthetic HTTP fixture did not start');
   async function post(token, path, body, status = 200) {
     const response = await fetch(fixture.url + path, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(15000) });
-    const value = response.status === 204 ? null : await response.json(); assert.equal(response.status, status, JSON.stringify(value)); return value;
+    const text = await response.text(), value = text ? JSON.parse(text) : null;
+    assert.equal(response.status, status, JSON.stringify(value)); return value;
   }
   alice = new LabWebDevice(bridge, fixture.aliceDevice); bob = new LabWebDevice(bridge, fixture.bobDevice);
   await alice.pinIdentity(bob.address, bob.publicIdentity); await bob.pinIdentity(alice.address, alice.publicIdentity);
