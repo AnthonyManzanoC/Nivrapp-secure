@@ -26,7 +26,7 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: 1.93.1
         run: |
-          if [ ! -f Cargo.lock ]; then cargo generate-lockfile; fi
+          if ! grep -q 'name = "ml-kem"' Cargo.lock; then cargo generate-lockfile; fi
           cargo metadata --locked --format-version 1 > dependency-metadata.json
           node check-dependencies.mjs dependency-metadata.json
           cargo test --locked

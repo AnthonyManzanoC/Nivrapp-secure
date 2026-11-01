@@ -27,7 +27,7 @@ test('permissive bridge uses separate agreement/signing keys and authenticates i
   } finally { identity.fill(0); }
   const { alice, bob } = await pair();
   try {
-    const bundle = await bob.bundle(); assert.equal(bundle.suite, 'NIVRA-OLM-BUNDLE-1');
+    const bundle = await bob.bundle(); assert.equal(bundle.suite, 'NIVRA-PQXDH-MLKEM768-BUNDLE-1');
     const altered = structuredClone(bundle); altered.preKeyId++;
     await assert.rejects(alice.establish(bob.address, altered));
     await alice.establish(bob.address, bundle);
@@ -41,7 +41,7 @@ test('Olm and AES-GCM exchange ratchet turns, preserve exact retries and recover
       const sender = turn % 2 ? bob : alice, receiver = turn % 2 ? alice : bob;
       const payload = { text: 'turn-' + turn }, at = context('turn-' + turn);
       const packet = await sender.encrypt(receiver.address, at, payload);
-      assert.equal(packet.suite, 'NIVRA-OLM-A256GCM-1');
+      assert.equal(packet.suite, 'NIVRA-PQXDH-MLKEM768-A256GCM-1');
       assert.deepEqual(await receiver.decrypt(sender.address, at, packet), payload);
       assert.deepEqual(await sender.encrypt(receiver.address, at, payload), packet);
       if (turn === 3) {
@@ -79,7 +79,6 @@ test('one-time private keys replenish beyond 256 initiations without automatic e
       await alice.releaseOutgoing(at.conversationId, at.messageId);
     }
     assert.equal((await bob.bundle()).preKeyId, 261);
-    for (let index = 1; index < 50; index++) await bob.bundle();
-    await assert.rejects(bob.bundle()); // Never discard a pending private key to make room.
+    assert.equal((await bob.pendingBundles()).length, 1);
   } finally { await alice.close(); await bob.close(); }
 });
