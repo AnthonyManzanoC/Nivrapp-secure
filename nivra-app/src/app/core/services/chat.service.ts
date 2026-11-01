@@ -3730,6 +3730,8 @@ export class ChatService implements OnDestroy {
   ): ChatMessageVm {
     const file = this.asFile(message.payload);
     this.releaseMediaPreview(this.fileId(file));
+    const accountKey = this.localAccountKey();
+    if (accountKey) void this.history.removeMessage(accountKey, `ratchet-receipt:${message.conversationId}`, message.id).catch(() => undefined);
     return {
       ...message,
       deleteAfterRead: false,
@@ -4819,7 +4821,7 @@ export class ChatService implements OnDestroy {
       }
       const deliveryDirectory = { ...directory!, devices: publishedDevices };
       directories.set(participant.userId, deliveryDirectory);
-      if (!this.isGroupConversation(conversation) && participant.userId !== current.user.id) await this.identityTrust.check(JSON.stringify([current.user.id,current.device.id]), deliveryDirectory);
+      if (participant.userId !== current.user.id) await this.identityTrust.check(JSON.stringify([current.user.id,current.device.id]), deliveryDirectory, () => this.isSendContextCurrent(sendContext));
       this.assertSendContext(sendContext);
     }
 

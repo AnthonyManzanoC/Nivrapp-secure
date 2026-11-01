@@ -38,7 +38,7 @@ export type RatchetRuntimeFactory = (name: string, storage: RatchetStorage, crea
 let loaded: Promise<{ bridge: unknown; Device: { open: (...args: unknown[]) => Promise<RatchetDeviceRuntime> } }> | undefined;
 export const openRatchetRuntime: RatchetRuntimeFactory = async (name, storage, create) => {
   loaded ??= (async () => {
-    const root = new URL('assets/ratchet/', document.baseURI);
+    const root = location.protocol === 'file:' ? new URL('nivra-crypto://app/') : new URL('assets/ratchet/', document.baseURI);
     const bridge = await import(/* webpackIgnore: true */ new URL('pkg/nivra_ratchet_wasm.js', root).href);
     await bridge.default({ module_or_path: new URL('pkg/nivra_ratchet_wasm_bg.wasm', root) });
     const wrapper = await import(/* webpackIgnore: true */ new URL('web-device.mjs', root).href);

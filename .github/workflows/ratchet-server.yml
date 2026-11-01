@@ -2,7 +2,7 @@ name: Ratchet PostgreSQL pilot
 on:
   push:
     branches: [codex/ratchet-bridge]
-    paths: [Nivra.Api/**, checks/Nivra.RatchetChecks/**, crypto/ratchet-pilot/**, crypto/ratchet-wasm/**, nivra-app/src/**, nivra-app/angular.json, nivra-app/package-lock.json, android/ratchet-lab/**, android/settings.gradle, .github/workflows/ratchet-server.yml, .github/workflows/ratchet-wasm.yml]
+    paths: [Nivra.Api/**, Nivra.Desktop/**, checks/Nivra.RatchetChecks/**, crypto/ratchet-pilot/**, crypto/ratchet-wasm/**, nivra-app/src/**, nivra-app/angular.json, nivra-app/package-lock.json, android/ratchet-lab/**, android/settings.gradle, .github/workflows/ratchet-server.yml, .github/workflows/ratchet-wasm.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -37,6 +37,31 @@ jobs:
           node node_modules/@angular/cli/bin/ng.js test --watch=false --browsers=ChromeHeadlessNoGpu --progress=false
   wasm:
     uses: ./.github/workflows/ratchet-wasm.yml
+  desktop:
+    needs: wasm
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2022]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.18.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ratchet-wasm-portability
+          path: crypto/ratchet-wasm
+      - run: npm ci --prefix Nivra.Desktop
+      - run: node --test Nivra.Desktop/*.test.js
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a Nivra.Desktop/node_modules/.bin/electron --no-sandbox Nivra.Desktop/ratchet-assets.electron.cjs
+      - if: runner.os == 'Windows'
+        run: Nivra.Desktop/node_modules/.bin/electron.cmd Nivra.Desktop/ratchet-assets.electron.cjs
   postgres:
     needs: wasm
     runs-on: ubuntu-24.04

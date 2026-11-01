@@ -1,0 +1,43 @@
+'use strict';
+// CI-only hidden renderer in a new temporary profile; never opens the installed user's app.
+const { app, BrowserWindow, protocol } = require('electron');
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const os = require('node:os');
+const { registerRatchetScheme, createRatchetAssetHandler } = require('./ratchet-assets');
+registerRatchetScheme(protocol);
+const profile = require('node:fs').mkdtempSync(path.join(os.tmpdir(), 'nivra-ratchet-electron-'));
+app.setPath('userData', profile);
+app.commandLine.appendSwitch('disable-gpu');
+const deadline = setTimeout(() => { console.error('Electron ratchet timeout'); app.exit(1); }, 45000);
+app.whenReady().then(async () => {
+  const root = path.join(profile, 'assets'); await fs.mkdir(path.join(root, 'pkg'), { recursive: true });
+  const source = path.resolve(__dirname, '../crypto/ratchet-wasm');
+  await fs.copyFile(path.join(source, 'web-device.mjs'), path.join(root, 'web-device.mjs'));
+  for (const name of ['nivra_ratchet_wasm.js', 'nivra_ratchet_wasm_bg.wasm']) await fs.copyFile(path.join(source, 'pkg/web', name), path.join(root, 'pkg', name));
+  protocol.handle('nivra-crypto', createRatchetAssetHandler(root));
+  const html = path.join(profile, 'test.html'); await fs.writeFile(html, '<!doctype html><meta charset="utf-8"><title>Isolated ratchet renderer</title>');
+  const window = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true } });
+  await window.loadFile(html);
+  const result = await window.webContents.executeJavaScript(`(async () => {
+    const bridge = await import('nivra-crypto://app/pkg/nivra_ratchet_wasm.js');
+    await bridge.default({module_or_path:new URL('nivra-crypto://app/pkg/nivra_ratchet_wasm_bg.wasm')});
+    const {LabWebDevice} = await import('nivra-crypto://app/web-device.mjs');
+    const rows = new Map(), storage = {read:async key=>structuredClone(rows.get(key)||null),commit:async(key,revision,state)=>{if((rows.get(key)?.revision||0)!==revision)throw Error('CAS');rows.set(key,{revision:revision+1,state:structuredClone(state)});return revision+1;}};
+    let alice = await LabWebDevice.open(bridge,'desktop-alice',1,storage,{createIfMissing:true});
+    let bob = await LabWebDevice.open(bridge,'desktop-bob',1,storage,{createIfMissing:true});
+    await alice.pinIdentity(bob.address,bob.publicIdentity); await bob.pinIdentity(alice.address,alice.publicIdentity);
+    await alice.establish(bob.address,await bob.bundle());
+    const context = {conversationId:'desktop-chat',messageId:'desktop-message'}, payload={text:'desktop private message'};
+    const packet=await alice.encrypt(bob.address,context,payload), value=await bob.decrypt(alice.address,context,packet);
+    if(value.text!==payload.text)throw Error('Plaintext mismatch');
+    await alice.close();await bob.close();
+    alice=await LabWebDevice.open(bridge,'desktop-alice',1,storage);bob=await LabWebDevice.open(bridge,'desktop-bob',1,storage);
+    if(JSON.stringify(await alice.encrypt(bob.address,context,payload))!==JSON.stringify(packet))throw Error('Retry mismatch');
+    if((await bob.pendingReceived())[0].payload.text!==payload.text)throw Error('Incoming history lost');
+    await alice.close();await bob.close();return {secureContext:isSecureContext,node:typeof require,checks:4};
+  })()`);
+  if (!result.secureContext || result.node !== 'undefined' || result.checks !== 4) throw Error('Invalid renderer security');
+  console.log('PASS Electron file-origin module/WASM, encryption, reopen, exact retry and isolated renderer');
+  clearTimeout(deadline); window.destroy(); app.exit(0);
+}).catch(error => { console.error(error.message); clearTimeout(deadline); app.exit(1); });

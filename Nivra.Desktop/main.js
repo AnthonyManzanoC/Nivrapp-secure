@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, shell, session, ipcMain, safeStorage, net } = require("electron");
+const { app, BrowserWindow, Menu, shell, session, ipcMain, safeStorage, net, protocol } = require("electron");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
@@ -9,6 +9,8 @@ const { installWindowPrivacy } = require('./window-privacy');
 const { isBundledEntry, isTrustedIpc } = require('./renderer-security');
 const { createElectronRequest, createUpdateManager, updateErrorCode } = require('./update-manager');
 const { createLauncherAppearanceManager, installLauncherAppearanceHandlers } = require('./launcher-appearance');
+const { registerRatchetScheme, installRatchetAssets } = require('./ratchet-assets');
+if (protocol) registerRatchetScheme(protocol);
 
 let mainWindow = null;
 let isQuitting = false;
@@ -294,6 +296,7 @@ if (!hasSingleInstanceLock) {
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
     const webRoot = resolveWebRoot();
+    if (protocol) installRatchetAssets(protocol, webRoot);
     const apiBaseUrl = resolveApiBaseUrl(webRoot);
 
     installSecureVaultHandlers();

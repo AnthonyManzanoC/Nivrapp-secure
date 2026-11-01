@@ -16,7 +16,7 @@ export interface RatchetTarget { userId: string; deviceId: string; publicJwk: Js
 interface DirectoryEntry { userId: string; deviceId: string; signalDeviceNumber: number; registrationId: number; identityKey: string; bindingHeader?: string; bindingCiphertext?: string; }
 interface Binding { header: string; ciphertext: string; }
 interface Peer { userId: string; identityKey: string; registrationId: number; legacy: string; }
-interface PendingSend { conversationId: string; payloadHash: string; payload: ChatPayload; recipients?: RecipientCipherRequest[]; }
+interface PendingSend { conversationId: string; payloadHash: string; payload: ChatPayload; targetsHash?: string; recipients?: RecipientCipherRequest[]; }
 interface ApplicationState { v: 1; registrationId: number; peers: Record<string, Peer>; outgoing: Record<string, PendingSend>; confirmed: Record<string, { conversationId: string; serverId: string }>; }
 interface MessageHeader { v: 4; alg: typeof ALGORITHM; senderDeviceId: string; recipientDeviceId: string; identityKey: string; registrationId: number; binding?: Binding; local?: boolean; }
 
@@ -190,14 +190,16 @@ export class RatchetMessagingService implements OnDestroy {
         if (saved) throw Error('El cifrado avanzado está temporalmente detenido. El mensaje queda pendiente.');
         return null;
       }
-      const engine = await this.open(true); await this.publish(engine); owner.assert();
+      const engine = await this.open(true); owner.assert();
       let state = await this.state(engine);
       if (state.confirmed[clientMessageId]) throw Error('Este mensaje ya se confirmó; recupera su confirmación antes de reintentar.');
       const clean = { ...payload }; delete clean['_padding'];
       const digest = await ratchetHash([conversationId, clean, fileObjectId]);
       const existing = state.outgoing[clientMessageId];
+      const targetsHash = await ratchetHash(targets.map(target => [target.userId, target.deviceId, this.coordinates(target.publicJwk)]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
       if (existing && (existing.payloadHash !== digest || existing.conversationId !== conversationId)) throw Error('El identificador del mensaje ya contiene otro contenido.');
-      if (existing?.recipients) return existing.recipients;
+      if (existing?.recipients && existing.targetsHash === targetsHash) return existing.recipients;
+      await this.publish(engine); owner.assert();
       if (!existing) {
         if (Object.keys(state.outgoing).length >= 200) throw Error('La cola cifrada está llena. Espera a que se envíen los mensajes pendientes.');
         state.outgoing[clientMessageId] = { conversationId, payloadHash: digest, payload };
@@ -239,7 +241,8 @@ export class RatchetMessagingService implements OnDestroy {
         recipients.push({ userId: target.userId, deviceId: target.deviceId, ciphertext, header, fileObjectId });
       }
       state = await this.state(engine); owner.assert();
-      state.outgoing[clientMessageId].recipients = recipients; await engine.updateApplicationState(state); return recipients;
+      state.outgoing[clientMessageId].recipients = recipients; state.outgoing[clientMessageId].targetsHash = targetsHash;
+      await engine.updateApplicationState(state); return recipients;
     });
   }
 
