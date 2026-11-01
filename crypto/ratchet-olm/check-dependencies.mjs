@@ -1,10 +1,19 @@
 import { readFileSync } from 'node:fs';
 const metadata = JSON.parse(readFileSync(process.argv[2], 'utf8'));
 const allowed = new Set(['MIT', 'Apache-2.0', 'BSD-1-Clause', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', '0BSD', 'CC0-1.0', 'Unicode-3.0', 'Zlib', 'BSL-1.0', 'Apache-2.0 WITH LLVM-exception']);
+function compatible(expression) {
+  const tokens = (expression ?? '').replace(/\//g, ' OR ').match(/[()]|[^\s()]+/g) ?? []; let index = 0;
+  function atom() {
+    if (tokens[index] === '(') { index++; const result = either(); if (tokens[index++] !== ')') throw Error('Invalid SPDX grouping'); return result; }
+    let id = tokens[index++]; if (tokens[index] === 'WITH') { index++; id += ' WITH ' + tokens[index++]; } return allowed.has(id);
+  }
+  function both() { let result = atom(); while (tokens[index] === 'AND') { index++; const next = atom(); result = result && next; } return result; }
+  function either() { let result = both(); while (tokens[index] === 'OR') { index++; const next = both(); result = result || next; } return result; }
+  const result = either(); return index === tokens.length && result;
+}
 for (const pkg of metadata.packages) {
   if (pkg.name === 'nivra-ratchet-olm') continue;
-  const terms = (pkg.license ?? '').replace(/[()]/g, '').split(/\s+(?:OR|AND)\s+|\//);
-  if (!terms.length || terms.some(term => !allowed.has(term))) throw Error(`Review dependency license: ${pkg.name} ${pkg.version} ${pkg.license}`);
+  if (!compatible(pkg.license)) throw Error(`Review dependency license: ${pkg.name} ${pkg.version} ${pkg.license}`);
 }
 const vendor = metadata.packages.find(pkg => pkg.name === 'vodozemac');
 if (vendor?.version !== '0.11.1' || !vendor.source?.includes('3e11ae87d157da6bcac3cbf7825d37c8f5ed60af')) throw Error('Unexpected vendor revision');
