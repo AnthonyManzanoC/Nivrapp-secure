@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, computed, effect, inject, signal, untracked, type WritableSignal } from '@angular/core';
+import { DestroyRef, Injectable, Injector, computed, effect, inject, signal, untracked, type WritableSignal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Room, RoomEvent } from 'livekit-client';
 import { firstValueFrom } from 'rxjs';
@@ -26,6 +26,8 @@ import { CryptoService } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 import { EncryptedDownloadService } from './encrypted-download.service';
+import { RatchetMessagingService, RatchetTarget } from './ratchet-messaging.service';
+import { ratchetTransport } from './ratchet-runtime';
 
 const VAULT_META_PREFIX = 'nivra.vault.';
 const MAX_VAULT_FILE_BYTES = 256 * 1024 * 1024;
@@ -42,6 +44,8 @@ interface VaultSessionContext { scope: string; epoch: number; userId: string; de
 
 @Injectable({ providedIn: 'root' })
 export class VaultService {
+  private readonly injector = inject(Injector);
+  private get ratchet(): RatchetMessagingService { return this.injector.get(RatchetMessagingService); }
   private readonly api = inject(NivraApiService);
   private readonly downloads = inject(EncryptedDownloadService);
   private readonly auth = inject(AuthService);
@@ -872,19 +876,19 @@ export class VaultService {
       throw new Error('Abre una sala Vault primero.');
     }
     this.sending.set(true);
+    const clientMessageId = `vault-${crypto.randomUUID()}`;
     try {
       await this.realtime.joinVaultRoom(room.id);
       this.checkContext(context);
-      const recipients = await this.encryptedRecipients(room, payload, fileObjectId, context);
+      const recipients = await this.encryptedRecipients(room, payload, fileObjectId, context, clientMessageId);
       this.checkContext(context);
       if (!recipients.length) {
         throw new Error('No hay llaves publicas disponibles para esta boveda.');
       }
-      const clientMessageId = `vault-${crypto.randomUUID()}`;
       await this.realtime.sendVaultRoomMessage(room.id, {
         clientMessageId,
         kind,
-        recipients,
+        ...ratchetTransport(recipients),
         fileObjectId,
       });
       this.checkContext(context);
@@ -903,63 +907,39 @@ export class VaultService {
         });
       }
     } finally {
+      // Vault plaintext stays in memory. Keep only the encrypted ratchet packet
+      // until the realtime attempt completes, without a permanent history copy.
+      if (this.isCurrent(context)) await this.ratchet.discardEphemeral(room.id, clientMessageId).catch(() => undefined);
       if (this.isCurrent(context)) this.sending.set(false);
     }
   }
 
-  private async encryptedRecipients(
-    room: VaultRoom,
-    payload: ChatPayload,
-    fileObjectId: string | null = null,
-    context = this.captureContext(),
-  ): Promise<RecipientCipherRequest[]> {
+  private async encryptedRecipients(room: VaultRoom, payload: ChatPayload, fileObjectId: string | null, context: VaultSessionContext, clientMessageId: string): Promise<RecipientCipherRequest[]> {
     this.checkContext(context);
-    const own = await this.crypto.currentKeyMaterial(context.alias, context.deviceId);
-    this.checkContext(context);
-    const recipients: RecipientCipherRequest[] = [];
-    const activeMembers = (room.members ?? []).filter((member) => member.status === 'Active');
-    const directories = await this.directoriesForUsers(activeMembers.map((member) => member.userId), context);
-    this.checkContext(context);
-
-    for (const member of activeMembers) {
-      this.checkContext(context);
-      const directory = member.userId === context.userId
-        ? await this.ownKeyDirectory(context)
-        : directories.get(member.userId) ?? await this.directoryForMember(member, context).catch(() => null);
-      this.checkContext(context);
-      const usedDeviceIds = new Set<string>();
-
-      for (const device of directory?.devices ?? []) {
-        const publicKey = this.crypto.parsePublicJwk(device.keyBundle?.identityKey);
-        if (!device.deviceId || !publicKey || usedDeviceIds.has(device.deviceId)) {
-          continue;
-        }
-        const sealed = await this.crypto.encryptForPublicKey(own, publicKey, payload);
-        this.checkContext(context);
-        recipients.push({
-          userId: member.userId,
-          deviceId: device.deviceId,
-          ciphertext: sealed.ciphertext,
-          header: sealed.header,
-          fileObjectId,
-        });
-        usedDeviceIds.add(device.deviceId);
-      }
-
-      if (member.userId === context.userId && !usedDeviceIds.has(context.deviceId)) {
-        const sealed = await this.crypto.encryptForPublicKey(own, own.publicJwk, payload);
-        this.checkContext(context);
-        recipients.push({
-          userId: context.userId,
-          deviceId: context.deviceId,
-          ciphertext: sealed.ciphertext,
-          header: sealed.header,
-          fileObjectId,
-        });
+    const own = await this.crypto.currentKeyMaterial(context.alias, context.deviceId); this.checkContext(context);
+    const members = (room.members ?? []).filter(member => member.status === 'Active');
+    const directories: PublicKeyDirectory[] = [];
+    for (let offset = 0; offset < members.length; offset += 128) {
+      directories.push(...await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds: members.slice(offset, offset + 128).map(member => member.userId), aliases: [] }))); this.checkContext(context);
+    }
+    const targets: RatchetTarget[] = [];
+    for (const member of members) {
+      const published = directories.find(directory => directory.userId === member.userId)?.devices.filter(device => device.keyBundle?.identityKey) ?? [];
+      if (!published.length && member.userId !== context.userId) throw Error('Un miembro necesita abrir Nivra y completar la actualización del cifrado.');
+      for (const device of published) {
+        const publicJwk = this.crypto.parsePublicJwk(device.keyBundle.identityKey);
+        if (!publicJwk || !device.deviceId) throw Error('No se pudo comprobar un dispositivo de la sala.');
+        targets.push({ userId: member.userId, deviceId: device.deviceId, publicJwk });
       }
     }
+    if (!targets.some(target => target.deviceId === context.deviceId)) targets.push({ userId: context.userId, deviceId: context.deviceId, publicJwk: own.publicJwk });
+    const packets = await this.ratchet.encrypt(room.id, clientMessageId, payload, targets, fileObjectId, true); this.checkContext(context);
+    if (!packets) throw Error('El cifrado actualizado no está disponible.');
+    return packets;
+  }
 
-    return recipients;
+  private isHybridEnvelope(header?: string | null): boolean {
+    try { const value = JSON.parse(header || '{}'); return value.v === 4 && value.alg === 'NIVRA-HYBRID-RATCHET-MESSAGE-1'; } catch { return false; }
   }
 
   private async directoriesForUsers(userIds: string[], context = this.captureContext()): Promise<Map<string, PublicKeyDirectory>> {
@@ -1025,7 +1005,9 @@ export class VaultService {
       try {
         const own = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
         if (!this.isCurrent(context)) return;
-        payload = await this.crypto.decryptEnvelope<ChatPayload>(own, recipient.header, recipient.ciphertext);
+        if (this.isHybridEnvelope(recipient.header)) {
+          payload = await this.ratchet.decrypt({ ...message, conversationId: message.vaultRoomId, serverReceivedAt: message.sentAt, deleteAfterRead: false, receipts: [] }, recipient, () => this.isCurrent(context), true);
+        } else payload = await this.crypto.decryptEnvelope<ChatPayload>(own, recipient.header, recipient.ciphertext);
         if (!this.isCurrent(context)) return;
       } catch {
         if (!this.isCurrent(context)) return;

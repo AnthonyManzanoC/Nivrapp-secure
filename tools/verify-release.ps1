@@ -183,6 +183,13 @@ $desktopExePath = Resolve-RequiredFile -Path (Join-Path $desktopPath 'Nivra.exe'
 $releasePath = Resolve-RequiredFile -Path (Join-Path $webPath 'assets\release.json')
 $webRelease = Get-Content -LiteralPath $releasePath -Raw | ConvertFrom-Json
 if ($webRelease.version -ne $Version) { throw "Built web release.json does not identify version $Version." }
+& node (Join-Path $workspacePath 'crypto\ratchet-olm\distribution.mjs') verify
+if ($LASTEXITCODE -ne 0) { throw 'Hybrid cryptographic distribution verification failed.' }
+$ratchetManifest = Get-Content -LiteralPath (Join-Path $workspacePath 'crypto\ratchet-olm\production\manifest.json') -Raw | ConvertFrom-Json
+foreach ($entry in $ratchetManifest.files.PSObject.Properties) {
+  $bundledPath = Resolve-RequiredFile -Path (Join-Path $webPath ('assets\ratchet\' + $entry.Name.Replace('/', '\')))
+  if ((Get-FileHash -LiteralPath $bundledPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $entry.Value) { throw "Built web cryptographic asset changed: $($entry.Name)" }
+}
 
 $gradlePath = Resolve-RequiredFile -Path (Join-Path $workspacePath 'android\app\build.gradle')
 $gradleSource = Get-Content -LiteralPath $gradlePath -Raw

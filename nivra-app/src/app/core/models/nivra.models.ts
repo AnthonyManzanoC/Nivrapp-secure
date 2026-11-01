@@ -494,6 +494,8 @@ export interface VaultInviteLink {
 }
 
 export interface VaultRealtimeMessageResponse {
+  sharedPayloadIv?: string | null;
+  sharedPayloadCiphertext?: string | null;
   id: string;
   vaultRoomId: string;
   clientMessageId: string;

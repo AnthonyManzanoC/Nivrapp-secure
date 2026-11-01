@@ -145,13 +145,15 @@ public sealed class RatchetPreKeyStore(NivraDbContext db, TimeProvider clock)
                 var allowed = await db.Conversations.AnyAsync(conversation => conversation.Id == conversationId &&
                     conversation.Participants.Any(peer => peer.UserId == userId && peer.RemovedAt == null) &&
                     conversation.Participants.Any(peer => peer.UserId == target.UserId && peer.RemovedAt == null), ct);
+                var sharedVault = deviceAddresses && await RatchetDirectoryService.SharedVaultAsync(db, userId, target.UserId, clock.GetUtcNow(), ct, conversationId);
+                allowed |= sharedVault;
                 if (!allowed && deviceAddresses && target.UserId == userId && conversationId.StartsWith("history_", StringComparison.Ordinal))
                 {
                     var transferId = conversationId[8..];
                     allowed = await db.HistoryKeyTransfers.AnyAsync(request => request.Id == transferId && request.UserId == userId && request.TargetDeviceId == targetDeviceId && request.ExpiresAt > clock.GetUtcNow() &&
                         db.HistoryKeyTransferResponses.Any(response => response.TransferId == request.Id && response.SourceDeviceId == deviceId), ct);
                 }
-                var sharedGroup = deviceAddresses && await db.Conversations.AnyAsync(chat => chat.Id == conversationId && chat.Type == ConversationType.Group, ct);
+                var sharedGroup = sharedVault || deviceAddresses && await db.Conversations.AnyAsync(chat => chat.Id == conversationId && chat.Type == ConversationType.Group, ct);
                 if (!allowed || !sharedGroup && await db.Set<ContactBlockRecord>().AnyAsync(block =>
                     block.OwnerUserId == userId && block.ContactUserId == target.UserId || block.OwnerUserId == target.UserId && block.ContactUserId == userId, ct))
                     throw Reject("prekey_conversation_forbidden", 403);

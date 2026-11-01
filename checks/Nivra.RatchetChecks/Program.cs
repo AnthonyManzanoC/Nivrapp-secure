@@ -81,6 +81,11 @@ await using (var scope = app.Services.CreateAsyncScope())
         foreach (var name in new[] { "alice", "bob", "carol" }) chat.Participants.Add(new ConversationParticipant { UserId = "usr-lab-" + name, JoinedAt = DateTimeOffset.UtcNow });
         db.Conversations.Add(chat);
     }
+    foreach (var roomId in new[] { "vault-lab", "vault-lab-expired", "vault-lab-other" }) {
+        db.VaultRooms.Add(new VaultRoom { Id = roomId, OwnerUserId = "usr-lab-alice", Name = "Synthetic vault", CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow, ExpiresAt = roomId.EndsWith("expired") ? DateTimeOffset.UtcNow.AddMinutes(-1) : DateTimeOffset.UtcNow.AddMinutes(15) });
+        foreach (var name in roomId.EndsWith("other") ? new[] { "alice" } : new[] { "alice", "bob" })
+            db.VaultRoomMembers.Add(new VaultRoomMember { Id = roomId + "-" + name, VaultRoomId = roomId, UserId = "usr-lab-" + name, Status = VaultMemberStatus.Active, CreatedAt = DateTimeOffset.UtcNow });
+    }
     await db.SaveChangesAsync();
 }
 await app.StartAsync();
@@ -236,6 +241,9 @@ await using (var scope = app.Services.CreateAsyncScope()) { var db = scope.Servi
 await Status("bob-hybrid", hybridPublish, new RatchetOlmPublishRequest(hybridBatch), HttpStatusCode.Conflict, "late publication cannot resurrect cleaned keys");
 await Status("bob-hybrid", hybridPublish, new RatchetOlmPublishRequest([Hybrid(9)]), HttpStatusCode.OK, "monotonic hybrid prekey replenishment continues");
 Console.WriteLine($"PASS {checks} PostgreSQL and HTTP hybrid ratchet checks");
+await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab", Guid.NewGuid()), HttpStatusCode.OK, "active vault peers reserve hybrid prekeys without a normal chat");
+await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab-expired", Guid.NewGuid()), HttpStatusCode.Forbidden, "expired vault cannot reserve a session");
+await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab-other", Guid.NewGuid()), HttpStatusCode.Forbidden, "vault membership is required on both sides");
 if (args.Contains("--serve-for-interop"))
 {
     // Synthetic bearer tokens are passed to the parent test harness only. That

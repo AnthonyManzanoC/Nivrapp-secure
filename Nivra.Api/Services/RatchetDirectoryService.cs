@@ -120,12 +120,17 @@ public sealed class RatchetDirectoryService(NivraDbContext db, TimeProvider cloc
         var target = await db.Devices.AsNoTracking().SingleOrDefaultAsync(row => row.Id == targetId && row.IsTrusted && row.RevokedAt == null && db.Users.Any(user => user.Id == row.UserId && user.DisabledAt == null), ct)
             ?? throw Reject("ratchet_device_unavailable", 404);
         if (source.UserId == target.UserId) return target;
+        if (await SharedVaultAsync(db, source.UserId, target.UserId, clock.GetUtcNow(), ct)) return target;
         if (await db.Conversations.AnyAsync(chat => chat.Type == ConversationType.Group && chat.Participants.Any(peer => peer.UserId == source.UserId && peer.RemovedAt == null) && chat.Participants.Any(peer => peer.UserId == target.UserId && peer.RemovedAt == null), ct)) return target;
         if (await ContactBlockPolicy.BetweenAsync(db, source.UserId, target.UserId, ct)) throw Reject("ratchet_binding_forbidden");
         if (await db.Conversations.AnyAsync(chat => chat.Participants.Any(peer => peer.UserId == source.UserId && peer.RemovedAt == null) && chat.Participants.Any(peer => peer.UserId == target.UserId && peer.RemovedAt == null), ct)
             || await db.Contacts.AnyAsync(contact => contact.OwnerUserId == source.UserId && contact.ContactUserId == target.UserId, ct)) return target;
         throw Reject("ratchet_binding_forbidden");
     }
+    public static Task<bool> SharedVaultAsync(NivraDbContext db, string first, string second, DateTimeOffset now, CancellationToken ct, string? roomId = null) =>
+        db.VaultRooms.AnyAsync(room => (roomId == null || room.Id == roomId) && room.ClosedAt == null && (room.ExpiresAt == null || room.ExpiresAt > now) &&
+            db.VaultRoomMembers.Any(member => member.VaultRoomId == room.Id && member.UserId == first && member.Status == VaultMemberStatus.Active) &&
+            db.VaultRoomMembers.Any(member => member.VaultRoomId == room.Id && member.UserId == second && member.Status == VaultMemberStatus.Active), ct);
     private static string[] Ids(List<string>? ids)
     {
         if (ids is null || ids.Count is < 1 or > 128 || ids.Any(id => !ValidId(id))) throw Reject("invalid_ratchet_devices", 400);

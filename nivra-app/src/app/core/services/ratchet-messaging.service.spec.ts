@@ -165,4 +165,18 @@ describe('actual application Double Ratchet delivery', () => {
     expect(finished).toBeTrue(); expect(pages.size).toBe(0); expect(acknowledgedSequence).toBe(nextSequence - 1);
     expect(linked.service.runtime.publicIdentity).not.toEqual(source.service.runtime.publicIdentity);
   }, 30000);
+
+  it('ratchets ephemeral vault messages without retaining plaintext in snapshots or permanent history', async () => {
+    const alice = await client('vault-alice'), bob = await client('vault-bob'); await alice.service.pump(); await bob.service.pump();
+    const targets = [alice.target, bob.target], payload = { type: 'text', text: 'EPHEMERAL VAULT SECRET' };
+    await alice.service.encrypt('vault-room', 'vault-one', payload, targets, null, true).catch(() => undefined); await bob.service.pump();
+    const packets = await alice.service.encrypt('vault-room', 'vault-one', payload, targets, null, true);
+    expect(JSON.stringify(alice.saved.get(alice.target.deviceId))).not.toContain(payload.text);
+    const transport = ratchetTransport(packets), message = { ...response(alice, transport.recipients, 'vault-one'), ...transport, conversationId: 'vault-room' };
+    expect(await bob.service.decrypt(message, transport.recipients[1], () => true, true)).toEqual(payload);
+    expect(JSON.stringify([...bob.messages.values()])).not.toContain(payload.text);
+    expect(await bob.service.runtime.pendingReceived()).toEqual([]);
+    await alice.service.discardEphemeral('vault-room', 'vault-one');
+    expect(alice.saved.get(alice.target.deviceId).state.outbox).toEqual([]);
+  }, 30000);
 });

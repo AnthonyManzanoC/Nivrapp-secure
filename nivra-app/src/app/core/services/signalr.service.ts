@@ -188,16 +188,22 @@ export class SignalrService implements OnDestroy {
       clientMessageId: string;
       kind: string;
       recipients: RecipientCipherRequest[];
+      sharedPayloadIv?: string;
+      sharedPayloadCiphertext?: string;
       fileObjectId?: string | null;
     },
   ): Promise<void> {
     await this.ensureConnected();
-    await this.connection?.invoke('SendVaultRoomMessage', roomId, {
+    const request = {
       clientMessageId: payload.clientMessageId,
       kind: payload.kind,
       recipients: payload.recipients,
       fileObjectId: payload.fileObjectId ?? null,
-    });
+      sharedPayloadIv: payload.sharedPayloadIv ?? null,
+      sharedPayloadCiphertext: payload.sharedPayloadCiphertext ?? null,
+    };
+    if (new TextEncoder().encode(JSON.stringify(request)).length > 500 * 1024) throw Error('El mensaje supera el tamaño permitido de la sala. Reduce su contenido antes de enviar.');
+    await this.connection?.invoke('SendVaultRoomMessage', roomId, request);
   }
 
   private async openConnection(hasRefreshedToken: boolean): Promise<void> {

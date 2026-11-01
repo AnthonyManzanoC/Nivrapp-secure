@@ -20,7 +20,8 @@ public sealed class NivraHub(
     PushNotificationService pushNotifications,
     LiveKitTokenService liveKit,
     ILogger<NivraHub> logger,
-    TimeProvider timeProvider) : Hub
+    TimeProvider timeProvider,
+    IConfiguration? configuration = null) : Hub
 {
     private const string ForceWipeCode = "FORCE_WIPE";
 
@@ -499,10 +500,19 @@ public sealed class NivraHub(
             request.Recipients.Count == 0 ||
             !await IsActiveVaultMemberAsync(roomId, currentUser.UserId))
         {
-            return;
+            throw new HubException("La sala ya no está disponible para este dispositivo.");
         }
 
         var now = timeProvider.GetUtcNow();
+        if (request.Recipients.Count > 1024 || string.IsNullOrWhiteSpace(request.ClientMessageId) || request.ClientMessageId.Length > 128) throw new HubException("Mensaje de sala inválido.");
+        var activeUsers = await db.VaultRoomMembers.Where(member => member.VaultRoomId == roomId && member.Status == VaultMemberStatus.Active).Select(member => member.UserId).ToListAsync(Context.ConnectionAborted);
+        var deviceIds = request.Recipients.Select(recipient => recipient.DeviceId).Distinct().ToArray();
+        var devices = await db.Devices.AsNoTracking().Where(device => deviceIds.Contains(device.Id) && device.RevokedAt == null && device.IsTrusted).ToDictionaryAsync(device => device.Id, Context.ConnectionAborted);
+        if (!request.Recipients.Select(recipient => recipient.UserId).ToHashSet(StringComparer.Ordinal).SetEquals(activeUsers) ||
+            request.Recipients.Select(recipient => (recipient.UserId, recipient.DeviceId)).Distinct().Count() != request.Recipients.Count ||
+            request.Recipients.Any(recipient => !devices.TryGetValue(recipient.DeviceId, out var device) || device.UserId != recipient.UserId || string.IsNullOrWhiteSpace(recipient.Ciphertext)) ||
+            !await RatchetMessagePolicy.ValidAsync(db, currentUser.UserId, currentUser.DeviceId, roomId, request.ClientMessageId, request.Recipients, Context.ConnectionAborted,
+                configuration?.GetValue<bool>("Ratchet:RequireHybrid") == true, request.SharedPayloadIv, request.SharedPayloadCiphertext)) throw new HubException("Actualiza los dispositivos de la sala y comprueba su cifrado antes de enviar.");
         var response = new VaultRealtimeMessageResponse(
             NivraIds.NewId("vmsg"),
             roomId,
@@ -512,7 +522,9 @@ public sealed class NivraHub(
             request.Kind,
             request.Recipients,
             request.FileObjectId,
-            now);
+            now,
+            request.SharedPayloadIv,
+            request.SharedPayloadCiphertext);
 
         await Clients.Group(GroupsFor.VaultRoom(roomId)).SendAsync("vault.message", response, Context.ConnectionAborted);
     }
@@ -680,7 +692,9 @@ public sealed record VaultRealtimeMessageRequest(
     string? ClientMessageId,
     MessageKind Kind,
     List<RecipientCipherRequest> Recipients,
-    string? FileObjectId);
+    string? FileObjectId,
+    string? SharedPayloadIv = null,
+    string? SharedPayloadCiphertext = null);
 
 public sealed record PresenceResponse(string UserId, bool Online, DateTimeOffset? LastSeenAt);
 
@@ -693,4 +707,6 @@ public sealed record VaultRealtimeMessageResponse(
     MessageKind Kind,
     List<RecipientCipherRequest> Recipients,
     string? FileObjectId,
-    DateTimeOffset SentAt);
+    DateTimeOffset SentAt,
+    string? SharedPayloadIv = null,
+    string? SharedPayloadCiphertext = null);

@@ -21,6 +21,11 @@ antiguos durante una actualización.
 - Cada mensaje usa un cuerpo AES-256-GCM y una cápsula ratchet independiente por
   dispositivo. El cuerpo se envía y almacena una vez incluso en grupos. El
   servidor valida las direcciones y el contexto opaco, sin recibir las llaves.
+- Los mensajes de las salas Vault también usan cápsulas híbridas. Su contenido
+  permanece en memoria y no se agrega al historial permanente. El estado
+  ratchet conserva únicamente el paquete cifrado durante el intento de envío;
+  se descarta al terminar. Las reservas requieren pertenencia activa a la sala
+  y se rechazan al caducar o cerrar la sala.
 - La reserva PostgreSQL es atómica, idempotente por UUID y rechaza dispositivos
   revocados o sin permiso en el chat. El receptor confirma el consumo solo
   después de autenticar y guardar la recepción. La API elimina esas preclaves

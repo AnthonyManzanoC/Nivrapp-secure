@@ -193,7 +193,7 @@ export class RatchetMessagingService implements OnDestroy {
   }
 
   /** New messages always use the hybrid ratchet; unavailable peers remain queued. */
-  async encrypt(conversationId: string, clientMessageId: string, payload: ChatPayload, targets: RatchetTarget[], fileObjectId: string | null): Promise<RecipientCipherRequest[] | null> {
+  async encrypt(conversationId: string, clientMessageId: string, payload: ChatPayload, targets: RatchetTarget[], fileObjectId: string | null, ephemeral = false): Promise<RecipientCipherRequest[] | null> {
     return this.run(async () => {
       const owner = this.owner();
       if (!await this.enabled()) {
@@ -204,19 +204,19 @@ export class RatchetMessagingService implements OnDestroy {
       if (state.confirmed[clientMessageId]) throw Error('Este mensaje ya se confirmó; recupera su confirmación antes de reintentar.');
       const clean = { ...payload }; delete clean['_padding'];
       const digest = await ratchetHash([conversationId, clean, fileObjectId]);
-      const existing = state.outgoing[clientMessageId];
+      const existing = ephemeral ? undefined : state.outgoing[clientMessageId];
       const targetsHash = await ratchetHash(targets.map(target => [target.userId, target.deviceId, this.coordinates(target.publicJwk)]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
       if (existing && (existing.payloadHash !== digest || existing.conversationId !== conversationId)) throw Error('El identificador del mensaje ya contiene otro contenido.');
       if (existing?.recipients && existing.targetsHash === targetsHash) return this.hydrate(existing.recipients, existing.body);
       await this.publish(engine); owner.assert();
-      if (!existing) {
+      if (!existing && !ephemeral) {
         if (Object.keys(state.outgoing).length >= 200) throw pendingRatchet('La cola cifrada está llena. Espera a que se envíen los mensajes pendientes.');
         state.outgoing[clientMessageId] = { conversationId, payloadHash: digest, payload, body: await this.contentFrame(payload) };
         await engine.updateApplicationState(state);
       }
       // Padding is random; retries must reuse the originally persisted bytes.
       payload = existing?.payload ?? payload;
-      const body = state.outgoing[clientMessageId].body;
+      const body = ephemeral ? await this.contentFrame(payload) : state.outgoing[clientMessageId].body;
       if (!body) throw Error('El estado cifrado pendiente necesita una versión compatible.');
       const keyPackage = { type: 'nivra-content-key', key: body.key, bodyHash: await ratchetHash([body.iv, body.ciphertext]) };
       const entries = new Map((await this.directory(targets.map(target => target.deviceId))).map(entry => [entry.deviceId, entry])); owner.assert();
@@ -260,8 +260,11 @@ export class RatchetMessagingService implements OnDestroy {
         batched.forEach((target, index) => { recipients[target.index].ciphertext = JSON.stringify(packets[index]); });
       }
       state = await this.state(engine); owner.assert();
-      state.outgoing[clientMessageId].recipients = recipients; state.outgoing[clientMessageId].targetsHash = targetsHash;
-      await engine.updateApplicationState(state); return this.hydrate(recipients, body);
+      if (!ephemeral) {
+        state.outgoing[clientMessageId].recipients = recipients; state.outgoing[clientMessageId].targetsHash = targetsHash;
+        await engine.updateApplicationState(state);
+      }
+      return this.hydrate(recipients, body);
     });
   }
   private async contentFrame(payload: ChatPayload): Promise<ContentFrame> {
@@ -316,7 +319,10 @@ export class RatchetMessagingService implements OnDestroy {
     return cached?.payload.type === 'ratchet-archive-delivery' && cached.payload['archiveContext'] === ratchetArchiveContext(message)
       && cached.payload['content'] && typeof cached.payload['content'] === 'object' ? cached.payload['content'] as ChatPayload : null;
   }
-  async decrypt(message: MessageResponse, recipient: RecipientCipherRequest, isCurrent: () => boolean = () => true): Promise<ChatPayload> {
+  async discardEphemeral(conversationId: string, clientMessageId: string): Promise<void> {
+    return this.run(async () => { const engine = await this.open(false); await engine.releaseOutgoing(conversationId, await ratchetMessageId(clientMessageId)); });
+  }
+  async decrypt(message: MessageResponse, recipient: RecipientCipherRequest, isCurrent: () => boolean = () => true, ephemeral = false): Promise<ChatPayload> {
     const initialOwner = this.owner();
     const retained = this.history.messageWriteGuard(initialOwner.userId, message.conversationId, message.id);
     const current = () => { initialOwner.assert(); return isCurrent() && retained(); };
@@ -329,7 +335,7 @@ export class RatchetMessagingService implements OnDestroy {
         header.payloadIv = message.sharedPayloadIv; header.payloadCiphertext = message.sharedPayloadCiphertext;
       }
       const digest = await ratchetHash([recipient.header, recipient.ciphertext, message.sharedPayloadIv ?? null, message.sharedPayloadCiphertext ?? null]);
-      const cached = await this.history.messageById(owner.userId, this.receiptConversation(message.conversationId), message.id); owner.assert();
+      const cached = ephemeral ? null : await this.history.messageById(owner.userId, this.receiptConversation(message.conversationId), message.id); owner.assert();
       if (cached?.senderUserId === message.senderUserId && cached.senderDeviceId === message.senderDeviceId && cached.clientMessageId === message.clientMessageId && cached.payload['content'] && (cached.payload['envelopeHash'] === digest ||
         (cached.payload['envelopeHash'] === 'sent' && header.local && message.senderUserId === owner.userId && message.senderDeviceId === owner.deviceId && cached.clientMessageId === message.clientMessageId))) return cached.payload['content'] as ChatPayload;
       const engine = await this.open(false), state = await this.state(engine);
@@ -370,7 +376,8 @@ export class RatchetMessagingService implements OnDestroy {
           payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plain));
         } finally { raw.fill(0); plain?.fill(0); }
       }
-      await this.persistDelivery(message, payload, digest, current); owner.assert();
+      if (!current()) throw Error('La recepción dejó de estar autorizada.');
+      if (!ephemeral) await this.persistDelivery(message, payload, digest, current); owner.assert();
       if (incomingId) await engine.acknowledgeReceived(incomingId);
       return payload;
     });
