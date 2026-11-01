@@ -1393,5 +1393,9 @@
   "CHAT.SELECTION_LIMIT": "Puedes seleccionar hasta 100 mensajes.",
   "CHAT.CONFIRM_SELECTED_ALL": "¿Eliminar los mensajes seleccionados para todos?",
   "CHAT.CONFIRM_SELECTED_ME": "¿Eliminar los mensajes seleccionados sólo para ti?",
-  "CHAT.SELECTION_FORWARD_RESTRICTED": "Algunos mensajes no permiten reenvío."
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Algunos mensajes no permiten reenvío.",
+  "SHELL.REALTIME_CONNECTED": "Conexión en tiempo real activa",
+  "SHELL.REALTIME_WAITING": "Esperando conexión en tiempo real",
+  "SHELL.LIVE": "En vivo",
+  "SHELL.CONNECTING": "Conectando"
 }

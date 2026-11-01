@@ -1207,5 +1207,9 @@
   "CHAT.SELECTION_LIMIT": "最大100件のメッセージを選択できます。",
   "CHAT.CONFIRM_SELECTED_ALL": "選択したメッセージを全員から削除しますか？",
   "CHAT.CONFIRM_SELECTED_ME": "選択したメッセージを自分からのみ削除しますか？",
-  "CHAT.SELECTION_FORWARD_RESTRICTED": "一部のメッセージは転送できません。"
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "一部のメッセージは転送できません。",
+  "SHELL.REALTIME_CONNECTED": "リアルタイム接続中",
+  "SHELL.REALTIME_WAITING": "リアルタイム接続を待機中",
+  "SHELL.LIVE": "オンライン",
+  "SHELL.CONNECTING": "接続中"
 }

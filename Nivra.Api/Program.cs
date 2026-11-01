@@ -19,6 +19,7 @@ builder.Logging.AddConsole();
 builder.Logging.AddDebug();
 builder.WebHost.ConfigureKestrel(options =>
 {
+    options.AddServerHeader = false;
     options.Limits.MaxRequestBodySize = maxEncryptedUploadBytes;
 });
 
@@ -170,12 +171,17 @@ builder.Services.AddRateLimiter(options =>
         });
     });
 
-    options.AddFixedWindowLimiter("uploads", limiter =>
+    options.AddPolicy("uploads", context =>
     {
-        limiter.PermitLimit = 30;
-        limiter.Window = TimeSpan.FromMinutes(1);
-        limiter.QueueLimit = 0;
-        limiter.AutoReplenishment = true;
+        var current = context.GetCurrentUser();
+        var key = current is not null ? $"user:{current.UserId}" : $"ip:{context.Connection.RemoteIpAddress}";
+        return RateLimitPartition.GetFixedWindowLimiter(key, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 30,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        });
     });
 });
 
@@ -195,6 +201,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     await BackfillPhoneHashesAsync(dbContext);
 }
 
+app.UseNivraSecurityHeaders();
 app.UseExceptionHandler(exceptionApp =>
 {
     exceptionApp.Run(async context =>
@@ -215,17 +222,6 @@ app.UseExceptionHandler(exceptionApp =>
             traceId = context.TraceIdentifier
         });
     });
-});
-
-app.Use(async (context, next) =>
-{
-    context.Response.Headers.TryAdd("X-Content-Type-Options", "nosniff");
-    context.Response.Headers.TryAdd("X-Frame-Options", "DENY");
-    context.Response.Headers.TryAdd("Referrer-Policy", "no-referrer");
-    context.Response.Headers.TryAdd("Permissions-Policy", "camera=(self), microphone=(self), display-capture=(self), clipboard-write=(self), geolocation=()");
-    context.Response.Headers.TryAdd("Cross-Origin-Opener-Policy", "same-origin");
-    context.Response.Headers.TryAdd("Cross-Origin-Resource-Policy", "same-origin");
-    await next();
 });
 
 app.UseCors("NivraClients");

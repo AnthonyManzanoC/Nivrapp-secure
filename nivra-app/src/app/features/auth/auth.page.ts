@@ -37,7 +37,7 @@ import { isLoginIdentifier } from '../../core/utils/nivra-number';
     IonText,
   ],
   templateUrl: './auth.page.html',
-  styleUrls: ['./auth.page.scss'],
+  styleUrls: ['./auth.page.scss', './auth-premium.scss'],
 })
 export class AuthPage implements OnDestroy {
   readonly auth = inject(AuthService);

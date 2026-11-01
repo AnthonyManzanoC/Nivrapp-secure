@@ -19,6 +19,17 @@ public interface INivraStore
 
     Task AddSessionAsync(SessionRecord session, CancellationToken cancellationToken = default);
     Task<SessionRecord?> GetSessionAsync(string sessionId, CancellationToken cancellationToken = default);
+    // Implementations may project this into one query, but must never cache an
+    // authorization decision across requests: revocation is shared cluster state.
+    async Task<bool> IsSessionActiveAsync(string sessionId, string userId, string deviceId, DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        var session = await GetSessionAsync(sessionId, cancellationToken);
+        if (session is null || session.RevokedAt is not null || session.ExpiresAt <= now ||
+            session.UserId != userId || session.DeviceId != deviceId) return false;
+        if (!await UserExistsAsync(userId, cancellationToken)) return false;
+        var device = await GetDeviceAsync(deviceId, cancellationToken);
+        return device is not null && device.RevokedAt is null && device.UserId == userId;
+    }
     Task<SessionRecord?> FindSessionByRefreshHashAsync(string refreshTokenHash, DateTimeOffset now, CancellationToken cancellationToken = default);
     Task RevokeSessionAsync(string sessionId, DateTimeOffset revokedAt, CancellationToken cancellationToken = default);
     Task RevokeSessionsForDeviceAsync(string deviceId, DateTimeOffset revokedAt, CancellationToken cancellationToken = default);

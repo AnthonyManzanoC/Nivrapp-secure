@@ -1,0 +1,28 @@
+.side-heading > .workspace-eyebrow { display: block; margin-bottom: 10px; color: var(--nivra-muted); font-size: 8px; font-weight: 600; letter-spacing: .17em; }
+.side-heading h1 { margin-bottom: 6px; font-size: 30px; font-weight: 650; letter-spacing: -1.2px; }
+.side-head { padding-top: calc(24px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px))); padding-bottom: 18px; }
+.side-actions { align-self: center; }
+.new-chat-button { color: var(--nivra-on-brand); background: var(--nivra-brand); border-radius: 14px; box-shadow: 0 4px 14px color-mix(in srgb, var(--nivra-brand) 14%, transparent); }
+.search-box { border: 1px solid var(--nivra-line); border-radius: 14px; background: var(--nivra-bg); }
+.search-box ion-input { min-height: 46px; font-size: 13px; }
+.chat-folders { margin-block: 4px 14px; gap: 4px; padding: 4px; border: 1px solid var(--nivra-line); border-radius: 14px; background: var(--nivra-bg); overflow-x: auto; }
+.chat-folders button { min-height: 38px; padding: 6px; border-radius: 10px; background: transparent; font-size: 11px; }
+.chat-folders button.selected { color: var(--nivra-text); background: var(--nivra-panel-solid); box-shadow: 0 2px 6px #00000010; }
+.list .conversation-item::part(native) { min-height: 80px; padding: 12px 10px; border: 1px solid transparent; border-radius: 14px; }
+.list .conversation-item.active::part(native) { border-radius: 14px; border-color: color-mix(in srgb, var(--nivra-brand) 18%, transparent); background: color-mix(in srgb, var(--nivra-brand) 9%, var(--nivra-panel-solid)); }
+.conversation-item .avatar { border: 1px solid var(--nivra-line); }
+.conversation-title { letter-spacing: -.015em; }
+.conversation-item.unread .conversation-unread-dot { box-shadow: 0 0 0 4px color-mix(in srgb, var(--nivra-brand) 9%, transparent); }
+.conversation-tail { gap: 4px; }
+.conversation-more { height: 40px; }
+@media (hover: hover) and (pointer: fine) {
+  .conversation-more { opacity: 0; transition: opacity .15s; }
+  .conversation-item:hover .conversation-more, .conversation-item:focus-within .conversation-more, .conversation-more[aria-expanded='true'] { opacity: 1; }
+}
+@media (max-width: 768px) {
+  .side-head { padding-top: calc(18px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px))); padding-bottom: 14px; }
+  .side-heading > .workspace-eyebrow { font-size: 8px; margin-bottom: 5px; }
+  .side-heading h1 { font-size: 29px; }
+  .chat-folders button { min-height: 40px; }
+  .list .conversation-item::part(native) { min-height: 78px; }
+}

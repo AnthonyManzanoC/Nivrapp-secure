@@ -23,13 +23,17 @@ describe('Chat welcome guide', () => {
     expect(story).toHaveBeenCalledTimes(1);
   });
 
-  it('shows a lighter workspace prompt once a conversation exists', async () => {
+  it('keeps group and story actions available to returning users and compacts the sidebar', async () => {
     await TestBed.configureTestingModule({ imports: [ChatWelcomeComponent], providers: [{ provide: TranslateService, useValue: { instant: (_key: string, fallback: string) => fallback } }] }).compileComponents();
     const fixture = TestBed.createComponent(ChatWelcomeComponent);
     fixture.componentRef.setInput('firstConversation', false);
     fixture.detectChanges();
-    expect(fixture.nativeElement.querySelector('.welcome-guide')).toBeNull();
+    expect(fixture.nativeElement.querySelector('.welcome-guide')).not.toBeNull();
     expect(fixture.nativeElement.querySelector('h2').textContent).toContain('Un espacio para tu gente');
+    expect(fixture.nativeElement.querySelectorAll('button').length).toBe(5);
+    fixture.componentRef.setInput('compact', true);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.welcome-guide')).toBeNull();
     expect(fixture.nativeElement.querySelectorAll('button').length).toBe(2);
   });
 });

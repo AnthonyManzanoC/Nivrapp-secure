@@ -40,7 +40,7 @@ describe('saved-account navigation shortcut', () => {
     await TestBed.configureTestingModule({ imports: [ShellPage], providers: [
       provideRouter(['chats', 'world', 'vault', 'calls', 'account'].map(tab => ({ path: `app/${tab}`, component: ShortcutTab }))),
       { provide: AuthService, useValue: auth }, { provide: CallsService, useValue: calls },
-      { provide: SignalrService, useValue: {} }, { provide: UnreadTabService, useValue: { unreadChats: signal(0) } },
+      { provide: SignalrService, useValue: { connected: signal(true) } }, { provide: UnreadTabService, useValue: { unreadChats: signal(0) } },
       { provide: ClientCompatibilityService, useValue: { check: jasmine.createSpy('check').and.resolveTo(), updateRequired: signal(false) } },
       { provide: AppLockService, useValue: { isContentLocked: locked } },
       { provide: NivraApiService, useValue: { baseUrl: 'https://fixture.invalid' } },

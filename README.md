@@ -5,7 +5,9 @@ Backend MVP para Nivra: una app de mensajería privada, gratuita primero, con ba
 La capa de datos ya usa PostgreSQL/Supabase con Entity Framework Core y migraciones automáticas al arrancar.
 El backend funciona como API pura + SignalR. El SPA vanilla original se conserva en `Nivra.Api/wwwroot_legacy` como historial y guia de migracion; el nuevo frontend vive en `nivra-app` con Angular + Ionic.
 
-La versión 7.7.0, Android build 49, restaura la confianza de contactos al vincular historial y conserva automáticamente las llaves conocidas. Rediseña la información del mensaje con estados por persona en directo y grupos, y añade selección múltiple para borrar o reenviar. Una llave nueva sin continuidad comprobable sigue requiriendo comparación. Véanse [los cambios y límites de 7.7.0](docs/release-7.7.0.md).
+La versión 8.0.0, Android build 50, consolida una renovación visual de acceso y chats, mejora búsqueda y rendimiento en segundo plano, y refuerza la validación de sesiones, los límites de solicitudes y las cabeceras de seguridad. El piloto Double Ratchet AES-256-GCM continúa aislado y experimental; el protocolo criptográfico de producción no cambia en esta versión. Véanse [los cambios, pruebas y límites de 8.0.0](docs/release-8.0.0.md).
+
+La consolidación de la versión 8.0.0 mejora diseño, búsqueda, rendimiento y validación de sesiones, actualiza dependencias y añade pruebas de seguridad reproducibles. Incluye un piloto aislado de libsignal con AES-256-GCM; Double Ratchet todavía no está activado en los clientes publicados.
 
 La versión 7.6.0, Android build 48, mueve las acciones de chats a la izquierda, corrige el acceso al perfil y el tema del acceso, y reduce lecturas redundantes en la sincronización de PostgreSQL. Véanse [los cambios y límites de 7.6.0](docs/release-7.6.0.md).
 

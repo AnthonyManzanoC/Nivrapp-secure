@@ -1207,5 +1207,9 @@
   "CHAT.SELECTION_LIMIT": "最多可选择100条消息。",
   "CHAT.CONFIRM_SELECTED_ALL": "为所有人删除所选消息？",
   "CHAT.CONFIRM_SELECTED_ME": "仅为自己删除所选消息？",
-  "CHAT.SELECTION_FORWARD_RESTRICTED": "部分消息不允许转发。"
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "部分消息不允许转发。",
+  "SHELL.REALTIME_CONNECTED": "实时连接已启用",
+  "SHELL.REALTIME_WAITING": "正在等待实时连接",
+  "SHELL.LIVE": "在线",
+  "SHELL.CONNECTING": "连接中"
 }

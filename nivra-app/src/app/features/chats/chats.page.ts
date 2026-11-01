@@ -51,6 +51,7 @@ import { ChatPassComponent } from './chat-pass.component';
 import { PushService } from '../../core/services/push.service';
 import { Capacitor } from '@capacitor/core';
 import { HistoryStatusSnoozeService } from '../../core/services/history-status-snooze.service';
+import { rankConversationTitles } from './conversation-search';
 
 type ChatSearchScope = 'all' | 'chats' | 'people';
 type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'refresh' | 'settings' | 'enable-alerts' | 'broadcasts';
@@ -92,7 +93,7 @@ type ConversationMenuAction = 'pin' | 'mute' | 'archive';
     IonSpinner,
   ],
   templateUrl: './chats.page.html',
-  styleUrls: ['./chats.page.scss'],
+  styleUrls: ['./chats.page.scss', './chats-premium.scss'],
 })
 export class ChatsPage implements OnDestroy {
   private readonly injector = inject(Injector);
@@ -688,7 +689,7 @@ export class ChatsPage implements OnDestroy {
     const term = this.normalizeSearch(this.query);
     if (!term) return [];
     const visible = [...this.chat.chatFolderConversations('all'), ...this.chat.chatFolderConversations('archived')];
-    return visible.filter((conversation) => this.normalizeSearch(this.chat.conversationTitle(conversation)).includes(term));
+    return rankConversationTitles(visible, term, conversation => this.chat.conversationTitle(conversation));
   }
 
   async search(): Promise<void> {

@@ -1393,5 +1393,9 @@
   "CHAT.SELECTION_LIMIT": "You can select up to 100 messages.",
   "CHAT.CONFIRM_SELECTED_ALL": "Delete the selected messages for everyone?",
   "CHAT.CONFIRM_SELECTED_ME": "Delete the selected messages only for you?",
-  "CHAT.SELECTION_FORWARD_RESTRICTED": "Some messages cannot be forwarded."
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Some messages cannot be forwarded.",
+  "SHELL.REALTIME_CONNECTED": "Real-time connection active",
+  "SHELL.REALTIME_WAITING": "Waiting for real-time connection",
+  "SHELL.LIVE": "Live",
+  "SHELL.CONNECTING": "Connecting"
 }

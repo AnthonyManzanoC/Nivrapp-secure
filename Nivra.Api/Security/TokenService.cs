@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -32,13 +31,12 @@ internal sealed record AccessTokenPayload(
 
 public sealed class TokenService
 {
-    private static readonly TimeSpan AccessTokenValidationCacheDuration = TimeSpan.FromSeconds(15);
+    private const int MaxAccessTokenLength = 4096;
 
     private readonly byte[] _signingKey;
     private readonly TimeProvider _timeProvider;
     private readonly NivraSecurityOptions _options;
     private readonly ILogger<TokenService> _logger;
-    private readonly ConcurrentDictionary<string, CachedAccessToken> _validatedAccessTokens = new(StringComparer.Ordinal);
 
     public TokenService(IOptions<NivraSecurityOptions> options, TimeProvider timeProvider, ILogger<TokenService> logger)
     {
@@ -84,8 +82,7 @@ public sealed class TokenService
         var session = await store.FindSessionByRefreshHashAsync(refreshHash, now, cancellationToken);
 
         if (session is null ||
-            !await store.UserExistsAsync(session.UserId, cancellationToken) ||
-            await store.GetDeviceAsync(session.DeviceId, cancellationToken) is not { RevokedAt: null })
+            !await store.IsSessionActiveAsync(session.Id, session.UserId, session.DeviceId, now, cancellationToken))
         {
             return null;
         }
@@ -100,17 +97,10 @@ public sealed class TokenService
 
     public async Task<CurrentUser?> ValidateAccessTokenAsync(string token, INivraStore store, CancellationToken cancellationToken = default)
     {
+        if (string.IsNullOrWhiteSpace(token) || token.Length > MaxAccessTokenLength) return null;
         try
         {
-            var cacheKey = HashOpaqueToken(token);
             var now = _timeProvider.GetUtcNow();
-            if (_validatedAccessTokens.TryGetValue(cacheKey, out var cached) &&
-                cached.ExpiresAt > now &&
-                cached.CachedUntil > now)
-            {
-                return cached.User;
-            }
-
             var parts = token.Split('.', 2);
             if (parts.Length != 2)
             {
@@ -128,44 +118,16 @@ public sealed class TokenService
             }
 
             var payload = JsonSerializer.Deserialize<AccessTokenPayload>(payloadBytes);
-            if (payload is null || payload.ExpiresUnixSeconds <= now.ToUnixTimeSeconds())
+            if (payload is null || payload.ExpiresUnixSeconds <= now.ToUnixTimeSeconds() ||
+                payload.ExpiresUnixSeconds > DateTimeOffset.MaxValue.ToUnixTimeSeconds() ||
+                string.IsNullOrWhiteSpace(payload.UserId) || string.IsNullOrWhiteSpace(payload.DeviceId) ||
+                string.IsNullOrWhiteSpace(payload.SessionId) || string.IsNullOrWhiteSpace(payload.Jti))
             {
-                _validatedAccessTokens.TryRemove(cacheKey, out _);
                 return null;
             }
-            var tokenExpiresAt = DateTimeOffset.FromUnixTimeSeconds(payload.ExpiresUnixSeconds);
-
-            var session = await store.GetSessionAsync(payload.SessionId, cancellationToken);
-            if (session is null ||
-                session.RevokedAt is not null ||
-                session.UserId != payload.UserId ||
-                session.DeviceId != payload.DeviceId)
-            {
-                _validatedAccessTokens.TryRemove(cacheKey, out _);
-                return null;
-            }
-
-            var user = await store.GetUserAsync(payload.UserId, cancellationToken);
-            if (user is null || user.DisabledAt is not null)
-            {
-                _validatedAccessTokens.TryRemove(cacheKey, out _);
-                return null;
-            }
-
-            var device = await store.GetDeviceAsync(payload.DeviceId, cancellationToken);
-            if (device is null || device.RevokedAt is not null)
-            {
-                _validatedAccessTokens.TryRemove(cacheKey, out _);
-                return null;
-            }
-
-            var currentUser = new CurrentUser(payload.UserId, payload.DeviceId, payload.SessionId);
-            var cachedUntil = now.Add(AccessTokenValidationCacheDuration);
-            _validatedAccessTokens[cacheKey] = new CachedAccessToken(
-                currentUser,
-                tokenExpiresAt,
-                cachedUntil < tokenExpiresAt ? cachedUntil : tokenExpiresAt);
-            return currentUser;
+            return await store.IsSessionActiveAsync(payload.SessionId, payload.UserId, payload.DeviceId, now, cancellationToken)
+                ? new CurrentUser(payload.UserId, payload.DeviceId, payload.SessionId)
+                : null;
         }
         catch (FormatException)
         {
@@ -226,5 +188,4 @@ public sealed class TokenService
         return Convert.FromBase64String(padded);
     }
 
-    private sealed record CachedAccessToken(CurrentUser User, DateTimeOffset ExpiresAt, DateTimeOffset CachedUntil);
 }

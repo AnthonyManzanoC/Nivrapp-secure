@@ -1,0 +1,31 @@
+:host { --access-ink: #20352f; --access-muted: #5c6e68; --access-line: #dae2db; --access-green: #176c56; --access-mint: #bee8d7; }
+.auth-page { --background: #f4f5ef; }
+.auth-shell { background: #f4f5ef; }
+.brand-row strong { font-weight: 600; letter-spacing: -1.3px; }
+.brand-row span { letter-spacing: .14em; text-transform: uppercase; font-size: 8px; }
+.auth-topline { margin-bottom: clamp(28px, 5vh, 60px); }
+h1 { font-weight: 500; letter-spacing: -.045em; }
+.auth-modes { border-radius: 16px; }
+.language-picker:focus-within { outline: 2px solid var(--access-green); outline-offset: 3px; }
+.auth-modes button, .mini-tabs button { transition: color .16s, background .16s; }
+:host .auth-visual, :host-context(.ion-palette-dark) .auth-visual {
+  background: radial-gradient(ellipse at 65% 80%, #255b4b70, transparent 60%), #13231f;
+  border-color: #304b40;
+  border-radius: 28px;
+}
+:host .editorial-intro h2, :host-context(.ion-palette-dark) .editorial-intro h2 { color: #eff5ee; font-weight: 450; letter-spacing: -.05em; }
+:host .editorial-intro p, :host-context(.ion-palette-dark) .editorial-intro p { color: #aec4b9; }
+:host .editorial-intro small, :host-context(.ion-palette-dark) .editorial-intro small { color: #d6bf91; letter-spacing: .22em; }
+.phone-preview { padding: 28px; border-color: #52756480; background: #ffffff08; box-shadow: 0 28px 60px -24px #00000080; transform: rotate(-4deg); }
+.phone-head { font-size: 24px; margin-bottom: 32px; }
+.phone-head b { border: 1px solid #62d8b640; padding: 5px 9px; border-radius: 20px; background: #62d8b60c; color: #89e6cb; }
+.signal-strip { border-top: 1px solid #a0c0ae24; padding-top: 20px; margin-top: 24px; }
+:host-context(.ion-palette-dark) { --access-ink: #eff3f1; --access-muted: #a1b2b3; --access-line: #2d3b3c; --access-green: #89e6cb; --access-mint: #62d8b6; }
+:host-context(.ion-palette-dark) .auth-page { --background: #0c1114; }
+:host-context(.ion-palette-dark) .auth-shell { background: #0c1114; }
+:host-context(.ion-palette-dark) .language-picker, :host-context(.ion-palette-dark) .language-picker option,
+:host-context(.ion-palette-dark) .auth-modes button.active { background: #202b2e; }
+:host-context(.ion-palette-dark) .auth-modes { background: #141d20; }
+:host-context(.ion-palette-dark) ion-input { --background: #141d20; }
+@media (max-width: 768px) { .auth-panel { max-width: 520px; } }
+@media (prefers-reduced-motion: reduce) { .auth-modes button, .mini-tabs button { transition: none; } }

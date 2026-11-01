@@ -3,6 +3,7 @@
     <aside class="sidebar" [class.has-story-strip]="storyHighlights().length && !query.trim() && !showRecentSearches">
       <header class="side-head">
         <div class="side-heading">
+          <span class="workspace-eyebrow">NIVRA · PRIVATE MESSENGER</span>
           <h1>{{ 'CHATS.TITLE' | translate:'Chats' }}</h1>
           @if (storiesCollapsed && !query.trim() && !showRecentSearches) {
             <button type="button" class="compact-stories" (click)="expandStories()" [attr.aria-label]="'CHATS.EXPAND_STORIES' | translate:'Mostrar historias'" aria-expanded="false">
@@ -91,7 +92,7 @@
         <div class="search-line">
           <div class="search-box" [class.has-value]="query">
             <ion-icon name="search-outline" aria-hidden="true"></ion-icon>
-            <ion-input #chatSearchInput mode="ios" [(ngModel)]="query" (ionFocus)="onSearchFocus()" (ionInput)="onSearchChange()" (keydown.escape)="closeSearch()" [placeholder]="'CHATS.SEARCH_PLACEHOLDER' | translate:'Busca chats, alias o ID Nivra'" [attr.aria-label]="'CHATS.SEARCH_PLACEHOLDER' | translate:'Busca chats, alias o ID Nivra'" autocomplete="off" autocorrect="off" enterkeyhint="search"></ion-input>
+            <ion-input #chatSearchInput mode="ios" [(ngModel)]="query" (ionFocus)="onSearchFocus()" (ionInput)="onSearchChange()" (keydown.escape)="closeSearch()" [placeholder]="'CHATS.SEARCH_PLACEHOLDER' | translate:'Busca chats, alias o ID Nivra'" [attr.aria-label]="'CHATS.SEARCH_PLACEHOLDER' | translate:'Busca chats, alias o ID Nivra'" [maxlength]="256" autocomplete="off" autocorrect="off" enterkeyhint="search"></ion-input>
             @if (query) {
               <button type="button" (click)="clearSearch()" [attr.aria-label]="'CHATS.CLEAR_SEARCH' | translate:'Limpiar búsqueda'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
             }

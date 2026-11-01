@@ -1207,5 +1207,9 @@
   "CHAT.SELECTION_LIMIT": "Você pode selecionar até 100 mensagens.",
   "CHAT.CONFIRM_SELECTED_ALL": "Apagar as mensagens selecionadas para todos?",
   "CHAT.CONFIRM_SELECTED_ME": "Apagar as mensagens selecionadas apenas para você?",
-  "CHAT.SELECTION_FORWARD_RESTRICTED": "Algumas mensagens não podem ser encaminhadas."
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Algumas mensagens não podem ser encaminhadas.",
+  "SHELL.REALTIME_CONNECTED": "Conexão em tempo real ativa",
+  "SHELL.REALTIME_WAITING": "Aguardando conexão em tempo real",
+  "SHELL.LIVE": "Ao vivo",
+  "SHELL.CONNECTING": "Conectando"
 }

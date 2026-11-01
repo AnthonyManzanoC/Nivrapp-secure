@@ -21,9 +21,30 @@ body app-calls .surface:not(.call-mode) .panel {
   box-shadow: var(--nivra-shadow-tiny);
   background: var(--nivra-panel-solid);
 }
+body app-world .panel, body app-account .panel, body app-vault .panel,
+body app-calls .surface:not(.call-mode) .panel {
+  border-color: var(--nivra-line);
+  box-shadow: 0 4px 20px #00000006;
+}
+body :is(app-world, app-account, app-vault, app-calls) .page-head {
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--nivra-line);
+  margin-bottom: 24px;
+}
+body :is(app-world, app-account, app-vault, app-calls) .page-head h1 {
+  font-weight: 550;
+  letter-spacing: -.045em;
+}
+body app-chat-detail .composer-input:focus-within {
+  border-color: var(--nivra-brand);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--nivra-brand) 9%, transparent);
+}
+body app-chat-detail .composer > ion-button { --color: var(--nivra-on-brand); }
+body app-chat-detail .message-sender { color: var(--nivra-brand-2); }
+body app-shell .nav-unread-badge { color: var(--nivra-on-brand); }
 body app-world .page-head h1, app-account .page-head h1,
 body app-vault .page-head h1, app-calls .page-head h1 {
-  font-size: clamp(28px, 3vw, 38px); font-weight: 700; letter-spacing: -.9px;
+  font-size: clamp(28px, 3vw, 38px); font-weight: 550; letter-spacing: -.045em;
 }
 body app-world .page-head p, app-account .page-head p, app-calls .page-head p {
   color: var(--nivra-muted); line-height: 1.6; max-width: 58ch;

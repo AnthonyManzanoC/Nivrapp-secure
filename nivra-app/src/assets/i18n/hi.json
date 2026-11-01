@@ -1207,5 +1207,9 @@
   "CHAT.SELECTION_LIMIT": "आप अधिकतम 100 संदेश चुन सकते हैं।",
   "CHAT.CONFIRM_SELECTED_ALL": "चुने हुए संदेश सभी के लिए हटाएँ?",
   "CHAT.CONFIRM_SELECTED_ME": "चुने हुए संदेश सिर्फ़ अपने लिए हटाएँ?",
-  "CHAT.SELECTION_FORWARD_RESTRICTED": "कुछ संदेश आगे नहीं भेजे जा सकते।"
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "कुछ संदेश आगे नहीं भेजे जा सकते।",
+  "SHELL.REALTIME_CONNECTED": "रीयल-टाइम कनेक्शन सक्रिय",
+  "SHELL.REALTIME_WAITING": "रीयल-टाइम कनेक्शन की प्रतीक्षा",
+  "SHELL.LIVE": "लाइव",
+  "SHELL.CONNECTING": "कनेक्ट हो रहा है"
 }

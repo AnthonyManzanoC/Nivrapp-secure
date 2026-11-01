@@ -2,6 +2,8 @@
 
 Fecha de revisión: 2026-09-13. Este documento es un plan de migración; no anuncia que los protocolos de las fases posteriores estén implementados ni sustituye una auditoría independiente.
 
+Actualización local del 31 de octubre de 2026: existe un [piloto ejecutable de libsignal y AES-256-GCM](../../crypto/ratchet-pilot/README.md) con pruebas de ratchet, identidad, manipulación, orden y reintentos. No está conectado a los clientes ni al transporte de producción; permanecen las puertas de migración y revisión de este documento. Los cambios y resultados locales están en la [revisión de consolidación](../../docs/consolidacion-2026-10-31.md).
+
 ## Estado comprobado
 
 - Los mensajes directos actuales derivan una clave AES-GCM desde ECDH P-256 de larga duración por dispositivo (`ECDH-P256-A256GCM`). El campo de preclave firmado no tiene todavía semántica X3DH/PQXDH: el cliente publica la misma clave pública como `identityKey` y `signedPreKey`.

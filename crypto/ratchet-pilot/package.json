@@ -1,0 +1,10 @@
+{
+  "name": "nivra-ratchet-pilot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24.18.1" },
+  "description": "Isolated libsignal integration and AES-256-GCM envelope validation. Not a production transport.",
+  "scripts": { "test": "node --test *.test.mjs" },
+  "dependencies": { "@signalapp/libsignal-client": "0.106.1" }
+}

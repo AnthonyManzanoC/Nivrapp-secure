@@ -1,4 +1,4 @@
-import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, NgZone, computed, inject, signal } from '@angular/core';
 import { fromEvent } from 'rxjs';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { NativeDeviceService } from './native-device.service';
@@ -9,9 +9,12 @@ type EfficiencyReason = 'thermal' | 'power-save' | 'low-memory' | 'background' |
 export class PerformanceModeService {
   private readonly nativeDevice = inject(NativeDeviceService);
   private readonly destroyRef = inject(DestroyRef);
+  private readonly zone = inject(NgZone);
   private readonly reasons = signal<Set<EfficiencyReason>>(new Set());
   private readonly thermalStatus = signal(0);
-  private readonly timer: number;
+  private timer: number | null = null;
+  private sampling = false;
+  private destroyed = false;
 
   readonly efficiencyMode = computed(() => {
     const active = this.reasons();
@@ -44,18 +47,39 @@ export class PerformanceModeService {
       .subscribe(() => {
         this.updateReason('background', document.visibilityState !== 'visible');
         this.applyClasses();
-        if (document.visibilityState === 'visible') {
-          void this.sampleNativeState();
-        }
+        this.syncSampling();
       });
 
-    void this.sampleNativeState();
-    this.timer = window.setInterval(() => void this.sampleNativeState(), 45000);
-    this.destroyRef.onDestroy(() => window.clearInterval(this.timer));
+    this.syncSampling();
+    this.destroyRef.onDestroy(() => {
+      this.destroyed = true;
+      if (this.timer !== null) window.clearInterval(this.timer);
+    });
+  }
+
+  private syncSampling(): void {
+    if (this.timer !== null) window.clearInterval(this.timer);
+    this.timer = null;
+    if (document.visibilityState === 'hidden' || this.destroyed) return;
+    this.zone.runOutsideAngular(() => {
+      void this.sampleNativeState();
+      this.timer = window.setInterval(() => void this.sampleNativeState(), 45_000);
+    });
   }
 
   private async sampleNativeState(): Promise<void> {
-    const diagnostics = await this.nativeDevice.diagnostics().catch(() => ({ nativeDiagnostics: null }));
+    if (this.sampling || this.destroyed || this.inBackground()) return;
+    this.sampling = true;
+    let diagnostics: Record<string, unknown>;
+    try {
+      diagnostics = await this.nativeDevice.diagnostics();
+    } catch {
+      // A failed probe is not evidence that a hot device has cooled down.
+      return;
+    } finally {
+      this.sampling = false;
+    }
+    if (this.destroyed || this.inBackground()) return;
     const native = (diagnostics as { nativeDiagnostics?: {
       lowMemory?: boolean;
       powerSaveMode?: boolean;
@@ -71,6 +95,7 @@ export class PerformanceModeService {
 
   private updateReason(reason: EfficiencyReason, active: boolean): void {
     this.reasons.update((current) => {
+      if (current.has(reason) === active) return current;
       const next = new Set(current);
       if (active) {
         next.add(reason);
@@ -80,6 +105,8 @@ export class PerformanceModeService {
       return next;
     });
   }
+
+  private inBackground(): boolean { return document.visibilityState === 'hidden'; }
 
   private applyClasses(): void {
     const root = document.documentElement;

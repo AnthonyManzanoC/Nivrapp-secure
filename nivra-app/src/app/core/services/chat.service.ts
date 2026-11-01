@@ -216,6 +216,8 @@ export class ChatService implements OnDestroy {
   readonly contacts = signal<Contact[]>([]);
   readonly profilesByUserId = signal<Record<string, LocalProfile>>({});
   readonly messagesByConversation = signal<Record<string, ChatMessageVm[]>>({});
+  private readonly orderedConversationIndex = computed(() =>
+    this.dedupeVisibleConversations(this.conversations(), this.messagesByConversation()));
   readonly conversationPaging = signal<Record<string, ConversationPageState>>({});
   readonly visibleConversations = computed(() => this.chatFolderConversations('all'));
   readonly mediaPreviews = signal<Record<string, MediaPreview>>({});
@@ -1748,7 +1750,7 @@ export class ChatService implements OnDestroy {
   }
 
   chatFolderConversations(folder: ChatFolderFilter): Conversation[] {
-    const conversations = this.dedupeVisibleConversations(this.conversations(), this.messagesByConversation());
+    const conversations = this.orderedConversationIndex();
     return conversations
       .filter((conversation) => {
         const archived = this.isArchivedConversationRecord(conversation);
@@ -1765,8 +1767,7 @@ export class ChatService implements OnDestroy {
           return this.hasUnreadConversation(conversation);
         }
         return true;
-      })
-      .sort(this.compareConversations);
+      });
   }
 
   hasUnreadConversation(conversation: Conversation | null | undefined): boolean {

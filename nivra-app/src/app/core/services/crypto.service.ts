@@ -478,8 +478,18 @@ export class CryptoService {
       payloadIv?: string;
       payloadCiphertext?: string;
     };
+    if (!meta || typeof meta !== 'object' || Array.isArray(meta)) {
+      throw new Error('Sobre cifrado inválido.');
+    }
     if (meta.v === 2 && meta.alg === 'NIVRA-GROUP-A256GCM') {
       return this.decryptGroupEnvelope<T>(own, meta, ciphertext);
+    }
+    // Never interpret a future ratchet envelope as a legacy ECDH message.
+    // Unversioned historical ECDH headers remain readable, but explicit unknown
+    // protocols must fail closed until their native provider is available.
+    if ((meta.v !== undefined && meta.v !== 1) ||
+        (meta.alg !== undefined && meta.alg !== 'ECDH-P256-A256GCM')) {
+      throw new Error('Este formato de cifrado requiere una versión compatible de Nivra.');
     }
     return this.decryptEcdhEnvelope<T>(own, meta, ciphertext);
   }
@@ -489,7 +499,8 @@ export class CryptoService {
     meta: { senderPublicKey?: JsonWebKey; iv?: string },
     ciphertext: string,
   ): Promise<T> {
-    if (!meta.senderPublicKey || !meta.iv) {
+    const senderPublicJwk = this.parsePublicJwk(meta.senderPublicKey);
+    if (!senderPublicJwk || typeof meta.iv !== 'string' || this.ub64(meta.iv).length !== 12) {
       throw new Error('Sobre cifrado invalido.');
     }
     const privateKey = await crypto.subtle.importKey(
@@ -501,7 +512,7 @@ export class CryptoService {
     );
     const senderPublic = await crypto.subtle.importKey(
       'jwk',
-      meta.senderPublicKey,
+      senderPublicJwk,
       { name: 'ECDH', namedCurve: 'P-256' },
       false,
       [],
@@ -529,9 +540,18 @@ export class CryptoService {
     if (!meta.keyHeader || !meta.payloadIv || !meta.payloadCiphertext) {
       throw new Error('Sobre de grupo invalido.');
     }
-    const keyPackage = await this.decryptEnvelope<{ type?: string; key?: string }>(own, meta.keyHeader, sealedKeyCiphertext);
+    const keyMeta = JSON.parse(meta.keyHeader);
+    if (!keyMeta || keyMeta.v !== 1 || keyMeta.alg !== 'ECDH-P256-A256GCM') {
+      throw new Error('Formato de llave de grupo inválido.');
+    }
+    // A group wraps one direct key envelope; nested group envelopes are invalid
+    // and must not trigger unbounded recursive parsing/decryption.
+    const keyPackage = await this.decryptEcdhEnvelope<{ type?: string; key?: string }>(own, keyMeta, sealedKeyCiphertext);
     if (keyPackage.type !== 'group-sender-key' || !keyPackage.key) {
       throw new Error('Llave de grupo invalida.');
+    }
+    if (this.ub64(keyPackage.key).length !== 32 || this.ub64(meta.payloadIv).length !== 12) {
+      throw new Error('Parámetros de cifrado de grupo inválidos.');
     }
     const key = await crypto.subtle.importKey('raw', this.ub64Buffer(keyPackage.key), { name: 'AES-GCM' }, false, ['decrypt']);
     const plain = await crypto.subtle.decrypt(

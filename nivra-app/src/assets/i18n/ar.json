@@ -1207,5 +1207,9 @@
   "CHAT.SELECTION_LIMIT": "يمكنك تحديد ما يصل إلى 100 رسالة.",
   "CHAT.CONFIRM_SELECTED_ALL": "هل تريد حذف الرسائل المحددة لدى الجميع؟",
   "CHAT.CONFIRM_SELECTED_ME": "هل تريد حذف الرسائل المحددة لديك فقط؟",
-  "CHAT.SELECTION_FORWARD_RESTRICTED": "لا يمكن إعادة توجيه بعض الرسائل."
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "لا يمكن إعادة توجيه بعض الرسائل.",
+  "SHELL.REALTIME_CONNECTED": "الاتصال الفوري نشط",
+  "SHELL.REALTIME_WAITING": "بانتظار الاتصال الفوري",
+  "SHELL.LIVE": "متصل",
+  "SHELL.CONNECTING": "جارٍ الاتصال"
 }

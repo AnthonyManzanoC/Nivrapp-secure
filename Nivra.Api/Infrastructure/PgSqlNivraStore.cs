@@ -110,6 +110,18 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
         return db.Sessions.FirstOrDefaultAsync(session => session.Id == sessionId, cancellationToken);
     }
 
+    public Task<bool> IsSessionActiveAsync(string sessionId, string userId, string deviceId, DateTimeOffset now, CancellationToken cancellationToken = default)
+    {
+        // EXISTS avoids materializing account profiles, password hashes or key
+        // bundles just to authenticate. Query current state on every request.
+        return db.Sessions.AsNoTracking().AnyAsync(session =>
+            session.Id == sessionId && session.UserId == userId && session.DeviceId == deviceId &&
+            session.RevokedAt == null && session.ExpiresAt > now &&
+            db.Users.Any(user => user.Id == userId && user.DisabledAt == null) &&
+            db.Devices.Any(device => device.Id == deviceId && device.UserId == userId && device.RevokedAt == null),
+            cancellationToken);
+    }
+
     public Task<SessionRecord?> FindSessionByRefreshHashAsync(string refreshTokenHash, DateTimeOffset now, CancellationToken cancellationToken = default)
     {
         return db.Sessions.FirstOrDefaultAsync(session =>

@@ -1,11 +1,11 @@
 export const environment = {
   production: true,
-  apiBaseUrl: 'https://nivrapp-secure.onrender.com',
-  // Keep the active API first; Render backups are tried in this order only after failover.
+  apiBaseUrl: 'https://nivrapp-secure-eaqi.onrender.com',
+  // Prefer the healthy shared cluster; the other same-cluster APIs remain failover candidates.
   apiEndpoints: [
+    'https://nivrapp-secure-eaqi.onrender.com',
     'https://nivrapp-secure.onrender.com',
     'https://nivra-webapp-secure.onrender.com',
-    'https://nivrapp-secure-eaqi.onrender.com',
   ],
   apiClusterFingerprint: 'c761492c31e3e9346640c94da63c476eea907d2aad8a26b6d830c60cd5d7fc64',
   firebase: {

@@ -1,11 +1,12 @@
 {
   "name": "nivra-app",
-  "version": "7.7.0",
+  "version": "8.0.0",
   "author": "Ionic Framework",
   "homepage": "https://ionicframework.com/",
   "scripts": {
     "ng": "ng",
     "start": "ng serve --force-esbuild",
+    "preview:design": "ng serve --force-esbuild --prebundle=false --configuration design-preview --host 127.0.0.1 --port 8102",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
     "test": "ng test",

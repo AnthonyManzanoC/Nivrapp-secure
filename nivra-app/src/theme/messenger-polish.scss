@@ -29,8 +29,8 @@ body app-chats .welcome-stage { background: var(--nivra-bg); }
 body :is(app-world, app-account, app-vault, app-calls) .page-head h1 {
   font-size: clamp(28px, 2.4vw, 34px);
   line-height: 1.2;
-  font-weight: 700;
-  letter-spacing: -.035em;
+  font-weight: 550;
+  letter-spacing: -.045em;
 }
 body :is(app-world, app-account, app-vault, app-calls) .page-head p {
   margin-top: 6px;
@@ -38,7 +38,7 @@ body :is(app-world, app-account, app-vault, app-calls) .page-head p {
   line-height: 1.5;
 }
 body :is(app-world, app-account, app-vault, app-calls) .panel {
-  border-radius: 16px;
+  border-radius: var(--nivra-radius-panel);
   box-shadow: none;
 }
 body :is(app-world, app-account, app-vault, app-calls) ion-button {

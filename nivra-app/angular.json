@@ -60,6 +60,10 @@
             "scripts": []
           },
           "configurations": {
+            "design-preview": {
+              "main": "design-preview/main.ts",
+              "tsConfig": "design-preview/tsconfig.json"
+            },
             "production": {
               "budgets": [
                 {
@@ -99,6 +103,9 @@
         "serve": {
           "builder": "@angular-devkit/build-angular:dev-server",
           "configurations": {
+            "design-preview": {
+              "buildTarget": "app:build:development,design-preview"
+            },
             "production": {
               "buildTarget": "app:build:production"
             },

@@ -1,6 +1,10 @@
 <section class="welcome" [class.compact]="compact()" [class.returning]="!firstConversation()">
   <div class="welcome-hero">
-    <span class="brand-mark"><img src="assets/brand/nivra-mark.svg" alt="" width="64" height="64"></span>
+    <div class="welcome-emblem" aria-hidden="true">
+      <span class="emblem-orbit"></span>
+      <span class="brand-mark"><img src="assets/brand/nivra-mark.svg" alt="" width="64" height="64"></span>
+      <span class="emblem-detail"><ion-icon name="shield-checkmark-outline"></ion-icon></span>
+    </div>
     <span class="eyebrow">{{ 'CHATS.WELCOME_EYEBROW' | translate:'Tu espacio privado' }}</span>
     <h2>{{ firstConversation() ? ('CHATS.WELCOME_TITLE' | translate:'Aquí empiezan tus conversaciones') : ('CHATS.WELCOME_BACK_TITLE' | translate:'Un espacio para tu gente') }}</h2>
     <p>{{ firstConversation() ? ('CHATS.WELCOME_COPY' | translate:'Encuentra a alguien por su alias o ID Nivra. Tu número de teléfono no es necesario.') : ('CHATS.WELCOME_BACK_COPY' | translate:'Abre una conversación de la lista o empieza algo nuevo.') }}</p>
@@ -16,7 +20,7 @@
       {{ 'CHATS.SHARE_PASS' | translate:'Compartir pase' }}
     </button>
   </div>
-  @if (firstConversation()) {
+  @if (!compact() || firstConversation()) {
     <div class="welcome-guide" [attr.aria-label]="'CHATS.WELCOME_GUIDE' | translate:'Cómo empezar'">
       <button type="button" class="guide-card" (click)="newChat.emit()">
         <span class="guide-icon"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon></span>

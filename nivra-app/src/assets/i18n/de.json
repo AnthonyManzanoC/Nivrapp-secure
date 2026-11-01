@@ -1207,5 +1207,9 @@
   "CHAT.SELECTION_LIMIT": "Du kannst bis zu 100 Nachrichten auswählen.",
   "CHAT.CONFIRM_SELECTED_ALL": "Ausgewählte Nachrichten für alle löschen?",
   "CHAT.CONFIRM_SELECTED_ME": "Ausgewählte Nachrichten nur für dich löschen?",
-  "CHAT.SELECTION_FORWARD_RESTRICTED": "Einige Nachrichten können nicht weitergeleitet werden."
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Einige Nachrichten können nicht weitergeleitet werden.",
+  "SHELL.REALTIME_CONNECTED": "Echtzeitverbindung aktiv",
+  "SHELL.REALTIME_WAITING": "Warten auf Echtzeitverbindung",
+  "SHELL.LIVE": "Live",
+  "SHELL.CONNECTING": "Verbinden"
 }

@@ -20,6 +20,12 @@
         </a>
       }
       <span class="nav-spacer"></span>
+      <span class="rail-connection" [class.connected]="realtime.connected()" role="status"
+        [attr.aria-label]="realtime.connected() ? ('SHELL.REALTIME_CONNECTED' | translate:'Conexión en tiempo real activa') : ('SHELL.REALTIME_WAITING' | translate:'Esperando conexión en tiempo real')"
+        [title]="realtime.connected() ? ('SHELL.REALTIME_CONNECTED' | translate:'Conexión en tiempo real activa') : ('SHELL.REALTIME_WAITING' | translate:'Esperando conexión en tiempo real')">
+        <span aria-hidden="true"></span>
+        {{ (realtime.connected() ? 'SHELL.LIVE' : 'SHELL.CONNECTING') | translate:(realtime.connected() ? 'En vivo' : 'Conectando') }}
+      </span>
       <button class="nav-btn logout" type="button" (click)="logout()">
         <ion-icon name="log-out-outline" aria-hidden="true"></ion-icon>
         <span>{{ 'TABS.LOGOUT' | translate:'Salir' }}</span>

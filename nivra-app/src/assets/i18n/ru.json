@@ -1207,5 +1207,9 @@
   "CHAT.SELECTION_LIMIT": "Можно выбрать до 100 сообщений.",
   "CHAT.CONFIRM_SELECTED_ALL": "Удалить выбранные сообщения у всех?",
   "CHAT.CONFIRM_SELECTED_ME": "Удалить выбранные сообщения только у вас?",
-  "CHAT.SELECTION_FORWARD_RESTRICTED": "Некоторые сообщения нельзя пересылать."
+  "CHAT.SELECTION_FORWARD_RESTRICTED": "Некоторые сообщения нельзя пересылать.",
+  "SHELL.REALTIME_CONNECTED": "Соединение в реальном времени активно",
+  "SHELL.REALTIME_WAITING": "Ожидание соединения в реальном времени",
+  "SHELL.LIVE": "Онлайн",
+  "SHELL.CONNECTING": "Подключение"
 }

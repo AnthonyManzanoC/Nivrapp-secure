@@ -64,7 +64,7 @@
 .story-launcher-icon ion-icon { font-size: 28px; }
 .story-launcher h2, .story-launcher p { margin: 0; }
 .story-launcher p { color: var(--nivra-muted); line-height: 1.6; max-width: 450px; }
-.story-launch-button { display: inline-flex; gap: 8px; align-items: center; justify-content: center; min-height: 48px; border: 0; padding: 12px 24px; border-radius: 16px; color: #05291f; background: var(--nivra-brand); font: inherit; font-weight: 750; cursor: pointer; }
+.story-launch-button { display: inline-flex; gap: 8px; align-items: center; justify-content: center; min-height: 48px; border: 0; padding: 12px 24px; border-radius: 16px; color: var(--nivra-on-brand); background: var(--nivra-brand); font: inherit; font-weight: 750; cursor: pointer; }
 .story-launch-button ion-icon { font-size: 23px; }
 .story-launch-button:focus-visible { outline: 3px solid var(--nivra-brand); outline-offset: 4px; }
 .story-launcher > small { color: var(--nivra-muted); line-height: 1.5; font-size: 12px; }
