@@ -18,7 +18,23 @@ try {
     keys.add(Array.from(pub).join(',')); identity.fill(0);
   }
   if (keys.size !== 16) throw Error('Browser randomness produced duplicate keys');
-  document.body.textContent = 'PASS: native/WASM identity and signature interoperability; browser secure randomness.';
+  const aliceKey = bridge.createIdentity(), bobKey = bridge.createIdentity();
+  const alice = new bridge.RatchetDevice('browser-alice', 1, aliceKey, 41);
+  const bob = new bridge.RatchetDevice('browser-bob', 1, bobKey, 42);
+  await alice.pinIdentity('browser-bob', 1, bridge.identityPublic(bobKey));
+  await bob.pinIdentity('browser-alice', 1, bridge.identityPublic(aliceKey));
+  aliceKey.fill(0); bobKey.fill(0);
+  try {
+    await alice.establish('browser-bob', 1, await bob.preKeyBundle(Date.now()), Date.now());
+    for (let i = 0; i < 6; i++) {
+      const [sender, recipient, senderName, recipientName] = i % 2
+        ? [bob, alice, 'browser-bob', 'browser-alice'] : [alice, bob, 'browser-alice', 'browser-bob'];
+      const plain = new TextEncoder().encode('Browser turn ' + i);
+      const packet = JSON.parse(await sender.encrypt(recipientName, 1, plain, Date.now()));
+      if (!equal(await recipient.decrypt(senderName, 1, packet.type, bytes(packet.bytes)), plain)) throw Error('Browser ratchet mismatch');
+    }
+  } finally { alice.free(); bob.free(); }
+  document.body.textContent = 'PASS: native/WASM interoperability, secure randomness, PQ session and six bidirectional browser ratchet turns.';
   document.body.dataset.result = 'passed';
 } catch (error) {
   document.body.textContent = 'FAIL: ' + error.message; document.body.dataset.result = 'failed';

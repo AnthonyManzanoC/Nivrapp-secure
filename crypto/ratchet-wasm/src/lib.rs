@@ -1,8 +1,9 @@
-//! Portability probe only. No sessions, prekey reservation or client capability
-//! is advertised by this crate. All primitives come from the pinned Signal core.
+//! Isolated laboratory bridge with in-memory sessions. No client capability or
+//! production activation is advertised. Primitives come from pinned Signal core.
 use libsignal_protocol::{IdentityKeyPair, PublicKey};
 use rand::{SeedableRng, rngs::StdRng};
 use wasm_bindgen::prelude::*;
+mod session;
 
 fn error(message: &str) -> JsValue { JsValue::from_str(message) }
 fn rng() -> Result<StdRng, JsValue> {

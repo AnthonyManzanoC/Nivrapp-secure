@@ -38,10 +38,10 @@ jobs:
       - name: Native interoperability tests
         run: |
           npm ci --prefix crypto/ratchet-pilot --ignore-scripts
-          node --test crypto/ratchet-wasm/tests/native-interop.test.mjs
+          node --test crypto/ratchet-wasm/tests/*.test.mjs
       - name: Actual browser WebCrypto and WASM test
         run: |
-          python3 -m http.server 8123 --bind 127.0.0.1 --directory crypto/ratchet-wasm > "$RUNNER_TEMP/ratchet-http.log" 2>&1 &
+          node crypto/ratchet-wasm/serve.mjs 8123 > "$RUNNER_TEMP/ratchet-http.log" 2>&1 &
           google-chrome --headless=new --no-sandbox --disable-gpu --no-first-run --user-data-dir="$RUNNER_TEMP/ratchet-browser" --virtual-time-budget=15000 --dump-dom http://127.0.0.1:8123/browser.html > crypto/ratchet-wasm/browser-result.html
           grep -q 'data-result="passed"' crypto/ratchet-wasm/browser-result.html
       - name: Preserve bridge and diagnostic artifacts
