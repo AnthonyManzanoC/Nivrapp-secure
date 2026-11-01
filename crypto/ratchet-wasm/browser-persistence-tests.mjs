@@ -23,6 +23,11 @@ export async function testBrowserPersistence(bridge) {
     await alice.close(); await bob.close();
     alice = await LabWebDevice.open(bridge, aliceName, 1, storage); bob = await LabWebDevice.open(bridge, bobName, 1, storage);
     check(alice.publicIdentity.every((byte, i) => byte === originalIdentity[i]), 'Identity changed after reopening');
+    const received = await bob.pendingReceived();
+    check(received.length === 1 && received[0].payload.text === 'persistent-2', 'Incoming delivery lost before history acknowledgement');
+    await bob.acknowledgeReceived(received[0].id);
+    await bob.close(); bob = await LabWebDevice.open(bridge, bobName, 1, storage);
+    check((await bob.pendingReceived()).length === 0, 'History acknowledgement not committed');
     check(JSON.stringify(await alice.encrypt(bob.address, context(1), { text: 'persistent-1' })) === JSON.stringify(packets[1]), 'Retry changed after reopening');
     await rejected(() => bob.decrypt(alice.address, context(2), packets[2]), 'Replay accepted after reopening');
     for (const i of [0, 1]) check((await bob.decrypt(alice.address, context(i), packets[i])).text === 'persistent-' + i, 'Skipped key lost after reopening');

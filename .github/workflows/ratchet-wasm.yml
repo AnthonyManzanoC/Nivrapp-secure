@@ -1,13 +1,11 @@
 name: Ratchet WASM portability
 on:
-  push:
-    branches: [codex/ratchet-bridge]
-    paths: [crypto/ratchet-wasm/**, .github/workflows/ratchet-wasm.yml]
+  workflow_call:
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: ratchet-wasm-${{ github.ref }}
+  group: ratchet-wasm-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
   portability:

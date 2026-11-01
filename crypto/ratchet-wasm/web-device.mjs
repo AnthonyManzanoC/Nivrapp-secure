@@ -39,6 +39,7 @@ export class LabWebDevice {
   #public;
   #queue = Promise.resolve();
   #outbox = new Map();
+  #inbox = new Map();
   #closed = false;
   #storage = null;
   #scope;
@@ -75,9 +76,10 @@ export class LabWebDevice {
       } catch (error) { await result.close(); throw error; }
     }
     const state = saved.state;
-    if (!Number.isSafeInteger(saved.revision) || saved.revision < 1 || state?.v !== 1 || state.scope !== scope
+    if (!Number.isSafeInteger(saved.revision) || saved.revision < 1 || state?.v !== 2 || state.scope !== scope
         || typeof state.core !== 'string' || state.core.length > 32 * 1024 * 1024
-        || !Array.isArray(state.outbox) || state.outbox.length > 256) throw Error('Invalid stored web device');
+        || !Array.isArray(state.outbox) || state.outbox.length > 256
+        || !Array.isArray(state.inbox) || state.inbox.length > 64) throw Error('Invalid stored web device');
     const outbox = new Map();
     for (const entry of state.outbox) {
       if (!Array.isArray(entry) || entry.length !== 2 || outbox.has(entry[0]) || binary(entry[0], 32).length !== 32
@@ -85,12 +87,21 @@ export class LabWebDevice {
           || entry[1]?.envelope?.context?.sender !== `${name}.${device}`) throw Error('Invalid stored retry envelope');
       outbox.set(entry[0], structuredClone(entry[1]));
     }
+    const inbox = new Map();
+    for (const entry of state.inbox) {
+      if (!Array.isArray(entry) || entry.length !== 2 || inbox.has(entry[0]) || binary(entry[0], 32).length !== 32
+          || !entry[1] || entry[1].context?.recipient !== `${name}.${device}`) throw Error('Invalid stored incoming delivery');
+      const peer = peerAddress(entry[1].peer);
+      const aad = contextBytes(entry[1].context, peer, { name, device });
+      if (await hash(aad) !== entry[0] || JSON.stringify(JSON.parse(decoder.decode(aad)).context) !== JSON.stringify(entry[1].context)) throw Error('Stored delivery context mismatch');
+      inbox.set(entry[0], structuredClone(entry[1]));
+    }
     const core = await bridge.RatchetDevice.restorePrivateState(name, device, state.core);
     let identity;
     try {
       identity = binary(JSON.parse(state.core).identity, 1024);
       const result = new LabWebDevice(bridge, name, device, { token: RESTORE, core, public: bridge.identityPublic(identity) });
-      result.#storage = storage; result.#revision = saved.revision; result.#outbox = outbox;
+      result.#storage = storage; result.#revision = saved.revision; result.#outbox = outbox; result.#inbox = inbox;
       return result;
     } catch (error) { core.free(); throw error; }
     finally { identity?.fill(0); }
@@ -148,6 +159,9 @@ export class LabWebDevice {
       const iv = binary(envelope.iv, 12), payload = binary(envelope.ciphertext, MAX_PAYLOAD + 16);
       if (iv.length !== 12 || payload.length < 16) throw Error('Invalid encrypted payload');
       const ratchet = binary(envelope.keyMessage, 131072);
+      const id = await hash(aad);
+      if (this.#inbox.has(id)) throw Error('Repeated message: recover the stored incoming delivery');
+      if (this.#inbox.size >= 64) throw Error('Incoming delivery queue full: save pending history first');
       let capsule, keyBytes, plain;
       try {
         capsule = await this.#core.decrypt(peer.name, peer.device, envelope.type, ratchet);
@@ -158,20 +172,33 @@ export class LabWebDevice {
         const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
         plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 }, key, payload));
         const result = JSON.parse(decoder.decode(plain));
+        // Keep a recoverable copy until the application confirms its own
+        // history write. A process exit after commit must not lose plaintext.
+        this.#inbox.set(id, { peer, context: JSON.parse(decoder.decode(aad)).context, payload: structuredClone(result) });
         return result;
       } finally { capsule?.fill(0); keyBytes?.fill(0); plain?.fill(0); }
     });
   }
   close() {
-    return this.#run(() => { this.#core.free(); this.#outbox.clear(); this.#public.fill(0); this.#closed = true; });
+    return this.#run(() => { this.#core.free(); this.#outbox.clear(); this.#inbox.clear(); this.#public.fill(0); this.#closed = true; });
+  }
+  pendingReceived() {
+    return this.#run(() => {
+      if (this.#poisoned) throw Error('Storage outcome uncertain: close and reopen before reading deliveries');
+      return [...this.#inbox].map(([id, record]) => ({ id, ...structuredClone(record) }));
+    });
+  }
+  acknowledgeReceived(id) {
+    if (binary(id, 32).length !== 32) throw Error('Invalid incoming delivery id');
+    return this.#mutate(() => this.#inbox.delete(id));
   }
   async #persistentState() {
-    return { v: 1, scope: this.#scope, core: await this.#core.exportPrivateStateForEncryption(), outbox: [...this.#outbox] };
+    return { v: 2, scope: this.#scope, core: await this.#core.exportPrivateStateForEncryption(), outbox: [...this.#outbox], inbox: [...this.#inbox] };
   }
   #mutate(action) {
     return this.#run(async () => {
       if (this.#poisoned) throw Error('Storage outcome uncertain: close and reopen before retrying');
-      const token = this.#core.checkpoint(), previousOutbox = new Map(this.#outbox);
+      const token = this.#core.checkpoint(), previousOutbox = new Map(this.#outbox), previousInbox = new Map(this.#inbox);
       try {
         const result = await action();
         if (this.#storage) {
@@ -182,7 +209,7 @@ export class LabWebDevice {
         this.#core.commit(token);
         return result;
       } catch (error) {
-        this.#core.rollback(token); this.#outbox = previousOutbox;
+        this.#core.rollback(token); this.#outbox = previousOutbox; this.#inbox = previousInbox;
         throw error;
       }
     });

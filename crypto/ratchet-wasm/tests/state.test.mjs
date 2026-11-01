@@ -36,11 +36,31 @@ test('WASM core snapshots preserve skipped keys, replay gates, identity and exac
     await alice.close(); await bob.close();
     alice = await LabWebDevice.open(bridge, 'alice', 1, store); bob = await LabWebDevice.open(bridge, 'bob', 1, store);
     assert.deepEqual(alice.publicIdentity, publicAlice);
+    const pending = await bob.pendingReceived();
+    assert.equal(pending.length, 1); assert.deepEqual(pending[0].payload, { text: 'message-3' });
     assert.deepEqual(await alice.encrypt(bob.address, context('order-3'), { text: 'message-3' }), packets[3]);
     await assert.rejects(bob.decrypt(alice.address, context('order-3'), packets[3]));
     for (const i of [1, 4, 0, 2]) assert.deepEqual(await bob.decrypt(alice.address, context('order-' + i), packets[i]), { text: 'message-' + i });
     const reply = await bob.encrypt(alice.address, context('reply'), { text: 'reply after restoring' });
     assert.deepEqual(await alice.decrypt(bob.address, context('reply'), reply), { text: 'reply after restoring' });
+  } finally { await alice?.close(); await bob?.close(); cleanup(); }
+});
+test('incoming delivery survives reopening until history acknowledges it, without weakening replay rejection', async () => {
+  const { store, cleanup } = temporary(); let alice, bob;
+  try {
+    ({ alice, bob } = await initialize(store));
+    const packet = await alice.encrypt(bob.address, context('history-gap'), { text: 'survives a process exit' });
+    const received = await bob.decrypt(alice.address, context('history-gap'), packet); received.text = 'caller mutation';
+    await bob.close(); bob = await LabWebDevice.open(bridge, 'bob', 1, store);
+    const pending = await bob.pendingReceived();
+    assert.deepEqual(pending[0].payload, { text: 'survives a process exit' });
+    pending[0].payload.text = 'list mutation';
+    assert.equal((await bob.pendingReceived())[0].payload.text, 'survives a process exit');
+    await assert.rejects(bob.decrypt(alice.address, context('history-gap'), packet));
+    assert.equal(await bob.acknowledgeReceived(pending[0].id), true);
+    await bob.close(); bob = await LabWebDevice.open(bridge, 'bob', 1, store);
+    assert.deepEqual(await bob.pendingReceived(), []);
+    await assert.rejects(bob.decrypt(alice.address, context('history-gap'), packet));
   } finally { await alice?.close(); await bob?.close(); cleanup(); }
 });
 test('stale disk writers cannot return a packet and must reopen before another operation', async () => {
