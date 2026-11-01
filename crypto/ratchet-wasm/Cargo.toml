@@ -1,0 +1,23 @@
+[package]
+name = "nivra-ratchet-wasm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93.1"
+license = "AGPL-3.0-only"
+publish = false
+description = "Isolated libsignal portability bridge. Not a production messaging engine."
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+libsignal-protocol = { git = "https://github.com/signalapp/libsignal", rev = "904c8dc8216073b078a5f2f5090e3da8382e6a92" }
+rand = "=0.9.4"
+getrandom = { version = "=0.3.4", features = ["wasm_js"] }
+wasm-bindgen = "=0.2.130"
+
+[profile.release]
+overflow-checks = true
+lto = true
+codegen-units = 1
+panic = "abort"

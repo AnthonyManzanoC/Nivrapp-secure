@@ -1,0 +1,57 @@
+name: Ratchet WASM portability
+on:
+  push:
+    branches: [codex/ratchet-bridge]
+    paths: [crypto/ratchet-wasm/**, .github/workflows/ratchet-wasm.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ratchet-wasm-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  portability:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.18.1
+      - name: Install pinned Rust and protobuf compiler
+        run: |
+          rustup toolchain install 1.93.1 --profile minimal --target wasm32-unknown-unknown
+          sudo apt-get update -qq
+          sudo apt-get install -y protobuf-compiler
+      - name: Build isolated WASM bridge
+        working-directory: crypto/ratchet-wasm
+        env:
+          RUSTUP_TOOLCHAIN: 1.93.1
+        run: |
+          cargo generate-lockfile
+          cargo build --locked --release --target wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.130 --locked
+          wasm-bindgen --target nodejs --out-dir pkg/node target/wasm32-unknown-unknown/release/nivra_ratchet_wasm.wasm
+          wasm-bindgen --target web --out-dir pkg/web target/wasm32-unknown-unknown/release/nivra_ratchet_wasm.wasm
+      - name: Native interoperability tests
+        run: |
+          npm ci --prefix crypto/ratchet-pilot --ignore-scripts
+          node --test crypto/ratchet-wasm/tests/native-interop.test.mjs
+      - name: Actual browser WebCrypto and WASM test
+        run: |
+          python3 -m http.server 8123 --bind 127.0.0.1 --directory crypto/ratchet-wasm > "$RUNNER_TEMP/ratchet-http.log" 2>&1 &
+          google-chrome --headless=new --no-sandbox --disable-gpu --no-first-run --user-data-dir="$RUNNER_TEMP/ratchet-browser" --virtual-time-budget=15000 --dump-dom http://127.0.0.1:8123/browser.html > crypto/ratchet-wasm/browser-result.html
+          grep -q 'data-result="passed"' crypto/ratchet-wasm/browser-result.html
+      - name: Preserve bridge and diagnostic artifacts
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ratchet-wasm-portability
+          path: |
+            crypto/ratchet-wasm/pkg/
+            crypto/ratchet-wasm/Cargo.lock
+            crypto/ratchet-wasm/browser-result.html
+          if-no-files-found: warn
+          retention-days: 7

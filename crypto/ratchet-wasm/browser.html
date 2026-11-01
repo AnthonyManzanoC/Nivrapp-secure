@@ -1,0 +1,26 @@
+<!doctype html><meta charset="utf-8"><title>Nivra isolated WASM portability test</title>
+<body data-result="pending">Testing synthetic keys only…
+<script type="module">
+import init, * as bridge from './pkg/web/nivra_ratchet_wasm.js';
+const bytes = value => Uint8Array.from(atob(value), char => char.charCodeAt(0));
+const equal = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
+try {
+  await init();
+  const fixture = await (await fetch('./fixtures.json')).json();
+  if (!equal(bridge.identityPublic(bytes(fixture.identity)), bytes(fixture.public))) throw Error('Native identity mismatch');
+  if (!bridge.verifyIdentity(bytes(fixture.public), bytes(fixture.context), bytes(fixture.signature))) throw Error('Native signature rejected');
+  const keys = new Set();
+  for (let i = 0; i < 16; i++) {
+    const identity = bridge.createIdentity();
+    const pub = bridge.identityPublic(identity);
+    const signature = bridge.signIdentity(identity, bytes(fixture.context));
+    if (!bridge.verifyIdentity(pub, bytes(fixture.context), signature)) throw Error('Browser signature failed');
+    keys.add(Array.from(pub).join(',')); identity.fill(0);
+  }
+  if (keys.size !== 16) throw Error('Browser randomness produced duplicate keys');
+  document.body.textContent = 'PASS: native/WASM identity and signature interoperability; browser secure randomness.';
+  document.body.dataset.result = 'passed';
+} catch (error) {
+  document.body.textContent = 'FAIL: ' + error.message; document.body.dataset.result = 'failed';
+}
+</script>
