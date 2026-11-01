@@ -1,127 +1,88 @@
 import { signal } from '@angular/core';
+import { fakeAsync, tick, flushMicrotasks } from '@angular/core/testing';
 import { ChatDetailPage } from './chat-detail.page';
 import { ChatService } from '../../core/services/chat.service';
 
-describe('Immediate text send feedback', () => {
+describe('Nonblocking durable text composer', () => {
   function harness() {
     const page: any = Object.create(ChatDetailPage.prototype);
     const session = signal<any>({ user: { id: 'a' }, device: { id: 'phone-a' } });
-    const confirmed = signal<any[]>([]);
-    const locked = signal(false);
-    let resolve!: (value: any) => void, reject!: (error: Error) => void;
-    const send = new Promise((done, fail) => { resolve = done; reject = fail; });
-    Object.assign(page, {
-      auth: { session }, conversation: () => ({ id: 'chat', participants: [] }),
-      chat: { selectedMessages: confirmed, sendText: jasmine.createSpy().and.returnValue(send),
-        sendTyping: jasmine.createSpy().and.returnValue(new Promise(() => undefined)) },
-      privateChatLocked: locked, pendingTextPreview: signal(null), failedTextSend: signal(null),
-      composerGeneration: 0, destroyed: false, sending: false, draft: ' Hola ', attachmentError: '',
+    const confirmed = signal<any[]>([]), pending = signal<any[]>([]), locked = signal(false);
+    const enqueue = jasmine.createSpy().and.callFake(async (conversation: any, text: string) => {
+      const clientMessageId = crypto.randomUUID();
+      const row = { id: 'local-' + clientMessageId, clientMessageId, conversationId: conversation.id,
+        senderUserId: session().user.id, senderDeviceId: session().device.id, mine: true, status: 'sending',
+        at: new Date().toISOString(), payload: { type: 'text', text: text.trim() } };
+      pending.update(rows => [...rows, row]); return row;
+    });
+    Object.assign(page, { auth: { session }, conversation: () => ({ id: 'chat', participants: [] }),
+      chat: { selectedMessages: confirmed, sendTyping: jasmine.createSpy().and.resolveTo() },
+      textOutbox: { enqueue, forConversation: () => pending(), retry: jasmine.createSpy().and.resolveTo(), discard: jasmine.createSpy().and.resolveTo() },
+      privateChatLocked: locked, composerGeneration: 0, destroyed: false, sending: false, textSaving: false, textQueueError: '', draft: ' Hola ', attachmentError: '',
       canSendMessages: () => true, isBlocked: () => false, currentPolicy: () => ({ ttlSeconds: null }),
       scrollBottom: jasmine.createSpy(), tr: (_key: string, fallback: string) => fallback,
     });
-    return { page, session, confirmed, locked, resolve, reject };
+    return { page, session, confirmed, pending, locked, enqueue };
   }
-
-  it('shows a pending bubble before typing or HTTP completes and uses one stable send identity', async () => {
-    const h = harness(); const sending = h.page.send();
-    expect(h.page.draft).toBe('');
-    expect(h.page.chat.sendText).toHaveBeenCalledTimes(1);
-    const bubble = h.page.displayedMessages()[0];
-    expect(bubble.payload.text).toBe('Hola');
-    expect(h.page.deliveryState(bubble)).toBe('pending');
-    expect(h.page.deliveryLabel(bubble)).toBe('Enviando…');
-    expect(h.page.chat.sendText.calls.mostRecent().args[3]).toBe(bubble.clientMessageId);
-    await h.page.send(); expect(h.page.chat.sendText).toHaveBeenCalledTimes(1);
-    h.confirmed.set([{ ...bubble, id: 'server-id', status: 'enviado' }]);
-    expect(h.page.displayedMessages().map((message: any) => message.id)).toEqual(['server-id']);
-    h.resolve({ id: 'server-id' }); await sending;
-    expect(h.page.pendingTextPreview()).toBeNull(); expect(h.page.sending).toBeFalse();
+  it('accepts a second message while the first remains pending on the network', async () => {
+    const h = harness(); await h.page.send();
+    expect(h.page.draft).toBe(''); expect(h.page.sending).toBeFalse();
+    h.page.draft = 'Dos'; await h.page.send();
+    expect(h.page.displayedMessages().map((row: any) => row.payload.text)).toEqual(['Hola', 'Dos']);
+    expect(h.enqueue).toHaveBeenCalledTimes(2);
+    for (const row of h.pending()) expect(h.page.deliveryState(row)).toBe('pending');
   });
-
-  it('retains failed text separately without a sent checkmark or replacing the next draft', async () => {
-    const h = harness(); const sending = h.page.send();
-    h.page.draft = 'Siguiente mensaje';
-    h.reject(new Error('offline')); await sending;
-    expect(h.page.draft).toBe('Siguiente mensaje');
-    expect(h.page.failedTextAttempt().text).toBe(' Hola ');
-    expect(h.page.displayedMessages()).toEqual([]); expect(h.page.sending).toBeFalse();
-    await h.page.send(); expect(h.page.chat.sendText).toHaveBeenCalledTimes(1);
+  it('preserves the draft if durable storage fails', async () => {
+    const h = harness(); h.enqueue.and.rejectWith(new Error('Storage unavailable'));
+    await h.page.send(); expect(h.page.draft).toBe(' Hola '); expect(h.page.sending).toBeFalse();
+    expect(h.page.textQueueError).toBe('Storage unavailable');
   });
-
-  it('retries with the same identity and policy, preserving new text and reply choice', async () => {
-    const h = harness(); h.page.currentPolicy = () => ({ ttlSeconds: 3600, replyTo: { messageId: 'original' } });
-    const sending = h.page.send(); const original = h.page.chat.sendText.calls.mostRecent().args;
-    h.reject(new Error('offline')); await sending;
-    h.page.draft = 'Otro texto'; h.page.replyingMessage = { id: 'next-reply' };
-    h.page.currentPolicy = () => ({ ttlSeconds: null });
-    h.page.chat.sendText.and.resolveTo({ id: 'accepted' });
-    await h.page.retryFailedText();
-    const retried = h.page.chat.sendText.calls.mostRecent().args;
-    expect(retried[1]).toBe(original[1]); expect(retried[2]).toEqual(original[2]); expect(retried[3]).toBe(original[3]);
-    expect(h.page.draft).toBe('Otro texto'); expect(h.page.replyingMessage.id).toBe('next-reply');
-    expect(h.page.failedTextAttempt()).toBeNull();
+  it('does not overwrite a newly typed draft when local storage finishes', async () => {
+    const h = harness(); let done!: () => void;
+    h.enqueue.and.returnValue(new Promise<void>(resolve => done = resolve));
+    const sending = h.page.send(); h.page.draft = 'Nuevo texto'; done(); await sending;
+    expect(h.page.draft).toBe('Nuevo texto');
   });
-
-  it('dismisses a late-confirmed failure and never retries an already confirmed message', async () => {
-    const h = harness(); const sending = h.page.send(); const bubble = h.page.displayedMessages()[0];
-    h.reject(new Error('response lost')); await sending;
-    expect(h.page.failedTextAttempt()).not.toBeNull();
-    h.confirmed.set([{ ...bubble, id: 'accepted', status: 'enviado' }]);
-    expect(h.page.failedTextAttempt()).toBeNull();
-    await h.page.retryFailedText(); expect(h.page.chat.sendText).toHaveBeenCalledTimes(1);
+  it('allows durable text sends during an attachment upload without changing its busy or error state', async () => {
+    const h = harness(); h.page.sending = true; h.page.attachmentError = 'Attachment status';
+    await h.page.send();
+    expect(h.enqueue).toHaveBeenCalledTimes(1); expect(h.page.sending).toBeTrue();
+    expect(h.page.attachmentError).toBe('Attachment status'); expect(h.page.textSaving).toBeFalse();
   });
-
-  it('prevents retries across accounts, locked chats and stale composer generations', async () => {
-    const h = harness(); const sending = h.page.send(); h.reject(new Error('offline')); await sending;
-    h.locked.set(true); expect(h.page.failedTextAttempt()).toBeNull(); await h.page.retryFailedText();
+  it('deduplicates realtime confirmation and hides another account or locked previews', async () => {
+    const h = harness(); await h.page.send(); const row = h.pending()[0];
+    h.confirmed.set([{ ...row, id: 'server', status: 'enviado' }]);
+    expect(h.page.displayedMessages().map((value: any) => value.id)).toEqual(['server']);
+    h.confirmed.set([]); h.locked.set(true); expect(h.page.displayedMessages()).toEqual([]);
     h.locked.set(false); h.session.set({ user: { id: 'b' }, device: { id: 'phone-b' } });
-    expect(h.page.failedTextAttempt()).toBeNull(); await h.page.retryFailedText();
-    h.session.set({ user: { id: 'a' }, device: { id: 'phone-a' } }); h.page.composerGeneration++;
-    expect(h.page.failedTextAttempt()).toBeNull(); await h.page.retryFailedText();
-    expect(h.page.chat.sendText).toHaveBeenCalledTimes(1);
-  });
-
-  it('discards only the failed attempt, leaving the next draft intact', async () => {
-    const h = harness(); const sending = h.page.send(); h.reject(new Error('offline')); await sending;
-    h.page.draft = 'Siguiente'; h.page.discardFailedText();
-    expect(h.page.failedTextAttempt()).toBeNull(); expect(h.page.draft).toBe('Siguiente');
-  });
-
-  it('does not recreate a draft when realtime already confirmed that exact send', async () => {
-    const h = harness(); const sending = h.page.send();
-    h.confirmed.set([{ ...h.page.displayedMessages()[0], id: 'accepted', status: 'enviado' }]);
-    h.reject(new Error('HTTP response lost')); await sending;
-    expect(h.page.draft).toBe(''); expect(h.page.attachmentError).toBe('');
-    expect(h.page.displayedMessages().length).toBe(1);
-  });
-
-  it('hides the previous account preview and rejects stale completion changes after switching accounts', async () => {
-    const h = harness(); const sending = h.page.send();
-    h.session.set({ user: { id: 'b' }, device: { id: 'phone-b' } });
-    h.page.draft = 'Draft for B'; h.page.attachmentError = 'B status'; h.page.sending = false;
     expect(h.page.displayedMessages()).toEqual([]);
-    h.reject(new Error('old account failed')); await sending;
-    expect(h.page.draft).toBe('Draft for B'); expect(h.page.attachmentError).toBe('B status');
   });
-
-  it('keeps pending content out of locked chats and prevents actions against temporary IDs', async () => {
-    const h = harness(); const sending = h.page.send(); const bubble = h.page.displayedMessages()[0];
-    h.locked.set(true); expect(h.page.displayedMessages()).toEqual([]);
-    expect(h.page.canReply(bubble)).toBeFalse(); expect(h.page.canEdit(bubble)).toBeFalse();
-    h.page.openMessageActions(bubble); expect(h.page.messageActionsOpen).toBeUndefined();
-    h.resolve({ id: 'done' }); await sending;
+  it('retains failed messages for retry without preventing another durable send', async () => {
+    const h = harness(); await h.page.send(); h.pending.update(rows => rows.map(row => ({ ...row, blocked: true })));
+    expect(h.page.failedTextAttempt()?.text).toBe('Hola');
+    h.page.draft = 'Siguiente'; await h.page.send(); expect(h.enqueue).toHaveBeenCalledTimes(2);
+    await h.page.retryFailedText(); expect(h.page.textOutbox.retry).toHaveBeenCalledWith(h.pending()[0].id);
   });
-
-  it('passes the preview identity through the encrypted send and keeps it on the confirmed local row', async () => {
+  it('closes the chat view through the menu without deleting chat data or pending sends', async () => {
+    const h = harness(); h.page.chatMenuOpen = true;
+    h.page.router = { navigateByUrl: jasmine.createSpy().and.resolveTo(true) };
+    h.page.cancelSelection = jasmine.createSpy();
+    await h.page.closeConversationView();
+    expect(h.page.chatMenuOpen).toBeFalse();
+    expect(h.page.router.navigateByUrl).toHaveBeenCalledWith('/app/chats');
+    expect(h.page.textOutbox.discard).not.toHaveBeenCalled();
+  });
+  it('times out identity preparation before a queued send and never posts after its late completion', fakeAsync(() => {
     const service: any = Object.create(ChatService.prototype);
-    service.currentUserAllowsForwarding = () => true;
-    service.sendPayload = jasmine.createSpy().and.resolveTo({ id: 'accepted' });
-    const conversation: any = { id: 'chat' };
-    await service.sendText(conversation, 'hello', {}, 'web-preview');
-    expect(service.sendPayload.calls.mostRecent().args[4].clientMessageId).toBe('web-preview');
-    service.auth = { session: () => ({ user: { id: 'a' }, device: { id: 'phone-a' } }) };
-    service.upsertMessage = jasmine.createSpy(); service.withLocalReadReceipt = (value: any) => value;
-    await service.ingestLocalSent({ id: 'accepted', clientMessageId: 'web-preview' }, { type: 'text', text: 'hello' });
-    expect(service.upsertMessage).toHaveBeenCalledWith(jasmine.objectContaining({ id: 'accepted', clientMessageId: 'web-preview' }));
-  });
+    let finish!: (value: unknown) => void; let error: Error | null = null;
+    service.auth = { session: () => ({ user: { id: 'a' }, device: { id: 'phone' } }),
+      ensureDeviceIdentity: () => new Promise(resolve => finish = resolve) };
+    service.assertPrivateChatUnlocked = () => undefined;
+    service.api = { post: jasmine.createSpy() };
+    void service.sendPayload({ id: 'chat' }, { type: 'text', text: 'Queued' }, 'Text', null, { queueManaged: true })
+      .catch((failure: Error) => error = failure);
+    tick(30001); flushMicrotasks(); expect((error as Error | null)?.name).toBe('TimeoutError');
+    finish({ userId: 'a', deviceId: 'phone' }); flushMicrotasks();
+    expect(service.api.post).not.toHaveBeenCalled();
+  }));
 });

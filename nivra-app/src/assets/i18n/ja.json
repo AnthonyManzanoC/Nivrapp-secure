@@ -1,4 +1,5 @@
 {
+  "CHAT.CLOSE_CHAT": "チャットを閉じる",
   "AUTH_RECOVERY.EYEBROW": "アカウントの安全性",
   "AUTH_RECOVERY.TITLE": "アクセスを復元",
   "AUTH_RECOVERY.RESET": "新しいパスワードを設定",

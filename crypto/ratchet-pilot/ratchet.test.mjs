@@ -8,8 +8,8 @@ async function pair() {
   const alice = new PilotDevice(randomUUID());
   const bob = new PilotDevice(randomUUID());
   // Represents an authenticated out-of-band identity comparison, never TOFU.
-  alice.pinIdentity(bob.address, bob.publicIdentity);
-  bob.pinIdentity(alice.address, alice.publicIdentity);
+  await alice.pinIdentity(bob.address, bob.publicIdentity);
+  await bob.pinIdentity(alice.address, alice.publicIdentity);
   await alice.establish(bob.address, await bob.bundle());
   return { alice, bob };
 }
@@ -71,9 +71,9 @@ test('unverified and changed identities are rejected', async () => {
   const alice = new PilotDevice(randomUUID());
   const bob = new PilotDevice(randomUUID());
   await assert.rejects(alice.establish(bob.address, await bob.bundle()));
-  alice.pinIdentity(bob.address, bob.publicIdentity);
+  await alice.pinIdentity(bob.address, bob.publicIdentity);
   const imposter = new PilotDevice(bob.address.name());
-  assert.throws(() => alice.pinIdentity(bob.address, imposter.publicIdentity), /Identity changed/);
+  await assert.rejects(alice.pinIdentity(bob.address, imposter.publicIdentity), /Identity changed/);
   await assert.rejects(alice.establish(bob.address, await imposter.bundle()));
 });
 test('unknown protocols and malformed or oversized data fail closed', async () => {

@@ -1980,7 +1980,13 @@ ion-modal.forward-modal {
   }
 }
 
+// The conversation list remains visible above the same split-view breakpoint.
+@media (min-width: 769px) {
+  .chat-back-controls { display: none; }
+}
+
 @media (max-width: 768px) {
+  .mobile-back { min-width: 44px; min-height: 44px; }
   :host,
   .chat-detail {
     height: 100dvh;

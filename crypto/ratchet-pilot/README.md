@@ -21,7 +21,13 @@ Requiere Node **24.18.1 o posterior** y una plataforma con binario nativo compat
 
 ## Alcance y trabajo necesario para activación
 
-`PilotDevice` conserva el estado **solo en memoria**. No es un almacén de producción: todavía necesita persistencia cifrada con transacciones y recuperación ante cierre/reinicio, una bandeja persistente y confirmaciones de entrega, límites y retención de claves saltadas revisados, consumo atómico de preclaves en el servidor y gestión de sesiones multidispositivo.
+`new PilotDevice(...)` conserva el estado en memoria. `PilotDevice.open(userId, deviceId, storage)` permite probar persistencia con `EncryptedPilotState`: cifra snapshots con AES-256-GCM y una clave externa de 32 bytes, vincula cuenta/dispositivo/revisión mediante AAD y confirma en una transacción SQLite el avance de sesión y los bytes exactos de reintento. Los escritores con revisión antigua son rechazados; una clave errónea o datos alterados no crean una identidad de reemplazo. La publicación de preclaves y el fijado de identidades también esperan a la confirmación local. `pinIdentity` ahora es asíncrono y debe esperarse con `await`.
+
+Las **15 pruebas** incluyen reapertura de sesiones en un proceso Node nuevo, mensajes fuera de orden y repetidos después de reabrir, fallo de escritura en envío/recepción, aislamiento entre cuentas/equipos y escritura concurrente. Estos resultados no certifican los clientes publicados.
+
+El adaptador es exclusivo del laboratorio Node: **no es IndexedDB, SQLCipher ni un gestor de secretos**. El llamador debe conservar la clave fuera del archivo y cerrar el almacén; el piloto no la guarda. Los identificadores de ámbito y revisiones son metadatos visibles. El WAL o una copia antigua del archivo podrían retener snapshots cifrados anteriores; no hay garantía de borrado físico ni defensa ante restauración completa de una copia antigua. No exportar este estado para vincular otro equipo.
+
+Todavía faltan los adaptadores transaccionales de IndexedDB y SQLCipher, el enlace a los gestores de claves de cada plataforma, confirmaciones/retención de la bandeja (limitada a 256 mensajes), límites y retención de claves saltadas revisados, consumo atómico de preclaves en PostgreSQL y gestión de sesiones multidispositivo. El almacenamiento limita cada snapshot a 32 MiB y falla sin confirmar el avance si se supera.
 
 La migración requiere un directorio versionado con identidades verificadas y capacidades autenticadas, puentes nativos para Android/iOS/escritorio y una solución revisada para web. No se debe copiar el material privado entre dispositivos para activar el ratchet. El historial v1/v2 conserva su protocolo y necesita una política explícita de transferencia.
 

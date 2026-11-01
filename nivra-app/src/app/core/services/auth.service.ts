@@ -966,7 +966,11 @@ export class AuthService implements OnDestroy {
   }
 
   async ensureDeviceIdentity(): Promise<StoredDeviceKeys> {
-    if (!await this.ensureFreshSession()) throw new Error('No se pudo comprobar la sesión para abrir las llaves de este dispositivo. Vuelve a intentar cuando haya conexión.');
+    if (!await this.ensureFreshSession()) {
+      const error = new Error('No se pudo comprobar la sesión para abrir las llaves de este dispositivo. Vuelve a intentar cuando haya conexión.');
+      Object.assign(error, { retryable: !this.lastRefreshFailedPermanently() });
+      throw error;
+    }
     const auth = this.session();
     if (!auth?.device.isTrusted || auth.device.revokedAt) throw new Error('Este dispositivo necesita una vinculación autorizada.');
     const scope = `${auth.user.id}:${auth.device.id}`;

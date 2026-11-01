@@ -2,7 +2,7 @@ import { DestroyRef, Injectable, OnDestroy, computed, effect, inject, signal, un
 import { HttpErrorResponse } from '@angular/common/http';
 import { earliestReceiptTime, mergeReceiptEvidence } from '../utils/receipt-time';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { firstValueFrom, fromEvent, timeout } from 'rxjs';
+import { firstValueFrom, from, fromEvent, timeout } from 'rxjs';
 import {
   ChatMessageVm,
   ChatPayload,
@@ -44,6 +44,7 @@ import { NetworkPolicyService } from './network-policy.service';
 import { ForegroundSyncRecovery } from './foreground-sync-recovery';
 import { uniqueCallSummaries, validatedCallSummary } from './call-summary.helpers';
 import { identityDisplayName, isNivraIdAccount } from '../utils/nivra-identity';
+import { TextOutboxService } from './text-outbox.service';
 
 const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 const LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
@@ -76,6 +77,7 @@ type ProfileSource = {
 };
 
 interface SendPayloadOptions {
+  queueManaged?: boolean;
   clientMessageId?: string;
   suppressLocalMessage?: boolean;
   encryptedPolicy?: string | null;
@@ -130,6 +132,7 @@ const CHAT_PAYLOAD_TEXT_ENCODER = new TextEncoder();
 
 @Injectable({ providedIn: 'root' })
 export class ChatService implements OnDestroy {
+  private readonly textOutbox = inject(TextOutboxService);
   private readonly api = inject(NivraApiService);
   private readonly network = inject(NetworkPolicyService);
   private readonly downloads = inject(EncryptedDownloadService);
@@ -244,6 +247,24 @@ export class ChatService implements OnDestroy {
     || Boolean(this.messageLoadCounts()[this.selectedConversationId() ?? '']));
 
   constructor() {
+    this.textOutbox.configure(entry => {
+      const conversation = this.conversations().find(row => row.id === entry.conversationId);
+      if (!conversation) throw new Error('La conversación no está disponible.');
+      const { __nivraOutbox: _localBinding, ...payload } = entry.payload;
+      return this.sendPayload(conversation, payload, 'Text', null, {
+        clientMessageId: entry.clientMessageId, deleteAfterRead: entry.deleteAfterRead,
+        expiresAt: entry.expiresAt, queueManaged: true,
+      });
+    }, entry => {
+      const current = this.auth.session();
+      const conversation = this.conversations().find(row => row.id === entry.conversationId);
+      return Boolean(current && current.user.id === entry.senderUserId && current.device.id === entry.senderDeviceId
+        && conversation && !this.privateChats.isLocked(entry.conversationId)
+        && !this.isConversationBlocked(entry.conversationId) && this.canSendToConversation(conversation));
+    }, entry => {
+      const conversation = this.conversations().find(row => row.id === entry.conversationId);
+      if (conversation) entry.payload = this.normalizeOutgoingPayload(conversation, entry.payload);
+    });
     this.deviceHistory.recovered$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       void this.retryRecoveredHistory();
     });
@@ -254,6 +275,13 @@ export class ChatService implements OnDestroy {
       this.contacts();
       this.profilesByUserId();
       this.messagesByConversation();
+      untracked(() => {
+        const pendingChats = new Set(this.textOutbox.entries().map(entry => entry.conversationId));
+        if (pendingChats.size) {
+          const messages = this.messagesByConversation();
+          this.textOutbox.reconcile([...pendingChats].flatMap(id => messages[id] ?? []));
+        }
+      });
       if (userId && conversations.length) {
         untracked(() => this.scheduleLaunchCacheSave(userId));
       }
@@ -1229,6 +1257,10 @@ export class ChatService implements OnDestroy {
     fileObjectId: string | null = null,
     options: SendPayloadOptions = {},
   ): Promise<MessageResponse | null> {
+    const deadline = Date.now() + 30000;
+    const historyGeneration = this.historyGeneration(conversation.id);
+    const bounded = <T>(work: Promise<T>): Promise<T> => options.queueManaged
+      ? firstValueFrom(from(work).pipe(timeout(Math.max(1, deadline - Date.now())))) : work;
     // The private module capability is granted only by recordCallSystemMessage.
     // A reserved-looking clientMessageId can never authorize a text/control send.
     const internalSummary = options.internalCallSummary === INTERNAL_CALL_SUMMARY
@@ -1237,7 +1269,7 @@ export class ChatService implements OnDestroy {
     const requireAccess = () => { if (!internalSummary) this.assertPrivateChatUnlocked(conversation.id); };
     requireAccess();
     const requestedUserId = this.auth.session()?.user.id;
-    const identity = await this.auth.ensureDeviceIdentity();
+    const identity = await bounded(this.auth.ensureDeviceIdentity());
     if (this.auth.session()?.user.id !== requestedUserId || identity.userId !== requestedUserId
       || identity.deviceId !== this.auth.session()?.device.id) {
       throw new Error('La cuenta o el dispositivo cambió durante el envío. Vuelve al chat y reintenta.');
@@ -1253,7 +1285,7 @@ export class ChatService implements OnDestroy {
     const outgoingPayload = validatedCallSummary(options.clientMessageId, this.normalizeOutgoingPayload(conversation, payload), conversation.id);
     if (!outgoingPayload) throw new Error('El resumen de llamada no es válido.');
     const wirePayload = this.withUniformMessagePadding(outgoingPayload);
-    const recipients = await this.encryptedRecipients(conversation, wirePayload, fileObjectId, context);
+    const recipients = await bounded(this.encryptedRecipients(conversation, wirePayload, fileObjectId, context));
     this.assertSendContext(context);
     requireAccess();
     if (!recipients.length) {
@@ -1270,13 +1302,18 @@ export class ChatService implements OnDestroy {
       deleteAfterRead: options.deleteAfterRead ?? false,
     };
     const endpoint = `/conversations/${conversation.id}/messages`;
+    if (options.queueManaged && (Date.now() >= deadline || historyGeneration !== this.historyGeneration(conversation.id))) {
+      const error = new Error('El intento de envío venció o el historial del chat cambió.');
+      error.name = 'TimeoutError'; throw error;
+    }
     let response: MessageResponse;
     try {
-      response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
+      const sending = this.api.post<MessageResponse>(endpoint, request);
+      response = await firstValueFrom(options.queueManaged ? sending.pipe(timeout(Math.max(1, deadline - Date.now()))) : sending);
     } catch (error) {
       this.assertSendContext(context);
       requireAccess();
-      if (!this.isTransientMessageSendError(error)) {
+      if (options.queueManaged || !this.isTransientMessageSendError(error)) {
         throw error;
       }
       await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
@@ -1285,6 +1322,7 @@ export class ChatService implements OnDestroy {
       response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
     }
     this.assertSendContext(context);
+    if (options.queueManaged && historyGeneration !== this.historyGeneration(conversation.id)) return response;
     if (!options.suppressLocalMessage) {
       if (options.clientMessageId?.startsWith('call-summary:') && response.senderUserId !== context.userId) await this.ingestMessage(response, false);
       else await this.ingestLocalSent(response, outgoingPayload);
@@ -1431,7 +1469,12 @@ export class ChatService implements OnDestroy {
   }
 
   async clearConversation(conversation: Conversation, scope: 'me' | 'everyone'): Promise<void> {
+    const context = this.captureSendContext();
+    const resume = await this.textOutbox?.pauseConversation(conversation.id);
+    try {
+    this.assertSendContext(context);
     await firstValueFrom(this.api.post(`/api/chats/${encodeURIComponent(conversation.id)}/clear`, { scope }));
+    this.assertSendContext(context);
     this.forgetConversationHistory(conversation.id);
     this.messagesByConversation.update((state) => ({ ...state, [conversation.id]: [] }));
     this.patchConversationPageState(conversation.id, {
@@ -1444,10 +1487,16 @@ export class ChatService implements OnDestroy {
     if (accountKey) {
       await this.history.removeConversationMessages(accountKey, conversation.id).catch(() => undefined);
     }
+    } finally { resume?.(); }
   }
 
   async deleteConversation(conversation: Conversation, scope: 'me' | 'everyone'): Promise<void> {
+    const context = this.captureSendContext();
+    const resume = await this.textOutbox?.pauseConversation(conversation.id);
+    try {
+    this.assertSendContext(context);
     await firstValueFrom(this.api.delete(`/api/chats/${encodeURIComponent(conversation.id)}?scope=${encodeURIComponent(scope)}`));
+    this.assertSendContext(context);
     this.forgetConversationHistory(conversation.id);
     this.conversations.update((items) => items.filter((item) => item.id !== conversation.id));
     this.messagesByConversation.update((state) => {
@@ -1464,6 +1513,7 @@ export class ChatService implements OnDestroy {
       this.selectedConversationId.set(nextId);
       this.persistSelectedConversationId(nextId);
     }
+    } finally { resume?.(); }
   }
 
   forwardAvailability(message: ChatMessageVm | null | undefined): { ok: boolean; reason?: string } {
@@ -1677,6 +1727,15 @@ export class ChatService implements OnDestroy {
     }
     const preview = this.preview(last.payload);
     return state ? `${state} - ${preview}` : preview;
+  }
+
+  conversationListPresence(conversation: Conversation): string {
+    if (this.privateChats?.isProtected(conversation.id)) return '';
+    const presence = this.presenceLabel(conversation);
+    const normalize = (value: string) => value.normalize('NFKC').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+    const preview = normalize(this.conversationSubtitle(conversation));
+    const status = normalize(presence);
+    return status && preview !== status && !preview.endsWith(` - ${status}`) ? presence : '';
   }
 
   preview(payload: ChatPayload): string {
@@ -3871,6 +3930,7 @@ export class ChatService implements OnDestroy {
       return;
     }
     this.forgetConversationHistory(conversationId);
+    void this.textOutbox?.pauseConversation(conversationId).then(resume => resume()).catch(() => undefined);
     if (value.mode === 'deleted') {
       this.conversations.update((items) => items.filter((conversation) => conversation.id !== conversationId));
       if (this.selectedConversationId() === conversationId) {
@@ -4423,6 +4483,7 @@ export class ChatService implements OnDestroy {
       return;
     }
     this.forgetConversationHistory(conversationId);
+    void this.textOutbox?.pauseConversation(conversationId).then(resume => resume()).catch(() => undefined);
     this.messagesByConversation.update(state => {
       const next = { ...state }; delete next[conversationId]; return next;
     });

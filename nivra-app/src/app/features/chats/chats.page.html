@@ -271,7 +271,7 @@
                       <small>{{ chat.conversationSubtitle(conversation) }}</small>
                     }
                     @if (appSettings.settings().chatListDensity === 'three-line' && !privateChats.isProtected(conversation.id)) {
-                      <em>{{ chat.presenceLabel(conversation) }}</em>
+                      @if (chat.conversationListPresence(conversation); as presence) { <em>{{ presence }}</em> }
                     }
                   </ion-label>
                   <div class="conversation-tail" slot="end">

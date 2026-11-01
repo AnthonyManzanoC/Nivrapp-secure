@@ -1,4 +1,5 @@
 {
+  "CHAT.CLOSE_CHAT": "关闭聊天",
   "AUTH_RECOVERY.EYEBROW": "账户安全",
   "AUTH_RECOVERY.TITLE": "恢复访问",
   "AUTH_RECOVERY.RESET": "设置新密码",

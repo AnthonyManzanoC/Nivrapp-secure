@@ -75,6 +75,7 @@ import {
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
+import { TextOutboxService } from '../../core/services/text-outbox.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
@@ -243,6 +244,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('micButton', { read: ElementRef }) private micButton?: ElementRef<HTMLElement>;
   @ViewChild('draftInput') private draftInput?: IonTextarea;
   readonly chat = inject(ChatService);
+  readonly textOutbox = inject(TextOutboxService);
   readonly appSettings = inject(AppSettingsService);
   readonly realtime = inject(SignalrService);
   readonly calls = inject(CallsService);
@@ -269,6 +271,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   draft = '';
   sending = false;
+  textSaving = false;
+  textQueueError = '';
   downloadingId: string | null = null;
   attachmentError = '';
   actionMessageId: string | null = null;
@@ -374,8 +378,6 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     { label: '7 dias', labelKey: 'COMMON.7_DAYS', value: 604800 },
   ];
   readonly conversation = computed(() => this.chat.selectedConversation());
-  private readonly pendingTextPreview = signal<TextSendAttempt | null>(null);
-  private readonly failedTextSend = signal<TextSendAttempt | null>(null);
   readonly messages = computed(() => this.displayedMessages());
   readonly hasReadableMessages = computed(() => this.messages().some(message => !message.decryptError));
   private voiceRecorder: MediaRecorder | null = null;
@@ -416,7 +418,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.closeStoryViewer(); this.closeStoryStats();
         this.cancelSelection();
         this.emojiPanelOpen = false; this.policyPanelOpen = false;
-        this.clearPendingAttachments(false); this.failedTextSend.set(null); ++this.composerGeneration;
+        this.clearPendingAttachments(false); ++this.composerGeneration;
         void this.cancelVoiceNote();
       });
     });
@@ -487,9 +489,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.cancelSelection();
         void this.cancelVoiceNote();
         this.clearPendingAttachments(false);
-        this.failedTextSend.set(null);
         ++this.composerGeneration;
         this.sending = false;
+        this.textSaving = false;
+        this.textQueueError = '';
         this.replyingMessage = null;
         this.editingMessage = null;
         this.closeSearch();
@@ -604,7 +607,6 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.stopGroupRoomRefresh();
     this.destroyed = true;
     this.cancelSelection();
-    this.failedTextSend.set(null);
     ++this.composerGeneration;
     this.finishContactInfoDismiss();
     const conversationId = this.conversation()?.id;
@@ -634,7 +636,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       await this.submitEdit();
       return;
     }
-    if (!conversation || !this.draft.trim() || this.sending || this.failedTextAttempt()) {
+    if (!conversation || !this.draft.trim() || this.textSaving || this.isBlocked() || this.privateChatLocked()) {
       return;
     }
     if (!this.canSendMessages()) {
@@ -645,78 +647,57 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!session) return;
     const text = this.draft;
     const policy = this.currentPolicy();
-    const clientMessageId = `web-${crypto.randomUUID()}`;
-    const preview = {
-      userId: session.user.id, deviceId: session.device.id, generation: this.composerGeneration,
-      text, policy,
-      message: {
-        id: `local-${clientMessageId}`, clientMessageId, conversationId: conversation.id,
-        senderUserId: session.user.id, senderDeviceId: session.device.id, mine: true,
-        at: new Date().toISOString(), status: 'sending',
-        payload: { type: 'text', text: text.trim(), ...(policy.replyTo ? { replyTo: policy.replyTo } : {}) },
-        deleteAfterRead: Boolean(policy.deleteAfterRead),
-      } satisfies ChatMessageVm,
-    };
-    this.draft = '';
-    this.replyingMessage = null;
-    await this.submitTextAttempt(conversation, preview);
+    const generation = this.composerGeneration;
+    const reply = this.replyingMessage;
+    this.textSaving = true;
+    try {
+      await this.textOutbox.enqueue(conversation, text, policy);
+      if (!this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation)) return;
+      if (this.draft === text) this.draft = '';
+      if (this.replyingMessage === reply) this.replyingMessage = null;
+      this.textQueueError = '';
+      this.emojiPanelOpen = false;
+      this.scrollBottom();
+      void this.chat.sendTyping(conversation.id, 'stopped', { force: true }).catch(() => undefined);
+    } catch (error) {
+      if (this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation)) {
+        this.textQueueError = error instanceof Error ? error.message : 'No se pudo guardar el mensaje pendiente.';
+      }
+    } finally {
+      if (this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation)) this.textSaving = false;
+    }
   }
 
   failedTextAttempt(): TextSendAttempt | null {
-    const attempt = this.failedTextSend();
-    if (!attempt || this.privateChatLocked()
-      || !this.composerContextCurrent(attempt.message.conversationId, attempt.userId, attempt.deviceId, attempt.generation)
-      || this.chat.selectedMessages().some(message => message.mine && message.clientMessageId === attempt.message.clientMessageId)) return null;
-    return attempt;
+    const session = this.auth.session(); const conversation = this.conversation();
+    if (!session || !conversation || this.privateChatLocked()) return null;
+    const entry = this.textOutbox.forConversation(conversation.id).find(row => row.blocked
+      && row.senderUserId === session.user.id && row.senderDeviceId === session.device.id);
+    return entry ? { message: entry, text: entry.payload.text || '', policy: {}, userId: session.user.id,
+      deviceId: session.device.id, generation: this.composerGeneration } : null;
   }
 
   async retryFailedText(): Promise<void> {
     const attempt = this.failedTextAttempt();
     const conversation = this.conversation();
     if (!attempt || !conversation || this.sending || this.isBlocked() || !this.canSendMessages()) return;
-    // Keep the original ID and policy: a lost HTTP acknowledgement must not
-    // turn a retry into a duplicate message, or change its expiry/reply target.
-    await this.submitTextAttempt(conversation, attempt);
+    try { await this.textOutbox.retry(attempt.message.id); }
+    catch { this.textQueueError = 'No se pudo reintentar el mensaje pendiente.'; }
   }
 
   discardFailedText(): void {
     if (this.sending) return;
-    this.failedTextSend.set(null);
-  }
-
-  private async submitTextAttempt(conversation: Conversation, preview: TextSendAttempt): Promise<void> {
-    const { text, policy, message: { clientMessageId } } = preview;
-    const current = () => this.composerContextCurrent(conversation.id, preview.userId, preview.deviceId, preview.generation);
-    this.failedTextSend.set(null);
-    this.pendingTextPreview.set(preview);
-    this.sending = true;
-    this.attachmentError = '';
-    this.scrollBottom();
-    try {
-      // Typing is best effort and must never hold up the actual encrypted send.
-      void this.chat.sendTyping(conversation.id, 'stopped', { force: true }).catch(() => undefined);
-      await this.chat.sendText(conversation, text, policy, clientMessageId);
-      if (!current()) return;
-      this.emojiPanelOpen = false;
-      this.scrollBottom();
-    } catch (error) {
-      if (current() && !this.chat.selectedMessages().some(message => message.mine && message.clientMessageId === clientMessageId)) {
-        // Never replace the next draft the user typed while this request ran.
-        // The failed text stays only in this account's in-memory composer.
-        this.failedTextSend.set(preview);
-      }
-    } finally {
-      if (this.pendingTextPreview() === preview) this.pendingTextPreview.set(null);
-      if (current()) this.sending = false;
-    }
+    const attempt = this.failedTextAttempt();
+    if (attempt) void this.textOutbox.discard(attempt.message.id).catch(() => { this.textQueueError = 'No se pudo eliminar el mensaje pendiente.'; });
   }
 
   private displayedMessages(): ChatMessageVm[] {
     const confirmed = this.chat.selectedMessages();
-    const preview = this.pendingTextPreview();
-    if (!preview || this.privateChatLocked() || !this.composerContextCurrent(preview.message.conversationId, preview.userId, preview.deviceId, preview.generation)
-      || confirmed.some(message => message.mine && message.clientMessageId === preview.message.clientMessageId)) return confirmed;
-    return [...confirmed, preview.message];
+    const session = this.auth.session(); const conversation = this.conversation();
+    if (!session || !conversation || this.privateChatLocked()) return confirmed;
+    const pending = this.textOutbox.forConversation(conversation.id).filter(row => row.senderUserId === session.user.id
+      && row.senderDeviceId === session.device.id && !confirmed.some(message => message.mine && message.clientMessageId === row.clientMessageId));
+    return [...confirmed, ...pending];
   }
 
   async back(): Promise<void> {
@@ -1366,6 +1347,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   closeChatMenu(): void {
     this.chatMenuOpen = false;
     this.chatMenuEvent = null;
+  }
+
+  async closeConversationView(): Promise<void> {
+    this.closeChatMenu();
+    this.cancelSelection();
+    await this.router.navigateByUrl('/app/chats');
   }
 
   openAttachmentMenu(event: Event): void {

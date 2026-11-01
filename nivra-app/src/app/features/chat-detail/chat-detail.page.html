@@ -1,11 +1,11 @@
 <section class="chat-detail ion-page">
   @if (privateChatLocked()) {
-    <ion-header class="chat-header"><ion-toolbar><ion-buttons slot="start"><ion-button mode="ios" fill="clear" (click)="back()" [attr.aria-label]="'COMMON.BACK' | translate:'Volver'"><ion-icon name="arrow-back-outline" /></ion-button></ion-buttons></ion-toolbar></ion-header>
+    <ion-header class="chat-header"><ion-toolbar><ion-buttons slot="start" class="chat-back-controls"><ion-button mode="ios" fill="clear" class="mobile-back" (click)="back()" [attr.aria-label]="'COMMON.BACK' | translate:'Volver'"><ion-icon name="arrow-back-outline" /></ion-button></ion-buttons></ion-toolbar></ion-header>
     <ion-content><app-private-chat-lock [conversationId]="privateConversationId()" (completed)="privateChatOpened()" (cancelled)="back()" /></ion-content>
   } @else {
   <ion-header class="chat-header">
     <ion-toolbar>
-      <ion-buttons slot="start">
+      <ion-buttons slot="start" class="chat-back-controls">
         <ion-button mode="ios" fill="clear" class="mobile-back" (click)="back()" [attr.aria-label]="'COMMON.BACK' | translate:'Volver'">
           <ion-icon name="arrow-back-outline"></ion-icon>
         </ion-button>
@@ -439,6 +439,9 @@
   </ion-content>
 
   <ion-footer class="composer-footer" [style.display]="selectionMode ? 'none' : null">
+    @if (textQueueError || textOutbox.storageError()) {
+      <p class="composer-error" role="alert">{{ textQueueError || textOutbox.storageError() }}</p>
+    }
     @if (failedTextAttempt(); as failed) {
       <app-failed-text-send [text]="failed.text" [busy]="sending"
         [retryDisabled]="sending || isBlocked() || !canSendMessages()"
@@ -571,7 +574,7 @@
         </ion-button>
       }
       @if (!voiceComposerActive()) {
-        <ion-button type="submit" mode="ios" class="send" [disabled]="sending || !!failedTextAttempt() || isBlocked() || !canSendMessages() || !draft.trim()" [attr.aria-label]="'COMMON.SEND' | translate:'Enviar'">
+        <ion-button type="submit" mode="ios" class="send" [disabled]="(editingMessage ? sending : textSaving) || isBlocked() || !canSendMessages() || !draft.trim()" [attr.aria-label]="'COMMON.SEND' | translate:'Enviar'">
           <ion-icon [name]="editingMessage ? 'checkmark-outline' : 'send-outline'"></ion-icon>
         </ion-button>
       }
@@ -684,6 +687,7 @@
           <ion-icon name="archive-outline"></ion-icon>
           {{ isArchived() ? ('CHATS.UNARCHIVE' | translate:'Desarchivar') : ('CHATS.ARCHIVE' | translate:'Archivar') }}
         </button>
+        <button type="button" (click)="closeConversationView()"><ion-icon name="close-outline"></ion-icon>{{ 'CHAT.CLOSE_CHAT' | translate:'Cerrar chat' }}</button>
         <button type="button" (click)="toggleBlock()">
           <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'"></ion-icon>
           {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : (chat.isGroup(conversation()) ? ('CHAT.BLOCK' | translate:'Bloquear') : ('CHAT.BLOCK_CONTACT' | translate:'Bloquear contacto')) }}

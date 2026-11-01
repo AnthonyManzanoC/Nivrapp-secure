@@ -33,6 +33,7 @@ describe('encrypted browser history transaction boundaries', () => {
     db = await openDB(databaseName, 1, { upgrade(database) {
       const store = database.createObjectStore('messages', { keyPath: 'key' });
       store.createIndex('byConversationAt', ['accountKey', 'conversationId', 'at']);
+      store.createIndex('byAccount', 'accountKey');
       database.createObjectStore('localVaultKeys', { keyPath: 'accountKey' });
     } });
     spyOn<any>(service, 'open').and.resolveTo(db);
@@ -78,5 +79,15 @@ describe('encrypted browser history transaction boundaries', () => {
     await expectAsync(service.putMessages('account', [message('1', 'must stay private')])).toBeRejectedWithError(/protector seguro/);
     expect(await db.getAll('messages')).toEqual([]);
     expect(await db.getAll('localVaultKeys')).toEqual([]);
+  });
+  it('restores only the requested encrypted outbox scope without exposing queued text in IndexedDB', async () => {
+    const scope = 'alice:text-outbox:v1:phone';
+    const other = 'bob:text-outbox:v1:phone';
+    await service.putMessages(scope, [message('1', 'private queued text')]);
+    await service.putMessages(other, [message('2', 'other account queued text')]);
+    const stored = JSON.stringify(await db.getAll('messages'));
+    expect(stored).not.toContain('private queued text'); expect(stored).not.toContain('other account queued text');
+    expect((await service.outboxMessages(scope)).map(row => row.payload.text)).toEqual(['private queued text']);
+    await expectAsync(service.outboxMessages('alice')).toBeRejected();
   });
 });

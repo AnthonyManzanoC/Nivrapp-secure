@@ -10,8 +10,8 @@ export const SUITE = 'NIVRA-LIBSIGNAL-A256GCM-PILOT-1';
 const hash = bytes => createHash('sha256').update(bytes).digest('base64');
 const copyMap = map => new Map([...map].map(([key, value]) => [key, Buffer.from(value)]));
 
-/** Local laboratory only. Production needs encrypted transactional persistence,
- * a secure native bridge and a reviewed device-credential/directory protocol. */
+/** Local laboratory only. Optional encrypted persistence does not provide
+ * a browser/native bridge or a reviewed device-credential/directory protocol. */
 export class PilotDevice extends IdentityKeyStore {
   #identity = IdentityKeyPair.generate();
   #registration = randomInt(1, 16380);
@@ -24,17 +24,36 @@ export class PilotDevice extends IdentityKeyStore {
   #outbox = new Map();
   #prekeyId = 0;
   #queue = Promise.resolve();
+  #storage = null;
+  #revision = 0;
+  #scope;
 
   constructor(userId, deviceId = 1) {
     super();
     this.address = ProtocolAddress.new(userId, deviceId);
+    this.#scope = JSON.stringify([userId, deviceId]);
+  }
+
+  static async open(userId, deviceId, storage) {
+    const device = new PilotDevice(userId, deviceId);
+    device.#storage = storage;
+    const saved = await storage.read(device.#scope);
+    if (saved) {
+      device.#restoreState(saved.state);
+      device.#revision = saved.revision;
+    } else {
+      device.#revision = await storage.commit(device.#scope, 0, device.#persistentState());
+    }
+    return device;
   }
 
   get publicIdentity() { return this.#identity.publicKey; }
-  pinIdentity(address, publicKey) {
-    const previous = this.#trusted.get(address.toString());
-    if (previous && !PublicKey.deserialize(previous).equals(publicKey)) throw new Error('Identity changed: explicit re-verification required');
-    this.#trusted.set(address.toString(), Buffer.from(publicKey.serialize()));
+  async pinIdentity(address, publicKey) {
+    return this.#transaction(async () => {
+      const previous = this.#trusted.get(address.toString());
+      if (previous && !PublicKey.deserialize(previous).equals(publicKey)) throw new Error('Identity changed: explicit re-verification required');
+      this.#replace(this.#trusted, address.toString(), publicKey.serialize());
+    });
   }
   async getIdentityKey() { return this.#identity.privateKey; }
   async getLocalRegistrationId() { return this.#registration; }
@@ -83,6 +102,8 @@ export class PilotDevice extends IdentityKeyStore {
   }
 
   async bundle() {
+    return this.#transaction(async () => {
+    if (this.#prekeyId >= 2147483647) throw new Error('Prekey identifiers exhausted');
     const id = ++this.#prekeyId;
     const oneTime = PrivateKey.generate();
     const signed = PrivateKey.generate();
@@ -94,6 +115,7 @@ export class PilotDevice extends IdentityKeyStore {
     await this.saveKyberPreKey(id, KyberPreKeyRecord.new(id, Date.now(), kem, kemSignature));
     return PreKeyBundle.new(this.#registration, this.address.deviceId(), id, oneTime.getPublicKey(),
       id, signed.getPublicKey(), signature, this.publicIdentity, id, kem.getPublicKey(), kemSignature);
+    });
   }
 
   async establish(peer, bundle) {
@@ -170,21 +192,46 @@ export class PilotDevice extends IdentityKeyStore {
 
   #transaction(action) {
     const operation = this.#queue.then(async () => {
-      const snapshot = [this.#sessions, this.#prekeys, this.#signed, this.#kyber, this.#usedKyber].map(copyMap);
+      const snapshot = [this.#sessions, this.#prekeys, this.#signed, this.#kyber, this.#usedKyber, this.#trusted].map(copyMap);
+      const prekeyId = this.#prekeyId;
       const outbox = new Map(this.#outbox);
       try {
         const result = await action();
+        if (this.#storage) this.#revision = await this.#storage.commit(this.#scope, this.#revision, this.#persistentState());
         for (const map of snapshot) for (const value of map.values()) value.fill(0);
         return result;
       } catch (error) {
-        for (const map of [this.#sessions, this.#prekeys, this.#signed, this.#kyber, this.#usedKyber]) for (const value of map.values()) value.fill(0);
-        [this.#sessions, this.#prekeys, this.#signed, this.#kyber, this.#usedKyber] = snapshot;
+        for (const map of [this.#sessions, this.#prekeys, this.#signed, this.#kyber, this.#usedKyber, this.#trusted]) for (const value of map.values()) value.fill(0);
+        [this.#sessions, this.#prekeys, this.#signed, this.#kyber, this.#usedKyber, this.#trusted] = snapshot;
+        this.#prekeyId = prekeyId;
         this.#outbox = outbox;
         throw error;
       }
     });
     this.#queue = operation.catch(() => {});
     return operation;
+  }
+
+  #persistentState() {
+    return { v: 1, scope: this.#scope, identity: Buffer.from(this.#identity.serialize()).toString('base64'),
+      registration: this.#registration, prekeyId: this.#prekeyId,
+      maps: [this.#sessions, this.#prekeys, this.#signed, this.#kyber, this.#usedKyber, this.#trusted]
+        .map(map => [...map].map(([key, bytes]) => [key, bytes.toString('base64')])),
+      outbox: [...this.#outbox] };
+  }
+  #restoreState(state) {
+    if (state?.v !== 1 || state.scope !== this.#scope || !Array.isArray(state.maps) || state.maps.length !== 6
+      || !Number.isInteger(state.registration) || state.registration < 1 || state.registration >= 16380
+      || !Number.isInteger(state.prekeyId) || state.prekeyId < 0 || state.prekeyId > 2147483647
+      || !Array.isArray(state.outbox) || state.outbox.length > 256) throw new Error('Invalid stored pilot state');
+    this.#identity = IdentityKeyPair.deserialize(decode(state.identity, 1024));
+    this.#registration = state.registration;
+    this.#prekeyId = state.prekeyId;
+    [this.#sessions, this.#prekeys, this.#signed, this.#kyber, this.#usedKyber, this.#trusted] = state.maps.map(entries => {
+      if (!Array.isArray(entries) || entries.length > 10000) throw new Error('Pilot state bounds exceeded');
+      return new Map(entries.map(([key, value]) => [key, decode(value, 2 * 1024 * 1024)]));
+    });
+    this.#outbox = new Map(state.outbox);
   }
 }
 

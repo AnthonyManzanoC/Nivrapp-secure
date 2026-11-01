@@ -319,6 +319,25 @@ export class LocalHistoryService {
     await db.transaction(LOCAL_MESSAGE_STORE, 'readwrite').objectStore(LOCAL_MESSAGE_STORE).put(record);
   }
 
+  async outboxMessages(accountKey: string): Promise<ChatMessageVm[]> {
+    if (!accountKey.includes(':text-outbox:v1:')) throw new Error('Invalid outbox scope');
+    const sqlite = await this.openNativeSqlite();
+    let records: StoredChatMessage[];
+    if (sqlite) {
+      const rows = await sqlite.query('SELECT record_json FROM local_messages WHERE account_key = ? LIMIT 201', [accountKey]);
+      records = (rows.values ?? []).map(row => this.parseSqliteRecord<StoredChatMessage>(row))
+        .filter((record): record is StoredChatMessage => Boolean(record));
+    } else {
+      const db = await this.open();
+      if (!db) throw new Error('No se pudo abrir la cola local cifrada.');
+      records = await db.getAllFromIndex(LOCAL_MESSAGE_STORE, 'byAccount', accountKey, 201) as StoredChatMessage[];
+    }
+    // Do not silently discard expired or unreadable queued messages. The queue
+    // owns their lifecycle and must never send an unreadable local payload.
+    return (await Promise.all(records.map(record => this.toChatMessage(accountKey, record))))
+      .filter((record): record is ChatMessageVm => Boolean(record));
+  }
+
   async putMessages(accountKey: string, messages: ChatMessageVm[]): Promise<void> {
     if (!accountKey || !messages.length) {
       return;
