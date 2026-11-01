@@ -22,11 +22,11 @@ function peerAddress(peer) {
       || !Number.isInteger(peer.device) || peer.device < 1 || peer.device > 127) throw Error('Invalid device address');
   return { name: peer.name, device: peer.device };
 }
-function contextBytes(context, sender, recipient) {
+function contextBytes(context, sender, recipient, suite = SUITE) {
   for (const key of ['conversationId', 'messageId']) {
     if (typeof context?.[key] !== 'string' || !/^[a-zA-Z0-9_-]{1,128}$/.test(context[key])) throw Error('Invalid message context');
   }
-  return encoder.encode(JSON.stringify({ suite: SUITE, context: {
+  return encoder.encode(JSON.stringify({ suite, context: {
     conversationId: context.conversationId, messageId: context.messageId,
     sender: `${sender.name}.${sender.device}`, recipient: `${recipient.name}.${recipient.device}`,
   } }));
@@ -35,6 +35,7 @@ const hash = async bytes => b64(new Uint8Array(await crypto.subtle.digest('SHA-2
 
 export class LabWebDevice {
   #core;
+  #suite;
   #address;
   #public;
   #queue = Promise.resolve();
@@ -50,6 +51,7 @@ export class LabWebDevice {
   #poisoned = false;
 
   constructor(bridge, name, device = 1, restored = null) {
+    this.#suite = bridge.protocolSuite?.() ?? SUITE;
     this.#address = peerAddress({ name, device });
     this.#scope = JSON.stringify([name, device]);
     if (restored?.token === RESTORE) {
@@ -69,6 +71,7 @@ export class LabWebDevice {
   static async open(bridge, name, device, storage, { createIfMissing = false } = {}) {
     peerAddress({ name, device });
     const scope = JSON.stringify([name, device]), saved = await storage.read(scope);
+    const suite = bridge.protocolSuite?.() ?? SUITE;
     if (!saved) {
       if (!createIfMissing) throw Error('Stored session missing: explicit initialization required');
       const result = new LabWebDevice(bridge, name, device);
@@ -79,7 +82,7 @@ export class LabWebDevice {
       } catch (error) { await result.close(); throw error; }
     }
     const state = saved.state;
-    if (!Number.isSafeInteger(saved.revision) || saved.revision < 1 || state?.v !== 3 || state.scope !== scope
+    if (!Number.isSafeInteger(saved.revision) || saved.revision < 1 || state?.v !== 3 || state.scope !== scope || (state.suite ?? SUITE) !== suite
         || typeof state.core !== 'string' || state.core.length > 32 * 1024 * 1024
         || !Array.isArray(state.outbox) || state.outbox.length > 4096
         || !Array.isArray(state.bundles) || state.bundles.length > 256
@@ -88,7 +91,7 @@ export class LabWebDevice {
     const outbox = new Map();
     for (const entry of state.outbox) {
       if (!Array.isArray(entry) || entry.length !== 2 || outbox.has(entry[0]) || binary(entry[0], 32).length !== 32
-          || binary(entry[1]?.requestHash, 32).length !== 32 || entry[1]?.envelope?.v !== 3 || entry[1]?.envelope?.suite !== SUITE
+          || binary(entry[1]?.requestHash, 32).length !== 32 || entry[1]?.envelope?.v !== 3 || entry[1]?.envelope?.suite !== suite
           || entry[1]?.envelope?.context?.sender !== `${name}.${device}`) throw Error('Invalid stored retry envelope');
       outbox.set(entry[0], structuredClone(entry[1]));
     }
@@ -97,14 +100,14 @@ export class LabWebDevice {
       if (!Array.isArray(entry) || entry.length !== 2 || inbox.has(entry[0]) || binary(entry[0], 32).length !== 32
           || !entry[1] || entry[1].context?.recipient !== `${name}.${device}`) throw Error('Invalid stored incoming delivery');
       const peer = peerAddress(entry[1].peer);
-      const aad = contextBytes(entry[1].context, peer, { name, device });
+      const aad = contextBytes(entry[1].context, peer, { name, device }, suite);
       if (await hash(aad) !== entry[0] || JSON.stringify(JSON.parse(decoder.decode(aad)).context) !== JSON.stringify(entry[1].context)) throw Error('Stored delivery context mismatch');
       inbox.set(entry[0], structuredClone(entry[1]));
     }
     const core = await bridge.RatchetDevice.restorePrivateState(name, device, state.core);
     let identity;
     try {
-      identity = binary(JSON.parse(state.core).identity, 1024);
+      identity = binary(JSON.parse(state.core).identity, 256 * 1024);
       const result = new LabWebDevice(bridge, name, device, { token: RESTORE, core, public: bridge.identityPublic(identity) });
       result.#storage = storage; result.#revision = saved.revision; result.#outbox = outbox; result.#inbox = inbox;
       const coreState = JSON.parse(state.core);
@@ -147,7 +150,7 @@ export class LabWebDevice {
   }
   encrypt(peer, context, payload) {
     peer = peerAddress(peer);
-    const aad = contextBytes(context, this.#address, peer);
+    const aad = contextBytes(context, this.#address, peer, this.#suite);
     const serialized = JSON.stringify(payload);
     if (typeof serialized !== 'string') throw Error('Payload must be JSON');
     const plain = encoder.encode(serialized);
@@ -159,7 +162,7 @@ export class LabWebDevice {
     const prepared = [];
     try {
       for (const request of requests) {
-        const peer = peerAddress(request.peer), aad = contextBytes(request.context, this.#address, peer);
+        const peer = peerAddress(request.peer), aad = contextBytes(request.context, this.#address, peer, this.#suite);
         const serialized = JSON.stringify(request.payload);
         if (typeof serialized !== 'string') throw Error('Payload must be JSON');
         const plain = encoder.encode(serialized);
@@ -189,7 +192,7 @@ export class LabWebDevice {
         const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 }, key, plain));
         capsule = encoder.encode(JSON.stringify({ key: b64(keyBytes), contextHash: id, payloadHash: await hash(ciphertext) }));
         const packet = JSON.parse(await this.#core.encrypt(peer.name, peer.device, capsule, Date.now()));
-        const envelope = { v: 3, suite: SUITE, context: JSON.parse(decoder.decode(aad)).context,
+        const envelope = { v: 3, suite: this.#suite, context: JSON.parse(decoder.decode(aad)).context,
           type: packet.type, keyMessage: packet.bytes, iv: b64(iv), ciphertext: b64(ciphertext) };
         const result = structuredClone(envelope);
         this.#outbox.set(id, { requestHash, envelope });
@@ -198,11 +201,11 @@ export class LabWebDevice {
   }
   decrypt(peer, context, envelope) {
     peer = peerAddress(peer);
-    const aad = contextBytes(context, peer, this.#address);
+    const aad = contextBytes(context, peer, this.#address, this.#suite);
     // Snapshot caller input before the first asynchronous operation.
     envelope = structuredClone(envelope);
     return this.#mutate(async () => {
-      if (envelope?.v !== 3 || envelope.suite !== SUITE || ![2, 3].includes(envelope.type)) throw Error('Unsupported protocol: no legacy fallback');
+      if (envelope?.v !== 3 || envelope.suite !== this.#suite || ![2, 3].includes(envelope.type)) throw Error('Unsupported protocol: no legacy fallback');
       if (JSON.stringify(envelope.context) !== JSON.stringify(JSON.parse(decoder.decode(aad)).context)) throw Error('Wrong message context');
       const iv = binary(envelope.iv, 12), payload = binary(envelope.ciphertext, MAX_PAYLOAD + 16);
       if (iv.length !== 12 || payload.length < 16) throw Error('Invalid encrypted payload');
@@ -249,7 +252,7 @@ export class LabWebDevice {
     });
   }
   async #persistentState() {
-    return { v: 3, scope: this.#scope, core: await this.#core.exportPrivateStateForEncryption(), outbox: [...this.#outbox], inbox: [...this.#inbox], bundles: [...this.#bundles], application: this.#application };
+    return { v: 3, suite: this.#suite, scope: this.#scope, core: await this.#core.exportPrivateStateForEncryption(), outbox: [...this.#outbox], inbox: [...this.#inbox], bundles: [...this.#bundles], application: this.#application };
   }
   #mutate(action) {
     return this.#run(async () => {

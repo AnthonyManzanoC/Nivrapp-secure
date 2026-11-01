@@ -1,0 +1,24 @@
+[package]
+name = "nivra-ratchet-olm"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93.1"
+publish = false
+description = "Nivra device bridge for the Apache-2.0 vodozemac Double Ratchet"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+vodozemac = { git = "https://github.com/matrix-org/vodozemac", rev = "3e11ae87d157da6bcac3cbf7825d37c8f5ed60af", default-features = false, features = ["precomputed-tables"] }
+getrandom = { version = "=0.4.3", features = ["wasm_js"] }
+wasm-bindgen = "=0.2.130"
+base64ct = { version = "1.8", features = ["alloc"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+zeroize = "1.8"
+
+[profile.release]
+overflow-checks = true
+lto = true
+codegen-units = 1

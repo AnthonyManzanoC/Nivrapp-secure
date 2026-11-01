@@ -1,0 +1,46 @@
+name: Permissive Double Ratchet verification
+on:
+  push:
+    branches: [codex/ratchet-permissive]
+    paths: [crypto/ratchet-olm/**, crypto/ratchet-wasm/web-device.mjs, .github/workflows/ratchet-olm.yml]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ratchet-olm-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  bridge:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.18.1
+      - run: rustup toolchain install 1.93.1 --profile minimal --target wasm32-unknown-unknown
+      - name: Check native security and build WASM
+        working-directory: crypto/ratchet-olm
+        env:
+          RUSTUP_TOOLCHAIN: 1.93.1
+        run: |
+          if [ ! -f Cargo.lock ]; then cargo generate-lockfile; fi
+          cargo metadata --locked --format-version 1 > dependency-metadata.json
+          node check-dependencies.mjs dependency-metadata.json
+          cargo test --locked
+          cargo build --locked --release --target wasm32-unknown-unknown
+          cargo install wasm-bindgen-cli --version 0.2.130 --locked
+          wasm-bindgen --target nodejs --out-dir pkg/node target/wasm32-unknown-unknown/release/nivra_ratchet_olm.wasm
+          wasm-bindgen --target web --out-dir pkg/web target/wasm32-unknown-unknown/release/nivra_ratchet_olm.wasm
+      - run: node --test crypto/ratchet-olm/tests/*.test.mjs
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: ratchet-olm-portability
+          path: |
+            crypto/ratchet-olm/pkg/
+            crypto/ratchet-olm/Cargo.lock
+            crypto/ratchet-olm/dependency-metadata.json
+          retention-days: 7
