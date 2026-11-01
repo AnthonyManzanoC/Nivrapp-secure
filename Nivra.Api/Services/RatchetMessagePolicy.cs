@@ -12,11 +12,12 @@ public static class RatchetMessagePolicy
 {
     public const string Algorithm = "NIVRA-LIBSIGNAL-MESSAGE-1";
     public const string HybridAlgorithm = "NIVRA-HYBRID-RATCHET-MESSAGE-1";
-    public static async Task<bool> ValidAsync(NivraDbContext db, string senderUserId, string senderDeviceId, string conversationId, string clientMessageId, IEnumerable<RecipientCipherRequest> recipients, CancellationToken ct)
+    public static async Task<bool> ValidAsync(NivraDbContext db, string senderUserId, string senderDeviceId, string conversationId, string clientMessageId, IEnumerable<RecipientCipherRequest> recipients, CancellationToken ct, bool requireHybrid = false)
     {
         var list = recipients.ToList(); var ids = list.Select(row => row.DeviceId).Append(senderDeviceId).Distinct().ToArray();
         var registrations = await db.Set<RatchetPilotDevice>().AsNoTracking().Where(row => ids.Contains(row.DeviceId) && row.AddressMode > 0).ToDictionaryAsync(row => row.DeviceId, ct);
         var sender = registrations.GetValueOrDefault(senderDeviceId);
+        if (requireHybrid && (sender?.AddressMode != 2 || sender.UserId != senderUserId || list.Count == 0)) return false;
         var contextMessageId = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(clientMessageId))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
         foreach (var recipient in list)
         {

@@ -288,6 +288,7 @@ app.MapGet("/health/ready", async (NivraDbContext db, PushNotificationService pu
     var multiReady = infrastructure.IsMultiInstanceReady(apiFailoverReady, fcmReady, webPushReady);
     return Results.Json(new { status = ready ? "ok" : "unavailable", version = ClientCompatibility.Version, callProtocol = ClientCompatibility.CallProtocol,
         minimumCallProtocol = ClientCompatibility.CallProtocol, failoverProtocol = 1,
+        ratchet = new { enabled = RatchetClientEndpoints.Enabled(app.Configuration), protocol = 5, requireHybrid = app.Configuration.GetValue<bool>("Ratchet:RequireHybrid"), suite = "NIVRA-PQXDH-MLKEM768-A256GCM-1" },
         apiFailoverReady, multiInstanceReady = multiReady, clusterFingerprint = infrastructure.ClusterFingerprint,
         sharedStorageReady = storage.UsesSharedStorage, realtimeSharedReady = redisHealthy,
         durableSigningKeyReady = infrastructure.DurableSigningKey,

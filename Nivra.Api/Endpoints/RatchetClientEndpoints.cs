@@ -10,12 +10,13 @@ namespace Nivra.Api.Endpoints;
 public static class RatchetClientEndpoints
 {
     public static bool Enabled(IConfiguration configuration) => configuration.GetValue<bool>("Ratchet:Enabled");
+    public static bool LaboratoryEnabled(IConfiguration configuration) => Enabled(configuration) && configuration.GetValue<bool>("Ratchet:LaboratoryClientEnabled");
     public static void MapRatchetClientEndpoints(this WebApplication app)
     {
         // Sending is enabled only when the deployment explicitly enables the
         // complete client protocol. Reading retained local v3 state is separate.
-        app.MapGet("/ratchet/config", (HttpContext http) => http.GetCurrentUser() is null ? Results.Unauthorized() : Results.Ok(new { enabled = Enabled(app.Configuration), protocol = 3 }));
-        if (!Enabled(app.Configuration)) return;
+        app.MapGet("/ratchet/config", (HttpContext http) => http.GetCurrentUser() is null ? Results.Unauthorized() : Results.Ok(new { enabled = LaboratoryEnabled(app.Configuration), protocol = 3 }));
+        if (!LaboratoryEnabled(app.Configuration)) return;
         var group = app.MapGroup("/ratchet");
         group.MapGet("/prekeys/status", (HttpContext http, RatchetDirectoryService store, CancellationToken ct) => Execute(http, async user => Results.Ok(new { available = await store.AvailableAsync(user.UserId, user.DeviceId, ct) })));
         group.MapPost("/prekeys", (HttpContext http, RatchetPreKeyStore store, CancellationToken ct) => Execute(http, async user =>

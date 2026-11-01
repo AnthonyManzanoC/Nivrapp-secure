@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createRequire } from 'node:module';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { LabWebDevice } from '../ratchet-common/web-device.mjs';
 const bridge = createRequire(import.meta.url)('./pkg/node/nivra_ratchet_olm.js');
@@ -23,7 +23,8 @@ try {
   }
   alice = new LabWebDevice(bridge, fixture.aliceDevice); bob = new LabWebDevice(bridge, fixture.bobDevice);
   await alice.pinIdentity(bob.address, bob.publicIdentity); await bob.pinIdentity(alice.address, alice.publicIdentity);
-  await post(fixture.aliceToken, '/ratchet/olm/prekeys', { bundles: [await alice.bundle()] });
+  const aliceBundle = await alice.bundle();
+  await post(fixture.aliceToken, '/ratchet/olm/prekeys', { bundles: [aliceBundle] });
   const publicBundle = await bob.bundle(); await post(fixture.bobToken, '/ratchet/olm/prekeys', { bundles: [publicBundle] });
   const path = '/ratchet/olm/devices/' + fixture.bobDevice + '/prekey', requestId = randomUUID();
   const claims = await Promise.all(Array.from({ length: 12 }, () => post(fixture.aliceToken, path, { conversationId: fixture.conversationId, requestId })));
@@ -32,7 +33,16 @@ try {
   for (let turn = 0; turn < 8; turn++) {
     const sender = turn % 2 ? bob : alice, receiver = turn % 2 ? alice : bob;
     const context = { conversationId: fixture.conversationId, messageId: 'hybrid-api-' + turn }, payload = { text: 'Synthetic hybrid turn ' + turn };
-    assert.deepEqual(await receiver.decrypt(sender.address, context, await sender.encrypt(receiver.address, context, payload)), payload);
+    const envelope = await sender.encrypt(receiver.address, context, payload);
+    assert.deepEqual(await receiver.decrypt(sender.address, context, envelope), payload);
+    const clientMessageId = 'policy-' + turn;
+    const wire = { ...envelope, context: { ...envelope.context, messageId: createHash('sha256').update(clientMessageId).digest('base64url') } };
+    const recipient = { userId: turn % 2 ? fixture.aliceUser : fixture.bobUser, deviceId: receiver.address.name, ciphertext: JSON.stringify(wire), header: JSON.stringify({ v: 4, alg: 'NIVRA-HYBRID-RATCHET-MESSAGE-1', senderDeviceId: sender.address.name, recipientDeviceId: receiver.address.name, identityKey: Buffer.from(sender.publicIdentity).toString('base64'), registrationId: (turn % 2 ? publicBundle : aliceBundle).registrationId, payloadIv: Buffer.alloc(12).toString('base64'), payloadCiphertext: Buffer.alloc(32).toString('base64') }) };
+    const body = { clientMessageId, kind: 0, recipients: [recipient], deleteAfterRead: false };
+    const token = turn % 2 ? fixture.bobToken : fixture.aliceToken;
+    await post(token, '/fixture/message-policy', body, 204);
+    await post(token, '/fixture/message-policy', { ...body, clientMessageId: 'changed-context' }, 400);
+    await post(token, '/fixture/message-policy', { ...body, recipients: [{ ...recipient, header: '{"v":1}' }] }, 400);
   }
   assert.deepEqual(await bob.pendingConsumedPreKeys(), [publicBundle.preKeyId]);
   await post(fixture.bobToken, '/ratchet/olm/prekeys/consumed', { preKeyIds: await bob.pendingConsumedPreKeys() }, 204);

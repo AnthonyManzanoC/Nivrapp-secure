@@ -50,7 +50,7 @@ public static partial class EndpointExtensions
                 await using var tx = await CallCoordination.LockAsync(db, $"history-archive:{id}:{sourceDeviceId}", ct);
                 var approved = await ApprovedArchive(db, current, id, sourceDeviceId, clock.GetUtcNow(), ct); if (approved is null) return Results.NotFound();
                 if (!await RatchetMessagePolicy.ValidAsync(db, current.UserId, current.DeviceId, $"history_{id}", ArchiveMessageId(id, sourceDeviceId, body.Sequence),
-                    [new RecipientCipherRequest(current.UserId, approved.Value.Request.TargetDeviceId, body.Ciphertext!, body.Header, null)], ct)) return Results.BadRequest();
+                    [new RecipientCipherRequest(current.UserId, approved.Value.Request.TargetDeviceId, body.Ciphertext!, body.Header, null)], ct, app.Configuration.GetValue<bool>("Ratchet:RequireHybrid"))) return Results.BadRequest();
                 using (var header = System.Text.Json.JsonDocument.Parse(body.Header))
                     if (header.RootElement.GetProperty("v").GetInt32() != 4) return Results.BadRequest();
                 var stream = await db.Set<HistoryArchiveStream>().SingleOrDefaultAsync(row => row.TransferId == id && row.SourceDeviceId == sourceDeviceId, ct);

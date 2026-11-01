@@ -2466,6 +2466,8 @@ export class ChatService implements OnDestroy {
     message?: MessageResponse,
   ): Promise<ChatPayload | null> {
     if (message && this.ratchet) {
+      const transferred = await this.ratchet.transferredPayload(message);
+      if (transferred) return transferred;
       const recipient = recipients.find(item => item.deviceId === deviceId && this.ratchet.isEnvelope(item.header));
       if (recipient) {
         const historyGeneration = this.historyGeneration(message.conversationId);

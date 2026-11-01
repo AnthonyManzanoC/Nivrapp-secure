@@ -1751,7 +1751,9 @@ public static partial class EndpointExtensions
                 }
             }
 
-            if (!await RatchetMessagePolicy.ValidAsync(db, current.UserId, current.DeviceId, conversationId, request.ClientMessageId, request.Recipients, cancellationToken))
+            if (app.Configuration.GetValue<bool>("Ratchet:RequireHybrid") && !await db.Set<RatchetPilotDevice>().AnyAsync(device => device.DeviceId == current.DeviceId && device.UserId == current.UserId && device.AddressMode == 2, cancellationToken))
+                return Error("client_update_required", "Actualiza Nivra para enviar con el nuevo cifrado. Tu historial sigue disponible.", StatusCodes.Status426UpgradeRequired);
+            if (!await RatchetMessagePolicy.ValidAsync(db, current.UserId, current.DeviceId, conversationId, request.ClientMessageId, request.Recipients, cancellationToken, app.Configuration.GetValue<bool>("Ratchet:RequireHybrid")))
                 return Error("invalid_ratchet_message", "El sobre cifrado no corresponde a los dispositivos y al mensaje.");
             var now = timeProvider.GetUtcNow();
             var message = new MessageEnvelope

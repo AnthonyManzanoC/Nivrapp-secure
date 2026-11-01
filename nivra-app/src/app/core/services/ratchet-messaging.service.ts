@@ -9,7 +9,7 @@ import { LocalHistoryService } from './local-history.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 import { AppLockService } from './app-lock.service';
-import { RatchetBundle, RatchetDeviceRuntime, RatchetEnvelope, RatchetRuntimeFactory, openRatchetRuntime, ratchetBase64, ratchetBinary, ratchetHash, ratchetMessageId } from './ratchet-runtime';
+import { RatchetBundle, RatchetDeviceRuntime, RatchetEnvelope, RatchetRuntimeFactory, openRatchetRuntime, ratchetBase64, ratchetBinary, ratchetHash, ratchetMessageId, ratchetArchiveContext } from './ratchet-runtime';
 
 export const RATCHET_RUNTIME = new InjectionToken<RatchetRuntimeFactory>('Nivra ratchet runtime', { providedIn: 'root', factory: () => openRatchetRuntime });
 const ALGORITHM = 'NIVRA-HYBRID-RATCHET-MESSAGE-1';
@@ -299,7 +299,7 @@ export class RatchetMessagingService implements OnDestroy {
     return this.run(async () => {
       const owner = this.owner(), engine = await this.open(false), state = await this.state(engine);
       // History must be durable before the only local self-copy is released.
-      if (isCurrent() && message.recipients.some(recipient => recipient.deviceId === owner.deviceId && this.isEnvelope(recipient.header))) await this.persistDelivery(message, payload, 'sent', isCurrent);
+      if (isCurrent() && message.senderUserId === owner.userId && message.senderDeviceId === owner.deviceId && message.recipients.some(recipient => recipient.deviceId === owner.deviceId && this.isEnvelope(recipient.header))) await this.persistDelivery(message, payload, 'sent', isCurrent);
       owner.assert();
       state.confirmed[message.clientMessageId] = { conversationId: message.conversationId, serverId: message.id };
       const ids = Object.keys(state.confirmed); for (const id of ids.slice(0, Math.max(0, ids.length - 8192))) delete state.confirmed[id];
@@ -309,6 +309,13 @@ export class RatchetMessagingService implements OnDestroy {
     });
   }
 
+  async transferredPayload(message: MessageResponse): Promise<ChatPayload | null> {
+    const owner = this.owner();
+    if (message.deleteAfterRead || message.expiresAt && Date.parse(message.expiresAt) <= Date.now()) return null;
+    const cached = await this.history.messageById(owner.userId, this.receiptConversation(message.conversationId), message.id); owner.assert();
+    return cached?.payload.type === 'ratchet-archive-delivery' && cached.payload['archiveContext'] === ratchetArchiveContext(message)
+      && cached.payload['content'] && typeof cached.payload['content'] === 'object' ? cached.payload['content'] as ChatPayload : null;
+  }
   async decrypt(message: MessageResponse, recipient: RecipientCipherRequest, isCurrent: () => boolean = () => true): Promise<ChatPayload> {
     const initialOwner = this.owner();
     const retained = this.history.messageWriteGuard(initialOwner.userId, message.conversationId, message.id);

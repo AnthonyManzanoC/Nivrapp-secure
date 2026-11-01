@@ -40,7 +40,8 @@ public final class RatchetLabActivity extends Activity {
     public static volatile String outcome;
     private static final String ALIAS = "NivraRatchetLabWrappingV1";
     private static final Set<String> ASSETS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList("/assets/lab.html", "/assets/lab.mjs", "/assets/web-device.mjs",
-        "/assets/pkg/web/nivra_ratchet_wasm.js", "/assets/pkg/web/nivra_ratchet_wasm_bg.wasm")));
+        "/assets/pkg/web/nivra_ratchet_wasm.js", "/assets/pkg/web/nivra_ratchet_wasm_bg.wasm",
+        "/assets/pkg/web/nivra_ratchet_olm.js", "/assets/pkg/web/nivra_ratchet_olm_bg.wasm")));
     private SQLiteDatabase database;
     private WebView web;
     private SharedPreferences preferences;

@@ -23,7 +23,7 @@ if (connection.Host is not ("127.0.0.1" or "localhost") || connection.Database !
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
 builder.Configuration.Sources.Clear();
-builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Ratchet:PreKeyPilotEnabled"] = "true", ["Ratchet:Enabled"] = "true" });
+builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Ratchet:PreKeyPilotEnabled"] = "true", ["Ratchet:Enabled"] = "true", ["Ratchet:LaboratoryClientEnabled"] = "true" });
 builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
 builder.Services.AddDbContext<NivraDbContext>(options => options.UseNpgsql(connection.ConnectionString, provider => provider.EnableRetryOnFailure(3)));
 builder.Services.AddScoped<INivraStore, PgSqlNivraStore>(); builder.Services.AddScoped<RatchetPreKeyStore>();
@@ -39,6 +39,10 @@ app.UseExceptionHandler(handler => handler.Run(context =>
     return context.Response.WriteAsJsonAsync(new { code = "synthetic_test_failure" });
 }));
 app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapRatchetHybridEndpoints(); app.MapHistoryArchiveEndpoints();
+app.MapPost("/fixture/message-policy", async (SendMessageRequest request, HttpContext http, NivraDbContext db, CancellationToken ct) => {
+    if (http.GetCurrentUser() is not { } user) return Results.Unauthorized();
+    return await RatchetMessagePolicy.ValidAsync(db, user.UserId, user.DeviceId, "chat-lab", request.ClientMessageId, request.Recipients, ct, requireHybrid: true) ? Results.NoContent() : Results.BadRequest();
+});
 var tokens = new Dictionary<string, string>();
 await using (var scope = app.Services.CreateAsyncScope())
 {

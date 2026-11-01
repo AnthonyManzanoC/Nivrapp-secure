@@ -1,5 +1,8 @@
 /** Runtime boundary shared by browser, Capacitor WebView and Electron. */
 import { environment } from '../../../environments/environment';
+import type { MessageResponse } from '../models/nivra.models';
+export const ratchetArchiveContext = (message: Pick<MessageResponse, 'id' | 'clientMessageId' | 'conversationId' | 'senderUserId' | 'senderDeviceId' | 'serverReceivedAt'>): string =>
+  JSON.stringify([message.id, message.clientMessageId, message.conversationId, message.senderUserId, message.senderDeviceId, message.serverReceivedAt]);
 export interface RatchetAddress { name: string; device: number; }
 export interface RatchetContext { conversationId: string; messageId: string; }
 export interface RatchetBundle {

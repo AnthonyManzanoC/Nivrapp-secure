@@ -113,6 +113,10 @@ describe('actual application Double Ratchet delivery', () => {
     const historical = { id: 'msg_history_one', clientMessageId: 'original-message', conversationId: 'chat-test', mine: true,
       senderUserId: source.target.userId, senderDeviceId: source.target.deviceId, at, payload: { type: 'text', text } };
     source.messages.set('chat-test:msg_history_one', historical);
+    // A crash may leave the durable ratchet receipt before the visible history row.
+    const recovered = { ...historical, id: 'msg_hidden_only', clientMessageId: 'hidden-original', payload: { type: 'text', text: 'saved before crash' } };
+    const edited = { ...historical, id: 'msg_history_edit', clientMessageId: 'edit-original', payload: { type: 'edit', messageId: historical.id, text: 'updated text' } };
+    for (const message of [recovered, edited]) source.messages.set(`ratchet-receipt:chat-test:${message.id}`, { ...message, conversationId: 'ratchet-receipt:chat-test', payload: { type: 'ratchet-delivery', content: message.payload } });
     const pages = new Map<number, any>(); let nextSequence = 0, acknowledgedSequence = -1, finished = false;
     for (const record of [source, linked]) {
       const originalGet = record.service.api.get, originalPost = record.service.api.post;
@@ -125,7 +129,7 @@ describe('actual application Double Ratchet delivery', () => {
       record.service.api.post = (path: string, body: any) => {
         if (path.endsWith('/ack')) { acknowledgedSequence = Math.max(acknowledgedSequence, body.sequence); for (const sequence of pages.keys()) if (sequence <= acknowledgedSequence) pages.delete(sequence); return of(null); }
         if (path.includes('/archive/')) { if (!pages.has(body.sequence)) { pages.set(body.sequence, structuredClone(body)); nextSequence++; finished = body.final; } return of(null); }
-        if (path === '/messages/history-recovery') return of({ messages: [{ ...response(source, [], 'original-message'), id: historical.id, serverReceivedAt: at }], deletedMessages: [] });
+        if (path === '/messages/history-recovery') return of({ messages: [historical, recovered, edited].map(message => ({ ...response(source, [], message.clientMessageId), id: message.id, serverReceivedAt: at })), deletedMessages: [] });
         return originalPost(path, body);
       };
     }
@@ -147,6 +151,13 @@ describe('actual application Double Ratchet delivery', () => {
     };
     await receiving.pump(); await receiving.pump(); await sending.pump();
     expect(linked.messages.get('chat-test:msg_history_one')?.payload.text).toBe(text);
+    expect(linked.messages.get('chat-test:msg_hidden_only')?.payload.text).toBe('saved before crash');
+    expect(linked.messages.has('chat-test:msg_history_edit')).toBeFalse();
+    const editResponse = { ...response(source, [], edited.clientMessageId), id: edited.id, serverReceivedAt: at };
+    expect(await linked.service.transferredPayload(editResponse)).toEqual(edited.payload);
+    expect(await linked.service.transferredPayload({ ...editResponse, senderDeviceId: 'another-device' })).toBeNull();
+    expect(await linked.service.transferredPayload({ ...editResponse, conversationId: 'another-chat' })).toBeNull();
+    expect(await linked.service.transferredPayload({ ...editResponse, deleteAfterRead: true })).toBeNull();
     expect(finished).toBeTrue(); expect(pages.size).toBe(0); expect(acknowledgedSequence).toBe(nextSequence - 1);
     expect(linked.service.runtime.publicIdentity).not.toEqual(source.service.runtime.publicIdentity);
   }, 30000);

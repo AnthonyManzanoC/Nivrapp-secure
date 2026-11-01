@@ -8,6 +8,7 @@ import { CryptoService } from './crypto.service';
 import { LocalHistoryService } from './local-history.service';
 import { NivraApiService } from './nivra-api.service';
 import { RatchetMessagingService } from './ratchet-messaging.service';
+import { ratchetArchiveContext } from './ratchet-runtime';
 
 export interface ArchiveTransfer { id: string; userId: string; targetDeviceId: string; targetIdentityKey: string; expiresAt: string; }
 interface Cursor { chat: number; before?: string; beforeId?: string; }
@@ -98,14 +99,20 @@ export class HistoryArchiveService implements OnDestroy {
     const owner = this.owner(); let cursor = { ...progress.cursor };
     while (cursor.chat < progress.conversations.length) {
       const conversationId = progress.conversations[cursor.chat];
-      const groups = await Promise.all((progress.accounts ?? [owner.userId]).map(account => this.history.conversationMessagesPage(account, conversationId, { before: cursor.before, beforeId: cursor.beforeId, limit: 8 }))); owner.assert();
+      const groups = await Promise.all((progress.accounts ?? [owner.userId]).map(async account => {
+        const page = { before: cursor.before, beforeId: cursor.beforeId, limit: 8 };
+        const [primary, deliveries] = await Promise.all([this.history.conversationMessagesPage(account, conversationId, page), this.history.conversationMessagesPage(account, `ratchet-receipt:${conversationId}`, page)]);
+        const recovered = deliveries.filter(message => ['ratchet-delivery', 'ratchet-archive-delivery'].includes(message.payload?.type) && message.payload['content'] && typeof message.payload['content'] === 'object')
+          .map(message => ({ ...message, conversationId, payload: message.payload['content'] as ChatPayload }));
+        return [...recovered, ...primary];
+      })); owner.assert();
       const byId = new Map<string, ChatMessageVm>();
-      for (const group of groups.reverse()) for (const message of group) byId.set(message.id, message);
+      for (const group of groups.reverse()) for (const message of group) if (!message.decryptError || !byId.get(message.id)?.payload) byId.set(message.id, message);
       const records = [...byId.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id === b.id ? 0 : 1)).slice(-8);
       if (!records.length) { cursor = { chat: cursor.chat + 1 }; continue; }
       const first = [...records].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id === b.id ? 0 : 1))[0], after = { chat: cursor.chat, before: first.at, beforeId: first.id };
       const messages = records.filter(message => !message.decryptError && !message.deleteAfterRead && (!message.expiresAt || Date.parse(message.expiresAt) > Date.now()) &&
-        message.payload && !['reaction', 'edit', 'delete'].includes(message.payload.type) && /^[a-zA-Z0-9_-]{1,64}$/.test(message.id));
+        message.payload && message.payload.type !== 'view-once-opened' && /^[a-zA-Z0-9_-]{1,64}$/.test(message.id));
       const text = JSON.stringify(messages);
       if (text.length > 16 * 1024 * 1024) throw Error('El bloque de historial excede el límite local.');
       progress.batch = { id: crypto.randomUUID(), text, parts: Math.max(1, Math.ceil(text.length / CHUNK_CHARS)), part: 0, after, final: false };
@@ -193,11 +200,15 @@ export class HistoryArchiveService implements OnDestroy {
     for (const candidate of candidates) {
       const server = allowed.get(candidate.id);
       if (!server || server.conversationId !== candidate.conversationId || server.senderUserId !== candidate.senderUserId || server.senderDeviceId !== candidate.senderDeviceId || server.serverReceivedAt !== candidate.at || server.deleteAfterRead || server.expiresAt && Date.parse(server.expiresAt) <= Date.now()) continue;
-      const existing = await this.history.messageById(owner.userId, candidate.conversationId, candidate.id); owner.assert();
-      if (existing && !existing.decryptError) continue;
       const message: ChatMessageVm = { ...candidate, mine: server.senderUserId === owner.userId, clientMessageId: server.clientMessageId, receipts: server.receipts, expiresAt: server.expiresAt, deleteAfterRead: server.deleteAfterRead, decryptError: false };
       const guard = guards.get(message.id)!;
       if (!guard()) continue;
+      const delivery: ChatMessageVm = { ...message, conversationId: `ratchet-receipt:${message.conversationId}`, payload: { type: 'ratchet-archive-delivery', archiveContext: ratchetArchiveContext(server), content: message.payload } };
+      await this.history.putMessages(owner.userId, [delivery], () => { owner.assert(); return guard(); }); owner.assert();
+      if (!await this.history.messageById(owner.userId, delivery.conversationId, delivery.id)) throw Error('No se pudo guardar la entrega del historial.');
+      if (['reaction', 'edit', 'delete'].includes(message.payload.type)) continue;
+      const existing = await this.history.messageById(owner.userId, message.conversationId, message.id); owner.assert();
+      if (existing && !existing.decryptError) continue;
       await this.history.putMessages(owner.userId, [message], () => { owner.assert(); return guard(); }); owner.assert();
       if (!await this.history.messageById(owner.userId, message.conversationId, message.id)) throw Error('No se pudo guardar el historial recibido.');
     }
