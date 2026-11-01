@@ -115,7 +115,7 @@ describe('actual application Double Ratchet delivery', () => {
     await source.service.pump(); await linked.service.pump();
     const at = new Date().toISOString(), text = 'history survives linking '.repeat(4200);
     const historical = { id: 'msg_history_one', clientMessageId: 'original-message', conversationId: 'chat-test', mine: true,
-      senderUserId: source.target.userId, senderDeviceId: source.target.deviceId, at, payload: { type: 'text', text } };
+      senderUserId: source.target.userId, senderDeviceId: source.target.deviceId, at: at.replace('Z', '4567Z'), payload: { type: 'text', text } };
     source.messages.set('chat-test:msg_history_one', historical);
     // A crash may leave the durable ratchet receipt before the visible history row.
     const recovered = { ...historical, id: 'msg_hidden_only', clientMessageId: 'hidden-original', payload: { type: 'text', text: 'saved before crash' } };
@@ -179,4 +179,21 @@ describe('actual application Double Ratchet delivery', () => {
     await alice.service.discardEphemeral('vault-room', 'vault-one');
     expect(alice.saved.get(alice.target.deviceId).state.outbox).toEqual([]);
   }, 30000);
+
+  it('archives every record once when more than one page shares a millisecond with different database precision', async () => {
+    const records = Array.from({ length: 12 }, (_, index) => ({ id: `msg_${String(12 - index).padStart(2, '0')}`, conversationId: 'chat-test',
+      at: `2026-11-01T12:00:00.123${String(index).padStart(3, '0')}Z`, payload: { type: 'text', text: 'precision boundary' } }));
+    const archive: any = Object.create(HistoryArchiveService.prototype);
+    archive.owner = () => ({ userId: 'archive-owner', assert: () => undefined }); archive.save = async () => undefined;
+    archive.history = { conversationMessagesPage: async (_account: string, chat: string, page: any) => chat !== 'chat-test' ? [] : records
+      .filter(record => !page.before || record.at < page.before || record.at === page.before && record.id < page.beforeId)
+      .sort((a, b) => a.at < b.at ? -1 : a.at > b.at ? 1 : a.id < b.id ? -1 : 1).slice(-page.limit) };
+    const progress: any = { conversations: ['chat-test'], cursor: { chat: 0 } }, received: string[] = [];
+    for (let page = 0; page < 4; page++) {
+      await archive.nextBatch(progress); received.push(...JSON.parse(progress.batch.text).map((record: any) => record.id));
+      if (progress.batch.final) break;
+      progress.cursor = progress.batch.after; progress.batch = undefined;
+    }
+    expect(received.length).toBe(12); expect(new Set(received)).toEqual(new Set(records.map(record => record.id)));
+  });
 });

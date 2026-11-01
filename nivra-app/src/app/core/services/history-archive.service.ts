@@ -108,9 +108,10 @@ export class HistoryArchiveService implements OnDestroy {
       })); owner.assert();
       const byId = new Map<string, ChatMessageVm>();
       for (const group of groups.reverse()) for (const message of group) if (!message.decryptError || !byId.get(message.id)?.payload) byId.set(message.id, message);
-      const records = [...byId.values()].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id === b.id ? 0 : 1)).slice(-8);
+      const order = (a: ChatMessageVm, b: ChatMessageVm) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0) || (a.id < b.id ? -1 : a.id === b.id ? 0 : 1);
+      const records = [...byId.values()].sort(order).slice(-8);
       if (!records.length) { cursor = { chat: cursor.chat + 1 }; continue; }
-      const first = [...records].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id === b.id ? 0 : 1))[0], after = { chat: cursor.chat, before: first.at, beforeId: first.id };
+      const first = records[0], after = { chat: cursor.chat, before: first.at, beforeId: first.id };
       const messages = records.filter(message => !message.decryptError && !message.deleteAfterRead && (!message.expiresAt || Date.parse(message.expiresAt) > Date.now()) &&
         message.payload && message.payload.type !== 'view-once-opened' && /^[a-zA-Z0-9_-]{1,64}$/.test(message.id));
       const text = JSON.stringify(messages);
@@ -199,8 +200,8 @@ export class HistoryArchiveService implements OnDestroy {
     const allowed = new Map(authoritative.messages.map(message => [message.id, message]));
     for (const candidate of candidates) {
       const server = allowed.get(candidate.id);
-      if (!server || server.conversationId !== candidate.conversationId || server.senderUserId !== candidate.senderUserId || server.senderDeviceId !== candidate.senderDeviceId || server.serverReceivedAt !== candidate.at || server.deleteAfterRead || server.expiresAt && Date.parse(server.expiresAt) <= Date.now()) continue;
-      const message: ChatMessageVm = { ...candidate, mine: server.senderUserId === owner.userId, clientMessageId: server.clientMessageId, receipts: server.receipts, expiresAt: server.expiresAt, deleteAfterRead: server.deleteAfterRead, decryptError: false };
+      if (!server || server.conversationId !== candidate.conversationId || server.senderUserId !== candidate.senderUserId || server.senderDeviceId !== candidate.senderDeviceId || Date.parse(server.serverReceivedAt) !== Date.parse(candidate.at) || server.deleteAfterRead || server.expiresAt && Date.parse(server.expiresAt) <= Date.now()) continue;
+      const message: ChatMessageVm = { ...candidate, at: server.serverReceivedAt, mine: server.senderUserId === owner.userId, clientMessageId: server.clientMessageId, receipts: server.receipts, expiresAt: server.expiresAt, deleteAfterRead: server.deleteAfterRead, decryptError: false };
       const guard = guards.get(message.id)!;
       if (!guard()) continue;
       const delivery: ChatMessageVm = { ...message, conversationId: `ratchet-receipt:${message.conversationId}`, payload: { type: 'ratchet-archive-delivery', archiveContext: ratchetArchiveContext(server), content: message.payload } };

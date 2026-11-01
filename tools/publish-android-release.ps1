@@ -3,12 +3,14 @@
 param(
   [Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
   [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{40}$')][string]$Commit,
-  [switch]$ValidateOnly
+  [switch]$ValidateOnly,
+  [string]$ArtifactDirectory
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $workspacePath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
-$artifactDirectory = Join-Path $workspacePath 'artifacts'
+if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) { $ArtifactDirectory = Join-Path $workspacePath 'artifacts' }
+$artifactDirectory = (Resolve-Path -LiteralPath $ArtifactDirectory).Path
 $metadataPath = Join-Path $workspacePath 'Nivra.Api\android-release.json'
 $metadata = Get-Content -LiteralPath $metadataPath -Raw | ConvertFrom-Json
 $apkName = "Nivra-$Version-debug.apk"

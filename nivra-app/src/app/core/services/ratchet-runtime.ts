@@ -14,7 +14,7 @@ export function ratchetTransport(recipients: RecipientCipherRequest[]): { recipi
   }) };
 }
 export const ratchetArchiveContext = (message: Pick<MessageResponse, 'id' | 'clientMessageId' | 'conversationId' | 'senderUserId' | 'senderDeviceId' | 'serverReceivedAt'>): string =>
-  JSON.stringify([message.id, message.clientMessageId, message.conversationId, message.senderUserId, message.senderDeviceId, message.serverReceivedAt]);
+  JSON.stringify([message.id, message.clientMessageId, message.conversationId, message.senderUserId, message.senderDeviceId, new Date(message.serverReceivedAt).toISOString()]);
 export interface RatchetAddress { name: string; device: number; }
 export interface RatchetContext { conversationId: string; messageId: string; }
 export interface RatchetBundle {
