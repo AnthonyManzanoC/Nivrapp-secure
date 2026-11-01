@@ -8,6 +8,7 @@ import { EncryptedDownloadService } from './encrypted-download.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 import { VaultService } from './vault.service';
+import { RatchetMessagingService } from './ratchet-messaging.service';
 
 describe('vault account and activation isolation', () => {
   const a = { user: { id: 'vault-scope-A', alias: 'vault-A' }, device: { id: 'device-A' } };
@@ -22,6 +23,7 @@ describe('vault account and activation isolation', () => {
   let vault: VaultService;
   let api: { get: jasmine.Spy; post: jasmine.Spy; delete: jasmine.Spy; putRaw: jasmine.Spy };
   let cryptography: Record<string, jasmine.Spy>;
+  let ratchet: { encrypt: jasmine.Spy; discardEphemeral: jasmine.Spy };
   let realtime: { events$: Subject<any>; joinVaultRoom: jasmine.Spy; sendVaultRoomMessage: jasmine.Spy };
   let chat: { createDirectConversation: jasmine.Spy; sendText: jasmine.Spy };
   let downloads: { file: jasmine.Spy };
@@ -53,6 +55,7 @@ describe('vault account and activation isolation', () => {
       parsePublicJwk: jasmine.createSpy().and.returnValue({ kty: 'EC' }),
     };
     realtime = { events$: new Subject(), joinVaultRoom: jasmine.createSpy().and.resolveTo(), sendVaultRoomMessage: jasmine.createSpy().and.resolveTo() };
+    ratchet = { encrypt: jasmine.createSpy().and.resolveTo([]), discardEphemeral: jasmine.createSpy().and.resolveTo() };
     chat = { createDirectConversation: jasmine.createSpy().and.resolveTo({ id: 'conversation-A' }), sendText: jasmine.createSpy().and.resolveTo() };
     downloads = { file: jasmine.createSpy().and.resolveTo(new ArrayBuffer(1)) };
     privacy = { enable: jasmine.createSpy().and.resolveTo(), disable: jasmine.createSpy().and.resolveTo() };
@@ -60,6 +63,7 @@ describe('vault account and activation isolation', () => {
       { provide: AuthService, useValue: { session, sessionGeneration: generation, isAuthenticated: () => !!session() } },
       { provide: NivraApiService, useValue: api }, { provide: CryptoService, useValue: cryptography },
       { provide: SignalrService, useValue: realtime }, { provide: ChatService, useValue: chat },
+      { provide: RatchetMessagingService, useValue: ratchet },
       { provide: EncryptedDownloadService, useValue: downloads },
     ] });
     vault = TestBed.inject(VaultService);
@@ -175,7 +179,8 @@ describe('vault account and activation isolation', () => {
 
   it('does not send a vault payload with B transport after A recipient encryption resumes', async () => {
     prime(); let finish!: (value: unknown) => void;
-    cryptography['encryptForPublicKey'].and.returnValue(new Promise(resolve => { finish = resolve; }));
+    api.post.and.returnValue(of([]));
+    ratchet.encrypt.and.returnValue(new Promise(resolve => { finish = resolve; }));
     (vault as any).directories.set(a.user.id, { userId: a.user.id, devices: [{ deviceId: a.device.id, keyBundle: { identityKey: '{}' } }] });
     const pending = vault.sendRoomText('PRIVATE A'); await settle(); switchTo(b);
     finish({ ciphertext: 'A ciphertext', header: 'header' }); await expectAsync(pending).toBeRejectedWithError(/cuenta cambió/);
