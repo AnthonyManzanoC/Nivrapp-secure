@@ -3,7 +3,8 @@
 param(
   [Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
   [string]$KeyStorePath = (Join-Path $env:USERPROFILE '.android\debug.keystore'),
-  [string]$KeyAlias = 'androiddebugkey'
+  [string]$KeyAlias = 'androiddebugkey',
+  [string]$OutputDirectory
 )
 $ErrorActionPreference = 'Stop'
 $workspace = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
@@ -21,7 +22,9 @@ try { & .\gradlew.bat assembleRelease; if ($LASTEXITCODE -ne 0) { throw 'Android
 finally { Pop-Location }
 $unsigned = Join-Path $workspace 'android\app\build\outputs\apk\release\app-release-unsigned.apk'
 if (-not (Test-Path -LiteralPath $unsigned)) { throw 'Unsigned release APK is missing.' }
-$output = Join-Path $workspace "artifacts\Nivra-$Version-debug.apk"
+if ([string]::IsNullOrWhiteSpace($OutputDirectory)) { $OutputDirectory = Join-Path $workspace 'artifacts' }
+New-Item -ItemType Directory -Path $OutputDirectory -Force | Out-Null
+$output = Join-Path (Resolve-Path -LiteralPath $OutputDirectory).Path "Nivra-$Version-debug.apk"
 # Retain the public filename contract for old updaters. This file is a release
 # build, signed by the existing key; verify-release checks debuggability/signing.
 & $java -jar (Join-Path $buildTools.FullName 'lib\apksigner.jar') sign --ks $KeyStorePath --ks-key-alias $KeyAlias --ks-pass env:NIVRA_ANDROID_STORE_PASSWORD --key-pass env:NIVRA_ANDROID_KEY_PASSWORD --out $output $unsigned

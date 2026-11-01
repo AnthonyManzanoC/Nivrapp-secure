@@ -1311,7 +1311,8 @@ export class ChatService implements OnDestroy {
       expiresAt: options.expiresAt ?? null,
       deleteAfterRead: options.deleteAfterRead ?? false,
     };
-    const endpoint = `/conversations/${conversation.id}/messages`;
+    const hybrid = recipients.some(recipient => this.ratchet?.isEnvelope(recipient.header));
+    const endpoint = `/conversations/${conversation.id}/messages${hybrid ? '/ratchet' : ''}`;
     if (options.queueManaged && (Date.now() >= deadline || historyGeneration !== this.historyGeneration(conversation.id))) {
       const error = new Error('El intento de envío venció o el historial del chat cambió.');
       error.name = 'TimeoutError'; throw error;
@@ -1323,6 +1324,7 @@ export class ChatService implements OnDestroy {
     } catch (error) {
       this.assertSendContext(context);
       requireAccess();
+      if (hybrid && (error as HttpErrorResponse).status === 404 && !(error as HttpErrorResponse).error?.code) throw Object.assign(new Error('Este servidor necesita completar la actualización del cifrado. El mensaje sigue pendiente.'), { status: 503, retryable: true });
       if (options.queueManaged || !this.isTransientMessageSendError(error)) {
         throw error;
       }

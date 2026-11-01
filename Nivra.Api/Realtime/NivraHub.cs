@@ -493,7 +493,9 @@ public sealed class NivraHub(
         }
     }
 
-    public async Task SendVaultRoomMessage(string roomId, VaultRealtimeMessageRequest request)
+    public Task SendVaultRoomMessage(string roomId, VaultRealtimeMessageRequest request) => SendVaultCore(roomId, request, configuration?.GetValue<bool>("Ratchet:RequireHybrid") == true);
+    public Task SendVaultRoomRatchetMessage(string roomId, VaultRealtimeMessageRequest request) => SendVaultCore(roomId, request, true);
+    private async Task SendVaultCore(string roomId, VaultRealtimeMessageRequest request, bool requireHybrid)
     {
         if (!TryGetCurrentUser(out var currentUser) ||
             request.Recipients is null ||
@@ -513,7 +515,7 @@ public sealed class NivraHub(
             request.Recipients.Select(recipient => (recipient.UserId, recipient.DeviceId)).Distinct().Count() != request.Recipients.Count ||
             request.Recipients.Any(recipient => !devices.TryGetValue(recipient.DeviceId, out var device) || device.UserId != recipient.UserId || string.IsNullOrWhiteSpace(recipient.Ciphertext)) ||
             !await RatchetMessagePolicy.ValidAsync(db, currentUser.UserId, currentUser.DeviceId, roomId, request.ClientMessageId, request.Recipients, Context.ConnectionAborted,
-                configuration?.GetValue<bool>("Ratchet:RequireHybrid") == true, request.SharedPayloadIv, request.SharedPayloadCiphertext)) throw new HubException("Actualiza los dispositivos de la sala y comprueba su cifrado antes de enviar.");
+                requireHybrid, request.SharedPayloadIv, request.SharedPayloadCiphertext)) throw new HubException("Actualiza los dispositivos de la sala y comprueba su cifrado antes de enviar.");
         var response = new VaultRealtimeMessageResponse(
             NivraIds.NewId("vmsg"),
             roomId,

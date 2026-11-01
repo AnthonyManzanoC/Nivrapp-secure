@@ -92,6 +92,8 @@ foreach (var actor in new[] { "alice", "bob" })
 {
     response = await Request(HttpMethod.Post, "/conversations/direct/messages", actor, invalidMessage);
     Check(response.StatusCode == HttpStatusCode.Forbidden && (await response.Content.ReadAsStringAsync()).Contains("communication_unavailable"), "direct message HTTP gate rejects " + actor + " without revealing who blocked whom");
+    response = await Request(HttpMethod.Post, "/conversations/direct/messages/ratchet", actor, invalidMessage);
+    Check(response.StatusCode == HttpStatusCode.Forbidden, "dedicated hybrid message route enforces the same contact block for " + actor);
     response = await Request(HttpMethod.Post, "/calls/start", actor, new { type = "Voice", conversationId = "direct", clientSessionId = "test-session", clientProtocol = 2 });
     Check(response.StatusCode == HttpStatusCode.Forbidden, "direct call HTTP start rejects " + actor);
     response = await Request(HttpMethod.Post, "/conversations", actor, new { type = "Direct", participantUserIds = new[] { "alice", "bob" } });

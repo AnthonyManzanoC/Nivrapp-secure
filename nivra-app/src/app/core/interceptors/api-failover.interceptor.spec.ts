@@ -48,6 +48,15 @@ describe('transport failover request semantics', () => {
     const next = jasmine.createSpy('next').and.returnValue(throwError(() => new HttpErrorResponse({ status: 0 })));
     await expectAsync(run(request(), next)).toBeRejected(); expect(next).toHaveBeenCalledTimes(1);
   });
+  it('recovers away from an old node missing the hybrid write route without replaying the mutation', async () => {
+    const next = jasmine.createSpy('next').and.returnValue(throwError(() => new HttpErrorResponse({ status: 404 })));
+    await expectAsync(run(request('POST', '/conversations/chat/messages/ratchet'), next)).toBeRejected();
+    expect(recover).toHaveBeenCalledWith(primary + '/conversations/chat/messages/ratchet'); expect(next).toHaveBeenCalledTimes(1);
+  });
+  it('does not interpret an authorized chat rejection as a server missing hybrid support', async () => {
+    await expectAsync(run(request('POST', '/conversations/chat/messages/ratchet'), () => throwError(() => new HttpErrorResponse({ status: 404, error: { code: 'not_found' } })))).toBeRejected();
+    expect(recover).not.toHaveBeenCalled();
+  });
   it('times out a stalled read even after the HTTP Sent event and recovers once', fakeAsync(() => {
     const next = jasmine.createSpy('next').and.callFake((req: HttpRequest<unknown>) => req.url.startsWith(primary)
       ? concat(of({ type: HttpEventType.Sent }), NEVER) : of(new HttpResponse({ body: { ok: true } })));

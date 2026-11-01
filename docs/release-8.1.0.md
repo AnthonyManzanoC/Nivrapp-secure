@@ -34,6 +34,11 @@ antiguos durante una actualización.
   IndexedDB o SQLCipher. Los conflictos entre ventanas no sobrescriben estados;
   el motor se reabre antes de reintentar. Una pérdida de estado publicado exige
   volver a vincular el dispositivo; nunca se sustituye silenciosamente su identidad.
+- Los envíos híbridos usan una ruta HTTP y un método de sala dedicados. Una API
+  antigua no puede aceptar el paquete omitiendo su cuerpo compartido. Si falta
+  soporte, el cliente busca otra API del clúster verificado y conserva la cola;
+  no repite automáticamente una escritura de resultado incierto. Las instancias
+  del servidor deben actualizarse antes de anunciar el despliegue como completo.
 
 ## Historial y dispositivos
 

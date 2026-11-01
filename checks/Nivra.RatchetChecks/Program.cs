@@ -62,7 +62,7 @@ app.MapPost("/fixture/vault-relay/{roomId}", async (string roomId, VaultRealtime
     var capture = (VaultFixtureClients)clients;
     var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Ratchet:RequireHybrid"] = "true" }).Build();
     var hub = new NivraHub(null!, store, db, null!, new RealtimePresence(), null!, null!, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<NivraHub>.Instance, TimeProvider.System, config) { Context = new VaultFixtureContext(user), Clients = clients };
-    try { await hub.SendVaultRoomMessage(roomId, request); }
+    try { await hub.SendVaultRoomRatchetMessage(roomId, request); }
     catch (HubException) { if (capture.Count != 0) throw new InvalidOperationException("Rejected Vault message was relayed"); return Results.StatusCode(403); }
     if (capture.Count != 1 || capture.Message is not { } relayed || relayed.SharedPayloadCiphertext != request.SharedPayloadCiphertext || relayed.Recipients.Count != request.Recipients.Count) throw new InvalidOperationException("Vault relay changed the encrypted frame");
     return Results.NoContent();

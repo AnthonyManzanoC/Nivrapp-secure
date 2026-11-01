@@ -1640,7 +1640,7 @@ public static partial class EndpointExtensions
             return Results.Ok(response);
         });
 
-        conversations.MapPost("/{conversationId}/messages", async Task<IResult> (string conversationId, SendMessageRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
+        var sendMessage = async Task<IResult> (string conversationId, SendMessageRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1652,11 +1652,11 @@ public static partial class EndpointExtensions
             var senderParticipant = conversation?.Participants.FirstOrDefault(participant => participant.UserId == current.UserId && participant.RemovedAt is null);
             if (conversation is null || senderParticipant is null)
             {
-                return Results.NotFound();
+                return Error("not_found", "El chat no está disponible para esta cuenta.", StatusCodes.Status404NotFound);
             }
             if (await ContactBlockPolicy.BlocksConversationAsync(db, conversation, current.UserId, cancellationToken))
                 return Error("communication_unavailable", "No se puede enviar a este chat. Revisa tus contactos bloqueados.", StatusCodes.Status403Forbidden);
-            if (string.IsNullOrWhiteSpace(request.ClientMessageId) || request.Recipients.Count == 0)
+            if (string.IsNullOrWhiteSpace(request.ClientMessageId) || request.Recipients is not { Count: > 0 })
             {
                 return Error("invalid_message", "ClientMessageId y recipients son obligatorios.");
             }
@@ -1751,9 +1751,10 @@ public static partial class EndpointExtensions
                 }
             }
 
-            if (app.Configuration.GetValue<bool>("Ratchet:RequireHybrid") && !await db.Set<RatchetPilotDevice>().AnyAsync(device => device.DeviceId == current.DeviceId && device.UserId == current.UserId && device.AddressMode == 2, cancellationToken))
+            var requireHybrid = app.Configuration.GetValue<bool>("Ratchet:RequireHybrid") || http.Request.Path.Value!.EndsWith("/messages/ratchet", StringComparison.OrdinalIgnoreCase);
+            if (requireHybrid && !await db.Set<RatchetPilotDevice>().AnyAsync(device => device.DeviceId == current.DeviceId && device.UserId == current.UserId && device.AddressMode == 2, cancellationToken))
                 return Error("client_update_required", "Actualiza Nivra para enviar con el nuevo cifrado. Tu historial sigue disponible.", StatusCodes.Status426UpgradeRequired);
-            if (!await RatchetMessagePolicy.ValidAsync(db, current.UserId, current.DeviceId, conversationId, request.ClientMessageId, request.Recipients, cancellationToken, app.Configuration.GetValue<bool>("Ratchet:RequireHybrid"), request.SharedPayloadIv, request.SharedPayloadCiphertext))
+            if (!await RatchetMessagePolicy.ValidAsync(db, current.UserId, current.DeviceId, conversationId, request.ClientMessageId, request.Recipients, cancellationToken, requireHybrid, request.SharedPayloadIv, request.SharedPayloadCiphertext))
                 return Error("invalid_ratchet_message", "El sobre cifrado no corresponde a los dispositivos y al mensaje.");
             var now = timeProvider.GetUtcNow();
             var message = new MessageEnvelope
@@ -1823,7 +1824,9 @@ public static partial class EndpointExtensions
             }
 
             return Results.Created($"/messages/{message.Id}", ToMessageResponse(message));
-        }));
+        });
+        conversations.MapPost("/{conversationId}/messages", sendMessage);
+        conversations.MapPost("/{conversationId}/messages/ratchet", sendMessage);
 
         conversations.MapPost("/{conversationId}/delete-request", async Task<IResult> (string conversationId, DeleteConversationRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {

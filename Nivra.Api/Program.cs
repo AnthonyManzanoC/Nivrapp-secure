@@ -230,7 +230,7 @@ app.UseCors("NivraClients");
 app.Use(async (context, next) =>
 {
     // Bound message JSON before binding it; encrypted file uploads keep their own limit.
-    if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/conversations") && context.Request.Path.Value!.EndsWith("/messages", StringComparison.OrdinalIgnoreCase))
+    if (HttpMethods.IsPost(context.Request.Method) && context.Request.Path.StartsWithSegments("/conversations") && (context.Request.Path.Value!.EndsWith("/messages", StringComparison.OrdinalIgnoreCase) || context.Request.Path.Value.EndsWith("/messages/ratchet", StringComparison.OrdinalIgnoreCase)))
     {
         const long messageLimit = 8L * 1024 * 1024;
         if (context.Request.ContentLength > messageLimit) { context.Response.StatusCode = 413; await context.Response.WriteAsJsonAsync(new { code = "message_too_large" }); return; }

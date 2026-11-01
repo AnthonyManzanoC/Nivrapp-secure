@@ -11,6 +11,7 @@ export function apiFailoverInterceptor(req: HttpRequest<unknown>, next: HttpHand
   const auth = inject(AuthService);
   const network = inject(NetworkPolicyService);
   const session = auth.session();
+  const hybridWrite = req.method === 'POST' && new URL(req.url).pathname.endsWith('/messages/ratchet');
   const sameSession = () => auth.session()?.user.id === session?.user.id && auth.session()?.device.id === session?.device.id;
   const safe = req.method === 'GET' || req.method === 'HEAD'
     || (req.method === 'POST' && new URL(req.url).pathname === '/keys/batch');
@@ -35,7 +36,8 @@ export function apiFailoverInterceptor(req: HttpRequest<unknown>, next: HttpHand
     const target = pool.rewrite(req.url);
     return send(target).pipe(catchError(error => {
       if (error instanceof TimeoutError) network.recordTimeout();
-      if (!sameSession() || !(error instanceof TimeoutError || (error instanceof HttpErrorResponse && [0, 502, 503, 504].includes(error.status)))) {
+      const oldHybridNode = hybridWrite && error instanceof HttpErrorResponse && error.status === 404 && !error.error?.code;
+      if (!sameSession() || !(oldHybridNode || error instanceof TimeoutError || (error instanceof HttpErrorResponse && [0, 502, 503, 504].includes(error.status)))) {
         return throwError(() => error);
       }
       return from(pool.recover(target)).pipe(switchMap(changed =>

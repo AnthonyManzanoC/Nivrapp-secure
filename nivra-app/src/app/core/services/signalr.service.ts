@@ -203,7 +203,14 @@ export class SignalrService implements OnDestroy {
       sharedPayloadCiphertext: payload.sharedPayloadCiphertext ?? null,
     };
     if (new TextEncoder().encode(JSON.stringify(request)).length > 500 * 1024) throw Error('El mensaje supera el tamaño permitido de la sala. Reduce su contenido antes de enviar.');
-    await this.connection?.invoke('SendVaultRoomMessage', roomId, request);
+    try { await this.connection?.invoke('SendVaultRoomRatchetMessage', roomId, request); }
+    catch (error) {
+      if (/Unknown hub method/i.test(String((error as Error)?.message))) {
+        await this.api.recoverEndpoint(this.connection?.baseUrl || this.api.baseUrl + '/hubs/realtime');
+        throw Object.assign(new Error('Este servidor necesita completar la actualización del cifrado de la sala.'), { status: 503, retryable: true });
+      }
+      throw error;
+    }
   }
 
   private async openConnection(hasRefreshedToken: boolean): Promise<void> {
