@@ -2,6 +2,8 @@
 
 Rama de desarrollo aislada. Usa el núcleo Rust de libsignal 0.106.1, fijado al commit `904c8dc8216073b078a5f2f5090e3da8382e6a92`. Incluye sesiones en memoria para pruebas; no anuncia capacidades y no está incluido en clientes ni instaladores publicados.
 
+Validación: [15 pruebas de interoperabilidad/restauración y Chrome real en CI](https://github.com/AnthonyManzanoC/Nivrapp-secure/actions/runs/41275999332), también 15 pruebas con el mismo WASM en Node sobre Windows. Estas comprobaciones no certifican los clientes de producción. Estado y etapas pendientes: [integración por etapas](../../docs/double-ratchet-etapas-2026-11-01.md).
+
 Esta primera comprobación construye el mismo núcleo para WebAssembly y contrasta identidades y firmas con el módulo nativo del piloto, en Node y en Chrome real. Usa exclusivamente claves sintéticas. La generación aleatoria debe proceder del sistema/WebCrypto; un fallo no se sustituye por un generador débil.
 
 La compilación en CI usa Rust 1.93.1 y wasm-bindgen 0.2.130, con dependencias fijadas en `Cargo.lock` y `cargo build --locked`. Los artefactos generados no se publican en el feed de actualizaciones. Esto no implica soporte oficial de Signal para navegador.
