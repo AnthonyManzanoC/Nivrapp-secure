@@ -1,8 +1,10 @@
 # Puente WebAssembly: etapa de portabilidad
 
-Rama de desarrollo aislada. Usa el núcleo Rust de libsignal 0.106.1, fijado al commit `904c8dc8216073b078a5f2f5090e3da8382e6a92`. Incluye sesiones en memoria para pruebas; no anuncia capacidades y no está incluido en clientes ni instaladores publicados.
+Rama de desarrollo aislada. Usa el núcleo Rust de libsignal 0.106.1, fijado al commit `904c8dc8216073b078a5f2f5090e3da8382e6a92`. Incluye sesiones en memoria y persistencia cifrada de ensayo; no anuncia capacidades y no está incluido en clientes ni instaladores publicados.
 
-Validación: [15 pruebas de interoperabilidad/restauración y Chrome real en CI](https://github.com/AnthonyManzanoC/Nivrapp-secure/actions/runs/41275999332), también 15 pruebas con el mismo WASM en Node sobre Windows. Estas comprobaciones no certifican los clientes de producción. Estado y etapas pendientes: [integración por etapas](../../docs/double-ratchet-etapas-2026-11-01.md).
+Validación: [16 pruebas del puente, Chrome real, 18 comprobaciones PostgreSQL/HTTP y un intercambio WASM/nativo a través de la API](https://github.com/AnthonyManzanoC/Nivrapp-secure/actions/runs/41320951735). Las 16 pruebas del puente también pasan en Node sobre Windows. Estas comprobaciones no certifican los clientes de producción. Estado y etapas pendientes: [integración por etapas](../../docs/double-ratchet-etapas-2026-11-01.md).
+
+La [ejecución conjunta con Android](https://github.com/AnthonyManzanoC/Nivrapp-secure/actions/runs/41324748797) también aprobó dos instrumentaciones con WebView, SQLCipher y Android Keystore, separadas por cierre del proceso del paquete de ensayo. Módulo y alcance: [Android aislado](../../android/ratchet-lab/README.md).
 
 Esta primera comprobación construye el mismo núcleo para WebAssembly y contrasta identidades y firmas con el módulo nativo del piloto, en Node y en Chrome real. Usa exclusivamente claves sintéticas. La generación aleatoria debe proceder del sistema/WebCrypto; un fallo no se sustituye por un generador débil.
 
@@ -15,6 +17,8 @@ La segunda comprobación contrasta sesiones bidireccionales, preclaves clásicas
 `indexeddb-state.mjs` es un adaptador de snapshots cifrados, en una base **de laboratorio separada**. Recibe una clave AES-GCM de 256 bits no exportable y exige que el llamador la conserve fuera de esa base. Cifra antes de abrir la transacción IndexedDB; dentro de una única transacción compara la revisión y escribe el estado completo. Ámbito y revisión están autenticados y visibles como metadatos. No protege frente a restaurar toda una copia antigua, ni proporciona borrado físico. Está conectado al motor solo en el laboratorio y todavía no al gestor de claves real. Sus pruebas en Chrome comprueban reapertura de sesiones WASM, escritores simultáneos, rechazo de clave incorrecta y alteraciones de datos, ámbito y revisión.
 
 La inicialización de una identidad nueva exige `createIfMissing: true`; la reapertura habitual rechaza un estado ausente y nunca sustituye automáticamente claves ilegibles. `exportPrivateStateForEncryption()` devuelve material **privado** exclusivamente para cifrarlo inmediatamente como una unidad. No guardarlo en texto claro, exportarlo a otro dispositivo ni incluirlo en registros. El motor conserva el control de uso PQ al restaurar, además de sus preclaves y sesiones. El adaptador Node/SQLite utilizado en las pruebas sigue siendo el laboratorio del piloto; no es SQLCipher de Android ni el almacén de producción.
+
+La envoltura de snapshot v2 incluye una bandeja entrante de hasta 64 mensajes. `pendingReceived()` devuelve copias de las entregas recuperables; `acknowledgeReceived(id)` solo debe invocarse **después** de guardar el mensaje en el historial de la aplicación. Si la app se cierra entre ambos pasos, puede recuperar la entrega y deduplicarla por contexto/identificador. No vuelve a descifrar el paquete ni relaja la protección contra repeticiones. Este contrato todavía debe conectarse al historial y las confirmaciones de producción. Los snapshots v1 del laboratorio anterior requieren una migración explícita; la reapertura no los reemplaza.
 
 Ejecución local con Node 24.18.1, después de descargar los artefactos de CI y de `npm ci --prefix crypto/ratchet-pilot --ignore-scripts`:
 

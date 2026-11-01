@@ -10,6 +10,8 @@ npm test
 
 Requiere Node **24.18.1 o posterior** y una plataforma con binario nativo compatible. No se importa desde Angular, Electron ni la API. No publica capacidades, modifica las identidades actuales ni cambia la entrega de mensajes existentes.
 
+El desarrollo posterior está en el [puente WASM](../ratchet-wasm/README.md) y en la [integración por etapas](../../docs/double-ratchet-etapas-2026-11-01.md): ya hay ensayos aprobados de navegador, persistencia cifrada, reserva PostgreSQL y recuperación Android con SQLCipher/Keystore. Siguen separados de los clientes publicados y de la activación de producción.
+
 ## Lo que comprueba
 
 - Negociación real mediante preclaves clásicas y Kyber de libsignal, seguida de intercambio bidireccional y evolución del ratchet.

@@ -2,6 +2,8 @@
 
 Módulo opcional y aplicación **separada**: `com.nivra.ratchetlab`, sin permisos de internet ni acceso a datos de `com.nivra.app`. Solo se incluye al pasar `-PnivraRatchetLab=true`. No participa en los instaladores ni en la aplicación publicada.
 
+Resultado: [ambas instrumentaciones aprobadas en CI](https://github.com/AnthonyManzanoC/Nivrapp-secure/actions/runs/41324748797), commit `29ef63747c60666a2740253fcfdc4fddbf34fc21`. Emulador API 35 x86_64, WebView 124.0.6367.219; la segunda instrumentación comenzó después de cerrar el proceso con `am force-stop`. Los trabajos de navegador/WASM y PostgreSQL de la misma ejecución también aprobaron. No equivale a validación en teléfonos físicos ni en el cliente publicado.
+
 Usa el artefacto WASM verificado, WebView real, SQLCipher 4.10.0 y una clave de envoltura AES-256-GCM no exportable de Android Keystore. El secreto aleatorio de SQLCipher se conserva envuelto en las preferencias privadas de esta app de ensayo. La reapertura rechaza secretos ausentes/ilegibles; no crea una base o clave de reemplazo. No se afirma protección por hardware en un emulador.
 
 El puente JavaScript solo se expone a recursos locales de una lista cerrada, mediante `WebViewAssetLoader` y HTTPS local. Se bloquean navegación, marcos, acceso a archivos y contenido remoto. El snapshot completo contiene material privado y solo se guarda dentro de SQLCipher. Las transacciones comparan revisiones y confirman antes de devolver el resultado.
