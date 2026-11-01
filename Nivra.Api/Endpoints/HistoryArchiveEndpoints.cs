@@ -9,7 +9,9 @@ using Nivra.Api.Contracts;
 
 namespace Nivra.Api.Endpoints;
 
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record HistoryArchiveUpload(int Sequence, string Header, string Ciphertext, bool Final);
+[System.Text.Json.Serialization.JsonUnmappedMemberHandling(System.Text.Json.Serialization.JsonUnmappedMemberHandling.Disallow)]
 public sealed record HistoryArchiveAcknowledgement(int Sequence);
 
 public static partial class EndpointExtensions
@@ -18,6 +20,14 @@ public static partial class EndpointExtensions
     {
         if (!RatchetClientEndpoints.Enabled(app.Configuration)) return;
         var group = app.MapGroup("/devices/history-transfer/{id}/archive/{sourceDeviceId}");
+        group.AddEndpointFilter(async (context, next) =>
+        {
+            context.HttpContext.Response.Headers.CacheControl = "no-store";
+            if (context.HttpContext.GetCurrentUser() is null) return Results.Unauthorized();
+            try { return await next(context); }
+            catch (RatchetPreKeyException error) { return RatchetPreKeyEndpoints.Failure(context.HttpContext, error); }
+            catch (System.Text.Json.JsonException) { return Results.BadRequest(new { code = "invalid_history_archive" }); }
+        });
         group.MapGet("/", async Task<IResult> (string id, string sourceDeviceId, HttpContext http, NivraDbContext db, TimeProvider clock, CancellationToken ct) =>
         {
             var current = http.GetCurrentUser(); if (current is null) return Results.Unauthorized();
@@ -28,12 +38,14 @@ public static partial class EndpointExtensions
             return Results.Ok(new { nextSequence = stream?.NextSequence ?? 0, acknowledgedSequence = stream?.AcknowledgedSequence ?? -1, finished = stream?.Finished ?? false,
                 pages = current.DeviceId == sourceDeviceId ? [] : pages.Select(row => new { row.Sequence, row.Header, row.Ciphertext, row.Final }).ToArray() });
         });
-        group.MapPost("/", async Task<IResult> (string id, string sourceDeviceId, HistoryArchiveUpload body, HttpContext http, NivraDbContext db, TimeProvider clock, IHubContext<NivraHub> hub, CancellationToken ct) =>
-            await CallCoordination.RunAsync<IResult>(db, async () =>
+        group.MapPost("/", async Task<IResult> (string id, string sourceDeviceId, HttpContext http, NivraDbContext db, TimeProvider clock, IHubContext<NivraHub> hub, CancellationToken ct) =>
+        {
+            var body = await RatchetPreKeyEndpoints.ReadBody<HistoryArchiveUpload>(http.Request, 600000, ct);
+            return await CallCoordination.RunAsync<IResult>(db, async () =>
             {
                 var current = http.GetCurrentUser(); if (current is null) return Results.Unauthorized();
                 if (current.DeviceId != sourceDeviceId) return Results.NotFound();
-                if (body.Sequence is < 0 or > 1000000 || body.Ciphertext?.Length > 262144) return Results.BadRequest();
+                if (body.Sequence is < 0 or > 1000000 || body.Ciphertext?.Length > 262144 || body.Header?.Length is not (> 0 and <= 262144)) return Results.BadRequest();
                 await using var tx = await CallCoordination.LockAsync(db, $"history-archive:{id}:{sourceDeviceId}", ct);
                 var approved = await ApprovedArchive(db, current, id, sourceDeviceId, clock.GetUtcNow(), ct); if (approved is null) return Results.NotFound();
                 if (!await RatchetMessagePolicy.ValidAsync(db, current.UserId, current.DeviceId, $"history_{id}", ArchiveMessageId(id, sourceDeviceId, body.Sequence),
@@ -56,9 +68,12 @@ public static partial class EndpointExtensions
                 await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
                 await hub.Clients.Group(GroupsFor.Device(approved.Value.Request.TargetDeviceId)).SendAsync("history.available", new { id }, ct);
                 return Results.NoContent();
-            }));
-        group.MapPost("/ack", async Task<IResult> (string id, string sourceDeviceId, HistoryArchiveAcknowledgement body, HttpContext http, NivraDbContext db, TimeProvider clock, CancellationToken ct) =>
-            await CallCoordination.RunAsync<IResult>(db, async () =>
+            });
+        });
+        group.MapPost("/ack", async Task<IResult> (string id, string sourceDeviceId, HttpContext http, NivraDbContext db, TimeProvider clock, CancellationToken ct) =>
+        {
+            var body = await RatchetPreKeyEndpoints.ReadBody<HistoryArchiveAcknowledgement>(http.Request, 4096, ct);
+            return await CallCoordination.RunAsync<IResult>(db, async () =>
             {
                 var current = http.GetCurrentUser(); if (current is null) return Results.Unauthorized();
                 await using var tx = await CallCoordination.LockAsync(db, $"history-archive:{id}:{sourceDeviceId}", ct);
@@ -69,7 +84,8 @@ public static partial class EndpointExtensions
                 stream.AcknowledgedSequence = Math.Max(body.Sequence, stream.AcknowledgedSequence);
                 await db.Set<HistoryArchivePage>().Where(row => row.TransferId == id && row.SourceDeviceId == sourceDeviceId && row.Sequence <= stream.AcknowledgedSequence).ExecuteDeleteAsync(ct);
                 await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); return Results.NoContent();
-            }));
+            });
+        });
     }
     internal static string ArchiveMessageId(string id, string sourceDeviceId, int sequence) => $"archive_{id}_{sourceDeviceId}_{sequence}";
     private static async Task<(HistoryKeyTransfer Request, DeviceRecord Source)?> ApprovedArchive(NivraDbContext db, CurrentUser current, string id, string sourceDeviceId, DateTimeOffset now, CancellationToken ct)

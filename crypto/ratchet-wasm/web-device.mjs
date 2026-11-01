@@ -152,7 +152,28 @@ export class LabWebDevice {
     if (typeof serialized !== 'string') throw Error('Payload must be JSON');
     const plain = encoder.encode(serialized);
     if (plain.length > MAX_PAYLOAD) { plain.fill(0); return Promise.reject(Error('Message too large')); }
+    return this.#mutate(() => this.#seal(peer, aad, plain)).finally(() => plain.fill(0));
+  }
+  encryptMany(requests) {
+    if (!Array.isArray(requests) || requests.length < 1 || requests.length > 512) throw Error('Invalid recipient batch');
+    const prepared = [];
+    try {
+      for (const request of requests) {
+        const peer = peerAddress(request.peer), aad = contextBytes(request.context, this.#address, peer);
+        const serialized = JSON.stringify(request.payload);
+        if (typeof serialized !== 'string') throw Error('Payload must be JSON');
+        const plain = encoder.encode(serialized);
+        if (plain.length > MAX_PAYLOAD) { plain.fill(0); throw Error('Message too large'); }
+        prepared.push({ peer, aad, plain });
+      }
+    } catch (error) { for (const row of prepared) row.plain.fill(0); throw error; }
     return this.#mutate(async () => {
+      const result = [];
+      for (const row of prepared) result.push(await this.#seal(row.peer, row.aad, row.plain));
+      return result;
+    }).finally(() => { for (const row of prepared) row.plain.fill(0); });
+  }
+  async #seal(peer, aad, plain) {
       let keyBytes, capsule;
       try {
         const id = await hash(aad), requestHash = await hash(encoder.encode(JSON.stringify([b64(aad), b64(plain)])));
@@ -161,7 +182,7 @@ export class LabWebDevice {
           if (previous.requestHash !== requestHash) throw Error('Message ID reused with different content');
           return structuredClone(previous.envelope);
         }
-        if (this.#outbox.size >= 4096) throw Error('Encrypted outbox full');
+        if (this.#outbox.size >= 4096) throw Object.assign(Error('Encrypted outbox full'), { retryable: true, status: 503 });
         keyBytes = crypto.getRandomValues(new Uint8Array(32));
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
@@ -174,7 +195,6 @@ export class LabWebDevice {
         this.#outbox.set(id, { requestHash, envelope });
         return result;
       } finally { plain.fill(0); keyBytes?.fill(0); capsule?.fill(0); }
-    }).finally(() => plain.fill(0));
   }
   decrypt(peer, context, envelope) {
     peer = peerAddress(peer);

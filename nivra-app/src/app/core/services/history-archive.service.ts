@@ -89,7 +89,7 @@ export class HistoryArchiveService implements OnDestroy {
       const conversationId = progress.conversations[cursor.chat];
       const records = await this.history.conversationMessagesPage(owner.userId, conversationId, { before: cursor.before, beforeId: cursor.beforeId, limit: 8 }); owner.assert();
       if (!records.length) { cursor = { chat: cursor.chat + 1 }; continue; }
-      const first = records[0], after = { chat: cursor.chat, before: first.at, beforeId: first.id };
+      const first = [...records].sort((a, b) => Date.parse(a.at) - Date.parse(b.at) || (a.id < b.id ? -1 : a.id === b.id ? 0 : 1))[0], after = { chat: cursor.chat, before: first.at, beforeId: first.id };
       const messages = records.filter(message => !message.decryptError && !message.deleteAfterRead && (!message.expiresAt || Date.parse(message.expiresAt) > Date.now()) &&
         message.payload && !['reaction', 'edit', 'delete'].includes(message.payload.type) && /^[a-zA-Z0-9_-]{1,64}$/.test(message.id));
       const text = JSON.stringify(messages);

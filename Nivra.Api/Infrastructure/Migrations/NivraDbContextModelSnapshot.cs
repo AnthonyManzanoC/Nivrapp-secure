@@ -727,8 +727,8 @@ namespace Nivra.Api.Infrastructure.Migrations
 
                     b.Property<string>("Header")
                         .IsRequired()
-                        .HasMaxLength(4096)
-                        .HasColumnType("character varying(4096)");
+                        .HasMaxLength(262144)
+                        .HasColumnType("character varying(262144)");
 
                     b.HasKey("TransferId", "SourceDeviceId", "Sequence");
 

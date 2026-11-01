@@ -220,13 +220,13 @@ export class LocalHistoryService {
       const result = expectedRevision === 0
         ? await sqlite.run('INSERT OR IGNORE INTO local_ratchet_states (scope, account_key, device_id, revision, envelope_json) VALUES (?, ?, ?, ?, ?)', [scope, userId, deviceId, revision, JSON.stringify(row)])
         : await sqlite.run('UPDATE local_ratchet_states SET revision = ?, envelope_json = ? WHERE scope = ? AND account_key = ? AND device_id = ? AND revision = ?', [revision, JSON.stringify(row), scope, userId, deviceId, expectedRevision]);
-      if (result.changes?.changes !== 1) throw new Error('La sesión cifrada cambió en otra ventana. Vuelve a abrirla antes de reintentar.');
+      if (result.changes?.changes !== 1) throw Object.assign(new Error('La sesión cifrada cambió en otra ventana. Vuelve a abrirla antes de reintentar.'), { retryable: true });
     } else {
       const db = await this.openRatchetDb();
       const tx = db.transaction(RATCHET_STORE, 'readwrite', { durability: 'strict' });
       const previous = await tx.store.get(scope) as StoredRatchetSnapshot | undefined;
       check();
-      if ((previous?.revision ?? 0) !== expectedRevision) { tx.abort(); await tx.done.catch(() => undefined); throw new Error('La sesión cifrada cambió en otra ventana. Vuelve a abrirla antes de reintentar.'); }
+      if ((previous?.revision ?? 0) !== expectedRevision) { tx.abort(); await tx.done.catch(() => undefined); throw Object.assign(new Error('La sesión cifrada cambió en otra ventana. Vuelve a abrirla antes de reintentar.'), { retryable: true }); }
       await tx.store.put(row); await tx.done;
     }
     check();

@@ -185,7 +185,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             b.HasKey(x => new { x.TransferId, x.SourceDeviceId, x.Sequence });
             b.HasOne<HistoryArchiveStream>().WithMany().HasForeignKey(x => new { x.TransferId, x.SourceDeviceId }).OnDelete(DeleteBehavior.Cascade);
             b.Property(x => x.TransferId).HasMaxLength(64); b.Property(x => x.SourceDeviceId).HasMaxLength(64);
-            b.Property(x => x.Header).HasMaxLength(4096); b.Property(x => x.Ciphertext).HasMaxLength(262144);
+            b.Property(x => x.Header).HasMaxLength(262144); b.Property(x => x.Ciphertext).HasMaxLength(262144);
         });
         modelBuilder.Entity<GroupInviteLink>(b =>
         {

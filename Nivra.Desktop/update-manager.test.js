@@ -24,9 +24,12 @@ const response = (body, headers = {}) => ({ status: 200, headers, body: Readable
 const errorIs = code => error => error?.code === code;
 
 async function fixture(t, overrides = {}) {
-  const directory = await fsp.mkdtemp(path.join(os.tmpdir(), 'nivra-update-test-'));
+  // Windows runners can expose TEMP through an 8.3 alias. Test a canonical
+  // directory while keeping production's junction/path replacement checks.
+  const temporaryRoot = await fsp.realpath(os.tmpdir());
+  const directory = await fsp.mkdtemp(path.join(temporaryRoot, 'nivra-update-test-'));
   t.after(async () => {
-    assert.equal(path.dirname(directory), path.resolve(os.tmpdir()));
+    assert.equal(path.dirname(directory), temporaryRoot);
     assert.ok(path.basename(directory).startsWith('nivra-update-test-'));
     await fsp.rm(directory, { recursive: true, force: true });
   });

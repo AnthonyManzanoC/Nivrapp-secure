@@ -39,6 +39,8 @@ public static class RatchetMessagePolicy
                     if (recipient.DeviceId != senderDeviceId || recipient.UserId != senderUserId || recipient.Ciphertext != "local-history-v1") return false;
                     continue;
                 }
+                if (Convert.FromBase64String(value.GetProperty("payloadIv").GetString()!).Length != 12 ||
+                    Convert.FromBase64String(value.GetProperty("payloadCiphertext").GetString()!).Length is < 16 or > 1048592) return false;
                 using var packet = JsonDocument.Parse(recipient.Ciphertext); var envelope = packet.RootElement; var context = envelope.GetProperty("context");
                 if (envelope.GetProperty("v").GetInt32() != 3 || envelope.GetProperty("suite").GetString() != "NIVRA-LIBSIGNAL-A256GCM-PILOT-1" ||
                     envelope.GetProperty("type").GetInt32() is not (2 or 3) || context.GetProperty("conversationId").GetString() != conversationId || context.GetProperty("messageId").GetString() != contextMessageId ||

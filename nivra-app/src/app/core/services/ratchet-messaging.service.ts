@@ -16,9 +16,11 @@ export interface RatchetTarget { userId: string; deviceId: string; publicJwk: Js
 interface DirectoryEntry { userId: string; deviceId: string; signalDeviceNumber: number; registrationId: number; identityKey: string; bindingHeader?: string; bindingCiphertext?: string; }
 interface Binding { header: string; ciphertext: string; }
 interface Peer { userId: string; identityKey: string; registrationId: number; legacy: string; }
-interface PendingSend { conversationId: string; payloadHash: string; payload: ChatPayload; targetsHash?: string; recipients?: RecipientCipherRequest[]; }
-interface ApplicationState { v: 1; registrationId: number; peers: Record<string, Peer>; outgoing: Record<string, PendingSend>; confirmed: Record<string, { conversationId: string; serverId: string }>; }
-interface MessageHeader { v: 4; alg: typeof ALGORITHM; senderDeviceId: string; recipientDeviceId: string; identityKey: string; registrationId: number; binding?: Binding; local?: boolean; }
+interface ContentFrame { key: string; iv: string; ciphertext: string; }
+interface PendingSend { conversationId: string; payloadHash: string; payload: ChatPayload; body: ContentFrame; targetsHash?: string; recipients?: RecipientCipherRequest[]; }
+interface ApplicationState { v: 1; registrationId: number; peers: Record<string, Peer>; outgoing: Record<string, PendingSend>; confirmed: Record<string, { conversationId: string; serverId: string }>; reservations?: Record<string, { conversationId: string; requestId: string }>; }
+interface MessageHeader { v: 4; alg: typeof ALGORITHM; senderDeviceId: string; recipientDeviceId: string; identityKey: string; registrationId: number; binding?: Binding; local?: boolean; payloadIv?: string; payloadCiphertext?: string; }
+const pendingRatchet = (message: string): Error => Object.assign(new Error(message), { retryable: true, status: 503 });
 
 /** One independently persisted Signal session per actual device. Legacy keys remain read-only for old history. */
 @Injectable({ providedIn: 'root' })
@@ -71,8 +73,9 @@ export class RatchetMessagingService implements OnDestroy {
     const session = this.auth.session();
     if (!session || this.appLock.isContentLocked()) throw Error('Desbloquea Nivra para abrir el cifrado del dispositivo.');
     const generation = this.generation;
+    const sessionGeneration = this.auth.sessionGeneration?.();
     const scope = JSON.stringify([session.user.id, session.device.id]);
-    const assert = () => { const now = this.auth.session(); if (generation !== this.generation || this.appLock.isContentLocked() || now?.user.id !== session.user.id || now.device.id !== session.device.id) throw Error('La cuenta o el dispositivo cambió.'); };
+    const assert = () => { const now = this.auth.session(); if (sessionGeneration !== this.auth.sessionGeneration?.() || generation !== this.generation || this.appLock.isContentLocked() || now?.user.id !== session.user.id || now.device.id !== session.device.id) throw Error('La cuenta o el dispositivo cambió.'); };
     return { userId: session.user.id, deviceId: session.device.id, alias: session.user.alias, scope, assert };
   }
   private async enabled(): Promise<boolean> {
@@ -167,7 +170,7 @@ export class RatchetMessagingService implements OnDestroy {
     }
     if (!binding) {
       await firstValueFrom(this.api.post('/ratchet/bindings/request', { deviceIds: [target.deviceId] }).pipe(timeout(15000)));
-      throw Error('El otro dispositivo está preparando el cifrado seguro. El mensaje permanece pendiente y se reintentará.');
+      throw pendingRatchet('El otro dispositivo está preparando el cifrado seguro. El mensaje permanece pendiente y se reintentará.');
     }
     const header = JSON.parse(binding.header);
     if (header.v !== 1 || header.alg !== 'ECDH-P256-A256GCM' || this.coordinates(header.senderPublicKey) !== this.coordinates(target.publicJwk)) throw Error('La prueba de identidad no coincide.');
@@ -187,7 +190,7 @@ export class RatchetMessagingService implements OnDestroy {
       const owner = this.owner();
       if (!await this.enabled()) {
         const saved = await this.history.readRatchetState(owner.userId, owner.deviceId); owner.assert();
-        if (saved) throw Error('El cifrado avanzado está temporalmente detenido. El mensaje queda pendiente.');
+        if (saved) throw pendingRatchet('El cifrado avanzado está temporalmente detenido. El mensaje queda pendiente.');
         return null;
       }
       const engine = await this.open(true); owner.assert();
@@ -198,17 +201,25 @@ export class RatchetMessagingService implements OnDestroy {
       const existing = state.outgoing[clientMessageId];
       const targetsHash = await ratchetHash(targets.map(target => [target.userId, target.deviceId, this.coordinates(target.publicJwk)]).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))));
       if (existing && (existing.payloadHash !== digest || existing.conversationId !== conversationId)) throw Error('El identificador del mensaje ya contiene otro contenido.');
-      if (existing?.recipients && existing.targetsHash === targetsHash) return existing.recipients;
+      if (existing?.recipients && existing.targetsHash === targetsHash) return this.hydrate(existing.recipients, existing.body);
       await this.publish(engine); owner.assert();
       if (!existing) {
-        if (Object.keys(state.outgoing).length >= 200) throw Error('La cola cifrada está llena. Espera a que se envíen los mensajes pendientes.');
-        state.outgoing[clientMessageId] = { conversationId, payloadHash: digest, payload };
+        if (Object.keys(state.outgoing).length >= 200) throw pendingRatchet('La cola cifrada está llena. Espera a que se envíen los mensajes pendientes.');
+        state.outgoing[clientMessageId] = { conversationId, payloadHash: digest, payload, body: await this.contentFrame(payload) };
         await engine.updateApplicationState(state);
       }
       // Padding is random; retries must reuse the originally persisted bytes.
       payload = existing?.payload ?? payload;
+      const body = state.outgoing[clientMessageId].body;
+      if (!body) throw Error('El estado cifrado pendiente necesita una versión compatible.');
+      const keyPackage = { type: 'nivra-content-key', key: body.key, bodyHash: await ratchetHash([body.iv, body.ciphertext]) };
       const entries = new Map((await this.directory(targets.map(target => target.deviceId))).map(entry => [entry.deviceId, entry])); owner.assert();
-      const recipients: RecipientCipherRequest[] = [], messageId = await ratchetMessageId(clientMessageId);
+      const missing = targets.filter(target => entries.has(target.deviceId) && target.deviceId !== owner.deviceId && !state.peers[target.deviceId] && !entries.get(target.deviceId)?.bindingHeader).map(target => target.deviceId);
+      if (missing.length) {
+        for (let index = 0; index < missing.length; index += 128) await firstValueFrom(this.api.post('/ratchet/bindings/request', { deviceIds: missing.slice(index, index + 128) }).pipe(timeout(15000)));
+        throw pendingRatchet('El otro dispositivo está preparando el cifrado seguro. El mensaje permanece pendiente y se reintentará.');
+      }
+      const recipients: RecipientCipherRequest[] = [], messageId = await ratchetMessageId(clientMessageId), batched: Array<{ index: number; deviceId: string }> = [];
       for (const target of targets) {
         owner.assert();
         state = await this.state(engine);
@@ -223,26 +234,47 @@ export class RatchetMessagingService implements OnDestroy {
           await this.pin(engine, target, entry, entry.bindingHeader && entry.bindingCiphertext ? { header: entry.bindingHeader, ciphertext: entry.bindingCiphertext } : undefined);
           const address = { name: target.deviceId, device: 1 };
           if (!await engine.hasSession(address)) {
-            const reservation = await firstValueFrom(this.api.post<{ bundle: RatchetBundle; deviceId: string }>(`/ratchet/devices/${encodeURIComponent(target.deviceId)}/prekey`, { conversationId, requestId: crypto.randomUUID() }).pipe(timeout(15000))); owner.assert();
+            state = await this.state(engine); state.reservations ??= {};
+            let claim = state.reservations[target.deviceId];
+            if (!claim || claim.conversationId !== conversationId) { claim = { conversationId, requestId: crypto.randomUUID() }; state.reservations[target.deviceId] = claim; await engine.updateApplicationState(state); }
+            const reservation = await firstValueFrom(this.api.post<{ bundle: RatchetBundle; deviceId: string }>(`/ratchet/devices/${encodeURIComponent(target.deviceId)}/prekey`, claim).pipe(timeout(15000))); owner.assert();
             if (reservation.deviceId !== target.deviceId || reservation.bundle.identityKey !== entry.identityKey || reservation.bundle.registrationId !== entry.registrationId) throw Error('Las preclaves no corresponden al dispositivo verificado.');
             await engine.establish(address, reservation.bundle);
           }
-          const sealed = await engine.encrypt(address, { conversationId, messageId }, payload);
           const binding = await this.makeBinding(engine, target);
-          ciphertext = JSON.stringify(sealed);
+          batched.push({ index: recipients.length, deviceId: target.deviceId }); ciphertext = '';
           header = JSON.stringify({ v: 4, alg: ALGORITHM, senderDeviceId: owner.deviceId, recipientDeviceId: target.deviceId,
             identityKey: ratchetBase64(engine.publicIdentity), registrationId: state.registrationId, binding } satisfies MessageHeader);
         } else {
           if (state.peers[target.deviceId]) throw Error('El dispositivo ya usa cifrado avanzado y no puede retroceder al formato anterior.');
-          const own = await this.auth.ensureDeviceIdentity(), sealed = await this.crypto.encryptForPublicKey(own, target.publicJwk, payload);
+          const own = await this.auth.ensureDeviceIdentity(), sealed = await this.crypto.encryptForPublicKey(own, target.publicJwk, { type: 'group-sender-key', alg: 'A256GCM', key: body.key });
           if (!sealed.header) throw Error('Falta el encabezado cifrado.');
-          ciphertext = sealed.ciphertext; header = sealed.header;
+          ciphertext = sealed.ciphertext; header = JSON.stringify({ v: 2, alg: 'NIVRA-GROUP-A256GCM', keyHeader: sealed.header });
         }
         recipients.push({ userId: target.userId, deviceId: target.deviceId, ciphertext, header, fileObjectId });
       }
+      if (batched.length) {
+        const packets = await engine.encryptMany(batched.map(target => ({ peer: { name: target.deviceId, device: 1 }, context: { conversationId, messageId }, payload: keyPackage })));
+        batched.forEach((target, index) => { recipients[target.index].ciphertext = JSON.stringify(packets[index]); });
+      }
       state = await this.state(engine); owner.assert();
       state.outgoing[clientMessageId].recipients = recipients; state.outgoing[clientMessageId].targetsHash = targetsHash;
-      await engine.updateApplicationState(state); return recipients;
+      await engine.updateApplicationState(state); return this.hydrate(recipients, body);
+    });
+  }
+  private async contentFrame(payload: ChatPayload): Promise<ContentFrame> {
+    const raw = crypto.getRandomValues(new Uint8Array(32)), iv = crypto.getRandomValues(new Uint8Array(12));
+    const plain = new TextEncoder().encode(JSON.stringify(payload));
+    if (plain.length > 1024 * 1024) { raw.fill(0); plain.fill(0); throw Error('El mensaje cifrado es demasiado grande.'); }
+    try {
+      const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt']);
+      return { key: ratchetBase64(raw), iv: ratchetBase64(iv), ciphertext: ratchetBase64(new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, plain))) };
+    } finally { raw.fill(0); plain.fill(0); }
+  }
+  private hydrate(recipients: RecipientCipherRequest[], body: ContentFrame): RecipientCipherRequest[] {
+    return recipients.map(recipient => {
+      const header = JSON.parse(recipient.header || '{}');
+      return header.local ? { ...recipient } : { ...recipient, header: JSON.stringify({ ...header, payloadIv: body.iv, payloadCiphertext: body.ciphertext }) };
     });
   }
 
@@ -284,7 +316,7 @@ export class RatchetMessagingService implements OnDestroy {
       if (!this.isEnvelope(recipient.header) || header.senderDeviceId !== message.senderDeviceId || header.recipientDeviceId !== owner.deviceId || recipient.deviceId !== owner.deviceId || recipient.userId !== owner.userId) throw Error('Sobre cifrado destinado a otro dispositivo.');
       const digest = await ratchetHash([recipient.header, recipient.ciphertext]);
       const cached = await this.history.messageById(owner.userId, this.receiptConversation(message.conversationId), message.id); owner.assert();
-      if (cached?.payload['content'] && (cached.payload['envelopeHash'] === digest ||
+      if (cached?.senderUserId === message.senderUserId && cached.senderDeviceId === message.senderDeviceId && cached.clientMessageId === message.clientMessageId && cached.payload['content'] && (cached.payload['envelopeHash'] === digest ||
         (cached.payload['envelopeHash'] === 'sent' && header.local && message.senderUserId === owner.userId && message.senderDeviceId === owner.deviceId && cached.clientMessageId === message.clientMessageId))) return cached.payload['content'] as ChatPayload;
       const engine = await this.open(false), state = await this.state(engine);
       let payload: ChatPayload, incomingId: string | undefined;
@@ -314,6 +346,15 @@ export class RatchetMessagingService implements OnDestroy {
           payload = await engine.decrypt({ name: message.senderDeviceId, device: 1 }, context, envelope) as ChatPayload;
           incomingId = (await engine.pendingReceived()).find(item => item.context.conversationId === context.conversationId && item.context.messageId === context.messageId && item.peer.name === message.senderDeviceId)?.id;
         }
+        if (payload.type !== 'nivra-content-key' || typeof payload['key'] !== 'string' || payload['bodyHash'] !== await ratchetHash([header.payloadIv, header.payloadCiphertext])) throw Error('El cuerpo cifrado no corresponde al mensaje.');
+        const raw = ratchetBinary(payload['key'], 32), iv = ratchetBinary(header.payloadIv!, 12), ciphertext = ratchetBinary(header.payloadCiphertext!, 1024 * 1024 + 16);
+        if (raw.length !== 32 || iv.length !== 12) throw Error('Llave del mensaje inválida.');
+        let plain: Uint8Array | undefined;
+        try {
+          const key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['decrypt']);
+          plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ciphertext));
+          payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(plain));
+        } finally { raw.fill(0); plain?.fill(0); }
       }
       await this.persistDelivery(message, payload, digest, current); owner.assert();
       if (incomingId) await engine.acknowledgeReceived(incomingId);

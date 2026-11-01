@@ -76,6 +76,8 @@ describe('actual application Double Ratchet delivery', () => {
     const targets = [alice.target, bob.target], payload = { type: 'file', name: 'photo.jpg', key: 'protected-file-key' };
     await alice.service.encrypt('chat-test', 'file-one', payload, targets, null).catch(() => undefined); await bob.service.pump();
     const recipients = await alice.service.encrypt('chat-test', 'file-one', payload, targets, null), message = response(alice, recipients, 'file-one');
+    const altered = JSON.parse(recipients[1].header); altered.payloadIv = btoa('tampered-iv!');
+    await expectAsync(bob.service.decrypt(message, { ...recipients[1], header: JSON.stringify(altered) })).toBeRejected();
     const save = bob.service.history.putMessages; bob.service.history.putMessages = async () => { throw Error('disk full'); };
     await expectAsync(bob.service.decrypt(message, recipients[1])).toBeRejectedWithError('disk full');
     bob.service.history.putMessages = save;
@@ -84,6 +86,22 @@ describe('actual application Double Ratchet delivery', () => {
     const next = await alice.service.encrypt('chat-test', 'msg-next', { type: 'text', text: 'next' }, targets, null);
     expect(await bob.service.decrypt(response(alice, next, 'msg-next'), next[1])).toEqual({ type: 'text', text: 'next' });
   }, 30000);
+
+  it('encrypts one shared body for a group, keeps only small ratchet key packets and remains readable by an older recipient', async () => {
+    const alice = await client('alice'), peers = await Promise.all(Array.from({ length: 8 }, (_, index) => client('peer' + index))), legacy = await client('legacy');
+    await alice.service.pump(); for (const peer of peers) await peer.service.pump();
+    const targets = [alice.target, ...peers.map(peer => peer.target), legacy.target], payload = { type: 'text', text: 'group message '.repeat(4500) };
+    await expectAsync(alice.service.encrypt('chat-test', 'group-message', payload, targets, null)).toBeRejected();
+    for (const peer of peers) await peer.service.pump();
+    const packets = await alice.service.encrypt('chat-test', 'group-message', payload, targets, null);
+    for (let index = 0; index < peers.length; index++) {
+      expect(packets[index + 1].ciphertext.length).toBeLessThan(8192);
+      expect(await peers[index].service.decrypt(response(alice, packets, 'group-message'), packets[index + 1])).toEqual(payload);
+    }
+    const older = packets[packets.length - 1];
+    expect(await legacy.service.crypto.decryptEnvelope(legacy.keys, older.header, older.ciphertext)).toEqual(payload);
+    expect(JSON.stringify(alice.saved.get(alice.target.deviceId)).length).toBeLessThan(1000000);
+  }, 60000);
 
   it('transfers approved history to a linked device using actual ratchet pages and resumes after an interrupted import', async () => {
     const source = await client('source'), linked = await client('linked');

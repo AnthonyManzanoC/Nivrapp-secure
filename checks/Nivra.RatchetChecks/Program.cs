@@ -173,7 +173,7 @@ HistoryArchiveUpload Page(int sequence, bool final = false)
 {
     var messageId = $"archive_{archiveId}_dev-lab-alice-client_{sequence}";
     var digest = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(messageId))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
-    var header = JsonSerializer.Serialize(new { v = 4, alg = RatchetMessagePolicy.Algorithm, senderDeviceId = "dev-lab-alice-client", recipientDeviceId = "dev-lab-alice-client-two", identityKey = identity, registrationId = 11 });
+    var header = JsonSerializer.Serialize(new { v = 4, alg = RatchetMessagePolicy.Algorithm, senderDeviceId = "dev-lab-alice-client", recipientDeviceId = "dev-lab-alice-client-two", identityKey = identity, registrationId = 11, payloadIv = Public(12), payloadCiphertext = Public(96) });
     var ciphertext = JsonSerializer.Serialize(new { v = 3, suite = "NIVRA-LIBSIGNAL-A256GCM-PILOT-1", type = 3, keyMessage = Public(96), iv = Public(12), ciphertext = Public(96), context = new { conversationId = "history_" + archiveId, messageId = digest, sender = "dev-lab-alice-client.1", recipient = "dev-lab-alice-client-two.1" } });
     return new(sequence, header, ciphertext, final);
 }

@@ -25,6 +25,7 @@ export interface RatchetDeviceRuntime {
   pinIdentity(peer: RatchetAddress, publicKey: Uint8Array, state?: unknown): Promise<void>;
   establish(peer: RatchetAddress, bundle: RatchetBundle): Promise<void>;
   encrypt(peer: RatchetAddress, context: RatchetContext, payload: unknown): Promise<RatchetEnvelope>;
+  encryptMany(requests: Array<{ peer: RatchetAddress; context: RatchetContext; payload: unknown }>): Promise<RatchetEnvelope[]>;
   decrypt(peer: RatchetAddress, context: RatchetContext, envelope: RatchetEnvelope): Promise<unknown>;
   applicationState(): Promise<unknown>;
   updateApplicationState(state: unknown): Promise<void>;
@@ -53,7 +54,7 @@ export const ratchetBase64 = (bytes: Uint8Array): string => {
   for (let index = 0; index < bytes.length; index += 8192) text += String.fromCharCode(...bytes.subarray(index, index + 8192));
   return btoa(text);
 };
-export function ratchetBinary(value: string, maximum: number): Uint8Array {
+export function ratchetBinary(value: string, maximum: number): Uint8Array<ArrayBuffer> {
   if (typeof value !== 'string' || value.length > Math.ceil(maximum / 3) * 4) throw Error('Paquete cifrado inválido.');
   const result = Uint8Array.from(atob(value), char => char.charCodeAt(0));
   if (result.length > maximum || ratchetBase64(result) !== value) throw Error('Paquete cifrado inválido.');
