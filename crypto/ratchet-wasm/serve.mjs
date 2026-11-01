@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 const port = Number(process.argv[2] || 8124);
 if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('Invalid test port');
 const root = new URL('./', import.meta.url);
-const allowed = /^\/(browser\.html|fixtures\.json|(?:web-device|indexeddb-state|browser-storage-tests)\.mjs|pkg\/web\/[a-zA-Z0-9_.-]+\.(js|wasm))$/;
+const allowed = /^\/(browser\.html|fixtures\.json|(?:web-device|indexeddb-state|browser-storage-tests|browser-persistence-tests)\.mjs|pkg\/web\/[a-zA-Z0-9_.-]+\.(js|wasm))$/;
 createServer(async (request, response) => {
   const name = new URL(request.url, 'http://127.0.0.1').pathname;
   if (!allowed.test(name) || !['GET', 'HEAD'].includes(request.method)) { response.writeHead(404).end(); return; }

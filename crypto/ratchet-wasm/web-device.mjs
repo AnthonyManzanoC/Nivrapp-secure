@@ -1,8 +1,10 @@
 // Experimental WebCrypto composition, isolated from all production clients.
-// Memory-only: no durable acceptance, key vault or device directory is implied.
+// Optional encrypted snapshot storage is experimental; no platform key vault
+// or production device directory is provided here.
 export const SUITE = 'NIVRA-LIBSIGNAL-A256GCM-PILOT-1';
 const encoder = new TextEncoder(), decoder = new TextDecoder('utf-8', { fatal: true });
 const MAX_PAYLOAD = 1024 * 1024;
+const RESTORE = Symbol('restored laboratory core');
 const b64 = bytes => {
   let text = '';
   for (let i = 0; i < bytes.length; i += 8192) text += String.fromCharCode(...bytes.subarray(i, i + 8192));
@@ -38,9 +40,18 @@ export class LabWebDevice {
   #queue = Promise.resolve();
   #outbox = new Map();
   #closed = false;
+  #storage = null;
+  #scope;
+  #revision = 0;
+  #poisoned = false;
 
-  constructor(bridge, name, device = 1) {
+  constructor(bridge, name, device = 1, restored = null) {
     this.#address = peerAddress({ name, device });
+    this.#scope = JSON.stringify([name, device]);
+    if (restored?.token === RESTORE) {
+      this.#core = restored.core; this.#public = restored.public;
+      return;
+    }
     const identity = bridge.createIdentity();
     try {
       this.#public = bridge.identityPublic(identity);
@@ -50,16 +61,50 @@ export class LabWebDevice {
       this.#core = new bridge.RatchetDevice(name, device, identity, value[0] % 16379 + 1);
     } finally { identity.fill(0); }
   }
+
+  static async open(bridge, name, device, storage, { createIfMissing = false } = {}) {
+    peerAddress({ name, device });
+    const scope = JSON.stringify([name, device]), saved = await storage.read(scope);
+    if (!saved) {
+      if (!createIfMissing) throw Error('Stored session missing: explicit initialization required');
+      const result = new LabWebDevice(bridge, name, device);
+      try {
+        result.#revision = await storage.commit(scope, 0, await result.#persistentState());
+        result.#storage = storage;
+        return result;
+      } catch (error) { await result.close(); throw error; }
+    }
+    const state = saved.state;
+    if (!Number.isSafeInteger(saved.revision) || saved.revision < 1 || state?.v !== 1 || state.scope !== scope
+        || typeof state.core !== 'string' || state.core.length > 32 * 1024 * 1024
+        || !Array.isArray(state.outbox) || state.outbox.length > 256) throw Error('Invalid stored web device');
+    const outbox = new Map();
+    for (const entry of state.outbox) {
+      if (!Array.isArray(entry) || entry.length !== 2 || outbox.has(entry[0]) || binary(entry[0], 32).length !== 32
+          || binary(entry[1]?.requestHash, 32).length !== 32 || entry[1]?.envelope?.v !== 3 || entry[1]?.envelope?.suite !== SUITE
+          || entry[1]?.envelope?.context?.sender !== `${name}.${device}`) throw Error('Invalid stored retry envelope');
+      outbox.set(entry[0], structuredClone(entry[1]));
+    }
+    const core = await bridge.RatchetDevice.restorePrivateState(name, device, state.core);
+    let identity;
+    try {
+      identity = binary(JSON.parse(state.core).identity, 1024);
+      const result = new LabWebDevice(bridge, name, device, { token: RESTORE, core, public: bridge.identityPublic(identity) });
+      result.#storage = storage; result.#revision = saved.revision; result.#outbox = outbox;
+      return result;
+    } catch (error) { core.free(); throw error; }
+    finally { identity?.fill(0); }
+  }
   get publicIdentity() { return this.#public.slice(); }
   get address() { return { ...this.#address }; }
   pinIdentity(peer, publicKey) {
     peer = peerAddress(peer); const key = new Uint8Array(publicKey);
-    return this.#run(() => this.#core.pinIdentity(peer.name, peer.device, key));
+    return this.#mutate(() => this.#core.pinIdentity(peer.name, peer.device, key));
   }
-  bundle() { return this.#run(async () => JSON.parse(await this.#core.preKeyBundle(Date.now()))); }
+  bundle() { return this.#mutate(async () => JSON.parse(await this.#core.preKeyBundle(Date.now()))); }
   establish(peer, bundle) {
     peer = peerAddress(peer); const encoded = JSON.stringify(bundle);
-    return this.#run(() => this.#core.establish(peer.name, peer.device, encoded, Date.now()));
+    return this.#mutate(() => this.#core.establish(peer.name, peer.device, encoded, Date.now()));
   }
   encrypt(peer, context, payload) {
     peer = peerAddress(peer);
@@ -68,8 +113,8 @@ export class LabWebDevice {
     if (typeof serialized !== 'string') throw Error('Payload must be JSON');
     const plain = encoder.encode(serialized);
     if (plain.length > MAX_PAYLOAD) { plain.fill(0); return Promise.reject(Error('Message too large')); }
-    return this.#run(async () => {
-      let keyBytes, capsule; let token;
+    return this.#mutate(async () => {
+      let keyBytes, capsule;
       try {
         const id = await hash(aad), requestHash = await hash(encoder.encode(JSON.stringify([b64(aad), b64(plain)])));
         const previous = this.#outbox.get(id);
@@ -83,17 +128,12 @@ export class LabWebDevice {
         const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
         const ciphertext = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 }, key, plain));
         capsule = encoder.encode(JSON.stringify({ key: b64(keyBytes), contextHash: id, payloadHash: await hash(ciphertext) }));
-        token = this.#core.checkpoint();
         const packet = JSON.parse(await this.#core.encrypt(peer.name, peer.device, capsule, Date.now()));
         const envelope = { v: 3, suite: SUITE, context: JSON.parse(decoder.decode(aad)).context,
           type: packet.type, keyMessage: packet.bytes, iv: b64(iv), ciphertext: b64(ciphertext) };
         const result = structuredClone(envelope);
-        this.#core.commit(token); token = undefined;
         this.#outbox.set(id, { requestHash, envelope });
         return result;
-      } catch (error) {
-        if (token !== undefined) this.#core.rollback(token);
-        throw error;
       } finally { plain.fill(0); keyBytes?.fill(0); capsule?.fill(0); }
     }).finally(() => plain.fill(0));
   }
@@ -102,13 +142,12 @@ export class LabWebDevice {
     const aad = contextBytes(context, peer, this.#address);
     // Snapshot caller input before the first asynchronous operation.
     envelope = structuredClone(envelope);
-    return this.#run(async () => {
+    return this.#mutate(async () => {
       if (envelope?.v !== 3 || envelope.suite !== SUITE || ![2, 3].includes(envelope.type)) throw Error('Unsupported protocol: no legacy fallback');
       if (JSON.stringify(envelope.context) !== JSON.stringify(JSON.parse(decoder.decode(aad)).context)) throw Error('Wrong message context');
       const iv = binary(envelope.iv, 12), payload = binary(envelope.ciphertext, MAX_PAYLOAD + 16);
       if (iv.length !== 12 || payload.length < 16) throw Error('Invalid encrypted payload');
       const ratchet = binary(envelope.keyMessage, 131072);
-      const token = this.#core.checkpoint();
       let capsule, keyBytes, plain;
       try {
         capsule = await this.#core.decrypt(peer.name, peer.device, envelope.type, ratchet);
@@ -119,14 +158,34 @@ export class LabWebDevice {
         const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
         plain = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: aad, tagLength: 128 }, key, payload));
         const result = JSON.parse(decoder.decode(plain));
-        this.#core.commit(token);
         return result;
-      } catch (error) { this.#core.rollback(token); throw error; }
-      finally { capsule?.fill(0); keyBytes?.fill(0); plain?.fill(0); }
+      } finally { capsule?.fill(0); keyBytes?.fill(0); plain?.fill(0); }
     });
   }
   close() {
     return this.#run(() => { this.#core.free(); this.#outbox.clear(); this.#public.fill(0); this.#closed = true; });
+  }
+  async #persistentState() {
+    return { v: 1, scope: this.#scope, core: await this.#core.exportPrivateStateForEncryption(), outbox: [...this.#outbox] };
+  }
+  #mutate(action) {
+    return this.#run(async () => {
+      if (this.#poisoned) throw Error('Storage outcome uncertain: close and reopen before retrying');
+      const token = this.#core.checkpoint(), previousOutbox = new Map(this.#outbox);
+      try {
+        const result = await action();
+        if (this.#storage) {
+          const state = await this.#persistentState();
+          try { this.#revision = await this.#storage.commit(this.#scope, this.#revision, state); }
+          catch (error) { this.#poisoned = true; throw error; }
+        }
+        this.#core.commit(token);
+        return result;
+      } catch (error) {
+        this.#core.rollback(token); this.#outbox = previousOutbox;
+        throw error;
+      }
+    });
   }
   #run(action) {
     const operation = this.#queue.then(() => {

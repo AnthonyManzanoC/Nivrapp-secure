@@ -4,6 +4,7 @@
 import init, * as bridge from './pkg/web/nivra_ratchet_wasm.js';
 import { LabWebDevice } from './web-device.mjs';
 import { testBrowserStorage } from './browser-storage-tests.mjs';
+import { testBrowserPersistence } from './browser-persistence-tests.mjs';
 const bytes = value => Uint8Array.from(atob(value), char => char.charCodeAt(0));
 const equal = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
 try {
@@ -60,7 +61,8 @@ try {
     }
   } finally { await webAlice.close(); await webBob.close(); }
   await testBrowserStorage();
-  document.body.textContent = 'PASS: native/WASM interoperability, secure randomness, PQ sessions, browser ratchet turns, AES-256-GCM envelopes, exact retries, tamper rollback and encrypted IndexedDB revision transactions.';
+  await testBrowserPersistence(bridge);
+  document.body.textContent = 'PASS: native/WASM interoperability, secure randomness, PQ sessions, browser ratchet turns, AES-256-GCM envelopes, exact retries, tamper rollback, encrypted IndexedDB transactions and restored ratchet sessions.';
   document.body.dataset.result = 'passed';
 } catch (error) {
   document.body.textContent = 'FAIL: ' + error.message; document.body.dataset.result = 'failed';

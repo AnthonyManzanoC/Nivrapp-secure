@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use wasm_bindgen::prelude::*;
 use super::{error, identity, rng};
+mod kyber;
+mod state;
+use kyber::TrackedKyber;
 
 const SUITE: &str = "NIVRA-LIBSIGNAL-BUNDLE-PILOT-1";
 fn address(name: String, device: u32) -> Result<ProtocolAddress, JsValue> {
@@ -41,12 +44,13 @@ struct Bundle {
 }
 #[derive(Serialize)]
 struct Encrypted { r#type: u8, bytes: String }
-struct Checkpoint { token: u32, store: InMemSignalProtocolStore, counter: u32, peers: Vec<ProtocolAddress> }
+struct Checkpoint { token: u32, store: InMemSignalProtocolStore, kyber: TrackedKyber, counter: u32, peers: Vec<ProtocolAddress> }
 
 #[wasm_bindgen]
 pub struct RatchetDevice {
     address: ProtocolAddress,
     store: InMemSignalProtocolStore,
+    kyber: TrackedKyber,
     registration: u32,
     device: u32,
     counter: u32,
@@ -61,7 +65,7 @@ impl RatchetDevice {
         if !(1..16380).contains(&registration) { return Err(error("Invalid registration number")); }
         Ok(Self { address: address(name, device)?, store: InMemSignalProtocolStore::new(identity(private_identity)?, registration)
             .map_err(|_| error("Store initialization failed"))?, registration, device, counter: 0,
-            peers: Vec::new(), checkpoint: None, transaction: 0 })
+            peers: Vec::new(), kyber: TrackedKyber::default(), checkpoint: None, transaction: 0 })
     }
     #[wasm_bindgen(js_name = pinIdentity)]
     pub async fn pin_identity(&mut self, name: String, device: u32, public: &[u8]) -> Result<(), JsValue> {
@@ -91,7 +95,7 @@ impl RatchetDevice {
         let id = self.counter;
         self.store.pre_key_store.save_pre_key(id.into(), &PreKeyRecord::new(id.into(), &one_time)).await.map_err(|_| error("Prekey save failed"))?;
         self.store.signed_pre_key_store.save_signed_pre_key(id.into(), &SignedPreKeyRecord::new(id.into(), timestamp, &signed, &signature)).await.map_err(|_| error("Signed prekey save failed"))?;
-        self.store.kyber_pre_key_store.save_kyber_pre_key(id.into(), &KyberPreKeyRecord::new(id.into(), timestamp, &kem, &kem_signature)).await.map_err(|_| error("PQ prekey save failed"))?;
+        self.kyber.save_kyber_pre_key(id.into(), &KyberPreKeyRecord::new(id.into(), timestamp, &kem, &kem_signature)).await.map_err(|_| error("PQ prekey save failed"))?;
         serde_json::to_string(&Bundle { v: 1, suite: SUITE.into(), registration_id: self.registration, device_id: self.device,
             identity_key: STANDARD.encode(identity.identity_key().serialize()), pre_key_id: id, pre_key_public: STANDARD.encode(one_time.public_key.serialize()),
             signed_pre_key_id: id, signed_pre_key_public: STANDARD.encode(signed.public_key.serialize()), signed_pre_key_signature: STANDARD.encode(signature),
@@ -135,12 +139,12 @@ impl RatchetDevice {
         let peer = address(name, device)?;
         if ciphertext.len() > 131072 { return Err(error("Ciphertext exceeds limit")); }
         if self.store.identity_store.get_identity(&peer).await.map_err(|_| error("Identity lookup failed"))?.is_none() { return Err(error("Unpinned peer")); }
-        let snapshot = self.store.clone(); let mut random = rng()?;
+        let snapshot = self.store.clone(); let kyber_snapshot = self.kyber.clone(); let mut random = rng()?;
         let result = match kind {
             3 => {
                 let message = PreKeySignalMessage::try_from(ciphertext).map_err(|_| error("Invalid prekey message"))?;
                 message_decrypt_prekey(&message, &peer, &self.address, &mut self.store.session_store, &mut self.store.identity_store,
-                    &mut self.store.pre_key_store, &self.store.signed_pre_key_store, &mut self.store.kyber_pre_key_store, &mut random).await.map(|result| result.plaintext)
+                    &mut self.store.pre_key_store, &self.store.signed_pre_key_store, &mut self.kyber, &mut random).await.map(|result| result.plaintext)
             },
             2 => {
                 let message = SignalMessage::try_from(ciphertext).map_err(|_| error("Invalid ratchet message"))?;
@@ -148,7 +152,7 @@ impl RatchetDevice {
             },
             _ => return Err(error("Unsupported message type: no legacy fallback")),
         };
-        if result.is_err() { self.store = snapshot; }
+        if result.is_err() { self.store = snapshot; self.kyber = kyber_snapshot; }
         result.map_err(|_| error("Ratchet decryption rejected"))
     }
     /// A caller serializes operations and verifies its outer AES-GCM payload
@@ -156,7 +160,7 @@ impl RatchetDevice {
     pub fn checkpoint(&mut self) -> Result<u32, JsValue> {
         if self.checkpoint.is_some() { return Err(error("A transaction is already active")); }
         self.transaction = self.transaction.checked_add(1).ok_or_else(|| error("Transaction counter exhausted"))?;
-        self.checkpoint = Some(Checkpoint { token: self.transaction, store: self.store.clone(), counter: self.counter, peers: self.peers.clone() });
+        self.checkpoint = Some(Checkpoint { token: self.transaction, store: self.store.clone(), kyber: self.kyber.clone(), counter: self.counter, peers: self.peers.clone() });
         Ok(self.transaction)
     }
     pub fn commit(&mut self, token: u32) -> Result<(), JsValue> {
@@ -166,6 +170,6 @@ impl RatchetDevice {
     pub fn rollback(&mut self, token: u32) -> Result<(), JsValue> {
         if self.checkpoint.as_ref().map(|value| value.token) != Some(token) { return Err(error("Wrong transaction token")); }
         let snapshot = self.checkpoint.take().ok_or_else(|| error("No active transaction"))?;
-        self.store = snapshot.store; self.counter = snapshot.counter; self.peers = snapshot.peers; Ok(())
+        self.store = snapshot.store; self.kyber = snapshot.kyber; self.counter = snapshot.counter; self.peers = snapshot.peers; Ok(())
     }
 }
