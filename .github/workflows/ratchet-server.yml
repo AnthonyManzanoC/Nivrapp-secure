@@ -2,7 +2,7 @@ name: Ratchet PostgreSQL pilot
 on:
   push:
     branches: [codex/ratchet-bridge]
-    paths: [Nivra.Api/**, checks/Nivra.RatchetChecks/**, crypto/ratchet-pilot/**, crypto/ratchet-wasm/**, android/ratchet-lab/**, android/settings.gradle, .github/workflows/ratchet-server.yml, .github/workflows/ratchet-wasm.yml]
+    paths: [Nivra.Api/**, checks/Nivra.RatchetChecks/**, crypto/ratchet-pilot/**, crypto/ratchet-wasm/**, nivra-app/src/**, nivra-app/angular.json, nivra-app/package-lock.json, android/ratchet-lab/**, android/settings.gradle, .github/workflows/ratchet-server.yml, .github/workflows/ratchet-wasm.yml]
   workflow_dispatch:
 permissions:
   contents: read
@@ -10,6 +10,26 @@ concurrency:
   group: ratchet-server-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  client:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.18.1
+      - run: npm ci --prefix nivra-app --ignore-scripts
+      - name: Check application and encrypted history
+        working-directory: nivra-app
+        env:
+          NG_BUILD_MAX_WORKERS: '2'
+          NG_BUILD_PARALLEL_TS: 'false'
+          CHROME_BIN: /usr/bin/google-chrome
+        run: |
+          node node_modules/typescript/bin/tsc -p tsconfig.app.json --noEmit --pretty false
+          node node_modules/@angular/cli/bin/ng.js test --watch=false --browsers=ChromeHeadlessNoGpu --progress=false
   wasm:
     uses: ./.github/workflows/ratchet-wasm.yml
   postgres:

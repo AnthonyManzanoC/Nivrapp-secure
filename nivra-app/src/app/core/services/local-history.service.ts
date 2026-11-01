@@ -19,6 +19,9 @@ const LOCAL_CONTACT_STORE = 'contacts';
 const LOCAL_SYNC_STORE = 'syncWatermarks';
 const LOCAL_CALL_STORE = 'calls';
 const LOCAL_STORY_STORE = 'stories';
+const RATCHET_DB_NAME = 'NivraRatchetState';
+const RATCHET_STORE = 'snapshots';
+const RATCHET_STATE_LIMIT = 32 * 1024 * 1024;
 const VIEW_ONCE_DELETE_DELAY_MS = 0;
 const LOCAL_PURGE_LIMIT = 500;
 const LOCAL_PAYLOAD_VERSION = 2;
@@ -71,6 +74,15 @@ interface NativeVaultKeyRecord {
   account_key: string;
   raw_key: string;
   created_at: string;
+}
+
+interface StoredRatchetSnapshot {
+  scope: string;
+  accountKey: string;
+  deviceId: string;
+  revision: number;
+  iv: string;
+  ciphertext: string;
 }
 
 interface SyncWatermarkRecord {
@@ -135,6 +147,9 @@ export class LocalHistoryService {
   private readonly ngZone = inject(NgZone);
   private readonly secureVault = inject(NativeSecureVaultService);
   private dbPromise?: Promise<IDBPDatabase | null>;
+  private ratchetDbPromise?: Promise<IDBPDatabase>;
+  private readonly ratchetAccountGenerations = new Map<string, number>();
+  private readonly ratchetWipingAccounts = new Set<string>();
   private sqlitePromise?: Promise<SQLiteDBConnection>;
   private sqliteConnection?: SQLiteConnection;
   private sqliteOpenFailed = false;
@@ -143,6 +158,90 @@ export class LocalHistoryService {
   private readonly vaultKeyInFlight = new Map<string, Promise<CryptoKey>>();
   private storageGeneration = 0;
   private wiping = false;
+
+  /** One encrypted account/device snapshot: ratchet state, retry bytes and incoming deliveries. */
+  async readRatchetState(userId: string, deviceId: string): Promise<{ revision: number; state: unknown } | null> {
+    const scope = this.ratchetScope(userId, deviceId), generation = this.storageGeneration;
+    const accountGeneration = this.ratchetAccountGenerations.get(userId) ?? 0;
+    const check = () => this.assertRatchetGeneration(userId, generation, accountGeneration);
+    const sqlite = await this.openNativeSqlite();
+    let row: StoredRatchetSnapshot | undefined;
+    if (sqlite) {
+      const found = await sqlite.query('SELECT revision, envelope_json FROM local_ratchet_states WHERE scope = ? AND account_key = ? AND device_id = ? LIMIT 1', [scope, userId, deviceId]);
+      if (found.values?.[0]) row = { ...JSON.parse(found.values[0]['envelope_json']), revision: found.values[0]['revision'] };
+    } else row = await (await this.openRatchetDb()).get(RATCHET_STORE, scope);
+    check();
+    if (!row) return null;
+    if (row.scope !== scope || row.accountKey !== userId || row.deviceId !== deviceId || !Number.isSafeInteger(row.revision) || row.revision < 1
+        || typeof row.iv !== 'string' || typeof row.ciphertext !== 'string' || row.ciphertext.length > Math.ceil((RATCHET_STATE_LIMIT + 16) / 3) * 4
+        || this.ub64Buffer(row.iv).byteLength !== 12) throw new Error('El estado cifrado de esta sesión no es válido. Se ha conservado.');
+    // Reading retained state must never create a replacement storage key.
+    const key = await this.loadLocalVaultKey(userId, generation, false, check);
+    let plain: ArrayBuffer | undefined;
+    try {
+      plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: this.ub64Buffer(row.iv), additionalData: this.ratchetAad(scope, row.revision) }, key, this.ub64Buffer(row.ciphertext));
+      check();
+      return { revision: row.revision, state: JSON.parse(textDecoder.decode(plain)) };
+    } finally { if (plain) new Uint8Array(plain).fill(0); }
+  }
+
+  async commitRatchetState(userId: string, deviceId: string, expectedRevision: number, state: unknown): Promise<number> {
+    const scope = this.ratchetScope(userId, deviceId), generation = this.storageGeneration;
+    const accountGeneration = this.ratchetAccountGenerations.get(userId) ?? 0;
+    const check = () => this.assertRatchetGeneration(userId, generation, accountGeneration);
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0 || expectedRevision >= Number.MAX_SAFE_INTEGER) throw new Error('Revisión de sesión inválida.');
+    const serialized = JSON.stringify(state);
+    if (typeof serialized !== 'string') throw new Error('El estado de la sesión no es válido.');
+    const plain = textEncoder.encode(serialized);
+    if (plain.byteLength > RATCHET_STATE_LIMIT) { plain.fill(0); throw new Error('El almacenamiento de la sesión alcanzó su límite.'); }
+    const revision = expectedRevision + 1;
+    const key = await this.loadLocalVaultKey(userId, generation, expectedRevision === 0, check);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    let ciphertext: ArrayBuffer;
+    try { ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: this.ratchetAad(scope, revision) }, key, plain); }
+    finally { plain.fill(0); }
+    const row: StoredRatchetSnapshot = { scope, accountKey: userId, deviceId, revision, iv: this.b64(iv), ciphertext: this.b64(new Uint8Array(ciphertext)) };
+    check();
+    const sqlite = await this.openNativeSqlite();
+    check();
+    if (sqlite) {
+      // A single transactional statement is the CAS. Never hold a native
+      // transaction open across WebCrypto or unrelated history operations.
+      const result = expectedRevision === 0
+        ? await sqlite.run('INSERT OR IGNORE INTO local_ratchet_states (scope, account_key, device_id, revision, envelope_json) VALUES (?, ?, ?, ?, ?)', [scope, userId, deviceId, revision, JSON.stringify(row)])
+        : await sqlite.run('UPDATE local_ratchet_states SET revision = ?, envelope_json = ? WHERE scope = ? AND account_key = ? AND device_id = ? AND revision = ?', [revision, JSON.stringify(row), scope, userId, deviceId, expectedRevision]);
+      if (result.changes?.changes !== 1) throw new Error('La sesión cifrada cambió en otra ventana. Vuelve a abrirla antes de reintentar.');
+    } else {
+      const db = await this.openRatchetDb();
+      const tx = db.transaction(RATCHET_STORE, 'readwrite', { durability: 'strict' });
+      const previous = await tx.store.get(scope) as StoredRatchetSnapshot | undefined;
+      check();
+      if ((previous?.revision ?? 0) !== expectedRevision) { tx.abort(); await tx.done.catch(() => undefined); throw new Error('La sesión cifrada cambió en otra ventana. Vuelve a abrirla antes de reintentar.'); }
+      await tx.store.put(row); await tx.done;
+    }
+    check();
+    return revision;
+  }
+
+  private ratchetScope(userId: string, deviceId: string): string {
+    if (!userId || !deviceId || userId.length > 128 || deviceId.length > 128 || this.wiping || this.ratchetWipingAccounts.has(userId)) throw new Error('La sesión local no está disponible.');
+    return JSON.stringify([userId, deviceId]);
+  }
+  private ratchetAad(scope: string, revision: number): Uint8Array<ArrayBuffer> {
+    return textEncoder.encode(JSON.stringify(['NIVRA-RATCHET-STATE-1', scope, revision]));
+  }
+  private assertRatchetGeneration(userId: string, generation: number, accountGeneration: number): void {
+    this.assertStorageGeneration(generation);
+    if ((this.ratchetAccountGenerations.get(userId) ?? 0) !== accountGeneration || this.ratchetWipingAccounts.has(userId)) throw new Error('La sesión local se ha cerrado.');
+  }
+  private openRatchetDb(): Promise<IDBPDatabase> {
+    if (this.wiping) return Promise.reject(new Error('El almacenamiento local se está cerrando.'));
+    return this.ratchetDbPromise ??= openDB(RATCHET_DB_NAME, 1, {
+      upgrade: db => db.createObjectStore(RATCHET_STORE, { keyPath: 'scope' }),
+      blocking: () => { void this.ratchetDbPromise?.then(db => db.close()); this.ratchetDbPromise = undefined; },
+      terminated: () => { this.ratchetDbPromise = undefined; },
+    });
+  }
 
   retryNativeStorage(): Promise<boolean> {
     if (!this.shouldUseNativeSqlite()) return Promise.resolve(true);
@@ -816,6 +915,9 @@ export class LocalHistoryService {
   /** Remove records with this account's owner key; never remove shared stores or secrets. */
   async wipeAccountData(userId: string): Promise<void> {
     if (!userId) throw new Error('Falta la cuenta que se debe limpiar.');
+    this.ratchetAccountGenerations.set(userId, (this.ratchetAccountGenerations.get(userId) ?? 0) + 1);
+    this.ratchetWipingAccounts.add(userId);
+    try {
     this.vaultKeyInFlight.delete(userId);
     const belongs = (key: unknown): boolean => {
       if (typeof key !== 'string') return false;
@@ -828,7 +930,7 @@ export class LocalHistoryService {
     if (sqlite) {
       // Read candidate owner keys and compare in JS so SQL LIKE wildcards in an
       // identifier cannot delete another account's history.
-      const tables = ['local_messages', 'local_conversations', 'local_contacts', 'local_calls', 'local_sync_watermarks', 'local_vault_keys'];
+      const tables = ['local_messages', 'local_conversations', 'local_contacts', 'local_calls', 'local_sync_watermarks', 'local_vault_keys', 'local_ratchet_states'];
       for (const table of tables) {
         const rows = await sqlite.query(`SELECT DISTINCT account_key FROM ${table}`);
         for (const row of rows.values ?? []) {
@@ -836,6 +938,13 @@ export class LocalHistoryService {
           if (belongs(key)) await sqlite.run(`DELETE FROM ${table} WHERE account_key = ?`, [key]);
         }
       }
+    }
+    if (!sqlite) {
+      const ratchets = await this.openRatchetDb();
+      const tx = ratchets.transaction(RATCHET_STORE, 'readwrite');
+      let cursor = await tx.store.openCursor();
+      while (cursor) { if ((cursor.value as StoredRatchetSnapshot).accountKey === userId) await cursor.delete(); cursor = await cursor.continue(); }
+      await tx.done;
     }
     // Profiles, stories and device keys remain in IDB even on Android.
     const db = await this.open();
@@ -852,6 +961,7 @@ export class LocalHistoryService {
       }
     }
     await transaction.done;
+    } finally { this.ratchetWipingAccounts.delete(userId); }
   }
 
   async wipeAllLocalData(): Promise<void> {
@@ -863,6 +973,8 @@ export class LocalHistoryService {
       const db = await this.dbPromise?.catch(() => null);
       db?.close();
       this.dbPromise = undefined;
+      const ratchets = await this.ratchetDbPromise?.catch(() => null);
+      ratchets?.close(); this.ratchetDbPromise = undefined;
 
       const sqlite = await this.sqlitePromise?.catch(() => null);
       if (sqlite) {
@@ -1048,7 +1160,7 @@ export class LocalHistoryService {
     };
     const names = typeof indexedDb.databases === 'function'
       ? (await indexedDb.databases()).map((database) => database.name).filter((name): name is string => Boolean(name))
-      : [LOCAL_DB_NAME];
+      : [LOCAL_DB_NAME, RATCHET_DB_NAME];
 
     await Promise.all([...new Set(names)].map((name) => this.deleteIndexedDatabase(name)));
   }
@@ -1227,6 +1339,14 @@ export class LocalHistoryService {
           raw_key TEXT NOT NULL,
           created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS local_ratchet_states (
+          scope TEXT PRIMARY KEY NOT NULL,
+          account_key TEXT NOT NULL,
+          device_id TEXT NOT NULL,
+          revision INTEGER NOT NULL CHECK(revision > 0),
+          envelope_json TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_local_ratchet_account ON local_ratchet_states(account_key, device_id);
       `));
       return db;
     } catch (error) {
@@ -1615,8 +1735,8 @@ export class LocalHistoryService {
     return pending;
   }
 
-  private async loadLocalVaultKey(accountKey: string, generation: number): Promise<CryptoKey> {
-    const nativeKey = await this.nativeLocalVaultKey(accountKey, generation);
+  private async loadLocalVaultKey(accountKey: string, generation: number, create = true, validateOwner: () => void = () => undefined): Promise<CryptoKey> {
+    const nativeKey = await this.nativeLocalVaultKey(accountKey, generation, create, validateOwner);
     if (nativeKey) {
       return nativeKey;
     }
@@ -1625,6 +1745,7 @@ export class LocalHistoryService {
       throw new Error('IndexedDB no esta disponible.');
     }
     this.assertStorageGeneration(generation);
+    validateOwner();
     const store = db.transaction(LOCAL_VAULT_KEY_STORE, 'readonly').objectStore(LOCAL_VAULT_KEY_STORE);
     const existing = await store.get(accountKey) as LocalVaultKeyRecord | undefined;
     const protectedKey = await this.unprotectLocalVaultKey(existing);
@@ -1642,6 +1763,7 @@ export class LocalHistoryService {
     if (existing?.key) {
       return existing.key;
     }
+    if (!create) throw new Error('No está disponible la clave guardada de esta sesión. Tus datos se han conservado.');
     const raw = crypto.getRandomValues(new Uint8Array(32));
     const keyEnvelope = await this.protectLocalVaultRawKey(raw);
     const key = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
@@ -1650,6 +1772,7 @@ export class LocalHistoryService {
     // after protection, and honour a key another tab may have committed first.
     const writeStore = db.transaction(LOCAL_VAULT_KEY_STORE, 'readwrite').objectStore(LOCAL_VAULT_KEY_STORE);
     const committed = await writeStore.get(accountKey) as LocalVaultKeyRecord | undefined;
+    this.assertStorageGeneration(generation); validateOwner();
     if (committed) {
       const winner = await this.unprotectLocalVaultKey(committed);
       if (winner) return winner;
@@ -1667,7 +1790,7 @@ export class LocalHistoryService {
     return key;
   }
 
-  private async nativeLocalVaultKey(accountKey: string, generation = this.storageGeneration): Promise<CryptoKey | null> {
+  private async nativeLocalVaultKey(accountKey: string, generation = this.storageGeneration, create = true, validateOwner: () => void = () => undefined): Promise<CryptoKey | null> {
     const sqlite = await this.openNativeSqlite();
     if (!sqlite) {
       return null;
@@ -1680,9 +1803,11 @@ export class LocalHistoryService {
     if (typeof existing?.raw_key === 'string' && existing.raw_key) {
       return crypto.subtle.importKey('raw', this.ub64Buffer(existing.raw_key), { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
     }
+    if (!create) throw new Error('No está disponible la clave guardada de esta sesión. Tus datos se han conservado.');
     const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, ['encrypt', 'decrypt']);
     const raw = new Uint8Array(await crypto.subtle.exportKey('raw', key));
     this.assertStorageGeneration(generation);
+    validateOwner();
     await sqlite.run(
       'INSERT OR IGNORE INTO local_vault_keys (account_key, raw_key, created_at) VALUES (?, ?, ?)',
       [accountKey, this.b64(raw), new Date().toISOString()],
