@@ -75,6 +75,15 @@ ML-KEM de referencia independientes con `@noble/post-quantum`, recepción fuera
 de orden, replay, alteraciones, sesiones simultáneas, reserva concurrente,
 limpieza, guardado fallido, recuperación de historial y fan-out de grupos.
 
+Validación del código de esta entrega: [ejecución 41354624435](https://github.com/AnthonyManzanoC/Nivrapp-secure/actions/runs/41354624435),
+con todos sus trabajos aprobados: 1.507 pruebas Angular, 6 pruebas Rust y 7
+WASM/JavaScript (incluidos 8 vectores ML-KEM independientes), PostgreSQL/HTTP,
+Electron Windows/Linux y las dos fases Android separadas por un cierre de proceso.
+Además pasaron 36 controles HTTP de seguridad, 61 de historial, 43 de bloqueo de
+contactos, 12 de metadatos Android y 20 del feed de actualización. Los análisis de
+paquetes de producción npm y NuGet no indicaron vulnerabilidades conocidas en
+sus fuentes consultadas el 1 de noviembre de 2026. Esto no sustituye una auditoría.
+
 Producción usa `Ratchet:Enabled=true`, `Ratchet:RequireHybrid=true`,
 `Ratchet:LaboratoryClientEnabled=false` y `Ratchet:PreKeyPilotEnabled=false`.
 Las variables de Render pueden reemplazar la configuración del repositorio;
