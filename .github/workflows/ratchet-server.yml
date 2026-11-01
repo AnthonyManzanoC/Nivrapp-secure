@@ -49,6 +49,8 @@ jobs:
     needs: wasm
     runs-on: ubuntu-24.04
     timeout-minutes: 25
+    env:
+      ANDROID_AVD_HOME: ${{ runner.temp }}/ratchet-avd
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -74,29 +76,36 @@ jobs:
           yes | "$sdkmanager" --licenses > /dev/null
           set -o pipefail
           "$sdkmanager" 'platform-tools' 'emulator' 'platforms;android-36' 'build-tools;36.0.0' 'system-images;android-35;google_apis;x86_64'
-          "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --name NivraRatchetCI --package 'system-images;android-35;google_apis;x86_64' --device pixel_2
+          mkdir -p "$ANDROID_AVD_HOME"
+          "$ANDROID_HOME/cmdline-tools/latest/bin/avdmanager" create avd --name NivraRatchetCI --path "$ANDROID_AVD_HOME/NivraRatchetCI.avd" --package 'system-images;android-35;google_apis;x86_64' --device pixel_2
+          printf 'avd.ini.encoding=UTF-8\npath=%s\ntarget=android-35\n' "$ANDROID_AVD_HOME/NivraRatchetCI.avd" > "$ANDROID_AVD_HOME/NivraRatchetCI.ini"
+          "$ANDROID_HOME/emulator/emulator" -list-avds | grep -Fx NivraRatchetCI
       - name: Build separate laboratory APKs
         working-directory: android
         run: bash ./gradlew -PnivraRatchetLab=true :ratchet-lab:assembleDebug :ratchet-lab:assembleDebugAndroidTest --no-daemon --max-workers=2 --console=plain
       - name: Verify state across Android process restart
         run: |
-          "$ANDROID_HOME/emulator/emulator" -avd NivraRatchetCI -port 5554 -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader_indirect -memory 2048 -cores 2 -skin 480x800 > "$RUNNER_TEMP/ratchet-android-emulator.log" 2>&1 &
-          trap 'adb -s emulator-5554 logcat -d -s NivraRatchetLab:E AndroidRuntime:E > "$RUNNER_TEMP/ratchet-android-errors.log" || true; adb -s emulator-5554 emu kill || true' EXIT
+          adb="$ANDROID_HOME/platform-tools/adb"
+          test -x "$adb"
+          "$ANDROID_HOME/emulator/emulator" -avd NivraRatchetCI -port 5554 -no-window -no-audio -no-snapshot -no-boot-anim -gpu swiftshader -memory 2048 -cores 2 -skin 480x800 > "$RUNNER_TEMP/ratchet-android-emulator.log" 2>&1 &
+          emulator_pid=$!
+          trap '"$adb" -s emulator-5554 logcat -d -s NivraRatchetLab:E AndroidRuntime:E > "$RUNNER_TEMP/ratchet-android-errors.log" || true; "$adb" -s emulator-5554 emu kill || true' EXIT
           booted=false
           for attempt in {1..150}; do
-            if [[ "$(adb -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == '1' ]]; then booted=true; break; fi
+            kill -0 "$emulator_pid" 2>/dev/null || { tail -n 80 "$RUNNER_TEMP/ratchet-android-emulator.log"; exit 1; }
+            if [[ "$("$adb" -s emulator-5554 shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" == '1' ]]; then booted=true; break; fi
             sleep 2
           done
           "$booted" || { tail -n 80 "$RUNNER_TEMP/ratchet-android-emulator.log"; exit 1; }
-          adb -s emulator-5554 shell wm dismiss-keyguard
-          adb -s emulator-5554 install -r android/ratchet-lab/build/outputs/apk/debug/ratchet-lab-debug.apk
-          adb -s emulator-5554 install -r android/ratchet-lab/build/outputs/apk/androidTest/debug/ratchet-lab-debug-androidTest.apk
-          adb -s emulator-5554 shell am instrument -w -e phase 1 com.nivra.ratchetlab.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/ratchet-android-phase1.log"
+          "$adb" -s emulator-5554 shell wm dismiss-keyguard
+          "$adb" -s emulator-5554 install -r android/ratchet-lab/build/outputs/apk/debug/ratchet-lab-debug.apk
+          "$adb" -s emulator-5554 install -r android/ratchet-lab/build/outputs/apk/androidTest/debug/ratchet-lab-debug-androidTest.apk
+          "$adb" -s emulator-5554 shell am instrument -w -e phase 1 com.nivra.ratchetlab.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/ratchet-android-phase1.log"
           grep -F 'OK (1 test)' "$RUNNER_TEMP/ratchet-android-phase1.log"
-          adb -s emulator-5554 shell am force-stop com.nivra.ratchetlab
-          adb -s emulator-5554 shell am instrument -w -e phase 2 com.nivra.ratchetlab.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/ratchet-android-phase2.log"
+          "$adb" -s emulator-5554 shell am force-stop com.nivra.ratchetlab
+          "$adb" -s emulator-5554 shell am instrument -w -e phase 2 com.nivra.ratchetlab.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/ratchet-android-phase2.log"
           grep -F 'OK (1 test)' "$RUNNER_TEMP/ratchet-android-phase2.log"
-          adb -s emulator-5554 shell dumpsys webviewupdate | grep 'Current WebView package' | tee "$RUNNER_TEMP/ratchet-android-webview.log"
+          "$adb" -s emulator-5554 shell dumpsys webviewupdate | grep 'Current WebView package' | tee "$RUNNER_TEMP/ratchet-android-webview.log"
       - name: Preserve Android trial diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
