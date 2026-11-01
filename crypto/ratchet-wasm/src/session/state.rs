@@ -6,7 +6,7 @@ impl RatchetDevice {
     /// Each bridge-generated EC/signed/PQ tuple has one id. Once its one-time
     /// EC key is consumed, erase the associated private bootstrap keys too.
     /// The outer checkpoint restores all of them if payload authentication fails.
-    async fn prune_consumed_prekeys(&mut self) -> Result<(), JsValue> {
+    pub(super) async fn prune_consumed_prekeys(&mut self) -> Result<(), JsValue> {
         let active: BTreeSet<u32> = self.store.all_pre_key_ids().map(|id| (*id).into()).collect();
         let mut signed = libsignal_protocol::InMemSignedPreKeyStore::new();
         for id in self.store.all_signed_pre_key_ids() {
