@@ -102,8 +102,13 @@ try {
   $remoteCommit = Invoke-RestMethod -Uri "$apiBase/commits/$Commit" -Headers $headers
   if ($remoteCommit.sha -ne $Commit) { throw 'Publish the verified commit before creating a release.' }
   $release = $null
-  try { $release = Invoke-RestMethod -Uri "$apiBase/releases/tags/v$Version" -Headers $headers }
-  catch { if ([int]$_.Exception.Response.StatusCode -ne 404) { throw 'Could not inspect the GitHub release.' } }
+  # GitHub does not consistently return draft releases from the by-tag route.
+  # Listing authenticated releases lets a resumed upload find its own draft.
+  try {
+    $releases = Invoke-RestMethod -Uri "$apiBase/releases?per_page=100" -Headers $headers
+    $release = $releases | Where-Object { $_.tag_name -ceq "v$Version" } | Select-Object -First 1
+  }
+  catch { throw 'Could not inspect the GitHub releases.' }
   if ($release -and -not $release.draft) { throw 'An existing published release must not be replaced.' }
   if (-not $release) {
     $body = @{ tag_name="v$Version"; target_commitish=$Commit; name="Nivra $Version"; body=$notes; draft=$true; prerelease=$false } | ConvertTo-Json

@@ -59,7 +59,7 @@ function Invoke-RestMethod {
   param([string]$Uri, [string]$Method='Get', $Headers, [string]$ContentType, $Body, [string]$InFile, [int]$TimeoutSec)
   $testState.networkCalls++
   if ($Uri -match '/commits/') { return [pscustomobject]@{ sha=$testCommit } }
-  if ($Uri -match '/releases/tags/') { return [pscustomobject]@{ id=123; draft=$true; target_commitish=$testCommit; upload_url='https://offline.invalid/upload{?name,label}' } }
+  if ($Uri -match '/releases\?per_page=100$') { return ,@([pscustomobject]@{ tag_name='v4.1.0'; id=123; draft=$true; target_commitish=$testCommit; upload_url='https://offline.invalid/upload{?name,label}' }) }
   # Match Invoke-RestMethod's non-enumerated JSON-array output, including [].
   if ($Uri.EndsWith('/assets')) { Write-Output -NoEnumerate ([object[]]@()); return }
   if ($Method -eq 'Post' -and $Uri.StartsWith('https://offline.invalid/upload?name=')) {
