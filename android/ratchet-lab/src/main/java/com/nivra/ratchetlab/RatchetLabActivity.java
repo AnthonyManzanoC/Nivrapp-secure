@@ -141,7 +141,9 @@ public final class RatchetLabActivity extends Activity {
                 checkScope(scope);
                 try (Cursor cursor = database.rawQuery("SELECT revision,state FROM snapshots WHERE scope=?", new String[] { scope })) {
                     if (!cursor.moveToFirst()) return "{\"ok\":true,\"row\":null}";
-                    return new JSONObject().put("ok", true).put("row", new JSONObject().put("revision", cursor.getLong(0)).put("state", new JSONObject(cursor.getString(1)))).toString();
+                    // Keep the original JSON text. Re-encoding nested objects in
+                    // Java can change context order and exact retry bytes.
+                    return new JSONObject().put("ok", true).put("row", new JSONObject().put("revision", cursor.getLong(0)).put("stateJson", cursor.getString(1))).toString();
                 }
             } catch (Exception error) { return "{\"ok\":false,\"code\":\"STATE_READ_FAILED\"}"; }
         }

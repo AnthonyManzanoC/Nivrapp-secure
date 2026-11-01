@@ -6,7 +6,10 @@ const encode = bytes => btoa(String.fromCharCode(...bytes));
 const hash = async object => encode(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(object)))));
 const reject = async operation => { let failed = false; try { await operation(); } catch { failed = true; } check(failed, 'Invalid operation accepted'); };
 const storage = {
-  async read(scope) { const result = JSON.parse(native.read(scope)); if (!result.ok) throw Error(result.code); return result.row; },
+  async read(scope) {
+    const result = JSON.parse(native.read(scope)); if (!result.ok) throw Error(result.code);
+    return result.row ? { revision: result.row.revision, state: JSON.parse(result.row.stateJson) } : null;
+  },
   async commit(scope, revision, state) { const result = JSON.parse(native.commit(scope, revision, JSON.stringify(state))); if (!result.ok) throw Error(result.code); return result.revision; },
 };
 let alice, bob, stale;
