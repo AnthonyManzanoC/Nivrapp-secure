@@ -70,6 +70,7 @@ builder.Services.AddDbContext<NivraDbContext>(options =>
 });
 builder.Services.AddScoped<INivraStore, PgSqlNivraStore>();
 builder.Services.AddScoped<RatchetPreKeyStore>();
+builder.Services.AddScoped<RatchetDirectoryService>();
 builder.Services.AddSingleton<PasswordHasher>();
 builder.Services.AddSingleton<TokenService>();
 builder.Services.AddSingleton<EncryptedFileStorage>();

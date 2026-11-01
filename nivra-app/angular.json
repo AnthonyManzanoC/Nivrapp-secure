@@ -20,6 +20,8 @@
             "tsConfig": "tsconfig.app.json",
             "inlineStyleLanguage": "scss",
             "assets": [
+              { "glob": "web-device.mjs", "input": "../crypto/ratchet-wasm", "output": "assets/ratchet" },
+              { "glob": "*.{js,wasm}", "input": "../crypto/ratchet-wasm/pkg/web", "output": "assets/ratchet/pkg" },
               {
                 "glob": "manifest.webmanifest",
                 "input": "src",
@@ -133,6 +135,8 @@
             "karmaConfig": "karma.conf.js",
             "inlineStyleLanguage": "scss",
             "assets": [
+              { "glob": "web-device.mjs", "input": "../crypto/ratchet-wasm", "output": "assets/ratchet" },
+              { "glob": "*.{js,wasm}", "input": "../crypto/ratchet-wasm/pkg/web", "output": "assets/ratchet/pkg" },
               {
                 "glob": "manifest.webmanifest",
                 "input": "src",

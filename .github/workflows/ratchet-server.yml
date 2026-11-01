@@ -11,6 +11,7 @@ concurrency:
   cancel-in-progress: true
 jobs:
   client:
+    needs: wasm
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -21,6 +22,10 @@ jobs:
         with:
           node-version: 24.18.1
       - run: npm ci --prefix nivra-app --ignore-scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: ratchet-wasm-portability
+          path: crypto/ratchet-wasm
       - name: Check application and encrypted history
         working-directory: nivra-app
         env:

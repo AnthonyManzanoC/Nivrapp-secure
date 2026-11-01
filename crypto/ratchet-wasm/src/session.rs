@@ -82,7 +82,8 @@ impl RatchetDevice {
     }
     #[wasm_bindgen(js_name = preKeyBundle)]
     pub async fn pre_key_bundle(&mut self, now: f64) -> Result<String, JsValue> {
-        if self.counter >= 256 { return Err(error("Pilot prekey generation limit reached")); }
+        if self.store.all_pre_key_ids().count() >= 2048 { return Err(error("Pending private prekey storage is full")); }
+        let next = self.counter.checked_add(1).ok_or_else(|| error("Prekey id space exhausted"))?;
         let (_, timestamp) = time(now)?;
         let mut random = rng()?;
         let identity = self.store.identity_store.get_identity_key_pair().await.map_err(|_| error("Identity lookup failed"))?;
@@ -91,7 +92,7 @@ impl RatchetDevice {
         let kem = kem::KeyPair::generate(kem::KeyType::Kyber1024, &mut random);
         let signature = identity.private_key().calculate_signature(&signed.public_key.serialize(), &mut random).map_err(|_| error("Prekey signature failed"))?;
         let kem_signature = identity.private_key().calculate_signature(&kem.public_key.serialize(), &mut random).map_err(|_| error("PQ prekey signature failed"))?;
-        self.counter += 1;
+        self.counter = next;
         let id = self.counter;
         self.store.pre_key_store.save_pre_key(id.into(), &PreKeyRecord::new(id.into(), &one_time)).await.map_err(|_| error("Prekey save failed"))?;
         self.store.signed_pre_key_store.save_signed_pre_key(id.into(), &SignedPreKeyRecord::new(id.into(), timestamp, &signed, &signature)).await.map_err(|_| error("Signed prekey save failed"))?;
@@ -153,6 +154,7 @@ impl RatchetDevice {
             _ => return Err(error("Unsupported message type: no legacy fallback")),
         };
         if result.is_err() { self.store = snapshot; self.kyber = kyber_snapshot; }
+        else { self.prune_consumed_prekeys().await?; }
         result.map_err(|_| error("Ratchet decryption rejected"))
     }
     /// A caller serializes operations and verifies its outer AES-GCM payload

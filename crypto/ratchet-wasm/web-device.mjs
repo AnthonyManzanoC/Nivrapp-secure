@@ -40,6 +40,9 @@ export class LabWebDevice {
   #queue = Promise.resolve();
   #outbox = new Map();
   #inbox = new Map();
+  #bundles = new Map();
+  #sessions = new Set();
+  #application = {};
   #closed = false;
   #storage = null;
   #scope;
@@ -76,9 +79,11 @@ export class LabWebDevice {
       } catch (error) { await result.close(); throw error; }
     }
     const state = saved.state;
-    if (!Number.isSafeInteger(saved.revision) || saved.revision < 1 || state?.v !== 2 || state.scope !== scope
+    if (!Number.isSafeInteger(saved.revision) || saved.revision < 1 || state?.v !== 3 || state.scope !== scope
         || typeof state.core !== 'string' || state.core.length > 32 * 1024 * 1024
-        || !Array.isArray(state.outbox) || state.outbox.length > 256
+        || !Array.isArray(state.outbox) || state.outbox.length > 4096
+        || !Array.isArray(state.bundles) || state.bundles.length > 256
+        || !state.application || typeof state.application !== 'object' || Array.isArray(state.application)
         || !Array.isArray(state.inbox) || state.inbox.length > 64) throw Error('Invalid stored web device');
     const outbox = new Map();
     for (const entry of state.outbox) {
@@ -102,20 +107,43 @@ export class LabWebDevice {
       identity = binary(JSON.parse(state.core).identity, 1024);
       const result = new LabWebDevice(bridge, name, device, { token: RESTORE, core, public: bridge.identityPublic(identity) });
       result.#storage = storage; result.#revision = saved.revision; result.#outbox = outbox; result.#inbox = inbox;
+      const coreState = JSON.parse(state.core);
+      result.#sessions = new Set(coreState.peers.filter(peer => peer.session).map(peer => JSON.stringify([peer.name, peer.device])));
+      result.#application = structuredClone(state.application);
+      for (const entry of state.bundles) {
+        if (!Array.isArray(entry) || entry.length !== 2 || !Number.isInteger(entry[0]) || entry[0] < 1
+            || result.#bundles.has(entry[0]) || entry[1]?.preKeyId !== entry[0]) throw Error('Invalid pending prekey publication');
+        result.#bundles.set(entry[0], structuredClone(entry[1]));
+      }
       return result;
     } catch (error) { core.free(); throw error; }
     finally { identity?.fill(0); }
   }
   get publicIdentity() { return this.#public.slice(); }
   get address() { return { ...this.#address }; }
-  pinIdentity(peer, publicKey) {
+  pinIdentity(peer, publicKey, applicationState) {
     peer = peerAddress(peer); const key = new Uint8Array(publicKey);
-    return this.#mutate(() => this.#core.pinIdentity(peer.name, peer.device, key));
+    const next = applicationState === undefined ? undefined : structuredClone(applicationState);
+    return this.#mutate(async () => { await this.#core.pinIdentity(peer.name, peer.device, key); if (next !== undefined) this.#application = next; });
   }
-  bundle() { return this.#mutate(async () => JSON.parse(await this.#core.preKeyBundle(Date.now()))); }
+  bundle() { return this.#mutate(async () => {
+    const bundle = JSON.parse(await this.#core.preKeyBundle(Date.now()));
+    this.#bundles.set(bundle.preKeyId, bundle); return structuredClone(bundle);
+  }); }
+  pendingBundles() { return this.#run(() => [...this.#bundles.values()].map(bundle => structuredClone(bundle))); }
+  acknowledgeBundles(ids) {
+    const acknowledged = [...ids];
+    return this.#mutate(() => { for (const id of acknowledged) this.#bundles.delete(id); });
+  }
+  hasSession(peer) { peer = peerAddress(peer); return this.#run(() => this.#sessions.has(JSON.stringify([peer.name, peer.device]))); }
+  applicationState() { return this.#run(() => structuredClone(this.#application)); }
+  updateApplicationState(state) {
+    const next = structuredClone(state);
+    return this.#mutate(() => { this.#application = next; });
+  }
   establish(peer, bundle) {
     peer = peerAddress(peer); const encoded = JSON.stringify(bundle);
-    return this.#mutate(() => this.#core.establish(peer.name, peer.device, encoded, Date.now()));
+    return this.#mutate(async () => { await this.#core.establish(peer.name, peer.device, encoded, Date.now()); this.#sessions.add(JSON.stringify([peer.name, peer.device])); });
   }
   encrypt(peer, context, payload) {
     peer = peerAddress(peer);
@@ -133,7 +161,7 @@ export class LabWebDevice {
           if (previous.requestHash !== requestHash) throw Error('Message ID reused with different content');
           return structuredClone(previous.envelope);
         }
-        if (this.#outbox.size >= 256) throw Error('Laboratory outbox full');
+        if (this.#outbox.size >= 4096) throw Error('Encrypted outbox full');
         keyBytes = crypto.getRandomValues(new Uint8Array(32));
         const iv = crypto.getRandomValues(new Uint8Array(12));
         const key = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['encrypt']);
@@ -165,6 +193,7 @@ export class LabWebDevice {
       let capsule, keyBytes, plain;
       try {
         capsule = await this.#core.decrypt(peer.name, peer.device, envelope.type, ratchet);
+        this.#sessions.add(JSON.stringify([peer.name, peer.device]));
         const metadata = JSON.parse(decoder.decode(capsule));
         if (metadata.contextHash !== await hash(aad) || metadata.payloadHash !== await hash(payload)) throw Error('Message binding failed');
         keyBytes = binary(metadata.key, 32);
@@ -174,13 +203,13 @@ export class LabWebDevice {
         const result = JSON.parse(decoder.decode(plain));
         // Keep a recoverable copy until the application confirms its own
         // history write. A process exit after commit must not lose plaintext.
-        this.#inbox.set(id, { peer, context: JSON.parse(decoder.decode(aad)).context, payload: structuredClone(result) });
+        this.#inbox.set(id, { peer, context: JSON.parse(decoder.decode(aad)).context, envelopeHash: await hash(encoder.encode(JSON.stringify(envelope))), payload: structuredClone(result) });
         return result;
       } finally { capsule?.fill(0); keyBytes?.fill(0); plain?.fill(0); }
     });
   }
   close() {
-    return this.#run(() => { this.#core.free(); this.#outbox.clear(); this.#inbox.clear(); this.#public.fill(0); this.#closed = true; });
+    return this.#run(() => { this.#core.free(); this.#outbox.clear(); this.#inbox.clear(); this.#bundles.clear(); this.#sessions.clear(); this.#application = {}; this.#public.fill(0); this.#closed = true; });
   }
   pendingReceived() {
     return this.#run(() => {
@@ -192,13 +221,20 @@ export class LabWebDevice {
     if (binary(id, 32).length !== 32) throw Error('Invalid incoming delivery id');
     return this.#mutate(() => this.#inbox.delete(id));
   }
+  releaseOutgoing(conversationId, messageId) {
+    return this.#mutate(() => {
+      for (const [id, record] of this.#outbox) {
+        if (record.envelope.context.conversationId === conversationId && record.envelope.context.messageId === messageId) this.#outbox.delete(id);
+      }
+    });
+  }
   async #persistentState() {
-    return { v: 2, scope: this.#scope, core: await this.#core.exportPrivateStateForEncryption(), outbox: [...this.#outbox], inbox: [...this.#inbox] };
+    return { v: 3, scope: this.#scope, core: await this.#core.exportPrivateStateForEncryption(), outbox: [...this.#outbox], inbox: [...this.#inbox], bundles: [...this.#bundles], application: this.#application };
   }
   #mutate(action) {
     return this.#run(async () => {
       if (this.#poisoned) throw Error('Storage outcome uncertain: close and reopen before retrying');
-      const token = this.#core.checkpoint(), previousOutbox = new Map(this.#outbox), previousInbox = new Map(this.#inbox);
+      const token = this.#core.checkpoint(), previousOutbox = new Map(this.#outbox), previousInbox = new Map(this.#inbox), previousBundles = new Map(this.#bundles), previousApplication = this.#application, previousSessions = new Set(this.#sessions);
       try {
         const result = await action();
         if (this.#storage) {
@@ -209,7 +245,7 @@ export class LabWebDevice {
         this.#core.commit(token);
         return result;
       } catch (error) {
-        this.#core.rollback(token); this.#outbox = previousOutbox; this.#inbox = previousInbox;
+        this.#core.rollback(token); this.#outbox = previousOutbox; this.#inbox = previousInbox; this.#bundles = previousBundles; this.#application = previousApplication; this.#sessions = previousSessions;
         throw error;
       }
     });

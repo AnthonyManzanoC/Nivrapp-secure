@@ -77,9 +77,32 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(row => row.DeviceId).HasMaxLength(64);
             entity.Property(row => row.UserId).HasMaxLength(64);
             entity.Property(row => row.IdentityKey).HasMaxLength(44);
-            entity.HasIndex(row => new { row.UserId, row.SignalDeviceNumber }).IsUnique();
+            entity.HasIndex(row => new { row.UserId, row.SignalDeviceNumber }).IsUnique().HasFilter("\"AddressMode\" = 0");
             entity.HasOne<DeviceRecord>().WithMany().HasForeignKey(row => row.DeviceId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(row => row.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<RatchetDeviceBinding>(entity =>
+        {
+            entity.ToTable("ratchet_device_bindings");
+            entity.HasKey(row => new { row.SourceDeviceId, row.TargetDeviceId });
+            entity.Property(row => row.SourceDeviceId).HasMaxLength(64);
+            entity.Property(row => row.TargetDeviceId).HasMaxLength(64);
+            entity.Property(row => row.TargetIdentity).HasMaxLength(128);
+            entity.Property(row => row.Header).HasMaxLength(4096);
+            entity.Property(row => row.Ciphertext).HasMaxLength(16384);
+            entity.HasOne<DeviceRecord>().WithMany().HasForeignKey(row => row.SourceDeviceId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<DeviceRecord>().WithMany().HasForeignKey(row => row.TargetDeviceId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(row => row.TargetDeviceId);
+        });
+        modelBuilder.Entity<RatchetBindingRequest>(entity =>
+        {
+            entity.ToTable("ratchet_binding_requests");
+            entity.HasKey(row => new { row.SourceDeviceId, row.TargetDeviceId });
+            entity.Property(row => row.SourceDeviceId).HasMaxLength(64);
+            entity.Property(row => row.TargetDeviceId).HasMaxLength(64);
+            entity.HasOne<DeviceRecord>().WithMany().HasForeignKey(row => row.SourceDeviceId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<DeviceRecord>().WithMany().HasForeignKey(row => row.TargetDeviceId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(row => new { row.TargetDeviceId, row.RequestedAt });
         });
         modelBuilder.Entity<RatchetPilotPreKey>(entity =>
         {

@@ -899,11 +899,69 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.ToTable("push_tokens", "public");
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.RatchetBindingRequest", b =>
+                {
+                    b.Property<string>("SourceDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("TargetDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("SourceDeviceId", "TargetDeviceId");
+
+                    b.HasIndex("TargetDeviceId", "RequestedAt");
+
+                    b.ToTable("ratchet_binding_requests", "public");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.RatchetDeviceBinding", b =>
+                {
+                    b.Property<string>("SourceDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("TargetDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("Ciphertext")
+                        .IsRequired()
+                        .HasMaxLength(16384)
+                        .HasColumnType("character varying(16384)");
+
+                    b.Property<string>("Header")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)");
+
+                    b.Property<string>("TargetIdentity")
+                        .IsRequired()
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("SourceDeviceId", "TargetDeviceId");
+
+                    b.HasIndex("TargetDeviceId");
+
+                    b.ToTable("ratchet_device_bindings", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.RatchetPilotDevice", b =>
                 {
                     b.Property<string>("DeviceId")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<int>("AddressMode")
+                        .HasColumnType("integer");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -930,7 +988,8 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasKey("DeviceId");
 
                     b.HasIndex("UserId", "SignalDeviceNumber")
-                        .IsUnique();
+                        .IsUnique()
+                        .HasFilter("\"AddressMode\" = 0");
 
                     b.ToTable("ratchet_pilot_devices", "public", t =>
                         {
@@ -1994,6 +2053,36 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.UserAccount", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.RatchetBindingRequest", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.DeviceRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SourceDeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nivra.Api.Domain.DeviceRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TargetDeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.RatchetDeviceBinding", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.DeviceRecord", null)
+                        .WithMany()
+                        .HasForeignKey("SourceDeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nivra.Api.Domain.DeviceRecord", null)
+                        .WithMany()
+                        .HasForeignKey("TargetDeviceId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

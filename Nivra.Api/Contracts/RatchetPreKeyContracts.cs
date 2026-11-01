@@ -15,3 +15,15 @@ public sealed record RatchetPublishRequest(List<RatchetPublicBundle> Bundles);
 public sealed record RatchetReserveRequest(string ConversationId, Guid RequestId);
 
 public sealed record RatchetPreKeyReservation(string DeviceId, Guid RequestId, RatchetPublicBundle Bundle);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record RatchetDeviceIdsRequest(List<string> DeviceIds);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record RatchetBindingUpload(string TargetDeviceId, string TargetIdentity, string Header, string Ciphertext);
+
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+public sealed record RatchetBindingUploadRequest(List<RatchetBindingUpload> Bindings);
+
+public sealed record RatchetDirectoryEntry(string UserId, string DeviceId, int SignalDeviceNumber, int RegistrationId, string IdentityKey,
+    string? BindingHeader, string? BindingCiphertext);

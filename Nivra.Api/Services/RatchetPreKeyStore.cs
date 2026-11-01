@@ -37,7 +37,7 @@ public sealed class RatchetPreKeyStore(NivraDbContext db, TimeProvider clock)
             bytes.Skip(prefix.HasValue ? 1 : 0).Any(part => part != 0);
     }
 
-    public async Task<int> PublishAsync(string userId, string deviceId, IReadOnlyList<RatchetPublicBundle>? bundles, CancellationToken ct)
+    public async Task<int> PublishAsync(string userId, string deviceId, IReadOnlyList<RatchetPublicBundle>? bundles, CancellationToken ct, bool deviceAddresses = false)
     {
         RequirePostgres();
         if (bundles is null || bundles.Count is < 1 or > 64 || bundles.Any(bundle => !IsValidBundle(bundle)) ||
@@ -56,14 +56,14 @@ public sealed class RatchetPreKeyStore(NivraDbContext db, TimeProvider clock)
                 var registration = await db.Set<RatchetPilotDevice>().SingleOrDefaultAsync(row => row.DeviceId == deviceId, ct);
                 if (registration is null)
                 {
-                    if (await db.Set<RatchetPilotDevice>().AnyAsync(row => row.UserId == userId && row.SignalDeviceNumber == first.DeviceId, ct))
+                    if (!deviceAddresses && await db.Set<RatchetPilotDevice>().AnyAsync(row => row.UserId == userId && row.AddressMode == 0 && row.SignalDeviceNumber == first.DeviceId, ct))
                         throw Reject("ratchet_device_number_taken");
                     registration = new RatchetPilotDevice { DeviceId = deviceId, UserId = userId, IdentityKey = first.IdentityKey,
-                        SignalDeviceNumber = first.DeviceId, RegistrationId = first.RegistrationId, CreatedAt = clock.GetUtcNow() };
+                        SignalDeviceNumber = first.DeviceId, RegistrationId = first.RegistrationId, AddressMode = deviceAddresses ? 1 : 0, CreatedAt = clock.GetUtcNow() };
                     db.Add(registration);
                 }
                 else if (registration.UserId != userId || registration.IdentityKey != first.IdentityKey ||
-                    registration.SignalDeviceNumber != first.DeviceId || registration.RegistrationId != first.RegistrationId)
+                    registration.SignalDeviceNumber != first.DeviceId || registration.RegistrationId != first.RegistrationId || registration.AddressMode != (deviceAddresses ? 1 : 0))
                     throw Reject("ratchet_identity_change_requires_verification");
 
                 var ids = bundles.Select(bundle => (long)bundle.PreKeyId).ToArray();
@@ -82,9 +82,14 @@ public sealed class RatchetPreKeyStore(NivraDbContext db, TimeProvider clock)
                     db.Add(new RatchetPilotPreKey { DeviceId = deviceId, PreKeyId = bundle.PreKeyId, BundleJson = encoded, BundleHash = digest, CreatedAt = clock.GetUtcNow() });
                     added++;
                 }
+                if (deviceAddresses)
+                {
+                    var retention = clock.GetUtcNow().AddDays(-30);
+                    await db.Set<RatchetPilotPreKey>().Where(row => row.DeviceId == deviceId && row.ClaimedAt < retention).ExecuteDeleteAsync(ct);
+                }
                 var stored = await db.Set<RatchetPilotPreKey>().Where(row => row.DeviceId == deviceId).CountAsync(ct);
                 var available = await db.Set<RatchetPilotPreKey>().Where(row => row.DeviceId == deviceId && row.ClaimRequestId == null).CountAsync(ct);
-                if (stored + added > 1024 || available + added > 256) throw Reject("prekey_storage_limit", 429);
+                if (stored + added > (deviceAddresses ? 8192 : 1024) || available + added > 256) throw Reject("prekey_storage_limit", 429);
                 registration.HighWatermark = Math.Max(registration.HighWatermark, bundles.Max(bundle => (long)bundle.PreKeyId));
                 await db.SaveChangesAsync(ct);
                 await transaction.CommitAsync(ct);
@@ -98,7 +103,7 @@ public sealed class RatchetPreKeyStore(NivraDbContext db, TimeProvider clock)
         finally { db.ChangeTracker.Clear(); }
     }
 
-    public async Task<RatchetPreKeyReservation?> ReserveAsync(string userId, string deviceId, string targetDeviceId, string conversationId, Guid requestId, CancellationToken ct)
+    public async Task<RatchetPreKeyReservation?> ReserveAsync(string userId, string deviceId, string targetDeviceId, string conversationId, Guid requestId, CancellationToken ct, bool deviceAddresses = false)
     {
         RequirePostgres();
         if (!ValidId(targetDeviceId) || !ValidId(conversationId) || requestId == Guid.Empty || targetDeviceId == deviceId) throw Reject("invalid_prekey_reservation", 400);
@@ -110,12 +115,15 @@ public sealed class RatchetPreKeyStore(NivraDbContext db, TimeProvider clock)
                 // same-request retries atomic, without depending on process memory.
                 await using var transaction = await CallCoordination.LockAsync(db, $"ratchet-reserve:{deviceId}", ct);
                 await RequireDeviceAsync(userId, deviceId, ct);
+                if (deviceAddresses && (!await db.Set<RatchetPilotDevice>().AnyAsync(row => row.DeviceId == deviceId && row.AddressMode == 1, ct)
+                    || !await db.Set<RatchetPilotDevice>().AnyAsync(row => row.DeviceId == targetDeviceId && row.AddressMode == 1, ct))) throw Reject("ratchet_registration_required", 409);
                 var target = await db.Devices.AsNoTracking().SingleOrDefaultAsync(row => row.Id == targetDeviceId && row.RevokedAt == null && row.IsTrusted, ct);
                 if (target is null || !await db.Users.AnyAsync(user => user.Id == target.UserId && user.DisabledAt == null, ct)) throw Reject("ratchet_device_unavailable", 404);
                 var allowed = await db.Conversations.AnyAsync(conversation => conversation.Id == conversationId &&
                     conversation.Participants.Any(peer => peer.UserId == userId && peer.RemovedAt == null) &&
                     conversation.Participants.Any(peer => peer.UserId == target.UserId && peer.RemovedAt == null), ct);
-                if (!allowed || await db.Set<ContactBlockRecord>().AnyAsync(block =>
+                var sharedGroup = deviceAddresses && await db.Conversations.AnyAsync(chat => chat.Id == conversationId && chat.Type == ConversationType.Group, ct);
+                if (!allowed || !sharedGroup && await db.Set<ContactBlockRecord>().AnyAsync(block =>
                     block.OwnerUserId == userId && block.ContactUserId == target.UserId || block.OwnerUserId == target.UserId && block.ContactUserId == userId, ct))
                     throw Reject("prekey_conversation_forbidden", 403);
 
@@ -127,7 +135,7 @@ public sealed class RatchetPreKeyStore(NivraDbContext db, TimeProvider clock)
                     return Reservation(previous, requestId);
                 }
                 var since = clock.GetUtcNow().AddHours(-1);
-                if (await db.Set<RatchetPilotPreKey>().CountAsync(row => row.ClaimantDeviceId == deviceId && row.ClaimedAt >= since, ct) >= 32)
+                if (await db.Set<RatchetPilotPreKey>().CountAsync(row => row.ClaimantDeviceId == deviceId && row.ClaimedAt >= since, ct) >= (deviceAddresses ? 512 : 32))
                     throw Reject("prekey_claim_limit", 429);
 
                 var candidates = await db.Set<RatchetPilotPreKey>().FromSqlInterpolated($"""

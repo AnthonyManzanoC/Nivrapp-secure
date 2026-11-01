@@ -45,6 +45,7 @@ import { ForegroundSyncRecovery } from './foreground-sync-recovery';
 import { uniqueCallSummaries, validatedCallSummary } from './call-summary.helpers';
 import { identityDisplayName, isNivraIdAccount } from '../utils/nivra-identity';
 import { TextOutboxService } from './text-outbox.service';
+import { RatchetMessagingService, RatchetTarget } from './ratchet-messaging.service';
 
 const MAX_ATTACHMENT_BYTES = E2EE_UPLOAD_LIMIT_BYTES;
 const LARGE_ATTACHMENT_CHUNK_THRESHOLD_BYTES = 50 * 1024 * 1024;
@@ -141,6 +142,7 @@ export class ChatService implements OnDestroy {
   readonly privateChats = inject(PrivateChatLockService);
   private readonly identityTrust = inject(IdentityTrustService);
   private readonly crypto = inject(CryptoService);
+  private readonly ratchet = inject(RatchetMessagingService);
   private readonly history = inject(LocalHistoryService);
   private readonly launchCache = inject(ChatLaunchCacheService);
   private readonly mediaOptimizer = inject(MediaOptimizerService);
@@ -1284,15 +1286,22 @@ export class ChatService implements OnDestroy {
     }
     const outgoingPayload = validatedCallSummary(options.clientMessageId, this.normalizeOutgoingPayload(conversation, payload), conversation.id);
     if (!outgoingPayload) throw new Error('El resumen de llamada no es válido.');
+    const clientMessageId = options.clientMessageId ?? `web-${crypto.randomUUID()}`;
+    const alreadySent = this.ratchet ? await bounded(this.ratchet.confirmed(conversation.id, clientMessageId)) : null;
+    if (alreadySent) {
+      this.assertSendContext(context); requireAccess();
+      if (!options.suppressLocalMessage) await this.ingestMessage(alreadySent, false);
+      return alreadySent;
+    }
     const wirePayload = this.withUniformMessagePadding(outgoingPayload);
-    const recipients = await bounded(this.encryptedRecipients(conversation, wirePayload, fileObjectId, context));
+    const recipients = await bounded(this.encryptedRecipients(conversation, wirePayload, fileObjectId, context, clientMessageId));
     this.assertSendContext(context);
     requireAccess();
     if (!recipients.length) {
       throw new Error('No hay llaves publicas disponibles para enviar.');
     }
     const request = {
-      clientMessageId: options.clientMessageId ?? `web-${crypto.randomUUID()}`,
+      clientMessageId,
       // El tipo funcional vive dentro del payload E2EE; el transporte usa una
       // categoria uniforme para no revelar si es texto, audio, archivo o control.
       kind: options.clientMessageId?.startsWith('call-summary:') ? 'System' : 'Text',
@@ -1322,6 +1331,7 @@ export class ChatService implements OnDestroy {
       response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
     }
     this.assertSendContext(context);
+    await this.ratchet?.confirmSent(response, outgoingPayload);
     if (options.queueManaged && historyGeneration !== this.historyGeneration(conversation.id)) return response;
     if (!options.suppressLocalMessage) {
       if (options.clientMessageId?.startsWith('call-summary:') && response.senderUserId !== context.userId) await this.ingestMessage(response, false);
@@ -2151,6 +2161,7 @@ export class ChatService implements OnDestroy {
         current.user.alias,
         current.device.id,
         recipients,
+        message,
       );
       if (decrypted) {
         payload = decrypted;
@@ -2451,7 +2462,15 @@ export class ChatService implements OnDestroy {
     alias: string,
     deviceId: string,
     recipients: RecipientCipherRequest[],
+    message?: MessageResponse,
   ): Promise<ChatPayload | null> {
+    if (message && this.ratchet) {
+      const recipient = recipients.find(item => item.deviceId === deviceId && this.ratchet.isEnvelope(item.header));
+      if (recipient) {
+        try { return await this.ratchet.decrypt(message, recipient); }
+        catch { return null; } // Never reinterpret a ratchet envelope as legacy ciphertext.
+      }
+    }
     const own = await this.crypto.currentKeyMaterial(alias, deviceId);
     // The habitual device can read its current envelopes immediately. Do not
     // scan every historical key, or depend on that scan, for normal delivery.
@@ -4753,6 +4772,7 @@ export class ChatService implements OnDestroy {
     payload: ChatPayload,
     fileObjectId: string | null = null,
     context?: ChatSendContext,
+    clientMessageId?: string,
   ): Promise<RecipientCipherRequest[]> {
     const own = await this.auth.ensureDeviceIdentity();
     const current = this.auth.session();
@@ -4799,6 +4819,20 @@ export class ChatService implements OnDestroy {
       directories.set(participant.userId, deliveryDirectory);
       if (!this.isGroupConversation(conversation) && participant.userId !== current.user.id) await this.identityTrust.check(JSON.stringify([current.user.id,current.device.id]), deliveryDirectory);
       this.assertSendContext(sendContext);
+    }
+
+    if (clientMessageId && this.ratchet) {
+      const targets: RatchetTarget[] = [];
+      for (const participant of activeParticipants) {
+        for (const device of directories.get(participant.userId)?.devices ?? []) {
+          const publicJwk = this.crypto.parsePublicJwk(device.keyBundle?.identityKey);
+          if (device.deviceId && publicJwk) targets.push({ userId: participant.userId, deviceId: device.deviceId, publicJwk });
+        }
+      }
+      if (!targets.some(target => target.userId === current.user.id && target.deviceId === current.device.id)) targets.push({ userId: current.user.id, deviceId: current.device.id, publicJwk: own.publicJwk });
+      const sealed = await this.ratchet.encrypt(conversation.id, clientMessageId, payload, targets, fileObjectId);
+      this.assertSendContext(sendContext);
+      if (sealed) return sealed;
     }
 
     for (const participant of activeParticipants) {

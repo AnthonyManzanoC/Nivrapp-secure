@@ -312,6 +312,7 @@ export class SignalrService implements OnDestroy {
       'broadcast.updated',
       'history.requested',
       'history.available',
+      'ratchet.binding.requested',
     ].forEach((eventName) => connection.on(eventName, forward(eventName)));
 
     connection.onreconnecting(error => {
@@ -389,6 +390,7 @@ export class SignalrService implements OnDestroy {
       'broadcast.updated',
       'history.requested',
       'history.available',
+      'ratchet.binding.requested',
     ].forEach((eventName) => connection.off(eventName));
   }
 

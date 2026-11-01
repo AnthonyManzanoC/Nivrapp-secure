@@ -23,10 +23,11 @@ if (connection.Host is not ("127.0.0.1" or "localhost") || connection.Database !
 var json = new JsonSerializerOptions(JsonSerializerDefaults.Web);
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions { EnvironmentName = "Testing" });
 builder.Configuration.Sources.Clear();
-builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Ratchet:PreKeyPilotEnabled"] = "true" });
+builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?> { ["Ratchet:PreKeyPilotEnabled"] = "true", ["Ratchet:Enabled"] = "true" });
 builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
 builder.Services.AddDbContext<NivraDbContext>(options => options.UseNpgsql(connection.ConnectionString, provider => provider.EnableRetryOnFailure(3)));
 builder.Services.AddScoped<INivraStore, PgSqlNivraStore>(); builder.Services.AddScoped<RatchetPreKeyStore>();
+builder.Services.AddScoped<RatchetDirectoryService>(); builder.Services.AddSignalR();
 builder.Services.AddSingleton(TimeProvider.System); builder.Services.AddSingleton<TokenService>();
 builder.Services.Configure<NivraSecurityOptions>(options => options.TokenSigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
 await using var app = builder.Build();
@@ -37,7 +38,7 @@ app.UseExceptionHandler(handler => handler.Run(context =>
     context.Response.StatusCode = 500;
     return context.Response.WriteAsJsonAsync(new { code = "synthetic_test_failure" });
 }));
-app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.MapRatchetPreKeyPilotEndpoints();
+app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints();
 var tokens = new Dictionary<string, string>();
 await using (var scope = app.Services.CreateAsyncScope())
 {
@@ -52,7 +53,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     {
         var user = new UserAccount { Id = "usr-lab-" + name, Alias = "lab-" + name, PasswordHash = new("fixture", 1, "fixture", "fixture"), CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow };
         db.Users.Add(user); await db.SaveChangesAsync();
-        foreach (var suffix in name is "alice" or "bob" ? new[] { "", "-real" } : new[] { "" })
+        foreach (var suffix in name is "alice" or "bob" ? new[] { "", "-real", "-client", "-client-two" } : new[] { "" })
         {
             var device = new DeviceRecord { Id = "dev-lab-" + name + suffix, UserId = user.Id, Name = "Synthetic fixture", IsTrusted = true, CreatedAt = DateTimeOffset.UtcNow };
             db.Devices.Add(device); await db.SaveChangesAsync();
@@ -134,6 +135,32 @@ await Mutate(async db => (await db.Devices.SingleAsync(row => row.Id == "dev-lab
 for (var i = 13; i < 32; i++) await Claim("alice", Guid.NewGuid());
 await Status("alice", "/experimental/ratchet/devices/dev-lab-bob/prekey", new RatchetReserveRequest("chat-lab", Guid.NewGuid()), HttpStatusCode.TooManyRequests, "database-backed claim quota enforced");
 Check((await Claim("alice", requestId)).Bundle.PreKeyId == repeated[0].Bundle.PreKeyId, "exact retry succeeds without consuming quota");
+// Production addresses use the actual device id, so multiple devices in one
+// account can each use libsignal device number 1 without sharing private state.
+await Status("alice-client", "/ratchet/prekeys", new RatchetPublishRequest([Bundle(1)]), HttpStatusCode.OK, "client device registers independent address");
+await Status("alice-client-two", "/ratchet/prekeys", new RatchetPublishRequest([Bundle(1)]), HttpStatusCode.OK, "second same-account client can use number one");
+await Status("bob-client", "/ratchet/prekeys", new RatchetPublishRequest([Bundle(1)]), HttpStatusCode.OK, "recipient client publishes prekey");
+await Status("bob-client", "/ratchet/prekeys", new RatchetPublishRequest([Bundle(2) with { DeviceId = 2 }]), HttpStatusCode.BadRequest, "client rejects account-slot addressing");
+await Status("alice-client", "/ratchet/devices/dev-lab-bob-client/prekey", new RatchetReserveRequest("chat-lab", Guid.NewGuid()), HttpStatusCode.OK, "client reserves real-device-address prekey");
+await Status("alice-client", "/ratchet/devices/dev-lab-bob-client/prekey", new RatchetReserveRequest("chat-lab", Guid.NewGuid()), HttpStatusCode.ServiceUnavailable, "exhausted client prekeys queue without legacy fallback");
+await Status("alice-client", "/ratchet/directory", new RatchetDeviceIdsRequest(["dev-lab-bob-client"]), HttpStatusCode.OK, "authenticated client capability directory");
+await Status(null, "/ratchet/directory", new RatchetDeviceIdsRequest(["dev-lab-bob-client"]), HttpStatusCode.Unauthorized, "anonymous client directory denied");
+await Status("alice-client", "/ratchet/directory", new { deviceIds = new[] { "dev-lab-bob-client" }, privateState = "reject" }, HttpStatusCode.BadRequest, "client directory rejects unknown fields");
+using var legacyAlice = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+using var legacyBob = ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256);
+string Legacy(ECDiffieHellman key) { var point = key.ExportParameters(false).Q; string Part(byte[] bytes) => Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_'); return JsonSerializer.Serialize(new { kty = "EC", crv = "P-256", x = Part(point.X!), y = Part(point.Y!) }); }
+var aliceLegacy = Legacy(legacyAlice); var bobLegacy = Legacy(legacyBob);
+await Mutate(async db => { (await db.Devices.SingleAsync(row => row.Id == "dev-lab-alice-client")).KeyBundle.IdentityKey = aliceLegacy; (await db.Devices.SingleAsync(row => row.Id == "dev-lab-bob-client")).KeyBundle.IdentityKey = bobLegacy; });
+await Status("alice-client", "/ratchet/bindings/request", new RatchetDeviceIdsRequest(["dev-lab-bob-client"]), HttpStatusCode.NoContent, "client requests legacy-identity continuity proof");
+var sealedHeader = JsonSerializer.Serialize(new { v = 1, alg = "ECDH-P256-A256GCM", senderPublicKey = JsonSerializer.Deserialize<JsonElement>(bobLegacy), iv = Public(12) });
+var binding = new RatchetBindingUpload("dev-lab-alice-client", RatchetDirectoryService.Coordinates(aliceLegacy)!, sealedHeader, Public(96));
+await Status("bob-client", "/ratchet/bindings", new RatchetBindingUploadRequest([binding]), HttpStatusCode.NoContent, "producer stores recipient-specific opaque continuity proof");
+using (var forAlice = await Post("alice-client", "/ratchet/directory", new RatchetDeviceIdsRequest(["dev-lab-bob-client"])))
+    Check((await forAlice.Content.ReadFromJsonAsync<List<RatchetDirectoryEntry>>(json))!.Single().BindingCiphertext == binding.Ciphertext, "binding is delivered only to intended requester");
+using (var forOther = await Post("alice-client-two", "/ratchet/directory", new RatchetDeviceIdsRequest(["dev-lab-bob-client"])))
+    Check((await forOther.Content.ReadFromJsonAsync<List<RatchetDirectoryEntry>>(json))!.Single().BindingCiphertext is null, "another same-account device cannot obtain target proof");
+await Status("bob-client", "/ratchet/bindings", new RatchetBindingUploadRequest([binding with { TargetIdentity = "changed" }]), HttpStatusCode.Conflict, "binding cannot target replaced legacy identity");
+await Status("bob-client", "/ratchet/bindings", new RatchetBindingUploadRequest([binding with { Header = sealedHeader.Replace(bobLegacy, aliceLegacy) }]), HttpStatusCode.BadRequest, "binding header must match producer identity");
 Console.WriteLine($"PASS {checks} PostgreSQL and HTTP ratchet checks");
 if (args.Contains("--serve-for-interop"))
 {

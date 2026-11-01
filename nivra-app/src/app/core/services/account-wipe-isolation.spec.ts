@@ -63,7 +63,7 @@ describe('account wipe storage isolation', () => {
       { account_key: 'user%_a' }, { account_key: 'user-any-a' }, { account_key: 'bob' },
     ] }), run });
     await history.wipeAccountData('user%_a');
-    expect(run).toHaveBeenCalledTimes(6);
+    expect(run).toHaveBeenCalledTimes(7);
     for (const call of run.calls.allArgs()) { expect(call[0]).toContain('WHERE account_key = ?'); expect(call[1]).toEqual(['user%_a']); }
     expect(clearSecret).not.toHaveBeenCalled();
   });

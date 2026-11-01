@@ -43,13 +43,13 @@ public static class RatchetPreKeyEndpoints
         });
     }
 
-    private static IResult Failure(HttpContext http, RatchetPreKeyException error)
+    internal static IResult Failure(HttpContext http, RatchetPreKeyException error)
     {
         if (error.Status == 429) http.Response.Headers.RetryAfter = "60";
         return Results.Json(new { code = error.Code }, statusCode: error.Status);
     }
 
-    private static async Task<T> ReadBody<T>(HttpRequest request, int limit, CancellationToken ct)
+    internal static async Task<T> ReadBody<T>(HttpRequest request, int limit, CancellationToken ct)
     {
         if (request.ContentLength.HasValue && request.ContentLength.Value > limit) throw new RatchetPreKeyException("prekey_request_too_large", 413);
         using var body = new MemoryStream();

@@ -2,6 +2,35 @@ use super::*;
 use libsignal_protocol::{SessionRecord, SessionStore};
 use std::collections::BTreeSet;
 
+impl RatchetDevice {
+    /// Each bridge-generated EC/signed/PQ tuple has one id. Once its one-time
+    /// EC key is consumed, erase the associated private bootstrap keys too.
+    /// The outer checkpoint restores all of them if payload authentication fails.
+    async fn prune_consumed_prekeys(&mut self) -> Result<(), JsValue> {
+        let active: BTreeSet<u32> = self.store.all_pre_key_ids().map(|id| (*id).into()).collect();
+        let mut signed = libsignal_protocol::InMemSignedPreKeyStore::new();
+        for id in self.store.all_signed_pre_key_ids() {
+            if active.contains(&u32::from(*id)) {
+                signed.save_signed_pre_key(*id, &self.store.signed_pre_key_store.get_signed_pre_key(*id).await.map_err(|_| error("Signed prekey read failed"))?).await.map_err(|_| error("Signed prekey retention failed"))?;
+            }
+        }
+        let mut kyber = TrackedKyber::default();
+        for id in self.kyber.inner.all_kyber_pre_key_ids() {
+            if active.contains(&u32::from(*id)) {
+                kyber.save_kyber_pre_key(*id, &self.kyber.get_kyber_pre_key(*id).await.map_err(|_| error("PQ prekey read failed"))?).await.map_err(|_| error("PQ prekey retention failed"))?;
+            }
+        }
+        for used in &self.kyber.used {
+            if active.contains(&used.kyber) {
+                let base = PublicKey::deserialize(&binary(&used.base, 33)?).map_err(|_| error("Invalid replay gate"))?;
+                kyber.mark_kyber_pre_key_used(used.kyber.into(), used.signed.into(), &base).await.map_err(|_| error("Replay gate retention failed"))?;
+            }
+        }
+        self.store.signed_pre_key_store = signed; self.kyber = kyber;
+        Ok(())
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Peer { name: String, device: u32, identity: String, session: Option<String> }
@@ -54,8 +83,8 @@ impl RatchetDevice {
     pub async fn restore_private_state(name: String, device: u32, encoded: String) -> Result<RatchetDevice, JsValue> {
         if encoded.len() > 32 * 1024 * 1024 { return Err(error("State exceeds pilot storage limit")); }
         let state: State = serde_json::from_str(&encoded).map_err(|_| error("Invalid stored state schema"))?;
-        if state.v != 1 || state.name != name || state.device != device || state.counter > 256
-            || state.peers.len() > 512 || state.prekeys.len() > 256 || state.signed.len() > 256 || state.kyber.len() > 256 || state.used.len() > 4096 {
+        if state.v != 1 || state.name != name || state.device != device
+            || state.peers.len() > 512 || state.prekeys.len() > 2048 || state.signed.len() > 2048 || state.kyber.len() > 2048 || state.used.len() > 4096 {
             return Err(error("Stored state scope or limits mismatch"));
         }
         check_ids(&state.prekeys, state.counter)?; check_ids(&state.signed, state.counter)?; check_ids(&state.kyber, state.counter)?;

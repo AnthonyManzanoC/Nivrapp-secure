@@ -65,6 +65,7 @@ public static partial class EndpointExtensions
         app.MapProfileEndpoints();
         app.MapDeviceAndKeyEndpoints();
         app.MapRatchetPreKeyPilotEndpoints();
+        app.MapRatchetClientEndpoints();
         app.MapHistoryKeyTransferEndpoints();
         app.MapContactEndpoints();
         app.MapContactBlockEndpoints();
