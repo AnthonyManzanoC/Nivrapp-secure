@@ -313,10 +313,10 @@ export class HistoryDeviceSyncService implements OnDestroy {
       if (this.evidenceSenderKey(recipient.header, recipient.ciphertext)) return true;
       try {
         const header = JSON.parse(recipient.header || '{}');
-        if (header.v !== 4 || header.alg !== 'NIVRA-LIBSIGNAL-MESSAGE-1' || header.recipientDeviceId !== recipient.deviceId) return false;
+        if (header.v !== 4 || header.alg !== 'NIVRA-HYBRID-RATCHET-MESSAGE-1' || header.recipientDeviceId !== recipient.deviceId) return false;
         if (header.local) return header.senderDeviceId === recipient.deviceId && recipient.ciphertext === 'local-history-v1';
         const packet = JSON.parse(recipient.ciphertext);
-        return packet.v === 3 && packet.suite === 'NIVRA-LIBSIGNAL-A256GCM-PILOT-1' && packet.context?.conversationId === message.conversationId;
+        return packet.v === 3 && packet.suite === 'NIVRA-PQXDH-MLKEM768-A256GCM-1' && packet.context?.conversationId === message.conversationId;
       } catch { return false; }
     });
   }

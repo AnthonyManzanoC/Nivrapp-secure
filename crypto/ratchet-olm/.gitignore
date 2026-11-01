@@ -1,3 +1,4 @@
 /target/
 /pkg/
 /dependency-metadata.json
+/node_modules/

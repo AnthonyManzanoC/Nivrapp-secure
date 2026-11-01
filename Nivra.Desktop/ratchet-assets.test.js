@@ -8,7 +8,7 @@ test('ratchet asset protocol grants module loading without disabling renderer se
   assert.equal(schemes[0].scheme, 'nivra-crypto'); assert.equal(schemes[0].privileges.secure, true); assert.equal(schemes[0].privileges.bypassCSP, undefined);
 });
 test('ratchet protocol never exposes arbitrary paths, remote hosts or private state', async () => {
-  const handler = createRatchetAssetHandler(path.resolve(__dirname, '../crypto/ratchet-wasm'));
+  const handler = createRatchetAssetHandler(path.resolve(__dirname, '../crypto/ratchet-common'));
   const result = await handler(new Request('nivra-crypto://app/web-device.mjs'));
   assert.equal(result.status, 200); assert.match(result.headers.get('content-type'), /javascript/);
   assert.match(await result.text(), /class LabWebDevice/);

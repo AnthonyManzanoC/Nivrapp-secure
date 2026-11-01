@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { LabWebDevice } from '../../ratchet-wasm/web-device.mjs';
+import { ml_kem768 } from '@noble/post-quantum/ml-kem.js';
 const bridge = createRequire(import.meta.url)('../pkg/node/nivra_ratchet_olm.js');
 function memory() {
   const rows = new Map();
@@ -10,6 +11,18 @@ function memory() {
   } };
 }
 const context = messageId => ({ conversationId: 'olm-chat', messageId });
+test('ML-KEM-768 matches the independent noble implementation for seeded keys, ciphertexts and shared secrets', () => {
+  for (let vector = 0; vector < 8; vector++) {
+    const seed = Uint8Array.from({ length: 64 }, (_, index) => (index * 7 + vector * 31) & 255);
+    const entropy = Uint8Array.from({ length: 32 }, (_, index) => (index * 11 + vector * 17) & 255);
+    const actual = JSON.parse(bridge.mlKemVector(seed, entropy)), reference = ml_kem768.keygen(seed), encapsulated = ml_kem768.encapsulate(reference.publicKey, entropy);
+    assert.equal(actual.publicKey, Buffer.from(reference.publicKey).toString('base64'));
+    assert.equal(actual.cipherText, Buffer.from(encapsulated.cipherText).toString('base64'));
+    assert.equal(actual.sharedSecret, Buffer.from(encapsulated.sharedSecret).toString('base64'));
+    assert.deepEqual(ml_kem768.decapsulate(encapsulated.cipherText, reference.secretKey), encapsulated.sharedSecret);
+    reference.secretKey.fill(0); encapsulated.sharedSecret.fill(0);
+  }
+});
 async function pair(storage = memory()) {
   const alice = await LabWebDevice.open(bridge, 'olm-alice', 1, storage, { createIfMissing: true });
   const bob = await LabWebDevice.open(bridge, 'olm-bob', 1, storage, { createIfMissing: true });
@@ -80,5 +93,18 @@ test('one-time private keys replenish beyond 256 initiations without automatic e
     }
     assert.equal((await bob.bundle()).preKeyId, 261);
     assert.equal((await bob.pendingBundles()).length, 1);
+  } finally { await alice.close(); await bob.close(); }
+});
+test('consumed private prekeys and uncertain publication metadata disappear only after a durable authenticated delivery', async () => {
+  let { alice, bob, storage } = await pair();
+  try {
+    const bundle = await bob.bundle(); assert.equal((await bob.pendingBundles()).length, 1);
+    await alice.establish(bob.address, bundle);
+    const envelope = await alice.encrypt(bob.address, context('consumed'), { text: 'durable' });
+    assert.deepEqual(await bob.decrypt(alice.address, context('consumed'), envelope), { text: 'durable' });
+    assert.equal((await bob.pendingBundles()).length, 0); assert.deepEqual(await bob.pendingConsumedPreKeys(), [bundle.preKeyId]);
+    await bob.close(); bob = await LabWebDevice.open(bridge, 'olm-bob', 1, storage);
+    assert.deepEqual(await bob.pendingConsumedPreKeys(), [bundle.preKeyId]);
+    await bob.acknowledgeConsumedPreKeys([bundle.preKeyId]); assert.deepEqual(await bob.pendingConsumedPreKeys(), []);
   } finally { await alice.close(); await bob.close(); }
 });

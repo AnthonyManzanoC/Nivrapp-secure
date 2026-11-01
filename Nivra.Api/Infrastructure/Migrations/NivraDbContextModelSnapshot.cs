@@ -1029,8 +1029,8 @@ namespace Nivra.Api.Infrastructure.Migrations
 
                     b.Property<string>("IdentityKey")
                         .IsRequired()
-                        .HasMaxLength(44)
-                        .HasColumnType("character varying(44)");
+                        .HasMaxLength(128)
+                        .HasColumnType("character varying(128)");
 
                     b.Property<int>("RegistrationId")
                         .HasColumnType("integer");

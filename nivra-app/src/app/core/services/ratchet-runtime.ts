@@ -22,6 +22,8 @@ export interface RatchetDeviceRuntime {
   bundle(): Promise<RatchetBundle>;
   pendingBundles(): Promise<RatchetBundle[]>;
   acknowledgeBundles(ids: number[]): Promise<void>;
+  pendingConsumedPreKeys(): Promise<number[]>;
+  acknowledgeConsumedPreKeys(ids: number[]): Promise<void>;
   hasSession(peer: RatchetAddress): Promise<boolean>;
   pinIdentity(peer: RatchetAddress, publicKey: Uint8Array, state?: unknown): Promise<void>;
   establish(peer: RatchetAddress, bundle: RatchetBundle): Promise<void>;
@@ -39,11 +41,12 @@ export type RatchetRuntimeFactory = (name: string, storage: RatchetStorage, crea
 
 let loaded: Promise<{ bridge: unknown; Device: { open: (...args: unknown[]) => Promise<RatchetDeviceRuntime> } }> | undefined;
 export const openRatchetRuntime: RatchetRuntimeFactory = async (name, storage, create) => {
-  if (!environment.ratchetLaboratory) throw Error('El motor de cifrado avanzado está disponible solo en pruebas hasta completar su sustitución.');
+  if (!environment.ratchetEnabled) throw Error('El cifrado avanzado no está disponible en esta compilación.');
   loaded ??= (async () => {
     const root = location.protocol === 'file:' ? new URL('nivra-crypto://app/') : new URL('assets/ratchet/', document.baseURI);
-    const bridge = await import(/* webpackIgnore: true */ new URL('pkg/nivra_ratchet_wasm.js', root).href);
-    await bridge.default({ module_or_path: new URL('pkg/nivra_ratchet_wasm_bg.wasm', root) });
+    const bridge = await import(/* webpackIgnore: true */ new URL('pkg/nivra_ratchet_olm.js', root).href);
+    await bridge.default({ module_or_path: new URL('pkg/nivra_ratchet_olm_bg.wasm', root) });
+    if (bridge.protocolSuite() !== 'NIVRA-PQXDH-MLKEM768-A256GCM-1' || bridge.bridgeVersion() !== 'NIVRA-HYBRID-WASM-1') throw Error('La versión del motor cifrado no coincide. Actualiza Nivra antes de continuar.');
     const wrapper = await import(/* webpackIgnore: true */ new URL('web-device.mjs', root).href);
     return { bridge, Device: wrapper.LabWebDevice };
   })().catch(error => { loaded = undefined; throw error; });

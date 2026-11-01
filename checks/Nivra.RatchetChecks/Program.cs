@@ -38,7 +38,7 @@ app.UseExceptionHandler(handler => handler.Run(context =>
     context.Response.StatusCode = 500;
     return context.Response.WriteAsJsonAsync(new { code = "synthetic_test_failure" });
 }));
-app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapHistoryArchiveEndpoints();
+app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapRatchetHybridEndpoints(); app.MapHistoryArchiveEndpoints();
 var tokens = new Dictionary<string, string>();
 await using (var scope = app.Services.CreateAsyncScope())
 {
@@ -53,7 +53,7 @@ await using (var scope = app.Services.CreateAsyncScope())
     {
         var user = new UserAccount { Id = "usr-lab-" + name, Alias = "lab-" + name, PasswordHash = new("fixture", 1, "fixture", "fixture"), CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow };
         db.Users.Add(user); await db.SaveChangesAsync();
-        foreach (var suffix in name is "alice" or "bob" ? new[] { "", "-real", "-client", "-client-two" } : new[] { "" })
+        foreach (var suffix in name is "alice" or "bob" ? new[] { "", "-real", "-client", "-client-two", "-hybrid" } : new[] { "" })
         {
             var device = new DeviceRecord { Id = "dev-lab-" + name + suffix, UserId = user.Id, Name = "Synthetic fixture", IsTrusted = true, CreatedAt = DateTimeOffset.UtcNow };
             db.Devices.Add(device); await db.SaveChangesAsync();
@@ -72,7 +72,7 @@ await using (var scope = app.Services.CreateAsyncScope())
 await app.StartAsync();
 using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()), Timeout = TimeSpan.FromSeconds(45) };
 int checks = 0;
-void Check(bool condition, string label) { if (!condition) throw new InvalidOperationException(label); checks++; Console.WriteLine("PASS " + label); }
+void Check(bool condition, string label) { if (!condition) throw new InvalidOperationException(label); Interlocked.Increment(ref checks); Console.WriteLine("PASS " + label); }
 async Task Mutate(Func<NivraDbContext, Task> action)
 {
     await using var scope = app.Services.CreateAsyncScope(); var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
@@ -198,6 +198,30 @@ await Status("alice-client", archivePath, Page(9), HttpStatusCode.Conflict, "com
 await Mutate(async db => (await db.Devices.SingleAsync(row => row.Id == "dev-lab-alice-client-two")).RevokedAt = DateTimeOffset.UtcNow);
 await Status("alice-client", archivePath, Page(8, true), HttpStatusCode.NotFound, "revocation blocks archive retries immediately");
 Console.WriteLine($"PASS {checks} PostgreSQL and HTTP ratchet/archive checks");
+var hybridIdentity = Public(64);
+RatchetOlmPublicBundle Hybrid(uint id) => new(1, RatchetPreKeyStore.OlmSuite, 21, 1, hybridIdentity, id, Public(32), Public(32), Public(1184), Public(64));
+const string hybridPublish = "/ratchet/olm/prekeys";
+var hybridBatch = Enumerable.Range(1, 8).Select(index => Hybrid((uint)index)).ToList();
+await Status(null, hybridPublish, new RatchetOlmPublishRequest(hybridBatch), HttpStatusCode.Unauthorized, "anonymous hybrid publication denied");
+await Status("alice-hybrid", hybridPublish, new RatchetOlmPublishRequest([Hybrid(1)]), HttpStatusCode.OK, "hybrid initiator registers independent identity");
+await Status("bob-hybrid", hybridPublish, new RatchetOlmPublishRequest(hybridBatch), HttpStatusCode.OK, "signed classical and ML-KEM prekeys stored");
+await Status("bob-hybrid", hybridPublish, new RatchetOlmPublishRequest([Hybrid(9) with { MlKemPublic = Public(32) }]), HttpStatusCode.BadRequest, "truncated ML-KEM key rejected");
+await Status("bob-hybrid", hybridPublish, new { bundles = hybridBatch, privateSeed = "reject" }, HttpStatusCode.BadRequest, "hybrid private fields rejected");
+var hybridRequest = Guid.NewGuid();
+var hybridClaims = await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ => {
+    using var response = await Post("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("chat-lab", hybridRequest));
+    Check(response.StatusCode == HttpStatusCode.OK, "hybrid concurrent claim authenticated");
+    return (await response.Content.ReadFromJsonAsync<RatchetOlmPreKeyReservation>(json))!;
+}));
+Check(hybridClaims.Select(row => row.Bundle.PreKeyId).Distinct().Count() == 1, "hybrid reservation races consume one key");
+var usedHybrid = hybridClaims[0].Bundle.PreKeyId;
+await Status("alice-hybrid", "/ratchet/olm/prekeys/consumed", new RatchetConsumedPreKeys([usedHybrid]), HttpStatusCode.NoContent, "another device cannot delete recipient prekeys");
+await using (var scope = app.Services.CreateAsyncScope()) { var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>(); Check(await db.Set<RatchetPilotPreKey>().AnyAsync(row => row.DeviceId == "dev-lab-bob-hybrid" && row.PreKeyId == usedHybrid), "other-owner acknowledgement retains key"); }
+await Status("bob-hybrid", "/ratchet/olm/prekeys/consumed", new RatchetConsumedPreKeys([usedHybrid]), HttpStatusCode.NoContent, "recipient cleans consumed prekey atomically");
+await using (var scope = app.Services.CreateAsyncScope()) { var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>(); Check(!await db.Set<RatchetPilotPreKey>().AnyAsync(row => row.DeviceId == "dev-lab-bob-hybrid" && row.PreKeyId == usedHybrid), "consumed public row is removed"); }
+await Status("bob-hybrid", hybridPublish, new RatchetOlmPublishRequest(hybridBatch), HttpStatusCode.Conflict, "late publication cannot resurrect cleaned keys");
+await Status("bob-hybrid", hybridPublish, new RatchetOlmPublishRequest([Hybrid(9)]), HttpStatusCode.OK, "monotonic hybrid prekey replenishment continues");
+Console.WriteLine($"PASS {checks} PostgreSQL and HTTP hybrid ratchet checks");
 if (args.Contains("--serve-for-interop"))
 {
     // Synthetic bearer tokens are passed to the parent test harness only. That

@@ -9,7 +9,7 @@ createServer(async (request, response) => {
   const name = new URL(request.url, 'http://127.0.0.1').pathname;
   if (!allowed.test(name) || !['GET', 'HEAD'].includes(request.method)) { response.writeHead(404).end(); return; }
   try {
-    const content = await readFile(new URL(name.slice(1), root));
+    const content = await readFile(new URL(name === '/web-device.mjs' ? '../ratchet-common/web-device.mjs' : name.slice(1), root));
     response.writeHead(200, { 'Content-Type': name.endsWith('.wasm') ? 'application/wasm' : /\.m?js$/.test(name) ? 'application/javascript' : name.endsWith('.json') ? 'application/json' : 'text/html; charset=utf-8',
       'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
     response.end(request.method === 'HEAD' ? undefined : content);

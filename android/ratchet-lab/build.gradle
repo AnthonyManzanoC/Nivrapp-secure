@@ -26,17 +26,22 @@ dependencies {
     androidTestImplementation 'androidx.test:runner:1.7.0'
 }
 
-def bridgeRoot = rootProject.file('../crypto/ratchet-wasm')
+def hybridLab = providers.gradleProperty('nivraHybridLab').orNull == 'true'
+def bridgeRoot = rootProject.file(hybridLab ? '../crypto/ratchet-olm' : '../crypto/ratchet-wasm')
+def bridgeName = hybridLab ? 'nivra_ratchet_olm' : 'nivra_ratchet_wasm'
 tasks.register('prepareRatchetAssets', Copy) {
     doFirst {
-        if (!new File(bridgeRoot, 'pkg/web/nivra_ratchet_wasm_bg.wasm').isFile()) {
+        if (!new File(bridgeRoot, "pkg/web/${bridgeName}_bg.wasm").isFile()) {
             throw new GradleException('Build/download the verified laboratory WASM artifact first')
         }
     }
     from(bridgeRoot) {
-        include 'web-device.mjs', 'pkg/web/*.js', 'pkg/web/*.wasm'
+        include 'pkg/web/*.js', 'pkg/web/*.wasm'
     }
-    from('src/main/lab-web')
+    from(rootProject.file('../crypto/ratchet-common')) { include 'web-device.mjs' }
+    from('src/main/lab-web') {
+        filter { line -> hybridLab ? line.replace('nivra_ratchet_wasm', 'nivra_ratchet_olm') : line }
+    }
     into layout.buildDirectory.dir('generated/ratchet-assets')
 }
 tasks.named('preBuild').configure { dependsOn 'prepareRatchetAssets' }

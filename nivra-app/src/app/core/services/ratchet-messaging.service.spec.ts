@@ -30,20 +30,21 @@ describe('actual application Double Ratchet delivery', () => {
     const target: RatchetTarget = { userId: owner.user.id, deviceId: owner.device.id, publicJwk: keys.publicJwk };
     const record = { target, service, owner, saved, messages, keys }; directory.set(target.deviceId, record);
     service.api = { get: (path: string) => {
-      if (path === '/ratchet/config') return of({ enabled: true, protocol: 3 });
-      if (path === '/ratchet/prekeys/status') return of({ available: bundles.get(target.deviceId)?.length ?? 0 });
-      if (path === '/ratchet/bindings/pending') return of([...(requests.get(target.deviceId) ?? [])].map(id => ({ userId: directory.get(id).target.userId, deviceId: id, identityKey: JSON.stringify(directory.get(id).keys.publicJwk) })));
+      if (path === '/ratchet/olm/config') return of({ enabled: true, protocol: 5 });
+      if (path === '/ratchet/olm/prekeys/status') return of({ available: bundles.get(target.deviceId)?.length ?? 0 });
+      if (path === '/ratchet/olm/bindings/pending') return of([...(requests.get(target.deviceId) ?? [])].map(id => ({ userId: directory.get(id).target.userId, deviceId: id, identityKey: JSON.stringify(directory.get(id).keys.publicJwk) })));
       return throwError(() => Error('Unexpected GET ' + path));
     }, post: (path: string, body: any) => {
-      if (path === '/ratchet/prekeys') { bundles.set(target.deviceId, [...(bundles.get(target.deviceId) ?? []), ...body.bundles]); record['registration' as keyof typeof record] = body.bundles[0] as never; return of({ added: body.bundles.length }); }
-      if (path === '/ratchet/directory') return of(body.deviceIds.flatMap((id: string) => {
+      if (path === '/ratchet/olm/prekeys') { bundles.set(target.deviceId, [...(bundles.get(target.deviceId) ?? []), ...body.bundles]); record['registration' as keyof typeof record] = body.bundles[0] as never; return of({ added: body.bundles.length }); }
+      if (path === '/ratchet/olm/prekeys/consumed') return of(null);
+      if (path === '/ratchet/olm/directory') return of(body.deviceIds.flatMap((id: string) => {
         const remote = directory.get(id), first = remote?.registration; if (!first) return [];
         const binding = proofs.get(`${id}:${target.deviceId}`);
         return [{ userId: remote.target.userId, deviceId: id, signalDeviceNumber: 1, registrationId: first.registrationId, identityKey: first.identityKey, bindingHeader: binding?.header, bindingCiphertext: binding?.ciphertext }];
       }));
-      if (path === '/ratchet/bindings/request') { for (const id of body.deviceIds) { const pending = requests.get(id) ?? new Set<string>(); pending.add(target.deviceId); requests.set(id, pending); } return of(null); }
-      if (path === '/ratchet/bindings') { for (const binding of body.bindings) { proofs.set(`${target.deviceId}:${binding.targetDeviceId}`, binding); requests.get(target.deviceId)?.delete(binding.targetDeviceId); } return of(null); }
-      if (path.startsWith('/ratchet/devices/')) { const id = path.split('/')[3], bundle = bundles.get(id)?.shift(); return bundle ? of({ deviceId: id, requestId: body.requestId, bundle }) : throwError(() => Error('No prekeys')); }
+      if (path === '/ratchet/olm/bindings/request') { for (const id of body.deviceIds) { const pending = requests.get(id) ?? new Set<string>(); pending.add(target.deviceId); requests.set(id, pending); } return of(null); }
+      if (path === '/ratchet/olm/bindings') { for (const binding of body.bindings) { proofs.set(`${target.deviceId}:${binding.targetDeviceId}`, binding); requests.get(target.deviceId)?.delete(binding.targetDeviceId); } return of(null); }
+      if (path.startsWith('/ratchet/olm/devices/')) { const id = path.split('/')[4], bundle = bundles.get(id)?.shift(); return bundle ? of({ deviceId: id, requestId: body.requestId, bundle }) : throwError(() => Error('No prekeys')); }
       if (path === '/keys/batch') return of(body.userIds.map((id: string) => ({ userId: id, devices: [...directory.values()].filter(remote => remote.target.userId === id).map(remote => ({ deviceId: remote.target.deviceId, keyBundle: { identityKey: JSON.stringify(remote.keys.publicJwk) } })) })));
       return throwError(() => Error('Unexpected POST ' + path));
     } };
@@ -87,10 +88,11 @@ describe('actual application Double Ratchet delivery', () => {
     expect(await bob.service.decrypt(response(alice, next, 'msg-next'), next[1])).toEqual({ type: 'text', text: 'next' });
   }, 30000);
 
-  it('encrypts one shared body for a group, keeps only small ratchet key packets and remains readable by an older recipient', async () => {
+  it('encrypts one shared body for a group, queues an unupdated recipient and still reads old ciphertext', async () => {
     const alice = await client('alice'), peers = await Promise.all(Array.from({ length: 8 }, (_, index) => client('peer' + index))), legacy = await client('legacy');
     await alice.service.pump(); for (const peer of peers) await peer.service.pump();
-    const targets = [alice.target, ...peers.map(peer => peer.target), legacy.target], payload = { type: 'text', text: 'group message '.repeat(4500) };
+    const targets = [alice.target, ...peers.map(peer => peer.target)], payload = { type: 'text', text: 'group message '.repeat(4500) };
+    await expectAsync(alice.service.encrypt('chat-test', 'group-message', payload, [...targets, legacy.target], null)).toBeRejectedWithError(/actualizar/);
     await expectAsync(alice.service.encrypt('chat-test', 'group-message', payload, targets, null)).toBeRejected();
     for (const peer of peers) await peer.service.pump();
     const packets = await alice.service.encrypt('chat-test', 'group-message', payload, targets, null);
@@ -98,7 +100,7 @@ describe('actual application Double Ratchet delivery', () => {
       expect(packets[index + 1].ciphertext.length).toBeLessThan(8192);
       expect(await peers[index].service.decrypt(response(alice, packets, 'group-message'), packets[index + 1])).toEqual(payload);
     }
-    const older = packets[packets.length - 1];
+    const older = await alice.service.crypto.encryptForPublicKey(alice.keys, legacy.keys.publicJwk, payload);
     expect(await legacy.service.crypto.decryptEnvelope(legacy.keys, older.header, older.ciphertext)).toEqual(payload);
     expect(JSON.stringify(alice.saved.get(alice.target.deviceId)).length).toBeLessThan(1000000);
   }, 60000);

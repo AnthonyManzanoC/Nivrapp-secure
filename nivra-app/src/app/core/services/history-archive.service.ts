@@ -54,9 +54,9 @@ export class HistoryArchiveService implements OnDestroy {
     if (!await this.history.messageById(owner.userId, this.conversation(owner.deviceId), this.id(progress))) throw Error('No se pudo guardar el avance del historial.');
   }
   async beginSend(transfer: ArchiveTransfer): Promise<boolean> {
-    if (!environment.ratchetLaboratory) return false;
+    if (!environment.ratchetEnabled) return false;
     const owner = this.owner();
-    const configuration = await firstValueFrom(this.api.get<{ enabled: boolean }>('/ratchet/config').pipe(timeout(15000))).catch(() => null); owner.assert();
+    const configuration = await firstValueFrom(this.api.get<{ enabled: boolean }>('/ratchet/olm/config').pipe(timeout(15000))).catch(() => null); owner.assert();
     if (!configuration?.enabled) return false;
     if (transfer.userId !== owner.userId || transfer.targetDeviceId === owner.deviceId || Date.parse(transfer.expiresAt) <= Date.now()) throw Error('Solicitud de historial inválida.');
     const existing = await this.history.messageById(owner.userId, this.conversation(owner.deviceId), `${transfer.id}:${owner.deviceId}:send`);

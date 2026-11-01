@@ -12,16 +12,16 @@ app.commandLine.appendSwitch('disable-gpu');
 const deadline = setTimeout(() => { console.error('Electron ratchet timeout'); app.exit(1); }, 45000);
 app.whenReady().then(async () => {
   const root = path.join(profile, 'assets'); await fs.mkdir(path.join(root, 'pkg'), { recursive: true });
-  const source = path.resolve(__dirname, '../crypto/ratchet-wasm');
-  await fs.copyFile(path.join(source, 'web-device.mjs'), path.join(root, 'web-device.mjs'));
-  for (const name of ['nivra_ratchet_wasm.js', 'nivra_ratchet_wasm_bg.wasm']) await fs.copyFile(path.join(source, 'pkg/web', name), path.join(root, 'pkg', name));
+  const source = path.resolve(__dirname, '../crypto/ratchet-olm');
+  await fs.copyFile(path.resolve(__dirname, '../crypto/ratchet-common/web-device.mjs'), path.join(root, 'web-device.mjs'));
+  for (const name of ['nivra_ratchet_olm.js', 'nivra_ratchet_olm_bg.wasm']) await fs.copyFile(path.join(source, 'pkg/web', name), path.join(root, 'pkg', name));
   protocol.handle('nivra-crypto', createRatchetAssetHandler(root));
   const html = path.join(profile, 'test.html'); await fs.writeFile(html, '<!doctype html><meta charset="utf-8"><title>Isolated ratchet renderer</title>');
   const window = new BrowserWindow({ show: false, webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true } });
   await window.loadFile(html);
   const result = await window.webContents.executeJavaScript(`(async () => {
-    const bridge = await import('nivra-crypto://app/pkg/nivra_ratchet_wasm.js');
-    await bridge.default({module_or_path:new URL('nivra-crypto://app/pkg/nivra_ratchet_wasm_bg.wasm')});
+    const bridge = await import('nivra-crypto://app/pkg/nivra_ratchet_olm.js');
+    await bridge.default({module_or_path:new URL('nivra-crypto://app/pkg/nivra_ratchet_olm_bg.wasm')});
     const {LabWebDevice} = await import('nivra-crypto://app/web-device.mjs');
     const rows = new Map(), storage = {read:async key=>structuredClone(rows.get(key)||null),commit:async(key,revision,state)=>{if((rows.get(key)?.revision||0)!==revision)throw Error('CAS');rows.set(key,{revision:revision+1,state:structuredClone(state)});return revision+1;}};
     let alice = await LabWebDevice.open(bridge,'desktop-alice',1,storage,{createIfMissing:true});

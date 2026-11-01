@@ -76,7 +76,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasKey(row => row.DeviceId);
             entity.Property(row => row.DeviceId).HasMaxLength(64);
             entity.Property(row => row.UserId).HasMaxLength(64);
-            entity.Property(row => row.IdentityKey).HasMaxLength(44);
+            entity.Property(row => row.IdentityKey).HasMaxLength(128);
             entity.HasIndex(row => new { row.UserId, row.SignalDeviceNumber }).IsUnique().HasFilter("\"AddressMode\" = 0");
             entity.HasOne<DeviceRecord>().WithMany().HasForeignKey(row => row.DeviceId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(row => row.UserId).OnDelete(DeleteBehavior.Cascade);

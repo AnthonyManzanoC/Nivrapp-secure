@@ -1,0 +1,11 @@
+{
+  "name": "nivra-ratchet-reference-tests",
+  "private": true,
+  "version": "0.1.0",
+  "devDependencies": {
+    "@noble/post-quantum": "0.7.1"
+  },
+  "dependencies": {
+    "nivra-multiplatform": "file:../.."
+  }
+}

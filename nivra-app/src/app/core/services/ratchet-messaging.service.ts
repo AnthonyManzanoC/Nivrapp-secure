@@ -12,7 +12,7 @@ import { AppLockService } from './app-lock.service';
 import { RatchetBundle, RatchetDeviceRuntime, RatchetEnvelope, RatchetRuntimeFactory, openRatchetRuntime, ratchetBase64, ratchetBinary, ratchetHash, ratchetMessageId } from './ratchet-runtime';
 
 export const RATCHET_RUNTIME = new InjectionToken<RatchetRuntimeFactory>('Nivra ratchet runtime', { providedIn: 'root', factory: () => openRatchetRuntime });
-const ALGORITHM = 'NIVRA-LIBSIGNAL-MESSAGE-1';
+const ALGORITHM = 'NIVRA-HYBRID-RATCHET-MESSAGE-1';
 export interface RatchetTarget { userId: string; deviceId: string; publicJwk: JsonWebKey; }
 interface DirectoryEntry { userId: string; deviceId: string; signalDeviceNumber: number; registrationId: number; identityKey: string; bindingHeader?: string; bindingCiphertext?: string; }
 interface Binding { header: string; ciphertext: string; }
@@ -80,11 +80,11 @@ export class RatchetMessagingService implements OnDestroy {
     return { userId: session.user.id, deviceId: session.device.id, alias: session.user.alias, scope, assert };
   }
   private async enabled(): Promise<boolean> {
-    if (!environment.ratchetLaboratory) return false;
+    if (!environment.ratchetEnabled) return false;
     const owner = this.owner();
     if (this.enabledCache?.scope === owner.scope && Date.now() - this.enabledCache.at < 30000) return this.enabledCache.enabled;
     let enabled: boolean;
-    try { const value = await firstValueFrom(this.api.get<{ enabled: boolean; protocol: number }>('/ratchet/config').pipe(timeout(15000))); enabled = value.enabled === true && value.protocol === 3; }
+    try { const value = await firstValueFrom(this.api.get<{ enabled: boolean; protocol: number }>('/ratchet/olm/config').pipe(timeout(15000))); enabled = value.enabled === true && value.protocol === 5; }
     catch (error) { if ((error as { status?: number }).status !== 404) throw error; enabled = false; }
     owner.assert(); this.enabledCache = { scope: owner.scope, at: Date.now(), enabled }; return enabled;
   }
@@ -120,14 +120,20 @@ export class RatchetMessagingService implements OnDestroy {
   }
   private async directory(ids: string[]): Promise<DirectoryEntry[]> {
     const result: DirectoryEntry[] = [];
-    for (let index = 0; index < ids.length; index += 128) result.push(...await firstValueFrom(this.api.post<DirectoryEntry[]>('/ratchet/directory', { deviceIds: ids.slice(index, index + 128) }).pipe(timeout(15000))));
-    if (result.some(entry => !ids.includes(entry.deviceId) || entry.signalDeviceNumber !== 1 || ratchetBinary(entry.identityKey, 33).length !== 33)) throw Error('Directorio de cifrado inválido.');
+    for (let index = 0; index < ids.length; index += 128) result.push(...await firstValueFrom(this.api.post<DirectoryEntry[]>('/ratchet/olm/directory', { deviceIds: ids.slice(index, index + 128) }).pipe(timeout(15000))));
+    if (result.some(entry => !ids.includes(entry.deviceId) || entry.signalDeviceNumber !== 1 || ratchetBinary(entry.identityKey, 64).length !== 64)) throw Error('Directorio de cifrado inválido.');
     return result;
   }
   private async publish(engine: RatchetDeviceRuntime): Promise<void> {
     await this.state(engine);
+    const consumed = await engine.pendingConsumedPreKeys();
+    for (let index = 0; index < consumed.length; index += 256) {
+      const preKeyIds = consumed.slice(index, index + 256);
+      await firstValueFrom(this.api.post('/ratchet/olm/prekeys/consumed', { preKeyIds }).pipe(timeout(15000)));
+      await engine.acknowledgeConsumedPreKeys(preKeyIds);
+    }
     let pending = await engine.pendingBundles();
-    const status = await firstValueFrom(this.api.get<{ available: number }>('/ratchet/prekeys/status').pipe(timeout(15000)));
+    const status = await firstValueFrom(this.api.get<{ available: number }>('/ratchet/olm/prekeys/status').pipe(timeout(15000)));
     if (!Number.isInteger(status.available) || status.available < 0 || status.available > 256) throw Error('Reserva de preclaves inválida.');
     if (status.available + pending.length < 8) {
       for (let index = status.available + pending.length; index < 24; index++) await engine.bundle();
@@ -135,7 +141,7 @@ export class RatchetMessagingService implements OnDestroy {
     }
     for (let index = 0; index < pending.length; index += 32) {
       const batch = pending.slice(index, index + 32);
-      await firstValueFrom(this.api.post('/ratchet/prekeys', { bundles: batch }).pipe(timeout(15000)));
+      await firstValueFrom(this.api.post('/ratchet/olm/prekeys', { bundles: batch }).pipe(timeout(15000)));
       await engine.acknowledgeBundles(batch.map(bundle => bundle.preKeyId));
     }
   }
@@ -143,7 +149,7 @@ export class RatchetMessagingService implements OnDestroy {
     return this.run(async () => {
       if (!this.auth.session() || !await this.enabled()) return;
       const owner = this.owner(), engine = await this.open(true); await this.publish(engine); owner.assert();
-      const pending = await firstValueFrom(this.api.get<Array<{ userId: string; deviceId: string; identityKey: string }>>('/ratchet/bindings/pending').pipe(timeout(15000)));
+      const pending = await firstValueFrom(this.api.get<Array<{ userId: string; deviceId: string; identityKey: string }>>('/ratchet/olm/bindings/pending').pipe(timeout(15000)));
       if (!Array.isArray(pending) || pending.length > 128) throw Error('Solicitud de dispositivos inválida.');
       const uploads = [];
       for (const target of pending) {
@@ -151,7 +157,7 @@ export class RatchetMessagingService implements OnDestroy {
         const binding = await this.makeBinding(engine, { ...target, publicJwk }); owner.assert();
         uploads.push({ targetDeviceId: target.deviceId, targetIdentity: this.coordinates(publicJwk), ...binding });
       }
-      for (let index = 0; index < uploads.length; index += 64) await firstValueFrom(this.api.post('/ratchet/bindings', { bindings: uploads.slice(index, index + 64) }).pipe(timeout(15000)));
+      for (let index = 0; index < uploads.length; index += 64) await firstValueFrom(this.api.post('/ratchet/olm/bindings', { bindings: uploads.slice(index, index + 64) }).pipe(timeout(15000)));
     });
   }
   private coordinates(key: JsonWebKey): string { if (!key.x || !key.y) throw Error('Identidad incompleta.'); return `${key.x}:${key.y}`; }
@@ -171,7 +177,7 @@ export class RatchetMessagingService implements OnDestroy {
       return;
     }
     if (!binding) {
-      await firstValueFrom(this.api.post('/ratchet/bindings/request', { deviceIds: [target.deviceId] }).pipe(timeout(15000)));
+      await firstValueFrom(this.api.post('/ratchet/olm/bindings/request', { deviceIds: [target.deviceId] }).pipe(timeout(15000)));
       throw pendingRatchet('El otro dispositivo está preparando el cifrado seguro. El mensaje permanece pendiente y se reintentará.');
     }
     const header = JSON.parse(binding.header);
@@ -183,7 +189,7 @@ export class RatchetMessagingService implements OnDestroy {
       || proof['identityKey'] !== entry.identityKey || proof['registrationId'] !== entry.registrationId || proof['sourceLegacy'] !== this.coordinates(target.publicJwk)
       || proof['targetUserId'] !== owner.userId || proof['targetDeviceId'] !== owner.deviceId || proof['targetLegacy'] !== this.coordinates(own.publicJwk)) throw Error('La vinculación cifrada no es válida para este dispositivo.');
     state.peers[target.deviceId] = { userId: target.userId, identityKey: entry.identityKey, registrationId: entry.registrationId, legacy: this.coordinates(target.publicJwk) };
-    await engine.pinIdentity({ name: target.deviceId, device: 1 }, ratchetBinary(entry.identityKey, 33), state); owner.assert();
+    await engine.pinIdentity({ name: target.deviceId, device: 1 }, ratchetBinary(entry.identityKey, 64), state); owner.assert();
   }
 
   /** null means this deployment has never enabled this device. Pinned peers never downgrade. */
@@ -191,9 +197,7 @@ export class RatchetMessagingService implements OnDestroy {
     return this.run(async () => {
       const owner = this.owner();
       if (!await this.enabled()) {
-        const saved = await this.history.readRatchetState(owner.userId, owner.deviceId); owner.assert();
-        if (saved) throw pendingRatchet('El cifrado avanzado está temporalmente detenido. El mensaje queda pendiente.');
-        return null;
+        throw pendingRatchet('El servidor está preparando el cifrado actualizado. El mensaje queda pendiente y se enviará automáticamente cuando esté disponible.');
       }
       const engine = await this.open(true); owner.assert();
       let state = await this.state(engine);
@@ -216,9 +220,10 @@ export class RatchetMessagingService implements OnDestroy {
       if (!body) throw Error('El estado cifrado pendiente necesita una versión compatible.');
       const keyPackage = { type: 'nivra-content-key', key: body.key, bodyHash: await ratchetHash([body.iv, body.ciphertext]) };
       const entries = new Map((await this.directory(targets.map(target => target.deviceId))).map(entry => [entry.deviceId, entry])); owner.assert();
+      if (targets.some(target => target.deviceId !== owner.deviceId && !entries.has(target.deviceId))) throw pendingRatchet('Un dispositivo del chat necesita actualizar Nivra. El mensaje queda pendiente y se enviará automáticamente cuando esté preparado.');
       const missing = targets.filter(target => entries.has(target.deviceId) && target.deviceId !== owner.deviceId && !state.peers[target.deviceId] && !entries.get(target.deviceId)?.bindingHeader).map(target => target.deviceId);
       if (missing.length) {
-        for (let index = 0; index < missing.length; index += 128) await firstValueFrom(this.api.post('/ratchet/bindings/request', { deviceIds: missing.slice(index, index + 128) }).pipe(timeout(15000)));
+        for (let index = 0; index < missing.length; index += 128) await firstValueFrom(this.api.post('/ratchet/olm/bindings/request', { deviceIds: missing.slice(index, index + 128) }).pipe(timeout(15000)));
         throw pendingRatchet('El otro dispositivo está preparando el cifrado seguro. El mensaje permanece pendiente y se reintentará.');
       }
       const recipients: RecipientCipherRequest[] = [], messageId = await ratchetMessageId(clientMessageId), batched: Array<{ index: number; deviceId: string }> = [];
@@ -239,7 +244,7 @@ export class RatchetMessagingService implements OnDestroy {
             state = await this.state(engine); state.reservations ??= {};
             let claim = state.reservations[target.deviceId];
             if (!claim || claim.conversationId !== conversationId) { claim = { conversationId, requestId: crypto.randomUUID() }; state.reservations[target.deviceId] = claim; await engine.updateApplicationState(state); }
-            const reservation = await firstValueFrom(this.api.post<{ bundle: RatchetBundle; deviceId: string }>(`/ratchet/devices/${encodeURIComponent(target.deviceId)}/prekey`, claim).pipe(timeout(15000))); owner.assert();
+            const reservation = await firstValueFrom(this.api.post<{ bundle: RatchetBundle; deviceId: string }>(`/ratchet/olm/devices/${encodeURIComponent(target.deviceId)}/prekey`, claim).pipe(timeout(15000))); owner.assert();
             if (reservation.deviceId !== target.deviceId || reservation.bundle.identityKey !== entry.identityKey || reservation.bundle.registrationId !== entry.registrationId) throw Error('Las preclaves no corresponden al dispositivo verificado.');
             await engine.establish(address, reservation.bundle);
           }
@@ -247,12 +252,7 @@ export class RatchetMessagingService implements OnDestroy {
           batched.push({ index: recipients.length, deviceId: target.deviceId }); ciphertext = '';
           header = JSON.stringify({ v: 4, alg: ALGORITHM, senderDeviceId: owner.deviceId, recipientDeviceId: target.deviceId,
             identityKey: ratchetBase64(engine.publicIdentity), registrationId: state.registrationId, binding } satisfies MessageHeader);
-        } else {
-          if (state.peers[target.deviceId]) throw Error('El dispositivo ya usa cifrado avanzado y no puede retroceder al formato anterior.');
-          const own = await this.auth.ensureDeviceIdentity(), sealed = await this.crypto.encryptForPublicKey(own, target.publicJwk, { type: 'group-sender-key', alg: 'A256GCM', key: body.key });
-          if (!sealed.header) throw Error('Falta el encabezado cifrado.');
-          ciphertext = sealed.ciphertext; header = JSON.stringify({ v: 2, alg: 'NIVRA-GROUP-A256GCM', keyHeader: sealed.header });
-        }
+        } else throw pendingRatchet('El destinatario necesita completar la actualización del cifrado.');
         recipients.push({ userId: target.userId, deviceId: target.deviceId, ciphertext, header, fileObjectId });
       }
       if (batched.length) {
@@ -281,7 +281,7 @@ export class RatchetMessagingService implements OnDestroy {
   }
 
   async confirmed(conversationId: string, clientMessageId: string): Promise<MessageResponse | null> {
-    if (!environment.ratchetLaboratory) return null;
+    if (!environment.ratchetEnabled) return null;
     return this.run(async () => {
       const owner = this.owner();
       if (!await this.history.readRatchetState(owner.userId, owner.deviceId)) return null;

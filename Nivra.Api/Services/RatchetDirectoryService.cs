@@ -15,13 +15,13 @@ public sealed class RatchetDirectoryService(NivraDbContext db, TimeProvider cloc
         await OwnDevice(userId, deviceId, ct);
         return await db.Set<RatchetPilotPreKey>().CountAsync(row => row.DeviceId == deviceId && row.ClaimRequestId == null, ct);
     }
-    public async Task<List<RatchetDirectoryEntry>> DirectoryAsync(string userId, string deviceId, List<string>? deviceIds, CancellationToken ct)
+    public async Task<List<RatchetDirectoryEntry>> DirectoryAsync(string userId, string deviceId, List<string>? deviceIds, CancellationToken ct, int addressMode = 1)
     {
         await OwnDevice(userId, deviceId, ct);
         var ids = Ids(deviceIds);
         var active = await db.Devices.AsNoTracking().Where(row => ids.Contains(row.Id) && row.IsTrusted && row.RevokedAt == null &&
             db.Users.Any(user => user.Id == row.UserId && user.DisabledAt == null)).Select(row => row.Id).ToListAsync(ct);
-        var registrations = await db.Set<RatchetPilotDevice>().AsNoTracking().Where(row => active.Contains(row.DeviceId) && row.AddressMode == 1).ToListAsync(ct);
+        var registrations = await db.Set<RatchetPilotDevice>().AsNoTracking().Where(row => active.Contains(row.DeviceId) && row.AddressMode == addressMode).ToListAsync(ct);
         var bindings = await db.Set<RatchetDeviceBinding>().AsNoTracking().Where(row => active.Contains(row.SourceDeviceId) && row.TargetDeviceId == deviceId).ToDictionaryAsync(row => row.SourceDeviceId, ct);
         return registrations.Select(row => new RatchetDirectoryEntry(row.UserId, row.DeviceId, row.SignalDeviceNumber, row.RegistrationId, row.IdentityKey,
             bindings.GetValueOrDefault(row.DeviceId)?.Header, bindings.GetValueOrDefault(row.DeviceId)?.Ciphertext)).ToList();
@@ -36,7 +36,7 @@ public sealed class RatchetDirectoryService(NivraDbContext db, TimeProvider cloc
             {
                 await using var tx = await CallCoordination.LockAsync(db, $"ratchet-bindings:{deviceId}", ct);
                 var source = await OwnDevice(userId, deviceId, ct);
-                if (!await db.Set<RatchetPilotDevice>().AnyAsync(row => row.DeviceId == deviceId && row.UserId == userId && row.AddressMode == 1, ct)) throw Reject("ratchet_registration_required", 409);
+                if (!await db.Set<RatchetPilotDevice>().AnyAsync(row => row.DeviceId == deviceId && row.UserId == userId && row.AddressMode > 0, ct)) throw Reject("ratchet_registration_required", 409);
                 var sourceIdentity = Coordinates(source.KeyBundle.IdentityKey);
                 if (sourceIdentity is null) throw Reject("legacy_identity_unavailable", 409);
                 var count = await db.Set<RatchetDeviceBinding>().CountAsync(row => row.SourceDeviceId == deviceId, ct);
@@ -85,7 +85,7 @@ public sealed class RatchetDirectoryService(NivraDbContext db, TimeProvider cloc
                 foreach (var id in ids.Where(id => id != deviceId))
                 {
                     var target = await RelatedDevice(source, id, ct);
-                    if (!await db.Set<RatchetPilotDevice>().AnyAsync(row => row.DeviceId == target.Id && row.AddressMode == 1, ct)) continue;
+                    if (!await db.Set<RatchetPilotDevice>().AnyAsync(row => row.DeviceId == target.Id && row.AddressMode > 0, ct)) continue;
                     var request = await db.Set<RatchetBindingRequest>().SingleOrDefaultAsync(row => row.SourceDeviceId == deviceId && row.TargetDeviceId == id, ct);
                     if (request is null)
                     {

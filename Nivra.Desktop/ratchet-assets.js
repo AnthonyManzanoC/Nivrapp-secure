@@ -6,6 +6,8 @@ const FILES = new Map([
   ['/web-device.mjs', 'text/javascript; charset=utf-8'],
   ['/pkg/nivra_ratchet_wasm.js', 'text/javascript; charset=utf-8'],
   ['/pkg/nivra_ratchet_wasm_bg.wasm', 'application/wasm'],
+  ['/pkg/nivra_ratchet_olm.js', 'text/javascript; charset=utf-8'],
+  ['/pkg/nivra_ratchet_olm_bg.wasm', 'application/wasm'],
 ]);
 function registerRatchetScheme(protocol) {
   protocol.registerSchemesAsPrivileged([{ scheme: SCHEME, privileges: { standard: true, secure: true, supportFetchAPI: true, corsEnabled: true } }]);
