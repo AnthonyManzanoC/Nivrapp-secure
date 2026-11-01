@@ -1,4 +1,5 @@
-import { of, throwError } from 'rxjs';
+import { of, throwError, Subject } from 'rxjs';
+import { HistoryArchiveService } from './history-archive.service';
 import { CryptoService } from './crypto.service';
 import { RatchetMessagingService, RatchetTarget } from './ratchet-messaging.service';
 import { RatchetBundle, openRatchetRuntime } from './ratchet-runtime';
@@ -19,7 +20,7 @@ describe('actual application Double Ratchet delivery', () => {
     service.appLock = { isContentLocked: () => false };
     service.factory = openRatchetRuntime; service.runtime = null; service.runtimeScope = ''; service.opening = null; service.generation = 0; service.serial = Promise.resolve(); service.enabledCache = null;
     const saved = new Map<string, any>(), messages = new Map<string, any>();
-    service.history = { readRatchetState: async (_user: string, device: string) => structuredClone(saved.get(device) ?? null),
+    service.history = { messageWriteGuard: () => () => true, readRatchetState: async (_user: string, device: string) => structuredClone(saved.get(device) ?? null),
       commitRatchetState: async (_user: string, device: string, revision: number, state: unknown) => {
         if ((saved.get(device)?.revision ?? 0) !== revision) throw Error('CAS conflict');
         saved.set(device, { revision: revision + 1, state: structuredClone(state) }); return revision + 1;
@@ -82,5 +83,50 @@ describe('actual application Double Ratchet delivery', () => {
     expect(await bob.service.decrypt(message, recipients[1])).toEqual(payload);
     const next = await alice.service.encrypt('chat-test', 'msg-next', { type: 'text', text: 'next' }, targets, null);
     expect(await bob.service.decrypt(response(alice, next, 'msg-next'), next[1])).toEqual({ type: 'text', text: 'next' });
+  }, 30000);
+
+  it('transfers approved history to a linked device using actual ratchet pages and resumes after an interrupted import', async () => {
+    const source = await client('source'), linked = await client('linked');
+    linked.owner.user.id = source.owner.user.id; linked.target.userId = source.target.userId;
+    await source.service.pump(); await linked.service.pump();
+    const at = new Date().toISOString(), text = 'history survives linking '.repeat(4200);
+    const historical = { id: 'msg_history_one', clientMessageId: 'original-message', conversationId: 'chat-test', mine: true,
+      senderUserId: source.target.userId, senderDeviceId: source.target.deviceId, at, payload: { type: 'text', text } };
+    source.messages.set('chat-test:msg_history_one', historical);
+    const pages = new Map<number, any>(); let nextSequence = 0, acknowledgedSequence = -1, finished = false;
+    for (const record of [source, linked]) {
+      const originalGet = record.service.api.get, originalPost = record.service.api.post;
+      record.service.history.conversations = async () => [{ id: 'chat-test' }];
+      record.service.history.conversationMessagesPage = async (_user: string, chat: string, options: any) => [...record.messages.values()]
+        .filter(message => message.conversationId === chat && (!options.before || message.at < options.before || message.at === options.before && message.id < options.beforeId))
+        .sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id)).slice(-options.limit).map(value => structuredClone(value));
+      record.service.api.get = (path: string) => path.includes('/archive/') ? of({ nextSequence, acknowledgedSequence, finished, pages: [...pages.values()] }) : originalGet(path);
+      record.service.api.post = (path: string, body: any) => {
+        if (path.endsWith('/ack')) { acknowledgedSequence = Math.max(acknowledgedSequence, body.sequence); for (const sequence of pages.keys()) if (sequence <= acknowledgedSequence) pages.delete(sequence); return of(null); }
+        if (path.includes('/archive/')) { if (!pages.has(body.sequence)) { pages.set(body.sequence, structuredClone(body)); nextSequence++; finished = body.final; } return of(null); }
+        if (path === '/messages/history-recovery') return of({ messages: [{ ...response(source, [], 'original-message'), id: historical.id, serverReceivedAt: at }], deletedMessages: [] });
+        return originalPost(path, body);
+      };
+    }
+    const transfer = { id: 'transfer_real_archive', userId: source.target.userId, targetDeviceId: linked.target.deviceId, targetIdentityKey: JSON.stringify(linked.keys.publicJwk), expiresAt: new Date(Date.now() + 600000).toISOString() };
+    const createArchive = (record: any): any => {
+      const archive: any = Object.create(HistoryArchiveService.prototype);
+      Object.assign(archive, { auth: record.service.auth, lock: record.service.appLock, crypto: record.service.crypto, history: record.service.history, api: record.service.api, ratchet: record.service, imported$: new Subject(), running: false });
+      return archive;
+    };
+    const sending = createArchive(source), receiving = createArchive(linked);
+    expect(await sending.beginSend(transfer)).toBeTrue();
+    await receiving.beginReceive(transfer, source.target.deviceId, JSON.stringify(source.keys.publicJwk));
+    await sending.pump(); await linked.service.pump(); await sending.pump();
+    expect(pages.size).toBeGreaterThan(2);
+    const save = linked.service.history.putMessages; let fail = true;
+    linked.service.history.putMessages = async (user: string, messages: any[]) => {
+      if (fail && messages.some(message => message.conversationId === 'chat-test')) { fail = false; throw Error('interrupted history import'); }
+      return save(user, messages);
+    };
+    await receiving.pump(); await receiving.pump(); await sending.pump();
+    expect(linked.messages.get('chat-test:msg_history_one')?.payload.text).toBe(text);
+    expect(finished).toBeTrue(); expect(pages.size).toBe(0); expect(acknowledgedSequence).toBe(nextSequence - 1);
+    expect(linked.service.runtime.publicIdentity).not.toEqual(source.service.runtime.publicIdentity);
   }, 30000);
 });

@@ -66,6 +66,7 @@ public static partial class EndpointExtensions
         app.MapDeviceAndKeyEndpoints();
         app.MapRatchetPreKeyPilotEndpoints();
         app.MapRatchetClientEndpoints();
+        MapHistoryArchiveEndpoints(app);
         app.MapHistoryKeyTransferEndpoints();
         app.MapContactEndpoints();
         app.MapContactBlockEndpoints();
@@ -1749,6 +1750,8 @@ public static partial class EndpointExtensions
                 }
             }
 
+            if (!await RatchetMessagePolicy.ValidAsync(db, current.UserId, current.DeviceId, conversationId, request.ClientMessageId, request.Recipients, cancellationToken))
+                return Error("invalid_ratchet_message", "El sobre cifrado no corresponde a los dispositivos y al mensaje.");
             var now = timeProvider.GetUtcNow();
             var message = new MessageEnvelope
             {

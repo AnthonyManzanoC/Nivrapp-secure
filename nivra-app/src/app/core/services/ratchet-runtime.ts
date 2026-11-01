@@ -60,4 +60,4 @@ export function ratchetBinary(value: string, maximum: number): Uint8Array {
   return result;
 }
 export const ratchetHash = async (value: unknown): Promise<string> => ratchetBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(value)))));
-export const ratchetMessageId = async (value: string): Promise<string> => (await ratchetHash(value)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+export const ratchetMessageId = async (value: string): Promise<string> => ratchetBase64(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');

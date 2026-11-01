@@ -704,6 +704,61 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.ToTable("GroupInviteLinks", "public");
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.HistoryArchivePage", b =>
+                {
+                    b.Property<string>("TransferId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SourceDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Sequence")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Ciphertext")
+                        .IsRequired()
+                        .HasMaxLength(262144)
+                        .HasColumnType("character varying(262144)");
+
+                    b.Property<bool>("Final")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Header")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)");
+
+                    b.HasKey("TransferId", "SourceDeviceId", "Sequence");
+
+                    b.ToTable("HistoryArchivePage", "public");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.HistoryArchiveStream", b =>
+                {
+                    b.Property<string>("TransferId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("SourceDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("AcknowledgedSequence")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Finished")
+                        .HasColumnType("boolean");
+
+                    b.Property<int>("NextSequence")
+                        .HasColumnType("integer");
+
+                    b.HasKey("TransferId", "SourceDeviceId");
+
+                    b.ToTable("HistoryArchiveStream", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.HistoryKeyTransfer", b =>
                 {
                     b.Property<string>("Id")
@@ -1915,6 +1970,24 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.ConversationRecord", null)
                         .WithMany()
                         .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.HistoryArchivePage", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.HistoryArchiveStream", null)
+                        .WithMany()
+                        .HasForeignKey("TransferId", "SourceDeviceId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.HistoryArchiveStream", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.HistoryKeyTransfer", null)
+                        .WithMany()
+                        .HasForeignKey("TransferId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

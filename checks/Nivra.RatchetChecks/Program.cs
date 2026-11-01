@@ -38,7 +38,7 @@ app.UseExceptionHandler(handler => handler.Run(context =>
     context.Response.StatusCode = 500;
     return context.Response.WriteAsJsonAsync(new { code = "synthetic_test_failure" });
 }));
-app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints();
+app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapHistoryArchiveEndpoints();
 var tokens = new Dictionary<string, string>();
 await using (var scope = app.Services.CreateAsyncScope())
 {
@@ -162,6 +162,39 @@ using (var forOther = await Post("alice-client-two", "/ratchet/directory", new R
 await Status("bob-client", "/ratchet/bindings", new RatchetBindingUploadRequest([binding with { TargetIdentity = "changed" }]), HttpStatusCode.Conflict, "binding cannot target replaced legacy identity");
 await Status("bob-client", "/ratchet/bindings", new RatchetBindingUploadRequest([binding with { Header = sealedHeader.Replace(bobLegacy, aliceLegacy) }]), HttpStatusCode.BadRequest, "binding header must match producer identity");
 Console.WriteLine($"PASS {checks} PostgreSQL and HTTP ratchet checks");
+const string archiveId = "approved-archive-fixture";
+await Mutate(db => {
+    db.HistoryKeyTransfers.Add(new HistoryKeyTransfer { Id = archiveId, UserId = "usr-lab-alice", TargetDeviceId = "dev-lab-alice-client-two", TargetIdentityKey = aliceLegacy, CreatedAt = DateTimeOffset.UtcNow, ExpiresAt = DateTimeOffset.UtcNow.AddMinutes(15) });
+    return Task.CompletedTask;
+});
+await Mutate(async db => (await db.Devices.SingleAsync(row => row.Id == "dev-lab-alice-client-two")).KeyBundle.IdentityKey = aliceLegacy);
+var archivePath = $"/devices/history-transfer/{archiveId}/archive/dev-lab-alice-client/";
+HistoryArchiveUpload Page(int sequence, bool final = false)
+{
+    var messageId = $"archive_{archiveId}_dev-lab-alice-client_{sequence}";
+    var digest = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(messageId))).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+    var header = JsonSerializer.Serialize(new { v = 4, alg = RatchetMessagePolicy.Algorithm, senderDeviceId = "dev-lab-alice-client", recipientDeviceId = "dev-lab-alice-client-two", identityKey = identity, registrationId = 11 });
+    var ciphertext = JsonSerializer.Serialize(new { v = 3, suite = "NIVRA-LIBSIGNAL-A256GCM-PILOT-1", type = 3, keyMessage = Public(96), iv = Public(12), ciphertext = Public(96), context = new { conversationId = "history_" + archiveId, messageId = digest, sender = "dev-lab-alice-client.1", recipient = "dev-lab-alice-client-two.1" } });
+    return new(sequence, header, ciphertext, final);
+}
+await Status("alice-client", archivePath, Page(0), HttpStatusCode.NotFound, "history cannot stream before explicit approval response");
+await Mutate(db => { db.HistoryKeyTransferResponses.Add(new HistoryKeyTransferResponse { Id = archiveId + ":dev-lab-alice-client", TransferId = archiveId, SourceDeviceId = "dev-lab-alice-client", SourceIdentityKey = aliceLegacy, Header = "opaque", Ciphertext = "opaque" }); return Task.CompletedTask; });
+var archiveFirst = Page(0);
+await Status("alice-client", archivePath, archiveFirst, HttpStatusCode.NoContent, "approved ratchet archive page stored");
+await Status("alice-client", archivePath, archiveFirst, HttpStatusCode.NoContent, "archive exact retry is idempotent");
+await Status("alice-client", archivePath, Page(0), HttpStatusCode.Conflict, "archive sequence cannot replace ciphertext");
+await Status("alice-client-two", archivePath, Page(1), HttpStatusCode.NotFound, "target cannot publish source history");
+await Status("stranger", archivePath, Page(1), HttpStatusCode.NotFound, "unrelated account cannot stream archive");
+for (var index = 1; index < 8; index++) await Status("alice-client", archivePath, Page(index), HttpStatusCode.NoContent, "bounded archive page " + index);
+await Status("alice-client", archivePath, Page(8), HttpStatusCode.TooManyRequests, "archive backpressure bounds unacknowledged ciphertext");
+await Status("alice-client", archivePath + "ack", new HistoryArchiveAcknowledgement(7), HttpStatusCode.NotFound, "source cannot forge target history acknowledgement");
+await Status("alice-client-two", archivePath + "ack", new HistoryArchiveAcknowledgement(8), HttpStatusCode.BadRequest, "target cannot acknowledge unsent history");
+await Status("alice-client-two", archivePath + "ack", new HistoryArchiveAcknowledgement(7), HttpStatusCode.NoContent, "target acknowledges durable imported history");
+await Status("alice-client", archivePath, Page(8, true), HttpStatusCode.NoContent, "archive continues after acknowledgement and marks final page");
+await Status("alice-client", archivePath, Page(9), HttpStatusCode.Conflict, "completed archive cannot append pages");
+await Mutate(async db => (await db.Devices.SingleAsync(row => row.Id == "dev-lab-alice-client-two")).RevokedAt = DateTimeOffset.UtcNow);
+await Status("alice-client", archivePath, Page(8, true), HttpStatusCode.NotFound, "revocation blocks archive retries immediately");
+Console.WriteLine($"PASS {checks} PostgreSQL and HTTP ratchet/archive checks");
 if (args.Contains("--serve-for-interop"))
 {
     // Synthetic bearer tokens are passed to the parent test harness only. That

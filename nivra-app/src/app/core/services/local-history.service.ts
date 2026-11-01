@@ -158,6 +158,16 @@ export class LocalHistoryService {
   private readonly vaultKeyInFlight = new Map<string, Promise<CryptoKey>>();
   private storageGeneration = 0;
   private wiping = false;
+  private readonly messageWriteVersions = new Map<string, number>();
+
+  /** A delayed import may not restore content removed while it was in flight. */
+  messageWriteGuard(accountKey: string, conversationId: string, messageId = ''): () => boolean {
+    const chat = JSON.stringify([accountKey, conversationId]), message = JSON.stringify([accountKey, conversationId, messageId]);
+    const chatVersion = this.messageWriteVersions.get(chat) ?? 0, messageVersion = this.messageWriteVersions.get(message) ?? 0;
+    const generation = this.storageGeneration, accountGeneration = this.ratchetAccountGenerations.get(accountKey) ?? 0;
+    return () => !this.wiping && !this.ratchetWipingAccounts.has(accountKey) && generation === this.storageGeneration && accountGeneration === (this.ratchetAccountGenerations.get(accountKey) ?? 0)
+      && chatVersion === (this.messageWriteVersions.get(chat) ?? 0) && messageVersion === (this.messageWriteVersions.get(message) ?? 0);
+  }
 
   /** One encrypted account/device snapshot: ratchet state, retry bytes and incoming deliveries. */
   async readRatchetState(userId: string, deviceId: string): Promise<{ revision: number; state: unknown } | null> {
@@ -437,14 +447,15 @@ export class LocalHistoryService {
       .filter((record): record is ChatMessageVm => Boolean(record));
   }
 
-  async putMessages(accountKey: string, messages: ChatMessageVm[]): Promise<void> {
+  async putMessages(accountKey: string, messages: ChatMessageVm[], isCurrent: () => boolean = () => true): Promise<void> {
     if (!accountKey || !messages.length) {
       return;
     }
     const sqlite = await this.openNativeSqlite();
     if (sqlite) {
       for (const message of messages) {
-        await this.sqlitePutMessage(sqlite, accountKey, message);
+        if (!isCurrent()) throw new Error('El historial cambió durante la escritura.');
+        await this.sqlitePutMessage(sqlite, accountKey, message, isCurrent);
       }
       return;
     }
@@ -464,6 +475,7 @@ export class LocalHistoryService {
       };
       return record;
     }));
+    if (!isCurrent()) throw new Error('El historial cambió durante la escritura.');
     const transaction = db.transaction(LOCAL_MESSAGE_STORE, 'readwrite');
     const store = transaction.objectStore(LOCAL_MESSAGE_STORE);
     await Promise.all(records.map(record => store.put(record)));
@@ -764,6 +776,9 @@ export class LocalHistoryService {
     if (!accountKey || !conversationId || !messageId) {
       return;
     }
+    const versionKey = JSON.stringify([accountKey, conversationId, messageId]);
+    this.messageWriteVersions.set(versionKey, (this.messageWriteVersions.get(versionKey) ?? 0) + 1);
+    if (!conversationId.startsWith('ratchet-receipt:')) await this.removeMessage(accountKey, `ratchet-receipt:${conversationId}`, messageId);
     const sqlite = await this.openNativeSqlite();
     if (sqlite) {
       await sqlite.run('DELETE FROM local_messages WHERE key = ?', [
@@ -784,6 +799,9 @@ export class LocalHistoryService {
     if (!accountKey || !conversationId) {
       return;
     }
+    const versionKey = JSON.stringify([accountKey, conversationId]);
+    this.messageWriteVersions.set(versionKey, (this.messageWriteVersions.get(versionKey) ?? 0) + 1);
+    if (!conversationId.startsWith('ratchet-receipt:')) await this.removeConversationMessages(accountKey, `ratchet-receipt:${conversationId}`);
     const sqlite = await this.openNativeSqlite();
     if (sqlite) {
       await sqlite.run('DELETE FROM local_messages WHERE account_key = ? AND conversation_id = ?', [accountKey, conversationId]);
@@ -1538,7 +1556,7 @@ export class LocalHistoryService {
     };
   }
 
-  private async sqlitePutMessage(sqlite: SQLiteDBConnection, accountKey: string, message: ChatMessageVm): Promise<void> {
+  private async sqlitePutMessage(sqlite: SQLiteDBConnection, accountKey: string, message: ChatMessageVm, isCurrent: () => boolean = () => true): Promise<void> {
     if (!message?.conversationId || !message.id) {
       return;
     }
@@ -1551,6 +1569,7 @@ export class LocalHistoryService {
       expiresAtMs: message.expiresAt ? Date.parse(message.expiresAt) || null : null,
       openedAtMs: null,
     };
+    if (!isCurrent()) throw new Error('El historial cambió durante la escritura.');
     await sqlite.run(
       `INSERT OR REPLACE INTO local_messages
        (key, account_key, conversation_id, id, at, expires_at_ms, opened_at_ms, delete_after_read, record_json)

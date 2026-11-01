@@ -20,3 +20,22 @@ public sealed class HistoryKeyTransferResponse
     public string Header { get; set; } = "";
     public string Ciphertext { get; set; } = "";
 }
+
+// Bounded, acknowledged ciphertext stream. No ratchet private state is transferred.
+public sealed class HistoryArchiveStream
+{
+    public required string TransferId { get; init; }
+    public required string SourceDeviceId { get; init; }
+    public int NextSequence { get; set; }
+    public int AcknowledgedSequence { get; set; } = -1;
+    public bool Finished { get; set; }
+}
+public sealed class HistoryArchivePage
+{
+    public required string TransferId { get; init; }
+    public required string SourceDeviceId { get; init; }
+    public int Sequence { get; init; }
+    public required string Header { get; init; }
+    public required string Ciphertext { get; init; }
+    public bool Final { get; init; }
+}

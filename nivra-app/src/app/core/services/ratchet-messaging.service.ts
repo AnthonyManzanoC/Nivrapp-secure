@@ -256,12 +256,13 @@ export class RatchetMessagingService implements OnDestroy {
       return message;
     });
   }
-  async confirmSent(message: MessageResponse, payload: ChatPayload): Promise<void> {
+  async confirmSent(message: MessageResponse, payload: ChatPayload, isCurrent: () => boolean = () => true): Promise<void> {
     if (!message.recipients.some(recipient => this.isEnvelope(recipient.header))) return;
     return this.run(async () => {
       const owner = this.owner(), engine = await this.open(false), state = await this.state(engine);
       // History must be durable before the only local self-copy is released.
-      await this.persistDelivery(message, payload, 'sent'); owner.assert();
+      if (isCurrent() && message.recipients.some(recipient => recipient.deviceId === owner.deviceId && this.isEnvelope(recipient.header))) await this.persistDelivery(message, payload, 'sent', isCurrent);
+      owner.assert();
       state.confirmed[message.clientMessageId] = { conversationId: message.conversationId, serverId: message.id };
       const ids = Object.keys(state.confirmed); for (const id of ids.slice(0, Math.max(0, ids.length - 8192))) delete state.confirmed[id];
       delete state.outgoing[message.clientMessageId];
@@ -270,8 +271,12 @@ export class RatchetMessagingService implements OnDestroy {
     });
   }
 
-  async decrypt(message: MessageResponse, recipient: RecipientCipherRequest): Promise<ChatPayload> {
+  async decrypt(message: MessageResponse, recipient: RecipientCipherRequest, isCurrent: () => boolean = () => true): Promise<ChatPayload> {
+    const initialOwner = this.owner();
+    const retained = this.history.messageWriteGuard(initialOwner.userId, message.conversationId, message.id);
+    const current = () => { initialOwner.assert(); return isCurrent() && retained(); };
     return this.run(async () => {
+      if (!current()) throw Error('El historial cambió durante la recepción.');
       const owner = this.owner(), header = JSON.parse(recipient.header || '{}') as MessageHeader;
       if (!this.isEnvelope(recipient.header) || header.senderDeviceId !== message.senderDeviceId || header.recipientDeviceId !== owner.deviceId || recipient.deviceId !== owner.deviceId || recipient.userId !== owner.userId) throw Error('Sobre cifrado destinado a otro dispositivo.');
       const digest = await ratchetHash([recipient.header, recipient.ciphertext]);
@@ -307,19 +312,31 @@ export class RatchetMessagingService implements OnDestroy {
           incomingId = (await engine.pendingReceived()).find(item => item.context.conversationId === context.conversationId && item.context.messageId === context.messageId && item.peer.name === message.senderDeviceId)?.id;
         }
       }
-      await this.persistDelivery(message, payload, digest); owner.assert();
+      await this.persistDelivery(message, payload, digest, current); owner.assert();
       if (incomingId) await engine.acknowledgeReceived(incomingId);
       return payload;
     });
   }
   private receiptConversation(id: string): string { return `ratchet-receipt:${id}`; }
-  private async persistDelivery(message: MessageResponse, payload: ChatPayload, envelopeHash: string): Promise<void> {
+  private async persistDelivery(message: MessageResponse, payload: ChatPayload, envelopeHash: string, isCurrent: () => boolean = () => true): Promise<void> {
     const owner = this.owner(), conversationId = this.receiptConversation(message.conversationId);
     await this.history.putMessages(owner.userId, [{ id: message.id, conversationId, clientMessageId: message.clientMessageId, mine: message.senderUserId === owner.userId,
       senderUserId: message.senderUserId, senderDeviceId: message.senderDeviceId, at: message.serverReceivedAt,
-      expiresAt: message.expiresAt, deleteAfterRead: message.deleteAfterRead, payload: { type: 'ratchet-delivery', envelopeHash, content: payload } }]);
+      expiresAt: message.expiresAt, deleteAfterRead: message.deleteAfterRead, payload: { type: 'ratchet-delivery', envelopeHash, content: payload } }], isCurrent);
     owner.assert();
     const saved = await this.history.messageById(owner.userId, conversationId, message.id);
     if (saved?.payload['envelopeHash'] !== envelopeHash) throw Error('No se pudo guardar el historial cifrado.');
+  }
+  forgetConversation(conversationId: string): Promise<void> {
+    return this.run(async () => {
+      const owner = this.owner();
+      if (!await this.history.readRatchetState(owner.userId, owner.deviceId)) return;
+      const engine = await this.open(false), state = await this.state(engine);
+      const outgoing = Object.entries(state.outgoing).filter(([, pending]) => pending.conversationId === conversationId);
+      for (const [id] of outgoing) delete state.outgoing[id];
+      await engine.updateApplicationState(state);
+      for (const [id] of outgoing) await engine.releaseOutgoing(conversationId, await ratchetMessageId(id));
+      for (const pending of await engine.pendingReceived()) if (pending.context.conversationId === conversationId) await engine.acknowledgeReceived(pending.id);
+    });
   }
 }

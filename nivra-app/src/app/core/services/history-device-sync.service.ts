@@ -9,6 +9,7 @@ import { MessageResponse, NivraDevice, StoredDeviceKeys } from '../models/nivra.
 import { NetworkPolicyService } from './network-policy.service';
 import { IdentityTrustService, IdentityTrustTransfer } from './identity-trust.service';
 import { Capacitor } from '@capacitor/core';
+import { HistoryArchiveService } from './history-archive.service';
 
 interface TransferRequest { id: string; userId: string; targetDeviceId: string; targetIdentityKey: string; targetDeviceName?: string; expiresAt: string; }
 export interface PendingHistoryApproval extends TransferRequest { fingerprint: string; }
@@ -20,7 +21,7 @@ export interface PreferredHistorySource {
 }
 interface TransferResponse { sourceDeviceId: string; sourceIdentityKey: string; header: string; ciphertext: string; }
 interface TransferStatus extends TransferRequest { responses: TransferResponse[]; }
-interface KeyringPayload { v: 1; purpose: 'history-keyring'; requestId: string; userId: string; targetDeviceId: string; sourceDeviceId: string; targetPublicJwk: JsonWebKey; expiresAt: string; keys: HistoricalDeviceKeyMaterial[]; identityTrust?: IdentityTrustTransfer; }
+interface KeyringPayload { v: 1; purpose: 'history-keyring'; requestId: string; userId: string; targetDeviceId: string; sourceDeviceId: string; targetPublicJwk: JsonWebKey; expiresAt: string; keys: HistoricalDeviceKeyMaterial[]; identityTrust?: IdentityTrustTransfer; archiveProtocol?: 1; }
 interface SessionScope { userId: string; deviceId: string; alias: string; epoch: number; }
 export interface HistoryRecoveryEvidence {
   userId: string;
@@ -42,6 +43,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private readonly network = inject(NetworkPolicyService);
   private readonly realtime = inject(SignalrService);
   private readonly identityTrust = inject(IdentityTrustService);
+  private readonly archive = inject(HistoryArchiveService);
   private readonly destroyRef = inject(DestroyRef);
   private epoch = 0;
   private scopeId = '';
@@ -89,6 +91,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
   readonly recovered$ = new Subject<void>();
 
   constructor() {
+    this.archive.imported$.pipe(takeUntilDestroyed()).subscribe(() => this.recovered$.next());
     effect(() => {
       const session = this.auth.session();
       const next = session ? `${session.user.id}:${session.device.id}` : '';
@@ -305,7 +308,17 @@ export class HistoryDeviceSyncService implements OnDestroy {
       || !message || typeof message.id !== 'string' || !message.id.trim() || typeof message.conversationId !== 'string' || !message.conversationId.trim()
       || message.encryptedPolicy?.startsWith('system:') || !Array.isArray(message.recipients)) return false;
     if (message.expiresAt && (!Number.isFinite(Date.parse(message.expiresAt)) || Date.parse(message.expiresAt) <= Date.now())) return false;
-    return message.recipients.some(recipient => recipient.userId === scope.userId && Boolean(this.evidenceSenderKey(recipient.header, recipient.ciphertext)));
+    return message.recipients.some(recipient => {
+      if (recipient.userId !== scope.userId) return false;
+      if (this.evidenceSenderKey(recipient.header, recipient.ciphertext)) return true;
+      try {
+        const header = JSON.parse(recipient.header || '{}');
+        if (header.v !== 4 || header.alg !== 'NIVRA-LIBSIGNAL-MESSAGE-1' || header.recipientDeviceId !== recipient.deviceId) return false;
+        if (header.local) return header.senderDeviceId === recipient.deviceId && recipient.ciphertext === 'local-history-v1';
+        const packet = JSON.parse(recipient.ciphertext);
+        return packet.v === 3 && packet.suite === 'NIVRA-LIBSIGNAL-A256GCM-PILOT-1' && packet.context?.conversationId === message.conversationId;
+      } catch { return false; }
+    });
   }
 
   private evidenceSenderKey(header: string | null | undefined, ciphertext: string | null | undefined): JsonWebKey | null {
@@ -585,6 +598,8 @@ export class HistoryDeviceSyncService implements OnDestroy {
     const keys = materials.map(key => ({ publicJwk: key.publicJwk, privateJwk: key.privateJwk, createdAt: key.createdAt }));
     if (!keys.length) throw new Error('Este dispositivo no conserva llaves de historial vinculadas a tu cuenta.');
     const payload: KeyringPayload = { v: 1, purpose: 'history-keyring', requestId: request.id, userId: scope.userId, targetDeviceId: request.targetDeviceId, sourceDeviceId: scope.deviceId, targetPublicJwk: target, expiresAt: request.expiresAt, keys };
+    if (await this.archive?.beginSend(request)) payload.archiveProtocol = 1;
+    this.assertCurrent(scope);
     try { payload.identityTrust = await this.identityTrust.exportForLinkedDevice(scope.userId, scope.deviceId); }
     catch { /* Optional contact continuity must not prevent approved history transfer. */ }
     this.assertCurrent(scope);
@@ -617,6 +632,10 @@ export class HistoryDeviceSyncService implements OnDestroy {
     if (payload.identityTrust) {
       try { await this.identityTrust.importFromLinkedDevice(JSON.stringify([scope.userId, scope.deviceId]), response.sourceDeviceId, payload.identityTrust, () => this.isCurrent(scope)); }
       catch { /* Keep valid history keys even if optional continuity is unsupported. */ }
+      this.assertCurrent(scope);
+    }
+    if (payload.archiveProtocol === 1) {
+      await this.archive?.beginReceive(request, response.sourceDeviceId, response.sourceIdentityKey);
       this.assertCurrent(scope);
     }
     this.state.set('syncing');

@@ -1331,7 +1331,7 @@ export class ChatService implements OnDestroy {
       response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
     }
     this.assertSendContext(context);
-    await this.ratchet?.confirmSent(response, outgoingPayload);
+    await this.ratchet?.confirmSent(response, outgoingPayload, () => historyGeneration === this.historyGeneration(conversation.id));
     if (options.queueManaged && historyGeneration !== this.historyGeneration(conversation.id)) return response;
     if (!options.suppressLocalMessage) {
       if (options.clientMessageId?.startsWith('call-summary:') && response.senderUserId !== context.userId) await this.ingestMessage(response, false);
@@ -2438,6 +2438,7 @@ export class ChatService implements OnDestroy {
   }
 
   private forgetConversationHistory(conversationId: string): void {
+    void this.ratchet?.forgetConversation(conversationId).catch(() => undefined);
     this.conversationHistoryGenerations.set(conversationId, this.historyGeneration(conversationId) + 1);
     for (const message of this.pendingHistoryEnvelopes.values()) {
       if (message.conversationId === conversationId) this.forgetHistoryMessage(message.id);
@@ -2467,7 +2468,8 @@ export class ChatService implements OnDestroy {
     if (message && this.ratchet) {
       const recipient = recipients.find(item => item.deviceId === deviceId && this.ratchet.isEnvelope(item.header));
       if (recipient) {
-        try { return await this.ratchet.decrypt(message, recipient); }
+        const historyGeneration = this.historyGeneration(message.conversationId);
+        try { return await this.ratchet.decrypt(message, recipient, () => !this.discardHistoryEnvelope(message, historyGeneration)); }
         catch { return null; } // Never reinterpret a ratchet envelope as legacy ciphertext.
       }
     }
