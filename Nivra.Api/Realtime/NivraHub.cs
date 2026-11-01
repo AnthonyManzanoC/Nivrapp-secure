@@ -505,6 +505,7 @@ public sealed class NivraHub(
 
         var now = timeProvider.GetUtcNow();
         if (request.Recipients.Count > 1024 || string.IsNullOrWhiteSpace(request.ClientMessageId) || request.ClientMessageId.Length > 128) throw new HubException("Mensaje de sala inválido.");
+        if (!await store.IsSessionActiveAsync(currentUser.SessionId, currentUser.UserId, currentUser.DeviceId, now, Context.ConnectionAborted)) throw new HubException("La sesión de este dispositivo dejó de estar autorizada.");
         var activeUsers = await db.VaultRoomMembers.Where(member => member.VaultRoomId == roomId && member.Status == VaultMemberStatus.Active).Select(member => member.UserId).ToListAsync(Context.ConnectionAborted);
         var deviceIds = request.Recipients.Select(recipient => recipient.DeviceId).Distinct().ToArray();
         var devices = await db.Devices.AsNoTracking().Where(device => deviceIds.Contains(device.Id) && device.RevokedAt == null && device.IsTrusted && db.Users.Any(user => user.Id == device.UserId && user.DisabledAt == null)).ToDictionaryAsync(device => device.Id, Context.ConnectionAborted);

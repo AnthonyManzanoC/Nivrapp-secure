@@ -12,7 +12,7 @@ const host = spawn('dotnet', ['run', '--no-build', '--project', 'checks/Nivra.Ra
 const lines = createInterface({ input: host.stdout }); let fixture, exited = false, startupError;
 host.on('error', error => { startupError = error; }); host.on('exit', () => { exited = true; });
 lines.on('line', line => { if (line.startsWith('RATCHET_FIXTURE ')) fixture = JSON.parse(line.slice('RATCHET_FIXTURE '.length)); else console.log(line); });
-let alice, bob;
+let alice, bob, lastAliceVault;
 try {
   const deadline = Date.now() + 90000;
   while (!fixture && Date.now() < deadline && !exited && !startupError) await delay(100);
@@ -49,11 +49,21 @@ try {
     await post(token, '/fixture/message-policy', compact, 204);
     await post(token, '/fixture/message-policy', { ...compact, sharedPayloadCiphertext: null }, 400);
     await post(token, '/fixture/message-policy', { ...compact, recipients: [recipient] }, 400);
+    const vaultRecipient = { ...compact.recipients[0], ciphertext: JSON.stringify({ ...wire, context: { ...wire.context, conversationId: 'vault-lab' } }) };
+    const self = { ...recipient, userId: turn % 2 ? fixture.bobUser : fixture.aliceUser, deviceId: sender.address.name, ciphertext: 'local-history-v1', header: JSON.stringify({ ...compactHeader, recipientDeviceId: sender.address.name, local: true }) };
+    const vault = { ...compact, recipients: [self, vaultRecipient] };
+    await post(token, '/fixture/vault-relay/vault-lab', vault, 204);
+    await post(token, '/fixture/vault-relay/vault-lab-expired', vault, 403);
+    await post(token, '/fixture/vault-relay/vault-lab-other', vault, 403);
+    await post(token, '/fixture/vault-relay/vault-lab', { ...vault, recipients: [self] }, 403);
+    if (!(turn % 2)) lastAliceVault = vault;
   }
   assert.deepEqual(await bob.pendingConsumedPreKeys(), [publicBundle.preKeyId]);
   await post(fixture.bobToken, '/ratchet/olm/prekeys/consumed', { preKeyIds: await bob.pendingConsumedPreKeys() }, 204);
   await bob.acknowledgeConsumedPreKeys([publicBundle.preKeyId]);
   await post(fixture.bobToken, '/ratchet/olm/prekeys', { bundles: [publicBundle] }, 409);
   await post(fixture.aliceToken, path, { conversationId: fixture.conversationId, requestId: randomUUID() }, 503);
+  await post(fixture.aliceToken, '/fixture/vault-relay/vault-lab?revoke=1', lastAliceVault, 403);
+  console.log('PASS actual Vault hub relay validates hybrid frames, complete membership, expiry and revoked sessions without storing messages');
   console.log('PASS real ML-KEM hybrid prekeys traverse .NET/PostgreSQL atomically, eight ratchet turns, consumed-key cleanup and no fallback');
 } finally { await alice?.close().catch(() => undefined); await bob?.close().catch(() => undefined); lines.close(); host.kill('SIGTERM'); }

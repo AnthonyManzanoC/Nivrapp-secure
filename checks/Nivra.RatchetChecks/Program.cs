@@ -12,6 +12,8 @@ using Nivra.Api.Infrastructure;
 using Nivra.Api.Security;
 using Nivra.Api.Services;
 using Npgsql;
+using Microsoft.AspNetCore.SignalR;
+using Nivra.Api.Realtime;
 
 // Never load application settings or a production connection. These tests
 // require an ephemeral CI database with this exact loopback name.
@@ -51,6 +53,18 @@ app.MapPost("/fixture/message-policy", async (SendMessageRequest request, HttpCo
         var restored = await db.Messages.AsNoTracking().SingleAsync(row => row.Id == id, ct);
         if (restored.SharedPayloadCiphertext != request.SharedPayloadCiphertext || restored.SharedPayloadIv != request.SharedPayloadIv || restored.Recipients.Any(row => row.Header!.Contains(request.SharedPayloadCiphertext!))) throw new InvalidOperationException("Shared ciphertext persistence changed or duplicated the body");
     }
+    return Results.NoContent();
+});
+app.MapPost("/fixture/vault-relay/{roomId}", async (string roomId, VaultRealtimeMessageRequest request, HttpContext http, NivraDbContext db, INivraStore store) => {
+    if (http.GetCurrentUser() is not { } user) return Results.Unauthorized();
+    if (http.Request.Query.ContainsKey("revoke")) { (await db.Sessions.SingleAsync(row => row.Id == user.SessionId)).RevokedAt = DateTimeOffset.UtcNow; await db.SaveChangesAsync(); db.ChangeTracker.Clear(); }
+    var clients = System.Reflection.DispatchProxy.Create<IHubCallerClients, VaultFixtureClients>();
+    var capture = (VaultFixtureClients)clients;
+    var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Ratchet:RequireHybrid"] = "true" }).Build();
+    var hub = new NivraHub(null!, store, db, null!, new RealtimePresence(), null!, null!, null!, Microsoft.Extensions.Logging.Abstractions.NullLogger<NivraHub>.Instance, TimeProvider.System, config) { Context = new VaultFixtureContext(user), Clients = clients };
+    try { await hub.SendVaultRoomMessage(roomId, request); }
+    catch (HubException) { if (capture.Count != 0) throw new InvalidOperationException("Rejected Vault message was relayed"); return Results.StatusCode(403); }
+    if (capture.Count != 1 || capture.Message is not { } relayed || relayed.SharedPayloadCiphertext != request.SharedPayloadCiphertext || relayed.Recipients.Count != request.Recipients.Count) throw new InvalidOperationException("Vault relay changed the encrypted frame");
     return Results.NoContent();
 });
 var tokens = new Dictionary<string, string>();
@@ -250,4 +264,25 @@ if (args.Contains("--serve-for-interop"))
     // harness suppresses this line, and no fixture is uploaded as an artifact.
     Console.WriteLine("RATCHET_FIXTURE " + JsonSerializer.Serialize(new { url = app.Urls.Single(), aliceToken = tokens["alice-real"], bobToken = tokens["bob-real"], aliceUser = "usr-lab-alice", bobUser = "usr-lab-bob", aliceDevice = "dev-lab-alice-real", bobDevice = "dev-lab-bob-real", conversationId = "chat-lab" }, json));
     await app.WaitForShutdownAsync();
+}
+
+public class VaultFixtureClients : System.Reflection.DispatchProxy
+{
+    public int Count { get; set; }
+    public VaultRealtimeMessageResponse? Message { get; set; }
+    protected override object? Invoke(System.Reflection.MethodInfo? method, object?[]? arguments) => method?.Name == "Group" ? new VaultFixtureClient(this) : throw new NotSupportedException();
+}
+public sealed class VaultFixtureClient(VaultFixtureClients parent) : IClientProxy
+{
+    public Task SendCoreAsync(string method, object?[] args, CancellationToken ct = default) { if (method != "vault.message" || args.Length != 1) throw new InvalidOperationException("Unexpected Vault event"); parent.Count++; parent.Message = (VaultRealtimeMessageResponse)args[0]!; return Task.CompletedTask; }
+}
+public sealed class VaultFixtureContext(CurrentUser user) : HubCallerContext
+{
+    public override string ConnectionId => "isolated-vault-fixture";
+    public override string? UserIdentifier => user.UserId;
+    public override System.Security.Claims.ClaimsPrincipal? User => null;
+    public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?> { ["current_user"] = user };
+    public override Microsoft.AspNetCore.Http.Features.IFeatureCollection Features { get; } = new Microsoft.AspNetCore.Http.Features.FeatureCollection();
+    public override CancellationToken ConnectionAborted => CancellationToken.None;
+    public override void Abort() { }
 }
