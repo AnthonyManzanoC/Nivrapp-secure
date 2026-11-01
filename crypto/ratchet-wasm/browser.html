@@ -2,6 +2,8 @@
 <body data-result="pending">Testing synthetic keys only…
 <script type="module">
 import init, * as bridge from './pkg/web/nivra_ratchet_wasm.js';
+import { LabWebDevice } from './web-device.mjs';
+import { testBrowserStorage } from './browser-storage-tests.mjs';
 const bytes = value => Uint8Array.from(atob(value), char => char.charCodeAt(0));
 const equal = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
 try {
@@ -34,7 +36,31 @@ try {
       if (!equal(await recipient.decrypt(senderName, 1, packet.type, bytes(packet.bytes)), plain)) throw Error('Browser ratchet mismatch');
     }
   } finally { alice.free(); bob.free(); }
-  document.body.textContent = 'PASS: native/WASM interoperability, secure randomness, PQ session and six bidirectional browser ratchet turns.';
+  const webAlice = new LabWebDevice(bridge, 'envelope-alice'), webBob = new LabWebDevice(bridge, 'envelope-bob');
+  try {
+    await webAlice.pinIdentity(webBob.address, webBob.publicIdentity);
+    await webBob.pinIdentity(webAlice.address, webAlice.publicIdentity);
+    await webAlice.establish(webBob.address, await webBob.bundle());
+    for (let i = 0; i < 6; i++) {
+      const [sender, recipient] = i % 2 ? [webBob, webAlice] : [webAlice, webBob];
+      const context = { conversationId: 'browser-chat', messageId: 'webcrypto-' + i };
+      const payload = { text: 'WebCrypto turn ' + i };
+      const envelope = await sender.encrypt(recipient.address, context, payload);
+      if (i === 0) {
+        const altered = structuredClone(envelope), nonce = bytes(altered.iv); nonce[0] ^= 1;
+        altered.iv = btoa(String.fromCharCode(...nonce));
+        let rejected = false;
+        try { await recipient.decrypt(sender.address, context, altered); } catch { rejected = true; }
+        if (!rejected) throw Error('Tampered nonce accepted');
+      }
+      const received = await recipient.decrypt(sender.address, context, envelope);
+      if (received.text !== payload.text) throw Error('WebCrypto envelope mismatch');
+      const retry = await sender.encrypt(recipient.address, context, payload);
+      if (JSON.stringify(retry) !== JSON.stringify(envelope)) throw Error('Retry bytes changed');
+    }
+  } finally { await webAlice.close(); await webBob.close(); }
+  await testBrowserStorage();
+  document.body.textContent = 'PASS: native/WASM interoperability, secure randomness, PQ sessions, browser ratchet turns, AES-256-GCM envelopes, exact retries, tamper rollback and encrypted IndexedDB revision transactions.';
   document.body.dataset.result = 'passed';
 } catch (error) {
   document.body.textContent = 'FAIL: ' + error.message; document.body.dataset.result = 'failed';

@@ -30,7 +30,6 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: 1.93.1
         run: |
-          cargo generate-lockfile
           cargo build --locked --release --target wasm32-unknown-unknown
           cargo install wasm-bindgen-cli --version 0.2.130 --locked
           wasm-bindgen --target nodejs --out-dir pkg/node target/wasm32-unknown-unknown/release/nivra_ratchet_wasm.wasm
@@ -42,6 +41,7 @@ jobs:
       - name: Actual browser WebCrypto and WASM test
         run: |
           node crypto/ratchet-wasm/serve.mjs 8123 > "$RUNNER_TEMP/ratchet-http.log" 2>&1 &
+          curl --fail --silent --retry 10 --retry-connrefused --retry-delay 1 http://127.0.0.1:8123/browser.html > /dev/null
           google-chrome --headless=new --no-sandbox --disable-gpu --no-first-run --user-data-dir="$RUNNER_TEMP/ratchet-browser" --virtual-time-budget=15000 --dump-dom http://127.0.0.1:8123/browser.html > crypto/ratchet-wasm/browser-result.html
           grep -q 'data-result="passed"' crypto/ratchet-wasm/browser-result.html
       - name: Preserve bridge and diagnostic artifacts
