@@ -94,6 +94,7 @@ async function main() {
     await waitFor("!!document.querySelector('.chats-page.search-active')");
     assert.equal(await evaluate("getComputedStyle(document.querySelector('.side-head')).display"),'none','mobile search replaces Chats heading');
     assert.equal(await evaluate("getComputedStyle(document.querySelector('.rail')).display"),'none','mobile search hides bottom navigation');
+    assert.equal(await evaluate("(async()=>getComputedStyle(await document.querySelector('.search-box ion-input').getInputElement()).outlineStyle)()"),'none','native input must not draw a rectangle inside the search pill');
     assert(await evaluate("document.querySelector('.search-box').getBoundingClientRect().top < 40"),'search uses the top of the screen');
     await capture('mobile-search');
     await evaluate("document.querySelector('.search-back').click()");

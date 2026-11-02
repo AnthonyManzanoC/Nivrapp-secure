@@ -20,6 +20,8 @@ small,.card-sub { color:var(--nivra-muted); font-size:13px; }
 .requests-link span { background:var(--nivra-accent-soft,#e6f9f3); padding:3px 8px; border-radius:20px; }
 .contacts-grid { display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start; }
 .panel { min-width:0; }
+.contacts-grid>.panel,.radar-panel { border:0; border-radius:0; box-shadow:none; background:transparent; padding:0; }
+.contacts-grid>.panel:first-child .panel-headline .card-sub { display:none; }
 h2 { font-size:16px; margin:12px 0; }
 .contact-list { margin-top:12px; }
 .contact-card { display:flex; align-items:center; gap:8px; padding:10px 0; border-bottom:1px solid var(--nivra-line); }

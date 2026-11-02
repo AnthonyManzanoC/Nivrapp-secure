@@ -1927,6 +1927,13 @@ ion-popover.chat-options-popover .popover-menu button:hover { background:var(--n
 ion-popover.chat-options-popover .popover-menu button:focus-visible { outline:2px solid var(--ion-color-primary); outline-offset:-2px; }
 ion-popover.chat-options-popover .popover-menu ion-icon { flex:0 0 18px; color:var(--ion-color-primary); }
 ion-popover.chat-options-popover .popover-menu button.danger { color:var(--ion-color-danger); }
+// Ionic input renders a scoped native input, rather than a shadow-DOM part.
+// The rounded search container supplies the focus cue for keyboard users.
+body app-chats .search-box ion-input input:focus-visible,
+body app-contacts .search-line ion-input input:focus-visible { outline:none; outline-offset:0; box-shadow:none; }
+body app-contacts .search-line ion-input,
+body app-contacts .search-line ion-input input { background:transparent; border:0; box-shadow:none; }
+body app-contacts .search-line:focus-within { box-shadow:0 0 0 2px color-mix(in srgb,var(--nivra-brand) 30%,transparent); }
 @media(max-width:768px) {
  .workspace:has(.chats-page.search-active) { padding-bottom:0; }
  .workspace:has(.chats-page.search-active)>.rail { display:none; }
