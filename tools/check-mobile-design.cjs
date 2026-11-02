@@ -89,6 +89,7 @@ async function main() {
     await call('Page.navigate',{url:base+'/app/chats?theme=light'});
     await waitFor("!!document.querySelector('.chats-page')");
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await tap('.compact-stories');
     await waitFor("document.querySelectorAll('.story-highlight').length > 5 && document.querySelector('.story-strip-page:not(.previous):not(:disabled)')");
     assert(await evaluate("(()=>{const a=document.querySelector('.story-collapse').getBoundingClientRect(),b=document.querySelector('.story-highlight').getBoundingClientRect();return a.bottom<=b.top || a.left>=b.right || a.right<=b.left;})()"),'collapse control must not cover Mi historia');
     await tap('.story-strip-page:not(.previous)');
