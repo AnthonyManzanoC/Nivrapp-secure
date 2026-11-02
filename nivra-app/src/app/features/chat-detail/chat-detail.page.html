@@ -98,6 +98,7 @@
     class="messages-content"
     [scrollEvents]="true"
     (ionScroll)="onThreadScroll($event)"
+    (wheel)="stopInitialScroll()" (touchstart)="stopInitialScroll()" (pointerdown)="stopInitialScroll()"
     [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
     [style.--nivra-chat-background]="appSettings.chatBackgroundCss()"
     [style.--nivra-chat-background-size]="appSettings.chatBackgroundSizeCss()"
@@ -111,7 +112,7 @@
     <ion-infinite-scroll
       position="top"
       threshold="120px"
-      [disabled]="!chat.hasOlderMessages(conversation()?.id)"
+      [disabled]="openingLatest || !chat.hasOlderMessages(conversation()?.id)"
       (ionInfinite)="loadOlderMessages($event)">
       <ion-infinite-scroll-content loadingSpinner="crescent"></ion-infinite-scroll-content>
     </ion-infinite-scroll>

@@ -56,3 +56,16 @@
 .story-strip { scroll-padding-inline:14px; }
 .story-highlight-item { scroll-snap-align:start; flex:0 0 84px; }
 .story-publish-notice { margin:4px 16px 12px; padding:12px 14px; border-radius:16px; font-size:12px; line-height:1.5; background:color-mix(in srgb,var(--nivra-brand) 7%,var(--nivra-panel-solid)); color:var(--nivra-text); }
+
+.mobile-message-fab { display:none; }
+@media(max-width:768px){
+ .side-actions .new-chat-button { display:none; }
+ .sidebar { position:relative; }
+ .mobile-message-fab { position:absolute; z-index:10; right:18px; bottom:18px; display:flex; align-items:center; justify-content:center; gap:0; height:56px; width:56px; border:0; border-radius:18px; color:var(--ion-color-primary-contrast,#fff); background:var(--ion-color-primary); box-shadow:0 5px 18px #003e2926; cursor:pointer; transition:width .22s ease,gap .22s ease; }
+ .mobile-message-fab ion-icon { font-size:26px; flex:none; }
+ .mobile-message-fab span { max-width:0; opacity:0; overflow:hidden; white-space:nowrap; font-size:13px; font-weight:700; transition:max-width .22s ease,opacity .18s ease; }
+ .mobile-message-fab.expanded,.mobile-message-fab:focus-visible { width:180px; gap:10px; }
+ .mobile-message-fab.expanded span,.mobile-message-fab:focus-visible span { max-width:130px; opacity:1; }
+ .sidebar:has(.mobile-message-fab) .list { padding-bottom:90px; }
+}
+@media(prefers-reduced-motion:reduce){.mobile-message-fab,.mobile-message-fab span{transition:none;}}

@@ -1,6 +1,6 @@
 import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
-import { Component, Injector, EffectRef, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, Injector, EffectRef, ElementRef, NgZone, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PrivateChatLockService } from '../../core/services/private-chat-lock.service';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
@@ -145,6 +145,10 @@ export class ChatsPage implements OnDestroy {
       });
   });
   query = '';
+  contactsFabExpanded = true;
+  private contactsFabTop = 0;
+  private contactsFabTimer: number | null = null;
+  private readonly feedbackZone = inject(NgZone);
   searchResults: UserSummary[] = [];
   searching = false;
   searchScope: ChatSearchScope = 'all';
@@ -349,10 +353,12 @@ export class ChatsPage implements OnDestroy {
     });
     void this.social.load().catch(() => undefined);
     this.storyStripTimer = window.setInterval(() => this.storyStripNow.set(Date.now()), 30_000);
+    this.scheduleContactsFabCollapse();
     queueMicrotask(() => this.syncSelectedConversationFromUrl(this.router.url));
   }
 
   ngOnDestroy(): void {
+    if (this.contactsFabTimer !== null) window.clearTimeout(this.contactsFabTimer);
     this.storyStripResize?.disconnect(); this.storyStripMutation?.disconnect();
     this.alive = false;
     this.detachNativeStoryGesture();
@@ -637,6 +643,13 @@ export class ChatsPage implements OnDestroy {
   startNewChat(): void {
     void this.router.navigateByUrl('/app/contacts');
   }
+  private scheduleContactsFabCollapse(): void {
+    if (this.contactsFabTimer !== null) window.clearTimeout(this.contactsFabTimer);
+    this.contactsFabTimer = this.feedbackZone.runOutsideAngular(() => window.setTimeout(() => {
+      this.contactsFabTimer = null;
+      if (this.alive) this.feedbackZone.run(() => this.contactsFabExpanded = false);
+    },4500));
+  }
 
   openConversationMenu(conversation: Conversation, event: Event): void {
     event.preventDefault();
@@ -829,6 +842,13 @@ export class ChatsPage implements OnDestroy {
 
   onChatListScroll(event: Event): void {
     const list = event.target as HTMLElement;
+    const delta = list.scrollTop - this.contactsFabTop;
+    if (Math.abs(delta) > 8) {
+      this.contactsFabTop = list.scrollTop;
+      this.contactsFabExpanded = delta < 0;
+      if (this.contactsFabTimer !== null) window.clearTimeout(this.contactsFabTimer);
+      if (this.contactsFabExpanded) this.scheduleContactsFabCollapse();
+    }
     if (this.androidStoryGesturesEnabled()) {
       const previousTop = this.nativeStoryScrollTop;
       this.nativeStoryScrollTop = list.scrollTop;

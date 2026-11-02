@@ -99,6 +99,10 @@ async function main() {
     await capture('mobile-stories-scroll');
     await evaluate("document.querySelector('.story-strip').scrollLeft=0");
     await capture('mobile-chats');
+    assert.equal(await evaluate("document.querySelectorAll('.header-refresh').length"),0,'refresh is removed from the heading');
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.side-actions .new-chat-button')).display"),'none','mobile heading keeps only the menu action');
+    await waitFor("document.querySelector('.mobile-message-fab').getBoundingClientRect().width<65");
+    await capture('mobile-message-button');
     await tap('.search-box ion-input');
     await waitFor("!!document.querySelector('.chats-page.search-active')");
     assert.equal(await evaluate("getComputedStyle(document.querySelector('.side-head')).display"),'none','mobile search replaces Chats heading');
@@ -108,7 +112,7 @@ async function main() {
     await capture('mobile-search');
     await evaluate("document.querySelector('.search-back').click()");
     await waitFor("!document.querySelector('.chats-page.search-active')");
-    await evaluate("document.querySelector('.new-chat-button').click()");
+    await tap('.mobile-message-fab');
     await waitFor("!!document.querySelector('.contacts-page')");
     assert(await evaluate("document.querySelector('.self-contact').textContent.includes('(Tú)')"),'self notes are accessible from Contacts');
     await capture('mobile-contacts');
@@ -130,6 +134,7 @@ async function main() {
     await tap('.search-box ion-input');
     await waitFor("!!document.querySelector('.chats-page.search-active')");
     assert.notEqual(await evaluate("getComputedStyle(document.querySelector('.side-head')).display"),'none','desktop preserves its split layout');
+    assert.notEqual(await evaluate("getComputedStyle(document.querySelector('.new-chat-button')).display"),'none','desktop keeps the new-chat shortcut');
     await capture('desktop-search');
     await viewport(390,844,true);
     await call('Page.navigate',{url:base+'/app/games?theme=light'});

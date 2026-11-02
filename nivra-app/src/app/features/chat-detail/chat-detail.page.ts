@@ -269,6 +269,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private initialScrollRequestId = 0;
   private initialScrollDoneForConversation = '';
   private initialScrollTimers: number[] = [];
+  openingLatest = true;
   initialUnreadMessageId: string | null = null;
 
   draft = '';
@@ -488,6 +489,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.routeSub = this.route.paramMap.subscribe((params) => {
       const id = params.get('conversationId');
       if (id) {
+        this.clearInitialScrollTimers(); this.openingLatest = true;
         this.cancelSelection();
         void this.cancelVoiceNote();
         this.clearPendingAttachments(false);
@@ -545,7 +547,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
     window.requestAnimationFrame(() => {
       this.cdr.detectChanges();
-      this.scheduleInitialScroll(conversationId);
+      this.scheduleInitialScroll(conversationId, { force: true });
     });
   }
 
@@ -585,7 +587,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   async loadOlderMessages(event: Event): Promise<void> {
     const infinite = event.target as HTMLIonInfiniteScrollElement | null;
     const conversationId = this.conversation()?.id;
-    if (!conversationId) {
+    if (!conversationId || this.openingLatest) {
       await infinite?.complete();
       return;
     }
@@ -594,6 +596,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const previousTop = scrollElement?.scrollTop ?? 0;
     try {
       await this.chat.loadOlderMessages(conversationId);
+      if (this.destroyed || this.conversation()?.id !== conversationId) return;
       this.cdr.detectChanges();
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       if (scrollElement && previousHeight > 0) {
@@ -3184,23 +3187,25 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
     this.initialScrollDoneForConversation = id;
     this.clearInitialScrollTimers();
-    [0, 80, 220, 520].forEach((delay, index) => {
-      const timer = window.setTimeout(() => this.scrollToInitialPosition(id, index), delay);
+    this.openingLatest = true;
+    [0, 80, 220, 520, 1000].forEach((delay, index) => {
+      const timer = window.setTimeout(() => {
+        this.scrollToInitialPosition(id, index);
+        if (index === 4) { this.openingLatest = false; this.clearInitialScrollTimers(); }
+      }, delay);
       this.initialScrollTimers.push(timer);
     });
   }
 
   private scrollToInitialPosition(conversationId: string | null | undefined, attempt = 0): void {
     const id = conversationId || this.conversation()?.id;
-    const unreadMessageId = this.chat.initialScrollMessageId(id);
-    if (unreadMessageId) {
-      this.initialUnreadMessageId = unreadMessageId;
-      this.scrollToMessage(unreadMessageId, attempt);
-      return;
-    }
-    this.initialUnreadMessageId = null;
-    this.scrollBottom({ strong: true });
+    if (this.destroyed || !id || this.conversation()?.id !== id) return;
+    // Keep the unread separator available when scrolling back, but open at the
+    // newest message. Search/reply navigation continues to target exact messages.
+    this.initialUnreadMessageId = this.chat.initialScrollMessageId(id);
+    void this.content?.scrollToBottom(0);
   }
+  stopInitialScroll(): void { this.openingLatest = false; this.clearInitialScrollTimers(); }
 
   private scrollToMessage(messageId: string, attempt = 0): void {
     const run = async () => {

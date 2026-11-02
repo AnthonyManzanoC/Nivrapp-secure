@@ -34,10 +34,6 @@
           }
         </div>
         <div class="side-actions">
-          <button class="header-refresh" type="button" [disabled]="showConversationSkeleton()" (click)="openHistoryPanel()" [attr.aria-label]="'CHATS.SYNC' | translate:'Sincronizar'" [title]="'CHATS.SYNC' | translate:'Sincronizar'">
-            @if (showConversationSkeleton()) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
-            @else { <ion-icon name="sync-outline" aria-hidden="true"></ion-icon> }
-          </button>
           <button class="new-chat-button" type="button" (click)="startNewChat()" [attr.aria-label]="'CHATS.NEW_CHAT' | translate:'Nuevo chat'" [title]="'CHATS.NEW_CHAT' | translate:'Nuevo chat'">
             <ion-icon name="add-outline" aria-hidden="true"></ion-icon>
           </button>
@@ -336,6 +332,9 @@
           </ion-list>
           </div>
         </section>
+      }
+      @if(!detailActive && !query.trim() && !showRecentSearches){
+        <button type="button" class="mobile-message-fab" [class.expanded]="contactsFabExpanded" (click)="startNewChat()" aria-label="Nuevo mensaje, abrir Contactos"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon><span>Nuevo mensaje</span></button>
       }
     </aside>
 

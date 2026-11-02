@@ -1196,3 +1196,9 @@ ion-modal.story-stats-modal {
  .world-surface .story-grid { gap:0; margin-top:10px; }
  .world-surface .story-bucket-row { border:0; border-bottom:1px solid var(--nivra-line); border-radius:0; padding:16px 0; min-height:90px; background:transparent; }
 }
+
+.world-surface .story-bucket-row { display:flex; align-items:center; gap:14px; }
+.world-surface .story-open { display:flex; align-items:center; gap:14px; }
+.world-surface .story-avatar { flex:0 0 54px; }
+.world-surface .story-open>span:last-child { flex:1; }
+.world-surface .story-bucket-row .row-actions { flex:none; flex-wrap:nowrap; justify-content:flex-end; gap:0; }
