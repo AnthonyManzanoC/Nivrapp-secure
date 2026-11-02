@@ -185,6 +185,11 @@ jobs:
       - name: Build separate laboratory APKs
         working-directory: android
         run: bash ./gradlew -PnivraRatchetLab=true -PnivraHybridLab=true :ratchet-lab:assembleDebug :ratchet-lab:assembleDebugAndroidTest --no-daemon --max-workers=2 --console=plain
+      - name: Build native call UI in a separate application package
+        run: |
+          npm ci --ignore-scripts
+          cd android
+          bash ./gradlew -PnivraExperienceLab=true :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2 --console=plain
       - name: Verify state across Android process restart
         run: |
           adb="$ANDROID_HOME/platform-tools/adb"
@@ -208,11 +213,20 @@ jobs:
           "$adb" -s emulator-5554 shell am instrument -w -e phase 2 com.nivra.ratchetlab.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/ratchet-android-phase2.log"
           grep -F 'OK (1 test)' "$RUNNER_TEMP/ratchet-android-phase2.log"
           "$adb" -s emulator-5554 shell dumpsys webviewupdate | grep 'Current WebView package' | tee "$RUNNER_TEMP/ratchet-android-webview.log"
+          "$adb" -s emulator-5554 shell wm size 1080x2400
+          "$adb" -s emulator-5554 shell wm density 420
+          "$adb" -s emulator-5554 install -r android/app/build/outputs/apk/debug/app-debug.apk
+          "$adb" -s emulator-5554 install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+          "$adb" -s emulator-5554 shell am instrument -w -e class com.nivra.app.IncomingCallExperienceInstrumentedTest com.nivra.app.experiencelab.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/ratchet-android-call-ui.log"
+          grep -F 'OK (3 tests)' "$RUNNER_TEMP/ratchet-android-call-ui.log"
+          "$adb" -s emulator-5554 pull /sdcard/Android/data/com.nivra.app.experiencelab/files/call-design/ "$RUNNER_TEMP/native-call-design/"
       - name: Preserve Android trial diagnostics
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ratchet-android-trial
-          path: ${{ runner.temp }}/ratchet-android-*.log
+          path: |
+            ${{ runner.temp }}/ratchet-android-*.log
+            ${{ runner.temp }}/native-call-design/
           if-no-files-found: warn
           retention-days: 7

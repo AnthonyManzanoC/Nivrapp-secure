@@ -24,8 +24,9 @@ final class NivraCallPushPolicy {
     }
 
     static boolean wasEnded(Context context, String userId, String deviceId, String callId, long now) {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getLong(NivraPushScopePolicy.callKey(userId, deviceId, callId), 0) > now - 300_000;
+        long endedAt = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getLong(NivraPushScopePolicy.callKey(userId, deviceId, callId), 0);
+        return endedAt > 0 && endedAt > now - 300_000;
     }
 
     static void markEnded(Context context, Map<String, String> data, String callId) {
