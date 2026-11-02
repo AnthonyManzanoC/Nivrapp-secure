@@ -117,6 +117,14 @@ async function main() {
     await waitFor("!!document.querySelector('.chats-page.search-active')");
     assert.notEqual(await evaluate("getComputedStyle(document.querySelector('.side-head')).display"),'none','desktop preserves its split layout');
     await capture('desktop-search');
+    await viewport(390,844,true);
+    await call('Page.navigate',{url:base+'/app/games?theme=light'});
+    await waitFor("document.querySelectorAll('.game-choice').length===7");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('mobile-games');
+    await evaluate("[...document.querySelectorAll('.game-choice')].find(button=>button.textContent.includes('Reversi')).click()");
+    await waitFor("document.querySelectorAll('.reversi-board button').length===36");
+    await capture('mobile-reversi');
     assert.deepEqual(errors,[],'preview must not throw runtime errors');
     console.log('PASS mobile search, Contacts, self notes entry and desktop layout; screenshots saved.');
   } finally { socket?.close(); chrome.kill(); server.close(); }

@@ -8,6 +8,8 @@ import { addIcons } from 'ionicons';
 import { arrowBackOutline, callOutline, videocamOutline } from 'ionicons/icons';
 import { ShellPage } from '../src/app/features/shell/shell.page';
 import { ContactsPage } from '../src/app/features/contacts/contacts.page';
+import { CallGamePanelComponent } from '../src/app/shared/call-game-panel.component';
+import { CallGameKind, CallGameState, applyCallGameAction, createCallGame } from '../src/app/core/games/call-game-engine';
 import { ContactSyncService } from '../src/app/core/services/contact-sync.service';
 import { ChatsPage } from '../src/app/features/chats/chats.page';
 import { AuthService } from '../src/app/core/services/auth.service';
@@ -76,6 +78,19 @@ class PreviewConversation {
 
 @Component({ selector: 'preview-empty', standalone: true, template: '<section style="padding:40px;color:var(--nivra-text)"><h1>Vista de prueba</h1><p>Esta vista usa datos ficticios y no envía mensajes.</p><a href="/app/chats">Volver a Chats</a></section>' })
 class PreviewEmpty {}
+@Component({selector:'preview-games',standalone:true,imports:[CallGamePanelComponent],
+  template:`<app-call-game-panel [state]="state" currentUserId="alex" [participants]="participants" [transportReady]="true" (create)="create($event)" (action)="act($event)" (catalogue)="state=null" />`,
+  styles:[':host{display:block;height:100%;overflow:auto;background:var(--nivra-panel-solid);}']})
+class PreviewGames {
+  state:CallGameState|null=null;
+  participants=[{userId:'alex',label:'Alex'},{userId:'sofia',label:'Sofía'}];
+  create(kind:CallGameKind):void {
+    const initial=createCallGame(kind,'synthetic-game','alex');
+    const joined=applyCallGameAction(initial,'sofia',{type:'join',gameId:initial.id,expectedRevision:initial.revision}).state;
+    this.state=applyCallGameAction(joined,'alex',{type:'start',gameId:joined.id,expectedRevision:joined.revision}).state;
+  }
+  act(action:Parameters<typeof applyCallGameAction>[2]):void { if(this.state)this.state=applyCallGameAction(this.state,'alex',action).state; }
+}
 @Component({
   selector: 'app-root', standalone: true, imports: [RouterOutlet],
   template: `<router-outlet /><aside class="preview-controls"><span>Vista de prueba · Datos ficticios</span><button type="button" (click)="toggleDensity()">Cambiar líneas</button><button type="button" (click)="toggleTheme()">{{ light ? 'Tema oscuro' : 'Tema claro' }}</button></aside>`,
@@ -93,6 +108,7 @@ bootstrapApplication(PreviewRoot, { providers: [
   provideIonicAngular(), provideRouter([{ path: 'app', component: ShellPage, children: [
     { path: 'chats', component: ChatsPage, children: [{ path: ':id', component: PreviewConversation }] },
     { path: 'contacts', component: ContactsPage },
+    { path: 'games', component: PreviewGames },
     { path: '**', component: PreviewEmpty },
   ] }, { path: '**', redirectTo: 'app/chats' }]),
   { provide: AuthService, useValue: { session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },

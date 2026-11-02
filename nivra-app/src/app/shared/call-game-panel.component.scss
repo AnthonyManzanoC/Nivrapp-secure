@@ -137,7 +137,7 @@ button:focus-visible { outline: 3px solid var(--game-accent-strong); outline-off
 .game-choice { border-radius:20px; transition:background .16s,transform .16s; }
 .game-choice:hover:enabled { transform:translateY(-2px); background:rgba(30,211,167,.12); }
 .game-art { background:linear-gradient(145deg,rgba(30,211,167,.22),rgba(67,120,221,.13)); border-radius:16px; }
-.board-hint { font-size:12px; color:#b4cbc5; line-height:1.5; }
+.board-hint { font-size:12px; color:var(--game-muted); line-height:1.5; }
 .reversi-board { grid-template-columns:repeat(6,minmax(0,1fr)); gap:4px; padding:8px; background:#0c4939; border-radius:16px; }
 .reversi-board button { aspect-ratio:1; min-height:0; border-radius:50%; font-size:24px; }
 .reversi-board button.legal-move:enabled { background:rgba(96,236,174,.2); border:1px dashed #59d9ad; }
