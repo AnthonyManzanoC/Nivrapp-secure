@@ -837,6 +837,7 @@ export class PushService {
         await this.cancelCallNotification(data['callId'], { userId, deviceId });
         if (!current()) return false;
         await this.calls.handleNotificationCallAction({ action, callId: data['callId'],
+          showQuickReplies: data['callQuickReplies'] === '1',
           recipientUserId: userId, recipientDeviceId: deviceId,
           callerUserId: data['callerUserId'] || data['initiatorUserId'], callType: data['callType'],
           conversationId: data['conversationId'] });

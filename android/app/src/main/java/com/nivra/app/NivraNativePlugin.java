@@ -1004,7 +1004,7 @@ public class NivraNativePlugin extends Plugin {
         JSObject route = new JSObject();
         // Only routing metadata is durable; caller/message text is never copied
         // into another account's pending navigation record.
-        for (String key : new String[] { "type", "callId", "callerUserId", "callType", "conversationId", "messageId", "tag", "recipientUserId", "recipientDeviceId", "google.message_id", "expiresAt" }) {
+        for (String key : new String[] { "type", "callId", "callerUserId", "callType", "conversationId", "messageId", "tag", "recipientUserId", "recipientDeviceId", "google.message_id", "expiresAt", "callQuickReplies" }) {
             String value = intent.getStringExtra(key); if (value != null) route.put(key, value);
         }
         route.put("nivraRouteIntent", "tap");

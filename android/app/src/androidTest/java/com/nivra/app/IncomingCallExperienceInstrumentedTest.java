@@ -95,6 +95,7 @@ public class IncomingCallExperienceInstrumentedTest {
                 View root=activity.getWindow().getDecorView();
                 assertTrue(contains(root,"Sofía"));assertTrue(contains(root,"Contestar"));
                 assertTrue(contains(root,"Rechazar"));assertFalse(contains(root,"Aceptar video"));
+                assertTrue(contains(root,"Responder con mensaje"));
             });
             screenshot("native-incoming-voice");
         }
@@ -125,7 +126,9 @@ public class IncomingCallExperienceInstrumentedTest {
         try (ActivityScenario<NivraIncomingCallActivity> scenario = ActivityScenario.launch(incoming("Voice", false))) {
             scenario.onActivity(activity -> assertTrue(contains(activity.getWindow().getDecorView(), "Sofía")));
             // Preserve the signed call marker while changing only privacy.
-            JSONObject registry = NivraNativePushRegistration.read(context);
+            Method readRegistry = NivraNativePushRegistration.class.getDeclaredMethod("registry", Context.class);
+            readRegistry.setAccessible(true);
+            JSONObject registry = (JSONObject)readRegistry.invoke(null, context);
             registry.getJSONArray("accounts").getJSONObject(0).put("hideNotificationContent", true);
             Method write = NivraNativePushRegistration.class.getDeclaredMethod("write", Context.class, JSONObject.class);
             write.setAccessible(true); write.invoke(null, context, registry);

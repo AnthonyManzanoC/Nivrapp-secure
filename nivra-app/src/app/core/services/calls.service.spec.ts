@@ -65,6 +65,67 @@ describe('call session isolation', () => {
 
   afterEach(() => service.ngOnDestroy());
 
+  it('saves an allowlisted quick reply in the encrypted text queue before rejecting', async () => {
+    service.activeCall.set({...invitation,conversationId:'chat'}); service.phase.set('ringing');
+    (TestBed.inject(ChatService).conversations as any).set([{id:'chat',type:'Direct',participants:[{userId:'me'},{userId:'peer'}]}]);
+    const enqueue=jasmine.createSpy().and.resolveTo({}); (service as any).chat.enqueueText=enqueue;
+    spyOn<any>(service,'claimCall').and.resolveTo(true);
+    spyOn<any>(service,'sendCallSignal').and.resolveTo();
+    spyOn<any>(service,'recordCallSystemOnce').and.resolveTo();
+    await service.decline('busy');
+    expect(enqueue).toHaveBeenCalledOnceWith(jasmine.objectContaining({id:'chat'}),'Estoy ocupado, te llamo más tarde.');
+    expect(service.activeCall()).toBeNull(); expect(service.lastResult()?.replied).toBeTrue();
+  });
+
+  it('keeps reception available if private-chat access or durable reply storage fails', async () => {
+    service.activeCall.set({...invitation,conversationId:'chat'}); service.phase.set('ringing');
+    (TestBed.inject(ChatService).conversations as any).set([{id:'chat',type:'Direct',participants:[{userId:'me'},{userId:'peer'}]}]);
+    (service as any).chat.enqueueText=jasmine.createSpy().and.rejectWith(new Error('Desbloquea el chat'));
+    spyOn<any>(service,'claimCall').and.resolveTo(true);
+    const signal=spyOn<any>(service,'sendCallSignal').and.resolveTo();
+    await service.decline('soon');
+    expect(service.activeCall()?.id).toBe(invitation.id); expect(service.error()).toBe('Desbloquea el chat');
+    expect(service.quickReplyBusy()).toBeFalse(); expect(signal).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown quick replies and never sends a direct reply into a group', async () => {
+    service.activeCall.set({...invitation,conversationId:'chat',isGroupRoom:true}); service.phase.set('ringing');
+    const claim=spyOn<any>(service,'claimCall').and.resolveTo(true);
+    await service.decline('arbitrary-text'); await service.decline('busy');
+    expect(claim).not.toHaveBeenCalled(); expect(service.activeCall()).not.toBeNull();
+  });
+
+  it('never closes a replacement call after a delayed rejection signal', async () => {
+    service.activeCall.set(invitation); service.phase.set('ringing');
+    spyOn<any>(service,'claimCall').and.resolveTo(true);
+    let finish!:()=>void;
+    spyOn<any>(service,'sendCallSignal').and.returnValue(new Promise<void>(resolve=>finish=resolve));
+    const pending=service.decline(); await Promise.resolve(); await Promise.resolve();
+    service.activeCall.set({...invitation,id:'next'}); service.phase.set('connected');
+    finish(); await pending;
+    expect(service.activeCall()?.id).toBe('next'); expect(service.phase()).toBe('connected');
+  });
+
+  it('returns to the preceding screen when the call ends, preserving deliberate navigation', async () => {
+    const router=TestBed.inject(Router) as any;
+    router.url='/app/world'; router.navigateByUrl.and.callFake(async (path:string)=>{router.url=path;return true;});
+    await service.openCallView(); service.activeCall.set(invitation);
+    (service as any).cleanup({remember:false}); await Promise.resolve();
+    expect(router.url).toBe('/app/world');
+    await service.openCallView(); service.activeCall.set(invitation);
+    router.url='/app/contacts'; (service as any).cleanup({remember:false}); await Promise.resolve();
+    expect(router.url).toBe('/app/contacts');
+  });
+
+  it('refuses external return URLs restored from local settings', async () => {
+    const router=TestBed.inject(Router) as any;
+    router.url='/app/calls'; router.navigateByUrl.and.callFake(async (path:string)=>{router.url=path;return true;});
+    localStorage.setItem('nivra.callReturn.me.shared-device','https://untrusted.test');
+    await service.openCallView(); service.activeCall.set(invitation);
+    (service as any).cleanup({remember:false}); await Promise.resolve();
+    expect(router.url).toBe('/app/chats'); localStorage.removeItem('nivra.callReturn.me.shared-device');
+  });
+
   it('applies a weak-link video budget to the sender without changing microphone or camera consent', async () => {
     spyOn<any>(service, 'networkInformation').and.returnValue({ effectiveType: '2g' });
     const parameters = { encodings: [{}] };

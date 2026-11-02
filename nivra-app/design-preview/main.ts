@@ -71,6 +71,10 @@ const chat: any = {
 };
 const previewSettings = signal({ chatListDensity: 'three-line' });
 const previewCalls: any = {
+  lastResult:signal(null),quickRepliesOpen:signal(false),quickReplyBusy:signal(false),
+  quickReplies:[{id:'busy',text:'Estoy ocupado, te llamo más tarde.'},{id:'soon',text:'Ahora no puedo hablar. Te llamo en cuanto pueda.'},{id:'message',text:'No puedo atender. Escríbeme por aquí.'}],
+  callPhoto:()=>previewAvatar,callInitials:()=> 'SM',
+  decline:async()=>{ const call=previewCalls.activeCall();previewCalls.activeCall.set(null);previewCalls.phase.set('idle');previewCalls.lastResult.set({call,kind:'rejected',incoming:true,replied:true}); },
   activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'),
   localStream: signal(null), remoteEntries: signal([]), activeScreenShareStreamId: signal(null),
   cameraOff: signal(false), remoteStates: signal({}), screenSharing: signal(false),
@@ -161,7 +165,11 @@ class PreviewGames {
 })
 class PreviewRoot {
   light = new URLSearchParams(location.search).get('theme') === 'light';
-  constructor() { this.applyTheme(); }
+  constructor() {
+    this.applyTheme();
+    const incoming=new URLSearchParams(location.search).get('incoming');
+    if(incoming){previewCalls.activeCall.set({id:'synthetic-incoming',initiatorUserId:'peer-1',participantUserIds:[user.id,'peer-1'],type:incoming==='video'?'Video':'Voice',startedAt:new Date().toISOString()});previewCalls.phase.set('ringing');}
+  }
   toggleTheme() { this.light = !this.light; this.applyTheme(); }
   toggleDensity() { previewSettings.update(value => ({ chatListDensity: value.chatListDensity === 'three-line' ? 'two-line' : 'three-line' })); }
   private applyTheme() { for (const root of [document.documentElement, document.body]) { root.classList.toggle('nivra-light-theme', this.light); root.classList.toggle('ion-palette-dark', !this.light); } }

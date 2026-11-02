@@ -524,6 +524,7 @@ export class CallsPage {
 
   historySubtitle(call: CallSession): string {
     const kind = call.type === 'Video' ? this.tr('CALLS.VIDEO_CALL', 'Videollamada') : this.tr('CALLS.CALL', 'Llamada');
+    if (String(call.status).toLowerCase() === 'missed' && call.initiatorUserId === this.auth.session()?.user.id) return `${kind} · ${this.tr('CALLS.NO_ANSWER', 'Sin respuesta')}`;
     const direction = this.historyDirectionLabel(call).toLowerCase();
     const status = this.historyStatusLabel(call.status).toLowerCase();
     return direction === status ? `${kind} ${status}` : `${kind} ${direction} ${status}`;
@@ -540,6 +541,7 @@ export class CallsPage {
     if (normalized === 'rejected') {
       return this.tr('CALLS.STATUS_REJECTED', 'rechazada');
     }
+    if (normalized === 'busy') return this.tr('CALLS.BUSY', 'Ocupado');
     if (normalized === 'ringing') {
       return this.tr('CALLS.STATUS_RINGING', 'sonando');
     }

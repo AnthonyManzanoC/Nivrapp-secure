@@ -511,6 +511,15 @@
 .incoming-call-card.video-incoming { background:linear-gradient(150deg,#0f2035,#173a42 55%,#081a27); color:#f4fcfa; border-color:#466c7b; }
 .incoming-call-card.video-incoming h2 { color:#f4fcfa; }
 .incoming-call-card.video-incoming p { color:#bad0d8; }
+.reply-call-toggle { min-height:44px; border:1px solid var(--nivra-line-strong); border-radius:16px; padding:10px 18px; color:inherit; background:var(--nivra-panel-2); font:inherit; font-size:13px; }
+.call-quick-replies { display:grid; gap:8px; width:100%; padding:14px; border-radius:20px; background:var(--nivra-panel-solid); border:1px solid var(--nivra-line-strong); color:var(--nivra-text); text-align:start; }
+.call-quick-replies small { color:var(--nivra-muted); font-size:11px; line-height:1.5; }
+.call-quick-replies button { min-height:44px; padding:10px 12px; border:1px solid var(--nivra-line); border-radius:12px; background:var(--nivra-panel-2); color:var(--nivra-text); font:inherit; font-size:13px; text-align:start; }
+.call-quick-replies button:focus-visible,.reply-call-toggle:focus-visible { outline:2px solid var(--nivra-brand); outline-offset:2px; }
+.incoming-call-card.reply-open { grid-template-rows:none; align-content:center; gap:10px; }
+.incoming-call-card.reply-open .incoming-avatar { width:88px; height:88px; min-height:88px; margin:0; }
+.incoming-call-card.reply-open h2 { font-size:22px; }
+.incoming-call-card.reply-open .incoming-actions { margin-top:8px; }
 .incoming-call-card h2 { white-space:normal; overflow-wrap:anywhere; text-align:center; line-height:1.2; }
 @media(max-width:768px) {
  .incoming-call-overlay { padding:0; background:#061c1a; }
