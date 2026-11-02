@@ -110,7 +110,8 @@ async function main() {
     assert.equal(await evaluate("(async()=>getComputedStyle(await document.querySelector('.search-box ion-input').getInputElement()).outlineStyle)()"),'none','native input must not draw a rectangle inside the search pill');
     assert(await evaluate("document.querySelector('.search-box').getBoundingClientRect().top < 40"),'search uses the top of the screen');
     await capture('mobile-search');
-    await evaluate("localStorage.setItem('nivra_recent_searches.preview-owner',JSON.stringify([{id:'peer-1',alias:'sofia',displayName:'Sofía Martínez',isDiscoverable:true}]));location.reload()");
+    await evaluate("localStorage.setItem('nivra_recent_searches.preview-owner',JSON.stringify([{id:'peer-1',alias:'sofia',displayName:'Sofía Martínez',isDiscoverable:true}]))");
+    await call('Page.navigate',{url:base+'/app/chats?theme=light&recent=1'});
     await waitFor("!!document.querySelector('.search-box ion-input')");
     await tap('.search-box ion-input');
     await waitFor("!!document.querySelector('.clear-recents')");
