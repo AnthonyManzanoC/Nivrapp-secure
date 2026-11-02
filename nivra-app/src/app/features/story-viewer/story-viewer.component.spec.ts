@@ -61,6 +61,9 @@ describe('story playback lifecycle', () => {
     const current = media();
     const detached = document.createElement('video'); detached.dataset['storyId'] = 'one';
     const ended = spyOn(player.mediaEnded, 'emit');
+    const duration = spyOn(player.syncDuration, 'emit');
+    player.loadedMetadata({target:detached} as unknown as Event);
+    expect(duration).not.toHaveBeenCalled();
     player.ended({target:detached} as unknown as Event);
     player.waitingMedia({target:detached} as unknown as Event);
     expect(ended).not.toHaveBeenCalled();expect(player.buffering).toBeFalse();

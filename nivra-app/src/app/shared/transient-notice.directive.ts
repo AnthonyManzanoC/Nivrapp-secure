@@ -1,8 +1,9 @@
-import { Directive, EventEmitter, HostBinding, HostListener, Input, OnChanges, OnDestroy, Output } from '@angular/core';
+import { Directive, EventEmitter, HostBinding, HostListener, Input, NgZone, OnChanges, OnDestroy, Output, inject } from '@angular/core';
 
 /** Expire action feedback without changing the workflow/error state behind it. */
 @Directive({selector:'[appTransientNotice]',standalone:true})
 export class TransientNoticeDirective implements OnChanges, OnDestroy {
+  private readonly zone = inject(NgZone);
   @Input() appTransientNotice: unknown;
   @Input() appNoticeDuration = 8000;
   @Output() noticeExpired = new EventEmitter<void>();
@@ -19,7 +20,7 @@ export class TransientNoticeDirective implements OnChanges, OnDestroy {
     if (this.deadline !== null) clearTimeout(this.deadline);
     this.remaining = Math.min(30000,Math.max(3000,Number(this.appNoticeDuration) || 8000));
     // Reading can pause the short timer, but feedback must never remain forever.
-    if (this.appTransientNotice) this.deadline = setTimeout(() => this.expire(),30000);
+    if (this.appTransientNotice) this.deadline = this.schedule(30000);
     if (this.appTransientNotice && !this.hovered && !this.focused) this.resume();
   }
   ngOnDestroy(): void { this.clearTimer(); if (this.deadline !== null) clearTimeout(this.deadline); }
@@ -34,7 +35,10 @@ export class TransientNoticeDirective implements OnChanges, OnDestroy {
   private resume(): void {
     if (this.timer !== null || this.expired || !this.appTransientNotice) return;
     this.started = Date.now();
-    this.timer = setTimeout(() => this.expire(),this.remaining);
+    this.timer = this.schedule(this.remaining);
+  }
+  private schedule(duration: number): ReturnType<typeof setTimeout> {
+    return this.zone.runOutsideAngular(() => setTimeout(() => this.zone.run(() => this.expire()),duration));
   }
   private expire(): void {
     if (this.expired) return;

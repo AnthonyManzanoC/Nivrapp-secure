@@ -135,6 +135,7 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     this.syncPlayback();
   }
   loadedImage(event?: Event): void { if (this.staleMediaEvent(event)) return; this.mediaReady = true; this.mediaFailed = false; this.lastTick = performance.now(); this.syncPlayback(); }
+  loadedMetadata(event: Event): void { if (!this.staleMediaEvent(event)) this.syncDuration.emit(event); }
   loadedMedia(event: Event): void {
     if (this.staleMediaEvent(event)) return;
     if (this.payload?.music) this.musicReady = true; else this.mediaReady = true;

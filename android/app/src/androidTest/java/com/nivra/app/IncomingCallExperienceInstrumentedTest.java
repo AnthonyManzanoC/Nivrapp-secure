@@ -64,8 +64,21 @@ public class IncomingCallExperienceInstrumentedTest {
 
     private void screenshot(String name) throws Exception {
         InstrumentationRegistry.getInstrumentation().waitForIdleSync();
-        Bitmap image = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+        // Idle callbacks can precede the compositor's Activity transition frame.
+        // Wait for the real dark call surface instead of accepting a white launch frame.
+        Bitmap image = null;
+        for (int attempt=0;attempt<20;attempt++) {
+            if (image != null) image.recycle();
+            android.os.SystemClock.sleep(150);
+            image = InstrumentationRegistry.getInstrumentation().getUiAutomation().takeScreenshot();
+            if (image != null) {
+                int color=image.getPixel(image.getWidth()/2,image.getHeight()/5);
+                if (android.graphics.Color.red(color)<90 && android.graphics.Color.green(color)<110 && android.graphics.Color.blue(color)<120) break;
+            }
+        }
         assertNotNull(image);
+        int color=image.getPixel(image.getWidth()/2,image.getHeight()/5);
+        assertTrue("Call surface did not finish drawing", android.graphics.Color.red(color)<90 && android.graphics.Color.green(color)<110 && android.graphics.Color.blue(color)<120);
         File directory = new File(context.getExternalFilesDir(null), "call-design");
         assertTrue(directory.isDirectory() || directory.mkdirs());
         try (FileOutputStream output = new FileOutputStream(new File(directory, name + ".png"))) {

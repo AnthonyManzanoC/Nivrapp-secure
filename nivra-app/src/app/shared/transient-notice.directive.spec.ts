@@ -5,6 +5,10 @@ import { TransientNoticeDirective } from './transient-notice.directive';
 @Component({standalone:true,imports:[TransientNoticeDirective],template:`@if(notice){<p [appTransientNotice]="notice" (noticeExpired)="notice=''">{{notice}}</p>}`})
 class NoticeHost { notice='Guardado'; }
 describe('temporary action feedback',()=>{
+  it('does not hold the screen initialization open while feedback counts down',async()=>{
+    const fixture=TestBed.createComponent(NoticeHost);fixture.detectChanges();
+    await fixture.whenStable();expect(fixture.componentInstance.notice).toBe('Guardado');fixture.destroy();
+  });
   it('expires even if a pointer or focus stays on the result',fakeAsync(()=>{
     const fixture=TestBed.createComponent(NoticeHost);fixture.detectChanges();
     fixture.nativeElement.querySelector('p').dispatchEvent(new Event('mouseenter'));
