@@ -160,6 +160,63 @@ ion-modal.call-exit-modal {
   pointer-events: none;
 }
 
+.minimize-call {
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  color: #f4fbf7;
+  background: rgb(8 24 23 / 78%);
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 16px;
+  text-decoration: none;
+  pointer-events: auto;
+  ion-icon { font-size: 24px; }
+}
+
+.active-call-heading {
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+  h2 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; }
+  small { display: block; margin-top: 4px; color: #c0d6d0; font-size: 12px; }
+}
+
+.surface.call-mode .panel-head .connection-state {
+  flex: 0 1 auto;
+  max-width: 42%;
+  padding: 8px 12px;
+  font-size: 11px;
+  text-align: center;
+  &.connected { color: #b6f6dd; border-color: rgb(131 234 195 / 32%); }
+  &.reconnecting { color: #ffe2a8; border-color: rgb(255 226 168 / 36%); }
+}
+
+.history-heading {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  small { color: var(--nivra-brand-2); font-size: 10px; font-weight: 750; letter-spacing: .12em; }
+  h2 { margin: 5px 0 0; }
+  > ion-icon { padding: 12px; border-radius: 16px; font-size: 24px; background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); color: var(--nivra-brand-2); }
+}
+
+.history-filters {
+  display: flex; gap: 8px; padding: 20px 0 8px; overflow-x: auto;
+  button {
+    min-height: 44px; padding: 10px 16px; border: 1px solid var(--nivra-line); border-radius: 24px;
+    color: var(--nivra-muted); background: transparent; font-size: 13px; font-weight: 650; white-space: nowrap;
+    &.selected { color: var(--nivra-brand-2); border-color: color-mix(in srgb, var(--nivra-brand) 40%, transparent); background: color-mix(in srgb, var(--nivra-brand) 12%, transparent); }
+  }
+}
+.history-empty {
+  display: grid; justify-items: center; gap: 12px; padding: 38px 20px; text-align: center;
+  ion-icon { font-size: 32px; color: var(--nivra-brand-2); }
+  strong { color: var(--nivra-text); }
+  small { line-height: 1.6; max-width: 32ch; }
+}
+.history-more { width: 100%; min-height: 44px; margin-top: 12px; }
+.history-actions .history-rejoin { --padding-start: 10px; --padding-end: 10px; min-height: 44px; font-size: 12px; }
+
 .surface.call-mode .panel-head h2 {
   margin: 0;
   color: rgba(244, 251, 247, .92);
@@ -337,7 +394,7 @@ ion-modal.call-exit-modal {
   margin: 0 0 12px;
 }
 
-.surface.call-mode .waiting-tile:not(.over-video) strong {
+.surface.call-mode .waiting-tile:not(.over-video) > strong {
   width: 100%;
   max-width: min(88vw, 480px);
   display: block;
@@ -1131,7 +1188,7 @@ ion-modal.call-exit-modal {
   margin-bottom: 8px;
 }
 
-.surface.call-mode .voice-connected strong {
+.surface.call-mode .voice-connected > strong {
   width: 100%;
   max-width: min(88vw, 640px);
   display: block;
@@ -1550,7 +1607,7 @@ ion-modal.invite-modal {
     height: clamp(112px, 34vw, 152px);
   }
 
-  .surface.call-mode .waiting-tile:not(.over-video) strong {
+  .surface.call-mode .waiting-tile:not(.over-video) > strong {
     width: 100%;
     max-width: min(86vw, 360px);
     display: block;

@@ -169,10 +169,11 @@
           <div class="recent-head">
             <span>{{ 'CHATS.RECENT_SEARCHES' | translate:'Busquedas recientes' }}</span>
             <div class="recent-actions">
-              <button type="button" (click)="closeSearch()" [attr.aria-label]="'CHATS.CLOSE_RECENT' | translate:'Cerrar busquedas recientes'">
+              <button type="button" class="close-recents" (click)="closeSearch()" [attr.aria-label]="'CHATS.CLOSE_RECENT' | translate:'Cerrar busquedas recientes'">
                 <ion-icon name="close-outline"></ion-icon>
               </button>
-              <button type="button" (click)="clearRecent()" [attr.aria-label]="'CHATS.DELETE_RECENT' | translate:'Eliminar busquedas recientes'">
+              <button type="button" class="clear-recents" (click)="clearRecent()" [attr.aria-label]="'CHATS.DELETE_RECENT' | translate:'Eliminar busquedas recientes'">
+                <ion-icon name="trash-outline" aria-hidden="true"></ion-icon>
                 {{ 'CHATS.DELETE_ALL_RECENT' | translate:'Eliminar todo' }}
               </button>
             </div>

@@ -26,11 +26,12 @@ import { UnreadTabService } from '../../core/services/unread-tab.service';
 import { AppLockService } from '../../core/services/app-lock.service';
 import { TabSwipeDirective } from '../../shared/tab-swipe.directive';
 import { CallGameInvitationComponent } from '../../shared/call-game-invitation.component';
+import { CallResultComponent } from '../../shared/call-result.component';
 
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CallGameInvitationComponent, LocalizedDatePipe, CommonModule, RouterLink, RouterLinkActive, RouterOutlet, TranslatePipe, IonApp, IonIcon, TabSwipeDirective],
+  imports: [CallResultComponent, CallGameInvitationComponent, LocalizedDatePipe, CommonModule, RouterLink, RouterLinkActive, RouterOutlet, TranslatePipe, IonApp, IonIcon, TabSwipeDirective],
   templateUrl: './shell.page.html',
   styleUrls: ['./shell.page.scss'],
 })
@@ -166,7 +167,7 @@ export class ShellPage implements AfterViewInit, OnDestroy {
   }
 
   async openCalls(): Promise<void> {
-    await this.router.navigateByUrl('/app/calls');
+    await this.calls.openCallView();
   }
 
   async acceptCall(): Promise<void> {

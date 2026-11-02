@@ -62,3 +62,17 @@ body app-world .panel h2, app-account .panel h2, app-vault .panel h2 { font-weig
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }
+
+/* Shared interaction feedback respects the theme and never changes media canvases. */
+body :is(app-world, app-account, app-vault, app-calls, app-contacts) {
+  .page-head h1, .panel h2 { text-wrap: balance; }
+  .page-head p, .empty-copy { overflow-wrap: anywhere; }
+  ion-searchbar { --border-radius: 18px; --box-shadow: none; --placeholder-opacity: .72; }
+  ion-button { --transition: background-color .16s ease, color .16s ease; }
+}
+@media (hover: hover) and (pointer: fine) {
+  body :is(app-contacts .contact-row, app-calls .agenda-row, app-calls .history-row) {
+    transition: background-color .16s ease;
+    &:hover { background-color: color-mix(in srgb, var(--nivra-brand) 5%, transparent); }
+  }
+}

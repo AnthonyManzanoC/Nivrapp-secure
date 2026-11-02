@@ -134,6 +134,9 @@ public class NivraIncomingCallActivity extends Activity {
         buttonParams.setMargins(dp(5),dp(16),dp(5),0);
         actions.addView(reject,buttonParams);actions.addView(answerView,new LinearLayout.LayoutParams(buttonParams));
         rootView.addView(actions,matchWrap());
+        Button reply=actionButton("Responder con mensaje",Color.TRANSPARENT);reply.setTextSize(14);
+        reply.setOnClickListener(view->{ getIntent().putExtra("callQuickReplies", "1"); openCall(); });
+        rootView.addView(reply,new LinearLayout.LayoutParams(-1,dp(48)));
         Button open=actionButton("Ver llamada",Color.TRANSPARENT);open.setTextSize(14);
         open.setOnClickListener(view->openCall());
         rootView.addView(open,new LinearLayout.LayoutParams(-1,dp(52)));

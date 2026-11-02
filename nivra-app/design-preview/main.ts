@@ -3,7 +3,7 @@
 import { Component, signal } from '@angular/core';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { provideRouter, RouterLink, RouterOutlet } from '@angular/router';
-import { IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent, provideIonicAngular } from '@ionic/angular/standalone';
+import { IonInput, IonTextarea, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent, provideIonicAngular } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { arrowBackOutline, callOutline, videocamOutline } from 'ionicons/icons';
 import { ShellPage } from '../src/app/features/shell/shell.page';
@@ -21,6 +21,8 @@ import { AuthService } from '../src/app/core/services/auth.service';
 import { ChatService } from '../src/app/core/services/chat.service';
 import { SocialService } from '../src/app/core/services/social.service';
 import { CallsService } from '../src/app/core/services/calls.service';
+import { CallsPage } from '../src/app/features/calls/calls.page';
+import { CallTranslationService } from '../src/app/core/services/call-translation.service';
 import { SignalrService } from '../src/app/core/services/signalr.service';
 import { AppSettingsService } from '../src/app/core/services/app-settings.service';
 import { LocalHistoryService } from '../src/app/core/services/local-history.service';
@@ -33,7 +35,8 @@ import { UnreadTabService } from '../src/app/core/services/unread-tab.service';
 import { ClientCompatibilityService } from '../src/app/core/services/client-compatibility.service';
 import { NivraApiService } from '../src/app/core/services/nivra-api.service';
 
-const user = { id: 'preview-owner', alias: 'alex', displayName: 'Alex', profilePhotoDataUrl: null };
+const previewAvatar = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#addbd0"/><circle cx="50" cy="37" r="18" fill="#275c55"/><ellipse cx="50" cy="102" rx="40" ry="45" fill="#275c55"/></svg>');
+const user = { id: 'preview-owner', alias: 'alex', displayName: 'Alex', profilePhotoDataUrl: previewAvatar };
 const items = signal<any[]>([
   { id: 'design', name: 'Estudio Creativo', preview: 'La nueva propuesta está lista ✨', type: 'Group', pinned: true, unread: true },
   { id: 'sofia', name: 'Sofía Martínez', preview: 'Nos vemos a las seis. ¡Qué ganas!', type: 'Direct', unread: true },
@@ -67,7 +70,41 @@ const chat: any = {
   conversationListPresence: (item: any) => ChatService.prototype.conversationListPresence.call(chat, item),
 };
 const previewSettings = signal({ chatListDensity: 'three-line' });
-const stories=signal<any[]>([user,...items().map((item,i)=>({id:'peer-'+i,alias:item.id,displayName:item.name}))].map((owner,i)=>({id:'story-'+i,owner,targetType:i===1?'group':'contacts',targetId:i===1?'design':null,visibility:'Contacts',encryptedPayload:'fixture',allowedUserIds:[],viewOnce:false,allowReposts:true,viewedByMe:i>5,viewCount:i+2,createdAt:new Date(Date.now()-i*600000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()})));
+const previewCalls: any = {
+  lastResult:signal(null),quickRepliesOpen:signal(false),quickReplyBusy:signal(false),
+  quickReplies:[{id:'busy',text:'Estoy ocupado, te llamo más tarde.'},{id:'soon',text:'Ahora no puedo hablar. Te llamo en cuanto pueda.'},{id:'message',text:'No puedo atender. Escríbeme por aquí.'}],
+  callPhoto:()=>previewAvatar,callInitials:()=> 'SM',
+  decline:async()=>{ const call=previewCalls.activeCall();previewCalls.activeCall.set(null);previewCalls.phase.set('idle');previewCalls.lastResult.set({call,kind:'rejected',incoming:true,replied:true}); },
+  activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'),
+  localStream: signal(null), remoteEntries: signal([]), activeScreenShareStreamId: signal(null),
+  cameraOff: signal(false), remoteStates: signal({}), screenSharing: signal(false),
+  mediaUpgradeRequested: signal(false), mediaUpgradeAwaitingPeer: signal(false), mediaUpgradeNotice: signal(''),
+  mediaUpgradeInFlight: signal(false), muted: signal(false), speaker: signal(true), error: signal(''),
+  screenShareNotice: signal(''), audioPlaybackBlocked: signal(false),
+  isGroupCall: () => false, canEndGroupForEveryone: () => false, clearInactiveCallUi: () => {},
+  canOfferScreenShare: () => false, canShareScreen: () => false, callStatusLabel: () => 'En llamada',
+  callTitle: () => 'Sofía Martínez', end: async () => { previewCalls.activeCall.set(null); previewCalls.phase.set('idle'); },
+  toggleMute: () => previewCalls.muted.update((value: boolean) => !value),
+  toggleCamera: async () => previewCalls.cameraOff.update((value: boolean) => !value),
+  games: { panelOpen: signal(false), invitationVisible: signal(false), state: signal(null) },
+  audioOutput: { playbackBlocked: signal(false), routeError: signal(''), availableRoutes: signal([]), selectedRouteId: signal('default'), selectedRouteLabel: () => 'Altavoz' },
+  history: signal(items().slice(0, 6).map((item, index) => ({ id: 'history-' + index, conversationId: item.id, initiatorUserId: index % 2 ? 'peer-1' : user.id, participantUserIds: ['peer-1', user.id], type: index % 2 ? 'Voice' : 'Video', status: index === 1 || index === 4 ? 'Missed' : 'Ended', startedAt: item.updatedAt, endedAt: item.updatedAt }))),
+};
+chat.participantDisplayName = (id: string) => id === user.id ? user.displayName : 'Sofía Martínez';
+chat.participantPhoto = () => '';
+@Component({ selector: 'preview-calls', standalone: true, imports: [CallsPage], template: '<app-calls />' })
+class PreviewCalls {
+  constructor() {
+    const mode = new URLSearchParams(location.search).get('mode');
+    if (mode === 'voice' || mode === 'video') {
+      previewCalls.activeCall.set({ id: 'synthetic-active', conversationId: 'sofia', type: mode === 'video' ? 'Video' : 'Voice', status: 'Active', initiatorUserId: user.id, participantUserIds: ['peer-1'], startedAt: new Date().toISOString() });
+      previewCalls.phase.set('connected');
+      previewCalls.remoteEntries.set([['peer-1', new MediaStream()]]);
+      previewCalls.localStream.set(new MediaStream());
+    }
+  }
+}
+const stories=signal<any[]>([user,...items().map((item,i)=>({id:'peer-'+i,alias:item.id,displayName:item.name,profilePhotoDataUrl:previewAvatar}))].map((owner,i)=>({id:'story-'+i,owner,targetType:i===1?'group':'contacts',targetId:i===1?'design':null,visibility:'Contacts',encryptedPayload:'fixture',allowedUserIds:[],viewOnce:false,allowReposts:true,viewedByMe:i>5,viewCount:i+2,createdAt:new Date(Date.now()-i*600000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()})));
 const request={id:'request-fixture',from:{id:'requester',alias:'daniela',displayName:'Daniela López'},to:user,status:'Pending',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
 const social:any={contacts:signal(items().filter(item=>item.type==='Direct').map(item=>({userId:item.participants[1].userId,alias:item.id,displayName:item.name,isFavorite:item.id==='sofia',isMutualContact:true}))),
  contactsLoading:signal(false),requestsLoading:signal(false),incomingRequests:signal([request]),outgoingRequests:signal([]),requestHistory:signal([]),connectionsError:signal(''),people:signal([]),searching:signal(false),connectionActions:signal([]),radarMatches:signal([]),radarLoading:signal(false),loadConnections:async()=>{},search:async()=>[],loading:signal(false),publishing:signal(false),publishingStatus:signal(''),storyDeliveryWarning:signal(''),
@@ -82,6 +119,16 @@ class PreviewComposer {}
 class PreviewViewer {story=stories()[2];queue=stories().slice(1,5);payload={type:'text',text:'Los mejores momentos se comparten. ✨',textTheme:'rose'};}
 @Component({selector:'preview-invitation',standalone:true,imports:[CallGameInvitationComponent,TransientNoticeDirective],template:`<section style="padding:100px 24px"><h1>Llamada en curso</h1><p [appTransientNotice]="notice" (noticeExpired)="notice=''" role="status">{{notice}}</p><app-call-game-invitation label="Sofía te invita a Puntos y cajas" /></section>`})
 class PreviewInvitation {notice='Resultado de prueba temporal';}
+// Visual fixture for the profile layout: actual account stylesheet, synthetic fields,
+// no AccountService or authentication mutations.
+@Component({ selector:'preview-profile', standalone:true, imports:[IonInput,IonTextarea,IonButton,IonIcon,IonContent],
+  styleUrls:['../src/app/features/account/account.page.scss'],
+  template:`<ion-content class="page"><main class="surface"><header class="page-head"><h1>Tu perfil</h1></header><section class="panel" style="max-width:700px;margin:auto">
+    <div class="profile-hero profile-photo-row"><div class="profile-avatar-control"><button class="profile-photo" aria-label="Ver foto"><img [src]="avatar" alt=""></button><button class="photo-edit-badge" aria-label="Cambiar foto"><ion-icon name="camera-outline" /></button></div>
+    <div class="profile-photo-actions"><div class="profile-hero-copy"><h2>Alex Martínez</h2><p>@alex</p><span class="profile-draft-tag">Perfil guardado</span></div><div class="profile-photo-buttons"><ion-button fill="outline">Cambiar foto</ion-button><ion-button fill="clear" color="danger">Quitar</ion-button></div><label class="profile-photo-visibility"><span><strong>Quién puede ver tu foto</strong><small>Tú eliges con quién compartirla.</small></span><select class="native-select" aria-label="Quién puede ver tu foto"><option>Mis contactos</option></select></label></div></div>
+    <div class="form-grid profile-form"><label><span>Alias</span><ion-input value="alex" aria-label="Alias" /></label><label><span>Nombre</span><ion-input value="Alex Martínez" aria-label="Nombre" /></label><label class="wide"><span>Email</span><ion-input value="alex@example.test" readonly aria-label="Email" /></label><label class="wide"><span>Bio</span><ion-textarea rows="3" value="Los mejores momentos se comparten." aria-label="Bio" /></label></div>
+  </section></main></ion-content>` })
+class PreviewProfile { avatar=previewAvatar; }
 @Component({
   selector: 'app-chat-detail', standalone: true,
   imports: [RouterLink, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent],
@@ -118,7 +165,11 @@ class PreviewGames {
 })
 class PreviewRoot {
   light = new URLSearchParams(location.search).get('theme') === 'light';
-  constructor() { this.applyTheme(); }
+  constructor() {
+    this.applyTheme();
+    const incoming=new URLSearchParams(location.search).get('incoming');
+    if(incoming){previewCalls.activeCall.set({id:'synthetic-incoming',initiatorUserId:'peer-1',participantUserIds:[user.id,'peer-1'],type:incoming==='video'?'Video':'Voice',startedAt:new Date().toISOString()});previewCalls.phase.set('ringing');}
+  }
   toggleTheme() { this.light = !this.light; this.applyTheme(); }
   toggleDensity() { previewSettings.update(value => ({ chatListDensity: value.chatListDensity === 'three-line' ? 'two-line' : 'three-line' })); }
   private applyTheme() { for (const root of [document.documentElement, document.body]) { root.classList.toggle('nivra-light-theme', this.light); root.classList.toggle('ion-palette-dark', !this.light); } }
@@ -131,12 +182,13 @@ bootstrapApplication(PreviewRoot, { providers: [
     { path: 'games', component: PreviewGames },
     { path: 'world', component: WorldPage },{ path: 'composer', component: PreviewComposer },{ path: 'viewer', component: PreviewViewer },{ path: 'invitation', component: PreviewInvitation },
     { path: '**', component: PreviewEmpty },
-  ] },{path:'preview/viewer',component:PreviewViewer}, { path: '**', redirectTo: 'app/chats' }]),
+  ] },{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls}, { path: '**', redirectTo: 'app/chats' }]),
   { provide: AuthService, useValue: { session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
   { provide: ChatService, useValue: chat },
   { provide: SocialService, useValue: social },
   { provide: ContactSyncService,useValue:{syncCachedContactsInBackground:async()=>{},radarHasNewContact:()=>false,lastDeviceContactCount:()=>0,syncing:()=>false}},
-  { provide: CallsService, useValue: { activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'), audioOutput: { playbackBlocked: signal(false) } } },
+  { provide: CallsService, useValue: previewCalls },
+  { provide: CallTranslationService, useValue: { enabled: signal(false), active: signal(false) } },
   { provide: SignalrService, useValue: { connected: signal(true) } },
   { provide: UnreadTabService, useValue: { unreadChats: signal(2) } },
   { provide: AppLockService, useValue: { isContentLocked: signal(false) } },

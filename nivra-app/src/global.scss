@@ -1009,8 +1009,7 @@ body.nivra-light-theme .nav-btn.active {
   box-shadow: 0 8px 22px rgba(24, 214, 162, .12);
 }
 
-body.nivra-light-theme .call-pill,
-body.nivra-light-theme .incoming-call-card {
+body.nivra-light-theme .call-pill {
   color: var(--nivra-text);
   background:
     linear-gradient(135deg, rgba(24, 214, 162, .14), rgba(52, 120, 246, .08)),
@@ -1942,3 +1941,11 @@ ion-modal.nivra-story-viewer-modal { --width:100vw; --height:100dvh; --max-width
 ion-modal.nivra-story-viewer-modal::part(content) { overflow:hidden; background:#080e10; border-radius:0; }
 ion-modal.nivra-story-viewer-modal app-story-viewer { display:block; height:100%; width:100%; overflow:hidden; }
 [data-notice-expired="true"] { display:none !important; }
+
+/* Incoming-call canvases have stable contrast regardless of the app theme. */
+body .incoming-call-overlay .incoming-call-card { color:#f2fbf7; background:radial-gradient(ellipse at 50% 35%,#16483c,#061c1a 75%); }
+body .incoming-call-overlay .incoming-call-card.video-incoming { background:linear-gradient(150deg,#0f2035,#173a42 55%,#081a27); }
+body .incoming-call-overlay .incoming-call-card h2 { color:#f2fbf7; }
+body .incoming-call-overlay .incoming-call-card p,body .incoming-call-overlay .incoming-brand { color:#b8d4cc; }
+body .incoming-call-overlay .incoming-kind { color:#a4f1d8; border-color:#48766a; background:#143b33; }
+body .incoming-call-overlay .video-incoming .incoming-kind { color:#b8e5ff; border-color:#527587; background:#183b4a; }

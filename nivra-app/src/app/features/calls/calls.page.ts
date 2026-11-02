@@ -1,11 +1,13 @@
 import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
-import { Component, effect, inject, signal, untracked } from '@angular/core';
+import { Component, computed, DestroyRef, effect, inject, NgZone, signal, untracked } from '@angular/core';
+import { RouterLink } from '@angular/router';
 import { FormsModule } from '@angular/forms';
 import { IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
   arrowDownLeftBoxOutline,
+  chevronDownOutline,
   arrowUpRightBoxOutline,
   callOutline,
   bluetoothOutline,
@@ -60,7 +62,7 @@ interface VideoTile {
 @Component({
   selector: 'app-calls',
   standalone: true,
-  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent, CallTranslationPanelComponent],
+  imports: [RouterLink, TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent, CallTranslationPanelComponent],
   templateUrl: './calls.page.html',
   styleUrls: ['./calls.page.scss'],
 })
@@ -69,13 +71,47 @@ export class CallsPage {
   readonly chat = inject(ChatService);
   private readonly translate = inject(TranslateService);
   private readonly auth = inject(AuthService);
+  private readonly zone = inject(NgZone);
+  private readonly destroyRef = inject(DestroyRef);
+  private pageActive = true;
+  private actionRevision = 0;
+  private inviteCallId: string | null = null;
+  private controlsFocused = false;
+  private observedCallScope = '';
+  readonly historyFilter = signal<'all' | 'missed' | 'video'>('all');
+  readonly historyLimit = signal(40);
+  private readonly searchQuery = signal('');
+  private readonly sortedContacts = computed(() => this.buildAgendaContacts());
+  private readonly profiles = computed(() => {
+    const profiles = new Map<string, CallIdentityProfile>();
+    for (const conversation of this.chat.conversations()) {
+      for (const participant of conversation.participants) {
+        if (!profiles.has(participant.userId)) profiles.set(participant.userId, participant);
+      }
+    }
+    for (const contact of this.chat.contacts()) profiles.set(contact.userId, contact);
+    const user = this.auth.session()?.user;
+    if (user) profiles.set(user.id, user);
+    return profiles;
+  });
+  readonly filteredHistory = computed(() => {
+    const query = this.normalize(this.searchQuery());
+    const filter = this.historyFilter();
+    return this.calls.history().filter(call =>
+      (filter !== 'missed' || String(call.status).toLowerCase() === 'missed') &&
+      (filter !== 'video' || call.type === 'Video') &&
+      (!query || this.normalize(this.historyTitle(call)).includes(query))
+    ).sort((a, b) => (Date.parse(b.startedAt) || 0) - (Date.parse(a.startedAt) || 0));
+  });
+  readonly visibleHistory = computed(() => this.filteredHistory().slice(0, this.historyLimit()));
   inviteModalOpen = false;
   exitModalOpen = false;
   audioRoutesOpen = false;
   private audioRouteCallId: string | null = null;
   callExitBusy = false;
   private exitCallId: string | null = null;
-  callQuery = '';
+  get callQuery(): string { return this.searchQuery(); }
+  set callQuery(value: string) { this.searchQuery.set(value); this.historyLimit.set(40); }
   callBusyId = '';
   videoSwapped = false;
   pinnedParticipantId: string | null = null;
@@ -86,6 +122,7 @@ export class CallsPage {
   constructor() {
     addIcons({
       arrowDownLeftBoxOutline,
+      chevronDownOutline,
       arrowUpRightBoxOutline,
       callOutline,
       bluetoothOutline,
@@ -162,14 +199,31 @@ export class CallsPage {
     });
     effect(() => {
       const callId = this.calls.activeCall()?.id ?? null;
+      const callScope = JSON.stringify([this.accountScope(), callId]);
+      if (callScope === this.observedCallScope) return;
+      this.observedCallScope = callScope;
       untracked(() => {
+        this.actionRevision++;
+        this.callBusyId = '';
+        this.closeInviteModal();
+        this.videoSwapped = false;
+        this.pinnedParticipantId = this.calls.activeCall()?.type === 'Video' ? this.calls.activeScreenShareStreamId() : null;
+        this.callQuery = '';
+        this.historyFilter.set('all');
         if (this.exitModalOpen && callId !== this.exitCallId) this.closeExitModal();
         if (this.audioRoutesOpen && callId !== this.audioRouteCallId) this.closeAudioRoutes();
+        this.revealCallChrome();
       });
+    });
+    this.destroyRef.onDestroy(() => {
+      this.pageActive = false;
+      this.actionRevision++;
+      this.clearControlsAutoHide();
     });
   }
 
   ionViewWillEnter(): void {
+    this.pageActive = true;
     this.calls.clearInactiveCallUi();
     if (!this.calls.activeCall()) {
       this.resetIdleUi(false);
@@ -178,6 +232,11 @@ export class CallsPage {
   }
 
   ionViewWillLeave(): void {
+    this.pageActive = false;
+    this.actionRevision++;
+    this.callBusyId = '';
+    this.controlsFocused = false;
+    this.closeInviteModal();
     this.calls.clearInactiveCallUi();
     this.clearControlsAutoHide();
     this.closeAudioRoutes();
@@ -228,18 +287,24 @@ export class CallsPage {
   }
 
   async startContactCall(contact: Contact, type: 'Voice' | 'Video'): Promise<void> {
-    if (this.callBusyId || this.calls.activeCall()) {
+    if (this.callBusyId || this.calls.activeCall() || !this.pageActive || !this.auth.session() || contact.userId === this.auth.session()?.user.id) {
       return;
     }
     this.videoSwapped = false;
     this.pinnedParticipantId = null;
     this.revealCallChrome();
     this.callBusyId = `${type}:${contact.userId}`;
+    const scope = this.accountScope();
+    const revision = ++this.actionRevision;
+    const isCurrent = () => this.pageActive && revision === this.actionRevision && this.accountScope() === scope;
     try {
       const conversation = await this.chat.createDirectConversation(this.contactAsPerson(contact));
+      if (!isCurrent() || this.calls.activeCall()) return;
       await this.calls.start(type, conversation.id, [contact.userId]);
+    } catch {
+      if (isCurrent()) this.calls.error.set(this.tr('CALLS.START_ERROR', 'No se pudo iniciar la llamada. Inténtalo de nuevo.'));
     } finally {
-      this.callBusyId = '';
+      if (isCurrent()) this.callBusyId = '';
     }
   }
 
@@ -339,30 +404,38 @@ export class CallsPage {
     await this.calls.rejoin(callId);
   }
 
-  canRejoin(callId: string): boolean {
-    return !this.calls.activeCall() && Boolean(callId);
+  canRejoin(call: CallSession): boolean {
+    return !this.calls.activeCall() && Boolean(call.id) && !call.endedAt && String(call.status).toLowerCase() === 'active';
   }
 
   openInviteModal(): void {
+    if (!this.calls.activeCall() || this.calls.phase() !== 'connected') return;
+    this.inviteCallId = this.calls.activeCall()!.id;
     this.inviteModalOpen = true;
+    this.revealCallChrome();
   }
 
   closeInviteModal(): void {
     this.inviteModalOpen = false;
+    this.inviteCallId = null;
   }
 
   async inviteToCall(contact: Contact): Promise<void> {
-    if (this.callBusyId) {
+    if (this.callBusyId || !this.inviteModalOpen || this.inviteCallId !== this.calls.activeCall()?.id) {
       return;
     }
     this.callBusyId = `invite:${contact.userId}`;
+    const callId = this.inviteCallId;
+    const scope = this.accountScope();
+    const revision = ++this.actionRevision;
+    const isCurrent = () => this.pageActive && revision === this.actionRevision && scope === this.accountScope() && callId === this.calls.activeCall()?.id;
     try {
       await this.calls.inviteToCall(contact.userId);
-      this.inviteModalOpen = false;
+      if (isCurrent()) this.closeInviteModal();
     } catch {
-      this.inviteModalOpen = true;
+      // Keep an existing sheet open for retry; never reopen a sheet the user dismissed.
     } finally {
-      this.callBusyId = '';
+      if (isCurrent()) this.callBusyId = '';
     }
   }
 
@@ -373,7 +446,7 @@ export class CallsPage {
       call?.initiatorUserId,
       ...(call?.participantUserIds ?? []),
     ].filter((userId): userId is string => Boolean(userId)));
-    return this.agendaContacts().filter((contact) => !excludedIds.has(contact.userId));
+    return this.sortedContacts().filter((contact) => !excludedIds.has(contact.userId));
   }
 
   contactLabel(contact: Contact): string {
@@ -403,7 +476,7 @@ export class CallsPage {
 
   filteredCallContacts(): Contact[] {
     const query = this.normalize(this.callQuery);
-    return this.agendaContacts()
+    return this.sortedContacts()
       .filter((contact) => !query || this.matchesContact(contact, query))
       .slice(0, 80);
   }
@@ -451,9 +524,10 @@ export class CallsPage {
 
   historySubtitle(call: CallSession): string {
     const kind = call.type === 'Video' ? this.tr('CALLS.VIDEO_CALL', 'Videollamada') : this.tr('CALLS.CALL', 'Llamada');
+    if (String(call.status).toLowerCase() === 'missed' && call.initiatorUserId === this.auth.session()?.user.id) return `${kind} · ${this.tr('CALLS.NO_ANSWER', 'Sin respuesta')}`;
     const direction = this.historyDirectionLabel(call).toLowerCase();
     const status = this.historyStatusLabel(call.status).toLowerCase();
-    return `${kind} ${direction} ${status}`;
+    return direction === status ? `${kind} ${status}` : `${kind} ${direction} ${status}`;
   }
 
   historyStatusLabel(status: string | null | undefined): string {
@@ -467,6 +541,7 @@ export class CallsPage {
     if (normalized === 'rejected') {
       return this.tr('CALLS.STATUS_REJECTED', 'rechazada');
     }
+    if (normalized === 'busy') return this.tr('CALLS.BUSY', 'Ocupado');
     if (normalized === 'ringing') {
       return this.tr('CALLS.STATUS_RINGING', 'sonando');
     }
@@ -653,6 +728,23 @@ export class CallsPage {
     this.armControlsAutoHide();
   }
 
+  onControlsFocus(focused: boolean): void {
+    this.controlsFocused = focused;
+    this.revealCallChrome();
+  }
+
+  setHistoryFilter(filter: 'all' | 'missed' | 'video'): void {
+    this.historyFilter.set(filter);
+    this.historyLimit.set(40);
+  }
+
+  showMoreHistory(): void { this.historyLimit.update(limit => limit + 40); }
+
+  private accountScope(): string {
+    const session = this.auth.session();
+    return JSON.stringify([session?.user.id, session?.device?.id, this.auth.sessionGeneration?.() ?? 0]);
+  }
+
   gameUserId(): string { return this.auth.session()?.user.id ?? ''; }
 
   gameParticipants(): Array<{ userId: string; label: string }> {
@@ -731,15 +823,21 @@ export class CallsPage {
 
   private armControlsAutoHide(): void {
     this.clearControlsAutoHide();
-    if (!this.isCallMode() || this.calls.phase() !== 'connected' || this.calls.games.panelOpen() || this.calls.mediaUpgradeRequested()) {
+    if (!this.canHideControls()) {
       return;
     }
-    this.controlsHideTimer = window.setTimeout(() => {
-      const phase = this.calls.phase();
-      if (this.isCallMode() && phase === 'connected') {
-        this.controlsVisible = false;
-      }
-    }, 5000);
+    this.zone.runOutsideAngular(() => {
+      this.controlsHideTimer = window.setTimeout(() => {
+        this.controlsHideTimer = null;
+        if (this.canHideControls()) this.zone.run(() => this.controlsVisible = false);
+      }, 5000);
+    });
+  }
+
+  private canHideControls(): boolean {
+    return this.pageActive && this.calls.activeCall()?.type === 'Video' && this.calls.phase() === 'connected' &&
+      !this.controlsFocused && !this.inviteModalOpen && !this.audioRoutesOpen && !this.exitModalOpen &&
+      !this.calls.games.panelOpen() && !this.calls.mediaUpgradeRequested() && !this.calls.error();
   }
 
   private clearControlsAutoHide(): void {
@@ -749,7 +847,7 @@ export class CallsPage {
     }
   }
 
-  private agendaContacts(): Contact[] {
+  private buildAgendaContacts(): Contact[] {
     const currentUserId = this.auth.session()?.user.id;
     const contacts = new Map<string, Contact>();
     for (const contact of this.chat.contacts()) {
@@ -852,22 +950,7 @@ export class CallsPage {
     if (!userId) {
       return null;
     }
-    const currentUser = this.auth.session()?.user;
-    if (currentUser?.id === userId) {
-      return {
-        userId: currentUser.id,
-        id: currentUser.id,
-        alias: currentUser.alias,
-        displayName: currentUser.displayName,
-        phone: currentUser.phone,
-        profilePhotoDataUrl: currentUser.profilePhotoDataUrl,
-      };
-    }
-    return this.chat.contacts().find((contact) => contact.userId === userId)
-      || this.chat.conversations()
-        .flatMap((conversation) => conversation.participants)
-        .find((participant) => participant.userId === userId)
-      || null;
+    return this.profiles().get(userId) ?? null;
   }
 
   private profileLabel(profile: CallIdentityProfile | null | undefined): string {
@@ -920,7 +1003,7 @@ export class CallsPage {
   }
 
   private normalize(value: string | null | undefined): string {
-    return (value || '').trim().toLowerCase();
+    return (value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
   }
 
   private firstText(...values: Array<string | null | undefined>): string {

@@ -66,10 +66,11 @@
     @if (calls.activeCall() && calls.phase() === 'connected' && !appLock.isContentLocked() && calls.games?.invitationVisible()) {
       <app-call-game-invitation [label]="calls.gameInvitationLabel()" (accepted)="calls.games.acceptInvitation();openCalls()" (dismissed)="calls.games.dismissInvitation()" />
     }
+    @if (!appLock.isContentLocked() && !calls.activeCall() && calls.lastResult?.()) { <app-call-result /> }
     @if (calls.phase() === 'ringing') {
       @if (calls.activeCall(); as call) {
         <section class="incoming-call-overlay" aria-live="assertive">
-          <div class="incoming-call-card" [class.video-incoming]="call.type === 'Video'">
+          <div class="incoming-call-card" [class.video-incoming]="call.type === 'Video'" [class.reply-open]="calls.quickRepliesOpen()">
             <span class="incoming-brand">NIVRA · CONEXIÓN PRIVADA</span>
             <span class="incoming-kind">
               <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
@@ -85,15 +86,26 @@
             <h2>{{ calls.callTitle(call) }}</h2>
             <p>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | localizedDate:'shortTime' }}</p>
             <div class="incoming-actions">
-              <button class="incoming-action reject" type="button" (click)="declineCall()" [attr.aria-label]="'CALLS.REJECT_CALL' | translate:'Rechazar llamada'">
+              <button class="incoming-action reject" type="button" [disabled]="calls.quickReplyBusy()" (click)="declineCall()" [attr.aria-label]="'CALLS.REJECT_CALL' | translate:'Rechazar llamada'">
                 <ion-icon name="close-outline"></ion-icon>
                 <span>{{ 'CALLS.REJECT' | translate:'Rechazar' }}</span>
               </button>
-              <button class="incoming-action accept" type="button" (click)="acceptCall()" [attr.aria-label]="'CALLS.ACCEPT_CALL' | translate:'Aceptar llamada'">
-                <ion-icon name="call-outline"></ion-icon>
+              <button class="incoming-action accept" type="button" [disabled]="calls.quickReplyBusy()" (click)="acceptCall()" [attr.aria-label]="'CALLS.ACCEPT_CALL' | translate:'Aceptar llamada'">
+                <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
                 <span>{{ 'CALLS.ACCEPT' | translate:'Aceptar' }}</span>
               </button>
             </div>
+            @if (!calls.isGroupCall(call) && !appLock.isContentLocked()) {
+              <button type="button" class="reply-call-toggle" [disabled]="calls.quickReplyBusy()" [attr.aria-expanded]="calls.quickRepliesOpen()" (click)="calls.quickRepliesOpen.set(!calls.quickRepliesOpen())">Responder con mensaje</button>
+              @if (calls.quickRepliesOpen()) {
+                <div class="call-quick-replies" role="group" aria-label="Rechazar con una respuesta rápida">
+                  <small>Se rechazará la llamada y se guardará tu respuesta cifrada.</small>
+                  @for (reply of calls.quickReplies; track reply.id) { <button type="button" [disabled]="calls.quickReplyBusy()" (click)="calls.decline(reply.id)">{{ reply.text }}</button> }
+                  @if (calls.quickReplyBusy()) { <small role="status">Guardando respuesta…</small> }
+                  @if (calls.error()) { <small role="alert">{{ calls.error() }}</small> }
+                </div>
+              }
+            }
           </div>
         </section>
       }

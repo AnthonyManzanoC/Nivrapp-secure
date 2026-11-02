@@ -24,6 +24,11 @@ export class NetworkPolicyService {
 
   onlineHint(): boolean { return this.runtime.onlineHint(); }
 
+  deliveryConcurrency(): number {
+    const hints = this.runtime.hints();
+    return hints.saveData || ['slow-2g', '2g'].includes(hints.effectiveType ?? '') || this.readTimeoutMs() >= 90_000 ? 1 : 3;
+  }
+
   readTimeoutMs(): number {
     const hints = this.runtime.hints();
     const hinted = hints.effectiveType === 'slow-2g' ? 120_000 : hints.effectiveType === '2g' ? 90_000 : hints.effectiveType === '3g' ? 60_000 : 30_000;

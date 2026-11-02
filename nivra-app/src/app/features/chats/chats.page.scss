@@ -801,7 +801,9 @@ time {
   align-items: center;
   justify-content: space-between;
   color: var(--nivra-muted);
-  font-size: 12px;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13px;
   font-weight: 800;
 }
 
@@ -809,6 +811,8 @@ time {
   display: flex;
   align-items: center;
   gap: 6px;
+  flex: none;
+  margin-inline-start: auto;
 }
 
 .recent-head button,
@@ -822,8 +826,26 @@ time {
 }
 
 .recent-head button {
-  width: 30px;
-  height: 30px;
+  min-width: 44px;
+  height: 44px;
+  padding: 10px;
+}
+.recent-head .clear-recents {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: auto;
+  white-space: nowrap;
+  border: 1px solid var(--nivra-line);
+  background: var(--nivra-panel-2);
+  color: var(--nivra-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+.recent-head button:focus-visible {
+  outline: 2px solid var(--nivra-brand);
+  outline-offset: -2px;
 }
 
 .recent-row {

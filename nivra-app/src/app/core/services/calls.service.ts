@@ -1,5 +1,6 @@
 import { DestroyRef, Injectable, NgZone, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { callBandwidth } from './call-bandwidth';
 import { Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
 import { Room, RoomEvent, Track, type AudioCaptureOptions, type VideoCaptureOptions } from 'livekit-client';
@@ -99,6 +100,14 @@ const CALL_AUDIO_CONSTRAINTS: MediaTrackConstraints = {
 
 @Injectable({ providedIn: 'root' })
 export class CallsService implements OnDestroy {
+  readonly quickReplies = [
+    { id: 'busy', text: 'Estoy ocupado, te llamo más tarde.' },
+    { id: 'soon', text: 'Ahora no puedo hablar. Te llamo en cuanto pueda.' },
+    { id: 'message', text: 'No puedo atender. Escríbeme por aquí.' },
+  ] as const;
+  readonly quickRepliesOpen = signal(false);
+  readonly quickReplyBusy = signal(false);
+  readonly lastResult = signal<{ call: CallSession; kind: 'missed' | 'rejected' | 'busy'; incoming: boolean; replied?: boolean } | null>(null);
   private readonly api = inject(NivraApiService);
   private readonly auth = inject(AuthService);
   readonly audioOutput = inject(CallAudioOutputService);
@@ -115,6 +124,7 @@ export class CallsService implements OnDestroy {
   private readonly zone = inject(NgZone);
   private readonly destroyRef = inject(DestroyRef);
   private observedCallScope = this.callAccountScope();
+  private returnLocation: {scope:string;path:string} | null = null;
   private readonly peers = new Map<string, PeerState>();
   private readonly pendingRemoteStreams = new Map<string, MediaStream>();
   private readonly pendingSignals: CallSignalEvent[] = [];
@@ -168,6 +178,7 @@ export class CallsService implements OnDestroy {
     void this.refreshActiveGroupRooms();
   };
   private readonly connectionChangeHandler = () => {
+    for (const peer of this.peers.values()) void this.tuneOutgoingSenders(peer.connection).catch(() => undefined);
     void this.recoverAfterNetworkChange();
   };
   private readonly visibilityChangeHandler = () => {
@@ -222,8 +233,10 @@ export class CallsService implements OnDestroy {
       const userId = this.auth.session()?.user.id;
       untracked(() => {
         if (scope !== this.observedCallScope) {
+          this.lastResult.set(null);
+          this.quickRepliesOpen.set(false);
           this.observedCallScope = scope;
-          this.cleanup({ remember: false });
+          this.cleanup({ remember: false, returnToPrevious:false });
           this.resumableCall.set(null);
           this.activeGroupRooms.set({});
           this.dismissedCallIds.clear();
@@ -308,6 +321,16 @@ export class CallsService implements OnDestroy {
       if (event.type === 'call.ended' || event.type === 'CallEnded') {
         const call = event.payload as CallSession;
         this.forgetGroupRoom(call);
+        if (call?.id === this.activeCall()?.id && ['calling','ringing'].includes(this.phase())) {
+          const kind = call.status === 'Busy' ? 'busy' : call.status === 'Rejected' ? 'rejected' : 'missed';
+          const incoming = call.initiatorUserId !== this.currentUserId();
+          const finished = {...call, status:kind === 'missed' ? 'Missed' : call.status, endedAt:call.endedAt || new Date().toISOString()};
+          this.cleanup({remember:false});
+          this.lastResult.set({call:finished,kind,incoming});
+          this.addHistory(finished);
+          if (!incoming && kind === 'missed') void this.recordCallSystemOnce(finished,'missed-call');
+          return;
+        }
         if (this.isGroupCall(call)) {
           void this.recordCallSystemOnce(call, 'call-ended', this.durationMsForCall(call));
         }
@@ -365,6 +388,7 @@ export class CallsService implements OnDestroy {
       const callId = this.activeCall()?.id ?? null;
       untracked(() => {
         if (callId) {
+          this.lastResult.set(null);
           this.startSignalPolling(callId);
         } else {
           this.stopSignalPolling();
@@ -395,6 +419,8 @@ export class CallsService implements OnDestroy {
       this.error.set(error.message);
       throw error;
     }
+    if (this.router.url?.split(/[?#]/,1)[0] === '/app/calls') this.returnLocation=null;
+    else this.rememberCallLocation();
     this.callActionInFlight = true;
     const scope = this.callAccountScope(), generation = this.callGeneration;
     const isCurrent = () => this.callAccountScope() === scope && this.callGeneration === generation;
@@ -502,27 +528,89 @@ export class CallsService implements OnDestroy {
     }
   }
 
-  async decline(): Promise<void> {
+  async decline(replyId?: string): Promise<void> {
     const call = this.activeCall();
-    if (!call || this.callActionInFlight) {
+    if (!call || this.phase() !== 'ringing' || this.callActionInFlight) {
       return;
     }
+    const reply = replyId ? this.quickReplies.find(item => item.id === replyId) : null;
+    if (replyId && (!reply || this.phase() !== 'ringing' || this.isGroupCall(call) || call.initiatorUserId === this.currentUserId())) return;
+    const current = this.currentCallGuard(call);
+    const scope = this.callAccountScope();
+    this.callActionInFlight = true;
+    this.quickReplyBusy.set(Boolean(reply));
+    try {
     if (this.isGroupCall(call) && this.phase() === 'ringing') {
       this.dismissedCallIds.add(call.id);
       this.cleanup({ historyStatus: 'Rejected' });
       return;
     }
     if (!this.isGroupCall(call) && !await this.claimCall(call)) { return; }
+    if (!current()) return;
+    if (reply) {
+      const conversation = this.conversationForCall(call);
+      const members = conversation?.participants.filter(member => !member.removedAt).map(member => member.userId) ?? [];
+      if (!conversation || conversation.type !== 'Direct' || members.length !== 2 || !members.includes(this.currentUserId()!) || !members.includes(call.initiatorUserId)) {
+        throw new Error('Abre el chat para responder a esta llamada.');
+      }
+      await this.chat.enqueueText(conversation, reply.text);
+      if (!current()) return;
+    }
     void this.nativeDevice.clearIncomingCall(call.id);
     this.phase.set('rejected');
     await Promise.all(this.otherParticipantIds(call).map((userId) =>
       this.sendCallSignal(call, userId, 'declined', { declined: true }).catch(() => undefined)));
+    if (!current()) return;
     const shouldEndRoom = !this.isGroupCall(call) || call.initiatorUserId === this.currentUserId();
     this.cleanup({ historyStatus: 'Rejected' });
+    if (reply) this.lastResult.set({ call, kind:'rejected', incoming:true, replied:true });
     if (shouldEndRoom) {
       const ended = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, { clientSessionId: this.callSignalSessionId })).catch(() => null);
-      if (ended && !this.isGroupCall(call)) await this.recordCallSystemOnce({ ...call, ...ended }, 'call-rejected');
+      if (ended && scope === this.callAccountScope() && !this.isGroupCall(call)) await this.recordCallSystemOnce({ ...call, ...ended }, 'call-rejected');
     }
+    } catch (error) {
+      if (current()) this.error.set(error instanceof Error ? error.message : 'No se pudo responder. Puedes rechazar la llamada o volver a intentarlo.');
+    } finally {
+      if (current()) this.callActionInFlight = false;
+      if (current()) this.quickReplyBusy.set(false);
+    }
+  }
+
+  async redialLast(): Promise<void> {
+    const result = this.lastResult();
+    if (!result || this.activeCall() || this.callActionInFlight || this.isGroupCall(result.call)) return;
+    const conversation = this.conversationForCall(result.call);
+    if (!conversation || conversation.type !== 'Direct') return;
+    this.lastResult.set(null);
+    try {
+      const started=await this.start(result.call.type === 'Video' ? 'Video' : 'Voice', conversation.id,
+        conversation.participants.filter(member => !member.removedAt && member.userId !== this.currentUserId()).map(member => member.userId));
+      if (this.activeCall()?.id === started.id) await this.openCallView();
+    } catch { /* The start path exposes its actionable error. */ }
+  }
+
+  openCallView(): Promise<boolean> {
+    this.rememberCallLocation();
+    return this.router.navigateByUrl('/app/calls');
+  }
+
+  private rememberCallLocation(): void {
+    const scope = this.callAccountScope();
+    const key = this.callReturnKey();
+    const current = this.router.url?.split(/[?#]/,1)[0];
+    let path = current;
+    if (current === '/app/calls') {
+      if (this.returnLocation?.scope === scope) return;
+      try { path = localStorage.getItem(key) || '/app/chats'; } catch { path='/app/chats'; }
+    }
+    if (!path || !/^\/app\/(?:chats(?:\/[a-zA-Z0-9_-]{1,100})?|world|contacts|account|vault)$/.test(path)) path='/app/chats';
+    this.returnLocation = {scope,path};
+    try { localStorage.setItem(key,path); } catch { /* In-memory return remains available. */ }
+  }
+
+  private callReturnKey(): string {
+    const session=this.auth.session();
+    return `nivra.callReturn.${session?.user.id ?? ''}.${session?.device.id ?? ''}`;
   }
 
   async end(callId = this.activeCall()?.id): Promise<void> {
@@ -1609,12 +1697,14 @@ export class CallsService implements OnDestroy {
     if (!call?.id || !targetUserId || targetUserId === this.currentUserId()) {
       return;
     }
+    const isCurrent = this.currentCallGuard(call);
     this.error.set('');
     try {
       const response = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/invite`, {
         userId: targetUserId,
         clientSessionId: this.callSignalSessionId,
       }));
+      if (!isCurrent()) return;
       const normalized = this.withGroupRoomMetadata(response, response.conversationId ?? call.conversationId ?? call.groupId ?? null, this.isGroupCall(response) || this.isGroupCall(call));
       const participantUserIds = [...new Set([...(call.participantUserIds ?? []), ...(normalized.participantUserIds ?? []), targetUserId])];
       const updated = {
@@ -1624,6 +1714,7 @@ export class CallsService implements OnDestroy {
       };
       await this.applyActiveCallUpdate(updated);
     } catch (error) {
+      if (!isCurrent()) return;
       this.error.set(error instanceof Error ? error.message : 'No se pudo invitar al contacto a la llamada.');
       throw error;
     }
@@ -1994,7 +2085,7 @@ export class CallsService implements OnDestroy {
       this.activeCall.set(resumed);
       this.setConnectingPhase();
       this.error.set('');
-      await this.router.navigateByUrl('/app/calls');
+      await this.openCallView();
       if (!isCurrent()) return;
       await this.retryConnection();
     } catch (error) {
@@ -2027,19 +2118,23 @@ export class CallsService implements OnDestroy {
     await this.nativeDevice.clearIncomingCall(callId).catch(() => undefined);
     if (!isCurrent()) return;
     if (action === 'open') {
-      await this.router.navigateByUrl('/app/calls');
+      await this.openCallView();
       if (!isCurrent()) return;
-      if (this.activeCall()) return;
+      if (this.activeCall()) {
+        if (this.activeCall()?.id === callId && this.phase() === 'ringing' && event.showQuickReplies) this.quickRepliesOpen.set(true);
+        return;
+      }
       const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`)).catch(() => null);
       if (!isCurrent() || this.activeCall() || !call || call.initiatorUserId === session.user.id
         || !call.participantUserIds?.includes(session.user.id) || call.endedAt
         || ['Ended', 'Rejected', 'Cancelled', 'Canceled', 'Missed', 'Busy', 'Failed'].includes(call.status)) return;
       if (this.ownedElsewhere(call)) this.resumableCall.set(call);
       else await this.receiveIncoming(call);
+      if (this.activeCall()?.id === callId && this.phase() === 'ringing' && event.showQuickReplies) this.quickRepliesOpen.set(true);
       return;
     }
     if (action === 'answer') {
-      await this.router.navigateByUrl('/app/calls');
+      await this.openCallView();
       if (!isCurrent()) return;
       if (this.activeCall()?.id === callId) {
         await this.accept();
@@ -2175,7 +2270,8 @@ export class CallsService implements OnDestroy {
     if (!session) return;
     const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`)).catch(() => null);
     if (this.callAccountScope() !== scope || this.activeCall()) return;
-    if (!call || call.endedAt || call.status === 'Ended') {
+    if (!call || call.initiatorUserId === session.user.id || !call.participantUserIds?.includes(session.user.id) || call.endedAt ||
+      (!this.isGroupCall(call) && call.status !== 'Ringing') || ['Ended','Rejected','Missed','Busy','Failed','Cancelled','Canceled'].includes(call.status)) {
       return;
     }
     const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? call.groupId ?? null, this.isGroupCall(call));
@@ -2360,6 +2456,7 @@ export class CallsService implements OnDestroy {
       }
       this.phase.set(signalType === 'busy' ? 'failed' : 'rejected');
       this.cleanup({ historyStatus: signalType === 'busy' ? 'Busy' : 'Rejected' });
+      this.lastResult.set({call,kind:signalType === 'busy' ? 'busy' : 'rejected',incoming:false});
       return;
     }
 
@@ -3281,13 +3378,14 @@ export class CallsService implements OnDestroy {
     if (!parameters.encodings?.length) {
       return;
     }
+    const bandwidth = callBandwidth(this.networkInformation());
     parameters.encodings.forEach((encoding) => {
       if (track.kind === 'video') {
         const isScreenTrack = this.screenShareStream?.getVideoTracks().some((item) => item.id === track.id) === true;
-        encoding.maxBitrate = isScreenTrack ? 3_000_000 : 2_500_000;
-        encoding.maxFramerate = 30;
+        encoding.maxBitrate = isScreenTrack ? bandwidth.screen : bandwidth.camera;
+        encoding.maxFramerate = isScreenTrack ? bandwidth.screenFps : bandwidth.cameraFps;
       } else {
-        encoding.maxBitrate = 128_000;
+        encoding.maxBitrate = bandwidth.audio;
       }
     });
     if (track.kind === 'video') {
@@ -3302,7 +3400,7 @@ export class CallsService implements OnDestroy {
         .some((url) => /^turns?:/i.test(String(url || ''))));
   }
 
-  private networkInformation(): (EventTarget & { effectiveType?: string; type?: string }) | null {
+  private networkInformation(): (EventTarget & { effectiveType?: string; type?: string; saveData?: boolean }) | null {
     if (typeof navigator === 'undefined') {
       return null;
     }
@@ -3522,7 +3620,9 @@ export class CallsService implements OnDestroy {
     }
   }
 
-  private cleanup(options: { remember?: boolean; historyStatus?: string; preserveNativeCall?: boolean } = {}): void {
+  private cleanup(options: { remember?: boolean; historyStatus?: string; preserveNativeCall?: boolean; returnToPrevious?:boolean } = {}): void {
+    this.quickRepliesOpen.set(false);
+    this.quickReplyBusy.set(false);
     this.callGeneration += 1;
     this.callActionInFlight = false;
     this.networkRecoveryInFlight = false;
@@ -3530,6 +3630,15 @@ export class CallsService implements OnDestroy {
     this.acceptedPeerInFlight.clear();
     this.connectionError = '';
     const call = this.activeCall();
+    const location=this.returnLocation;
+    const generation=this.callGeneration;
+    if (call && location && options.returnToPrevious !== false && !options.preserveNativeCall) {
+      queueMicrotask(() => {
+        if (location !== this.returnLocation || location.scope !== this.callAccountScope() || generation !== this.callGeneration || this.activeCall()) return;
+        this.returnLocation=null;
+        if (this.router.url?.split(/[?#]/,1)[0] === '/app/calls') void Promise.resolve(this.router.navigateByUrl(location.path)).catch(() => undefined);
+      });
+    }
     if (call?.id) {
       void this.nativeDevice.clearIncomingCall(call.id);
       if (!options.preserveNativeCall) {
@@ -3923,6 +4032,8 @@ export class CallsService implements OnDestroy {
       return;
     }
 
+    const current = this.currentCallGuard(call);
+    this.lastResult.set({call,kind:'missed',incoming:call.initiatorUserId !== this.currentUserId()});
     this.phase.set('missed');
     const endedAt = new Date().toISOString();
     // Only the originating session times out the whole direct call. An
@@ -3937,6 +4048,7 @@ export class CallsService implements OnDestroy {
       const ended = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/end`, {
         clientSessionId: this.callSignalSessionId, reason: 'timeout',
       }));
+      if (!current()) return;
       if (!ended.endedAt && ended.status !== 'Ended') {
         this.timedOutCallIds.delete(call.id);
         if (this.activeCall()?.id === call.id) {
@@ -3954,6 +4066,7 @@ export class CallsService implements OnDestroy {
       await this.recordCallSystemOnce(missedCall, 'missed-call');
       this.addHistory(missedCall);
     } catch {
+      if (!current()) return;
       const missedCall = {
         ...call,
         status: 'Missed',

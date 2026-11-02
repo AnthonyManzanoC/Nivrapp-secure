@@ -4,7 +4,7 @@
     [class.call-mode]="isCallMode()"
     [class.games-open]="calls.games.panelOpen()"
     [class.call-chrome-hidden]="isCallMode() && !controlsVisible"
-    (pointerdown)="revealCallChrome()">
+    (pointerdown)="revealCallChrome()" (keydown)="revealCallChrome()">
     <header class="page-head">
       <div>
         <h1>{{ 'CALLS.TITLE' | translate:'Llamadas' }}</h1>
@@ -15,8 +15,15 @@
     <section class="grid" [class.call-grid-active]="isCallMode()">
       <article class="panel calls-panel" [class.span-12]="isCallMode()" [class.span-7]="!isCallMode()">
         <div class="panel-head">
-          <h2>{{ calls.activeCall() ? ('CALLS.ACTIVE' | translate:'Activa') : ('CALLS.AGENDA' | translate:'Agenda') }}</h2>
-          <span role="status" aria-live="polite">{{ uiPhase() }}</span>
+          @if (calls.activeCall(); as currentCall) {
+            <a class="minimize-call" routerLink="/app/chats" [attr.aria-label]="'CALLS.MINIMIZE' | translate:'Volver a chats sin colgar'" (focus)="onControlsFocus(true)" (blur)="onControlsFocus(false)">
+              <ion-icon name="chevron-down-outline" aria-hidden="true"></ion-icon>
+            </a>
+            <div class="active-call-heading"><h2>{{ activeCallTitle(currentCall) }}</h2><small>{{ currentCall.type === 'Video' ? ('CALLS.VIDEO_CALL' | translate:'Videollamada') : ('CALLS.CALL' | translate:'Llamada') }}</small></div>
+          } @else {
+            <h2>{{ 'CALLS.AGENDA' | translate:'Agenda' }}</h2>
+          }
+          <span class="connection-state" [class.connected]="calls.phase() === 'connected'" [class.reconnecting]="calls.phase() === 'connecting'" role="status" aria-live="polite">{{ uiPhase() }}</span>
         </div>
 
         @if (calls.activeCall(); as call) {
@@ -238,7 +245,7 @@
                 (pointerdown)="$event.stopPropagation()" (click)="$event.stopPropagation()">
               </app-call-game-panel>
             }
-            <div class="call-controls">
+            <div class="call-controls" (focusin)="onControlsFocus(true)" (focusout)="onControlsFocus(false)">
               @if (calls.phase() === 'ringing') {
                 <ion-button mode="ios" class="accept" (click)="accept()">
                   <ion-icon name="call-outline" slot="start"></ion-icon>
@@ -384,7 +391,7 @@
         }
 
         @if (calls.error() && !calls.activeCall()) {
-          <p class="error-copy" [appTransientNotice]="calls.audioOutput.routeError()" [appNoticeDuration]="15000" [appTransientNotice]="calls.error()" [appNoticeDuration]="15000">{{ calls.error() }}</p>
+          <p class="error-copy" role="alert" [appTransientNotice]="calls.error()" [appNoticeDuration]="15000">{{ calls.error() }}</p>
         }
           @if (!calls.activeCall()) {
             @if (calls.resumableCall(); as ongoing) {
@@ -398,10 +405,15 @@
       </article>
 
       @if (!isCallMode()) {
-        <article class="panel span-5">
-          <h2>{{ 'CALLS.LOCAL_HISTORY' | translate:'Historial local' }}</h2>
+        <article class="panel span-5 history-panel">
+          <div class="history-heading"><div><small>{{ 'CALLS.RECENT' | translate:'TU ACTIVIDAD' }}</small><h2>{{ 'CALLS.LOCAL_HISTORY' | translate:'Historial local' }}</h2></div><ion-icon name="call-outline" aria-hidden="true"></ion-icon></div>
+          <div class="history-filters" role="group" [attr.aria-label]="'CALLS.FILTER_HISTORY' | translate:'Filtrar llamadas'">
+            <button type="button" [class.selected]="historyFilter() === 'all'" [attr.aria-pressed]="historyFilter() === 'all'" (click)="setHistoryFilter('all')">{{ 'COMMON.ALL' | translate:'Todas' }}</button>
+            <button type="button" [class.selected]="historyFilter() === 'missed'" [attr.aria-pressed]="historyFilter() === 'missed'" (click)="setHistoryFilter('missed')">{{ 'CALLS.MISSED_FILTER' | translate:'Perdidas' }}</button>
+            <button type="button" [class.selected]="historyFilter() === 'video'" [attr.aria-pressed]="historyFilter() === 'video'" (click)="setHistoryFilter('video')">{{ 'CALLS.VIDEO_FILTER' | translate:'Video' }}</button>
+          </div>
           <div class="stack">
-            @for (call of calls.history(); track call.id) {
+            @for (call of visibleHistory(); track call.id) {
               <div class="call-row history-row" [class.missed]="historyClass(call) === 'missed'" [class.outgoing]="historyClass(call) === 'outgoing'" [class.incoming]="historyClass(call) === 'incoming'">
                 <div class="history-main">
                   <div class="history-avatar">
@@ -419,9 +431,10 @@
                 </div>
                 <div class="history-actions">
                   <ion-icon class="direction" [name]="historyIcon(call)"></ion-icon>
-                  @if (canRejoin(call.id) && call.status !== 'Ended' && !call.endedAt) {
-                    <ion-button mode="ios" fill="clear" (click)="rejoin(call.id)" [attr.aria-label]="'CALLS.REJOIN' | translate:'Reentrar'">
+                  @if (canRejoin(call)) {
+                    <ion-button mode="ios" fill="clear" class="history-rejoin" (click)="rejoin(call.id)" [attr.aria-label]="'CALLS.REJOIN' | translate:'Volver a unirme'">
                       <ion-icon name="enter-outline"></ion-icon>
+                      {{ 'CALLS.JOIN_SHORT' | translate:'Unirme' }}
                     </ion-button>
                   } @else {
                     <ion-icon class="kind" [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
@@ -429,9 +442,12 @@
                 </div>
               </div>
             } @empty {
-              <div class="empty-copy">{{ 'CALLS.EMPTY_HISTORY' | translate:'Las llamadas entrantes apareceran aqui.' }}</div>
+              <div class="empty-copy history-empty"><ion-icon name="call-outline" aria-hidden="true"></ion-icon><strong>{{ 'CALLS.NO_HISTORY_MATCH' | translate:'No hay llamadas para mostrar' }}</strong><small>{{ 'CALLS.HISTORY_HELP' | translate:'Tus llamadas aparecerán aquí. Puedes cambiar el filtro o buscar un contacto.' }}</small></div>
             }
           </div>
+          @if (visibleHistory().length < filteredHistory().length) {
+            <ion-button class="history-more" mode="ios" fill="clear" (click)="showMoreHistory()">{{ 'CALLS.MORE_HISTORY' | translate:'Ver más llamadas' }}</ion-button>
+          }
         </article>
       }
     </section>
@@ -464,7 +480,7 @@
         @if (calls.audioOutput.systemPickerSupported) {
           <ion-button fill="clear" (click)="calls.audioOutput.chooseSystemOutput()">Elegir otro dispositivo</ion-button>
         }
-        @if (calls.audioOutput.routeError()) { <p class="error-copy" role="status">{{ calls.audioOutput.routeError() }}</p> }
+        @if (calls.audioOutput.routeError()) { <p class="error-copy" role="status" [appTransientNotice]="calls.audioOutput.routeError()" [appNoticeDuration]="15000">{{ calls.audioOutput.routeError() }}</p> }
         <button type="button" class="call-audio-route output-mute" [attr.aria-pressed]="!calls.speaker()" (click)="calls.toggleOutputMute()">
           <ion-icon [name]="calls.speaker() ? 'volume-high-outline' : 'volume-mute-outline'" aria-hidden="true"></ion-icon>
           <span>{{ calls.speaker() ? 'Silenciar escucha' : 'Activar escucha' }}</span>

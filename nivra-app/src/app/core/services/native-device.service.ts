@@ -31,6 +31,7 @@ export type NativeShareIntent = {
   at?: number;
 };
 export type NativeCallActionEvent = {
+  showQuickReplies?: boolean;
   action: 'answer' | 'reject' | 'open';
   callId?: string;
   callerName?: string;

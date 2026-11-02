@@ -95,6 +95,7 @@ public class IncomingCallExperienceInstrumentedTest {
                 View root=activity.getWindow().getDecorView();
                 assertTrue(contains(root,"Sofía"));assertTrue(contains(root,"Contestar"));
                 assertTrue(contains(root,"Rechazar"));assertFalse(contains(root,"Aceptar video"));
+                assertTrue(contains(root,"Responder con mensaje"));
             });
             screenshot("native-incoming-voice");
         }
@@ -119,5 +120,30 @@ public class IncomingCallExperienceInstrumentedTest {
         NivraCallPushPolicy.markEnded(context,scope,callId);
         assertTrue(NivraCallPushPolicy.wasEnded(context,user,device,callId,System.currentTimeMillis()));
         assertFalse(NivraCallPushPolicy.wasEnded(context,"another-account",device,callId,System.currentTimeMillis()));
+    }
+
+    @Test public void privacyChangeRedactsAnAlreadyVisibleCallerWithoutEndingReception() throws Exception {
+        try (ActivityScenario<NivraIncomingCallActivity> scenario = ActivityScenario.launch(incoming("Voice", false))) {
+            scenario.onActivity(activity -> assertTrue(contains(activity.getWindow().getDecorView(), "Sofía")));
+            // Preserve the signed call marker while changing only privacy.
+            Method readRegistry = NivraNativePushRegistration.class.getDeclaredMethod("registry", Context.class);
+            readRegistry.setAccessible(true);
+            JSONObject registry = (JSONObject)readRegistry.invoke(null, context);
+            registry.getJSONArray("accounts").getJSONObject(0).put("hideNotificationContent", true);
+            Method write = NivraNativePushRegistration.class.getDeclaredMethod("write", Context.class, JSONObject.class);
+            write.setAccessible(true); write.invoke(null, context, registry);
+            context.sendBroadcast(new Intent(NivraNativePushRegistration.ACTION_PRIVACY_CHANGED)
+                .setPackage(context.getPackageName()).putExtra("recipientUserId", user).putExtra("recipientDeviceId", device));
+            java.util.concurrent.atomic.AtomicBoolean redacted = new java.util.concurrent.atomic.AtomicBoolean();
+            for (int attempt = 0; attempt < 30 && !redacted.get(); attempt++) {
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                scenario.onActivity(activity -> {
+                    View root = activity.getWindow().getDecorView();
+                    redacted.set(!contains(root, "Sofía") && contains(root, "Nivra") && contains(root, "Contestar") && !activity.isFinishing());
+                });
+                if (!redacted.get()) android.os.SystemClock.sleep(100);
+            }
+            assertTrue("Privacy refresh must redact the caller while keeping reception available", redacted.get());
+        }
     }
 }

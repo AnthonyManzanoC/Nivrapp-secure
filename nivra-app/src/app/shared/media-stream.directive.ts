@@ -1,4 +1,4 @@
-import { Directive, ElementRef, Input, OnChanges, OnDestroy, inject } from '@angular/core';
+import { Directive, ElementRef, Input, NgZone, OnChanges, OnDestroy, inject } from '@angular/core';
 
 @Directive({
   selector: 'video[appMediaStream],audio[appMediaStream]',
@@ -6,6 +6,7 @@ import { Directive, ElementRef, Input, OnChanges, OnDestroy, inject } from '@ang
 })
 export class MediaStreamDirective implements OnChanges, OnDestroy {
   private readonly element = inject<ElementRef<HTMLMediaElement>>(ElementRef);
+  private readonly zone = inject(NgZone);
   private listeners: Array<() => void> = [];
   private readonly resume = () => {
     if (this.stream && document.visibilityState !== 'hidden') {
@@ -16,6 +17,12 @@ export class MediaStreamDirective implements OnChanges, OnDestroy {
   @Input('appMediaStream') stream: MediaStream | null = null;
 
   ngOnChanges(): void {
+    // Media readiness does not change the template. Do not trigger a whole-app
+    // change detection pass for every tile's playback event.
+    this.zone.runOutsideAngular(() => this.bindStream());
+  }
+
+  private bindStream(): void {
     this.removeListeners();
     const node = this.element.nativeElement;
     if (node instanceof HTMLVideoElement) {
@@ -31,16 +38,22 @@ export class MediaStreamDirective implements OnChanges, OnDestroy {
         target.addEventListener(name, handler);
         this.listeners.push(() => target.removeEventListener(name, handler));
       };
-      const observed = new Set<MediaStreamTrack>();
+      const observed = new Map<MediaStreamTrack, () => void>();
       const watchTracks = () => {
-        for (const track of this.stream?.getTracks() ?? []) {
+        const tracks = new Set(this.stream?.getTracks() ?? []);
+        for (const [track, remove] of observed) {
+          if (!tracks.has(track)) { remove(); observed.delete(track); }
+        }
+        for (const track of tracks) {
           if (observed.has(track)) continue;
-          observed.add(track);
-          listen(track, 'unmute', this.resume);
+          track.addEventListener('unmute', this.resume);
+          observed.set(track, () => track.removeEventListener('unmute', this.resume));
         }
         this.resume();
       };
       listen(this.stream, 'addtrack', watchTracks);
+      listen(this.stream, 'removetrack', watchTracks);
+      this.listeners.push(() => { observed.forEach(remove => remove()); observed.clear(); });
       listen(node, 'loadedmetadata', this.resume);
       listen(node, 'canplay', this.resume);
       listen(node, 'pointerup', this.resume);

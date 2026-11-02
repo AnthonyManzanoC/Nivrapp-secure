@@ -29,15 +29,20 @@ async function main() {
   const chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank',
-  ], { stdio:'ignore' });
+  ], { stdio:['ignore','ignore','pipe'] });
+  let browserDiagnostics = '';
+  chrome.stderr.on('data', chunk => { browserDiagnostics = (browserDiagnostics + chunk.toString()).slice(-8000); });
+  chrome.on('error', error => { browserDiagnostics += error.message; });
   let socket;
   try {
     let port;
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 300; i++) {
+      if (chrome.exitCode !== null) break;
       try { port = (await fs.readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; break; }
       catch { await new Promise(resolve => setTimeout(resolve, 100)); }
     }
-    assert(port, 'Chrome did not start');
+    if (!port) await fs.writeFile(path.join(output,'browser-startup.txt'),browserDiagnostics);
+    assert(port, 'Chrome did not start: ' + browserDiagnostics);
     const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method:'PUT' })).json();
     socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => { socket.onopen=resolve; socket.onerror=reject; });
@@ -110,6 +115,16 @@ async function main() {
     assert.equal(await evaluate("(async()=>getComputedStyle(await document.querySelector('.search-box ion-input').getInputElement()).outlineStyle)()"),'none','native input must not draw a rectangle inside the search pill');
     assert(await evaluate("document.querySelector('.search-box').getBoundingClientRect().top < 40"),'search uses the top of the screen');
     await capture('mobile-search');
+    await evaluate("localStorage.setItem('nivra_recent_searches.preview-owner',JSON.stringify([{id:'peer-1',alias:'sofia',displayName:'Sofía Martínez',isDiscoverable:true}]))");
+    await call('Page.navigate',{url:base+'/app/chats?theme=light&recent=1'});
+    await waitFor("!!document.querySelector('.search-box ion-input')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await tap('.search-box ion-input');
+    await waitFor("!!document.querySelector('.clear-recents')");
+    assert(await evaluate("(()=>{const b=document.querySelector('.clear-recents');return b.getBoundingClientRect().width>100 && getComputedStyle(b).whiteSpace==='nowrap';})()"),'delete recent searches is a readable full-width action');
+    await capture('mobile-search-recents');
+    await tap('.clear-recents');
+    await waitFor("document.querySelectorAll('.recent-tile').length===0");
     await evaluate("document.querySelector('.search-back').click()");
     await waitFor("!document.querySelector('.chats-page.search-active')");
     await tap('.mobile-message-fab');
@@ -154,6 +169,21 @@ async function main() {
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
     assert.equal(await evaluate("document.querySelectorAll('.radar-panel, #friend-requests').length"),0,'Mundo focuses on stories while phone tools stay paused');
     await capture('mobile-world');
+    assert(await evaluate("[...document.querySelectorAll('.story-open .story-avatar')].every(image=>{const a=image.getBoundingClientRect(),b=image.parentElement.getBoundingClientRect();return Math.abs(a.width-a.height)<1 && a.left-4>=b.left && a.right+4<=b.right;})"),'story avatar and its ring fit inside the open button');
+    await call('Page.navigate',{url:base+'/app/world?theme=dark'});
+    await waitFor("document.querySelectorAll('.story-bucket-row').length>3");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.story-bucket-row.viewed')).opacity"),'1','viewed stories retain readable contrast');
+    await capture('mobile-world-dark');
+    await call('Page.navigate',{url:base+'/preview/profile?theme=dark'});
+    await waitFor("!!document.querySelector('.profile-hero')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    assert(await evaluate("(()=>{const a=document.querySelector('.profile-avatar-control').getBoundingClientRect(),b=document.querySelector('.profile-hero-copy').getBoundingClientRect();return a.right<=b.left;})()"),'profile avatar and identity stay alongside each other');
+    await capture('mobile-profile-dark');
+    await call('Page.navigate',{url:base+'/preview/profile?theme=light'});
+    await waitFor("!!document.querySelector('.profile-hero')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('mobile-profile-light');
     await call('Page.navigate',{url:base+'/app/composer?theme=light'});
     await waitFor("!!document.querySelector('.source-text')");
     await tap('.source-text');
@@ -176,6 +206,45 @@ async function main() {
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
     await capture('desktop-game-invitation');
     await waitFor("!document.querySelector('preview-invitation p[role=status]')?.textContent.trim()");
+    await viewport(390,844,true);
+    await call('Page.navigate',{url:base+'/app/chats?theme=light&incoming=voice'});
+    await waitFor("!!document.querySelector('.incoming-call-card')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    assert.equal(await evaluate("getComputedStyle(document.querySelector('.incoming-call-card h2')).color"),'rgb(242, 251, 247)','incoming caller remains readable with the light theme');
+    await capture('mobile-incoming-voice');
+    await tap('.reply-call-toggle');
+    await waitFor("document.querySelectorAll('.call-quick-replies button').length===3");
+    await capture('mobile-call-quick-replies');
+    await tap('.call-quick-replies button');
+    await waitFor("!!document.querySelector('.call-result')");
+    await capture('mobile-call-reply-result');
+    await call('Page.navigate',{url:base+'/app/chats?theme=light&incoming=video'});
+    await waitFor("!!document.querySelector('.video-incoming')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('mobile-incoming-video');
+    await viewport(1440,900,false);
+    await call('Page.navigate',{url:base+'/preview/calls?theme=light'});
+    await waitFor("document.querySelectorAll('.history-row').length===6");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('desktop-call-history');
+    await tap('.history-filters button:nth-child(2)');
+    await waitFor("document.querySelectorAll('.history-row').length===2");
+    assert.equal(await evaluate("document.querySelectorAll('.history-rejoin').length"),0,'missed calls cannot show rejoin');
+    await viewport(390,844,true);
+    await call('Page.navigate',{url:base+'/preview/calls?theme=dark&mode=voice'});
+    await waitFor("!!document.querySelector('.voice-connected')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('mobile-active-voice');
+    await call('Page.navigate',{url:base+'/preview/calls?theme=dark&mode=video'});
+    await waitFor("!!document.querySelector('.direct-video')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('mobile-active-video');
+    await evaluate("document.querySelector('.minimize-call').focus()");
+    await new Promise(resolve=>setTimeout(resolve,5500));
+    assert.equal(await evaluate("!!document.querySelector('.call-chrome-hidden')"),false,'keyboard focus keeps video controls visible');
+    await tap('.minimize-call');
+    await waitFor("location.pathname==='/app/chats'");
+    assert(await evaluate("!!document.querySelector('.active-call-banner') || document.body.textContent.includes('Volver a la llamada')"),'minimize keeps the active call available');
     assert.deepEqual(errors,[],'preview must not throw runtime errors');
     console.log('PASS mobile search, Contacts, self notes entry and desktop layout; screenshots saved.');
   } finally { socket?.close(); chrome.kill(); server.close(); }
