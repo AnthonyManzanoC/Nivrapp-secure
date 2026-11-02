@@ -36,7 +36,7 @@ h2 { font-size:16px; margin:12px 0; }
 .contact-card .row-actions ion-button { --padding-start:5px; --padding-end:5px; min-width:32px; margin:0; }
 .contact-card .row-actions ion-button:nth-child(2) { display:none; }
 .search-line { display:flex; align-items:center; gap:12px; padding:4px 18px; border-radius:28px; background:var(--nivra-hover,#f3f5f4); }
-.search-line ion-input { --highlight-color-focused:transparent; --highlight-color-valid:transparent; --padding-top:13px; --padding-bottom:13px; }
+.search-line ion-input { --background:transparent; --highlight-color-focused:transparent; --highlight-color-valid:transparent; --padding-top:13px; --padding-bottom:13px; }
 .search-line ion-input::part(native) { outline:none; box-shadow:none; }
 .discovery-hint,.empty-copy { font-size:13px; color:var(--nivra-muted); line-height:1.6; padding:10px 0; }
 .result-row { padding:16px 0; border-bottom:1px solid var(--nivra-line); display:flex; gap:12px; justify-content:space-between; align-items:center; }
