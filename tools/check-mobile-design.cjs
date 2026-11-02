@@ -29,15 +29,20 @@ async function main() {
   const chrome = spawn(process.env.CHROME_BIN || '/usr/bin/google-chrome', [
     '--headless=new', '--disable-gpu', '--no-sandbox', '--no-first-run', '--no-default-browser-check',
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank',
-  ], { stdio:'ignore' });
+  ], { stdio:['ignore','ignore','pipe'] });
+  let browserDiagnostics = '';
+  chrome.stderr.on('data', chunk => { browserDiagnostics = (browserDiagnostics + chunk.toString()).slice(-8000); });
+  chrome.on('error', error => { browserDiagnostics += error.message; });
   let socket;
   try {
     let port;
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 300; i++) {
+      if (chrome.exitCode !== null) break;
       try { port = (await fs.readFile(path.join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]; break; }
       catch { await new Promise(resolve => setTimeout(resolve, 100)); }
     }
-    assert(port, 'Chrome did not start');
+    if (!port) await fs.writeFile(path.join(output,'browser-startup.txt'),browserDiagnostics);
+    assert(port, 'Chrome did not start: ' + browserDiagnostics);
     const target = await (await fetch(`http://127.0.0.1:${port}/json/new?about:blank`, { method:'PUT' })).json();
     socket = new WebSocket(target.webSocketDebuggerUrl);
     await new Promise((resolve, reject) => { socket.onopen=resolve; socket.onerror=reject; });
