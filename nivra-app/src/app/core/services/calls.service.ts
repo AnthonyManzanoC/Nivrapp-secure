@@ -582,8 +582,11 @@ export class CallsService implements OnDestroy {
     const conversation = this.conversationForCall(result.call);
     if (!conversation || conversation.type !== 'Direct') return;
     this.lastResult.set(null);
-    await this.start(result.call.type === 'Video' ? 'Video' : 'Voice', conversation.id,
-      conversation.participants.filter(member => !member.removedAt && member.userId !== this.currentUserId()).map(member => member.userId)).catch(() => undefined);
+    try {
+      const started=await this.start(result.call.type === 'Video' ? 'Video' : 'Voice', conversation.id,
+        conversation.participants.filter(member => !member.removedAt && member.userId !== this.currentUserId()).map(member => member.userId));
+      if (this.activeCall()?.id === started.id) await this.openCallView();
+    } catch { /* The start path exposes its actionable error. */ }
   }
 
   openCallView(): Promise<boolean> {

@@ -65,6 +65,14 @@ describe('call session isolation', () => {
 
   afterEach(() => service.ngOnDestroy());
 
+  it('opens the call screen when redialing and keeps the original media type', async () => {
+    (TestBed.inject(ChatService).conversations as any).set([{id:'chat',type:'Direct',participants:[{userId:'me'},{userId:'peer'}]}]);
+    service.lastResult.set({call:{...invitation,conversationId:'chat',type:'Video'},kind:'missed',incoming:false});
+    const start=spyOn(service,'start').and.callFake(async()=>{service.activeCall.set(invitation);return invitation;});
+    const open=spyOn(service,'openCallView').and.resolveTo(true);
+    await service.redialLast(); expect(start).toHaveBeenCalledWith('Video','chat',['peer']); expect(open).toHaveBeenCalledTimes(1);
+  });
+
   it('ignores a stale reject tap after the call was answered', async () => {
     service.activeCall.set({...invitation,status:'Active'}); service.phase.set('connected');
     const claim=spyOn<any>(service,'claimCall').and.resolveTo(true);
