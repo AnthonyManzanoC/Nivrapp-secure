@@ -42,6 +42,34 @@ describe('story playback lifecycle', () => {
   });
   afterEach(() => player.ngOnDestroy());
 
+  it('ignores image results from a previous story and an earlier retry', () => {
+    const old = document.createElement('img');
+    old.dataset['storyId'] = 'previous';
+    player.loadedImage({target:old} as unknown as Event);
+    player.failedMedia({target:old} as unknown as Event);
+    expect(player.mediaReady).toBeFalse(); expect(player.mediaFailed).toBeFalse();
+    old.dataset['storyId'] = 'one'; old.dataset['storyAttempt'] = '0';
+    player.imageRevision = 1;
+    player.failedMedia({target:old} as unknown as Event);
+    expect(player.mediaFailed).toBeFalse();
+    old.dataset['storyAttempt'] = '1';
+    player.loadedImage({target:old} as unknown as Event);
+    expect(player.mediaReady).toBeTrue();
+  });
+
+  it('ignores ended and buffering events from a detached media element', () => {
+    const current = media();
+    const detached = document.createElement('video'); detached.dataset['storyId'] = 'one';
+    const ended = spyOn(player.mediaEnded, 'emit');
+    const duration = spyOn(player.syncDuration, 'emit');
+    player.loadedMetadata({target:detached} as unknown as Event);
+    expect(duration).not.toHaveBeenCalled();
+    player.ended({target:detached} as unknown as Event);
+    player.waitingMedia({target:detached} as unknown as Event);
+    expect(ended).not.toHaveBeenCalled();expect(player.buffering).toBeFalse();
+    player.waitingMedia({target:current} as unknown as Event);expect(player.buffering).toBeTrue();
+  });
+
   it('keeps navigation inside an open confirmation and Escape dismisses only that sheet', () => {
     const next = spyOn(player.next, 'emit');
     const close = spyOn(player.closeViewer, 'emit');

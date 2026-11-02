@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import {
   AfterViewInit,
@@ -21,7 +22,7 @@ interface CropPointer {
 @Component({
   selector: 'app-image-cropper',
   standalone: true,
-  imports: [CommonModule],
+  imports: [TransientNoticeDirective, CommonModule],
   templateUrl: './image-cropper.component.html',
   styleUrls: ['./image-cropper.component.scss'],
 })

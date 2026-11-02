@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, ElementRef, EventEmitter, HostListener, Input, NgZone, OnChanges, OnDestroy, Output, SimpleChanges, ViewChild, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -12,6 +13,7 @@ import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { E2EE_UPLOAD_LIMIT_BYTES } from '../../core/services/media-optimizer.service';
 import { SocialService } from '../../core/services/social.service';
+import { STORY_TEXT_THEMES, storyTextTheme } from '../../core/utils/story-theme';
 import { TranslateService } from '../../core/services/translate.service';
 import { MediaStreamDirective } from '../media-stream.directive';
 import { encodeStoryMusicFragment, STORY_MUSIC_SOURCE_MAX_BYTES, STORY_MUSIC_SOURCE_MAX_SECONDS, validMusicWindow } from '../../core/services/story-music';
@@ -23,7 +25,7 @@ type MediaKind = 'image' | 'video' | 'audio' | '';
 @Component({
   selector: 'app-story-composer',
   standalone: true,
-  imports: [CommonModule, FormsModule, TranslatePipe, MediaStreamDirective, IonModal, IonIcon, IonSpinner],
+  imports: [TransientNoticeDirective, CommonModule, FormsModule, TranslatePipe, MediaStreamDirective, IonModal, IonIcon, IonSpinner],
   templateUrl: './story-composer.component.html',
   styleUrls: ['./story-composer.component.scss'],
 })
@@ -62,6 +64,10 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
   previewUrl = '';
   mediaKind: MediaKind = '';
   text = '';
+  readonly textThemes = STORY_TEXT_THEMES;
+  textThemeId: string = STORY_TEXT_THEMES[0].id;
+  textTheme() { return storyTextTheme(this.textThemeId); }
+  selectTextTheme(id: string): void { if (!this.busy) this.textThemeId = storyTextTheme(id).id; }
   audience = 'contacts';
   visibility = 'Contacts';
   durationSeconds = 86400;
@@ -622,6 +628,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
       }
       await this.social.publishStory({
         text: this.text.trim(), file,
+        ...(!file ? {textTheme: this.textTheme().id} : {}),
         ...(this.musicBuffer && validMusicWindow(this.musicTotal, this.musicStart, this.musicLength) ? { music: {
           file: encodeStoryMusicFragment(this.musicBuffer, this.musicStart, this.musicLength), title: this.musicTitle.trim(),
           durationSeconds: Math.floor(this.musicLength * 22050) / 22050, sourceStartSeconds: this.musicStart,
@@ -731,6 +738,7 @@ export class StoryComposerComponent implements OnChanges, OnDestroy {
     this.file = null;
     this.mediaKind = '';
     this.text = '';
+    this.textThemeId = STORY_TEXT_THEMES[0].id;
     this.audience = 'contacts';
     this.visibility = 'Contacts';
     this.durationSeconds = 86400;

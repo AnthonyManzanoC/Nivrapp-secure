@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, HostListener, Input, OnChanges, OnDestroy, Output, SimpleChanges, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -42,7 +43,7 @@ export function createStickerPng(sticker: ChatSticker): Promise<File> {
 @Component({
   selector: 'app-chat-expression-picker',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [TransientNoticeDirective, CommonModule, FormsModule],
   templateUrl: './chat-expression-picker.component.html',
   styleUrls: ['./chat-expression-picker.component.scss'],
 })

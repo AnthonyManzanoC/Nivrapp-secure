@@ -434,7 +434,7 @@
       </article>
     </section>
 
-    @if (notice) { <p class="notice">{{ notice }}</p> }
-    @if (error) { <p class="error">{{ error }}</p> }
+    @if (notice) { <p [appTransientNotice]="notice" (noticeExpired)="notice=''" class="notice">{{ notice }}</p> }
+    @if (error) { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="error">{{ error }}</p> }
   </main>
 </ion-content>

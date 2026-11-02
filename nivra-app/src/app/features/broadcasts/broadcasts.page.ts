@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { Component, OnDestroy, OnInit, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -13,7 +14,7 @@ import { identityDisplayName } from '../../core/utils/nivra-identity';
 
 @Component({
   selector: 'app-broadcasts', standalone: true,
-  imports: [FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonSpinner, IonTextarea],
+  imports: [TransientNoticeDirective, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonSpinner, IonTextarea],
   templateUrl: './broadcasts.page.html', styleUrls: ['./broadcasts.page.scss'],
 })
 export class BroadcastsPage implements OnInit, OnDestroy {

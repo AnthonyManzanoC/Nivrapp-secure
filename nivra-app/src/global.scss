@@ -1913,3 +1913,32 @@ ion-modal.nivra-story-viewer-modal::part(content) {
   width: 0;
   height: 0;
 }
+// Popovers are mounted outside the routed page. Keep their layout during dismissal.
+ion-popover.chat-options-popover {
+  --width:min(292px,calc(100vw - 24px));
+  --background:var(--nivra-panel-solid);
+  --box-shadow:0 16px 48px rgba(0,0,0,.16);
+  color:var(--nivra-text);
+}
+ion-popover.chat-options-popover::part(content) { border:1px solid var(--nivra-line); border-radius:20px; max-height:min(680px,80dvh); overflow:auto; }
+ion-popover.chat-options-popover .popover-menu { display:grid; gap:2px; padding:8px; }
+ion-popover.chat-options-popover .popover-menu button { display:flex; align-items:center; gap:12px; width:100%; min-height:44px; padding:10px 12px; border:0; border-radius:12px; background:transparent; color:var(--nivra-text); font:inherit; font-size:14px; text-align:start; }
+ion-popover.chat-options-popover .popover-menu button:hover { background:var(--nivra-hover); }
+ion-popover.chat-options-popover .popover-menu button:focus-visible { outline:2px solid var(--ion-color-primary); outline-offset:-2px; }
+ion-popover.chat-options-popover .popover-menu ion-icon { flex:0 0 18px; color:var(--ion-color-primary); }
+ion-popover.chat-options-popover .popover-menu button.danger { color:var(--ion-color-danger); }
+// Ionic input renders a scoped native input, rather than a shadow-DOM part.
+// The rounded search container supplies the focus cue for keyboard users.
+body app-chats .search-box ion-input input:focus-visible,
+body app-contacts .search-line ion-input input:focus-visible { outline:none; outline-offset:0; box-shadow:none; }
+body app-contacts .search-line ion-input,
+body app-contacts .search-line ion-input input { background:transparent; border:0; box-shadow:none; }
+body app-contacts .search-line:focus-within { box-shadow:0 0 0 2px color-mix(in srgb,var(--nivra-brand) 30%,transparent); }
+@media(max-width:768px) {
+ .workspace:has(.chats-page.search-active) { padding-bottom:0; }
+ .workspace:has(.chats-page.search-active)>.rail { display:none; }
+}
+ion-modal.nivra-story-viewer-modal { --width:100vw; --height:100dvh; --max-width:100vw; --max-height:100dvh; --background:#080e10; --border-radius:0; }
+ion-modal.nivra-story-viewer-modal::part(content) { overflow:hidden; background:#080e10; border-radius:0; }
+ion-modal.nivra-story-viewer-modal app-story-viewer { display:block; height:100%; width:100%; overflow:hidden; }
+[data-notice-expired="true"] { display:none !important; }

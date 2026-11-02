@@ -1,5 +1,6 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
-import { Component, Injector, EffectRef, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, Injector, EffectRef, ElementRef, NgZone, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PrivateChatLockService } from '../../core/services/private-chat-lock.service';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
@@ -24,7 +25,7 @@ import {
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { callOutline, videocamOutline, informationCircleOutline, addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, fingerPrintOutline, imageOutline, lockClosedOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { arrowBackOutline, callOutline, videocamOutline, informationCircleOutline, addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, fingerPrintOutline, imageOutline, lockClosedOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
@@ -60,7 +61,7 @@ type ConversationMenuAction = 'pin' | 'mute' | 'archive';
 @Component({
   selector: 'app-chats',
   standalone: true,
-  imports: [
+  imports: [TransientNoticeDirective,
     LocalizedDatePipe,
     CommonModule,
     FormsModule,
@@ -144,6 +145,10 @@ export class ChatsPage implements OnDestroy {
       });
   });
   query = '';
+  contactsFabExpanded = true;
+  private contactsFabTop = 0;
+  private contactsFabTimer: number | null = null;
+  private readonly feedbackZone = inject(NgZone);
   searchResults: UserSummary[] = [];
   searching = false;
   searchScope: ChatSearchScope = 'all';
@@ -220,6 +225,33 @@ export class ChatsPage implements OnDestroy {
   private alive = true;
   storyHighlightOpening = '';
   storiesCollapsed = true;
+  readonly storyStripCanBack = signal(false);
+  readonly storyStripCanNext = signal(false);
+  private storyStripNav?: ElementRef<HTMLElement>;
+  private storyStripResize?: ResizeObserver;
+  private storyStripMutation?: MutationObserver;
+  @ViewChild('storyStripScroller', {read:ElementRef}) private set storyStripRef(ref: ElementRef<HTMLElement> | undefined) {
+    this.storyStripResize?.disconnect(); this.storyStripMutation?.disconnect();
+    this.storyStripNav = ref;
+    if (!ref) return;
+    const measure = () => { if (this.alive && this.storyStripNav === ref) this.updateStoryStripEdges(); };
+    this.storyStripResize = new ResizeObserver(measure); this.storyStripResize.observe(ref.nativeElement);
+    this.storyStripMutation = new MutationObserver(measure); this.storyStripMutation.observe(ref.nativeElement, {childList:true});
+    queueMicrotask(measure);
+  }
+  updateStoryStripEdges(): void {
+    const nav = this.storyStripNav?.nativeElement;
+    if (!nav) return;
+    const offset = Math.abs(nav.scrollLeft);
+    this.storyStripCanBack.set(offset > 2);
+    this.storyStripCanNext.set(nav.clientWidth > 0 && offset + nav.clientWidth < nav.scrollWidth - 2);
+  }
+  moveStoryStrip(direction: number): void {
+    const nav = this.storyStripNav?.nativeElement;
+    if (!nav) return;
+    nav.scrollBy({left:direction * (getComputedStyle(nav).direction === 'rtl' ? -1 : 1) * Math.max(96,nav.clientWidth*.8),
+      behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+  }
   private conversationList?: ElementRef<HTMLElement>;
   private nativeStoryTouch: { id: number; x: number; y: number; atTop: boolean; pull: boolean; expanded: boolean; collapse: boolean } | null = null;
   private nativeStoryScrollTop = 0;
@@ -291,7 +323,7 @@ export class ChatsPage implements OnDestroy {
     document.addEventListener('pointerdown', this.onDocumentPointerDown, true);
     document.addEventListener('keydown', this.onDocumentKeydown, true);
     document.addEventListener('visibilitychange', this.onHistoryVisibility);
-    addIcons({ callOutline, videocamOutline, informationCircleOutline,
+    addIcons({ arrowBackOutline, callOutline, videocamOutline, informationCircleOutline,
       addOutline,
       archiveOutline,
       chatbubbleEllipsesOutline,
@@ -321,10 +353,13 @@ export class ChatsPage implements OnDestroy {
     });
     void this.social.load().catch(() => undefined);
     this.storyStripTimer = window.setInterval(() => this.storyStripNow.set(Date.now()), 30_000);
+    this.scheduleContactsFabCollapse();
     queueMicrotask(() => this.syncSelectedConversationFromUrl(this.router.url));
   }
 
   ngOnDestroy(): void {
+    if (this.contactsFabTimer !== null) window.clearTimeout(this.contactsFabTimer);
+    this.storyStripResize?.disconnect(); this.storyStripMutation?.disconnect();
     this.alive = false;
     this.detachNativeStoryGesture();
     this.searchSeq += 1;
@@ -606,11 +641,14 @@ export class ChatsPage implements OnDestroy {
   }
 
   startNewChat(): void {
-    this.query = '';
-    this.searchScope = 'people';
-    this.invalidateSearch();
-    this.onSearchFocus();
-    void this.chatSearchInput?.setFocus();
+    void this.router.navigateByUrl('/app/contacts');
+  }
+  private scheduleContactsFabCollapse(): void {
+    if (this.contactsFabTimer !== null) window.clearTimeout(this.contactsFabTimer);
+    this.contactsFabTimer = this.feedbackZone.runOutsideAngular(() => window.setTimeout(() => {
+      this.contactsFabTimer = null;
+      if (this.alive) this.feedbackZone.run(() => this.contactsFabExpanded = false);
+    },4500));
   }
 
   openConversationMenu(conversation: Conversation, event: Event): void {
@@ -642,6 +680,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   closeSearch(): void {
+    void this.chatSearchInput?.getInputElement().then(input => input.blur());
     this.clearSearch();
     this.hideRecent();
     this.searchScope = 'all';
@@ -803,6 +842,13 @@ export class ChatsPage implements OnDestroy {
 
   onChatListScroll(event: Event): void {
     const list = event.target as HTMLElement;
+    const delta = list.scrollTop - this.contactsFabTop;
+    if (Math.abs(delta) > 8) {
+      this.contactsFabTop = list.scrollTop;
+      this.contactsFabExpanded = delta < 0;
+      if (this.contactsFabTimer !== null) window.clearTimeout(this.contactsFabTimer);
+      if (this.contactsFabExpanded) this.scheduleContactsFabCollapse();
+    }
     if (this.androidStoryGesturesEnabled()) {
       const previousTop = this.nativeStoryScrollTop;
       this.nativeStoryScrollTop = list.scrollTop;
@@ -1535,6 +1581,13 @@ export class ChatsPage implements OnDestroy {
   }
 
   private syncSelectedConversationFromUrl(url: string): void {
+    const compose = this.router.parseUrl(url).queryParams?.['compose'];
+    if (['group', 'story', 'pass'].includes(compose)) {
+      void this.router.navigate(['/app/chats'], { replaceUrl: true });
+      if (compose === 'group') this.openGroupModal();
+      else if (compose === 'story') this.openStoryComposer();
+      else void this.openShareAccount();
+    }
     const segments = this.router.parseUrl(url).root.children['primary']?.segments.map((segment) => segment.path) ?? [];
     const chatsIndex = segments.findIndex((segment) => segment === 'chats');
     const conversationId = chatsIndex >= 0 ? segments[chatsIndex + 1] : null;

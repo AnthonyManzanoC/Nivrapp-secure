@@ -20,7 +20,13 @@ final class NivraCallPushPolicy {
     static boolean isCurrent(Context context, Map<String, String> data, long sentAt, long now) {
         String callId = data.get("callId");
         return callId != null && !callId.trim().isEmpty() && isTimely(data.get("expiresAt"), sentAt, now) &&
-            context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(NivraPushScopePolicy.callKey(data.get("recipientUserId"), data.get("recipientDeviceId"), callId), 0) <= now - 300_000;
+            !wasEnded(context, data.get("recipientUserId"), data.get("recipientDeviceId"), callId, now);
+    }
+
+    static boolean wasEnded(Context context, String userId, String deviceId, String callId, long now) {
+        long endedAt = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getLong(NivraPushScopePolicy.callKey(userId, deviceId, callId), 0);
+        return endedAt > 0 && endedAt > now - 300_000;
     }
 
     static void markEnded(Context context, Map<String, String> data, String callId) {

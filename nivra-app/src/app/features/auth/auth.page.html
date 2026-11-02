@@ -144,8 +144,8 @@
         </section>
       }
 
-      @if (notice) { <ion-note class="auth-feedback success" role="status" aria-live="polite">{{ notice }}</ion-note> }
-      @if (error || (mode === 'qr' && qrErrorMessage())) { <ion-text class="auth-feedback failure" role="alert"><p>{{ error || qrErrorMessage() }}</p></ion-text> }
+      @if (notice) { <ion-note class="auth-feedback success" [appTransientNotice]="notice" (noticeExpired)="notice=''" role="status" aria-live="polite">{{ notice }}</ion-note> }
+      @if (error || (mode === 'qr' && qrErrorMessage())) { <ion-text class="auth-feedback failure" [appTransientNotice]="error || qrErrorMessage()" [appNoticeDuration]="15000" role="alert"><p>{{ error || qrErrorMessage() }}</p></ion-text> }
       <div id="phoneRecaptcha" class="recaptcha-slot"></div>
     </section>
 

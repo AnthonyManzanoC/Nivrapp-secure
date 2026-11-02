@@ -3,14 +3,14 @@ import { CallGamePanelComponent } from './call-game-panel.component';
 import { applyCallGameAction, createCallGame } from '../core/games/call-game-engine';
 
 describe('CallGamePanelComponent', () => {
-  it('offers five real games and emits a selected game only after connection', async () => {
+  it('offers eight real games and emits a selected game only after connection', async () => {
     await TestBed.configureTestingModule({ imports: [CallGamePanelComponent] }).compileComponents();
     const fixture = TestBed.createComponent(CallGamePanelComponent);
     const component = fixture.componentInstance;
     const created = spyOn(component.create, 'emit');
     fixture.detectChanges();
     const choices = fixture.nativeElement.querySelectorAll('.game-choice') as NodeListOf<HTMLButtonElement>;
-    expect(choices.length).toBe(5);
+    expect(choices.length).toBe(8);
     expect(choices[0].disabled).toBeTrue();
     component.transportReady = true;
     fixture.detectChanges();

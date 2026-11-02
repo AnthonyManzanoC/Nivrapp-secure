@@ -1,0 +1,40 @@
+name: Mobile design verification
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, "codex/**"]
+    paths: ["tools/check-mobile-design.cjs", "nivra-app/design-preview/**", ".github/workflows/mobile-design.yml"]
+permissions:
+  contents: read
+concurrency:
+  group: mobile-design-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  design:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24.18.1
+      - run: npm ci --prefix nivra-app --ignore-scripts
+      - run: node crypto/ratchet-olm/distribution.mjs verify
+      - name: Check mobile and desktop design with synthetic contacts
+        working-directory: nivra-app
+        env:
+          NG_BUILD_MAX_WORKERS: '2'
+          NG_BUILD_PARALLEL_TS: 'false'
+          CHROME_BIN: /usr/bin/google-chrome
+        run: |
+          node node_modules/@angular/cli/bin/ng.js build --configuration development,design-preview --output-path ../artifacts/design-preview --progress=false
+          node ../tools/check-mobile-design.cjs ../artifacts/design-preview ../artifacts/design-screenshots
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: mobile-design-review
+          path: artifacts/design-screenshots/
+          if-no-files-found: warn
+          retention-days: 7

@@ -903,6 +903,7 @@ export class ChatService implements OnDestroy {
   }
 
   presenceLabel(conversation: Conversation | null | undefined): string {
+    if (this.isSelfConversation(conversation)) return 'Mensajes para ti';
     if (!conversation) {
       return this.signalr.connected() ? 'online' : 'reconectando';
     }
@@ -947,8 +948,10 @@ export class ChatService implements OnDestroy {
   }
 
   async createDirectConversation(person: UserSummary): Promise<Conversation> {
+    const context = this.captureSendContext();
     this.rememberProfiles([this.profileSummary(person)], true);
     const existing = await this.findExistingDirectConversation(person.id);
+    this.assertSendContext(context);
     if (existing) {
       await this.selectConversation(existing.id);
       return existing;
@@ -957,6 +960,7 @@ export class ChatService implements OnDestroy {
     const pending = this.directConversationInFlight.get(person.id);
     if (pending) {
       const conversation = await pending;
+      this.assertSendContext(context);
       await this.selectConversation(conversation.id);
       return conversation;
     }
@@ -966,7 +970,7 @@ export class ChatService implements OnDestroy {
     try {
       return await creation;
     } finally {
-      this.directConversationInFlight.delete(person.id);
+      if (this.directConversationInFlight.get(person.id) === creation) this.directConversationInFlight.delete(person.id);
     }
   }
 
@@ -994,19 +998,26 @@ export class ChatService implements OnDestroy {
   }
 
   private async createDirectConversationCore(person: UserSummary): Promise<Conversation> {
-    await firstValueFrom(this.api.post('/contacts', { alias: person.alias, nicknameCiphertext: null })).catch(() => null);
+    const context = this.captureSendContext();
+    if (person.id !== this.auth.session()?.user.id) {
+      await firstValueFrom(this.api.post('/contacts', { alias: person.alias, nicknameCiphertext: null })).catch(() => null);
+    }
+    this.assertSendContext(context);
     const existing = await this.findExistingDirectConversation(person.id);
+    this.assertSendContext(context);
     if (existing) {
       await this.selectConversation(existing.id);
       return existing;
     }
 
-    const conversation = this.applyLocalConversationState([await firstValueFrom(this.api.post<Conversation>('/conversations', {
+    const response = await firstValueFrom(this.api.post<Conversation>('/conversations', {
       type: 'Direct',
       participantUserIds: [person.id],
       titleCiphertext: null,
       privacySettings: null,
-    }))])[0];
+    }));
+    this.assertSendContext(context);
+    const conversation = this.applyLocalConversationState([response])[0];
     this.rememberConversationParticipants([conversation]);
     this.conversations.update((items) => [conversation, ...items.filter((item) => item.id !== conversation.id)].sort(this.compareConversations));
     await this.selectConversation(conversation.id);
@@ -1683,6 +1694,7 @@ export class ChatService implements OnDestroy {
   }
 
   conversationTitle(conversation: Conversation): string {
+    if (this.isSelfConversation(conversation)) return `${this.auth.session()?.user.displayName || this.auth.session()?.user.alias || 'Nivra'} (Tú)`;
     const people = this.conversationPeople(conversation);
     if (this.isGroupConversation(conversation)) {
       const explicit = this.firstText(conversation.groupName, conversation.title);
@@ -3393,6 +3405,7 @@ export class ChatService implements OnDestroy {
   }
 
   private isDirectConversationWith(conversation: Conversation, userId: string): boolean {
+    if (userId === this.auth.session()?.user.id) return this.isSelfConversation(conversation);
     return this.isDirectConversation(conversation)
       && conversation.participants.some((participant) => !participant.removedAt && participant.userId === userId);
   }
@@ -4093,6 +4106,7 @@ export class ChatService implements OnDestroy {
 
   private conversationPrimaryPerson(conversation: Conversation): LocalProfile | null {
     const currentUserId = this.auth.session()?.user.id;
+    if (currentUserId && this.isSelfConversation(conversation)) return this.participantProfile(currentUserId);
     const other = conversation.participants.find((participant) => participant.userId !== currentUserId && !participant.removedAt);
     return other ? this.profileForUser(other.userId) : null;
   }
@@ -4103,6 +4117,13 @@ export class ChatService implements OnDestroy {
 
   private isDirectConversation(conversation: Conversation | null | undefined): boolean {
     return String(conversation?.type || '').toLowerCase() === 'direct';
+  }
+
+  isSelfConversation(conversation: Conversation | null | undefined): boolean {
+    const userId = this.auth.session()?.user.id;
+    return !!conversation && !!userId && this.isDirectConversation(conversation)
+      && conversation.participants.length === 1
+      && conversation.participants[0].userId === userId && !conversation.participants[0].removedAt;
   }
 
   private normalizedGroupSettings(settings: Partial<GroupSettings> | null | undefined): GroupSettings {

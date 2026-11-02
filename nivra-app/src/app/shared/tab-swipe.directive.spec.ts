@@ -104,6 +104,15 @@ describe('mobile tab swipe navigation', () => {
     touch('touchstart', start, 200, element); touch('touchmove', end, 200 + dy, element);
     const result = touch('touchend', end, 200 + dy, element); await settle(); return result;
   }
+
+  it('keeps mobile search open when a horizontal gesture starts in its results', async () => {
+    target.setAttribute('data-tab-swipe-lock','true');
+    await swipe(300,70);
+    expect(navigation).not.toHaveBeenCalled();
+    target.removeAttribute('data-tab-swipe-lock');
+    await swipe(300,70);
+    expect(navigation).toHaveBeenCalled();
+  });
   function overlay(tag: string, attributes: Record<string, string> = {}, openedBy: 'isOpen' | 'presented' = 'isOpen'): Element {
     // A distinct namespace preserves the selector/state contract without
     // hydrating registered Ionic HTML custom elements and presenting a modal.

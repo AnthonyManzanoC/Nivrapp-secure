@@ -1,11 +1,12 @@
+import { TransientNoticeDirective } from './transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, Input, Output } from '@angular/core';
-import { CallGameAction, CallGameKind, CallGameState, TRIVIA_QUESTION_COUNT } from '../core/games/call-game-engine';
+import { CallGameAction, CallGameKind, CallGameState, TRIVIA_QUESTION_COUNT, reversiFlips } from '../core/games/call-game-engine';
 
 @Component({
   selector: 'app-call-game-panel',
   standalone: true,
-  imports: [CommonModule],
+  imports: [TransientNoticeDirective, CommonModule],
   templateUrl: './call-game-panel.component.html',
   styleUrls: ['./call-game-panel.component.scss'],
 })
@@ -29,9 +30,26 @@ export class CallGamePanelComponent {
     { kind: 'gomoku', title: 'Cinco en línea', symbol: '● ○', description: 'Tablero de 8 × 8. Conecta cinco piedras en cualquier dirección.' },
     { kind: 'take-away', title: 'La última ficha', symbol: '21', description: 'Retira 1, 2 o 3 fichas. Quien toma la última gana.' },
     { kind: 'trivia', title: 'Reto de cálculo', symbol: '+ ×', description: 'Cinco preguntas para jugar en grupo.' },
+    { kind: 'reversi', title: 'Reversi', symbol: '◐', description: 'Encierra fichas rivales. Gana quien conquista más casillas.' },
+    { kind: 'hex', title: 'Hex', symbol: '⬡', description: 'Conecta tus dos bordes con un camino de fichas.' },
+    { kind: 'dots-boxes', title: 'Puntos y cajas', symbol: '•─•', description: 'Cierra cajas para sumar puntos y repetir turno.' },
   ];
 
   remaining(): number { return this.state?.board.filter(cell => cell === null).length ?? 0; }
+  readonly dotsCells = Array.from({length:25}, (_, index) => {
+    const row = Math.floor(index / 5), col = index % 5;
+    return row % 2 === 0 && col % 2 === 0 ? {kind:'dot',index:-1}
+      : row % 2 === 0 ? {kind:'horizontal',index:row / 2 * 2 + (col - 1) / 2}
+      : col % 2 === 0 ? {kind:'vertical',index:6 + (row - 1) / 2 * 3 + col / 2}
+      : {kind:'box',index:12 + (row - 1) / 2 * 2 + (col - 1) / 2};
+  });
+
+  legalMove(index: number): boolean {
+    const s = this.state;
+    if (!s || s.board[index] !== null) return false;
+    if (s.kind !== 'reversi') return true;
+    return reversiFlips(s.board, index, this.currentUserId, s.playerIds.find(id => id !== this.currentUserId) || '').length > 0;
+  }
 
   label(userId: string | null): string {
     if (userId === this.currentUserId) { return 'Tú'; }

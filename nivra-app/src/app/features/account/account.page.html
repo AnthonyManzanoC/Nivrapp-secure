@@ -832,7 +832,7 @@
           </div>
 
           @if (pinSetupError) {
-            <p class="pin-setup-error">{{ pinSetupError }}</p>
+            <p [appTransientNotice]="pinSetupError" [appNoticeDuration]="15000" class="pin-setup-error">{{ pinSetupError }}</p>
           }
 
           <ion-button mode="ios" (click)="confirmWebPin()" [disabled]="saving || setupPin.length !== 4 || (pinSetupPurpose === 'enable' && (setupPinConfirm.length !== 4 || setupPin !== setupPinConfirm))">
@@ -935,7 +935,7 @@
       (cropped)="applyProfilePhotoCrop($event)">
     </app-image-cropper>
 
-    @if (notice) { <p class="notice account-feedback" role="status">{{ notice }}</p> }
-    @if (error && error !== profileError) { <p class="error" role="alert">{{ error }}</p> }
+    @if (notice) { <p [appTransientNotice]="notice" (noticeExpired)="notice=''" class="notice account-feedback" role="status">{{ notice }}</p> }
+    @if (error && error !== profileError) { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="error" role="alert">{{ error }}</p> }
   </main>
 </ion-content>

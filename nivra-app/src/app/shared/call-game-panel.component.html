@@ -7,7 +7,7 @@
   @if (!transportReady) {
     <p class="connection-note" role="status">Esperando conexión con las otras personas de la llamada…</p>
   }
-  @if (error) { <p class="game-error" role="alert">{{ error }}</p> }
+  @if (error) { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="game-error" role="alert">{{ error }}</p> }
 
   @if (!state) {
     <p class="intro">La llamada sigue mientras juegan. Invita a quienes están contigo.</p>
@@ -32,7 +32,7 @@
         <div class="player-chip" [class.player-one]="index === 0" [class.player-two]="index === 1" [class.active-player]="state.turnUserId === playerId">
           <span class="player-dot" aria-hidden="true"></span>
           <strong>{{ label(playerId) }}</strong>
-          @if (state.kind === 'trivia') { <b>{{ state.scores[playerId] || 0 }}</b> }
+          @if (state.kind === 'trivia' || state.kind === 'dots-boxes') { <b>{{ state.scores[playerId] || 0 }}</b> }
           @if (state.hostUserId === playerId) { <small>Anfitrión</small> }
         </div>
       }
@@ -49,15 +49,26 @@
       @if (isHost()) {
         <button type="button" class="primary-game-action" (click)="dispatch('start')" [disabled]="!transportReady || state.playerIds.length < 2">Comenzar ronda</button>
       }
+    } @else if (state.kind === 'dots-boxes') {
+      <p class="board-hint">Une dos puntos. Al cerrar una caja ganas un punto y vuelves a jugar.</p>
+      <div class="dots-board" aria-label="Tablero de puntos y cajas">
+        @for(cell of dotsCells;track $index){
+          @if(cell.kind==='dot'){<span class="dots-dot" aria-hidden="true"></span>}
+          @else if(cell.kind==='box'){<span class="dots-box" [class.player-one]="state.board[cell.index] === state.playerIds[0]" [class.player-two]="state.board[cell.index] === state.playerIds[1]">{{symbol(state.board[cell.index])}}</span>}
+          @else{<button type="button" class="dots-edge" [class.vertical]="cell.kind==='vertical'" [class.player-one]="state.board[cell.index] === state.playerIds[0]" [class.player-two]="state.board[cell.index] === state.playerIds[1]" [disabled]="!transportReady || !myTurn() || !!state.board[cell.index]" (click)="move(cell.index)" [attr.aria-label]="'Línea '+(cell.index+1)+(state.board[cell.index] ? ', ocupada' : ', libre')"></button>}
+        }
+      </div>
     } @else if (state.kind === 'take-away') {
       <p class="game-status">{{ remaining() }} fichas restantes · La última gana</p>
       <div class="token-pile" aria-label="Fichas disponibles">@for(cell of state.board; track $index){<span [class.taken]="cell !== null">●</span>}</div>
       <div class="take-actions">@for(count of [1,2,3]; track count){<button type="button" (click)="move(count)" [disabled]="!transportReady || !myTurn() || remaining() < count">Retirar {{ count }}</button>}</div>
-    } @else if (state.kind === 'tic-tac-toe' || state.kind === 'gomoku') {
-      <div class="tic-board" [class.gomoku-board]="state.kind === 'gomoku'" role="group" [attr.aria-label]="title()">
+    } @else if (state.kind === 'tic-tac-toe' || state.kind === 'gomoku' || state.kind === 'reversi' || state.kind === 'hex') {
+      @if (state.kind === 'hex') { <p class="board-hint">× une arriba y abajo · ○ une izquierda y derecha. Las casillas se conectan en seis direcciones.</p> }
+      @if (state.kind === 'reversi') { <p class="board-hint">Encierra fichas rivales entre las tuyas. Las casillas resaltadas son tus jugadas disponibles.</p> }
+      <div class="tic-board" [class.gomoku-board]="state.kind === 'gomoku'" [class.reversi-board]="state.kind === 'reversi'" [class.hex-board]="state.kind === 'hex'" role="group" [attr.aria-label]="title()">
         @for (cell of state.board; track $index; let index = $index) {
           <button type="button" [class.player-one]="cell && cell === state.playerIds[0]" [class.player-two]="cell && cell === state.playerIds[1]"
-            [disabled]="!transportReady || !myTurn() || !!cell" (click)="move(index)"
+            [class.legal-move]="myTurn() && legalMove(index)" [disabled]="!transportReady || !myTurn() || !legalMove(index)" (click)="move(index)"
             [attr.aria-label]="'Casilla ' + (index + 1) + ', ' + (cell ? label(cell) : 'libre')">{{ symbol(cell) }}</button>
         }
       </div>

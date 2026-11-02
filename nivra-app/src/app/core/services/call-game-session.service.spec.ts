@@ -1,5 +1,5 @@
 import { signal } from '@angular/core';
-import { TestBed } from '@angular/core/testing';
+import { TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { Subject } from 'rxjs';
 import { CallSession } from '../models/nivra.models';
 import { CallGameSessionService } from './call-game-session.service';
@@ -44,6 +44,21 @@ describe('shared call game session', () => {
     expect(alice.state()?.board[4]).toBe('carol');
     expect(bob.state()).toEqual(alice.state()); expect(carol.state()).toEqual(alice.state());
   });
+  it('shows a short invitation and only one reminder to people who have not joined',fakeAsync(()=>{
+    bob.create('trivia');expect(alice.invitationVisible()).toBeTrue();expect(bob.invitationVisible()).toBeFalse();
+    tick(6500);expect(alice.invitationVisible()).toBeFalse();tick(38500);expect(alice.invitationVisible()).toBeTrue();
+    tick(6500);expect(alice.invitationVisible()).toBeFalse();tick(90000);expect(alice.invitationVisible()).toBeFalse();
+    peers.forEach(peer=>peer.service.reset());
+  }));
+  it('joins from the invitation and prevents reminders after joining or changing calls',fakeAsync(()=>{
+    bob.create('tic-tac-toe');carol.acceptInvitation();
+    expect(carol.state()?.playerIds).toContain('carol');expect(carol.panelOpen()).toBeTrue();expect(alice.invitationVisible()).toBeFalse();
+    alice.reset();tick(60000);expect(alice.invitationVisible()).toBeFalse();peers.forEach(peer=>peer.service.reset());
+  }));
+  it('honors an explicit dismissal without cancelling another person’s game',fakeAsync(()=>{
+    bob.create('trivia');const id=bob.state()?.id;carol.dismissInvitation();tick(60000);
+    expect(carol.invitationVisible()).toBeFalse();expect(bob.state()?.id).toBe(id);peers.forEach(peer=>peer.service.reset());
+  }));
 
   it('serializes simultaneous game creation without replacing a lobby', () => {
     bob.create('connect-four'); const id = bob.state()!.id;

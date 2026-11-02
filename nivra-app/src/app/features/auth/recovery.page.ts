@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Location } from '@angular/common';
@@ -10,7 +11,7 @@ import { NivraApiService } from '../../core/services/nivra-api.service';
 
 @Component({
   standalone: true,
-  imports: [FormsModule, RouterLink, IonContent, IonButton, IonSpinner, TranslatePipe],
+  imports: [TransientNoticeDirective, FormsModule, RouterLink, IonContent, IonButton, IonSpinner, TranslatePipe],
   templateUrl: './recovery.page.html',
   styleUrls: ['./recovery.page.scss'],
 })

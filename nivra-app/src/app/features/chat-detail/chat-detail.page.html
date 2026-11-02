@@ -30,6 +30,7 @@
         </div>
       </button>
       <ion-buttons slot="end" [style.visibility]="selectionMode ? 'hidden' : null">
+        @if (!chat.isSelfConversation(conversation())) {
         @if (!calls.activeGroupRoomForConversation(conversation()?.id)) {
         <ion-button mode="ios" fill="clear" [disabled]="busyAction !== '' || isBlocked()" (click)="startCall('Voice')" [attr.aria-label]="'COMMON.CALL' | translate:'Llamada'">
           <ion-icon name="call-outline"></ion-icon>
@@ -43,6 +44,7 @@
             {{ 'COMMON.JOIN' | translate:'Unirse' }}
           </ion-button>
         }
+        }
         <ion-button mode="ios" fill="clear" [attr.aria-label]="'COMMON.MENU' | translate:'Menu'" (click)="openChatMenu($event)">
           <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
         </ion-button>
@@ -55,7 +57,7 @@
       <strong aria-live="polite">{{ 'CHAT.SELECTION' | translate:'Selección' }} · {{ selectedMessages().length }}@if (bulkBusy) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }</strong>
       <button type="button" (click)="openSelectionForward()" [disabled]="bulkBusy || !canForwardSelection()" [attr.aria-label]="'CHAT_ACTIONS.FORWARD' | translate:'Reenviar'"><ion-icon name="arrow-redo-outline" aria-hidden="true"></ion-icon></button>
       <button type="button" (click)="openSelectionDelete()" [disabled]="bulkBusy || !selectedMessages().length" [attr.aria-label]="'CHAT.DELETE_FOR_ME' | translate:'Eliminar para mí'"><ion-icon name="trash-outline" aria-hidden="true"></ion-icon></button>
-      @if (selectionError) { <small class="selection-error" role="alert">{{ selectionError }}</small> } @else if (selectedMessages().length && !canForwardSelection()) { <small>{{ 'CHAT.SELECTION_FORWARD_RESTRICTED' | translate:'Algunos mensajes no permiten reenvío.' }}</small> }
+      @if (selectionError) { <small [appTransientNotice]="selectionError" [appNoticeDuration]="15000" class="selection-error" role="alert">{{ selectionError }}</small> } @else if (selectedMessages().length && !canForwardSelection()) { <small>{{ 'CHAT.SELECTION_FORWARD_RESTRICTED' | translate:'Algunos mensajes no permiten reenvío.' }}</small> }
     </section>
   }
   @if (!auth.deviceIdentityError() && !auth.deviceIdentityNeedsRelink()) {
@@ -75,6 +77,12 @@
       <small>{{ (searchQuery() && !searchResults().length ? 'CHAT.SEARCH_EMPTY' : 'CHAT.SEARCH_LOADED') | translate:(searchQuery() && !searchResults().length ? 'Sin coincidencias' : 'Mensajes disponibles en este dispositivo') }}</small>
     </section>
   }
+  @if (directCallInProgress(); as ongoing) {
+    <div class="group-call-banner direct-call-banner" role="status">
+      <div><ion-icon [name]="ongoing.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon><span>{{ ongoing.type === 'Video' ? 'Videollamada en curso' : 'Llamada en curso' }}</span><small>Puedes seguir conversando y volver cuando quieras.</small></div>
+      <ion-button mode="ios" size="small" [disabled]="busyAction !== ''" (click)="returnToDirectCall()">{{ calls.activeCall()?.id === ongoing.id ? 'Volver' : 'Unirme' }}</ion-button>
+    </div>
+  }
   @if (calls.activeGroupRoomForConversation(conversation()?.id); as room) {
     <div class="group-call-banner">
       <div>
@@ -90,6 +98,7 @@
     class="messages-content"
     [scrollEvents]="true"
     (ionScroll)="onThreadScroll($event)"
+    (wheel)="stopInitialScroll()" (touchstart)="stopInitialScroll()" (pointerdown)="stopInitialScroll()"
     [attr.data-wallpaper]="appSettings.settings().chatWallpaper"
     [style.--nivra-chat-background]="appSettings.chatBackgroundCss()"
     [style.--nivra-chat-background-size]="appSettings.chatBackgroundSizeCss()"
@@ -103,7 +112,7 @@
     <ion-infinite-scroll
       position="top"
       threshold="120px"
-      [disabled]="!chat.hasOlderMessages(conversation()?.id)"
+      [disabled]="openingLatest || !chat.hasOlderMessages(conversation()?.id)"
       (ionInfinite)="loadOlderMessages($event)">
       <ion-infinite-scroll-content loadingSpinner="crescent"></ion-infinite-scroll-content>
     </ion-infinite-scroll>
@@ -597,10 +606,10 @@
       <p class="composer-notice">{{ 'CHAT.ADMINS_ONLY_MESSAGES' | translate:'Solo los admins pueden enviar mensajes en este grupo.' }}</p>
     }
     @if (attachmentError && !identityErrorIsDuplicated()) {
-      <p class="composer-error">{{ attachmentError }}</p>
+      <p [appTransientNotice]="attachmentError" [appNoticeDuration]="15000" class="composer-error">{{ attachmentError }}</p>
     }
     @if (notice) {
-      <p class="composer-notice">{{ notice }}</p>
+      <p [appTransientNotice]="notice" (noticeExpired)="notice=''" class="composer-notice">{{ notice }}</p>
     }
   </ion-footer>
 
@@ -664,19 +673,19 @@
   </ion-modal>
 
   <ion-popover
-    class="chat-options-popover"
+    #chatOptions class="chat-options-popover"
     [isOpen]="chatMenuOpen"
     [event]="chatMenuEvent"
     [showBackdrop]="false"
     side="bottom"
     alignment="end"
-    (didDismiss)="closeChatMenu()">
+    (didDismiss)="chatMenuOpen = false; chatMenuEvent = null">
     <ng-template>
       <div class="popover-menu">
         <button type="button" (click)="beginSelection()"><ion-icon name="checkmark-outline"></ion-icon>{{ 'CHAT.SELECT_MESSAGES' | translate:'Seleccionar mensajes' }}</button>
         <button type="button" (click)="openPrivateChatProtection()"><ion-icon name="lock-closed-outline" />{{ privateChats.isProtected(privateConversationId()) ? ('PRIVATE_CHAT.REMOVE' | translate:'Quitar protección') : ('PRIVATE_CHAT.PROTECT' | translate:'Proteger conversación') }}</button>
         <button type="button" (click)="openSearch()"><ion-icon name="search-outline"></ion-icon>{{ 'CHAT.SEARCH_CHAT' | translate:'Buscar en este chat' }}</button>
-        @if (!isGroupConversation()) {
+        @if (!isGroupConversation() && !chat.isSelfConversation(conversation())) {
           <button type="button" (click)="closeChatMenu(); verifyIdentity()"><ion-icon name="shield-checkmark-outline"></ion-icon>{{ 'IDENTITY.TITLE' | translate:'Verificar identidad' }}</button>
         }
         <button type="button" (click)="openContactInfo()">
@@ -688,10 +697,12 @@
           {{ isArchived() ? ('CHATS.UNARCHIVE' | translate:'Desarchivar') : ('CHATS.ARCHIVE' | translate:'Archivar') }}
         </button>
         <button type="button" (click)="closeConversationView()"><ion-icon name="close-outline"></ion-icon>{{ 'CHAT.CLOSE_CHAT' | translate:'Cerrar chat' }}</button>
+        @if (!chat.isSelfConversation(conversation())) {
         <button type="button" (click)="toggleBlock()">
           <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'"></ion-icon>
           {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : (chat.isGroup(conversation()) ? ('CHAT.BLOCK' | translate:'Bloquear') : ('CHAT.BLOCK_CONTACT' | translate:'Bloquear contacto')) }}
         </button>
+        }
         <button type="button" (click)="clearChat('me')">
           <ion-icon name="trash-outline"></ion-icon>
           {{ 'CHAT.CLEAR_FOR_ME' | translate:'Vaciar para mi' }}
@@ -943,7 +954,7 @@
               }
             </div>
           }
-          <div class="profile-actions">
+          <div class="profile-actions" [style.display]="chat.isSelfConversation(conversation()) ? 'none' : null">
             <button
               type="button"
               (click)="startProfileCall('Voice')"
@@ -959,7 +970,7 @@
               {{ 'COMMON.VIDEO' | translate:'Video' }}
             </button>
           </div>
-          @if (!isGroupConversation()) {
+          @if (!isGroupConversation() && !chat.isSelfConversation(conversation())) {
             <button
               type="button"
               class="profile-card profile-security"
@@ -1142,7 +1153,7 @@
               </section>
             }
             @if (groupInfoError) {
-              <p class="profile-error" role="alert">{{ groupInfoError }}</p>
+              <p [appTransientNotice]="groupInfoError" [appNoticeDuration]="15000" class="profile-error" role="alert">{{ groupInfoError }}</p>
             }
             <section class="profile-card group-settings">
               <div class="profile-section-head">
@@ -1480,7 +1491,7 @@
             (repost)="repostStory(story)">
           </app-story-viewer>
           @if (storyError) {
-            <p class="story-error">{{ storyError }}</p>
+            <p [appTransientNotice]="storyError" [appNoticeDuration]="15000" class="story-error">{{ storyError }}</p>
           }
         }
       }
@@ -1503,7 +1514,7 @@
           <div>
             <h2>{{ 'CHAT_ACTIONS.FORWARD' | translate:'Reenviar' }}</h2>
             @if (forwardingSelectionIds.length) { <p>{{ 'CHAT.SELECTION' | translate:'Selección' }} · {{ forwardingSelectionIds.length }}</p> } @else { <p>{{ chat.preview(forwardingMessage.payload) }}</p> }
-            @if (forwardingSelectionIds.length && selectionError) { <p role="alert">{{ selectionError }}</p> }
+            @if (forwardingSelectionIds.length && selectionError) { <p [appTransientNotice]="selectionError" [appNoticeDuration]="15000" role="alert">{{ selectionError }}</p> }
           </div>
           <ion-button mode="ios" fill="clear" (click)="closeForward()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
             <ion-icon name="close-outline"></ion-icon>

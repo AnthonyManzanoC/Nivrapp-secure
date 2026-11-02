@@ -9,11 +9,11 @@ describe('actual application Double Ratchet delivery', () => {
   let clients: any[], directory: Map<string, any>, bundles: Map<string, RatchetBundle[]>, proofs: Map<string, any>, requests: Map<string, Set<string>>;
   beforeEach(() => { clients = []; directory = new Map(); bundles = new Map(); proofs = new Map(); requests = new Map(); });
   afterEach(async () => { for (const client of clients) await client.runtime?.close().catch(() => undefined); });
-  async function client(name: string) {
+  async function client(name: string, accountName = name) {
     const service: any = Object.create(RatchetMessagingService.prototype);
     const keypair = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveKey']);
     const keys = { publicJwk: await crypto.subtle.exportKey('jwk', keypair.publicKey), privateJwk: await crypto.subtle.exportKey('jwk', keypair.privateKey) };
-    const owner = { user: { id: `usr-${name}`, alias: name }, device: { id: `dev-${name}` } };
+    const owner = { user: { id: `usr-${accountName}`, alias: accountName }, device: { id: `dev-${name}` } };
     service.auth = { session: () => owner, ensureDeviceIdentity: async () => keys };
     service.crypto = Object.create(CryptoService.prototype); service.crypto.currentKeyMaterial = async () => keys;
     service.trust = { check: jasmine.createSpy('identityCheck').and.resolveTo() };
@@ -52,6 +52,31 @@ describe('actual application Double Ratchet delivery', () => {
   }
   const response = (sender: any, recipients: any[], clientMessageId = 'msg-one'): MessageResponse => ({ id: 'server-' + clientMessageId, conversationId: 'chat-test', clientMessageId,
     senderUserId: sender.target.userId, senderDeviceId: sender.target.deviceId, kind: 'Text', recipients, serverReceivedAt: new Date().toISOString(), deleteAfterRead: false, receipts: [] });
+
+  it('keeps notes to self encrypted, retryable and readable after restarting the client', async () => {
+    const alice=await client('alice');await alice.service.pump();
+    const payload={type:'text',text:'Private note to myself'},id='self-note';
+    const recipients=await alice.service.encrypt('chat-test',id,payload,[alice.target],null);
+    expect(recipients.length).toBe(1);expect(recipients[0].ciphertext).toBe('local-history-v1');
+    expect(JSON.stringify(recipients)).not.toContain(payload.text);
+    await alice.service.runtime.close();alice.service.runtime=null;
+    expect(await alice.service.encrypt('chat-test',id,payload,[alice.target],null)).toEqual(recipients);
+    const message=response(alice,recipients,id);await alice.service.confirmSent(message,payload);
+    await alice.service.runtime.close();alice.service.runtime=null;
+    expect(await alice.service.decrypt(message,recipients[0])).toEqual(payload);
+  },30000);
+
+  it('delivers notes to another authorized device of the same account through a real ratchet session', async () => {
+    const alice=await client('alice'),linked=await client('alice-linked','alice');
+    await alice.service.pump();await linked.service.pump();
+    const targets=[alice.target,linked.target],payload={type:'text',text:'Synced private note'},id='self-linked';
+    await alice.service.encrypt('chat-test',id,payload,targets,null).catch(()=>undefined);await linked.service.pump();
+    const recipients=await alice.service.encrypt('chat-test',id,payload,targets,null);
+    expect(recipients[1].ciphertext).not.toBe('local-history-v1');
+    const message=response(alice,recipients,id);expect(await linked.service.decrypt(message,recipients[1])).toEqual(payload);
+    await linked.service.runtime.close();linked.service.runtime=null;
+    expect(await linked.service.decrypt(message,recipients[1])).toEqual(payload);
+  },30000);
 
   it('authenticates migration, sends, retries identical bytes, restarts and reads both sides without a static-key self copy', async () => {
     const alice = await client('alice'), bob = await client('bob');

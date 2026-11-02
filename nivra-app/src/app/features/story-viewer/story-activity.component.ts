@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, Input, Output, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -13,7 +14,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 @Component({
   selector: 'app-story-activity', standalone: true,
-  imports: [CommonModule, FormsModule, IonIcon, IonSpinner, TranslatePipe, LocalizedDatePipe],
+  imports: [TransientNoticeDirective,CommonModule, FormsModule, IonIcon, IonSpinner, TranslatePipe, LocalizedDatePipe],
   templateUrl: './story-activity.component.html', styleUrls: ['./story-activity.component.scss'],
 })
 export class StoryActivityComponent {

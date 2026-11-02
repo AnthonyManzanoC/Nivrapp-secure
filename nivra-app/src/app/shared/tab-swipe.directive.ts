@@ -168,7 +168,7 @@ export class TabSwipeDirective implements OnChanges, OnDestroy {
   private available(): boolean {
     return !this.destroyed && this.tabSwipeEnabled && this.mobileLayout.matches
       && document.visibilityState !== 'hidden' && (window.visualViewport?.scale ?? 1) <= 1.01
-      && this.tabIndex(this.router.url) >= 0;
+        && this.tabIndex(this.router.url) >= 0 && !this.host.querySelector('[data-tab-swipe-lock="true"]');
   }
 
   private tabIndex(url: string): number { return this.appTabSwipe.indexOf(url.split(/[?#]/)[0].replace(/\/$/, '')); }

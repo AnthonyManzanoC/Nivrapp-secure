@@ -34,7 +34,7 @@
           <span>{{ continuing ? ('WELCOME.CONTINUING' | translate:'Abriendo tu espacio…') : ('WELCOME.NEXT' | translate:'Siguiente') }}</span>
           <ion-icon name="arrow-forward-outline" aria-hidden="true"></ion-icon>
         </button>
-        @if (error) { <p class="welcome-error" role="alert">{{ error }}</p> }
+        @if (error) { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="welcome-error" role="alert">{{ error }}</p> }
       </div>
     </section>
 

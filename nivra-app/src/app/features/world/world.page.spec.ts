@@ -33,6 +33,15 @@ describe('World request actions and account boundaries', () => {
     TestBed.flushEffects();
   });
   afterEach(() => { page.ngOnDestroy(); TestBed.resetTestingModule(); });
+  it('filters only the already authorized story buckets and resets on account change', () => {
+    const buckets:any[]=[{id:'one',title:'Sofía',isGroup:false},{id:'two',title:'Estudio',isGroup:true}];
+    page.storyQuery='sofia';
+    expect((page as any).filterStoryBuckets(buckets).map((item:any)=>item.id)).toEqual(['one']);
+    page.storyQuery='';page.storyFilter='groups';
+    expect((page as any).filterStoryBuckets(buckets).map((item:any)=>item.id)).toEqual(['two']);
+    session.set({user:{id:'new'},device:{id:'new'}});TestBed.flushEffects();
+    expect(page.storyQuery).toBe('');expect(page.storyFilter).toBe('all');
+  });
   it('shows the destination on outgoing requests and the sender on incoming ones', () => {
     expect(page.requestPerson({ from: user('alice'), to: user('bob') } as FriendRequest).id).toBe('bob');
     expect(page.requestPerson({ from: user('carol'), to: user('alice') } as FriendRequest).id).toBe('carol');

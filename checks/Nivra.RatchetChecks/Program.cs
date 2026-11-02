@@ -127,6 +127,14 @@ async Task Status(string? actor, string path, object body, HttpStatusCode expect
 {
     using var response = await Post(actor, path, body); Check(response.StatusCode == expected, label);
 }
+// Each linked device can create its own notes simultaneously; the account has one shared conversation.
+var selfChats = await Task.WhenAll(Enumerable.Range(0, 12).Select(async _ => {
+    await using var scope = app.Services.CreateAsyncScope();
+    return await SelfConversationStore.GetOrCreateAsync(scope.ServiceProvider.GetRequiredService<NivraDbContext>(),
+        scope.ServiceProvider.GetRequiredService<INivraStore>(), "usr-lab-alice", DateTimeOffset.UtcNow, CancellationToken.None);
+}));
+Check(selfChats.Select(chat => chat.Id).Distinct().Count() == 1, "concurrent linked devices reuse one self conversation");
+Check(selfChats.All(chat => chat.Type == ConversationType.Direct && chat.Participants.Count == 1 && chat.Participants[0].UserId == "usr-lab-alice"), "notes never include another account as a recipient");
 string Public(int size, byte? prefix = null)
 {
     var bytes = RandomNumberGenerator.GetBytes(size); if (prefix.HasValue) bytes[0] = prefix.Value; return Convert.ToBase64String(bytes);

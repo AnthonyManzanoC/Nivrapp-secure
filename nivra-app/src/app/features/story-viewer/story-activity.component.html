@@ -34,6 +34,6 @@
     }
     }
   </div>
-  @if (replyError) { <p class="activity-error" role="alert">{{ 'COMMON.ACTION_ERROR' | translate:'No se pudo abrir el chat.' }}</p> }
+  @if (replyError) { <p class="activity-error" role="alert" [appTransientNotice]="replyError" [appNoticeDuration]="15000">{{ 'COMMON.ACTION_ERROR' | translate:'No se pudo abrir el chat.' }}</p> }
 </section>
 }

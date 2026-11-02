@@ -46,6 +46,6 @@
       <button type="button" [disabled]="enablingCallAlerts()" (click)="enableCallAlerts.emit()">{{ (enablingCallAlerts() ? 'CHATS.CALL_ALERTS_ENABLING' : 'CHATS.CALL_ALERTS_ACTION') | translate:(enablingCallAlerts() ? 'Activando…' : 'Activar avisos') }}</button>
     </aside>
   }
-  @if (callAlertsNotice()) { <p class="call-alerts-notice" role="status">{{ callAlertsNotice() }}</p> }
+  @if (callAlertsNotice()) { <p class="call-alerts-notice" [appTransientNotice]="callAlertsNotice()" role="status">{{ callAlertsNotice() }}</p> }
   <p class="privacy-note"><ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.WELCOME_PRIVATE' | translate:'Tus mensajes se cifran en tus dispositivos.' }}</p>
 </section>

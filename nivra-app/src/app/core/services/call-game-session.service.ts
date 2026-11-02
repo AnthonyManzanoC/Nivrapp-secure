@@ -1,7 +1,7 @@
 import { Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { CallSession } from '../models/nivra.models';
-import { CALL_GAME_KINDS, applyCallGameAction, createCallGame, type CallGameAction, type CallGameKind, type CallGameState } from '../games/call-game-engine';
+import { CALL_GAME_KINDS, callGameBoardSize, applyCallGameAction, createCallGame, type CallGameAction, type CallGameKind, type CallGameState } from '../games/call-game-engine';
 import { CallGameTransportService, type CallGamePacket } from './call-game-transport.service';
 
 const KINDS: readonly string[] = CALL_GAME_KINDS;
@@ -17,6 +17,10 @@ export class CallGameSessionService implements OnDestroy {
   readonly browsing = signal(false);
   readonly error = signal('');
   readonly ready = computed(() => this.transport.connectedPeers().length > 0);
+  readonly invitationVisible = signal(false);
+  private invitationGameId = '';
+  private dismissedInvitationId = '';
+  private readonly invitationTimers = new Set<ReturnType<typeof setTimeout>>();
   private callId = '';
   private localUserId = '';
   private users: string[] = [];
@@ -27,6 +31,10 @@ export class CallGameSessionService implements OnDestroy {
 
   constructor() {
     this.subscription = this.transport.packets$.subscribe(packet => this.receive(packet));
+    effect(() => {
+      this.panelOpen(); this.ready();
+      untracked(() => this.updateInvitation());
+    });
     effect(() => {
       const peers = this.transport.connectedPeers();
       untracked(() => {
@@ -49,13 +57,13 @@ export class CallGameSessionService implements OnDestroy {
     this.transport.configure(call.id, this.users.filter(id => id !== localUserId));
     const current = this.state();
     if (current && !this.users.includes(current.hostUserId)) {
-      this.state.set(null);
+      this.setGameState(null);
       this.error.set('Quien creó la partida salió de la llamada. Puedes iniciar otra.');
     } else if (current && this.coordinator === localUserId) {
       for (const playerId of current.playerIds.filter(id => !this.users.includes(id))) {
         const latest = this.state()!;
         const result = applyCallGameAction(latest, playerId, { type: 'leave', gameId: latest.id, expectedRevision: latest.revision });
-        if (result.accepted) this.state.set(result.state);
+        if (result.accepted) this.setGameState(result.state);
       }
       if (this.state() !== current || previousCoordinator !== this.coordinator) this.broadcast();
     }
@@ -91,13 +99,15 @@ export class CallGameSessionService implements OnDestroy {
   }
 
   reset(): void {
+    this.clearInvitationTimers();
+    this.invitationVisible.set(false); this.invitationGameId = ''; this.dismissedInvitationId = '';
     this.callId = '';
     this.localUserId = '';
     this.coordinator = '';
     this.users = [];
     this.seenPeers = [];
     this.requests.clear();
-    this.state.set(null);
+    this.setGameState(null);
     this.panelOpen.set(false);
     this.browsing.set(false);
     this.error.set('');
@@ -105,6 +115,53 @@ export class CallGameSessionService implements OnDestroy {
   }
 
   ngOnDestroy(): void { this.subscription.unsubscribe(); this.reset(); }
+
+  acceptInvitation(): void {
+    const game = this.state();
+    this.dismissInvitation();
+    this.panelOpen.set(true); this.browsing.set(false);
+    if (game && this.ready() && game.status === 'lobby' && !game.playerIds.includes(this.localUserId)
+      && game.playerIds.length < (game.kind === 'trivia' ? 12 : 2)) {
+      this.act({type:'join',gameId:game.id,expectedRevision:game.revision});
+    }
+  }
+  dismissInvitation(): void {
+    this.dismissedInvitationId = this.state()?.id ?? '';
+    this.clearInvitationTimers(); this.invitationVisible.set(false);
+  }
+  private setGameState(state: CallGameState | null): void {
+    this.state.set(state); this.updateInvitation();
+  }
+  private canInvite(): boolean {
+    const game = this.state();
+    return !!this.callId && !!game && this.ready() && game.status === 'lobby' && !this.panelOpen()
+      && !game.playerIds.includes(this.localUserId) && game.playerIds.length < (game.kind === 'trivia' ? 12 : 2)
+      && this.dismissedInvitationId !== game.id;
+  }
+  private updateInvitation(): void {
+    const game = this.state();
+    if (!this.canInvite()) { this.clearInvitationTimers(); this.invitationVisible.set(false); return; }
+    if (!game || this.invitationGameId === game.id) return;
+    this.clearInvitationTimers(); this.invitationGameId = game.id;
+    const callId = this.callId, local = this.localUserId, id = game.id;
+    const current = () => this.callId === callId && this.localUserId === local && this.state()?.id === id && this.canInvite();
+    const later = (callback: () => void, delay: number) => {
+      const timer = setTimeout(() => { this.invitationTimers.delete(timer); callback(); },delay);
+      this.invitationTimers.add(timer);
+    };
+    this.invitationVisible.set(true);
+    later(() => this.invitationVisible.set(false),6500);
+    // One quiet reminder, only while the same lobby still has a free place.
+    later(() => {
+      if (!current()) return;
+      this.invitationVisible.set(true);
+      later(() => this.invitationVisible.set(false),6500);
+    },45000);
+  }
+  private clearInvitationTimers(): void {
+    for (const timer of this.invitationTimers) clearTimeout(timer);
+    this.invitationTimers.clear();
+  }
 
   private request(body: Record<string, unknown>): void {
     const localCancel = body['type'] === 'cancel' && this.coordinator === this.localUserId;
@@ -123,7 +180,7 @@ export class CallGameSessionService implements OnDestroy {
       const next = body['state'] as CallGameState | null;
       const current = this.state();
       if (current && next?.id === current.id && next.revision < current.revision) return;
-      this.state.set(next);
+      this.setGameState(next);
       this.error.set('');
       return;
     }
@@ -141,7 +198,7 @@ export class CallGameSessionService implements OnDestroy {
     if (body['type'] === 'cancel') {
       // Only the creator can end this exact game, including an empty lobby.
       if (current && current.id === body['gameId'] && current.hostUserId === senderUserId) {
-        this.state.set(null);
+        this.setGameState(null);
         this.broadcast();
       }
       return;
@@ -149,7 +206,7 @@ export class CallGameSessionService implements OnDestroy {
     if (body['type'] === 'create') {
       if (!KINDS.includes(String(body['kind']))) return;
       if (current && current.status !== 'finished') { this.reject(senderUserId, 'Ya hay una partida disponible. Únete desde Juegos.'); return; }
-      this.state.set(createCallGame(body['kind'] as CallGameKind, crypto.randomUUID(), senderUserId));
+      this.setGameState(createCallGame(body['kind'] as CallGameKind, crypto.randomUUID(), senderUserId));
       this.broadcast();
       return;
     }
@@ -161,7 +218,7 @@ export class CallGameSessionService implements OnDestroy {
       return;
     }
     const leaving = (body['action'] as CallGameAction).type === 'leave';
-    this.state.set(leaving && result.state.playerIds.length < 2 ? null : result.state);
+    this.setGameState(leaving && result.state.playerIds.length < 2 ? null : result.state);
     this.broadcast();
   }
 
@@ -201,8 +258,8 @@ export class CallGameSessionService implements OnDestroy {
       this.users.includes(s.hostUserId) && Array.isArray(s.playerIds) && s.playerIds.length <= 12 &&
       s.playerIds.every(id => this.users.includes(id)) && new Set(s.playerIds).size === s.playerIds.length &&
       ['lobby', 'playing', 'finished'].includes(s.status) && Number.isSafeInteger(s.revision) && s.revision >= 0 &&
-      Number.isSafeInteger(s.round) && Array.isArray(s.board) && s.board.length <= 64 &&
-      s.board.every(cell => cell === null || (typeof cell === 'string' && cell.length <= 80)) &&
+      Number.isSafeInteger(s.round) && Array.isArray(s.board) && s.board.length === callGameBoardSize(s.kind) &&
+      s.board.every(cell => cell === null || s.playerIds.includes(cell)) &&
       (s.turnUserId === null || s.playerIds.includes(s.turnUserId)) &&
       (s.winnerId === null || s.playerIds.includes(s.winnerId)) && typeof s.draw === 'boolean' &&
       s.scores !== null && typeof s.scores === 'object' && !Array.isArray(s.scores) &&

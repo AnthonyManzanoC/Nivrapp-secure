@@ -1,0 +1,24 @@
+:host { display:block; color:var(--nivra-text); }
+.requests-panel { border:0; box-shadow:none; background:transparent; padding:0; }
+.panel-headline { display:flex; align-items:center; gap:16px; justify-content:space-between; }
+h2 { font-size:22px; margin:0 0 6px; }
+.card-sub,.request-empty { font-size:13px; line-height:1.6; color:var(--nivra-muted); }
+.request-search { display:flex; align-items:center; gap:12px; border-radius:28px; background:var(--nivra-panel-2); padding:4px 16px; margin:22px 0; }
+.request-search input { min-width:0; flex:1; border:0; background:transparent; color:inherit; padding:12px 0; font:inherit; }
+.request-section { margin-top:24px; }
+h3 { display:flex; gap:8px; font-size:14px; color:var(--nivra-muted); }
+h3 span { color:var(--nivra-brand); }
+.request-row { display:flex; align-items:center; justify-content:space-between; gap:14px; padding:18px 0; border-bottom:1px solid var(--nivra-line); }
+.request-person { display:flex; align-items:center; gap:14px; min-width:0; flex:1; }
+.contact-avatar { flex:0 0 48px; width:48px; height:48px; display:grid; place-items:center; object-fit:cover; border-radius:50%; font-size:20px; font-weight:700; color:#075846; background:linear-gradient(145deg,#bcece0,#daeef4); }
+.request-person>span:last-child { min-width:0; display:grid; gap:4px; }
+.request-person strong { overflow-wrap:anywhere; font-size:15px; }
+.request-person small,.request-person p { color:var(--nivra-muted); font-size:13px; margin:0; }
+.request-actions { display:flex; gap:4px; flex-wrap:wrap; }
+.request-history { margin-top:28px; padding:18px 0; border-top:1px solid var(--nivra-line); }
+.request-history summary { cursor:pointer; font-size:14px; font-weight:600; }
+.request-history-row { display:flex; justify-content:space-between; gap:12px; padding:12px 0; }
+.request-history-row>span { display:grid; gap:4px; }
+.request-history-row small,.request-history-copy { color:var(--nivra-muted); font-size:12px; }
+.request-error,.connections-error { color:var(--ion-color-danger); font-size:13px; }
+@media(max-width:600px) { .request-row { flex-wrap:wrap; }.request-actions { margin-inline-start:62px; } }

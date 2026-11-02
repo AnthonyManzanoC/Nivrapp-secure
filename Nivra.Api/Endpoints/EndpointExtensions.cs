@@ -1218,7 +1218,7 @@ public static partial class EndpointExtensions
                 .Distinct(StringComparer.Ordinal)
                 .ToList();
 
-            if (request.Type == ConversationType.Direct && participantIds.Count != 2)
+            if (request.Type == ConversationType.Direct && participantIds.Count is < 1 or > 2)
             {
                 return Error("invalid_conversation", "Un chat directo necesita exactamente dos participantes.");
             }
@@ -1226,6 +1226,14 @@ public static partial class EndpointExtensions
             if (!await store.UsersExistAsync(participantIds, cancellationToken))
             {
                 return Error("invalid_participants", "Uno o mas participantes no existen.");
+            }
+
+            if (request.Type == ConversationType.Direct && participantIds.Count == 1)
+            {
+                var self = await SelfConversationStore.GetOrCreateAsync(db, store, current.UserId, timeProvider.GetUtcNow(), cancellationToken);
+                var selfResponse = await ToConversationResponseAsync(self, store, cancellationToken);
+                await NotifyUsers(hub, [current.UserId], "conversation.created", selfResponse);
+                return Results.Ok(selfResponse);
             }
 
             if (request.Type == ConversationType.Direct && await ContactBlockPolicy.BetweenAsync(db, participantIds[0], participantIds[1], cancellationToken))
@@ -3600,36 +3608,11 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            var servers = (options.Value.IceServers ?? [])
-                .Select(server => new WebRtcIceServerResponse(
-                    (server.Urls ?? [])
-                        .Select(url => url?.Trim() ?? "")
-                        .Where(url =>
-                            url.StartsWith("stun:", StringComparison.OrdinalIgnoreCase) ||
-                            url.StartsWith("stuns:", StringComparison.OrdinalIgnoreCase) ||
-                            url.StartsWith("turn:", StringComparison.OrdinalIgnoreCase) ||
-                            url.StartsWith("turns:", StringComparison.OrdinalIgnoreCase))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
-                        .Take(8)
-                        .ToList(),
-                    NormalizeOptional(server.Username),
-                    NormalizeOptional(server.Credential)))
-                .Where(server => server.Urls.Count > 0)
-                .Take(8)
-                .ToList();
-
-            if (servers.Count == 0)
-            {
-                servers.Add(new WebRtcIceServerResponse(
-                    ["stun:stun.l.google.com:19302", "stun:global.stun.twilio.com:3478"],
-                    null,
-                    null));
+            if (options.Value.RelayOnly && !options.Value.HasConfiguredRelay) {
+                http.Response.Headers.RetryAfter = "30";
+                return Results.Json(new { code = "call_relay_unavailable", message = "La conexión privada de llamadas todavía no está disponible. Intenta de nuevo en un momento." }, statusCode: 503);
             }
-
-            var hasRelay = servers.Any(server => server.Urls.Any(url =>
-                url.StartsWith("turn:", StringComparison.OrdinalIgnoreCase) ||
-                url.StartsWith("turns:", StringComparison.OrdinalIgnoreCase)));
-            return Results.Ok(new WebRtcIceConfigResponse(servers, options.Value.RelayOnly && hasRelay));
+            return Results.Ok(new WebRtcIceConfigResponse(options.Value.PublicIceServers(), options.Value.RelayOnly));
         });
 
         static async Task<IResult> RoomToken(string groupId, HttpContext http, INivraStore store, NivraDbContext db, LiveKitTokenService liveKit, CancellationToken cancellationToken)

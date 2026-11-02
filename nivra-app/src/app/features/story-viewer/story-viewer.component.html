@@ -1,4 +1,4 @@
-<section class="story-viewer" [class.mine]="isMine" [class.ui-hidden]="uiHidden" [attr.aria-label]="'STORY.SNAPSHOT' | translate:'Historia'">
+<section class="story-viewer" [class.mine]="isMine" [class.ui-hidden]="uiHidden" [class.text-viewer]="!payload.media" [style.--story-text-background]="!payload.media ? textTheme().background : null" [attr.aria-label]="'STORY.SNAPSHOT' | translate:'Historia'">
   <div class="story-progress" aria-hidden="true">
     @for (item of queue; track item.id; let index = $index) { <span><i [style.width.%]="progressFor(index)"></i></span> }
   </div>
@@ -38,18 +38,18 @@
             @if (social.storyMedia(current); as media) {
               @if (social.isImage(media.mime)) {
                 @for (revision of [imageRevision]; track revision) {
-                  <img [src]="media.url" [alt]="media.name" (load)="loadedImage()" (error)="failedMedia()">
+                  <img [attr.data-story-id]="story.id" [attr.data-story-attempt]="imageRevision" [src]="media.url" [alt]="media.name" (load)="loadedImage($event)" (error)="failedMedia($event)">
                 }
                 @if (payload.music && social.storyMusic(current); as music) {
-                  <audio #storyMedia [src]="music.url" playsinline preload="auto" (canplay)="loadedMedia($event)" (waiting)="waitingMedia()" (stalled)="waitingMedia()" (playing)="playingMedia()" (error)="failedMedia()" (ended)="ended()"></audio>
+                  <audio [attr.data-story-id]="story.id" #storyMedia [src]="music.url" playsinline preload="auto" (canplay)="loadedMedia($event)" (waiting)="waitingMedia($event)" (stalled)="waitingMedia($event)" (playing)="playingMedia($event)" (error)="failedMedia($event)" (ended)="ended($event)"></audio>
                 }
               } @else if (social.isVideo(media.mime)) {
-                <video #storyMedia [src]="media.url" playsinline preload="auto" (loadedmetadata)="syncDuration.emit($event)" (canplay)="loadedMedia($event)" (waiting)="waitingMedia()" (stalled)="waitingMedia()" (playing)="playingMedia()" (error)="failedMedia()" (ended)="ended()"></video>
+                <video [attr.data-story-id]="story.id" #storyMedia [src]="media.url" playsinline preload="auto" (loadedmetadata)="loadedMetadata($event)" (canplay)="loadedMedia($event)" (waiting)="waitingMedia($event)" (stalled)="waitingMedia($event)" (playing)="playingMedia($event)" (error)="failedMedia($event)" (ended)="ended($event)"></video>
               } @else {
-                <div class="story-audio-card"><ion-icon name="volume-high-outline"></ion-icon><audio #storyMedia [src]="media.url" controls playsinline preload="auto" (loadedmetadata)="syncDuration.emit($event)" (canplay)="loadedMedia($event)" (waiting)="waitingMedia()" (stalled)="waitingMedia()" (playing)="playingMedia()" (error)="failedMedia()" (ended)="ended()"></audio></div>
+                <div class="story-audio-card"><ion-icon name="volume-high-outline"></ion-icon><audio [attr.data-story-id]="story.id" #storyMedia [src]="media.url" controls playsinline preload="auto" (loadedmetadata)="loadedMetadata($event)" (canplay)="loadedMedia($event)" (waiting)="waitingMedia($event)" (stalled)="waitingMedia($event)" (playing)="playingMedia($event)" (error)="failedMedia($event)" (ended)="ended($event)"></audio></div>
               }
             } @else { <div class="story-loading"><ion-spinner name="crescent"></ion-spinner><span>{{ 'COMMON.DECRYPTING' | translate:'Descifrando' }}</span></div> }
-          } @else { <p class="story-text-content" tabindex="0" (focus)="focusReply(true)" (blur)="focusReply(false)">{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantánea') }}</p> }
+          } @else { <p class="story-text-content" [class.long-text]="(payload.text?.length || 0) > 240" [style.color]="textTheme().color" tabindex="0" (focus)="focusReply(true)" (blur)="focusReply(false)">{{ payload.text || story.caption || ('STORY.SNAPSHOT' | translate:'Instantánea') }}</p> }
         }
       }
       @if (needsPlay && !mediaFailed) {
@@ -106,7 +106,7 @@
     <section class="story-confirm-sheet" role="dialog" aria-modal="true" [attr.aria-label]="(deleteConfirmOpen ? 'STORY_PLAYER.MANAGE' : 'STORY_PLAYER.SHARE') | translate">
       <h2>{{ (deleteConfirmOpen ? 'STORY_PLAYER.DELETE_TITLE' : 'STORY_PLAYER.SHARE_TITLE') | translate }}</h2>
       <p>{{ (deleteConfirmOpen ? 'STORY_PLAYER.DELETE_COPY' : 'STORY_PLAYER.SHARE_COPY') | translate }}</p>
-      @if (actionError) { <p class="story-action-error" role="alert">{{ 'COMMON.ACTION_ERROR' | translate }}</p> }
+      @if (actionError) { <p class="story-action-error" [appTransientNotice]="actionError" [appNoticeDuration]="15000" role="alert">{{ 'COMMON.ACTION_ERROR' | translate }}</p> }
       <button type="button" class="story-confirm-primary" [class.destructive]="deleteConfirmOpen" [disabled]="actionBusy" (click)="deleteConfirmOpen ? deleteOwnStory() : confirmRepost()">
         {{ (deleteConfirmOpen ? 'STORY_PLAYER.DELETE' : 'STORY_PLAYER.SHARE_CONTACTS') | translate }}
       </button>

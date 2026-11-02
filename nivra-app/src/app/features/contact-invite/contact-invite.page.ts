@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, OnInit, inject } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -15,7 +16,7 @@ const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 @Component({
   selector: 'app-contact-invite',
   standalone: true,
-  imports: [CommonModule, TranslatePipe, IonButton, IonContent, IonIcon, IonSpinner],
+  imports: [TransientNoticeDirective, CommonModule, TranslatePipe, IonButton, IonContent, IonIcon, IonSpinner],
   templateUrl: './contact-invite.page.html',
   styleUrls: ['./contact-invite.page.scss'],
 })

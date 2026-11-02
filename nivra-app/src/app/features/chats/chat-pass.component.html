@@ -13,8 +13,8 @@
         </div>
         <strong dir="ltr">@{{ alias }}</strong>
         <p class="pass-link" dir="ltr">{{ link }}</p>
-        @if (notice) { <p class="pass-notice" role="status">{{ notice }}</p> }
-        @if (error) { <p class="pass-error" role="alert">{{ error }}</p> }
+        @if (notice) { <p [appTransientNotice]="notice" (noticeExpired)="notice=''" class="pass-notice" role="status">{{ notice }}</p> }
+        @if (error) { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="pass-error" role="alert">{{ error }}</p> }
       </div>
       <footer>
         <ion-button mode="ios" fill="outline" (click)="copy()" [disabled]="busy"><ion-icon slot="start" name="copy-outline" aria-hidden="true"></ion-icon>{{ 'COMMON.COPY' | translate:'Copiar' }}</ion-button>

@@ -1780,3 +1780,17 @@ ion-modal.call-audio-modal {
 .surface:not(.call-mode) .agenda-row { grid-template-columns: 48px minmax(0, 1fr) auto; }
 .surface:not(.call-mode) .agenda-actions { grid-column: auto; justify-content: flex-end; }
 .surface:not(.call-mode) .agenda-actions ion-button { flex: none; }
+.resume-call-card { display:flex; align-items:center; gap:18px; padding:22px; margin-top:18px; border:1px solid color-mix(in srgb,var(--nivra-brand) 30%,var(--nivra-line)); border-radius:22px; background:color-mix(in srgb,var(--nivra-brand) 7%,var(--nivra-panel-solid)); }
+.resume-call-icon { flex:0 0 54px; width:54px; height:54px; display:grid; place-items:center; border-radius:18px; background:var(--nivra-accent-soft,#dff8ee); color:#007c61; font-size:26px; }
+.resume-call-card div { flex:1; min-width:0; }
+.resume-call-card small { color:var(--ion-color-primary); font-weight:700; font-size:10px; letter-spacing:1px; }
+.resume-call-card h3 { margin:6px 0; font-size:20px; }
+.resume-call-card p { margin:0; color:var(--nivra-muted); font-size:13px; line-height:1.5; }
+.surface.call-mode { background:radial-gradient(ellipse at 50% 35%,#0b2926,#030c0d 72%); }
+.surface.call-mode .call-controls { max-width:calc(100% - 24px); overflow-x:auto; scrollbar-width:none; padding-bottom:max(12px,env(safe-area-inset-bottom)); }
+@media(max-width:768px) {
+ .resume-call-card { flex-wrap:wrap; padding:18px; }
+ .resume-call-card ion-button { width:100%; margin:4px 0 0; }
+ .surface.call-mode .call-controls { border-radius:26px; gap:6px; }
+ .surface.call-mode .call-avatar { width:128px; height:128px; }
+}

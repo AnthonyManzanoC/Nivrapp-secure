@@ -75,7 +75,10 @@ describe('story viewer available app area', () => {
     const header = getComputedStyle(host.querySelector('.story-viewer-top')!);
     const footer = getComputedStyle(host.querySelector('.story-action-bar')!);
     expect(progress.paddingTop).toBe('30px');
-    expect(header.paddingTop).toBe('12px');
+    // The new full-bleed layout overlays the header instead of placing it after
+    // the progress row. Each overlay applies the inset once, independently.
+    expect(header.position).toBe('absolute');
+    expect(header.paddingTop).toBe('42px');
     for (const style of [progress, header, footer]) {
       expect(parseFloat(style.paddingLeft)).toBeGreaterThanOrEqual(28);
       expect(parseFloat(style.paddingRight)).toBeGreaterThanOrEqual(24);

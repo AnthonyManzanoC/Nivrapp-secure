@@ -98,3 +98,6 @@ ion-popover.chat-options-popover::part(content), ion-popover.message-actions-pop
 }
 @media (max-width: 350px) { .composer .composer-input .camera { display: none !important; } .title-wrap .avatar { width: 34px; height: 34px; } }
 @media (prefers-reduced-motion: reduce) { .message { animation: none; } }
+.group-call-banner { gap:12px; border-bottom:1px solid var(--nivra-line); background:color-mix(in srgb,var(--nivra-brand) 8%,var(--nivra-panel-solid)); }
+.group-call-banner>div { min-width:0; flex:1; }
+.group-call-banner small { white-space:normal; line-height:1.4; }

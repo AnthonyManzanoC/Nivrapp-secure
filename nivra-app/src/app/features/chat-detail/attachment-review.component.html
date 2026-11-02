@@ -53,7 +53,7 @@
     <button type="button" class="add-file" (click)="files.click()" [disabled]="busy || processing" [attr.aria-label]="'CHAT.ADD_FILES' | translate:'Añadir archivos'"><ion-icon name="add-outline"></ion-icon></button>
     <input #files type="file" hidden multiple [accept]="media ? 'image/*,video/*' : ''" (change)="addFiles($event)">
   </div>
-  @if (error || editError) { <p class="review-error" role="alert">{{ error || (editError | translate:'No se pudo editar esta foto. El original se ha conservado.') }}</p> }
+  @if (error || editError) { <p class="review-error" [appTransientNotice]="error || editError" [appNoticeDuration]="15000" role="alert">{{ error || (editError | translate:'No se pudo editar esta foto. El original se ha conservado.') }}</p> }
   <footer class="review-footer">
     <ion-textarea mode="ios" [ngModel]="caption" (ngModelChange)="captionChange.emit($event)" [disabled]="busy || processing" autoGrow="true" rows="1" maxlength="1200" [attr.aria-label]="'CHAT.ATTACHMENT_CAPTION' | translate:'Agregar mensaje al adjunto'" [placeholder]="'CHAT.ATTACHMENT_CAPTION' | translate:'Agregar mensaje al adjunto'"></ion-textarea>
     <button type="button" class="send-button" (click)="submitted.emit()" [disabled]="busy || processing || editing || !items.length" [attr.aria-label]="'COMMON.SEND' | translate:'Enviar'">@if (busy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }</button>

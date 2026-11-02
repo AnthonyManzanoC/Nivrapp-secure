@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -73,7 +74,7 @@ import {
   volumeHighOutline,
 } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
-import { ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
+import { CallSession, ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
 import { TextOutboxService } from '../../core/services/text-outbox.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
@@ -150,7 +151,7 @@ interface MessageTextPart {
 @Component({
   selector: 'app-chat-detail',
   standalone: true,
-  imports: [
+  imports: [TransientNoticeDirective,
     LocalizedDatePipe,
     CommonModule,
     FormsModule,
@@ -241,6 +242,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (text !== null && !this.draft) this.draft = text;
   }
   @ViewChild(IonContent) private content?: IonContent;
+  @ViewChild('chatOptions') private chatOptions?: IonPopover;
   @ViewChild('micButton', { read: ElementRef }) private micButton?: ElementRef<HTMLElement>;
   @ViewChild('draftInput') private draftInput?: IonTextarea;
   readonly chat = inject(ChatService);
@@ -267,6 +269,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private initialScrollRequestId = 0;
   private initialScrollDoneForConversation = '';
   private initialScrollTimers: number[] = [];
+  openingLatest = true;
   initialUnreadMessageId: string | null = null;
 
   draft = '';
@@ -486,6 +489,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.routeSub = this.route.paramMap.subscribe((params) => {
       const id = params.get('conversationId');
       if (id) {
+        this.clearInitialScrollTimers(); this.openingLatest = true;
         this.cancelSelection();
         void this.cancelVoiceNote();
         this.clearPendingAttachments(false);
@@ -543,7 +547,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
     window.requestAnimationFrame(() => {
       this.cdr.detectChanges();
-      this.scheduleInitialScroll(conversationId);
+      this.scheduleInitialScroll(conversationId, { force: true });
     });
   }
 
@@ -583,7 +587,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   async loadOlderMessages(event: Event): Promise<void> {
     const infinite = event.target as HTMLIonInfiniteScrollElement | null;
     const conversationId = this.conversation()?.id;
-    if (!conversationId) {
+    if (!conversationId || this.openingLatest) {
       await infinite?.complete();
       return;
     }
@@ -592,6 +596,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const previousTop = scrollElement?.scrollTop ?? 0;
     try {
       await this.chat.loadOlderMessages(conversationId);
+      if (this.destroyed || this.conversation()?.id !== conversationId) return;
       this.cdr.detectChanges();
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
       if (scrollElement && previousHeight > 0) {
@@ -604,6 +609,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    void this.closeChatMenu();
     this.stopGroupRoomRefresh();
     this.destroyed = true;
     this.cancelSelection();
@@ -1344,13 +1350,17 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.emojiPanelOpen = false;
   }
 
-  closeChatMenu(): void {
+  async closeChatMenu(): Promise<void> {
     this.chatMenuOpen = false;
     this.chatMenuEvent = null;
+    await this.chatOptions?.dismiss();
   }
 
   async closeConversationView(): Promise<void> {
-    this.closeChatMenu();
+    const userId = this.auth?.session()?.user.id;
+    const conversationId = this.conversation?.()?.id;
+    await this.closeChatMenu();
+    if (this.destroyed || this.auth?.session()?.user.id !== userId || this.conversation?.()?.id !== conversationId) return;
     this.cancelSelection();
     await this.router.navigateByUrl('/app/chats');
   }
@@ -1960,6 +1970,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async toggleBlock(): Promise<void> {
+    if (this.chat.isSelfConversation(this.conversation())) return;
     const conversation = this.conversation();
     if (!conversation) {
       return;
@@ -1977,7 +1988,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   async startCall(type: 'Voice' | 'Video'): Promise<void> {
     const conversation = this.conversation();
-    if (!conversation || this.isBlocked()) {
+    if (!conversation || this.isBlocked() || this.chat.isSelfConversation(conversation)) {
       return;
     }
     const currentUserId = this.auth.session()?.user.id;
@@ -1989,6 +2000,24 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       if (room) { await this.calls.joinGroupRoom(room); }
       else { await this.calls.start(type, conversation.id, participantUserIds); }
       if (this.calls.activeCall()) { await this.router.navigateByUrl('/app/calls'); }
+    });
+  }
+
+  directCallInProgress(): CallSession | null {
+    const conversation = this.conversation();
+    if (!conversation || this.chat.isGroup(conversation) || this.chat.isSelfConversation(conversation)) return null;
+    const call = this.calls.activeCall() ?? this.calls.resumableCall();
+    return call && call.conversationId === conversation.id && !call.endedAt && call.status !== 'Ended' ? call : null;
+  }
+
+  async returnToDirectCall(): Promise<void> {
+    const call = this.directCallInProgress();
+    if (!call) return;
+    await this.runAction('call:return', async () => {
+      if (this.calls.activeCall()?.id === call.id) {
+        if (this.calls.phase() === 'failed') await this.calls.retryConnection();
+        await this.router.navigateByUrl('/app/calls');
+      } else if (this.calls.resumableCall()?.id === call.id) await this.calls.resumeHere();
     });
   }
 
@@ -3158,23 +3187,25 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     }
     this.initialScrollDoneForConversation = id;
     this.clearInitialScrollTimers();
-    [0, 80, 220, 520].forEach((delay, index) => {
-      const timer = window.setTimeout(() => this.scrollToInitialPosition(id, index), delay);
+    this.openingLatest = true;
+    [0, 80, 220, 520, 1000].forEach((delay, index) => {
+      const timer = window.setTimeout(() => {
+        this.scrollToInitialPosition(id, index);
+        if (index === 4) { this.openingLatest = false; this.clearInitialScrollTimers(); }
+      }, delay);
       this.initialScrollTimers.push(timer);
     });
   }
 
   private scrollToInitialPosition(conversationId: string | null | undefined, attempt = 0): void {
     const id = conversationId || this.conversation()?.id;
-    const unreadMessageId = this.chat.initialScrollMessageId(id);
-    if (unreadMessageId) {
-      this.initialUnreadMessageId = unreadMessageId;
-      this.scrollToMessage(unreadMessageId, attempt);
-      return;
-    }
-    this.initialUnreadMessageId = null;
-    this.scrollBottom({ strong: true });
+    if (this.destroyed || !id || this.conversation()?.id !== id) return;
+    // Keep the unread separator available when scrolling back, but open at the
+    // newest message. Search/reply navigation continues to target exact messages.
+    this.initialUnreadMessageId = this.chat.initialScrollMessageId(id);
+    void this.content?.scrollToBottom(0);
   }
+  stopInitialScroll(): void { this.openingLatest = false; this.clearInitialScrollTimers(); }
 
   private scrollToMessage(messageId: string, attempt = 0): void {
     const run = async () => {

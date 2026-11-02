@@ -180,10 +180,10 @@ describe('Chats actions and scoped search', () => {
     expect(page.sharePassOpen).toBeFalse();
   });
 
-  it('opens contact search from onboarding, and opens the pass directly without navigation', async () => {
+  it('opens the new Contacts view from the plus action and opens the pass directly', async () => {
     page.startNewChat();
-    expect(page.searchScope).toBe('people');
-    expect(page.showRecentSearches).toBeTrue();
+    expect(router.navigateByUrl).toHaveBeenCalledOnceWith('/app/contacts');
+    router.navigateByUrl.calls.reset();
     await page.openShareAccount();
     expect(page.sharePassOpen).toBeTrue();
     expect(router.navigateByUrl).not.toHaveBeenCalled();
@@ -360,6 +360,12 @@ describe('Chats actions and scoped search', () => {
   });
 
   describe('Android list gesture for stories', () => {
+    it('collapses the message button while scrolling down and briefly expands when returning',fakeAsync(()=>{
+      page.onChatListScroll({target:{scrollTop:100,scrollHeight:1400,clientHeight:500}} as unknown as Event);
+      expect(page.contactsFabExpanded).toBeFalse();
+      page.onChatListScroll({target:{scrollTop:20,scrollHeight:1400,clientHeight:500}} as unknown as Event);
+      expect(page.contactsFabExpanded).toBeTrue();tick(4500);expect(page.contactsFabExpanded).toBeFalse();
+    }));
     let list: { scrollTop: number; scrollHeight: number; clientHeight: number };
     const touch = (x: number, y: number, count = 1, target: EventTarget | null = null): TouchEvent => ({
       currentTarget: list, target: target ?? list,
