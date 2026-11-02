@@ -243,7 +243,7 @@ jobs:
           "$adb" -s emulator-5554 install -r android/app/build/outputs/apk/debug/app-debug.apk
           "$adb" -s emulator-5554 install -r android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
           "$adb" -s emulator-5554 shell am instrument -w -e class com.nivra.app.IncomingCallExperienceInstrumentedTest com.nivra.app.experiencelab.test/androidx.test.runner.AndroidJUnitRunner | tee "$RUNNER_TEMP/ratchet-android-call-ui.log"
-          grep -F 'OK (3 tests)' "$RUNNER_TEMP/ratchet-android-call-ui.log"
+          grep -F 'OK (4 tests)' "$RUNNER_TEMP/ratchet-android-call-ui.log"
           "$adb" -s emulator-5554 pull /sdcard/Android/data/com.nivra.app.experiencelab/files/call-design/ "$RUNNER_TEMP/native-call-design/"
       - name: Preserve Android trial diagnostics
         if: always()
