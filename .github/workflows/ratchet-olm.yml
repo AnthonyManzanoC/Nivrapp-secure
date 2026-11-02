@@ -73,6 +73,11 @@ jobs:
           node node_modules/typescript/bin/tsc -p tsconfig.app.json --noEmit --pretty false
           node node_modules/@angular/cli/bin/ng.js test --watch=false --browsers=ChromeHeadlessNoGpu --progress=false
           npm run build
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: verified-client-assets
+          path: nivra-app/dist/nivra-app/browser/
+          retention-days: 7
 
   design:
     runs-on: ubuntu-24.04
@@ -161,7 +166,7 @@ jobs:
       - run: npm ci --prefix crypto/ratchet-olm --ignore-scripts
       - run: node crypto/ratchet-olm/server-interop.mjs
   android:
-    needs: bridge
+    needs: [bridge, client]
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
@@ -199,6 +204,11 @@ jobs:
         working-directory: android
         run: bash ./gradlew -PnivraRatchetLab=true -PnivraHybridLab=true :ratchet-lab:assembleDebug :ratchet-lab:assembleDebugAndroidTest --no-daemon --max-workers=2 --console=plain
       - name: Build native call UI in a separate application package
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          name: verified-client-assets
+          path: nivra-app/dist/nivra-app/browser/
+      - name: Compile native call UI laboratory
         run: |
           npm ci --ignore-scripts
           mkdir -p android/app/src/main/assets

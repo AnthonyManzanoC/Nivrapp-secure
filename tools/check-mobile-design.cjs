@@ -58,6 +58,8 @@ async function main() {
       }
     };
     await call('Runtime.enable'); await call('Page.enable');
+    await call('Page.bringToFront');
+    await call('Emulation.setFocusEmulationEnabled',{enabled:true});
     await call('Fetch.enable',{patterns:[{urlPattern:'*'}]});
     const evaluate = async expression => {
       const result=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});
@@ -66,7 +68,10 @@ async function main() {
     };
     const waitFor = async expression => {
       for(let i=0;i<100;i++){if(await evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,100));}
-      throw Error('UI did not become ready: '+expression);
+      const diagnostics=await evaluate("({text:document.body.innerText,focus:document.activeElement?.outerHTML,inputs:[...document.querySelectorAll('ion-input')].map(input=>({html:input.outerHTML,hasNative:!!input.querySelector('input'),classes:input.className}))})");
+      await fs.writeFile(path.join(output,'failure.json'),JSON.stringify({expression,diagnostics,errors},null,2));
+      await capture('failure');
+      throw Error('UI did not become ready: '+expression+'; '+errors.join('; '));
     };
     const capture = async name => {
       await evaluate('document.fonts.ready');
@@ -75,12 +80,17 @@ async function main() {
       await fs.writeFile(path.join(output,name+'.png'),Buffer.from(data,'base64'));
     };
     const viewport = (width,height,mobile) => call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile});
+    const tap = async selector => {
+      const point=await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+      await call('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
+      await call('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
+    };
     await viewport(390,844,true);
     await call('Page.navigate',{url:base+'/app/chats?theme=light'});
     await waitFor("!!document.querySelector('.chats-page')");
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
     await capture('mobile-chats');
-    await evaluate("document.querySelector('.search-box ion-input').setFocus()");
+    await tap('.search-box ion-input');
     await waitFor("!!document.querySelector('.chats-page.search-active')");
     assert.equal(await evaluate("getComputedStyle(document.querySelector('.side-head')).display"),'none','mobile search replaces Chats heading');
     assert.equal(await evaluate("getComputedStyle(document.querySelector('.rail')).display"),'none','mobile search hides bottom navigation');
@@ -103,7 +113,7 @@ async function main() {
     await call('Page.navigate',{url:base+'/app/chats?theme=light'});
     await waitFor("!!document.querySelector('.chats-page')");
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
-    await evaluate("document.querySelector('.search-box ion-input').setFocus()");
+    await tap('.search-box ion-input');
     await waitFor("!!document.querySelector('.chats-page.search-active')");
     assert.notEqual(await evaluate("getComputedStyle(document.querySelector('.side-head')).display"),'none','desktop preserves its split layout');
     await capture('desktop-search');
