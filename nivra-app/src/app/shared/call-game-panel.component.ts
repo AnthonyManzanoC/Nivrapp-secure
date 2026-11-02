@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, Input, Output } from '@angular/core';
-import { CallGameAction, CallGameKind, CallGameState, TRIVIA_QUESTION_COUNT } from '../core/games/call-game-engine';
+import { CallGameAction, CallGameKind, CallGameState, TRIVIA_QUESTION_COUNT, reversiFlips } from '../core/games/call-game-engine';
 
 @Component({
   selector: 'app-call-game-panel',
@@ -29,9 +29,18 @@ export class CallGamePanelComponent {
     { kind: 'gomoku', title: 'Cinco en línea', symbol: '● ○', description: 'Tablero de 8 × 8. Conecta cinco piedras en cualquier dirección.' },
     { kind: 'take-away', title: 'La última ficha', symbol: '21', description: 'Retira 1, 2 o 3 fichas. Quien toma la última gana.' },
     { kind: 'trivia', title: 'Reto de cálculo', symbol: '+ ×', description: 'Cinco preguntas para jugar en grupo.' },
+    { kind: 'reversi', title: 'Reversi', symbol: '◐', description: 'Encierra fichas rivales. Gana quien conquista más casillas.' },
+    { kind: 'hex', title: 'Hex', symbol: '⬡', description: 'Conecta tus dos bordes con un camino de fichas.' },
   ];
 
   remaining(): number { return this.state?.board.filter(cell => cell === null).length ?? 0; }
+
+  legalMove(index: number): boolean {
+    const s = this.state;
+    if (!s || s.board[index] !== null) return false;
+    if (s.kind !== 'reversi') return true;
+    return reversiFlips(s.board, index, this.currentUserId, s.playerIds.find(id => id !== this.currentUserId) || '').length > 0;
+  }
 
   label(userId: string | null): string {
     if (userId === this.currentUserId) { return 'Tú'; }

@@ -1,4 +1,4 @@
-<ion-content fullscreen class="chats-page" [class.three-line-list]="appSettings.settings().chatListDensity === 'three-line'">
+<ion-content fullscreen class="chats-page" [class.search-active]="query.trim() || showRecentSearches" [class.three-line-list]="appSettings.settings().chatListDensity === 'three-line'">
   <section class="chat-layout">
     <aside class="sidebar" [class.has-story-strip]="storyHighlights().length && !query.trim() && !showRecentSearches">
       <header class="side-head">
@@ -91,6 +91,9 @@
       <div class="search-panel">
         <div class="search-line">
           <div class="search-box" [class.has-value]="query">
+            @if (query.trim() || showRecentSearches) {
+              <button class="search-back" type="button" (click)="closeSearch()" aria-label="Volver a Chats"><ion-icon name="arrow-back-outline" aria-hidden="true"></ion-icon></button>
+            }
             <ion-icon name="search-outline" aria-hidden="true"></ion-icon>
             <ion-input #chatSearchInput mode="ios" [(ngModel)]="query" (ionFocus)="onSearchFocus()" (ionInput)="onSearchChange()" (keydown.escape)="closeSearch()" [placeholder]="'CHATS.SEARCH_PLACEHOLDER' | translate:'Busca chats, alias o ID Nivra'" [attr.aria-label]="'CHATS.SEARCH_PLACEHOLDER' | translate:'Busca chats, alias o ID Nivra'" [maxlength]="256" autocomplete="off" autocorrect="off" enterkeyhint="search"></ion-input>
             @if (query) {

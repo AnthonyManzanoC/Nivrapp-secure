@@ -1,8 +1,8 @@
 name: Permissive Double Ratchet verification
 on:
   push:
-    branches: [codex/ratchet-permissive, main]
-    paths: [crypto/ratchet-olm/**, crypto/ratchet-common/**, crypto/ratchet-wasm/web-device.mjs, Nivra.Api/**, checks/Nivra.RatchetChecks/**, nivra-app/src/**, nivra-app/angular.json, Nivra.Desktop/**, android/ratchet-lab/**, .github/workflows/ratchet-olm.yml]
+    branches: [codex/ratchet-permissive, codex/mobile-experience-8-2, main]
+    paths: [crypto/ratchet-olm/**, crypto/ratchet-common/**, crypto/ratchet-wasm/web-device.mjs, Nivra.Api/**, checks/Nivra.RatchetChecks/**, nivra-app/src/**, nivra-app/angular.json, Nivra.Desktop/**, android/ratchet-lab/**, android/app/src/**, .github/workflows/ratchet-olm.yml]
   workflow_dispatch:
 permissions:
   contents: read

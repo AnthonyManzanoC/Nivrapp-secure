@@ -73,7 +73,7 @@ import {
   volumeHighOutline,
 } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
-import { ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
+import { CallSession, ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
 import { TextOutboxService } from '../../core/services/text-outbox.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
@@ -241,6 +241,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (text !== null && !this.draft) this.draft = text;
   }
   @ViewChild(IonContent) private content?: IonContent;
+  @ViewChild('chatOptions') private chatOptions?: IonPopover;
   @ViewChild('micButton', { read: ElementRef }) private micButton?: ElementRef<HTMLElement>;
   @ViewChild('draftInput') private draftInput?: IonTextarea;
   readonly chat = inject(ChatService);
@@ -604,6 +605,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    void this.closeChatMenu();
     this.stopGroupRoomRefresh();
     this.destroyed = true;
     this.cancelSelection();
@@ -1344,13 +1346,14 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.emojiPanelOpen = false;
   }
 
-  closeChatMenu(): void {
+  async closeChatMenu(): Promise<void> {
     this.chatMenuOpen = false;
     this.chatMenuEvent = null;
+    await this.chatOptions?.dismiss();
   }
 
   async closeConversationView(): Promise<void> {
-    this.closeChatMenu();
+    await this.closeChatMenu();
     this.cancelSelection();
     await this.router.navigateByUrl('/app/chats');
   }
@@ -1977,7 +1980,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   async startCall(type: 'Voice' | 'Video'): Promise<void> {
     const conversation = this.conversation();
-    if (!conversation || this.isBlocked()) {
+    if (!conversation || this.isBlocked() || this.chat.isSelfConversation(conversation)) {
       return;
     }
     const currentUserId = this.auth.session()?.user.id;
@@ -1989,6 +1992,24 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       if (room) { await this.calls.joinGroupRoom(room); }
       else { await this.calls.start(type, conversation.id, participantUserIds); }
       if (this.calls.activeCall()) { await this.router.navigateByUrl('/app/calls'); }
+    });
+  }
+
+  directCallInProgress(): CallSession | null {
+    const conversation = this.conversation();
+    if (!conversation || this.chat.isGroup(conversation) || this.chat.isSelfConversation(conversation)) return null;
+    const call = this.calls.activeCall() ?? this.calls.resumableCall();
+    return call && call.conversationId === conversation.id && !call.endedAt && call.status !== 'Ended' ? call : null;
+  }
+
+  async returnToDirectCall(): Promise<void> {
+    const call = this.directCallInProgress();
+    if (!call) return;
+    await this.runAction('call:return', async () => {
+      if (this.calls.activeCall()?.id === call.id) {
+        if (this.calls.phase() === 'failed') await this.calls.retryConnection();
+        await this.router.navigateByUrl('/app/calls');
+      } else if (this.calls.resumableCall()?.id === call.id) await this.calls.resumeHere();
     });
   }
 

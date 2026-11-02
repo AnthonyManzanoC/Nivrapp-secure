@@ -1913,3 +1913,21 @@ ion-modal.nivra-story-viewer-modal::part(content) {
   width: 0;
   height: 0;
 }
+// Popovers are mounted outside the routed page. Keep their layout during dismissal.
+ion-popover.chat-options-popover {
+  --width:min(292px,calc(100vw - 24px));
+  --background:var(--nivra-panel-solid);
+  --box-shadow:0 16px 48px rgba(0,0,0,.16);
+  color:var(--nivra-text);
+}
+ion-popover.chat-options-popover::part(content) { border:1px solid var(--nivra-line); border-radius:20px; max-height:min(680px,80dvh); overflow:auto; }
+ion-popover.chat-options-popover .popover-menu { display:grid; gap:2px; padding:8px; }
+ion-popover.chat-options-popover .popover-menu button { display:flex; align-items:center; gap:12px; width:100%; min-height:44px; padding:10px 12px; border:0; border-radius:12px; background:transparent; color:var(--nivra-text); font:inherit; font-size:14px; text-align:start; }
+ion-popover.chat-options-popover .popover-menu button:hover { background:var(--nivra-hover); }
+ion-popover.chat-options-popover .popover-menu button:focus-visible { outline:2px solid var(--ion-color-primary); outline-offset:-2px; }
+ion-popover.chat-options-popover .popover-menu ion-icon { flex:0 0 18px; color:var(--ion-color-primary); }
+ion-popover.chat-options-popover .popover-menu button.danger { color:var(--ion-color-danger); }
+@media(max-width:768px) {
+ .workspace:has(.chats-page.search-active) { padding-bottom:0; }
+ .workspace:has(.chats-page.search-active)>.rail { display:none; }
+}

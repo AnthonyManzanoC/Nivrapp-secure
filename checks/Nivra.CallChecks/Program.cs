@@ -261,6 +261,11 @@ Check(!db.Database.HasPendingModelChanges(), "the committed migration snapshot i
 var latestMigration = db.Database.GetMigrations().Last();
 var outboxMigration = db.GetService<IMigrator>().GenerateScript("20261026060301_StoryMusicFragment", latestMigration);
 Check(outboxMigration.Contains("CREATE TABLE public.call_push_outbox") && outboxMigration.Contains("IX_calls_Status_StartedAt") && !outboxMigration.Contains("DROP TABLE") && !outboxMigration.Contains("DELETE FROM"), "the new migration adds queue and expiry index while preserving histories");
+var invalidIce = new WebRtcOptions { IceServers = [new() { Urls = ["https://wrong.example", " turn:relay.example.test:3478 ", "turn:relay.example.test:3478"], Username = " user ", Credential = " secret " }] };
+Check(invalidIce.PublicIceServers()[0].Urls.SequenceEqual(new[]{"turn:relay.example.test:3478"}), "ICE advertisement sanitizes schemes, whitespace and duplicate addresses");
+Check(invalidIce.PublicIceServers()[0].Username == "user" && invalidIce.HasConfiguredRelay, "authenticated advertised TURN survives normalization");
+Check(!new WebRtcOptions { IceServers = [new() { Urls = ["turn:relay.example.test:3478"] }] }.HasConfiguredRelay, "unauthenticated TURN is never advertised as a working relay");
+Check(!new WebRtcOptions { IceServers = Enumerable.Range(0,8).Select(i=>new WebRtcIceServerOptions { Urls=["stun:stun"+i+".example.test:3478"] }).Append(new() { Urls=["turn:relay.example.test:3478"],Username="user",Credential="secret" }).ToList() }.HasConfiguredRelay, "relay health follows the actual bounded ICE response");
 Check(!new WebRtcOptions().HasConfiguredRelay, "STUN-only configuration cannot advertise a configured relay");
 Check(new WebRtcOptions { IceServers = [new() { Urls = ["turns:relay.example.test:443?transport=tcp"], Username = "fixture", Credential = "fixture" }] }.HasConfiguredRelay, "relay readiness exposes only whether authenticated TURN is configured");
 Console.WriteLine($"{checks} regression checks passed. Physical devices require separate validation.");

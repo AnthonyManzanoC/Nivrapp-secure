@@ -386,8 +386,14 @@
         @if (calls.error() && !calls.activeCall()) {
           <p class="error-copy">{{ calls.error() }}</p>
         }
-        @if (calls.resumableCall() && !calls.activeCall()) {
-          <ion-button mode="ios" (click)="calls.resumeHere()">Continuar aquí</ion-button>
+          @if (!calls.activeCall()) {
+            @if (calls.resumableCall(); as ongoing) {
+              <section class="resume-call-card" aria-label="Llamada todavía activa">
+                <span class="resume-call-icon"><ion-icon [name]="ongoing.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon></span>
+                <div><small>LA LLAMADA SIGUE ACTIVA</small><h3>{{ calls.callTitle(ongoing) }}</h3><p>Vuelve a unirte desde este dispositivo. Si está en otro equipo, continuará aquí.</p></div>
+                <ion-button mode="ios" (click)="calls.resumeHere()">Volver a unirme</ion-button>
+              </section>
+            }
         }
       </article>
 

@@ -24,7 +24,7 @@ import {
   IonSpinner,
 } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
-import { callOutline, videocamOutline, informationCircleOutline, addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, fingerPrintOutline, imageOutline, lockClosedOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
+import { arrowBackOutline, callOutline, videocamOutline, informationCircleOutline, addOutline, archiveOutline, chatbubbleEllipsesOutline, checkmarkOutline, chevronForwardOutline, closeOutline, ellipsisVerticalOutline, fingerPrintOutline, imageOutline, lockClosedOutline, notificationsOffOutline, notificationsOutline, peopleOutline, personOutline, pinOutline, playCircleOutline, searchOutline, settingsOutline, shareSocialOutline, syncOutline, trashOutline } from 'ionicons/icons';
 import { Subscription } from 'rxjs';
 import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
@@ -291,7 +291,7 @@ export class ChatsPage implements OnDestroy {
     document.addEventListener('pointerdown', this.onDocumentPointerDown, true);
     document.addEventListener('keydown', this.onDocumentKeydown, true);
     document.addEventListener('visibilitychange', this.onHistoryVisibility);
-    addIcons({ callOutline, videocamOutline, informationCircleOutline,
+    addIcons({ arrowBackOutline, callOutline, videocamOutline, informationCircleOutline,
       addOutline,
       archiveOutline,
       chatbubbleEllipsesOutline,
@@ -606,11 +606,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   startNewChat(): void {
-    this.query = '';
-    this.searchScope = 'people';
-    this.invalidateSearch();
-    this.onSearchFocus();
-    void this.chatSearchInput?.setFocus();
+    void this.router.navigateByUrl('/app/contacts');
   }
 
   openConversationMenu(conversation: Conversation, event: Event): void {
@@ -642,6 +638,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   closeSearch(): void {
+    void this.chatSearchInput?.getInputElement().then(input => input.blur());
     this.clearSearch();
     this.hideRecent();
     this.searchScope = 'all';
@@ -1535,6 +1532,13 @@ export class ChatsPage implements OnDestroy {
   }
 
   private syncSelectedConversationFromUrl(url: string): void {
+    const compose = this.router.parseUrl(url).queryParams['compose'];
+    if (['group', 'story', 'pass'].includes(compose)) {
+      void this.router.navigate(['/app/chats'], { replaceUrl: true });
+      if (compose === 'group') this.openGroupModal();
+      else if (compose === 'story') this.openStoryComposer();
+      else void this.openShareAccount();
+    }
     const segments = this.router.parseUrl(url).root.children['primary']?.segments.map((segment) => segment.path) ?? [];
     const chatsIndex = segments.findIndex((segment) => segment === 'chats');
     const conversationId = chatsIndex >= 0 ? segments[chatsIndex + 1] : null;

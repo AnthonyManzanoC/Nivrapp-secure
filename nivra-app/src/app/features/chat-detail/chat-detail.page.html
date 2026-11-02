@@ -30,6 +30,7 @@
         </div>
       </button>
       <ion-buttons slot="end" [style.visibility]="selectionMode ? 'hidden' : null">
+        @if (!chat.isSelfConversation(conversation())) {
         @if (!calls.activeGroupRoomForConversation(conversation()?.id)) {
         <ion-button mode="ios" fill="clear" [disabled]="busyAction !== '' || isBlocked()" (click)="startCall('Voice')" [attr.aria-label]="'COMMON.CALL' | translate:'Llamada'">
           <ion-icon name="call-outline"></ion-icon>
@@ -42,6 +43,7 @@
             <ion-icon [name]="calls.activeGroupRoomForConversation(conversation()?.id)?.call?.type === 'Video' ? 'videocam-outline' : 'call-outline'" slot="start"></ion-icon>
             {{ 'COMMON.JOIN' | translate:'Unirse' }}
           </ion-button>
+        }
         }
         <ion-button mode="ios" fill="clear" [attr.aria-label]="'COMMON.MENU' | translate:'Menu'" (click)="openChatMenu($event)">
           <ion-icon name="ellipsis-horizontal-outline"></ion-icon>
@@ -74,6 +76,12 @@
       <button type="button" (click)="closeSearch()" [attr.aria-label]="'CHAT.SEARCH_CLOSE' | translate:'Cerrar búsqueda'"><ion-icon name="close-outline"></ion-icon></button>
       <small>{{ (searchQuery() && !searchResults().length ? 'CHAT.SEARCH_EMPTY' : 'CHAT.SEARCH_LOADED') | translate:(searchQuery() && !searchResults().length ? 'Sin coincidencias' : 'Mensajes disponibles en este dispositivo') }}</small>
     </section>
+  }
+  @if (directCallInProgress(); as ongoing) {
+    <div class="group-call-banner direct-call-banner" role="status">
+      <div><ion-icon [name]="ongoing.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon><span>{{ ongoing.type === 'Video' ? 'Videollamada en curso' : 'Llamada en curso' }}</span><small>Puedes seguir conversando y volver cuando quieras.</small></div>
+      <ion-button mode="ios" size="small" [disabled]="busyAction !== ''" (click)="returnToDirectCall()">{{ calls.activeCall()?.id === ongoing.id ? 'Volver' : 'Unirme' }}</ion-button>
+    </div>
   }
   @if (calls.activeGroupRoomForConversation(conversation()?.id); as room) {
     <div class="group-call-banner">
@@ -664,13 +672,13 @@
   </ion-modal>
 
   <ion-popover
-    class="chat-options-popover"
+    #chatOptions class="chat-options-popover"
     [isOpen]="chatMenuOpen"
     [event]="chatMenuEvent"
     [showBackdrop]="false"
     side="bottom"
     alignment="end"
-    (didDismiss)="closeChatMenu()">
+    (didDismiss)="chatMenuOpen = false; chatMenuEvent = null">
     <ng-template>
       <div class="popover-menu">
         <button type="button" (click)="beginSelection()"><ion-icon name="checkmark-outline"></ion-icon>{{ 'CHAT.SELECT_MESSAGES' | translate:'Seleccionar mensajes' }}</button>

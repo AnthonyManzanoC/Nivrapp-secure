@@ -1,5 +1,5 @@
 /** Pure host reducer. The transport must authenticate senders as current call participants. */
-export const CALL_GAME_KINDS = ['tic-tac-toe', 'connect-four', 'trivia', 'gomoku', 'take-away'] as const;
+export const CALL_GAME_KINDS = ['tic-tac-toe', 'connect-four', 'trivia', 'gomoku', 'take-away', 'reversi', 'hex'] as const;
 export type CallGameKind = typeof CALL_GAME_KINDS[number];
 export interface CallGameQuestion { prompt: string; options: string[]; }
 export interface CallGameState {
@@ -32,7 +32,7 @@ export function createCallGame(kind: CallGameKind, id: string, hostUserId: strin
   if (!CALL_GAME_KINDS.includes(kind) || !id || !hostUserId) { throw new Error('Partida no válida.'); }
   return {
     id, kind, hostUserId, playerIds: [hostUserId], status: 'lobby', revision: 0, round: 1,
-    board: Array<string | null>(kind === 'tic-tac-toe' ? 9 : kind === 'connect-four' ? 42 : kind === 'gomoku' ? 64 : kind === 'take-away' ? 21 : 0).fill(null),
+    board: Array<string | null>(callGameBoardSize(kind)).fill(null),
     turnUserId: null, winnerId: null, draw: false, scores: { [hostUserId]: 0 },
     questionIndex: 0, question: null, answeredPlayerIds: [],
   };
@@ -90,6 +90,10 @@ export function applyCallGameAction(state: CallGameState, senderUserId: string, 
     if (state.playerIds.length < 2) { return reject('Falta otra persona para comenzar.'); }
     resetRound(next);
     next.status = 'playing';
+    if (next.kind === 'reversi') {
+      next.board[14] = next.board[21] = next.playerIds[0];
+      next.board[15] = next.board[20] = next.playerIds[1];
+    }
     if (state.kind === 'trivia') {
       next.question = triviaChallenge(next).question;
     } else {
@@ -113,6 +117,32 @@ export function applyCallGameAction(state: CallGameState, senderUserId: string, 
   if (action.type !== 'move') { return reject('Jugada no válida.'); }
   if (state.kind === 'trivia') { return reject('Elige una respuesta para continuar.'); }
   if (state.turnUserId !== senderUserId) { return reject('Es el turno de otra persona.'); }
+  if (state.kind === 'reversi' || state.kind === 'hex') {
+    if (!Number.isInteger(action.index) || action.index < 0 || action.index >= state.board.length || state.board[action.index] !== null) return reject('Selecciona una casilla libre.');
+    const rival = state.playerIds.find(id => id !== senderUserId)!;
+    if (state.kind === 'reversi') {
+      const flips = reversiFlips(state.board, action.index, senderUserId, rival);
+      if (!flips.length) return reject('Esta jugada debe encerrar al menos una ficha rival.');
+      next.board[action.index] = senderUserId;
+      flips.forEach(index => next.board[index] = senderUserId);
+      const canMove = (id: string, other: string) => next.board.some((cell, index) => cell === null && reversiFlips(next.board, index, id, other).length > 0);
+      if (canMove(rival, senderUserId)) next.turnUserId = rival;
+      else if (canMove(senderUserId, rival)) next.turnUserId = senderUserId;
+      else {
+        const mine = next.board.filter(cell => cell === senderUserId).length;
+        const theirs = next.board.filter(cell => cell === rival).length;
+        const winner = mine === theirs ? null : mine > theirs ? senderUserId : rival;
+        finishGame(next, winner);
+        if (winner) next.scores[winner]++;
+      }
+    } else {
+      next.board[action.index] = senderUserId;
+      if (hexConnected(next.board, senderUserId, senderUserId === next.playerIds[0])) {
+        finishGame(next, senderUserId); next.scores[senderUserId]++;
+      } else next.turnUserId = rival;
+    }
+    return accept();
+  }
   if (state.kind === 'take-away') {
     const remaining = state.board.filter(cell => cell === null).length;
     if (!Number.isInteger(action.index) || action.index < 1 || action.index > 3 || action.index > remaining) return reject('Retira entre una y tres fichas disponibles.');
@@ -158,6 +188,41 @@ function resetRound(state: CallGameState): void {
   state.questionIndex = 0;
   state.answeredPlayerIds = [];
   state.scores = Object.fromEntries(state.playerIds.map((id) => [id, 0]));
+}
+
+export function callGameBoardSize(kind: CallGameKind): number {
+  return ({'tic-tac-toe':9,'connect-four':42,gomoku:64,'take-away':21,trivia:0,reversi:36,hex:25})[kind];
+}
+
+export function reversiFlips(board: Array<string | null>, position: number, player: string, rival: string): number[] {
+  if (position < 0 || position >= 36 || board[position] !== null) return [];
+  const result: number[] = [];
+  for (const [dr, dc] of [[-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]]) {
+    const line: number[] = [];
+    let row = Math.floor(position / 6) + dr, col = position % 6 + dc;
+    while (row >= 0 && row < 6 && col >= 0 && col < 6 && board[row * 6 + col] === rival) {
+      line.push(row * 6 + col); row += dr; col += dc;
+    }
+    if (line.length && row >= 0 && row < 6 && col >= 0 && col < 6 && board[row * 6 + col] === player) result.push(...line);
+  }
+  return result;
+}
+
+function hexConnected(board: Array<string | null>, player: string, vertical: boolean): boolean {
+  const seen = new Set<number>(), pending: number[] = [];
+  for (let i = 0; i < 5; i++) { const cell = vertical ? i : i * 5; if (board[cell] === player) pending.push(cell); }
+  while (pending.length) {
+    const cell = pending.pop()!;
+    if (seen.has(cell)) continue;
+    seen.add(cell);
+    const row = Math.floor(cell / 5), col = cell % 5;
+    if (vertical ? row === 4 : col === 4) return true;
+    for (const [dr, dc] of [[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0]]) {
+      const r = row + dr, c = col + dc, index = r * 5 + c;
+      if (r >= 0 && r < 5 && c >= 0 && c < 5 && board[index] === player && !seen.has(index)) pending.push(index);
+    }
+  }
+  return false;
 }
 
 function finishGame(state: CallGameState, winnerId: string | null): void {

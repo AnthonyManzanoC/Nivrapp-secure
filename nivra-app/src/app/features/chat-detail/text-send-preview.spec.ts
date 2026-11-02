@@ -86,3 +86,13 @@ describe('Nonblocking durable text composer', () => {
     expect(service.api.post).not.toHaveBeenCalled();
   }));
 });
+
+describe('chat menu disposal',()=>{
+ it('waits until the actual menu has left the screen before navigating',async()=>{
+  const page:any=Object.create(ChatDetailPage.prototype);let finish!:(value:boolean)=>void;
+  page.chatOptions={dismiss:()=>new Promise<boolean>(resolve=>finish=resolve)};page.chatMenuOpen=true;
+  page.cancelSelection=jasmine.createSpy();page.router={navigateByUrl:jasmine.createSpy().and.resolveTo(true)};
+  const closing=page.closeConversationView();expect(page.router.navigateByUrl).not.toHaveBeenCalled();
+  finish(true);await closing;expect(page.router.navigateByUrl).toHaveBeenCalledOnceWith('/app/chats');
+ });
+});

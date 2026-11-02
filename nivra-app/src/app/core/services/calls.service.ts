@@ -135,7 +135,7 @@ export class CallsService implements OnDestroy {
   private callActionInFlight = false;
   private recoveryLookupInFlight = '';
   private mediaGeneration = 0;
-  private mediaPreparation: { generation: number; withVideo: boolean; promise: Promise<MediaStream> } | null = null;
+  private mediaPreparation: { generation: number; withVideo: boolean; scope: string; promise: Promise<MediaStream> } | null = null;
   private readonly dismissedCallIds = new Set<string>();
   private connectedUiReconcileTimers: number[] = [];
   private screenShareStream: MediaStream | null = null;
@@ -396,14 +396,19 @@ export class CallsService implements OnDestroy {
       throw error;
     }
     this.callActionInFlight = true;
+    const scope = this.callAccountScope(), generation = this.callGeneration;
+    const isCurrent = () => this.callAccountScope() === scope && this.callGeneration === generation;
+    const assertCurrent = () => { if (!isCurrent()) throw new Error('La cuenta o la llamada cambió durante la preparación.'); };
     let ownedStart: CallSession | null = null;
     try {
       const groupCall = this.isGroupConversationId(conversationId);
       if (!groupCall) {
-        await this.loadIceConfiguration();
+        await this.loadIceConfiguration(true);
+        assertCurrent();
       }
       if (type === 'Video' && !groupCall) {
         await this.prepareMedia(true);
+        assertCurrent();
       }
       const call = await firstValueFrom(this.api.post<CallSession>('/calls/start', {
         type,
@@ -416,32 +421,38 @@ export class CallsService implements OnDestroy {
         mediaEncryption: 'livekit-e2ee-v1',
       }));
       const normalized = this.withGroupRoomMetadata(call, conversationId, groupCall);
+      assertCurrent();
       this.rememberGroupRoom(normalized);
       this.activeCall.set(normalized);
       this.phase.set('calling');
       this.addHistory(normalized);
       if (groupCall) {
         if (!await this.claimCall(normalized)) { throw new Error('La llamada está abierta en otra sesión.'); }
+        assertCurrent();
         ownedStart = normalized;
         await this.connectLiveKitRoom(normalized);
+        assertCurrent();
       } else {
         ownedStart = normalized;
         this.scheduleRingTimeout(normalized);
         this.startRingingTone('calling');
         await this.flushPendingCallSignals();
+        assertCurrent();
       }
       return normalized;
     } catch (error) {
+      if (!isCurrent()) throw error;
       this.cleanup({ remember: false });
+      const cleanupGeneration = this.callGeneration;
       if (ownedStart) {
         await firstValueFrom(this.api.post(`/calls/${encodeURIComponent(ownedStart.id)}/leave`, {
           clientSessionId: this.callSignalSessionId,
         })).catch(() => undefined);
       }
-      this.error.set(error instanceof Error ? error.message : 'No se pudo iniciar la llamada.');
+      if (this.callAccountScope() === scope && this.callGeneration === cleanupGeneration) this.error.set(error instanceof Error ? error.message : 'No se pudo iniciar la llamada.');
       throw error;
     } finally {
-      this.callActionInFlight = false;
+      if (isCurrent()) this.callActionInFlight = false;
     }
   }
 
@@ -844,13 +855,16 @@ export class CallsService implements OnDestroy {
     if (this.reconcileHealthyConnection(call)) return;
     const isCurrent = this.currentCallGuard(call);
     if (this.isGroupCall(call)) {
+      this.networkRecoveryInFlight = true;
       this.setConnectingPhase();
       this.error.set('');
-      await this.connectLiveKitRoom(call, true).catch((error) => {
+      try {
+        await this.connectLiveKitRoom(call, true);
+      } catch (error) {
         if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
         this.phase.set('failed');
         this.setConnectionError(error instanceof Error ? error.message : 'No se pudo reconectar la sala.');
-      });
+      } finally { if (isCurrent()) this.networkRecoveryInFlight = false; }
       return;
     }
 
@@ -1210,7 +1224,8 @@ export class CallsService implements OnDestroy {
       return;
     }
     if (this.activeCall()?.id !== call.id) { return; }
-    this.disconnectLiveKitRoom();
+    await this.disconnectLiveKitRoomForReconnect();
+    if (this.activeCall()?.id !== call.id) return;
     const encryptionContext = await this.groupCrypto.prepare(call, this.currentUserId() ?? '', async (target, type, payload) => {
       const current = this.activeCall();
       if (current?.id !== call.id) throw new Error('La llamada ya se cerró.');
@@ -1310,6 +1325,25 @@ export class CallsService implements OnDestroy {
     if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
       await room.disconnect();
       return;
+    }
+    const screen = preserveMediaIntent ? this.screenShareStream : null;
+    if (screen?.getVideoTracks().some(track => track.readyState === 'live')) {
+      try {
+        for (const track of screen.getTracks().filter(track => track.readyState === 'live')) {
+          await room.localParticipant.publishTrack(track, {
+            source: track.kind === 'video' ? Track.Source.ScreenShare : Track.Source.ScreenShareAudio,
+            name: track.kind === 'video' ? 'Pantalla' : 'Audio de pantalla', simulcast: false,
+          });
+          if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) return;
+        }
+        this.screenSharing.set(true);
+        this.screenShareNotice.set('La pantalla compartida continúa después de reconectar.');
+      } catch {
+        if (this.activeCall()?.id === call.id && this.liveKitRoom === room) {
+          this.screenShareNotice.set('La llamada continúa. Vuelve a compartir la pantalla si no aparece.');
+          await this.stopScreenShare({ restoreCamera: false });
+        }
+      }
     }
     if (call.type !== 'Video') {
       this.cameraOff.set(true);
@@ -1521,6 +1555,35 @@ export class CallsService implements OnDestroy {
     const microphone = publications.find(publication => this.liveKitTrackSource(publication.track, publication) === 'microphone');
     if (camera) this.cameraOff.set(Boolean(camera.isMuted) || camera.track?.mediaStreamTrack?.readyState !== 'live' || !camera.track?.mediaStreamTrack?.enabled);
     if (microphone) this.muted.set(Boolean(microphone.isMuted) || microphone.track?.mediaStreamTrack?.readyState !== 'live' || !microphone.track?.mediaStreamTrack?.enabled);
+  }
+
+  private async disconnectLiveKitRoomForReconnect(): Promise<void> {
+    const room = this.liveKitRoom;
+    this.liveKitRoom = null;
+    this.groupEncryptionContext?.dispose();
+    this.groupEncryptionContext = null;
+    if (!room) return;
+    room.removeAllListeners();
+    const publications = Array.from(room.localParticipant.trackPublications.values());
+    if (!this.screenShareStream && this.screenSharing()) {
+      const tracks = publications.filter(publication => publication.source === Track.Source.ScreenShare || publication.source === Track.Source.ScreenShareAudio)
+        .map(publication => publication.track?.mediaStreamTrack).filter((track): track is MediaStreamTrack => !!track && track.readyState === 'live');
+      if (tracks.some(track => track.kind === 'video')) {
+        const stream = new MediaStream(tracks);
+        this.screenShareStream = stream;
+        stream.getVideoTracks()[0].onended = () => { if (this.screenShareStream === stream) void this.stopScreenShare(); };
+      }
+    }
+    const preserved = new Set(this.screenShareStream?.getTracks() ?? []);
+    // The SDK's default disconnect stops externally supplied projection tracks.
+    // Keep the existing consented capture; replace only SDK-owned mic/camera tracks.
+    try { await room.disconnect(false); }
+    finally {
+      for (const publication of publications) {
+        const track = publication.track?.mediaStreamTrack;
+        if (track && !preserved.has(track)) track.stop();
+      }
+    }
   }
 
   private disconnectLiveKitRoom(): void {
@@ -1909,22 +1972,32 @@ export class CallsService implements OnDestroy {
     const candidate = this.resumableCall();
     if (!candidate || this.activeCall() || this.callActionInFlight) { return; }
     this.callActionInFlight = true;
+    const scope = this.callAccountScope(), generation = this.callGeneration;
+    const isCurrent = () => this.callAccountScope() === scope && this.callGeneration === generation;
     try {
       const resumed = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(candidate.id)}/resume`, {
         clientSessionId: this.callSignalSessionId,
       }));
+      if (!isCurrent()) return;
+      if (resumed.endedAt || resumed.status === 'Ended') {
+        this.resumableCall.set(null);
+        this.error.set('La llamada ya finalizó.');
+        return;
+      }
       this.dismissedCallIds.delete(resumed.id);
       this.resumableCall.set(null);
       this.activeCall.set(resumed);
       this.setConnectingPhase();
       this.error.set('');
       await this.router.navigateByUrl('/app/calls');
+      if (!isCurrent()) return;
       await this.retryConnection();
     } catch (error) {
+      if (!isCurrent()) return;
       this.error.set((error as { status?: number }).status === 409
         ? 'La llamada ya finalizó.' : 'No se pudo trasladar la llamada. Vuelve a intentar.');
     } finally {
-      this.callActionInFlight = false;
+      if (isCurrent()) this.callActionInFlight = false;
     }
   }
 
@@ -2108,22 +2181,23 @@ export class CallsService implements OnDestroy {
 
   private prepareMedia(withVideo: boolean): Promise<MediaStream> {
     const pending = this.mediaPreparation;
-    if (pending?.generation === this.mediaGeneration && (pending.withVideo || !withVideo)) {
+    if (pending?.generation === this.mediaGeneration && pending.scope === this.callAccountScope() && (pending.withVideo || !withVideo)) {
       // Claim updates and an early SDP offer can arrive while permissions are
       // open. They must share one capture instead of reopening the camera.
       return pending.promise;
     }
     this.stopLocalMedia();
     const generation = this.mediaGeneration;
-    const promise = this.capturePreparedMedia(withVideo, generation);
-    this.mediaPreparation = { generation, withVideo, promise };
+    const scope = this.callAccountScope();
+    const promise = this.capturePreparedMedia(withVideo, generation, scope);
+    this.mediaPreparation = { generation, withVideo, scope, promise };
     void promise.finally(() => {
       if (this.mediaPreparation?.promise === promise) this.mediaPreparation = null;
     }).catch(() => undefined);
     return promise;
   }
 
-  private async capturePreparedMedia(withVideo: boolean, generation: number): Promise<MediaStream> {
+  private async capturePreparedMedia(withVideo: boolean, generation: number, scope = this.callAccountScope()): Promise<MediaStream> {
     this.muted.set(false);
     this.cameraOff.set(true);
     if (!navigator.mediaDevices?.getUserMedia) {
@@ -2148,7 +2222,7 @@ export class CallsService implements OnDestroy {
         throw new Error('Permite camara y microfono para la videollamada.');
       }
     }
-    if (generation !== this.mediaGeneration) {
+    if (generation !== this.mediaGeneration || scope !== this.callAccountScope()) {
       stream.getTracks().forEach((track) => track.stop());
       throw new Error('La llamada se cerró antes de activar el micrófono.');
     }
@@ -2177,6 +2251,7 @@ export class CallsService implements OnDestroy {
     const operation = firstValueFrom(this.api.get<WebRtcIceConfigResponse>('/calls/ice-config'))
       .then((response) => {
         if (this.callAccountScope() !== scope || this.iceConfigPromise !== operation) return;
+        if (typeof response?.relayOnly !== 'boolean') throw new Error('No se pudo verificar la conexión de la llamada.');
         const servers = (response?.iceServers ?? [])
           .map((server): RTCIceServer | null => {
             const urls = (Array.isArray(server.urls) ? server.urls : [server.urls])
@@ -2192,19 +2267,19 @@ export class CallsService implements OnDestroy {
             };
           })
           .filter((server): server is RTCIceServer => Boolean(server));
+        const hasRelay = servers.some(server => server.username && server.credential &&
+          (Array.isArray(server.urls) ? server.urls : [server.urls]).some(url => /^turns?:/i.test(url)));
+        if (response.relayOnly && !hasRelay) throw new Error('La conexión privada de llamadas todavía no está disponible.');
         this.iceServers = servers.length ? servers : DEFAULT_ICE_SERVERS;
-        const hasRelay = this.iceServers.some((server) =>
-          (Array.isArray(server.urls) ? server.urls : [server.urls]).some((url) => /^turns?:/i.test(url)));
-        this.iceTransportPolicy = response?.relayOnly && hasRelay ? 'relay' : 'all';
+        this.iceTransportPolicy = response.relayOnly ? 'relay' : 'all';
         this.iceConfigLoadedAt = Date.now();
       })
-      .catch(() => {
+      .catch((error) => {
         if (this.callAccountScope() !== scope || this.iceConfigPromise !== operation) return;
-        this.iceServers = DEFAULT_ICE_SERVERS;
-        this.iceTransportPolicy = 'all';
-        this.iceConfigLoadedAt = Date.now();
+        this.iceConfigLoadedAt = 0;
+        throw new Error(error?.error?.message || 'No se pudo verificar la conexión de la llamada. Comprueba tu conexión y reintenta.');
       }).finally(() => {
-        if (this.iceConfigPromise === operation) this.iceConfigInFlight = false;
+        if (this.iceConfigPromise === operation) { this.iceConfigInFlight = false; if (!this.iceConfigLoadedAt) this.iceConfigPromise = null; }
       });
     this.iceConfigPromise = operation;
     return this.iceConfigPromise;

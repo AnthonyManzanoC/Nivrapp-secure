@@ -60,10 +60,14 @@
       }
     }
 
+    @if (!calls.activeCall() && calls.resumableCall() && !onCallsPage()) {
+      <aside class="ongoing-call" aria-label="Llamada todavía activa"><button type="button" class="ongoing-call-return" (click)="openCalls()"><ion-icon name="call-outline"></ion-icon><span><strong>Tu llamada sigue activa</strong><small>Volver a unirme</small></span></button></aside>
+    }
     @if (calls.phase() === 'ringing') {
       @if (calls.activeCall(); as call) {
         <section class="incoming-call-overlay" aria-live="assertive">
-          <div class="incoming-call-card">
+          <div class="incoming-call-card" [class.video-incoming]="call.type === 'Video'">
+            <span class="incoming-brand">NIVRA · CONEXIÓN PRIVADA</span>
             <span class="incoming-kind">
               <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
               {{ call.type === 'Video' ? ('CALLS.INCOMING_VIDEO' | translate:'Videollamada entrante') : ('CALLS.INCOMING_AUDIO' | translate:'Llamada entrante') }}

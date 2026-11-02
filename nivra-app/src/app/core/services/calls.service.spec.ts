@@ -35,7 +35,7 @@ describe('call session isolation', () => {
   beforeEach(() => {
     api = {
       post: jasmine.createSpy().and.returnValue(of(invitation)),
-      get: jasmine.createSpy().and.returnValue(of(invitation)),
+      get: jasmine.createSpy().and.callFake((path: string) => of(path === '/calls/ice-config' ? { iceServers: [], relayOnly: false } : invitation)),
       patch: jasmine.createSpy().and.returnValue(of({ ...invitation, type: 'Video', status: 'Active' })),
     };
     TestBed.configureTestingModule({ providers: [
@@ -64,6 +64,35 @@ describe('call session isolation', () => {
   });
 
   afterEach(() => service.ngOnDestroy());
+
+  it('preserves an existing screen-capture grant while replacing a disconnected room', async () => {
+    const call={...invitation,isGroupRoom:true,status:'Active'};
+    service.activeCall.set(call); service.phase.set('connected');
+    const screen=document.createElement('canvas').captureStream().getVideoTracks()[0];
+    const camera=document.createElement('canvas').captureStream().getVideoTracks()[0];
+    const capture=new MediaStream([screen]);
+    (service as any).screenShareStream=capture;service.screenSharing.set(true);
+    const old={removeAllListeners:jasmine.createSpy(),disconnect:jasmine.createSpy().and.resolveTo(),localParticipant:{trackPublications:new Map([
+      ['screen',{source:'screen_share',track:{mediaStreamTrack:screen}}],['camera',{source:'camera',track:{mediaStreamTrack:camera}}]])}};
+    (service as any).liveKitRoom=old;
+    await (service as any).disconnectLiveKitRoomForReconnect();
+    expect(old.disconnect).toHaveBeenCalledOnceWith(false);expect(screen.readyState).toBe('live');expect(camera.readyState).toBe('ended');
+    const publish=jasmine.createSpy().and.resolveTo();
+    const next={localParticipant:{setMicrophoneEnabled:jasmine.createSpy().and.resolveTo(),publishTrack:publish}};
+    (service as any).liveKitRoom=next;
+    await (service as any).publishLiveKitLocalMedia(next,call,true);
+    expect(publish.calls.first().args[0]).toBe(screen);expect(service.screenSharing()).toBeTrue();
+    expect(service.activeCall()?.id).toBe(call.id);(service as any).liveKitRoom=null;
+  });
+
+  it('does not adopt a delayed resume response after switching accounts', async () => {
+    TestBed.flushEffects();const reply=new Subject<CallSession>();api.post.and.returnValue(reply);
+    service.resumableCall.set(invitation);const pending=service.resumeHere();
+    (service as any).auth.session.set({user:{id:'other'},device:{id:'other-phone'}});TestBed.flushEffects();
+    const own={...invitation,id:'other-active'};service.activeCall.set(own);(service as any).callActionInFlight=true;
+    reply.next(invitation);reply.complete();await pending;
+    expect(service.activeCall()?.id).toBe(own.id);expect((service as any).callActionInFlight).toBeTrue();
+  });
 
   it('shows transport failure instead of the old server Active status while retry is available', () => {
     const call = { ...invitation, status: 'Active' };
@@ -231,9 +260,47 @@ describe('call session isolation', () => {
     expect((service as any).loadIceConfiguration(true)).toBe(first);
     expect((service as any).loadIceConfiguration(true)).toBe(first);
     expect(api.get).toHaveBeenCalledOnceWith('/calls/ice-config');
-    response.next({ iceServers: [{ urls: 'turn:relay.example.test', username: 'fresh', credential: 'key' }] }); response.complete();
+    response.next({ iceServers: [{ urls: 'turn:relay.example.test', username: 'fresh', credential: 'key' }], relayOnly: false }); response.complete();
     await first;
     expect((service as any).iceServers[0].username).toBe('fresh');
+  });
+
+  it('keeps relay-only privacy on a configuration failure and allows a later authenticated retry', async () => {
+    api.get.and.returnValue(of({ relayOnly: true, iceServers: [{ urls: 'turns:relay.example.test:443', username: 'temporary', credential: 'secret' }] }));
+    await (service as any).loadIceConfiguration();
+    api.get.and.returnValue(throwError(() => new Error('offline')));
+    await expectAsync((service as any).loadIceConfiguration(true)).toBeRejected();
+    expect((service as any).iceTransportPolicy).toBe('relay');
+    expect((service as any).iceServers[0].username).toBe('temporary');
+    api.get.and.returnValue(of({ relayOnly: true, iceServers: [{ urls: 'turns:relay.example.test:443', username: 'renewed', credential: 'renewed-secret' }] }));
+    await (service as any).loadIceConfiguration();
+    expect((service as any).iceServers[0].username).toBe('renewed');
+  });
+
+  it('rejects relay-only configuration without an authenticated relay instead of exposing a direct connection', async () => {
+    api.get.and.returnValue(of({ relayOnly: true, iceServers: [{ urls: 'stun:stun.example.test' }] }));
+    await expectAsync((service as any).loadIceConfiguration()).toBeRejected();
+    expect((service as any).iceConfigPromise).toBeNull();
+  });
+
+  it('does not start an A call with B credentials when connection preparation resolves after switching accounts', async () => {
+    TestBed.flushEffects();
+    let finish!: () => void;
+    spyOn<any>(service, 'loadIceConfiguration').and.returnValue(new Promise<void>(resolve => { finish = resolve; }));
+    const pending = service.start('Voice', null, ['peer']);
+    (service as any).auth.session.set({ user: { id: 'B' }, device: { id: 'B-phone' } }); TestBed.flushEffects();
+    finish(); await expectAsync(pending).toBeRejectedWithError(/cuenta/);
+    expect(api.post).not.toHaveBeenCalled();
+  });
+
+  it('does not erase a B call or its action lock when an A start response arrives late', async () => {
+    TestBed.flushEffects(); spyOn<any>(service, 'loadIceConfiguration').and.resolveTo();
+    const response = new Subject<CallSession>(); api.post.and.returnValue(response);
+    const pending = service.start('Voice', null, ['peer']); await Promise.resolve();
+    (service as any).auth.session.set({ user: { id: 'B' }, device: { id: 'B-phone' } }); TestBed.flushEffects();
+    const current = { ...invitation, id: 'B-active' }; service.activeCall.set(current); service.phase.set('connected'); (service as any).callActionInFlight = true;
+    response.next(invitation); response.complete(); await expectAsync(pending).toBeRejectedWithError(/cuenta/);
+    expect(service.activeCall()).toBe(current); expect(service.phase()).toBe('connected'); expect((service as any).callActionInFlight).toBeTrue();
   });
 
   it('does not install ICE credentials returned for the previous account', async () => {

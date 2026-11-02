@@ -1,4 +1,4 @@
-import { CallGameAction, CallGameKind, CallGameState, TRIVIA_QUESTION_COUNT, applyCallGameAction, createCallGame } from './call-game-engine';
+import { CallGameAction, CallGameKind, CallGameState, TRIVIA_QUESTION_COUNT, applyCallGameAction, createCallGame, reversiFlips } from './call-game-engine';
 
 type Proposal = { type: 'join' | 'start' | 'rematch' | 'leave' } | { type: 'move'; index: number } | { type: 'answer'; optionIndex: number };
 const action = (state: CallGameState, proposal: Proposal): CallGameAction => ({ ...proposal, gameId: state.id, expectedRevision: state.revision });
@@ -158,4 +158,52 @@ describe('additional multiplayer boards', () => {
     state = accepted(state,'host',{type:'rematch'});
     expect(state.board.every(cell => cell === null)).toBeTrue();
   });
+});
+
+describe('Reversi and Hex in a live call', () => {
+ it('initializes a real Reversi board and flips only enclosed pieces without mutating the previous state', () => {
+  const state=playing('reversi');expect(state.board.length).toBe(36);expect(state.board.filter(Boolean).length).toBe(4);
+  expect(reversiFlips(state.board,9,'host','guest')).toEqual([15]);
+  const next=accepted(state,'host',{type:'move',index:9});
+  expect(next.board[15]).toBe('host');expect(state.board[15]).toBe('guest');expect(next.turnUserId).toBe('guest');
+  expect(applyCallGameAction(state,'host',action(state,{type:'move',index:0})).accepted).toBeFalse();
+ });
+ it('never wraps a Reversi capture around a row edge', () => {
+  const board=Array<string|null>(36).fill(null);board[6]='guest';board[7]='host';
+  expect(reversiFlips(board,5,'host','guest')).toEqual([]);
+ });
+ it('finishes a complete legal Reversi round and awards the majority, including forced passes', () => {
+  let state=playing('reversi');let moves=0;
+  while(state.status==='playing' && moves++<65){
+   const player=state.turnUserId!,rival=state.playerIds.find(id=>id!==player)!;
+   const index=state.board.findIndex((cell,i)=>cell===null&&reversiFlips(state.board,i,player,rival).length>0);
+   expect(index).toBeGreaterThanOrEqual(0);if(index<0)break;
+   state=accepted(state,player,{type:'move',index});
+  }
+  expect(state.status).toBe('finished');expect(state.turnUserId).toBeNull();
+  const a=state.board.filter(v=>v==='host').length,b=state.board.filter(v=>v==='guest').length;
+  expect(state.winnerId).toBe(a===b?null:a>b?'host':'guest');
+ });
+ it('connects top to bottom for the first Hex player',()=>{
+  const state=moves(playing('hex'),[0,1,5,2,10,3,15,4,20]);
+  expect(state.status).toBe('finished');expect(state.winnerId).toBe('host');
+ });
+ it('connects left to right for the second Hex player',()=>{
+  const state=moves(playing('hex'),[0,5,10,6,20,7,12,8,24,9]);
+  expect(state.status).toBe('finished');expect(state.winnerId).toBe('guest');
+ });
+ it('rejects row wrapping and a nonadjacent diagonal in Hex',()=>{
+  for(const indices of [[4,5,10,15],[0,6,12,18]]){
+   const state=playing('hex');for(const i of indices)state.board[i]='host';
+   const next=accepted(state,'host',{type:'move',index:indices[0]===4?20:24});
+   expect(next.status).toBe('playing');expect(next.winnerId).toBeNull();
+  }
+ });
+ it('blocks spectators, stale moves, occupied cells and invalid coordinates in both games',()=>{
+  for(const kind of ['reversi','hex'] as const){const state=playing(kind);
+   expect(applyCallGameAction(state,'outsider',action(state,{type:'move',index:0})).accepted).toBeFalse();
+   for(const index of [-1,999,0.5,NaN])expect(applyCallGameAction(state,'host',action(state,{type:'move',index})).accepted).toBeFalse();
+   expect(applyCallGameAction(state,'host',{type:'move',gameId:state.id,expectedRevision:state.revision-1,index:9}).accepted).toBeFalse();
+  }
+ });
 });

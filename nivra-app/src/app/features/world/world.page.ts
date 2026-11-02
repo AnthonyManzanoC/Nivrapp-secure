@@ -1,9 +1,10 @@
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, OnInit, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, ToastController } from '@ionic/angular/standalone';
+import { IonButton, IonContent, IonIcon, IonModal, IonSpinner, ToastController } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
+  peopleOutline, chevronForwardOutline,
   addOutline,
   barChartOutline,
   cameraOutline,
@@ -39,7 +40,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { TranslateService } from '../../core/services/translate.service';
 import { SocialService } from '../../core/services/social.service';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { StoryActivityComponent } from '../story-viewer/story-activity.component';
 import { GroupHubComponent } from './group-hub.component';
@@ -63,7 +64,7 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryActivityComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea],
+  imports: [RouterLink, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryActivityComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonModal, IonSpinner],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })
@@ -120,7 +121,7 @@ export class WorldPage implements OnInit, OnDestroy {
         this.runningActions.clear(); this.storyComposerOpen = false; this.stopStoryProgress();
       });
     });
-    addIcons({
+    addIcons({peopleOutline, chevronForwardOutline,
       addOutline,
       barChartOutline,
       cameraOutline,

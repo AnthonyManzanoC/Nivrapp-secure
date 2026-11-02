@@ -1,7 +1,7 @@
 import { Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { CallSession } from '../models/nivra.models';
-import { CALL_GAME_KINDS, applyCallGameAction, createCallGame, type CallGameAction, type CallGameKind, type CallGameState } from '../games/call-game-engine';
+import { CALL_GAME_KINDS, callGameBoardSize, applyCallGameAction, createCallGame, type CallGameAction, type CallGameKind, type CallGameState } from '../games/call-game-engine';
 import { CallGameTransportService, type CallGamePacket } from './call-game-transport.service';
 
 const KINDS: readonly string[] = CALL_GAME_KINDS;
@@ -201,8 +201,8 @@ export class CallGameSessionService implements OnDestroy {
       this.users.includes(s.hostUserId) && Array.isArray(s.playerIds) && s.playerIds.length <= 12 &&
       s.playerIds.every(id => this.users.includes(id)) && new Set(s.playerIds).size === s.playerIds.length &&
       ['lobby', 'playing', 'finished'].includes(s.status) && Number.isSafeInteger(s.revision) && s.revision >= 0 &&
-      Number.isSafeInteger(s.round) && Array.isArray(s.board) && s.board.length <= 64 &&
-      s.board.every(cell => cell === null || (typeof cell === 'string' && cell.length <= 80)) &&
+      Number.isSafeInteger(s.round) && Array.isArray(s.board) && s.board.length === callGameBoardSize(s.kind) &&
+      s.board.every(cell => cell === null || s.playerIds.includes(cell)) &&
       (s.turnUserId === null || s.playerIds.includes(s.turnUserId)) &&
       (s.winnerId === null || s.playerIds.includes(s.winnerId)) && typeof s.draw === 'boolean' &&
       s.scores !== null && typeof s.scores === 'object' && !Array.isArray(s.scores) &&

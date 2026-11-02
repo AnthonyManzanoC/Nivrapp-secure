@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.Intent;
 import android.media.projection.MediaProjectionManager;
+import android.media.projection.MediaProjectionConfig;
+import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
 import androidx.activity.result.ActivityResult;
@@ -47,7 +49,12 @@ public final class NivraScreenSharePlugin extends Plugin {
             activeSessionId = sessionId;
             pendingStart = call;
             try {
-                startActivityForResult(call, manager.createScreenCaptureIntent(), "projectionConsent");
+                // This control shares the whole screen, including when the user switches apps.
+                // Android still asks for consent; a grant is used for exactly one projection.
+                Intent consent = Build.VERSION.SDK_INT >= 34
+                    ? manager.createScreenCaptureIntent(MediaProjectionConfig.createConfigForDefaultDisplay())
+                    : manager.createScreenCaptureIntent();
+                startActivityForResult(call, consent, "projectionConsent");
             } catch (RuntimeException ignored) {
                 endSession(sessionId, "unavailable");
             }
