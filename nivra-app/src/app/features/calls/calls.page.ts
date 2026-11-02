@@ -207,7 +207,7 @@ export class CallsPage {
         this.callBusyId = '';
         this.closeInviteModal();
         this.videoSwapped = false;
-        this.pinnedParticipantId = null;
+        this.pinnedParticipantId = this.calls.activeCall()?.type === 'Video' ? this.calls.activeScreenShareStreamId() : null;
         this.callQuery = '';
         this.historyFilter.set('all');
         if (this.exitModalOpen && callId !== this.exitCallId) this.closeExitModal();
