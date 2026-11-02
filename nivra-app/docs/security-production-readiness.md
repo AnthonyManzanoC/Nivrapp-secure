@@ -1,6 +1,6 @@
 # Nivra: seguridad y preparación operativa
 
-Revisión: 2026-11-01. Base publicada: 8.1.0. Candidata de experiencia: 8.2.0.
+Revisión: 2026-11-02. Base publicada: 8.1.0. Candidata de experiencia: 8.2.0.
 
 ## Mensajes e historial
 
@@ -27,7 +27,7 @@ Historias, ajustes y señalización de llamadas conservan sus formatos propios. 
 | Llamada entrante | Pantalla nativa sobre bloqueo, diseños de voz/video, caducidad y acciones firmadas por dispositivo | Android controla permisos de notificación y pantalla completa; validar cada fabricante. |
 | Push | FCM nativo independiente de la WebView, renovación de token, privacidad y alcance por cuenta/dispositivo | Una app forzada a detenerse, permisos denegados, falta de red o restricciones del sistema pueden impedir o retrasar la entrega. |
 
-El usuario confirmó que no dispone de TURN. La API primaria informaba `webrtcRelayConfigured: false` en la revisión de 8.1.0. Los reintentos no sustituyen ese servicio en redes restrictivas.
+El usuario confirmó que no dispone de TURN y decidió dejar su activación para una etapa futura, conservando su código y configuración. La API primaria informaba `webrtcRelayConfigured: false` en la revisión de 8.1.0. Los reintentos no sustituyen ese servicio en redes restrictivas.
 
 ## Protecciones y metadatos
 
@@ -38,6 +38,14 @@ El usuario confirmó que no dispone de TURN. La API primaria informaba `webrtcRe
 - El correo de recuperación es un metadato del servicio. Los enlaces son de un solo uso, se guardan como hash, caducan y revocan sesiones cuando corresponde.
 - El servicio y los proveedores conocen metadatos necesarios: destinos, tiempos aproximados, tamaños y tokens push. Las historias de Mundo son públicas para su audiencia.
 - Las credenciales de infraestructura deben permanecer en el gestor de secretos del proveedor y fuera de repositorios e instaladores.
+
+## Autenticación, historias y experiencia
+
+Las rutas heredadas `/auth/phone/start` y `/auth/phone/verify` solo se mapean en Development. Una prueba HTTP real comprueba su ausencia fuera de desarrollo. Firebase sigue implementado; el acceso por teléfono permanece en pausa por decisión del propietario y no se elimina. El radar se oculta de la interfaz mientras esté en pausa.
+
+Contactos reúne contactos, notas propias y solicitudes recibidas, enviadas e historial. Mundo conserva historias y grupos con búsqueda local. Los doce fondos de texto se transmiten como identificadores dentro del contenido protegido; el visor solo acepta una paleta interna de colores. No interpreta estilos o direcciones arbitrarias del mensaje. Los resultados de acción caducan y sus temporizadores no bloquean la inicialización de pantalla; las alertas de seguridad y estados activos conservan su ciclo propio.
+
+Los ocho juegos validan movimientos y revisiones. Una invitación desaparece a los 6,5 segundos y permite un único recordatorio a los 45 segundos si la misma sala sigue disponible; un cierre explícito anula el recordatorio. No cambia permisos de micrófono ni cámara.
 
 ## Evidencia y pendientes
 

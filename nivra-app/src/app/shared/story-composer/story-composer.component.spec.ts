@@ -303,7 +303,7 @@ describe('Story composer draft, privacy and capture lifecycle', () => {
     const published = spyOn(composer.published, 'emit');
     await composer.publish();
     expect(social.publishStory).toHaveBeenCalledOnceWith({
-      text: 'Mi historia', file: null, visibility: 'MutualContacts', durationSeconds: 3600,
+      text: 'Mi historia', file: null, textTheme: 'nivra', visibility: 'MutualContacts', durationSeconds: 3600,
       viewOnce: true, allowReposts: false, targetType: 'contacts', targetId: null, allowedUserIds: [],
     });
     expect(published).toHaveBeenCalledWith('Historia publicada.');

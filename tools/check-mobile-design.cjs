@@ -170,7 +170,7 @@ async function main() {
     await waitFor("!!document.querySelector('.game-invitation')");
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
     await capture('desktop-game-invitation');
-    await waitFor("!document.querySelector('preview-invitation p[role=status]')");
+    await waitFor("!document.querySelector('preview-invitation p[role=status]')?.textContent.trim()");
     assert.deepEqual(errors,[],'preview must not throw runtime errors');
     console.log('PASS mobile search, Contacts, self notes entry and desktop layout; screenshots saved.');
   } finally { socket?.close(); chrome.kill(); server.close(); }
