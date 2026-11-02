@@ -530,7 +530,7 @@ export class CallsService implements OnDestroy {
 
   async decline(replyId?: string): Promise<void> {
     const call = this.activeCall();
-    if (!call || this.callActionInFlight) {
+    if (!call || this.phase() !== 'ringing' || this.callActionInFlight) {
       return;
     }
     const reply = replyId ? this.quickReplies.find(item => item.id === replyId) : null;
@@ -2267,7 +2267,8 @@ export class CallsService implements OnDestroy {
     if (!session) return;
     const call = await firstValueFrom(this.api.get<CallSession>(`/calls/${encodeURIComponent(callId)}`)).catch(() => null);
     if (this.callAccountScope() !== scope || this.activeCall()) return;
-    if (!call || call.endedAt || call.status === 'Ended') {
+    if (!call || call.initiatorUserId === session.user.id || !call.participantUserIds?.includes(session.user.id) || call.endedAt ||
+      (!this.isGroupCall(call) && call.status !== 'Ringing') || ['Ended','Rejected','Missed','Busy','Failed','Cancelled','Canceled'].includes(call.status)) {
       return;
     }
     const normalized = this.withGroupRoomMetadata(call, call.conversationId ?? call.groupId ?? null, this.isGroupCall(call));

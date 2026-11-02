@@ -65,6 +65,19 @@ describe('call session isolation', () => {
 
   afterEach(() => service.ngOnDestroy());
 
+  it('ignores a stale reject tap after the call was answered', async () => {
+    service.activeCall.set({...invitation,status:'Active'}); service.phase.set('connected');
+    const claim=spyOn<any>(service,'claimCall').and.resolveTo(true);
+    await service.decline();
+    expect(claim).not.toHaveBeenCalled(); expect(service.phase()).toBe('connected'); expect(service.activeCall()).not.toBeNull();
+  });
+
+  it('does not adopt an already answered direct call from a stale reject notification', async () => {
+    api.get.and.returnValue(of({...invitation,status:'Active'}));
+    await (service as any).rejectIncomingCallById(invitation.id);
+    expect(service.activeCall()).toBeNull(); expect(api.post).not.toHaveBeenCalled();
+  });
+
   it('saves an allowlisted quick reply in the encrypted text queue before rejecting', async () => {
     service.activeCall.set({...invitation,conversationId:'chat'}); service.phase.set('ringing');
     (TestBed.inject(ChatService).conversations as any).set([{id:'chat',type:'Direct',participants:[{userId:'me'},{userId:'peer'}]}]);
