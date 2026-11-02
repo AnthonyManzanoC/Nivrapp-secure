@@ -190,6 +190,6 @@ export class ShellPage implements AfterViewInit, OnDestroy {
   }
 
   private isMobileImmersiveRoute(url: string): boolean {
-    return /^\/app\/chats\/[^/?#]+/.test(url) || /^\/app\/share(?:[/?#]|$)/.test(url);
+    return /^\/app\/contacts(?:[/?#]|$)/.test(url) || /^\/app\/chats\/[^/?#]+/.test(url) || /^\/app\/share(?:[/?#]|$)/.test(url);
   }
 }

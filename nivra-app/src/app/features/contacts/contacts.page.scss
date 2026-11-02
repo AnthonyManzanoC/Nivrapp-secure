@@ -1,6 +1,6 @@
 :host { display:block; height:100%; }
 .contacts-page { --background:var(--nivra-panel-solid); }
-.contacts-surface { max-width:1120px; margin:auto; padding:24px 32px 40px; color:var(--nivra-ink); }
+.contacts-surface { max-width:1120px; margin:auto; padding:24px 32px 40px; color:var(--nivra-text); }
 .contacts-head { display:flex; align-items:center; gap:16px; padding:12px 0 24px; }
 .contacts-head div { flex:1; min-width:0; }
 h1 { margin:0; font-size:30px; letter-spacing:-1px; }
@@ -71,3 +71,6 @@ footer { display:flex; align-items:center; justify-content:center; gap:8px; font
  .radar-layout { grid-template-columns:1fr; }
 }
 @media(prefers-reduced-motion:reduce) { .contact-shortcuts button { transition:none; } }
+
+.search-back { display:grid; place-items:center; background:none; border:0; color:inherit; width:40px; height:44px; flex:0 0 40px; padding:0; }
+@media(max-width:768px){.searching .contacts-head,.searching .requests-link{display:none;}.searching .people-panel{margin-top:8px;}}

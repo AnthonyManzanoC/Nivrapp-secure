@@ -7,6 +7,8 @@ import { IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent, prov
 import { addIcons } from 'ionicons';
 import { arrowBackOutline, callOutline, videocamOutline } from 'ionicons/icons';
 import { ShellPage } from '../src/app/features/shell/shell.page';
+import { ContactsPage } from '../src/app/features/contacts/contacts.page';
+import { ContactSyncService } from '../src/app/core/services/contact-sync.service';
 import { ChatsPage } from '../src/app/features/chats/chats.page';
 import { AuthService } from '../src/app/core/services/auth.service';
 import { ChatService } from '../src/app/core/services/chat.service';
@@ -90,11 +92,15 @@ class PreviewRoot {
 bootstrapApplication(PreviewRoot, { providers: [
   provideIonicAngular(), provideRouter([{ path: 'app', component: ShellPage, children: [
     { path: 'chats', component: ChatsPage, children: [{ path: ':id', component: PreviewConversation }] },
+    { path: 'contacts', component: ContactsPage },
     { path: '**', component: PreviewEmpty },
   ] }, { path: '**', redirectTo: 'app/chats' }]),
   { provide: AuthService, useValue: { session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
   { provide: ChatService, useValue: chat },
-  { provide: SocialService, useValue: { stories: signal([]), worldStories: signal([]), activeStory: signal(null), storyViewerOwner: signal(null), load: async () => {}, activeStoriesForGroup: () => [], activeStoriesForOwner: () => [] } },
+  { provide: SocialService, useValue: { contacts:signal(items().filter(item=>item.type==='Direct').map(item=>({userId:item.participants[1].userId,alias:item.id,displayName:item.name,isFavorite:item.id==='sofia',isMutualContact:true}))),
+    contactsLoading:signal(false),requestsLoading:signal(false),incomingRequests:signal([]),people:signal([]),searching:signal(false),connectionActions:signal([]),radarMatches:signal([]),radarLoading:signal(false),loadConnections:async()=>{},search:async()=>[],
+    stories: signal([]), worldStories: signal([]), activeStory: signal(null), storyViewerOwner: signal(null), load: async () => {}, activeStoriesForGroup: () => [], activeStoriesForOwner: () => [] } },
+  { provide: ContactSyncService,useValue:{syncCachedContactsInBackground:async()=>{},radarHasNewContact:()=>false,lastDeviceContactCount:()=>0,syncing:()=>false}},
   { provide: CallsService, useValue: { activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'), audioOutput: { playbackBlocked: signal(false) } } },
   { provide: SignalrService, useValue: { connected: signal(true) } },
   { provide: UnreadTabService, useValue: { unreadChats: signal(2) } },

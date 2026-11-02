@@ -48,10 +48,10 @@
 
       <article class="panel span-7 people-panel" [class.has-query]="query.trim().length >= 2">
         <h2>{{ 'WORLD.SEARCH_PEOPLE' | translate:'Buscar personas' }}</h2>
-        <label class="search-line">
-          <ion-icon name="search-outline"></ion-icon>
+        <div class="search-line" role="search">
+          @if(searchOpen){<button class="search-back" type="button" (click)="closeSearch()" aria-label="Cerrar búsqueda"><ion-icon name="arrow-back-outline"></ion-icon></button>}@else{<ion-icon name="search-outline"></ion-icon>}
           <ion-input #contactSearch mode="ios" [(ngModel)]="query" (ionFocus)="searchOpen=true" (ionInput)="searchChanged()" [placeholder]="'WORLD.ALIAS_NAME_ID' | translate:'Alias, nombre o ID Nivra'"></ion-input>
-        </label>
+        </div>
         <p class="discovery-hint">{{ 'WORLD.EXACT_ID_HINT' | translate:'Las cuentas en modo fantasma sólo aparecen con su alias o ID exactos, o al abrir su QR compartido.' }}</p>
         @if (social.searching()) { <p class="search-status" role="status"><ion-spinner name="crescent"></ion-spinner>{{ 'WORLD.SEARCHING' | translate:'Buscando…' }}</p> }
         <div class="stack">

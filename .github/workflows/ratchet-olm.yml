@@ -73,6 +73,22 @@ jobs:
           node node_modules/typescript/bin/tsc -p tsconfig.app.json --noEmit --pretty false
           node node_modules/@angular/cli/bin/ng.js test --watch=false --browsers=ChromeHeadlessNoGpu --progress=false
           npm run build
+      - name: Check mobile and desktop design with synthetic contacts
+        working-directory: nivra-app
+        env:
+          NG_BUILD_MAX_WORKERS: '2'
+          NG_BUILD_PARALLEL_TS: 'false'
+          CHROME_BIN: /usr/bin/google-chrome
+        run: |
+          node node_modules/@angular/cli/bin/ng.js build --configuration development,design-preview --output-path ../artifacts/design-preview --progress=false
+          node ../tools/check-mobile-design.cjs ../artifacts/design-preview ../artifacts/design-screenshots
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: mobile-design-review
+          path: artifacts/design-screenshots/
+          if-no-files-found: warn
+          retention-days: 7
   desktop:
     needs: bridge
     strategy:

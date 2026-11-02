@@ -33,7 +33,7 @@
  .search-active .side-head,.search-active .story-strip,.search-active .story-publish-notice { display:none; }
  .search-active .search-panel { padding-top:calc(12px + var(--ion-safe-area-top,env(safe-area-inset-top,0px))); }
  .search-active .search-box { border-radius:30px; box-shadow:none; border-color:transparent; background:var(--nivra-hover,#f3f5f4); padding-inline:6px 14px; }
- .search-active .search-back { display:grid; place-items:center; flex:0 0 40px; width:40px; height:44px; color:var(--nivra-ink); border:0; background:none; }
+ .search-active .search-back { display:grid; place-items:center; flex:0 0 40px; width:40px; height:44px; color:var(--nivra-text); border:0; background:none; }
  .search-active .search-back ion-icon { font-size:24px; }
  .search-active .search-box>ion-icon,.search-active .search-cancel { display:none; }
  .search-active .search-scopes { padding-top:14px; overflow:auto; scrollbar-width:none; flex-wrap:nowrap; }
