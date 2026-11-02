@@ -202,47 +202,54 @@ public static partial class EndpointExtensions
             return Results.Ok(new AuthResponse(ToUserResponse(user), ToDeviceResponse(device), tokens));
         });
 
-        group.MapPost("/phone/start", (PhoneOtpStartRequest request, PhoneOtpService otpService) =>
+        // The legacy local OTP returns development hints; it must never be reachable
+        // in Production, Staging or a misconfigured public deployment. Published clients
+        // authenticate phone ownership through the verified Firebase-token route below.
+        if (app.Environment.IsDevelopment())
         {
-            var phone = NormalizePhone(request.Phone);
-            if (phone is null)
+            group.MapPost("/phone/start", (PhoneOtpStartRequest request, PhoneOtpService otpService) =>
             {
-                return Error("invalid_phone", "Envia un numero de telefono valido.");
-            }
-
-            var challenge = otpService.Start(phone);
-            return Results.Accepted(value: new PhoneOtpStartResponse(challenge.ExpiresAt, challenge.DeliveryHint));
-        });
-
-        group.MapPost("/phone/verify", async Task<IResult> (PhoneOtpVerifyRequest request, NivraDbContext db, PhoneOtpService otpService, PasswordHasher hasher, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
-        {
-            var phone = NormalizePhone(request.Phone);
-            if (phone is null || string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.DeviceName))
+                var phone = NormalizePhone(request.Phone);
+                if (phone is null)
+                {
+                    return Error("invalid_phone", "Envia un numero de telefono valido.");
+                }
+    
+                var challenge = otpService.Start(phone);
+                return Results.Accepted(value: new PhoneOtpStartResponse(challenge.ExpiresAt, challenge.DeliveryHint));
+            });
+    
+            group.MapPost("/phone/verify", async Task<IResult> (PhoneOtpVerifyRequest request, NivraDbContext db, PhoneOtpService otpService, PasswordHasher hasher, TokenService tokenService, PushNotificationService pushNotifications, TimeProvider timeProvider, HttpContext http, CancellationToken cancellationToken) =>
             {
-                return Error("invalid_phone_login", "Telefono, codigo y dispositivo son obligatorios.");
-            }
-
-            if (!otpService.TryVerify(phone, request.Code))
-            {
-                return Error("invalid_otp", "Codigo invalido o vencido.", StatusCodes.Status401Unauthorized);
-            }
-
-            return await CompleteVerifiedPhoneLoginAsync(
-                phone,
-                request.DeviceName,
-                request.KeyBundle,
-                request.HardwareId,
-                "auth.phone_login",
-                "OTP verified",
-                db,
-                otpService,
-                hasher,
-                tokenService,
-                pushNotifications,
-                timeProvider,
-                http,
-                cancellationToken);
-        });
+                var phone = NormalizePhone(request.Phone);
+                if (phone is null || string.IsNullOrWhiteSpace(request.Code) || string.IsNullOrWhiteSpace(request.DeviceName))
+                {
+                    return Error("invalid_phone_login", "Telefono, codigo y dispositivo son obligatorios.");
+                }
+    
+                if (!otpService.TryVerify(phone, request.Code))
+                {
+                    return Error("invalid_otp", "Codigo invalido o vencido.", StatusCodes.Status401Unauthorized);
+                }
+    
+                return await CompleteVerifiedPhoneLoginAsync(
+                    phone,
+                    request.DeviceName,
+                    request.KeyBundle,
+                    request.HardwareId,
+                    "auth.phone_login",
+                    "OTP verified",
+                    db,
+                    otpService,
+                    hasher,
+                    tokenService,
+                    pushNotifications,
+                    timeProvider,
+                    http,
+                    cancellationToken);
+            });
+    
+        }
 
         async Task<IResult> VerifyFirebasePhone(FirebasePhoneVerifyRequest request, NivraDbContext db, PhoneOtpService otpService, PasswordHasher hasher, TokenService tokenService, TimeProvider timeProvider, PushNotificationService pushNotifications, HttpContext http, CancellationToken cancellationToken)
         {
