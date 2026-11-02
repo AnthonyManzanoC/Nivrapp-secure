@@ -81,6 +81,8 @@ async function main() {
     };
     const viewport = (width,height,mobile) => call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile});
     const tap = async selector => {
+      // A newly attached Ionic modal can still be moving to its final position.
+      await new Promise(resolve=>setTimeout(resolve,450));
       const point=await evaluate(`(()=>{const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
       await call('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',clickCount:1});
       await call('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',clickCount:1});
