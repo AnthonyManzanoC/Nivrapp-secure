@@ -526,7 +526,7 @@ export class CallsPage {
     const kind = call.type === 'Video' ? this.tr('CALLS.VIDEO_CALL', 'Videollamada') : this.tr('CALLS.CALL', 'Llamada');
     const direction = this.historyDirectionLabel(call).toLowerCase();
     const status = this.historyStatusLabel(call.status).toLowerCase();
-    return `${kind} ${direction} ${status}`;
+    return direction === status ? `${kind} ${status}` : `${kind} ${direction} ${status}`;
   }
 
   historyStatusLabel(status: string | null | undefined): string {

@@ -394,7 +394,7 @@ ion-modal.call-exit-modal {
   margin: 0 0 12px;
 }
 
-.surface.call-mode .waiting-tile:not(.over-video) strong {
+.surface.call-mode .waiting-tile:not(.over-video) > strong {
   width: 100%;
   max-width: min(88vw, 480px);
   display: block;
@@ -1188,7 +1188,7 @@ ion-modal.call-exit-modal {
   margin-bottom: 8px;
 }
 
-.surface.call-mode .voice-connected strong {
+.surface.call-mode .voice-connected > strong {
   width: 100%;
   max-width: min(88vw, 640px);
   display: block;
@@ -1607,7 +1607,7 @@ ion-modal.invite-modal {
     height: clamp(112px, 34vw, 152px);
   }
 
-  .surface.call-mode .waiting-tile:not(.over-video) strong {
+  .surface.call-mode .waiting-tile:not(.over-video) > strong {
     width: 100%;
     max-width: min(86vw, 360px);
     display: block;

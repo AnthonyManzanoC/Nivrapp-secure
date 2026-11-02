@@ -82,7 +82,7 @@ const previewCalls: any = {
   toggleMute: () => previewCalls.muted.update((value: boolean) => !value),
   toggleCamera: async () => previewCalls.cameraOff.update((value: boolean) => !value),
   games: { panelOpen: signal(false), invitationVisible: signal(false), state: signal(null) },
-  audioOutput: { playbackBlocked: signal(false), routeError: signal(''), availableRoutes: signal([]), selectedRouteId: signal('default') },
+  audioOutput: { playbackBlocked: signal(false), routeError: signal(''), availableRoutes: signal([]), selectedRouteId: signal('default'), selectedRouteLabel: () => 'Altavoz' },
   history: signal(items().slice(0, 6).map((item, index) => ({ id: 'history-' + index, conversationId: item.id, initiatorUserId: index % 2 ? 'peer-1' : user.id, participantUserIds: ['peer-1', user.id], type: index % 2 ? 'Voice' : 'Video', status: index === 1 || index === 4 ? 'Missed' : 'Ended', startedAt: item.updatedAt, endedAt: item.updatedAt }))),
 };
 chat.participantDisplayName = (id: string) => id === user.id ? user.displayName : 'Sofía Martínez';
