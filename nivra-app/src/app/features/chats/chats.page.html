@@ -48,9 +48,16 @@
       </header>
 
       @if (storyHighlights().length && !query.trim() && !showRecentSearches) {
-        <nav class="story-strip" [class.native-story-accordion]="androidStoryGesturesEnabled()" [class.is-collapsed]="storiesCollapsed" [attr.inert]="storiesCollapsed ? '' : null" [attr.aria-hidden]="storiesCollapsed" [attr.aria-label]="'WORLD.STORIES' | translate:'Historias'"
+        <section class="story-strip-shell" [class.is-collapsed]="storiesCollapsed">
+          <header class="story-strip-heading"><strong>{{ 'WORLD.STORIES' | translate:'Historias' }}</strong><div>
+            @if(storyStripCanBack() || storyStripCanNext()){
+              <button type="button" class="story-strip-page previous" (click)="moveStoryStrip(-1)" [disabled]="!storyStripCanBack()" aria-label="Historias anteriores"><ion-icon name="chevron-forward-outline"></ion-icon></button>
+              <button type="button" class="story-strip-page" (click)="moveStoryStrip(1)" [disabled]="!storyStripCanNext()" aria-label="Más historias"><ion-icon name="chevron-forward-outline"></ion-icon></button>
+            }
+            <button class="story-collapse" type="button" (click)="collapseStories()" [attr.aria-label]="'CHATS.COLLAPSE_STORIES' | translate:'Contraer historias'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
+          </div></header>
+        <nav #storyStripScroller class="story-strip" (scroll)="updateStoryStripEdges()" [class.native-story-accordion]="androidStoryGesturesEnabled()" [class.is-collapsed]="storiesCollapsed" [attr.inert]="storiesCollapsed ? '' : null" [attr.aria-hidden]="storiesCollapsed" [attr.aria-label]="'WORLD.STORIES' | translate:'Historias'"
           (touchstart)="onNativeStoryTouchStart($event)" (touchmove)="onNativeStoryTouchMove($event)" (touchend)="onNativeStoryTouchEnd($event)" (touchcancel)="onNativeStoryTouchCancel()">
-          <button class="story-collapse" type="button" (click)="collapseStories()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
           @for (highlight of storyHighlights(); track highlight.id) {
             <div class="story-highlight-item">
               <button
@@ -85,8 +92,9 @@
             </div>
           }
         </nav>
+        </section>
       }
-      @if (storyPublishNotice) { <p class="story-publish-notice" role="status">{{ storyPublishNotice }}</p> }
+      @if (storyPublishNotice) { <p [appTransientNotice]="storyPublishNotice" (noticeExpired)="storyPublishNotice=''" class="story-publish-notice" role="status">{{ storyPublishNotice }}</p> }
 
       <div class="search-panel">
         <div class="search-line">
@@ -114,11 +122,11 @@
             <p class="search-hint">{{ 'CHATS.SEARCH_HINT' | translate:'Busca un chat por su nombre o encuentra a alguien por su alias o ID.' }}</p>
           }
         }
-        @if (callAlertsNotice) { <p class="search-hint" role="status">{{ callAlertsNotice }}</p> }
-        @if (syncNotice) { <p class="sync-notice" role="status">{{ syncNotice }}</p> }
-        @if (conversationActionNotice) { <p class="sync-notice" role="status"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>{{ conversationActionNotice }}</p> }
-        @if (conversationActionError) { <p class="search-hint search-error" role="alert">{{ conversationActionError }}</p> }
-        @if (searchError && !query.trim()) { <p class="search-hint search-error" role="alert">{{ searchError }}</p> }
+        @if (callAlertsNotice) { <p [appTransientNotice]="callAlertsNotice" (noticeExpired)="callAlertsNotice=''" class="search-hint" role="status">{{ callAlertsNotice }}</p> }
+        @if (syncNotice) { <p [appTransientNotice]="syncNotice" (noticeExpired)="syncNotice=''" class="sync-notice" role="status">{{ syncNotice }}</p> }
+        @if (conversationActionNotice) { <p [appTransientNotice]="conversationActionNotice" (noticeExpired)="conversationActionNotice=''" class="sync-notice" role="status"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>{{ conversationActionNotice }}</p> }
+        @if (conversationActionError) { <p [appTransientNotice]="conversationActionError" [appNoticeDuration]="15000" class="search-hint search-error" role="alert">{{ conversationActionError }}</p> }
+        @if (searchError && !query.trim()) { <p [appTransientNotice]="searchError" [appNoticeDuration]="15000" class="search-hint search-error" role="alert">{{ searchError }}</p> }
       </div>
 
       @if (query.trim()) {
@@ -143,7 +151,7 @@
             } @else if (searching) {
               <div class="search-progress" role="status"><ion-spinner name="crescent" aria-hidden="true"></ion-spinner>{{ 'CHATS.SEARCHING' | translate:'Buscando personas…' }}</div>
             } @else if (searchError) {
-              <div class="search-retry" role="alert"><p>{{ searchError }}</p><button type="button" (click)="search()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button></div>
+              <div class="search-retry" role="alert"><p [appTransientNotice]="searchError" [appNoticeDuration]="15000">{{ searchError }}</p><button type="button" (click)="search()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button></div>
             } @else {
               @for (person of searchResults; track person.id) {
                 <ion-item button class="list-item" (click)="startConversation(person)" [disabled]="!!startingPersonId">
@@ -460,7 +468,7 @@
         </div>
 
         @if (groupError) {
-          <p class="group-error">{{ groupError }}</p>
+          <p [appTransientNotice]="groupError" [appNoticeDuration]="15000" class="group-error">{{ groupError }}</p>
         }
 
         <footer>
@@ -546,7 +554,7 @@
             (repost)="repostStory(story)">
           </app-story-viewer>
           @if (storyError) {
-            <p class="story-error">{{ storyError }}</p>
+            <p [appTransientNotice]="storyError" [appNoticeDuration]="15000" class="story-error">{{ storyError }}</p>
           }
         }
       }

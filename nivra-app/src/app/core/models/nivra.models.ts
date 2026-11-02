@@ -412,6 +412,7 @@ export interface StoryPayload {
   v?: number;
   type: 'text' | 'media' | string;
   text?: string;
+  textTheme?: string;
   media?: StoryMediaPayload | null;
   music?: (StoryMediaPayload & { title: string; durationSeconds: number; sourceStartSeconds: number }) | null;
 }

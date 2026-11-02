@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -150,7 +151,7 @@ interface MessageTextPart {
 @Component({
   selector: 'app-chat-detail',
   standalone: true,
-  imports: [
+  imports: [TransientNoticeDirective,
     LocalizedDatePipe,
     CommonModule,
     FormsModule,

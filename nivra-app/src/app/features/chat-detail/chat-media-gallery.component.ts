@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, Input, OnDestroy, Output, inject } from '@angular/core';
 import {
@@ -25,7 +26,7 @@ import { TranslateService } from '../../core/services/translate.service';
 @Component({
   selector: 'app-chat-media-gallery',
   standalone: true,
-  imports: [
+  imports: [TransientNoticeDirective,
     CommonModule,
     TranslatePipe,
     IonButton,

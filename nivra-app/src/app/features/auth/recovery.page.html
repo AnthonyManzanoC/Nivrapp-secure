@@ -16,8 +16,8 @@
       <ion-button expand="block" type="submit" [disabled]="busy">@if (busy) { <ion-spinner name="crescent" /> }{{ token ? (purpose === 'verify-email' ? t('VERIFY_ACTION', 'Confirmar mi correo') : t('SAVE', 'Guardar contraseña')) : t('SEND', 'Enviar enlace seguro') }}</ion-button>
     </form>
   }
-  @if (notice) { <p class="notice" role="status">{{ notice }}</p> }
-  @if (error) { <p class="error" role="alert">{{ error }}</p> }
+  @if (notice) { <p [appTransientNotice]="notice" (noticeExpired)="notice=''" class="notice" role="status">{{ notice }}</p> }
+  @if (error) { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="error" role="alert">{{ error }}</p> }
   @if (token && error) { <button class="text-link" type="button" (click)="startAgain()">{{ t('AGAIN', 'Solicitar otro enlace') }}</button> }
   <a class="back-link" routerLink="/auth">{{ t('BACK', 'Volver a Nivra') }}</a>
   @if (!completed && !token) {

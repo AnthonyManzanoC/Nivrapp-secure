@@ -57,7 +57,7 @@
       <strong aria-live="polite">{{ 'CHAT.SELECTION' | translate:'Selección' }} · {{ selectedMessages().length }}@if (bulkBusy) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }</strong>
       <button type="button" (click)="openSelectionForward()" [disabled]="bulkBusy || !canForwardSelection()" [attr.aria-label]="'CHAT_ACTIONS.FORWARD' | translate:'Reenviar'"><ion-icon name="arrow-redo-outline" aria-hidden="true"></ion-icon></button>
       <button type="button" (click)="openSelectionDelete()" [disabled]="bulkBusy || !selectedMessages().length" [attr.aria-label]="'CHAT.DELETE_FOR_ME' | translate:'Eliminar para mí'"><ion-icon name="trash-outline" aria-hidden="true"></ion-icon></button>
-      @if (selectionError) { <small class="selection-error" role="alert">{{ selectionError }}</small> } @else if (selectedMessages().length && !canForwardSelection()) { <small>{{ 'CHAT.SELECTION_FORWARD_RESTRICTED' | translate:'Algunos mensajes no permiten reenvío.' }}</small> }
+      @if (selectionError) { <small [appTransientNotice]="selectionError" [appNoticeDuration]="15000" class="selection-error" role="alert">{{ selectionError }}</small> } @else if (selectedMessages().length && !canForwardSelection()) { <small>{{ 'CHAT.SELECTION_FORWARD_RESTRICTED' | translate:'Algunos mensajes no permiten reenvío.' }}</small> }
     </section>
   }
   @if (!auth.deviceIdentityError() && !auth.deviceIdentityNeedsRelink()) {
@@ -605,10 +605,10 @@
       <p class="composer-notice">{{ 'CHAT.ADMINS_ONLY_MESSAGES' | translate:'Solo los admins pueden enviar mensajes en este grupo.' }}</p>
     }
     @if (attachmentError && !identityErrorIsDuplicated()) {
-      <p class="composer-error">{{ attachmentError }}</p>
+      <p [appTransientNotice]="attachmentError" [appNoticeDuration]="15000" class="composer-error">{{ attachmentError }}</p>
     }
     @if (notice) {
-      <p class="composer-notice">{{ notice }}</p>
+      <p [appTransientNotice]="notice" (noticeExpired)="notice=''" class="composer-notice">{{ notice }}</p>
     }
   </ion-footer>
 
@@ -1152,7 +1152,7 @@
               </section>
             }
             @if (groupInfoError) {
-              <p class="profile-error" role="alert">{{ groupInfoError }}</p>
+              <p [appTransientNotice]="groupInfoError" [appNoticeDuration]="15000" class="profile-error" role="alert">{{ groupInfoError }}</p>
             }
             <section class="profile-card group-settings">
               <div class="profile-section-head">
@@ -1490,7 +1490,7 @@
             (repost)="repostStory(story)">
           </app-story-viewer>
           @if (storyError) {
-            <p class="story-error">{{ storyError }}</p>
+            <p [appTransientNotice]="storyError" [appNoticeDuration]="15000" class="story-error">{{ storyError }}</p>
           }
         }
       }
@@ -1513,7 +1513,7 @@
           <div>
             <h2>{{ 'CHAT_ACTIONS.FORWARD' | translate:'Reenviar' }}</h2>
             @if (forwardingSelectionIds.length) { <p>{{ 'CHAT.SELECTION' | translate:'Selección' }} · {{ forwardingSelectionIds.length }}</p> } @else { <p>{{ chat.preview(forwardingMessage.payload) }}</p> }
-            @if (forwardingSelectionIds.length && selectionError) { <p role="alert">{{ selectionError }}</p> }
+            @if (forwardingSelectionIds.length && selectionError) { <p [appTransientNotice]="selectionError" [appNoticeDuration]="15000" role="alert">{{ selectionError }}</p> }
           </div>
           <ion-button mode="ios" fill="clear" (click)="closeForward()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
             <ion-icon name="close-outline"></ion-icon>

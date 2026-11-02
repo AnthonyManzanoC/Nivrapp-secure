@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -59,7 +60,7 @@ interface VideoTile {
 @Component({
   selector: 'app-calls',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent, CallTranslationPanelComponent],
+  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent, CallTranslationPanelComponent],
   templateUrl: './calls.page.html',
   styleUrls: ['./calls.page.scss'],
 })

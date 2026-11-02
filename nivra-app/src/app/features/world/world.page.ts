@@ -1,7 +1,8 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, OnInit, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { IonButton, IonContent, IonIcon, IonModal, IonSpinner, ToastController } from '@ionic/angular/standalone';
+import { IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, ToastController } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
   peopleOutline, chevronForwardOutline,
@@ -47,6 +48,7 @@ import { GroupHubComponent } from './group-hub.component';
 import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
 import { identityDisplayName } from '../../core/utils/nivra-identity';
 import { friendRequestStatus } from '../../core/services/social-connections.helpers';
+import { rankConversationTitles } from '../chats/conversation-search';
 
 interface StoryBucket {
   id: string;
@@ -64,7 +66,7 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [RouterLink, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryActivityComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonModal, IonSpinner],
+  imports: [TransientNoticeDirective, RouterLink, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryActivityComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })
@@ -77,6 +79,8 @@ export class WorldPage implements OnInit, OnDestroy {
   private readonly router = inject(Router);
   private readonly toastController = inject(ToastController);
   query = '';
+  storyQuery = '';
+  storyFilter: 'all' | 'unread' | 'groups' = 'all';
   storyComposerOpen = false;
   radarPhones = '';
   busyId = '';
@@ -117,7 +121,7 @@ export class WorldPage implements OnInit, OnDestroy {
         this.uiScope = scope;
         ++this.uiRevision; ++this.searchRevision;
         if (this.timer !== null) window.clearTimeout(this.timer);
-        this.query = ''; this.radarPhones = ''; this.notice = ''; this.error = ''; this.busyId = '';
+        this.query = ''; this.storyQuery = ''; this.storyFilter = 'all'; this.radarPhones = ''; this.notice = ''; this.error = ''; this.busyId = '';
         this.runningActions.clear(); this.storyComposerOpen = false; this.stopStoryProgress();
       });
     });
@@ -153,9 +157,9 @@ export class WorldPage implements OnInit, OnDestroy {
 
   async ngOnInit(): Promise<void> {
     await this.social.load();
-    if (!this.destroyed) void this.contactSync.syncCachedContactsInBackground();
+
     if (!this.destroyed && this.router.url?.endsWith('#friend-requests')) {
-      requestAnimationFrame(() => { if (!this.destroyed) this.reviewRequests(); });
+      void this.router.navigateByUrl('/app/contacts#friend-requests', {replaceUrl:true});
     }
   }
 
@@ -532,21 +536,27 @@ export class WorldPage implements OnInit, OnDestroy {
 
   myStoryBuckets(): StoryBucket[] {
     const currentUserId = this.auth.session()?.user.id;
-    return this.storyBuckets().filter((bucket) => bucket.owner.id === currentUserId);
+    return this.filterStoryBuckets(this.storyBuckets().filter((bucket) => bucket.owner.id === currentUserId));
   }
 
   recentStoryBuckets(): StoryBucket[] {
     const currentUserId = this.auth.session()?.user.id;
-    return this.storyBuckets()
+    return this.filterStoryBuckets(this.storyBuckets()
       .filter((bucket) => bucket.owner.id !== currentUserId)
-      .filter((bucket) => bucket.unviewedCount > 0);
+      .filter((bucket) => bucket.unviewedCount > 0));
   }
 
   viewedStoryBuckets(): StoryBucket[] {
     const currentUserId = this.auth.session()?.user.id;
-    return this.storyBuckets()
+    if (this.storyFilter === 'unread') return [];
+    return this.filterStoryBuckets(this.storyBuckets()
       .filter((bucket) => bucket.owner.id !== currentUserId)
-      .filter((bucket) => bucket.unviewedCount === 0);
+      .filter((bucket) => bucket.unviewedCount === 0));
+  }
+
+  private filterStoryBuckets(buckets: StoryBucket[]): StoryBucket[] {
+    const filtered = buckets.filter(bucket => this.storyFilter !== 'groups' || bucket.isGroup);
+    return this.storyQuery.trim() ? rankConversationTitles(filtered, this.storyQuery, bucket => bucket.title) : filtered;
   }
 
   storyGroupTitle(story: Story): string {
@@ -641,7 +651,7 @@ export class WorldPage implements OnInit, OnDestroy {
     return state === 'friends' || person.isMutualContact ? this.tr('WORLD.FRIENDS', 'Contactos mutuos') : state === 'incoming' ? this.tr('WORLD.REQUEST_RECEIVED', 'Solicitud recibida') : state === 'requested' ? this.tr('WORLD.REQUEST_SENT', 'Solicitud enviada') : person.isContact ? this.tr('WORLD.CONTACT_SAVED', 'Contacto guardado') : this.tr('WORLD.NO_REQUEST', 'Sin solicitud');
   }
   reviewRequests(): void {
-    document.getElementById('friend-requests')?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    void this.router.navigateByUrl('/app/contacts#friend-requests');
   }
   private accountScope(): string {
     const session = this.auth.session(); return session ? `${session.user.id}:${session.device.id}` : '';

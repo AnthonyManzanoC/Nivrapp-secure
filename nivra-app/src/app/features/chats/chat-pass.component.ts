@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { Component, OnDestroy, effect, inject, output } from '@angular/core';
 import { IonButton, IonIcon, IonModal, IonSpinner } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -17,7 +18,7 @@ export function chatPassUrl(alias: string): string {
 @Component({
   selector: 'app-chat-pass',
   standalone: true,
-  imports: [IonButton, IonIcon, IonModal, IonSpinner, TranslatePipe],
+  imports: [TransientNoticeDirective, IonButton, IonIcon, IonModal, IonSpinner, TranslatePipe],
   templateUrl: './chat-pass.component.html',
   styleUrls: ['./chat-pass.component.scss'],
 })

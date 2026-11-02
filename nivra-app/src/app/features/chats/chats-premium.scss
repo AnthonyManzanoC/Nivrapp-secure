@@ -45,3 +45,14 @@
  .search-active .search-hint { font-size:13px; margin-block:12px 4px; }
  .search-active .recent-searches { flex:1; min-height:0; }
 }
+.story-strip-shell { flex:none; min-width:0; overflow:hidden; }
+.story-strip-shell.is-collapsed { display:none; }
+.story-strip-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 16px 8px; }
+.story-strip-heading strong { font-size:12px; color:var(--nivra-muted); font-weight:600; }
+.story-strip-heading>div { display:flex; align-items:center; gap:4px; }
+.story-strip-heading .story-collapse,.story-strip-page { position:static; inset:auto; display:grid; place-items:center; width:34px; height:34px; flex:0 0 34px; min-height:34px; border:0; border-radius:50%; background:var(--nivra-panel-2); color:var(--nivra-muted); cursor:pointer; }
+.story-strip-page.previous ion-icon { transform:rotate(180deg); }
+.story-strip-page:disabled { opacity:.35; cursor:default; }
+.story-strip { scroll-padding-inline:14px; }
+.story-highlight-item { scroll-snap-align:start; flex:0 0 84px; }
+.story-publish-notice { margin:4px 16px 12px; padding:12px 14px; border-radius:16px; font-size:12px; line-height:1.5; background:color-mix(in srgb,var(--nivra-brand) 7%,var(--nivra-panel-solid)); color:var(--nivra-text); }

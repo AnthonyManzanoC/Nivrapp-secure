@@ -25,11 +25,12 @@ import { NivraApiService } from '../../core/services/nivra-api.service';
 import { UnreadTabService } from '../../core/services/unread-tab.service';
 import { AppLockService } from '../../core/services/app-lock.service';
 import { TabSwipeDirective } from '../../shared/tab-swipe.directive';
+import { CallGameInvitationComponent } from '../../shared/call-game-invitation.component';
 
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, RouterLink, RouterLinkActive, RouterOutlet, TranslatePipe, IonApp, IonIcon, TabSwipeDirective],
+  imports: [CallGameInvitationComponent, LocalizedDatePipe, CommonModule, RouterLink, RouterLinkActive, RouterOutlet, TranslatePipe, IonApp, IonIcon, TabSwipeDirective],
   templateUrl: './shell.page.html',
   styleUrls: ['./shell.page.scss'],
 })

@@ -576,6 +576,7 @@ export class SocialService {
 
   async publishStory(options: {
     text: string;
+    textTheme?: string;
     visibility: string;
     file?: File | null;
     music?: StoryMusicDraft | null;
@@ -693,7 +694,8 @@ export class SocialService {
           sourceStartSeconds: musicDraft.sourceStartSeconds };
       }
 
-      const decodedPayload: StoryPayload = { v: 2, type: media ? 'media' : 'text', text, media, ...(music ? { music } : {}) };
+      const decodedPayload: StoryPayload = { v: 2, type: media ? 'media' : 'text', text, media,
+        ...(!media && options.textTheme ? {textTheme: options.textTheme} : {}), ...(music ? { music } : {}) };
       const payload = await this.encodeStoryPayload(decodedPayload, recipientPlan, options.visibility, assertPublishingSession);
       assertPublishingSession();
       this.publishingStatus.set('Publicando tu historia…');

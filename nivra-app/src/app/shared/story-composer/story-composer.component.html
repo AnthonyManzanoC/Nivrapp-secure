@@ -89,7 +89,7 @@
         } @else {
           <div class="editor-grid">
             <div class="preview-column">
-              <div #draftPreview class="story-preview" [class.crop-preview]="imageCrop" [class.text-preview]="!file" [class.audio-preview]="mediaKind === 'audio'">
+              <div #draftPreview class="story-preview" [style.background]="!file ? textTheme().background : null" [class.crop-preview]="imageCrop" [class.text-preview]="!file" [class.audio-preview]="mediaKind === 'audio'">
                 @if (mediaKind === 'image') {
                   <img [src]="previewUrl" [attr.style]="imagePreviewTransform()" (load)="imageLoaded($event)" (error)="previewFailed()" [alt]="'STORY_COMPOSER.PREVIEW' | translate:'Vista previa de tu historia'">
                 } @else if (mediaKind === 'video') {
@@ -98,7 +98,7 @@
                   <div class="audio-art"><ion-icon name="musical-notes-outline"></ion-icon></div>
                   <audio #draftMedia [src]="previewUrl" controls preload="metadata" (error)="previewFailed()"></audio>
                 } @else {
-                  <p class="text-story">{{ text || ('STORY_COMPOSER.TEXT_PREVIEW' | translate:'Tu historia empieza aquí…') }}</p>
+                  <p class="text-story" [style.color]="textTheme().color">{{ text || ('STORY_COMPOSER.TEXT_PREVIEW' | translate:'Tu historia empieza aquí…') }}</p>
                 }
                 @if (imageLoading) { <ion-spinner name="crescent" class="preview-loading"></ion-spinner> }
               </div>
@@ -119,6 +119,18 @@
               </div>
             </div>
             <div class="draft-options">
+              @if (!file) {
+                <fieldset class="story-color-picker" [disabled]="busy">
+                  <legend>Color del fondo <span>{{ textTheme().name }}</span></legend>
+                  <div role="group" aria-label="Colores para la historia">
+                    @for(theme of textThemes; track theme.id) {
+                      <button type="button" class="story-color" [style.background]="theme.background" [class.selected]="textThemeId === theme.id" [attr.aria-label]="theme.name" [attr.aria-pressed]="textThemeId === theme.id" (click)="selectTextTheme(theme.id)">
+                        @if(textThemeId === theme.id){<ion-icon name="checkmark-outline" [style.color]="theme.color"></ion-icon>}
+                      </button>
+                    }
+                  </div>
+                </fieldset>
+              }
               @if (mediaKind === 'image' && (musicUrl || musicLoading || musicError)) {
                 <section class="music-editor" aria-label="Fragmento de música" [attr.aria-busy]="musicLoading">
                   <div class="music-editor-heading"><span class="music-symbol"><ion-icon name="musical-notes-outline"></ion-icon></span><div><strong>Tu foto, con música</strong><small>Elige hasta 15 segundos de tu archivo</small></div><button type="button" class="icon-button" (click)="removeMusic()" [disabled]="busy" aria-label="Quitar música"><ion-icon name="close-outline"></ion-icon></button></div>
@@ -133,7 +145,7 @@
                     <p class="music-note">Sólo se publicará este fragmento. Tu archivo original se queda en este dispositivo.</p>
                     @if (audience === 'contacts' && visibility === 'PublicWorld') { <p class="music-note">En Mundo, la foto, el nombre de la música y el fragmento serán públicos.</p> }
                   }
-                  @if (musicError) { <p class="music-error" role="alert">{{ musicError }}</p> }
+                  @if (musicError) { <p [appTransientNotice]="musicError" [appNoticeDuration]="15000" class="music-error" role="alert">{{ musicError }}</p> }
                 </section>
               }
               <div class="caption-heading"><label class="caption-label" for="story-caption">{{ 'STORY_COMPOSER.CAPTION' | translate:'Añade unas palabras' }}</label><span>{{ text.length }} / 4000</span></div>
@@ -176,11 +188,11 @@
             </div>
           </div>
         }
-        @if (error && mode !== 'edit') { <p class="composer-error" role="alert">{{ error }}</p> }
+        @if (error && mode !== 'edit') { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="composer-error" role="alert">{{ error }}</p> }
       </div>
       @if (mode === 'edit') {
         <footer class="composer-footer">
-          @if (error) { <p class="composer-error" role="alert">{{ error }}</p> }
+          @if (error) { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="composer-error" role="alert">{{ error }}</p> }
           @if (busy) { <span class="publish-status" role="status">{{ social.publishingStatus() || ('STORY_COMPOSER.PUBLISHING' | translate:'Publicando tu historia…') }}</span> }
           <button type="button" class="publish-button" (click)="publish()" [disabled]="busy || social.publishing() || !hasDraft() || imageLoading || musicLoading">
             @if (busy) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }

@@ -1,0 +1,49 @@
+      <article id="contact-friend-requests" class="panel span-7 requests-panel" [attr.aria-busy]="social.requestsLoading()">
+        <div class="panel-headline">
+          <div><h2>{{ 'WORLD.REQUESTS' | translate:'Solicitudes' }}</h2><span class="card-sub">{{ 'WORLD.REQUESTS_COPY' | translate:'Tú decides con quién conectar.' }}</span></div>
+          @if (social.requestsLoading()) { <ion-spinner name="crescent" [attr.aria-label]="'COMMON.LOADING' | translate:'Cargando'"></ion-spinner> }
+        </div>
+        <label class="request-search"><ion-icon name="search-outline"></ion-icon><input type="search" [(ngModel)]="query" placeholder="Buscar solicitudes" aria-label="Buscar solicitudes" maxlength="120"></label>
+<section class="request-section" aria-labelledby="incoming-requests-heading">
+          <h3 id="incoming-requests-heading">{{ 'WORLD.INCOMING_REQUESTS' | translate:'Recibidas' }} <span>{{ social.incomingRequests().length }}</span></h3>
+          @for (request of filteredRequests(social.incomingRequests()); track request.id) {
+            <div class="request-row">
+              <div class="request-person">
+                @if (request.from.profilePhotoDataUrl) { <img class="contact-avatar photo" [src]="request.from.profilePhotoDataUrl" alt="" loading="lazy" decoding="async"> }
+                @else { <span class="contact-avatar">{{ personName(request.from).slice(0, 1) }}</span> }
+                <span><strong>{{ personName(request.from) }}</strong><small>@{{ request.from.alias }}</small>@if (request.message) { <p>{{ request.message }}</p> }</span>
+              </div>
+              <div class="request-actions">
+                <ion-button mode="ios" size="small" (click)="accept(request.id)" [disabled]="requestBusy(request)">{{ 'WORLD.ACCEPT_REQUEST' | translate:'Aceptar' }}</ion-button>
+                <ion-button mode="ios" size="small" fill="clear" color="medium" (click)="reject(request.id)" [disabled]="requestBusy(request)">{{ 'WORLD.REJECT_REQUEST' | translate:'Rechazar' }}</ion-button>
+              </div>
+            </div>
+          } @empty { <p class="request-empty">{{ 'WORLD.NO_INCOMING_REQUESTS' | translate:'No tienes solicitudes por responder.' }}</p> }
+        </section>
+        <section class="request-section" aria-labelledby="outgoing-requests-heading">
+          <h3 id="outgoing-requests-heading">{{ 'WORLD.OUTGOING_REQUESTS' | translate:'Enviadas' }} <span>{{ social.outgoingRequests().length }}</span></h3>
+          @for (request of filteredRequests(social.outgoingRequests()); track request.id) {
+            <div class="request-row">
+              <div class="request-person">
+                @if (request.to.profilePhotoDataUrl) { <img class="contact-avatar photo" [src]="request.to.profilePhotoDataUrl" alt="" loading="lazy" decoding="async"> }
+                @else { <span class="contact-avatar">{{ personName(request.to).slice(0, 1) }}</span> }
+                <span><strong>{{ personName(request.to) }}</strong><small>@{{ request.to.alias }} · {{ 'WORLD.REQUEST_PENDING' | translate:'Pendiente' }}</small></span>
+              </div>
+              <ion-button mode="ios" size="small" fill="clear" (click)="cancel(request.id)" [disabled]="requestBusy(request)">{{ 'COMMON.CANCEL' | translate:'Cancelar' }}</ion-button>
+            </div>
+          } @empty { <p class="request-empty">{{ 'WORLD.NO_OUTGOING_REQUESTS' | translate:'No tienes solicitudes en espera.' }}</p> }
+        </section>
+        @if (social.requestHistory().length) {
+          <details class="request-history">
+            <summary>{{ 'WORLD.RECENT_REQUEST_HISTORY' | translate:'Historial reciente' }} <span>{{ social.requestHistory().length }}</span></summary>
+            <p class="request-history-copy">{{ 'WORLD.REQUEST_HISTORY_COPY' | translate:'Últimos movimientos. Las solicitudes cerradas no requieren respuesta.' }}</p>
+            @for (request of social.requestHistory().slice(0, 8); track request.id) {
+              <div class="request-history-row"><span><strong>{{ personName(requestPerson(request)) }}</strong><small>{{ request.updatedAt | localizedDate:'short' }}</small></span><small class="request-status">{{ requestStatus(request) }}</small></div>
+            }
+          </details>
+        }
+        @if (social.connectionsError()) { <div class="connections-error" role="status"><p>{{ 'WORLD.CONNECTIONS_REFRESH_ERROR' | translate:'No se pudieron actualizar todos tus contactos y solicitudes. Conservamos la información disponible.' }}</p><ion-button mode="ios" size="small" fill="clear" (click)="social.loadConnections(true)" [disabled]="social.requestsLoading() || social.contactsLoading()">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</ion-button></div> }
+      </article>
+
+
+@if(error){<p [appTransientNotice]="error" [appNoticeDuration]="15000" role="alert" class="request-error">{{error}}</p>}

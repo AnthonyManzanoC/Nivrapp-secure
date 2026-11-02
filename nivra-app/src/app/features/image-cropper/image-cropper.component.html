@@ -64,7 +64,7 @@
     </div>
 
     @if (error) {
-      <p class="crop-error" role="alert">{{ error }}</p>
+      <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="crop-error" role="alert">{{ error }}</p>
     }
 
     <footer>

@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, OnInit, inject } from '@angular/core';
 import { ActivatedRoute, Router } from '@angular/router';
@@ -13,7 +14,7 @@ const PENDING_VAULT_INVITE_KEY = 'nivra.pendingVaultInvite';
 @Component({
   selector: 'app-vault-invite',
   standalone: true,
-  imports: [CommonModule, TranslatePipe, IonButton, IonContent, IonIcon, IonSpinner],
+  imports: [TransientNoticeDirective, CommonModule, TranslatePipe, IonButton, IonContent, IonIcon, IonSpinner],
   templateUrl: './vault-invite.page.html',
   styleUrls: ['./vault-invite.page.scss'],
 })

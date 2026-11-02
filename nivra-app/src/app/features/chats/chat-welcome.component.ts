@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { Component, input, output } from '@angular/core';
 import { IonIcon } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -7,7 +8,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 @Component({
   selector: 'app-chat-welcome',
   standalone: true,
-  imports: [IonIcon, TranslatePipe],
+  imports: [TransientNoticeDirective,IonIcon, TranslatePipe],
   templateUrl: './chat-welcome.component.html',
   styleUrls: ['./chat-welcome.component.scss'],
 })

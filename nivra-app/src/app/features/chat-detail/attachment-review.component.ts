@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { Component, ElementRef, EventEmitter, Input, OnChanges, OnDestroy, Output, ViewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonIcon, IonSpinner, IonTextarea } from '@ionic/angular/standalone';
@@ -16,7 +17,7 @@ export interface AttachmentReviewItem {
 @Component({
   selector: 'app-attachment-review',
   standalone: true,
-  imports: [FormsModule, IonIcon, IonSpinner, IonTextarea, TranslatePipe],
+  imports: [TransientNoticeDirective,FormsModule, IonIcon, IonSpinner, IonTextarea, TranslatePipe],
   templateUrl: './attachment-review.component.html',
   styleUrls: ['./attachment-review.component.scss'],
 })

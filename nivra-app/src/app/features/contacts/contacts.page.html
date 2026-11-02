@@ -1,12 +1,13 @@
-<ion-content fullscreen class="contacts-page"><main class="contacts-surface" [class.searching]="searchOpen">
+<ion-content fullscreen class="contacts-page"><main class="contacts-surface" [class.searching]="searchOpen" [class.requests-mode]="requestsOpen">
 <header class="contacts-head"><button type="button" (click)="back()" aria-label="Volver a Chats"><ion-icon name="arrow-back-outline"></ion-icon></button><div><h1>Contactos</h1><p>{{social.contacts().length}} guardados en Nivra</p></div><button type="button" (click)="focusSearch()" aria-label="Buscar contactos"><ion-icon name="search-outline"></ion-icon></button><button type="button" (click)="social.loadConnections(true)" [disabled]="social.contactsLoading()" aria-label="Actualizar contactos"><ion-icon name="refresh-outline"></ion-icon></button></header>
-@if(error){<p class="feedback error" role="alert">{{error}}</p>}@if(notice){<p class="feedback" role="status">{{notice}}</p>}
+@if(error){<p [appTransientNotice]="error" [appNoticeDuration]="15000" class="feedback error" role="alert">{{error}}</p>}@if(notice){<p [appTransientNotice]="notice" (noticeExpired)="notice=''" class="feedback" role="status">{{notice}}</p>}
 <section class="contact-shortcuts" aria-label="Crear y conectar">
 <button type="button" (click)="compose('group')"><span><ion-icon name="people-outline"></ion-icon></span><strong>Nuevo grupo</strong><small>Conversa con tu gente</small></button>
 <button type="button" (click)="focusSearch()"><span><ion-icon name="person-add-outline"></ion-icon></span><strong>Nuevo contacto</strong><small>Busca un alias o ID</small></button>
 <button type="button" (click)="compose('pass')"><span><ion-icon name="qr-code-outline"></ion-icon></span><strong>Mi pase Nivra</strong><small>Comparte tu QR y enlace</small></button>
 <button type="button" (click)="compose('story')"><span><ion-icon name="camera-outline"></ion-icon></span><strong>Nueva historia</strong><small>Comparte un momento</small></button>
-</section><button type="button" class="requests-link" (click)="reviewRequests()">Solicitudes de amistad <span>{{social.incomingRequests().length}}</span></button>
+</section><nav class="directory-tabs" aria-label="Contactos y solicitudes"><button type="button" [attr.aria-pressed]="!requestsOpen" (click)="requestsOpen=false">Contactos</button><button type="button" [attr.aria-pressed]="requestsOpen" (click)="reviewRequests()">Solicitudes <span>{{social.incomingRequests().length}}</span></button></nav>
+@if(requestsOpen){<app-friend-requests />}@else{
 <section class="contacts-grid">      <article class="panel span-5">
         <div class="panel-headline">
           <div>
@@ -86,75 +87,4 @@
         </div>
       </article>
 
-<details class="radar-details"><summary><ion-icon name="scan-outline"></ion-icon><span>Encontrar contactos de mi agenda<small>Coincidencias privadas, con tu permiso</small></span><ion-icon name="add-outline"></ion-icon></summary>      <article class="panel span-12 radar-panel">
-        <div class="panel-headline">
-          <div class="radar-heading">
-            <h2 class="radar-title">
-              <span>{{ 'WORLD.RADAR_TITLE' | translate:'Radar cifrado' }}</span>
-              @if (contactSync.radarHasNewContact()) {
-                <span class="radar-dot" [attr.aria-label]="'WORLD.NEW_CONTACT_NIVRA' | translate:'Nuevo contacto en Nivra'"></span>
-              }
-            </h2>
-            <span class="card-sub">{{ radarCountLabel() }}</span>
-          </div>
-          <ion-icon name="scan-outline"></ion-icon>
-        </div>
-        <div class="radar-layout">
-          <label class="radar-input">
-            <span>{{ 'WORLD.PHONES' | translate:'Telefonos' }}</span>
-            <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="radarPhones" placeholder="+57...&#10;+1..."></ion-textarea>
-          </label>
-          <div class="radar-control">
-            <div class="radar-state" [class.ghost]="isGhostMode()">
-              <ion-icon [name]="radarStateIcon()"></ion-icon>
-              <span>{{ radarStateLabel() }}</span>
-            </div>
-            <ion-button mode="ios" fill="outline" (click)="pickDeviceContacts()" [disabled]="isBusy('radar:picker') || social.radarLoading()">
-              <ion-icon name="phone-portrait-outline"></ion-icon>
-              {{ 'WORLD.CONTACTS' | translate:'Contactos' }}
-            </ion-button>
-            <ion-button mode="ios" (click)="scanRadar()" [disabled]="isBusy('radar') || isBusy('radar:picker') || social.radarLoading()">
-              @if (social.radarLoading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="scan-outline"></ion-icon> }
-              {{ 'WORLD.SCAN' | translate:'Escanear' }}
-            </ion-button>
-          </div>
-        </div>
-        <div class="radar-results">
-          @for (person of social.radarMatches(); track person.id) {
-            <div class="result-row person-result"><span class="contact-avatar">@if(person.profilePhotoDataUrl){<img [src]="person.profilePhotoDataUrl" alt="" loading="lazy">}@else{ {{personName(person).slice(0,1)}} }</span>
-              <div>
-                <strong>{{ personName(person) }}</strong>
-                <span class="card-sub">@{{ person.alias }} - {{ friendshipLabel(person) }}</span>
-              </div>
-              <div class="row-actions">
-                <ion-button mode="ios" fill="clear" (click)="openPerson(person)" [disabled]="isBusy('open:' + person.id)" [attr.aria-label]="'WORLD.OPEN_CHAT' | translate:'Abrir chat'">
-                  <ion-icon name="chatbubble-ellipses-outline"></ion-icon>
-                </ion-button>
-                @if (!person.isContact) {
-                  <ion-button mode="ios" fill="clear" (click)="addContact(person)" [disabled]="isBusy('contact:' + person.id) || personBusy(person.id)" [attr.aria-label]="'WORLD.SAVE_CONTACT' | translate:'Guardar contacto'">
-                    <ion-icon name="person-add-outline"></ion-icon>
-                  </ion-button>
-                }
-                @if (person.friendshipState === 'incoming') {
-                  <ion-button mode="ios" fill="outline" (click)="reviewRequests()">{{ 'WORLD.REVIEW_REQUEST' | translate:'Ver solicitud' }}</ion-button>
-                }
-                @if (person.friendshipState === 'none' && !person.isMutualContact) {
-                  <ion-button mode="ios" fill="outline" [disabled]="isBusy(person.id) || personBusy(person.id)" (click)="request(person)">
-                    <ion-icon name="person-add-outline"></ion-icon> Solicitar
-                  </ion-button>
-                }
-              </div>
-            </div>
-          } @empty {
-            <div class="empty-copy">{{ 'WORLD.PRIVATE_MATCHES_EMPTY' | translate:'Las coincidencias privadas aparecen aqui.' }}</div>
-          }
-        </div>
-        @if (contactSync.lastDeviceContactCount() > 0) {
-          <div class="radar-sync-summary">
-            <strong>{{ 'WORLD.AGENDA_SYNCED' | translate:'Agenda sincronizada' }}</strong>
-            <span>{{ contactSync.lastDeviceContactCount() }} {{ 'WORLD.PHONES_REVIEWED' | translate:'telefonos revisados' }}. {{ 'WORLD.AGENDA_SYNCED_COPY' | translate:'Solo aparecen contactos visibles en directorio.' }}</span>
-          </div>
-        }
-      </article>
-
-</details></section><footer><ion-icon name="shield-checkmark-outline"></ion-icon>La privacidad de cada persona decide cómo puedes encontrarla.</footer></main></ion-content>
+</section>}<footer><ion-icon name="shield-checkmark-outline"></ion-icon>La privacidad de cada persona decide cómo puedes encontrarla.</footer></main></ion-content>

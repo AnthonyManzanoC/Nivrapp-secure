@@ -922,6 +922,11 @@ export class CallsService implements OnDestroy {
     return this.activeGroupRooms()[conversationId] ?? null;
   }
 
+  gameInvitationLabel(): string {
+    const host = this.games.state()?.hostUserId;
+    return host ? `${this.chat.participantDisplayName(host)} está esperando para jugar.` : 'Únete sin salir de la llamada.';
+  }
+
   async refreshActiveGroupRoom(conversationId: string | null | undefined): Promise<GroupCallRoom | null> {
     const id = conversationId?.trim();
     if (!id || !this.isGroupConversationId(id)) {

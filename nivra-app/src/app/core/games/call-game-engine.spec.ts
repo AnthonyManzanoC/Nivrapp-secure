@@ -207,3 +207,16 @@ describe('Reversi and Hex in a live call', () => {
   }
  });
 });
+
+describe('Puntos y cajas',()=>{
+ it('captures adjacent boxes, repeats the capturing turn and finishes by actual box scores',()=>{
+  let state=playing('dots-boxes');state=moves(state,[0,1,2,3,6,8]);const previous=state;
+  state=accepted(state,'host',{type:'move',index:7});expect(state.scores['host']).toBe(2);expect(state.turnUserId).toBe('host');expect(previous.scores['host']).toBe(0);
+  state=moves(state,[4,5,9,11,10]);expect(state.status).toBe('finished');expect(state.winnerId).toBe('host');expect(state.scores['host']).toBe(4);
+ });
+ it('rejects an occupied line, a box index, spectators and stale moves',()=>{
+  const state=moves(playing('dots-boxes'),[0]);
+  for(const index of [0,12,-1,999])expect(applyCallGameAction(state,'guest',action(state,{type:'move',index})).accepted).toBeFalse();
+  expect(applyCallGameAction(state,'outsider',action(state,{type:'move',index:1})).accepted).toBeFalse();
+ });
+});

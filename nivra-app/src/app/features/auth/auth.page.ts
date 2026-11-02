@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, HostListener, OnDestroy, inject, signal } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -23,7 +24,7 @@ import { isLoginIdentifier } from '../../core/utils/nivra-number';
 @Component({
   selector: 'app-auth',
   standalone: true,
-  imports: [
+  imports: [TransientNoticeDirective,
     CommonModule,
     FormsModule,
     RouterLink,

@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from './transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, EventEmitter, Input, Output } from '@angular/core';
 import { CallGameAction, CallGameKind, CallGameState, TRIVIA_QUESTION_COUNT, reversiFlips } from '../core/games/call-game-engine';
@@ -5,7 +6,7 @@ import { CallGameAction, CallGameKind, CallGameState, TRIVIA_QUESTION_COUNT, rev
 @Component({
   selector: 'app-call-game-panel',
   standalone: true,
-  imports: [CommonModule],
+  imports: [TransientNoticeDirective, CommonModule],
   templateUrl: './call-game-panel.component.html',
   styleUrls: ['./call-game-panel.component.scss'],
 })
@@ -31,9 +32,17 @@ export class CallGamePanelComponent {
     { kind: 'trivia', title: 'Reto de cálculo', symbol: '+ ×', description: 'Cinco preguntas para jugar en grupo.' },
     { kind: 'reversi', title: 'Reversi', symbol: '◐', description: 'Encierra fichas rivales. Gana quien conquista más casillas.' },
     { kind: 'hex', title: 'Hex', symbol: '⬡', description: 'Conecta tus dos bordes con un camino de fichas.' },
+    { kind: 'dots-boxes', title: 'Puntos y cajas', symbol: '•─•', description: 'Cierra cajas para sumar puntos y repetir turno.' },
   ];
 
   remaining(): number { return this.state?.board.filter(cell => cell === null).length ?? 0; }
+  readonly dotsCells = Array.from({length:25}, (_, index) => {
+    const row = Math.floor(index / 5), col = index % 5;
+    return row % 2 === 0 && col % 2 === 0 ? {kind:'dot',index:-1}
+      : row % 2 === 0 ? {kind:'horizontal',index:row / 2 * 2 + (col - 1) / 2}
+      : col % 2 === 0 ? {kind:'vertical',index:6 + (row - 1) / 2 * 3 + col / 2}
+      : {kind:'box',index:12 + (row - 1) / 2 * 2 + (col - 1) / 2};
+  });
 
   legalMove(index: number): boolean {
     const s = this.state;

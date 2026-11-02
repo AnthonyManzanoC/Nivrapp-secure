@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { Component, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -11,7 +12,7 @@ import { TranslateService } from '../../core/services/translate.service';
 @Component({
   selector: 'app-welcome',
   standalone: true,
-  imports: [FormsModule, IonContent, IonIcon, TranslatePipe],
+  imports: [TransientNoticeDirective, FormsModule, IonContent, IonIcon, TranslatePipe],
   templateUrl: './welcome.page.html',
   styleUrls: ['./welcome.page.scss'],
 })

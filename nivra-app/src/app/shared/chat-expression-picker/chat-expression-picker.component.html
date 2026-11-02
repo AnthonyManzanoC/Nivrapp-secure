@@ -40,7 +40,7 @@
       <button *ngFor="let item of stickers; trackBy: trackSticker" type="button" class="sticker-option" [disabled]="disabled || stickersDisabled || busy" [attr.aria-label]="t('SEND_STICKER', 'Enviar sticker') + ': ' + name(item)" [title]="name(item)" (click)="selectSticker(item)"><img [src]="item.preview" alt="" draggable="false" loading="lazy" /><span>{{ name(item) }}</span></button>
     </div>
     <div *ngIf="(tab === 'emoji' ? emojis.length : stickers.length) === 0" class="empty-state"><span aria-hidden="true">{{ query ? '🔎' : '✨' }}</span><p>{{ query ? t('NO_RESULTS', 'No hay resultados. Prueba otra palabra.') : t('NO_RECENTS', 'Los emojis y stickers que uses aparecerán aquí.') }}</p></div>
-    <p *ngIf="error" class="picker-error" role="alert">{{ error }}</p>
+    <p [appTransientNotice]="error" [appNoticeDuration]="15000" *ngIf="error" class="picker-error" role="alert">{{ error }}</p>
   </div>
   <footer class="picker-hint" aria-live="polite"><span class="preparing-dot" *ngIf="busy" aria-hidden="true"></span>{{ busy ? t('PREPARING', 'Preparando sticker…') : tab === 'emoji' ? t('EMOJI_HINT', 'Toca un emoji para añadirlo a tu mensaje.') : t('STICKER_HINT', 'Toca un sticker para enviarlo.') }}</footer>
 </section>

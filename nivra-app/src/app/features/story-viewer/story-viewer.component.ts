@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, ElementRef, EventEmitter, HostListener, Input, NgZone, OnChanges, OnDestroy, Output, SimpleChanges, ViewChild, effect, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -7,18 +8,20 @@ import { closeOutline, eyeOutline, happyOutline, heart, heartOutline, musicalNot
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { Story, StoryPayload } from '../../core/models/nivra.models';
 import { SocialService } from '../../core/services/social.service';
+import { storyTextTheme } from '../../core/utils/story-theme';
 export interface StoryPointerUpEvent { event: PointerEvent; side: 'left' | 'right'; }
 
 /** One playback clock shared by all entry points. Actual media time is authoritative. */
 @Component({
   selector: 'app-story-viewer', standalone: true,
-  imports: [CommonModule, FormsModule, TranslatePipe, IonIcon, IonInput, IonSpinner],
+  imports: [TransientNoticeDirective,CommonModule, FormsModule, TranslatePipe, IonIcon, IonInput, IonSpinner],
   templateUrl: './story-viewer.component.html', styleUrls: ['./story-viewer.component.scss'],
 })
 export class StoryViewerComponent implements OnChanges, OnDestroy {
   readonly social = inject(SocialService);
   private readonly zone = inject(NgZone);
   readonly heartEmoji = '❤️';
+  textTheme() { return storyTextTheme(this.payload?.textTheme); }
   readonly defaultReactionOptions = ['❤️', '😂', '😮', '😢', '👏', '🔥'];
   @Input({ required: true }) story!: Story;
   @Input({ required: true }) payload!: StoryPayload;
@@ -131,8 +134,9 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     }
     this.syncPlayback();
   }
-  loadedImage(): void { this.mediaReady = true; this.mediaFailed = false; this.lastTick = performance.now(); this.syncPlayback(); }
+  loadedImage(event?: Event): void { if (this.staleMediaEvent(event)) return; this.mediaReady = true; this.mediaFailed = false; this.lastTick = performance.now(); this.syncPlayback(); }
   loadedMedia(event: Event): void {
+    if (this.staleMediaEvent(event)) return;
     if (this.payload?.music) this.musicReady = true; else this.mediaReady = true;
     this.mediaFailed = false; this.buffering = false;
     // Legacy parents use video metadata for their clocks. A photo with music
@@ -140,11 +144,12 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     if (!this.payload?.music) this.syncDuration.emit(event);
     this.syncPlayback();
   }
-  waitingMedia(): void { this.buffering = true; }
-  playingMedia(): void { this.buffering = false; }
+  waitingMedia(event?: Event): void { if (!this.staleMediaEvent(event)) this.buffering = true; }
+  playingMedia(event?: Event): void { if (!this.staleMediaEvent(event)) this.buffering = false; }
   toggleCaption(): void { this.captionExpanded = !this.captionExpanded; this.syncPlayback(); }
-  failedMedia(): void { this.mediaFailed = true; this.mediaReady = false; this.buffering = false; this.media?.pause(); }
-  ended(): void {
+  failedMedia(event?: Event): void { if (this.staleMediaEvent(event)) return; this.mediaFailed = true; this.mediaReady = false; this.buffering = false; this.media?.pause(); }
+  ended(event?: Event): void {
+    if (this.staleMediaEvent(event)) return;
     if (this.stopped()) return;
     this.completed = true; this.localProgress = 100; this.mediaEnded.emit();
   }
@@ -184,6 +189,14 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     else if (event.key === ' ') { event.preventDefault(); this.togglePause(); }
   }
   private ready(): boolean { return this.social.storyReadyId() === this.story?.id; }
+  private staleMediaEvent(event?: Event): boolean {
+    const element = event?.target;
+    if (!(element instanceof HTMLElement)) return false;
+    const id = element.getAttribute('data-story-id');
+    return (id !== null && id !== this.story?.id)
+      || (element instanceof HTMLMediaElement && !!this.media && element !== this.media)
+      || (element instanceof HTMLImageElement && element.hasAttribute('data-story-attempt') && element.getAttribute('data-story-attempt') !== String(this.imageRevision));
+  }
   private stopped(): boolean {
     return this.destroyed || !this.ready() || document.visibilityState === 'hidden' || this.paused ||
       this.userPaused || this.inputFocused || this.held || this.uiHidden || this.reactionsOpen || Boolean(this.busyId) ||

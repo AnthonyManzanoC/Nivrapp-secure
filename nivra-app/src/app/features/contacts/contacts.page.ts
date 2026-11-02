@@ -1,8 +1,9 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, OnInit, ViewChild, effect, inject, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea } from '@ionic/angular/standalone';
+import { IonButton, IonContent, IonIcon, IonInput, IonSpinner } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { addOutline, arrowBackOutline, cameraOutline, chatbubbleEllipsesOutline, closeOutline, fingerPrintOutline, peopleOutline, personAddOutline, personRemoveOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, searchOutline, shieldCheckmarkOutline, star, starOutline } from 'ionicons/icons';
 import { Contact, UserSummary } from '../../core/models/nivra.models';
@@ -13,24 +14,25 @@ import { SocialService } from '../../core/services/social.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { rankConversationTitles } from '../chats/conversation-search';
+import { FriendRequestsComponent } from './friend-requests.component';
 import { identityDisplayName } from '../../core/utils/nivra-identity';
-@Component({selector:'app-contacts',standalone:true,imports:[CommonModule,FormsModule,TranslatePipe,IonButton,IonContent,IonIcon,IonInput,IonSpinner,IonTextarea],templateUrl:'./contacts.page.html',styleUrls:['./contacts.page.scss']})
+@Component({selector:'app-contacts',standalone:true,imports:[TransientNoticeDirective, FriendRequestsComponent,CommonModule,FormsModule,TranslatePipe,IonButton,IonContent,IonIcon,IonInput,IonSpinner],templateUrl:'./contacts.page.html',styleUrls:['./contacts.page.scss']})
 export class ContactsPage implements OnInit,OnDestroy {
  readonly social=inject(SocialService);readonly auth=inject(AuthService);readonly chat=inject(ChatService);
  readonly contactSync=inject(ContactSyncService);readonly translate=inject(TranslateService);private readonly router=inject(Router);
  @ViewChild('contactSearch') private input?:IonInput;
- query='';radarPhones='';busyId='';error='';notice='';searchOpen=false;radarOpen=false;
+ requestsOpen=false;query='';radarPhones='';busyId='';error='';notice='';searchOpen=false;radarOpen=false;
  private timer:number|null=null;private destroyed=false;private uiRevision=0;private searchRevision=0;
  private readonly runningActions=new Set<string>();private uiScope=this.accountScope();readonly personName=identityDisplayName;
  constructor(){
  addIcons({addOutline,arrowBackOutline,cameraOutline,chatbubbleEllipsesOutline,closeOutline,fingerPrintOutline,peopleOutline,personAddOutline,personRemoveOutline,phonePortraitOutline,qrCodeOutline,refreshOutline,scanOutline,searchOutline,shieldCheckmarkOutline,star,starOutline});
  effect(()=>{const scope=this.accountScope();untracked(()=>{if(scope===this.uiScope)return;this.uiScope=scope;++this.uiRevision;++this.searchRevision;
- if(this.timer!==null)window.clearTimeout(this.timer);this.timer=null;this.query='';this.radarPhones='';this.notice='';this.error='';this.busyId='';this.runningActions.clear();this.searchOpen=false;this.radarOpen=false;
+ if(this.timer!==null)window.clearTimeout(this.timer);this.timer=null;this.query='';this.radarPhones='';this.notice='';this.error='';this.busyId='';this.runningActions.clear();this.searchOpen=false;this.radarOpen=false;this.requestsOpen=false;
  });});
  }
   async ngOnInit(): Promise<void> {
     await this.social.load();
-    if (!this.destroyed) void this.contactSync.syncCachedContactsInBackground();
+    if (!this.destroyed && this.router.url?.endsWith('#friend-requests')) this.reviewRequests();
   }
 
   ngOnDestroy(): void {
@@ -219,10 +221,10 @@ export class ContactsPage implements OnInit,OnDestroy {
     const contacts = [...this.social.contacts()].sort((a,b) => Number(b.isFavorite)-Number(a.isFavorite) || this.personName(a).localeCompare(this.personName(b)));
     return this.query.trim() ? rankConversationTitles(contacts, this.query, contact => [this.personName(contact), contact.alias, contact.nivraNumber || ''].join(' ')) : contacts;
   }
- focusSearch():void{this.searchOpen=true;requestAnimationFrame(()=>void this.input?.setFocus());}
+ focusSearch():void{this.requestsOpen=false;this.searchOpen=true;requestAnimationFrame(()=>void this.input?.setFocus());}
  closeSearch():void{this.query='';this.searchOpen=false;this.searchChanged();void this.input?.getInputElement().then(input=>input.blur());}
  back():void{void this.router.navigateByUrl('/app/chats');}
  compose(kind:'group'|'story'|'pass'):void{void this.router.navigate(['/app/chats'],{queryParams:{compose:kind}});}
- reviewRequests():void{void this.router.navigateByUrl('/app/world#friend-requests');}
+ reviewRequests():void{this.closeSearch();this.requestsOpen=true;requestAnimationFrame(()=>document.getElementById('contact-friend-requests')?.scrollIntoView({block:'start',behavior:'smooth'}));}
  async openSelf():Promise<void>{const user=this.auth.session()?.user;if(user)await this.openPerson({...user,isContact:false,isMutualContact:false,isFavorite:false,friendshipState:'none'} as UserSummary);}
 }

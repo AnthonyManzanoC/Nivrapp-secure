@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, OnDestroy, OnInit, effect, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -44,7 +45,7 @@ import { MediaStreamDirective } from '../../shared/media-stream.directive';
 @Component({
   selector: 'app-vault',
   standalone: true,
-  imports: [LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
+  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
   templateUrl: './vault.page.html',
   styleUrls: ['./vault.page.scss'],
 })

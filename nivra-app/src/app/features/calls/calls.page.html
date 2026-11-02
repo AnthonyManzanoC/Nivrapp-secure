@@ -196,7 +196,7 @@
                     </div>
                   </section>
                 } @else if (calls.mediaUpgradeAwaitingPeer()) {
-                  <p class="video-upgrade-pending" role="status">
+                  <p class="video-upgrade-pending" [appTransientNotice]="calls.mediaUpgradeNotice()" role="status">
                     <ion-icon name="videocam-outline" aria-hidden="true"></ion-icon>
                     {{ 'CALLS.WAITING_FOR_PEER_CAMERA' | translate:'Esperando que active su cámara…' }}
                   </p>
@@ -384,7 +384,7 @@
         }
 
         @if (calls.error() && !calls.activeCall()) {
-          <p class="error-copy">{{ calls.error() }}</p>
+          <p class="error-copy" [appTransientNotice]="calls.audioOutput.routeError()" [appNoticeDuration]="15000" [appTransientNotice]="calls.error()" [appNoticeDuration]="15000">{{ calls.error() }}</p>
         }
           @if (!calls.activeCall()) {
             @if (calls.resumableCall(); as ongoing) {

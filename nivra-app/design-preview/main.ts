@@ -8,6 +8,11 @@ import { addIcons } from 'ionicons';
 import { arrowBackOutline, callOutline, videocamOutline } from 'ionicons/icons';
 import { ShellPage } from '../src/app/features/shell/shell.page';
 import { ContactsPage } from '../src/app/features/contacts/contacts.page';
+import { WorldPage } from '../src/app/features/world/world.page';
+import { StoryComposerComponent } from '../src/app/shared/story-composer/story-composer.component';
+import { StoryViewerComponent } from '../src/app/features/story-viewer/story-viewer.component';
+import { CallGameInvitationComponent } from '../src/app/shared/call-game-invitation.component';
+import { TransientNoticeDirective } from '../src/app/shared/transient-notice.directive';
 import { CallGamePanelComponent } from '../src/app/shared/call-game-panel.component';
 import { CallGameKind, CallGameState, applyCallGameAction, createCallGame } from '../src/app/core/games/call-game-engine';
 import { ContactSyncService } from '../src/app/core/services/contact-sync.service';
@@ -62,6 +67,21 @@ const chat: any = {
   conversationListPresence: (item: any) => ChatService.prototype.conversationListPresence.call(chat, item),
 };
 const previewSettings = signal({ chatListDensity: 'three-line' });
+const stories=signal<any[]>([user,...items().map((item,i)=>({id:'peer-'+i,alias:item.id,displayName:item.name}))].map((owner,i)=>({id:'story-'+i,owner,targetType:i===1?'group':'contacts',targetId:i===1?'design':null,visibility:'Contacts',encryptedPayload:'fixture',allowedUserIds:[],viewOnce:false,allowReposts:true,viewedByMe:i>5,viewCount:i+2,createdAt:new Date(Date.now()-i*600000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()})));
+const request={id:'request-fixture',from:{id:'requester',alias:'daniela',displayName:'Daniela López'},to:user,status:'Pending',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
+const social:any={contacts:signal(items().filter(item=>item.type==='Direct').map(item=>({userId:item.participants[1].userId,alias:item.id,displayName:item.name,isFavorite:item.id==='sofia',isMutualContact:true}))),
+ contactsLoading:signal(false),requestsLoading:signal(false),incomingRequests:signal([request]),outgoingRequests:signal([]),requestHistory:signal([]),connectionsError:signal(''),people:signal([]),searching:signal(false),connectionActions:signal([]),radarMatches:signal([]),radarLoading:signal(false),loadConnections:async()=>{},search:async()=>[],loading:signal(false),publishing:signal(false),publishingStatus:signal(''),storyDeliveryWarning:signal(''),
+ stories,worldStories:signal([]),activeStory:signal(null),storyViewerOwner:signal(null),load:async()=>{},
+ activeStoriesForGroup:(id:string)=>stories().filter(story=>story.targetId===id),activeStoriesForOwner:(id:string)=>stories().filter(story=>story.owner.id===id&&!story.targetId),
+ contactStories:()=>stories().filter(story=>!story.targetId),groupStories:()=>stories().filter(story=>!!story.targetId),isGroupStory:(story:any)=>!!story.targetId,
+ storyText:()=> 'Un momento para compartir ✨',storyMedia:()=>null,storyMusic:()=>null,storyMediaError:()=>'',storyOpenError:signal(''),storyReadyId:signal('story-2'),storyOpening:signal(false),viewStory:async()=>{},ensureStoryMedia:async()=>null,
+ isImage:(mime:string)=>mime.startsWith('image/'),isVideo:(mime:string)=>mime.startsWith('video/'),storyComments:()=>[],storyViews:()=>[],storyReactions:()=>[]};
+@Component({selector:'preview-composer',standalone:true,imports:[StoryComposerComponent],template:'<app-story-composer [isOpen]="true" />'})
+class PreviewComposer {}
+@Component({selector:'preview-viewer',standalone:true,imports:[StoryViewerComponent],template:`<app-story-viewer [story]="story" [payload]="payload" [queue]="queue" [paused]="true" subtitle="Hace unos minutos" />`,styles:[':host{display:block;width:min(100%,520px);height:100%;margin:auto;background:#111}']})
+class PreviewViewer {story=stories()[2];queue=stories().slice(1,5);payload={type:'text',text:'Los mejores momentos se comparten. ✨',textTheme:'rose'};}
+@Component({selector:'preview-invitation',standalone:true,imports:[CallGameInvitationComponent,TransientNoticeDirective],template:`<section style="padding:100px 24px"><h1>Llamada en curso</h1><p [appTransientNotice]="notice" (noticeExpired)="notice=''" role="status">{{notice}}</p><app-call-game-invitation label="Sofía te invita a Puntos y cajas" /></section>`})
+class PreviewInvitation {notice='Resultado de prueba temporal';}
 @Component({
   selector: 'app-chat-detail', standalone: true,
   imports: [RouterLink, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent],
@@ -109,13 +129,12 @@ bootstrapApplication(PreviewRoot, { providers: [
     { path: 'chats', component: ChatsPage, children: [{ path: ':id', component: PreviewConversation }] },
     { path: 'contacts', component: ContactsPage },
     { path: 'games', component: PreviewGames },
+    { path: 'world', component: WorldPage },{ path: 'composer', component: PreviewComposer },{ path: 'viewer', component: PreviewViewer },{ path: 'invitation', component: PreviewInvitation },
     { path: '**', component: PreviewEmpty },
-  ] }, { path: '**', redirectTo: 'app/chats' }]),
+  ] },{path:'preview/viewer',component:PreviewViewer}, { path: '**', redirectTo: 'app/chats' }]),
   { provide: AuthService, useValue: { session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
   { provide: ChatService, useValue: chat },
-  { provide: SocialService, useValue: { contacts:signal(items().filter(item=>item.type==='Direct').map(item=>({userId:item.participants[1].userId,alias:item.id,displayName:item.name,isFavorite:item.id==='sofia',isMutualContact:true}))),
-    contactsLoading:signal(false),requestsLoading:signal(false),incomingRequests:signal([]),people:signal([]),searching:signal(false),connectionActions:signal([]),radarMatches:signal([]),radarLoading:signal(false),loadConnections:async()=>{},search:async()=>[],
-    stories: signal([]), worldStories: signal([]), activeStory: signal(null), storyViewerOwner: signal(null), load: async () => {}, activeStoriesForGroup: () => [], activeStoriesForOwner: () => [] } },
+  { provide: SocialService, useValue: social },
   { provide: ContactSyncService,useValue:{syncCachedContactsInBackground:async()=>{},radarHasNewContact:()=>false,lastDeviceContactCount:()=>0,syncing:()=>false}},
   { provide: CallsService, useValue: { activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'), audioOutput: { playbackBlocked: signal(false) } } },
   { provide: SignalrService, useValue: { connected: signal(true) } },

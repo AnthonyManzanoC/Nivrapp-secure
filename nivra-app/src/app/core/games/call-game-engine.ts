@@ -1,5 +1,5 @@
 /** Pure host reducer. The transport must authenticate senders as current call participants. */
-export const CALL_GAME_KINDS = ['tic-tac-toe', 'connect-four', 'trivia', 'gomoku', 'take-away', 'reversi', 'hex'] as const;
+export const CALL_GAME_KINDS = ['tic-tac-toe', 'connect-four', 'trivia', 'gomoku', 'take-away', 'reversi', 'hex', 'dots-boxes'] as const;
 export type CallGameKind = typeof CALL_GAME_KINDS[number];
 export interface CallGameQuestion { prompt: string; options: string[]; }
 export interface CallGameState {
@@ -117,6 +117,23 @@ export function applyCallGameAction(state: CallGameState, senderUserId: string, 
   if (action.type !== 'move') { return reject('Jugada no válida.'); }
   if (state.kind === 'trivia') { return reject('Elige una respuesta para continuar.'); }
   if (state.turnUserId !== senderUserId) { return reject('Es el turno de otra persona.'); }
+  if (state.kind === 'dots-boxes') {
+    if (!Number.isInteger(action.index) || action.index < 0 || action.index >= 12 || state.board[action.index] !== null) return reject('Elige una línea libre.');
+    next.board[action.index] = senderUserId;
+    let captured = 0;
+    for (let box = 0; box < 4; box++) {
+      if (next.board[12 + box] !== null) continue;
+      const row = Math.floor(box / 2), col = box % 2;
+      if ([row * 2 + col, (row + 1) * 2 + col, 6 + row * 3 + col, 6 + row * 3 + col + 1].every(edge => next.board[edge] !== null)) {
+        next.board[12 + box] = senderUserId; next.scores[senderUserId]++; captured++;
+      }
+    }
+    if (next.board.slice(12).every(Boolean)) {
+      const [first, second] = next.playerIds;
+      finishGame(next, next.scores[first] === next.scores[second] ? null : next.scores[first] > next.scores[second] ? first : second);
+    } else if (!captured) next.turnUserId = next.playerIds.find(id => id !== senderUserId) ?? null;
+    return accept();
+  }
   if (state.kind === 'reversi' || state.kind === 'hex') {
     if (!Number.isInteger(action.index) || action.index < 0 || action.index >= state.board.length || state.board[action.index] !== null) return reject('Selecciona una casilla libre.');
     const rival = state.playerIds.find(id => id !== senderUserId)!;
@@ -191,7 +208,7 @@ function resetRound(state: CallGameState): void {
 }
 
 export function callGameBoardSize(kind: CallGameKind): number {
-  return ({'tic-tac-toe':9,'connect-four':42,gomoku:64,'take-away':21,trivia:0,reversi:36,hex:25})[kind];
+  return ({'tic-tac-toe':9,'connect-four':42,gomoku:64,'take-away':21,trivia:0,reversi:36,hex:25,'dots-boxes':16})[kind];
 }
 
 export function reversiFlips(board: Array<string | null>, position: number, player: string, rival: string): number[] {

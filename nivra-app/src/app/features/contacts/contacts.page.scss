@@ -80,3 +80,8 @@ footer { display:flex; align-items:center; justify-content:center; gap:8px; font
 .person-result>div:nth-child(2) { flex:1; min-width:0; display:grid; gap:5px; }
 .person-result .contact-avatar { width:40px; height:40px; flex-basis:40px; }
 @media(max-width:768px){.person-result {flex-wrap:wrap;}.person-result .row-actions{margin-inline-start:54px;justify-content:start;}}
+.directory-tabs { display:flex; gap:8px; border-bottom:1px solid var(--nivra-line); padding:8px 0 16px; margin-bottom:20px; }
+.directory-tabs button { border:1px solid var(--nivra-line); border-radius:24px; min-height:44px; padding:10px 18px; background:transparent; color:var(--nivra-muted); font:inherit; font-weight:600; }
+.directory-tabs button[aria-pressed=true] { background:var(--nivra-accent-soft,#e6f9f3); color:var(--ion-color-primary); border-color:color-mix(in srgb,var(--nivra-brand) 30%,var(--nivra-line)); }
+.directory-tabs span { margin-inline-start:8px; font-size:12px; }
+.requests-mode .contact-shortcuts { display:none; }

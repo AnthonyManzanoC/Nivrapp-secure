@@ -1,3 +1,4 @@
+import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
 import { Component, Injector, EffectRef, ElementRef, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
@@ -60,7 +61,7 @@ type ConversationMenuAction = 'pin' | 'mute' | 'archive';
 @Component({
   selector: 'app-chats',
   standalone: true,
-  imports: [
+  imports: [TransientNoticeDirective,
     LocalizedDatePipe,
     CommonModule,
     FormsModule,
@@ -220,6 +221,33 @@ export class ChatsPage implements OnDestroy {
   private alive = true;
   storyHighlightOpening = '';
   storiesCollapsed = true;
+  readonly storyStripCanBack = signal(false);
+  readonly storyStripCanNext = signal(false);
+  private storyStripNav?: ElementRef<HTMLElement>;
+  private storyStripResize?: ResizeObserver;
+  private storyStripMutation?: MutationObserver;
+  @ViewChild('storyStripScroller', {read:ElementRef}) private set storyStripRef(ref: ElementRef<HTMLElement> | undefined) {
+    this.storyStripResize?.disconnect(); this.storyStripMutation?.disconnect();
+    this.storyStripNav = ref;
+    if (!ref) return;
+    const measure = () => { if (this.alive && this.storyStripNav === ref) this.updateStoryStripEdges(); };
+    this.storyStripResize = new ResizeObserver(measure); this.storyStripResize.observe(ref.nativeElement);
+    this.storyStripMutation = new MutationObserver(measure); this.storyStripMutation.observe(ref.nativeElement, {childList:true});
+    queueMicrotask(measure);
+  }
+  updateStoryStripEdges(): void {
+    const nav = this.storyStripNav?.nativeElement;
+    if (!nav) return;
+    const offset = Math.abs(nav.scrollLeft);
+    this.storyStripCanBack.set(offset > 2);
+    this.storyStripCanNext.set(nav.clientWidth > 0 && offset + nav.clientWidth < nav.scrollWidth - 2);
+  }
+  moveStoryStrip(direction: number): void {
+    const nav = this.storyStripNav?.nativeElement;
+    if (!nav) return;
+    nav.scrollBy({left:direction * (getComputedStyle(nav).direction === 'rtl' ? -1 : 1) * Math.max(96,nav.clientWidth*.8),
+      behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+  }
   private conversationList?: ElementRef<HTMLElement>;
   private nativeStoryTouch: { id: number; x: number; y: number; atTop: boolean; pull: boolean; expanded: boolean; collapse: boolean } | null = null;
   private nativeStoryScrollTop = 0;
@@ -325,6 +353,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.storyStripResize?.disconnect(); this.storyStripMutation?.disconnect();
     this.alive = false;
     this.detachNativeStoryGesture();
     this.searchSeq += 1;

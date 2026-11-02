@@ -61,7 +61,7 @@
   </div>
 
   @if (error) {
-    <p class="gallery-error">{{ error }}</p>
+    <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="gallery-error">{{ error }}</p>
   }
 </section>
 

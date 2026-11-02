@@ -11,6 +11,13 @@ describe('Story composer draft, privacy and capture lifecycle', () => {
   let social: any;
   let auth: any;
   let chat: any;
+  it('publishes the chosen text background through the normal encrypted story flow and resets the next draft',async()=>{
+    composer.isOpen=true;composer.ngOnChanges({isOpen:new SimpleChange(false,true,false)});
+    composer.chooseText();composer.text='Un momento en colores';composer.selectTextTheme('rose');
+    await composer.publish();
+    expect(social.publishStory).toHaveBeenCalledWith(jasmine.objectContaining({text:'Un momento en colores',textTheme:'rose'}));
+    expect(composer.textThemeId).toBe('nivra');
+  });
   const track = () => ({ stop: jasmine.createSpy('stop') });
   const streamWith = (...tracks: any[]) => ({ getTracks: () => tracks, getAudioTracks: () => [], addTrack: jasmine.createSpy('addTrack'), removeTrack: jasmine.createSpy('removeTrack') } as unknown as MediaStream);
 

@@ -145,3 +145,13 @@ button:focus-visible { outline: 3px solid var(--game-accent-strong); outline-off
 .hex-board button { aspect-ratio:1; min-height:0; border-radius:12px; clip-path:polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%); }
 .hex-board button.legal-move:enabled { border-color:rgba(132,222,195,.5); }
 @media(prefers-reduced-motion:reduce) { .game-choice { transition:none; } }
+.dots-board { display:grid; grid-template-columns:44px 1fr 44px 1fr 44px; grid-template-rows:44px 64px 44px 64px 44px; align-items:stretch; justify-items:stretch; padding:8px; border-radius:22px; background:var(--game-surface-subtle); border:1px solid var(--game-border); }
+.dots-dot { width:10px; height:10px; border-radius:50%; background:var(--game-text); place-self:center; }
+.dots-edge { position:relative; border:0; background:transparent; min-width:44px; min-height:44px; border-radius:12px; cursor:pointer; }
+.dots-edge::after { content:''; position:absolute; left:0; right:0; top:calc(50% - 3px); height:6px; border-radius:4px; background:var(--game-border); }
+.dots-edge.vertical::after { top:0; bottom:0; left:calc(50% - 3px); width:6px; height:auto; }
+.dots-edge.player-one::after { background:#087f62; }
+.dots-edge.player-two::after { background:#7953bf; }
+.dots-edge:enabled:hover { background:color-mix(in srgb,var(--game-accent) 12%,transparent); }
+.dots-box { display:grid; place-items:center; border-radius:16px; color:var(--game-text); font-size:30px; }
+.dots-box.player-one { background:#18b58a22; }.dots-box.player-two { background:#7953bf22; }
