@@ -13,6 +13,8 @@ Revisión del 2 de noviembre de 2026 sobre la versión publicada 8.2.0.
 
 ## Alcance
 
+Ampliación solicitada: anillos y fotos de historias con espacio interior, historias vistas legibles sin reducir la opacidad, filtros oscuros con colores del tema, botón de eliminar búsquedas recientes que conserva todo su texto y perfil con foto/nombre en dos columnas y formulario definido. La cola limita los chats simultáneos a tres, o uno con red 2G/ahorro de datos, mantiene identificadores estables y respeta Retry-After. Los reintentos incorporan variación aleatoria para evitar ráfagas simultáneas; se limpian al destruir el servicio. Las llamadas directas ajustan los límites del emisor para 2G, 3G y ahorro de datos; las salas conservan el control adaptativo de LiveKit. Estos límites son techos: WebRTC puede reducir más la tasa según la congestión.
+
 TURN y Firebase por teléfono se conservan en pausa. No se cambia el protocolo criptográfico, las bases de datos ni las claves del historial. No se envían llamadas, SMS ni mensajes a cuentas reales durante las pruebas.
 
 Los cambios de rendimiento usan las propiedades de [cálculo diferido y caché de Angular](https://angular.dev/guide/signals) y los eventos de [visibilidad del documento](https://developer.mozilla.org/en-US/docs/Web/API/Document/visibilitychange_event). No se interrumpe el audio de una llamada al ocultar la interfaz.

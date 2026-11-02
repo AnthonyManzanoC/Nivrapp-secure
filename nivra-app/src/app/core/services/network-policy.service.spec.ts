@@ -15,6 +15,13 @@ describe('bounded network policy', () => {
     network = TestBed.inject(NetworkPolicyService);
   });
   afterEach(() => TestBed.resetTestingModule());
+  it('limits parallel delivery on low-bandwidth or metered connections and recovers its capacity', () => {
+    expect(network.deliveryConcurrency()).toBe(3);
+    hints = { effectiveType: '2g' }; expect(network.deliveryConcurrency()).toBe(1);
+    hints = { effectiveType: '4g', saveData: true }; expect(network.deliveryConcurrency()).toBe(1);
+    hints = {}; network.recordTimeout(); expect(network.deliveryConcurrency()).toBe(1);
+    now += 120001; expect(network.deliveryConcurrency()).toBe(3);
+  });
   it('extends slow link deadlines without interpreting online as a fast connection', () => {
     hints = { effectiveType: '2g' };
     expect(network.readTimeoutMs()).toBe(90000);

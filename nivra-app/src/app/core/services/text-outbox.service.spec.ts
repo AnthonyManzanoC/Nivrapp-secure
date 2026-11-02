@@ -4,6 +4,7 @@ import { AuthService } from './auth.service';
 import { AppLockService } from './app-lock.service';
 import { LocalHistoryService } from './local-history.service';
 import { TextOutboxService } from './text-outbox.service';
+import { NetworkPolicyService } from './network-policy.service';
 
 describe('durable text outbox', () => {
   let disk: Map<string, any>, session: ReturnType<typeof signal<any>>, locked: ReturnType<typeof signal<boolean>>;
@@ -31,6 +32,43 @@ describe('durable text outbox', () => {
     spyOnProperty(navigator, 'onLine', 'get').and.returnValue(true);
   });
   afterEach(() => TestBed.resetTestingModule());
+
+  it('limits simultaneous chats and continues queued conversations as bandwidth becomes available', async () => {
+    const service = open();
+    const network = TestBed.inject(NetworkPolicyService);
+    spyOn(network, 'deliveryConcurrency').and.returnValue(1);
+    const completions: Array<() => void> = [];
+    const send = jasmine.createSpy().and.callFake(() => new Promise<void>(resolve => completions.push(resolve)));
+    service.configure(send, () => true); await settle();
+    for (const id of ['a', 'b', 'c']) await service.enqueue({ id } as any, 'Pendiente');
+    expect(send).toHaveBeenCalledTimes(1); expect(disk.size).toBe(3);
+    completions[0](); await settle();
+    expect(send).toHaveBeenCalledTimes(2); expect(send.calls.mostRecent().args[0].conversationId).toBe('b');
+    completions[1](); await settle(); completions[2](); await settle();
+    expect(disk.size).toBe(0);
+  });
+
+  it('respects server throttling when a mobile network reports online repeatedly', async () => {
+    let now = Date.now(); spyOn(Date, 'now').and.callFake(() => now);
+    const service = open();
+    const send = jasmine.createSpy().and.rejectWith({ status: 429, headers: { get: () => '120' } });
+    service.configure(send, () => true); await settle();
+    const entry = await service.enqueue({ id: 'a' } as any, 'Conservar'); await settle();
+    for (let i = 0; i < 5; i++) window.dispatchEvent(new Event('online'));
+    await settle(); expect(send).toHaveBeenCalledTimes(1); expect(disk.size).toBe(1);
+    send.and.resolveTo({}); now += 120001; service.wake(); await settle();
+    expect(send.calls.mostRecent().args[0].clientMessageId).toBe(entry.clientMessageId);
+    expect(disk.size).toBe(0);
+  });
+
+  it('does not start another queued message when an in-flight request finishes after service destruction', async () => {
+    const service = open(); let finish!: () => void;
+    const send = jasmine.createSpy().and.returnValue(new Promise<void>(resolve => finish = resolve));
+    service.configure(send, () => true); await settle();
+    await service.enqueue({ id: 'chat' } as any, 'Uno'); await service.enqueue({ id: 'chat' } as any, 'Dos');
+    TestBed.resetTestingModule(); finish(); await settle();
+    expect(send).toHaveBeenCalledTimes(1); expect(disk.size).toBe(1);
+  });
 
   it('accepts multiple durable messages while one request remains pending and sends in order', async () => {
     const service = open(); const completions: Array<(value: unknown) => void> = [];

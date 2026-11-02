@@ -1,5 +1,6 @@
 import { DestroyRef, Injectable, NgZone, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { callBandwidth } from './call-bandwidth';
 import { Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
 import { Room, RoomEvent, Track, type AudioCaptureOptions, type VideoCaptureOptions } from 'livekit-client';
@@ -168,6 +169,7 @@ export class CallsService implements OnDestroy {
     void this.refreshActiveGroupRooms();
   };
   private readonly connectionChangeHandler = () => {
+    for (const peer of this.peers.values()) void this.tuneOutgoingSenders(peer.connection).catch(() => undefined);
     void this.recoverAfterNetworkChange();
   };
   private readonly visibilityChangeHandler = () => {
@@ -3284,13 +3286,14 @@ export class CallsService implements OnDestroy {
     if (!parameters.encodings?.length) {
       return;
     }
+    const bandwidth = callBandwidth(this.networkInformation());
     parameters.encodings.forEach((encoding) => {
       if (track.kind === 'video') {
         const isScreenTrack = this.screenShareStream?.getVideoTracks().some((item) => item.id === track.id) === true;
-        encoding.maxBitrate = isScreenTrack ? 3_000_000 : 2_500_000;
-        encoding.maxFramerate = 30;
+        encoding.maxBitrate = isScreenTrack ? bandwidth.screen : bandwidth.camera;
+        encoding.maxFramerate = isScreenTrack ? bandwidth.screenFps : bandwidth.cameraFps;
       } else {
-        encoding.maxBitrate = 128_000;
+        encoding.maxBitrate = bandwidth.audio;
       }
     });
     if (track.kind === 'video') {
@@ -3305,7 +3308,7 @@ export class CallsService implements OnDestroy {
         .some((url) => /^turns?:/i.test(String(url || ''))));
   }
 
-  private networkInformation(): (EventTarget & { effectiveType?: string; type?: string }) | null {
+  private networkInformation(): (EventTarget & { effectiveType?: string; type?: string; saveData?: boolean }) | null {
     if (typeof navigator === 'undefined') {
       return null;
     }

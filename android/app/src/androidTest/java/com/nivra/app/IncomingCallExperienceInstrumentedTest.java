@@ -124,7 +124,11 @@ public class IncomingCallExperienceInstrumentedTest {
     @Test public void privacyChangeRedactsAnAlreadyVisibleCallerWithoutEndingReception() throws Exception {
         try (ActivityScenario<NivraIncomingCallActivity> scenario = ActivityScenario.launch(incoming("Voice", false))) {
             scenario.onActivity(activity -> assertTrue(contains(activity.getWindow().getDecorView(), "Sofía")));
-            incoming("Voice", true); // Update only the isolated test account's privacy registry.
+            // Preserve the signed call marker while changing only privacy.
+            JSONObject registry = NivraNativePushRegistration.read(context);
+            registry.getJSONArray("accounts").getJSONObject(0).put("hideNotificationContent", true);
+            Method write = NivraNativePushRegistration.class.getDeclaredMethod("write", Context.class, JSONObject.class);
+            write.setAccessible(true); write.invoke(null, context, registry);
             context.sendBroadcast(new Intent(NivraNativePushRegistration.ACTION_PRIVACY_CHANGED)
                 .setPackage(context.getPackageName()).putExtra("recipientUserId", user).putExtra("recipientDeviceId", device));
             java.util.concurrent.atomic.AtomicBoolean redacted = new java.util.concurrent.atomic.AtomicBoolean();

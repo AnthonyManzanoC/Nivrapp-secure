@@ -1202,3 +1202,20 @@ ion-modal.story-stats-modal {
 .world-surface .story-avatar { flex:0 0 54px; }
 .world-surface .story-open>span:last-child { flex:1; }
 .world-surface .story-bucket-row .row-actions { flex:none; flex-wrap:nowrap; justify-content:flex-end; gap:0; }
+
+// Reserve the avatar ring inside the button, including on narrow WebViews.
+.world-surface .story-open { padding:6px; border-radius:18px; overflow:visible; text-align:start; }
+.world-surface .story-avatar { min-width:54px; min-height:54px; aspect-ratio:1; object-position:center; }
+.world-surface .story-bucket-row.viewed { opacity:1; }
+.world-surface .story-open em { color:var(--nivra-muted); font-style:normal; }
+.world-surface .story-open strong { color:var(--nivra-text); }
+.world-filters button[aria-pressed=true] { background:color-mix(in srgb,var(--nivra-brand) 16%,var(--nivra-panel-solid)); color:var(--nivra-brand-2); }
+.world-search { border:1px solid transparent; }
+.world-search:focus-within { border-color:var(--nivra-brand); box-shadow:0 0 0 3px color-mix(in srgb,var(--nivra-brand) 10%,transparent); }
+.world-surface .story-open:focus-visible { outline:2px solid var(--nivra-brand); outline-offset:0; }
+.world-surface .story-bucket-row .row-actions ion-button { min-width:44px; min-height:44px; --padding-start:10px; --padding-end:10px; }
+@media(max-width:380px) {
+ .world-surface .story-bucket-row { gap:4px; }
+ .world-surface .story-open { gap:10px; }
+ .world-surface .story-bucket-row .row-actions ion-button { min-width:40px; --padding-start:8px; --padding-end:8px; }
+}

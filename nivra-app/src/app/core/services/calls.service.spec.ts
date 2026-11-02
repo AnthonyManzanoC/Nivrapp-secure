@@ -65,6 +65,15 @@ describe('call session isolation', () => {
 
   afterEach(() => service.ngOnDestroy());
 
+  it('applies a weak-link video budget to the sender without changing microphone or camera consent', async () => {
+    spyOn<any>(service, 'networkInformation').and.returnValue({ effectiveType: '2g' });
+    const parameters = { encodings: [{}] };
+    const sender = { track: { kind: 'video', id: 'camera' }, getParameters: () => parameters, setParameters: jasmine.createSpy().and.resolveTo() };
+    await (service as any).tuneOutgoingSender(sender);
+    expect(sender.setParameters).toHaveBeenCalledWith(jasmine.objectContaining({ encodings: [jasmine.objectContaining({ maxBitrate: 180000, maxFramerate: 12 })] }));
+    expect(service.localStream()).toBeNull();
+  });
+
   it('discards a delayed participant invite response after account ownership changes', async () => {
     service.activeCall.set(invitation);
     const response = new Subject<CallSession>(); api.post.and.returnValue(response);

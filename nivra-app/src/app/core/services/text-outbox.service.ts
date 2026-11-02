@@ -1,7 +1,8 @@
-import { DestroyRef, Injectable, effect, inject, signal, untracked } from '@angular/core';
+import { DestroyRef, Injectable, NgZone, effect, inject, signal, untracked } from '@angular/core';
 import { AuthService } from './auth.service';
 import { LocalHistoryService } from './local-history.service';
 import { AppLockService } from './app-lock.service';
+import { NetworkPolicyService } from './network-policy.service';
 import type { ChatMessageVm, Conversation } from '../models/nivra.models';
 import type { MessagePolicyOptions } from './chat.service';
 
@@ -18,6 +19,8 @@ export class TextOutboxService {
   private readonly history = inject(LocalHistoryService);
   private readonly destroyRef = inject(DestroyRef);
   private readonly appLock = inject(AppLockService);
+  private readonly network = inject(NetworkPolicyService);
+  private readonly zone = inject(NgZone);
   readonly entries = signal<QueuedText[]>([]);
   readonly storageError = signal('');
   private scope = '';
@@ -46,10 +49,16 @@ export class TextOutboxService {
     const resume = () => this.resumeNetwork();
     window.addEventListener('online', resume);
     document.addEventListener('visibilitychange', resume);
-    const timer = window.setInterval(wake, 2000);
+    const connection = (navigator as Navigator & { connection?: EventTarget }).connection;
+    connection?.addEventListener?.('change', resume);
+    const timer = this.zone.runOutsideAngular(() => window.setInterval(() => {
+      if (this.entries().length) this.zone.run(wake);
+    }, 2000));
     this.destroyRef.onDestroy(() => {
+      this.sender = undefined;
       ++this.epoch; window.clearInterval(timer);
       window.removeEventListener('online', resume); document.removeEventListener('visibilitychange', resume);
+      connection?.removeEventListener?.('change', resume);
     });
   }
   configure(sender: (entry: QueuedText) => Promise<unknown>, allowed: (entry: QueuedText) => boolean, prepareEntry?: (entry: QueuedText) => void): void {
@@ -146,6 +155,7 @@ export class TextOutboxService {
     const heads = new Map<string, QueuedText>();
     for (const entry of this.entries()) if (!heads.has(entry.conversationId)) heads.set(entry.conversationId, entry);
     for (const entry of heads.values()) {
+      if ([...this.running.keys()].filter(key => key.startsWith(`${this.scope}:`)).length >= this.network.deliveryConcurrency()) break;
       const key = `${this.scope}:${entry.conversationId}`;
       if (this.running.has(key) || this.paused.has(key) || entry.blocked || entry.retryAt > Date.now() || !this.allowed(entry)) continue;
       this.running.set(key, entry.id);
@@ -170,7 +180,7 @@ export class TextOutboxService {
       const next = { ...entry, attempts: entry.attempts + 1, blocked: !transient,
         lastStatus: Number.isFinite(status) ? status : 0,
         retryAt: Date.now() + Math.max(Math.min(300000, Number.isFinite(hintedDelay) ? hintedDelay : 0),
-          Math.min(60000, 2000 * 2 ** Math.min(entry.attempts, 5))) };
+          this.network.retryDelayMs(entry.attempts, 2000, 60000)) };
       try {
         await this.persist(scope, next);
         if (epoch === this.epoch) this.entries.update(rows => rows.map(row => row.id === entry.id ? next : row));

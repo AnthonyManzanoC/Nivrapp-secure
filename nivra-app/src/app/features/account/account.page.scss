@@ -15,6 +15,34 @@
 .profile-hero-copy { min-width: 0; margin-bottom: 10px; }
 .profile-hero-copy h2 { margin: 0; font-size: clamp(22px, 4vw, 30px); letter-spacing: -.025em; overflow-wrap: anywhere; }
 .profile-hero-copy p { margin: 4px 0 10px; color: var(--nivra-muted); overflow-wrap: anywhere; }
+
+.profile-hero.profile-photo-row {
+  display:grid; grid-template-columns:104px minmax(0,1fr); gap:18px; align-items:center;
+  background:linear-gradient(145deg,color-mix(in srgb,var(--nivra-brand) 11%,var(--nivra-panel-solid)),var(--nivra-panel-solid));
+  .profile-avatar-control { grid-column:1; grid-row:1; width:104px; align-self:center; }
+  .profile-photo-actions { display:contents; }
+  .profile-hero-copy { grid-column:2; grid-row:1; margin:0; }
+  .profile-hero-copy h2 { font-size:clamp(20px,3vw,28px); line-height:1.2; }
+  .profile-photo-buttons { grid-column:1/-1; gap:8px; }
+  .profile-photo-buttons ion-button { min-height:44px; margin:0; font-size:13px; }
+  .profile-photo-visibility { grid-column:1/-1; width:100%; padding:14px; border-radius:16px; background:var(--nivra-panel-2); border-color:var(--nivra-line); }
+  .photo-edit-badge { width:40px; height:40px; border-color:var(--nivra-panel-solid); color:var(--nivra-on-brand); }
+}
+.profile-form {
+  gap:20px;
+  > label:not(.switch-line) { display:grid; gap:8px; color:var(--nivra-text); }
+  > label > span { font-size:13px; font-weight:650; color:var(--nivra-soft); }
+  ion-input,ion-textarea { --background:var(--nivra-panel-2); --border-radius:14px; --padding-start:14px; --padding-end:14px; --highlight-color-focused:var(--nivra-brand); border-radius:14px; }
+  ion-input { min-height:52px; }
+  ion-textarea { min-height:108px; --padding-top:12px; --padding-bottom:12px; }
+  .profile-field-count { justify-self:end; font-size:11px; }
+}
+@media(max-width:480px) {
+ .profile-hero.profile-photo-row { grid-template-columns:88px minmax(0,1fr); gap:14px; padding:16px; }
+ .profile-hero.profile-photo-row .profile-avatar-control { width:88px; }
+ .profile-hero.profile-photo-row .profile-photo-visibility { grid-template-columns:1fr; }
+ .profile-hero.profile-photo-row .profile-photo-visibility .native-select { width:100%; }
+}
 .nivra-id-profile-tag { display: inline-flex; align-items: center; gap: 5px; margin: 6px 8px 10px 0; padding: 5px 9px; border-radius: 20px; background: color-mix(in srgb, var(--nivra-brand) 12%, transparent); color: var(--nivra-brand-2); font-size: 12px; font-weight: 650; }
 .nivra-id-profile-tag ion-icon { font-size: 15px; }
 .alias-inspiration { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }

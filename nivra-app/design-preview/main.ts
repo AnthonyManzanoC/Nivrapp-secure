@@ -3,7 +3,7 @@
 import { Component, signal } from '@angular/core';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { provideRouter, RouterLink, RouterOutlet } from '@angular/router';
-import { IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent, provideIonicAngular } from '@ionic/angular/standalone';
+import { IonInput, IonTextarea, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent, provideIonicAngular } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { arrowBackOutline, callOutline, videocamOutline } from 'ionicons/icons';
 import { ShellPage } from '../src/app/features/shell/shell.page';
@@ -35,7 +35,8 @@ import { UnreadTabService } from '../src/app/core/services/unread-tab.service';
 import { ClientCompatibilityService } from '../src/app/core/services/client-compatibility.service';
 import { NivraApiService } from '../src/app/core/services/nivra-api.service';
 
-const user = { id: 'preview-owner', alias: 'alex', displayName: 'Alex', profilePhotoDataUrl: null };
+const previewAvatar = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#addbd0"/><circle cx="50" cy="37" r="18" fill="#275c55"/><ellipse cx="50" cy="102" rx="40" ry="45" fill="#275c55"/></svg>');
+const user = { id: 'preview-owner', alias: 'alex', displayName: 'Alex', profilePhotoDataUrl: previewAvatar };
 const items = signal<any[]>([
   { id: 'design', name: 'Estudio Creativo', preview: 'La nueva propuesta está lista ✨', type: 'Group', pinned: true, unread: true },
   { id: 'sofia', name: 'Sofía Martínez', preview: 'Nos vemos a las seis. ¡Qué ganas!', type: 'Direct', unread: true },
@@ -99,7 +100,7 @@ class PreviewCalls {
     }
   }
 }
-const stories=signal<any[]>([user,...items().map((item,i)=>({id:'peer-'+i,alias:item.id,displayName:item.name}))].map((owner,i)=>({id:'story-'+i,owner,targetType:i===1?'group':'contacts',targetId:i===1?'design':null,visibility:'Contacts',encryptedPayload:'fixture',allowedUserIds:[],viewOnce:false,allowReposts:true,viewedByMe:i>5,viewCount:i+2,createdAt:new Date(Date.now()-i*600000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()})));
+const stories=signal<any[]>([user,...items().map((item,i)=>({id:'peer-'+i,alias:item.id,displayName:item.name,profilePhotoDataUrl:previewAvatar}))].map((owner,i)=>({id:'story-'+i,owner,targetType:i===1?'group':'contacts',targetId:i===1?'design':null,visibility:'Contacts',encryptedPayload:'fixture',allowedUserIds:[],viewOnce:false,allowReposts:true,viewedByMe:i>5,viewCount:i+2,createdAt:new Date(Date.now()-i*600000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()})));
 const request={id:'request-fixture',from:{id:'requester',alias:'daniela',displayName:'Daniela López'},to:user,status:'Pending',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
 const social:any={contacts:signal(items().filter(item=>item.type==='Direct').map(item=>({userId:item.participants[1].userId,alias:item.id,displayName:item.name,isFavorite:item.id==='sofia',isMutualContact:true}))),
  contactsLoading:signal(false),requestsLoading:signal(false),incomingRequests:signal([request]),outgoingRequests:signal([]),requestHistory:signal([]),connectionsError:signal(''),people:signal([]),searching:signal(false),connectionActions:signal([]),radarMatches:signal([]),radarLoading:signal(false),loadConnections:async()=>{},search:async()=>[],loading:signal(false),publishing:signal(false),publishingStatus:signal(''),storyDeliveryWarning:signal(''),
@@ -114,6 +115,16 @@ class PreviewComposer {}
 class PreviewViewer {story=stories()[2];queue=stories().slice(1,5);payload={type:'text',text:'Los mejores momentos se comparten. ✨',textTheme:'rose'};}
 @Component({selector:'preview-invitation',standalone:true,imports:[CallGameInvitationComponent,TransientNoticeDirective],template:`<section style="padding:100px 24px"><h1>Llamada en curso</h1><p [appTransientNotice]="notice" (noticeExpired)="notice=''" role="status">{{notice}}</p><app-call-game-invitation label="Sofía te invita a Puntos y cajas" /></section>`})
 class PreviewInvitation {notice='Resultado de prueba temporal';}
+// Visual fixture for the profile layout: actual account stylesheet, synthetic fields,
+// no AccountService or authentication mutations.
+@Component({ selector:'preview-profile', standalone:true, imports:[IonInput,IonTextarea,IonButton,IonIcon,IonContent],
+  styleUrls:['../src/app/features/account/account.page.scss'],
+  template:`<ion-content class="page"><main class="surface"><header class="page-head"><h1>Tu perfil</h1></header><section class="panel" style="max-width:700px;margin:auto">
+    <div class="profile-hero profile-photo-row"><div class="profile-avatar-control"><button class="profile-photo" aria-label="Ver foto"><img [src]="avatar" alt=""></button><button class="photo-edit-badge" aria-label="Cambiar foto"><ion-icon name="camera-outline" /></button></div>
+    <div class="profile-photo-actions"><div class="profile-hero-copy"><h2>Alex Martínez</h2><p>@alex</p><span class="profile-draft-tag">Perfil guardado</span></div><div class="profile-photo-buttons"><ion-button fill="outline">Cambiar foto</ion-button><ion-button fill="clear" color="danger">Quitar</ion-button></div><label class="profile-photo-visibility"><span><strong>Quién puede ver tu foto</strong><small>Tú eliges con quién compartirla.</small></span><select class="native-select" aria-label="Quién puede ver tu foto"><option>Mis contactos</option></select></label></div></div>
+    <div class="form-grid profile-form"><label><span>Alias</span><ion-input value="alex" aria-label="Alias" /></label><label><span>Nombre</span><ion-input value="Alex Martínez" aria-label="Nombre" /></label><label class="wide"><span>Email</span><ion-input value="alex@example.test" readonly aria-label="Email" /></label><label class="wide"><span>Bio</span><ion-textarea rows="3" value="Los mejores momentos se comparten." aria-label="Bio" /></label></div>
+  </section></main></ion-content>` })
+class PreviewProfile { avatar=previewAvatar; }
 @Component({
   selector: 'app-chat-detail', standalone: true,
   imports: [RouterLink, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent],
@@ -163,7 +174,7 @@ bootstrapApplication(PreviewRoot, { providers: [
     { path: 'games', component: PreviewGames },
     { path: 'world', component: WorldPage },{ path: 'composer', component: PreviewComposer },{ path: 'viewer', component: PreviewViewer },{ path: 'invitation', component: PreviewInvitation },
     { path: '**', component: PreviewEmpty },
-  ] },{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls}, { path: '**', redirectTo: 'app/chats' }]),
+  ] },{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls}, { path: '**', redirectTo: 'app/chats' }]),
   { provide: AuthService, useValue: { session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
   { provide: ChatService, useValue: chat },
   { provide: SocialService, useValue: social },
