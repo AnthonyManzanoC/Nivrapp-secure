@@ -684,7 +684,7 @@
         <button type="button" (click)="beginSelection()"><ion-icon name="checkmark-outline"></ion-icon>{{ 'CHAT.SELECT_MESSAGES' | translate:'Seleccionar mensajes' }}</button>
         <button type="button" (click)="openPrivateChatProtection()"><ion-icon name="lock-closed-outline" />{{ privateChats.isProtected(privateConversationId()) ? ('PRIVATE_CHAT.REMOVE' | translate:'Quitar protección') : ('PRIVATE_CHAT.PROTECT' | translate:'Proteger conversación') }}</button>
         <button type="button" (click)="openSearch()"><ion-icon name="search-outline"></ion-icon>{{ 'CHAT.SEARCH_CHAT' | translate:'Buscar en este chat' }}</button>
-        @if (!isGroupConversation()) {
+        @if (!isGroupConversation() && !chat.isSelfConversation(conversation())) {
           <button type="button" (click)="closeChatMenu(); verifyIdentity()"><ion-icon name="shield-checkmark-outline"></ion-icon>{{ 'IDENTITY.TITLE' | translate:'Verificar identidad' }}</button>
         }
         <button type="button" (click)="openContactInfo()">
@@ -696,10 +696,12 @@
           {{ isArchived() ? ('CHATS.UNARCHIVE' | translate:'Desarchivar') : ('CHATS.ARCHIVE' | translate:'Archivar') }}
         </button>
         <button type="button" (click)="closeConversationView()"><ion-icon name="close-outline"></ion-icon>{{ 'CHAT.CLOSE_CHAT' | translate:'Cerrar chat' }}</button>
+        @if (!chat.isSelfConversation(conversation())) {
         <button type="button" (click)="toggleBlock()">
           <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'"></ion-icon>
           {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : (chat.isGroup(conversation()) ? ('CHAT.BLOCK' | translate:'Bloquear') : ('CHAT.BLOCK_CONTACT' | translate:'Bloquear contacto')) }}
         </button>
+        }
         <button type="button" (click)="clearChat('me')">
           <ion-icon name="trash-outline"></ion-icon>
           {{ 'CHAT.CLEAR_FOR_ME' | translate:'Vaciar para mi' }}
@@ -951,7 +953,7 @@
               }
             </div>
           }
-          <div class="profile-actions">
+          <div class="profile-actions" [hidden]="chat.isSelfConversation(conversation())">
             <button
               type="button"
               (click)="startProfileCall('Voice')"
@@ -967,7 +969,7 @@
               {{ 'COMMON.VIDEO' | translate:'Video' }}
             </button>
           </div>
-          @if (!isGroupConversation()) {
+          @if (!isGroupConversation() && !chat.isSelfConversation(conversation())) {
             <button
               type="button"
               class="profile-card profile-security"

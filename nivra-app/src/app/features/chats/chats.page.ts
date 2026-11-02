@@ -1532,7 +1532,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   private syncSelectedConversationFromUrl(url: string): void {
-    const compose = this.router.parseUrl(url).queryParams['compose'];
+    const compose = this.router.parseUrl(url).queryParams?.['compose'];
     if (['group', 'story', 'pass'].includes(compose)) {
       void this.router.navigate(['/app/chats'], { replaceUrl: true });
       if (compose === 'group') this.openGroupModal();

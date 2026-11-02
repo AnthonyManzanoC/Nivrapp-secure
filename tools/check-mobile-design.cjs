@@ -50,10 +50,11 @@ async function main() {
       const message = JSON.parse(event.data);
       if (message.id) { const p=pending.get(message.id); pending.delete(message.id); message.error?p.reject(Error(message.error.message)):p.resolve(message.result); }
       else if (message.method==='Runtime.exceptionThrown') errors.push(message.params.exceptionDetails.exception?.description || message.params.exceptionDetails.text);
+      else if (message.method==='Runtime.consoleAPICalled' && message.params.type==='error') errors.push(message.params.args.map(arg=>arg.description||arg.value||arg.type).join(' '));
       else if (message.method==='Fetch.requestPaused') {
         const url=message.params.request.url;
         void call(url.startsWith(base) || /^(data|blob):/.test(url)?'Fetch.continueRequest':'Fetch.failRequest',
-          {requestId:message.params.requestId,...(url.startsWith(base) || /^(data|blob):/.test(url)?{}:{errorReason:'BlockedByClient'})});
+          {requestId:message.params.requestId,...(url.startsWith(base) || /^(data|blob):/.test(url)?{}:{errorReason:'BlockedByClient'})}).catch(()=>{});
       }
     };
     await call('Runtime.enable'); await call('Page.enable');

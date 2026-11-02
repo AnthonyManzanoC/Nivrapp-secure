@@ -188,6 +188,7 @@ jobs:
       - name: Build native call UI in a separate application package
         run: |
           npm ci --ignore-scripts
+          npx --no-install cap update android
           cd android
           bash ./gradlew -PnivraExperienceLab=true :app:assembleDebug :app:assembleDebugAndroidTest --no-daemon --max-workers=2 --console=plain
       - name: Verify state across Android process restart

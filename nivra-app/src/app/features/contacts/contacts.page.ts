@@ -12,6 +12,7 @@ import { ContactSyncService } from '../../core/services/contact-sync.service';
 import { SocialService } from '../../core/services/social.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
+import { rankConversationTitles } from '../chats/conversation-search';
 import { identityDisplayName } from '../../core/utils/nivra-identity';
 @Component({selector:'app-contacts',standalone:true,imports:[CommonModule,FormsModule,TranslatePipe,IonButton,IonContent,IonIcon,IonInput,IonSpinner,IonTextarea],templateUrl:'./contacts.page.html',styleUrls:['./contacts.page.scss']})
 export class ContactsPage implements OnInit,OnDestroy {
@@ -214,9 +215,12 @@ export class ContactsPage implements OnInit,OnDestroy {
   }
 
 
- filteredContacts():Contact[]{const q=this.query.trim().toLocaleLowerCase();return this.social.contacts().filter(c=>!q||(this.personName(c)+' '+c.alias+' '+(c.nivraNumber||'')).toLocaleLowerCase().includes(q)).sort((a,b)=>Number(b.isFavorite)-Number(a.isFavorite)||this.personName(a).localeCompare(this.personName(b)));}
+  filteredContacts(): Contact[] {
+    const contacts = [...this.social.contacts()].sort((a,b) => Number(b.isFavorite)-Number(a.isFavorite) || this.personName(a).localeCompare(this.personName(b)));
+    return this.query.trim() ? rankConversationTitles(contacts, this.query, contact => [this.personName(contact), contact.alias, contact.nivraNumber || ''].join(' ')) : contacts;
+  }
  focusSearch():void{this.searchOpen=true;requestAnimationFrame(()=>void this.input?.setFocus());}
- closeSearch():void{this.query='';this.searchOpen=false;this.searchChanged();}
+ closeSearch():void{this.query='';this.searchOpen=false;this.searchChanged();void this.input?.getInputElement().then(input=>input.blur());}
  back():void{void this.router.navigateByUrl('/app/chats');}
  compose(kind:'group'|'story'|'pass'):void{void this.router.navigate(['/app/chats'],{queryParams:{compose:kind}});}
  reviewRequests():void{void this.router.navigateByUrl('/app/world#friend-requests');}

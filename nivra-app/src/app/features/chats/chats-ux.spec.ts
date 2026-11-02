@@ -180,10 +180,10 @@ describe('Chats actions and scoped search', () => {
     expect(page.sharePassOpen).toBeFalse();
   });
 
-  it('opens contact search from onboarding, and opens the pass directly without navigation', async () => {
+  it('opens the new Contacts view from the plus action and opens the pass directly', async () => {
     page.startNewChat();
-    expect(page.searchScope).toBe('people');
-    expect(page.showRecentSearches).toBeTrue();
+    expect(router.navigateByUrl).toHaveBeenCalledOnceWith('/app/contacts');
+    router.navigateByUrl.calls.reset();
     await page.openShareAccount();
     expect(page.sharePassOpen).toBeTrue();
     expect(router.navigateByUrl).not.toHaveBeenCalled();

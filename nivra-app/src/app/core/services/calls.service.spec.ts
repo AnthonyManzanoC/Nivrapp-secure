@@ -309,10 +309,10 @@ describe('call session isolation', () => {
     const oldRequest = (service as any).loadIceConfiguration();
     (service as any).auth.session.set({ user: { id: 'other' }, device: { id: 'other-device' } });
     const newRequest = (service as any).loadIceConfiguration();
-    previous.next({ iceServers: [{ urls: 'turn:old.example.test', username: 'old' }] }); previous.complete();
+    previous.next({ relayOnly: false, iceServers: [{ urls: 'turn:old.example.test', username: 'old' }] }); previous.complete();
     await oldRequest;
     expect((service as any).iceServers.some((server: RTCIceServer) => server.username === 'old')).toBeFalse();
-    current.next({ iceServers: [{ urls: 'turn:new.example.test', username: 'new' }] }); current.complete();
+    current.next({ relayOnly: false, iceServers: [{ urls: 'turn:new.example.test', username: 'new' }] }); current.complete();
     await newRequest; expect((service as any).iceServers[0].username).toBe('new');
   });
 

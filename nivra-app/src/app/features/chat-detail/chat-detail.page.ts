@@ -1353,7 +1353,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async closeConversationView(): Promise<void> {
+    const userId = this.auth?.session()?.user.id;
+    const conversationId = this.conversation?.()?.id;
     await this.closeChatMenu();
+    if (this.destroyed || this.auth?.session()?.user.id !== userId || this.conversation?.()?.id !== conversationId) return;
     this.cancelSelection();
     await this.router.navigateByUrl('/app/chats');
   }
@@ -1963,6 +1966,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async toggleBlock(): Promise<void> {
+    if (this.chat.isSelfConversation(this.conversation())) return;
     const conversation = this.conversation();
     if (!conversation) {
       return;

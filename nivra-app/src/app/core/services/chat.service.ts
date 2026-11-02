@@ -4106,7 +4106,7 @@ export class ChatService implements OnDestroy {
 
   private conversationPrimaryPerson(conversation: Conversation): LocalProfile | null {
     const currentUserId = this.auth.session()?.user.id;
-    if (currentUserId && this.isSelfConversation(conversation)) return this.profileForUser(currentUserId);
+    if (currentUserId && this.isSelfConversation(conversation)) return this.participantProfile(currentUserId);
     const other = conversation.participants.find((participant) => participant.userId !== currentUserId && !participant.removedAt);
     return other ? this.profileForUser(other.userId) : null;
   }

@@ -159,16 +159,17 @@
             }
           }
         </ion-list>
-      } @else if (query.length < 2 && recentSearches.length && showRecentSearches && !recentCollapsed) {
+      } @else if (query.length < 2 && showRecentSearches && !recentCollapsed) {
         <div class="recent-searches">
+          @if (recentSearches.length) {
           <div class="recent-head">
             <span>{{ 'CHATS.RECENT_SEARCHES' | translate:'Busquedas recientes' }}</span>
             <div class="recent-actions">
-              <button type="button" (click)="hideRecent($event)" [attr.aria-label]="'CHATS.CLOSE_RECENT' | translate:'Cerrar busquedas recientes'">
+              <button type="button" (click)="closeSearch()" [attr.aria-label]="'CHATS.CLOSE_RECENT' | translate:'Cerrar busquedas recientes'">
                 <ion-icon name="close-outline"></ion-icon>
               </button>
               <button type="button" (click)="clearRecent()" [attr.aria-label]="'CHATS.DELETE_RECENT' | translate:'Eliminar busquedas recientes'">
-                <ion-icon name="trash-outline"></ion-icon>
+                {{ 'CHATS.DELETE_ALL_RECENT' | translate:'Eliminar todo' }}
               </button>
             </div>
           </div>
@@ -192,6 +193,9 @@
               }
             }
           </div>
+          } @else {
+            <div class="search-start"><ion-icon name="search-outline" aria-hidden="true"></ion-icon><strong>Encuentra tu próxima conversación</strong><p>Busca entre tus chats o escribe un alias o ID Nivra.</p></div>
+          }
         </div>
       } @else {
         <section class="chat-list-shell" [class.has-history-warning]="!!visibleStorageError()">

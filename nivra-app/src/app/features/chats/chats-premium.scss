@@ -27,6 +27,11 @@
   .list .conversation-item::part(native) { min-height: 78px; }
 }
 .search-back { display:none; }
+.search-start { display:grid; justify-items:center; gap:12px; padding:48px 24px; text-align:center; color:var(--nivra-muted); }
+.search-start ion-icon { font-size:32px; color:var(--ion-color-primary); }
+.search-start strong { color:var(--nivra-text); font-size:15px; }
+.search-start p { margin:0; font-size:13px; line-height:1.6; }
+.recent-actions button { min-height:36px; border-radius:20px; }
 .search-box ion-input { --highlight-color-focused:transparent; --highlight-color-valid:transparent; }
 .search-box ion-input::part(native) { outline:none; box-shadow:none; }
 @media(max-width:768px) {
