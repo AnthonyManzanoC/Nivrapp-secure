@@ -118,6 +118,7 @@ async function main() {
     await evaluate("localStorage.setItem('nivra_recent_searches.preview-owner',JSON.stringify([{id:'peer-1',alias:'sofia',displayName:'Sofía Martínez',isDiscoverable:true}]))");
     await call('Page.navigate',{url:base+'/app/chats?theme=light&recent=1'});
     await waitFor("!!document.querySelector('.search-box ion-input')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
     await tap('.search-box ion-input');
     await waitFor("!!document.querySelector('.clear-recents')");
     assert(await evaluate("(()=>{const b=document.querySelector('.clear-recents');return b.getBoundingClientRect().width>100 && getComputedStyle(b).whiteSpace==='nowrap';})()"),'delete recent searches is a readable full-width action');
