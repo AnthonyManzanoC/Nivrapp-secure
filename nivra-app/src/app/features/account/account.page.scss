@@ -30,7 +30,7 @@
 }
 .profile-form {
   gap:20px;
-  > label:not(.switch-line) { display:grid; gap:8px; color:var(--nivra-text); }
+  > label:not(.switch-line):not(.toggle-row) { display:grid; gap:8px; color:var(--nivra-text); }
   > label > span { font-size:13px; font-weight:650; color:var(--nivra-soft); }
   ion-input,ion-textarea { --background:var(--nivra-panel-2); --border-radius:14px; --padding-start:14px; --padding-end:14px; --highlight-color-focused:var(--nivra-brand); border-radius:14px; }
   ion-input { min-height:52px; }
