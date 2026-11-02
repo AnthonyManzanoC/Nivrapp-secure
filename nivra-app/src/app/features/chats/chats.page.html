@@ -1,4 +1,4 @@
-<ion-content fullscreen class="chats-page" [class.search-active]="query.trim() || showRecentSearches" [class.three-line-list]="appSettings.settings().chatListDensity === 'three-line'">
+<ion-content fullscreen class="chats-page" [class.search-active]="query.trim() || showRecentSearches" [attr.data-tab-swipe-lock]="query.trim() || showRecentSearches ? 'true' : null" [class.three-line-list]="appSettings.settings().chatListDensity === 'three-line'">
   <section class="chat-layout">
     <aside class="sidebar" [class.has-story-strip]="storyHighlights().length && !query.trim() && !showRecentSearches">
       <header class="side-head">

@@ -74,3 +74,7 @@ footer { display:flex; align-items:center; justify-content:center; gap:8px; font
 
 .search-back { display:grid; place-items:center; background:none; border:0; color:inherit; width:40px; height:44px; flex:0 0 40px; padding:0; }
 @media(max-width:768px){.searching .contacts-head,.searching .requests-link{display:none;}.searching .people-panel{margin-top:8px;}}
+
+.person-result>div:nth-child(2) { flex:1; min-width:0; display:grid; gap:5px; }
+.person-result .contact-avatar { width:40px; height:40px; flex-basis:40px; }
+@media(max-width:768px){.person-result {flex-wrap:wrap;}.person-result .row-actions{margin-inline-start:54px;justify-content:start;}}

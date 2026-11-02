@@ -154,6 +154,9 @@ export class WorldPage implements OnInit, OnDestroy {
   async ngOnInit(): Promise<void> {
     await this.social.load();
     if (!this.destroyed) void this.contactSync.syncCachedContactsInBackground();
+    if (!this.destroyed && this.router.url?.endsWith('#friend-requests')) {
+      requestAnimationFrame(() => { if (!this.destroyed) this.reviewRequests(); });
+    }
   }
 
   ngOnDestroy(): void {

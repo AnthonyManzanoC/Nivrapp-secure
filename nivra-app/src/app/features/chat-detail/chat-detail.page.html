@@ -953,7 +953,7 @@
               }
             </div>
           }
-          <div class="profile-actions" [hidden]="chat.isSelfConversation(conversation())">
+          <div class="profile-actions" [style.display]="chat.isSelfConversation(conversation()) ? 'none' : null">
             <button
               type="button"
               (click)="startProfileCall('Voice')"

@@ -56,7 +56,7 @@
         @if (social.searching()) { <p class="search-status" role="status"><ion-spinner name="crescent"></ion-spinner>{{ 'WORLD.SEARCHING' | translate:'Buscando…' }}</p> }
         <div class="stack">
           @for (person of social.people(); track person.id) {
-            <div class="result-row person-result">
+            <div class="result-row person-result"><span class="contact-avatar">@if(person.profilePhotoDataUrl){<img [src]="person.profilePhotoDataUrl" alt="" loading="lazy">}@else{ {{personName(person).slice(0,1)}} }</span>
               <div>
                 <strong>{{ personName(person) }}</strong>
                 <span class="card-sub">@{{ person.alias }} - {{ friendshipLabel(person) }}</span>
@@ -75,7 +75,7 @@
                 }
                 @if (person.friendshipState === 'none' && !person.isMutualContact) {
                   <ion-button mode="ios" fill="outline" [disabled]="isBusy(person.id) || personBusy(person.id) || person.id === auth.session()?.user?.id" (click)="request(person)">
-                    <ion-icon name="add-outline"></ion-icon>
+                    <ion-icon name="person-add-outline"></ion-icon> Solicitar
                   </ion-button>
                 }
               </div>
@@ -121,7 +121,7 @@
         </div>
         <div class="radar-results">
           @for (person of social.radarMatches(); track person.id) {
-            <div class="result-row person-result">
+            <div class="result-row person-result"><span class="contact-avatar">@if(person.profilePhotoDataUrl){<img [src]="person.profilePhotoDataUrl" alt="" loading="lazy">}@else{ {{personName(person).slice(0,1)}} }</span>
               <div>
                 <strong>{{ personName(person) }}</strong>
                 <span class="card-sub">@{{ person.alias }} - {{ friendshipLabel(person) }}</span>
@@ -140,7 +140,7 @@
                 }
                 @if (person.friendshipState === 'none' && !person.isMutualContact) {
                   <ion-button mode="ios" fill="outline" [disabled]="isBusy(person.id) || personBusy(person.id)" (click)="request(person)">
-                    <ion-icon name="add-outline"></ion-icon>
+                    <ion-icon name="person-add-outline"></ion-icon> Solicitar
                   </ion-button>
                 }
               </div>
