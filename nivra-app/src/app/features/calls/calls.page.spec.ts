@@ -21,6 +21,7 @@ describe('call video presentation', () => {
   beforeEach(() => {
     calls = {
       activeCall: signal({ id: 'call', type: 'Video', initiatorUserId: 'me', participantUserIds: ['peer'] }),
+      history: signal([]), start: jasmine.createSpy().and.resolveTo(), inviteToCall: jasmine.createSpy().and.resolveTo(),
       phase: signal('connected'), localStream: signal(null), remoteEntries: signal([]),
       activeScreenShareStreamId: signal(null), cameraOff: signal(false), remoteStates: signal({}),
       screenSharing: signal(false), isGroupCall: jasmine.createSpy().and.returnValue(false),
@@ -41,7 +42,7 @@ describe('call video presentation', () => {
     TestBed.configureTestingModule({ providers: [
       { provide: CallsService, useValue: calls },
       { provide: AuthService, useValue: { session: signal({ user: { id: 'me' } }) } },
-      { provide: ChatService, useValue: { contacts: signal([]), conversations: signal([]) } },
+      { provide: ChatService, useValue: { contacts: signal([]), conversations: signal([]), createDirectConversation: jasmine.createSpy(), participantDisplayName: (id: string) => id, conversationTitle: (conversation: any) => conversation.title } },
       { provide: TranslateService, useValue: { instant: (_key: string, fallback: string) => fallback } },
     ] });
     page = TestBed.runInInjectionContext(() => new CallsPage());
@@ -49,6 +50,91 @@ describe('call video presentation', () => {
   });
 
   afterEach(() => page.ionViewWillLeave());
+
+  it('does not start a pending contact call after switching accounts', async () => {
+    calls.activeCall.set(null); TestBed.flushEffects();
+    let finish!: (value: any) => void;
+    (TestBed.inject(ChatService).createDirectConversation as jasmine.Spy).and.returnValue(new Promise(resolve => finish = resolve));
+    const pending = page.startContactCall({ userId: 'peer' } as any, 'Voice');
+    (TestBed.inject(AuthService).session as any).set({ user: { id: 'other' } });
+    finish({ id: 'old-account-chat' }); await pending;
+    expect(calls.start).not.toHaveBeenCalled();
+  });
+
+  it('cancels pending contact starts on leaving the page and allows retry after a creation error', async () => {
+    calls.activeCall.set(null); TestBed.flushEffects();
+    const create = TestBed.inject(ChatService).createDirectConversation as jasmine.Spy;
+    create.and.rejectWith(new Error('offline'));
+    await page.startContactCall({ userId: 'peer' } as any, 'Video');
+    expect(page.callBusyId).toBe(''); expect(calls.error()).toContain('No se pudo iniciar');
+    let finish!: (value: any) => void;
+    create.and.returnValue(new Promise(resolve => finish = resolve));
+    const pending = page.startContactCall({ userId: 'peer' } as any, 'Voice');
+    page.ionViewWillLeave(); finish({ id: 'chat' }); await pending;
+    expect(calls.start).not.toHaveBeenCalled();
+  });
+
+  it('never reopens a dismissed participant sheet after a failed invitation', async () => {
+    let fail!: (error: Error) => void;
+    calls.inviteToCall.and.returnValue(new Promise((_resolve, reject) => fail = reject));
+    page.openInviteModal();
+    const pending = page.inviteToCall({ userId: 'peer2' } as any);
+    page.closeInviteModal(); fail(new Error('offline')); await pending;
+    expect(page.inviteModalOpen).toBeFalse(); expect(page.callBusyId).toBe('');
+  });
+
+  it('never shows rejoin for missed, rejected, ended or failed calls', () => {
+    calls.activeCall.set(null);
+    for (const status of ['Missed', 'Rejected', 'Ended', 'Failed', 'Ringing']) {
+      expect(page.canRejoin({ id: 'past', status } as any)).toBeFalse();
+    }
+    expect(page.canRejoin({ id: 'ongoing', status: 'Active' } as any)).toBeTrue();
+    expect(page.canRejoin({ id: 'ended', status: 'Active', endedAt: '2026-11-02' } as any)).toBeFalse();
+  });
+
+  it('filters accent-insensitive local history, orders newest first and renders in bounded pages', () => {
+    const chat = TestBed.inject(ChatService);
+    (chat.conversations as any).set([{ id: 'chat', title: 'Sofía', participants: [] }]);
+    calls.history.set(Array.from({ length: 81 }, (_, i) => ({ id: String(i), conversationId: 'chat', startedAt: new Date(i * 60000).toISOString(), status: i % 2 ? 'Missed' : 'Ended', type: i % 2 ? 'Voice' : 'Video' })));
+    page.callQuery = 'sofia';
+    expect(page.filteredHistory().length).toBe(81);
+    expect(page.visibleHistory().length).toBe(40);
+    expect(page.visibleHistory()[0].id).toBe('80');
+    page.showMoreHistory(); expect(page.visibleHistory().length).toBe(80);
+    page.setHistoryFilter('missed'); expect(page.filteredHistory().length).toBe(40);
+    expect(page.filteredHistory().every(call => call.status === 'Missed')).toBeTrue();
+    page.setHistoryFilter('video'); expect(page.filteredHistory().length).toBe(41);
+    page.callQuery = 'no-match'; expect(page.visibleHistory()).toEqual([]);
+  });
+
+  it('reuses the sorted agenda until contacts change rather than sorting on every playback update', () => {
+    const chat = TestBed.inject(ChatService);
+    (chat.contacts as any).set([{ userId: 'peer', displayName: 'Sofía' }]);
+    const build = spyOn<any>(page, 'buildAgendaContacts').and.callThrough();
+    page.filteredCallContacts(); page.filteredCallContacts();
+    calls.remoteEntries.set([]); page.filteredCallContacts();
+    expect(build).toHaveBeenCalledTimes(1);
+    (chat.contacts as any).set([{ userId: 'next', displayName: 'Ana' }]);
+    expect(page.filteredCallContacts()[0].userId).toBe('next');
+    expect(build).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps voice controls and keyboard-focused video controls visible', fakeAsync(() => {
+    calls.activeCall.set({ id: 'call', type: 'Voice' });
+    page.revealCallChrome(); tick(6000); expect(page.controlsVisible).toBeTrue();
+    calls.activeCall.set({ id: 'call', type: 'Video' });
+    page.onControlsFocus(true); tick(6000); expect(page.controlsVisible).toBeTrue();
+    page.onControlsFocus(false); tick(5000); expect(page.controlsVisible).toBeFalse();
+    page.revealCallChrome(); expect(page.controlsVisible).toBeTrue();
+    page.ionViewWillLeave(); tick(6000); expect(page.controlsVisible).toBeTrue();
+  }));
+
+  it('rechecks pending controls hide when games or camera consent opens', fakeAsync(() => {
+    page.revealCallChrome(); calls.games.panelOpen.set(true); tick(6000);
+    expect(page.controlsVisible).toBeTrue();
+    calls.games.panelOpen.set(false); page.revealCallChrome(); calls.mediaUpgradeRequested.set(true); tick(6000);
+    expect(page.controlsVisible).toBeTrue();
+  }));
 
   it('opens a route choice without muting playback or microphone and refreshes real devices', async () => {
     await page.openAudioRoutes();

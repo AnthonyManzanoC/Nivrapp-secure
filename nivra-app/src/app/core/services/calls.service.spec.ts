@@ -65,6 +65,25 @@ describe('call session isolation', () => {
 
   afterEach(() => service.ngOnDestroy());
 
+  it('discards a delayed participant invite response after account ownership changes', async () => {
+    service.activeCall.set(invitation);
+    const response = new Subject<CallSession>(); api.post.and.returnValue(response);
+    const apply = spyOn<any>(service, 'applyActiveCallUpdate').and.resolveTo();
+    const pending = service.inviteToCall('new-peer');
+    (service as any).auth.session.set({ user: { id: 'other' }, device: { id: 'other-device' } });
+    response.next({ ...invitation, participantUserIds: ['new-peer'] }); await pending;
+    expect(apply).not.toHaveBeenCalled();
+  });
+
+  it('discards invitation errors from a former call rather than covering the new call', async () => {
+    service.activeCall.set(invitation);
+    const response = new Subject<CallSession>(); api.post.and.returnValue(response);
+    const pending = service.inviteToCall('new-peer');
+    service.activeCall.set({ ...invitation, id: 'next' }); service.error.set('');
+    response.error(new Error('old-call-error')); await pending;
+    expect(service.error()).toBe(''); expect(service.activeCall()?.id).toBe('next');
+  });
+
   it('preserves an existing screen-capture grant while replacing a disconnected room', async () => {
     const call={...invitation,isGroupRoom:true,status:'Active'};
     service.activeCall.set(call); service.phase.set('connected');

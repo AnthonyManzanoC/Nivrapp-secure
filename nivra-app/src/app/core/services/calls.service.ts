@@ -1609,12 +1609,14 @@ export class CallsService implements OnDestroy {
     if (!call?.id || !targetUserId || targetUserId === this.currentUserId()) {
       return;
     }
+    const isCurrent = this.currentCallGuard(call);
     this.error.set('');
     try {
       const response = await firstValueFrom(this.api.post<CallSession>(`/calls/${encodeURIComponent(call.id)}/invite`, {
         userId: targetUserId,
         clientSessionId: this.callSignalSessionId,
       }));
+      if (!isCurrent()) return;
       const normalized = this.withGroupRoomMetadata(response, response.conversationId ?? call.conversationId ?? call.groupId ?? null, this.isGroupCall(response) || this.isGroupCall(call));
       const participantUserIds = [...new Set([...(call.participantUserIds ?? []), ...(normalized.participantUserIds ?? []), targetUserId])];
       const updated = {
@@ -1624,6 +1626,7 @@ export class CallsService implements OnDestroy {
       };
       await this.applyActiveCallUpdate(updated);
     } catch (error) {
+      if (!isCurrent()) return;
       this.error.set(error instanceof Error ? error.message : 'No se pudo invitar al contacto a la llamada.');
       throw error;
     }

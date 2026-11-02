@@ -21,6 +21,8 @@ import { AuthService } from '../src/app/core/services/auth.service';
 import { ChatService } from '../src/app/core/services/chat.service';
 import { SocialService } from '../src/app/core/services/social.service';
 import { CallsService } from '../src/app/core/services/calls.service';
+import { CallsPage } from '../src/app/features/calls/calls.page';
+import { CallTranslationService } from '../src/app/core/services/call-translation.service';
 import { SignalrService } from '../src/app/core/services/signalr.service';
 import { AppSettingsService } from '../src/app/core/services/app-settings.service';
 import { LocalHistoryService } from '../src/app/core/services/local-history.service';
@@ -67,6 +69,36 @@ const chat: any = {
   conversationListPresence: (item: any) => ChatService.prototype.conversationListPresence.call(chat, item),
 };
 const previewSettings = signal({ chatListDensity: 'three-line' });
+const previewCalls: any = {
+  activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'),
+  localStream: signal(null), remoteEntries: signal([]), activeScreenShareStreamId: signal(null),
+  cameraOff: signal(false), remoteStates: signal({}), screenSharing: signal(false),
+  mediaUpgradeRequested: signal(false), mediaUpgradeAwaitingPeer: signal(false), mediaUpgradeNotice: signal(''),
+  mediaUpgradeInFlight: signal(false), muted: signal(false), speaker: signal(true), error: signal(''),
+  screenShareNotice: signal(''), audioPlaybackBlocked: signal(false),
+  isGroupCall: () => false, canEndGroupForEveryone: () => false, clearInactiveCallUi: () => {},
+  canOfferScreenShare: () => false, canShareScreen: () => false, callStatusLabel: () => 'En llamada',
+  callTitle: () => 'Sofía Martínez', end: async () => { previewCalls.activeCall.set(null); previewCalls.phase.set('idle'); },
+  toggleMute: () => previewCalls.muted.update((value: boolean) => !value),
+  toggleCamera: async () => previewCalls.cameraOff.update((value: boolean) => !value),
+  games: { panelOpen: signal(false), invitationVisible: signal(false), state: signal(null) },
+  audioOutput: { playbackBlocked: signal(false), routeError: signal(''), availableRoutes: signal([]), selectedRouteId: signal('default') },
+  history: signal(items().slice(0, 6).map((item, index) => ({ id: 'history-' + index, conversationId: item.id, initiatorUserId: index % 2 ? 'peer-1' : user.id, participantUserIds: ['peer-1', user.id], type: index % 2 ? 'Voice' : 'Video', status: index === 1 || index === 4 ? 'Missed' : 'Ended', startedAt: item.updatedAt, endedAt: item.updatedAt }))),
+};
+chat.participantDisplayName = (id: string) => id === user.id ? user.displayName : 'Sofía Martínez';
+chat.participantPhoto = () => '';
+@Component({ selector: 'preview-calls', standalone: true, imports: [CallsPage], template: '<app-calls />' })
+class PreviewCalls {
+  constructor() {
+    const mode = new URLSearchParams(location.search).get('mode');
+    if (mode === 'voice' || mode === 'video') {
+      previewCalls.activeCall.set({ id: 'synthetic-active', conversationId: 'sofia', type: mode === 'video' ? 'Video' : 'Voice', status: 'Active', initiatorUserId: user.id, participantUserIds: ['peer-1'], startedAt: new Date().toISOString() });
+      previewCalls.phase.set('connected');
+      previewCalls.remoteEntries.set([['peer-1', new MediaStream()]]);
+      previewCalls.localStream.set(new MediaStream());
+    }
+  }
+}
 const stories=signal<any[]>([user,...items().map((item,i)=>({id:'peer-'+i,alias:item.id,displayName:item.name}))].map((owner,i)=>({id:'story-'+i,owner,targetType:i===1?'group':'contacts',targetId:i===1?'design':null,visibility:'Contacts',encryptedPayload:'fixture',allowedUserIds:[],viewOnce:false,allowReposts:true,viewedByMe:i>5,viewCount:i+2,createdAt:new Date(Date.now()-i*600000).toISOString(),expiresAt:new Date(Date.now()+86400000).toISOString()})));
 const request={id:'request-fixture',from:{id:'requester',alias:'daniela',displayName:'Daniela López'},to:user,status:'Pending',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};
 const social:any={contacts:signal(items().filter(item=>item.type==='Direct').map(item=>({userId:item.participants[1].userId,alias:item.id,displayName:item.name,isFavorite:item.id==='sofia',isMutualContact:true}))),
@@ -131,12 +163,13 @@ bootstrapApplication(PreviewRoot, { providers: [
     { path: 'games', component: PreviewGames },
     { path: 'world', component: WorldPage },{ path: 'composer', component: PreviewComposer },{ path: 'viewer', component: PreviewViewer },{ path: 'invitation', component: PreviewInvitation },
     { path: '**', component: PreviewEmpty },
-  ] },{path:'preview/viewer',component:PreviewViewer}, { path: '**', redirectTo: 'app/chats' }]),
+  ] },{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls}, { path: '**', redirectTo: 'app/chats' }]),
   { provide: AuthService, useValue: { session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
   { provide: ChatService, useValue: chat },
   { provide: SocialService, useValue: social },
   { provide: ContactSyncService,useValue:{syncCachedContactsInBackground:async()=>{},radarHasNewContact:()=>false,lastDeviceContactCount:()=>0,syncing:()=>false}},
-  { provide: CallsService, useValue: { activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'), audioOutput: { playbackBlocked: signal(false) } } },
+  { provide: CallsService, useValue: previewCalls },
+  { provide: CallTranslationService, useValue: { enabled: signal(false), active: signal(false) } },
   { provide: SignalrService, useValue: { connected: signal(true) } },
   { provide: UnreadTabService, useValue: { unreadChats: signal(2) } },
   { provide: AppLockService, useValue: { isContentLocked: signal(false) } },

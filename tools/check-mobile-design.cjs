@@ -176,6 +176,28 @@ async function main() {
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
     await capture('desktop-game-invitation');
     await waitFor("!document.querySelector('preview-invitation p[role=status]')?.textContent.trim()");
+    await call('Page.navigate',{url:base+'/preview/calls?theme=light'});
+    await waitFor("document.querySelectorAll('.history-row').length===6");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('desktop-call-history');
+    await tap('.history-filters button:nth-child(2)');
+    await waitFor("document.querySelectorAll('.history-row').length===2");
+    assert.equal(await evaluate("document.querySelectorAll('.history-rejoin').length"),0,'missed calls cannot show rejoin');
+    await viewport(390,844,true);
+    await call('Page.navigate',{url:base+'/preview/calls?theme=dark&mode=voice'});
+    await waitFor("!!document.querySelector('.voice-connected')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('mobile-active-voice');
+    await call('Page.navigate',{url:base+'/preview/calls?theme=dark&mode=video'});
+    await waitFor("!!document.querySelector('.direct-video')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('mobile-active-video');
+    await evaluate("document.querySelector('.minimize-call').focus()");
+    await new Promise(resolve=>setTimeout(resolve,5500));
+    assert.equal(await evaluate("!!document.querySelector('.call-chrome-hidden')"),false,'keyboard focus keeps video controls visible');
+    await tap('.minimize-call');
+    await waitFor("location.pathname==='/app/chats'");
+    assert(await evaluate("!!document.querySelector('.active-call-banner') || document.body.textContent.includes('Volver a la llamada')"),'minimize keeps the active call available');
     assert.deepEqual(errors,[],'preview must not throw runtime errors');
     console.log('PASS mobile search, Contacts, self notes entry and desktop layout; screenshots saved.');
   } finally { socket?.close(); chrome.kill(); server.close(); }

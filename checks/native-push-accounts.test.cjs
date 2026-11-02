@@ -109,5 +109,9 @@ test('new native protection removes prior scoped previews without terminating th
   assert.doesNotMatch(cleanup,/stopScope|discardPendingCallActions|ACTION_CALL_DISMISS/);
   assert.match(read('NivraNativePlugin'),/privacyRoute\.putString\("nivraConversationId"/);
   assert.match(read('NivraMessagingService'),/privacyRoute\.putString\("nivraConversationId"/);
-  const activity=read('NivraIncomingCallActivity');assert.match(activity,/ACTION_PRIVACY_CHANGED/);assert.match(activity,/callerView\.setText\("Nivra"\)/);
+  const activity=read('NivraIncomingCallActivity');
+  assert.match(activity,/ACTION_PRIVACY_CHANGED[\s\S]*?if \(sameScope\)[\s\S]*?bindIntent\(getIntent\(\)\)/);
+  assert.match(activity,/hideNotificationContent\(this, scope\)\) callerName = "Nivra"/);
+  assert.match(activity,/callerView\.setText\(callerName\)/);
+  assert.match(activity,/avatarView\.setText\(initials\(callerName\)\)/);
 });

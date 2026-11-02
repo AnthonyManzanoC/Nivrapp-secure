@@ -120,4 +120,23 @@ public class IncomingCallExperienceInstrumentedTest {
         assertTrue(NivraCallPushPolicy.wasEnded(context,user,device,callId,System.currentTimeMillis()));
         assertFalse(NivraCallPushPolicy.wasEnded(context,"another-account",device,callId,System.currentTimeMillis()));
     }
+
+    @Test public void privacyChangeRedactsAnAlreadyVisibleCallerWithoutEndingReception() throws Exception {
+        try (ActivityScenario<NivraIncomingCallActivity> scenario = ActivityScenario.launch(incoming("Voice", false))) {
+            scenario.onActivity(activity -> assertTrue(contains(activity.getWindow().getDecorView(), "Sofía")));
+            incoming("Voice", true); // Update only the isolated test account's privacy registry.
+            context.sendBroadcast(new Intent(NivraNativePushRegistration.ACTION_PRIVACY_CHANGED)
+                .setPackage(context.getPackageName()).putExtra("recipientUserId", user).putExtra("recipientDeviceId", device));
+            java.util.concurrent.atomic.AtomicBoolean redacted = new java.util.concurrent.atomic.AtomicBoolean();
+            for (int attempt = 0; attempt < 30 && !redacted.get(); attempt++) {
+                InstrumentationRegistry.getInstrumentation().waitForIdleSync();
+                scenario.onActivity(activity -> {
+                    View root = activity.getWindow().getDecorView();
+                    redacted.set(!contains(root, "Sofía") && contains(root, "Nivra") && contains(root, "Contestar") && !activity.isFinishing());
+                });
+                if (!redacted.get()) android.os.SystemClock.sleep(100);
+            }
+            assertTrue("Privacy refresh must redact the caller while keeping reception available", redacted.get());
+        }
+    }
 }
