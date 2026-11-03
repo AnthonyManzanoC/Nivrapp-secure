@@ -278,6 +278,7 @@ async function main() {
     assert.equal(await evaluate("document.querySelectorAll('app-group-hub img.photo').length"),1,'group hub displays the actual group photo');
     await call('Page.navigate',{url:base+'/app/vault?theme=light'});
     await waitFor("!!document.querySelector('.vault-chat')");
+    assert(await evaluate("(()=>{const a=document.querySelector('.room-list-panel').getBoundingClientRect(),b=document.querySelector('.room-workspace').getBoundingClientRect();return a.right<=b.left&&Math.abs(a.top-b.top)<2;})()"),'Vault rooms and chat share one desktop row');
     await evaluate("document.querySelector('.preview-controls').style.display='none';document.querySelector('.room-workspace').scrollIntoView()");
     await capture('desktop-vault-room');
     await evaluate("document.querySelector('.create-room-cta').scrollIntoView()");

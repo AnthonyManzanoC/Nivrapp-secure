@@ -32,6 +32,11 @@
 .room-workspace .room-head { gap: 10px; }
 .room-workspace .composer { border-radius: 20px; background: var(--nivra-panel-solid); border: 1px solid var(--nivra-line); padding: 8px; }
 .room-workspace .owner-invite-panel { border-radius: 18px; }
+@media(min-width: 980px) {
+  .vault-surface:not(.is-fullscreen) .room-list-panel { grid-column: 1 / span 4; align-self: start; }
+  .vault-surface:not(.is-fullscreen) .room-workspace { grid-column: 5 / -1; align-self: start; }
+  .vault-surface:not(.is-fullscreen) .vault-room-head { grid-template-columns: minmax(0,1fr) auto auto auto; }
+}
 @media(max-width: 680px) {
   .vault-create-modal { --width: 100%; --height: 100%; --border-radius: 0; }
   .room-create-dialog { padding: calc(22px + var(--ion-safe-area-top, 0px)) 20px calc(24px + var(--ion-safe-area-bottom, 0px)); }
