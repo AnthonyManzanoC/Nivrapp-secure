@@ -45,6 +45,7 @@ import { Router, RouterLink } from '@angular/router';
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { StoryActivityComponent } from '../story-viewer/story-activity.component';
 import { GroupHubComponent } from './group-hub.component';
+import { CommunityHubComponent } from './community-hub.component';
 import { StoryComposerComponent } from '../../shared/story-composer/story-composer.component';
 import { identityDisplayName } from '../../core/utils/nivra-identity';
 import { friendRequestStatus } from '../../core/services/social-connections.helpers';
@@ -66,7 +67,7 @@ interface StoryBucket {
 @Component({
   selector: 'app-world',
   standalone: true,
-  imports: [TransientNoticeDirective, RouterLink, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryActivityComponent, StoryComposerComponent, GroupHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner],
+  imports: [TransientNoticeDirective, RouterLink, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, StoryViewerComponent, StoryActivityComponent, StoryComposerComponent, GroupHubComponent, CommunityHubComponent, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner],
   templateUrl: './world.page.html',
   styleUrls: ['./world.page.scss'],
 })

@@ -9,14 +9,17 @@
 <button type="button" (click)="compose('story')"><span><ion-icon name="camera-outline"></ion-icon></span><strong>Nueva historia</strong><small>Comparte un momento</small></button>
 </section><nav class="directory-tabs" aria-label="Contactos y solicitudes"><button type="button" [attr.aria-pressed]="!requestsOpen" (click)="requestsOpen=false">Contactos</button><button type="button" [attr.aria-pressed]="requestsOpen" (click)="reviewRequests()">Solicitudes <span>{{social.incomingRequests().length}}</span></button></nav>
 @if(requestsOpen){<app-friend-requests />}@else{
-<section class="contacts-grid">      <article class="panel span-5">
+<section class="contacts-grid">      <article class="panel saved-panel">
         <div class="panel-headline">
           <div>
-            <h2>{{ 'WORLD.CONTACTS' | translate:'Contactos' }}</h2>
+            <h2>Contactos guardados</h2>
             <span class="card-sub">{{ social.contacts().length }} {{ 'WORLD.SAVED' | translate:'guardados' }}</span>
           </div>
         </div>
-        <div class="contact-list"><button type="button" class="self-contact" (click)="openSelf()" [disabled]="!!busyId"><span class="contact-avatar">@if(auth.session()?.user?.profilePhotoDataUrl){<img [src]="auth.session()?.user?.profilePhotoDataUrl" alt="">}@else{<ion-icon name="chatbubble-ellipses-outline"></ion-icon>}</span><span><strong>{{auth.session()?.user?.displayName || auth.session()?.user?.alias}} <em>(Tú)</em></strong><small>Mensajes para ti. Tus ideas, siempre a mano.</small></span></button>
+        <div class="contact-list">
+          @if(!query.trim()){
+            <button type="button" class="self-contact" (click)="openSelf()" [disabled]="!!busyId"><span class="contact-avatar">@if(auth.session()?.user?.profilePhotoDataUrl){<img [src]="auth.session()?.user?.profilePhotoDataUrl" alt="">}@else{<ion-icon name="chatbubble-ellipses-outline"></ion-icon>}</span><span><strong>{{auth.session()?.user?.displayName || auth.session()?.user?.alias}} <em>(Tú)</em></strong><small>Mensajes para ti. Tus ideas, siempre a mano.</small></span></button>
+          }
           @for (contact of filteredContacts(); track contact.userId) {
             <div class="contact-card" [class.favorite]="contact.isFavorite">
               <button type="button" class="contact-main" (click)="openContact(contact)">
@@ -43,16 +46,17 @@
               </div>
             </div>
           } @empty {
-            <div class="empty-copy">{{ 'WORLD.CONTACTS_EMPTY' | translate:'Tus contactos apareceran aqui.' }}</div>
+            <div class="empty-copy">{{ query.trim() ? 'Ningún contacto guardado coincide.' : ('WORLD.CONTACTS_EMPTY' | translate:'Tus contactos aparecerán aquí.') }}</div>
           }
         </div>
       </article>
 
-      <article class="panel span-7 people-panel" [class.has-query]="query.trim().length >= 2">
+      <article class="panel people-panel" [class.has-query]="query.trim().length >= 2">
         <h2>{{ 'WORLD.SEARCH_PEOPLE' | translate:'Buscar personas' }}</h2>
         <div class="search-line" role="search">
           @if(searchOpen){<button class="search-back" type="button" (click)="closeSearch()" aria-label="Cerrar búsqueda"><ion-icon name="arrow-back-outline"></ion-icon></button>}@else{<ion-icon name="search-outline"></ion-icon>}
-          <ion-input #contactSearch mode="ios" [(ngModel)]="query" (ionFocus)="searchOpen=true" (ionInput)="searchChanged()" [placeholder]="'WORLD.ALIAS_NAME_ID' | translate:'Alias, nombre o ID Nivra'"></ion-input>
+          <ion-input #contactSearch mode="ios" [(ngModel)]="query" (ionFocus)="searchOpen=true" (ionInput)="searchChanged()" (keydown.escape)="closeSearch()" aria-label="Buscar por nombre, alias o ID Nivra" [placeholder]="'WORLD.ALIAS_NAME_ID' | translate:'Alias, nombre o ID Nivra'" autocomplete="off" enterkeyhint="search"></ion-input>
+          @if(query){<button class="search-clear" type="button" (click)="clearSearchQuery()" aria-label="Limpiar búsqueda"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>}
         </div>
         <p class="discovery-hint">{{ 'WORLD.EXACT_ID_HINT' | translate:'Las cuentas en modo fantasma sólo aparecen con su alias o ID exactos, o al abrir su QR compartido.' }}</p>
         @if (social.searching()) { <p class="search-status" role="status"><ion-spinner name="crescent"></ion-spinner>{{ 'WORLD.SEARCHING' | translate:'Buscando…' }}</p> }

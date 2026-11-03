@@ -1,41 +1,200 @@
-<ion-content class="page"><main class="community-page" [class.detail-open]="!!selectedId() || creating()">
-  <aside class="community-directory"><header><div><small>TU GENTE, CONECTADA</small><h1>Comunidades</h1></div><button class="new-community" type="button" (click)="newCommunity()" aria-label="Nueva comunidad">+</button></header>
-    <label class="directory-search">
-      <svg class="community-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"/><path d="m15 15 4.5 4.5"/></svg>
-      <input type="search" [(ngModel)]="query" aria-label="Buscar comunidades" placeholder="Buscar comunidad">
-    </label>
-    @if(communities.loading()){<p class="hint" role="status">Actualizando…</p>}
-    <nav aria-label="Tus comunidades">@for(item of filtered();track item.id){<button type="button" class="community-item" [class.active]="item.id===selectedId()" (click)="select(item)"><span class="face">@if(item.photo){<img [src]="item.photo" alt="">}@else{<span>{{item.name.slice(0,2).toUpperCase()}}</span>}</span><span><strong>{{item.name}}</strong><small>{{item.groups.length}} grupos · {{item.memberCount}} miembros</small></span></button>}@empty{<div class="empty"><strong>Un lugar para tus grupos</strong><p>Crea una comunidad o acepta una invitación para empezar.</p><button type="button" class="primary" (click)="newCommunity()">Crear comunidad</button></div>}</nav>
-    <a class="world-back" routerLink="/app/world">← Volver a Mundo</a>
-  </aside>
-  <section class="community-detail">
-    <button type="button" class="mobile-back" (click)="back()">← Comunidades</button>
-    @if(communities.error()){<p class="feedback error" role="alert">{{communities.error()}} <button type="button" (click)="communities.load()">Reintentar</button></p>}
-    @if(notice){<p class="feedback" [appTransientNotice]="notice" (noticeExpired)="notice=''" role="status">{{notice}}</p>}
-    @if(formError){<p class="feedback error" [appTransientNotice]="formError" (noticeExpired)="formError=''" role="alert">{{formError}}</p>}
-    @if(creating() || editing){
-      <div class="create-community"><span class="eyebrow">UN NUEVO ESPACIO</span><h2>{{editing ? "Editar comunidad" : "Nueva comunidad"}}</h2><p>Organiza tus grupos y comparte noticias desde Avisos.</p>
-        <label class="photo-picker">
-          <input type="file" accept="image/png,image/jpeg,image/webp" (change)="pickPhoto($event)" aria-label="Foto de la comunidad">
-          @if(photo){<img [src]="photo" alt="Vista previa de la comunidad">}
-          @else{<span aria-hidden="true"><svg class="community-icon" viewBox="0 0 24 24"><path d="M4 7h4l1.5-2h5L16 7h4a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.4"/></svg></span>}
-          <div><strong>Foto de la comunidad</strong><small>{{photo?'Cambiar imagen':'Añadir una imagen'}}</small></div>
-        </label>
-        <label>Nombre<input [(ngModel)]="name" maxlength="160" placeholder="Por ejemplo, Barrio Las Flores" autocomplete="off"></label>
-        <label>Descripción<textarea [(ngModel)]="description" maxlength="1000" rows="3" placeholder="¿Qué reúne a tu comunidad?"></textarea></label>
-        @if(!editing){<section class="group-picker"><h3>Añadir grupos existentes <small>Opcional</small></h3><p>Los miembros de los grupos seleccionados se incorporarán al espacio de Avisos. Sus mensajes anteriores se conservan en cada grupo.</p>
-          @for(group of availableGroups();track group.id){<label class="check-row"><input type="checkbox" [checked]="groupIds.has(group.id)" (change)="toggleGroup(group.id)"><span>{{chat.conversationTitle(group)}}</span></label>}@empty{<p>Puedes crear grupos después o vincular los que administras.</p>}
-        </section>}<div class="form-footer"><span>Los mensajes usan el cifrado de Nivra.</span><button class="primary" type="button" [disabled]="!name.trim()||!!communities.busy()" (click)="create()">{{communities.busy()?'Guardando…':editing?'Guardar cambios':'Crear comunidad'}}</button></div>
+<ion-content class="page">
+  <main class="community-page" [class.detail-open]="!!selectedId() || creating()">
+    <aside class="community-directory" aria-labelledby="community-directory-title">
+      <a class="back-link" routerLink="/app/world">
+        <span aria-hidden="true">←</span> Mundo
+      </a>
+      <header class="directory-head">
+        <div>
+          <span class="eyebrow">TU GENTE, CONECTADA</span>
+          <h1 id="community-directory-title">Comunidades</h1>
+        </div>
+        <button class="primary new-community" type="button" (click)="newCommunity()" aria-label="Nueva comunidad">
+          <span class="plus" aria-hidden="true">+</span><span class="new-label">Nueva</span>
+        </button>
+      </header>
+      <p class="directory-intro">Reúne a tu gente en espacios con sus propios grupos y avisos.</p>
+      <div class="directory-search" role="search">
+        <svg class="community-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="5.8"/><path d="m15 15 4.5 4.5"/></svg>
+        <input type="search" [(ngModel)]="query" aria-label="Buscar comunidades" placeholder="Buscar comunidad" (keydown.escape)="query=''">
+        @if(query){
+          <button class="icon-button" type="button" (click)="query=''" aria-label="Limpiar búsqueda de comunidades">×</button>
+        }
       </div>
-    }@else if(selected();as item){
-      <header class="community-cover"><span class="face large">@if(item.photo){<img [src]="item.photo" alt="">}@else{<span>{{item.name.slice(0,2).toUpperCase()}}</span>}</span><div><small>COMUNIDAD</small><h2>{{item.name}}</h2><p>{{item.description || 'Tus grupos, en un mismo lugar.'}}</p><span>{{item.memberCount}} miembros · {{item.groups.length}} grupos</span></div></header>
-      <a class="announcements" [routerLink]="['/app/chats',item.id]"><span class="announcement-icon" aria-hidden="true"><svg class="community-icon" viewBox="0 0 24 24"><path d="m4 10 13-5v14L4 14V10Zm3 5 1 5h3l-1-4m9-7 2-2m-2 8 2 2"/></svg></span><div><strong>Avisos de la comunidad</strong><small>Las novedades de tus administradores</small></div><span aria-hidden="true">›</span></a>
-      @if(isAdmin(item)){<div class="community-actions"><button type="button" (click)="edit(item)">Editar comunidad</button><button type="button" (click)="invite()" [disabled]="!!communities.busy()">Invitar a la comunidad</button><a [routerLink]="['/app/chats',item.id]">Administrar avisos y miembros</a></div>@if(shareUrl){<label class="share-link">Enlace de invitación<input readonly [value]="shareUrl" aria-label="Enlace de invitación a la comunidad"></label>}}
-      <section class="community-groups"><header><h3>Grupos de la comunidad</h3><span>{{item.groups.length}}</span></header>
-        @for(group of item.groups;track group.id){<article class="linked-group"><span class="face">@if(group.photo){<img [src]="group.photo" alt="">}@else{<span>{{group.name.slice(0,2).toUpperCase()}}</span>}</span><div><strong>{{group.name}}</strong><small>{{group.memberCount}} miembros</small></div>@if(group.joined){<a [routerLink]="['/app/chats',group.id]">Abrir</a>}@else{<button type="button" (click)="join(group.id)" [disabled]="!!communities.busy()">Unirme</button>}@if(isAdmin(item)){<button type="button" class="unlink" (click)="unlink(group.id)" [disabled]="!!communities.busy()" [attr.aria-label]="'Desvincular '+group.name">×</button>}</article>}@empty{<div class="empty"><h3>Cada grupo tiene su espacio</h3><p>Añade grupos para conversar por temas. Los avisos seguirán llegando a toda la comunidad.</p></div>}
-      </section>
-      @if(isAdmin(item)){<section class="manage-groups"><h3>Organiza tu comunidad</h3><label>Vincular un grupo que administras<select [(ngModel)]="linkId"><option value="">Selecciona un grupo</option>@for(group of availableGroups();track group.id){<option [value]="group.id">{{chat.conversationTitle(group)}}</option>}</select></label><button type="button" (click)="link()" [disabled]="!linkId||!!communities.busy()">Vincular grupo</button><label>Crear un grupo nuevo<input [(ngModel)]="newGroupName" maxlength="160" placeholder="Nombre del grupo"></label><button type="button" (click)="createGroup()" [disabled]="!newGroupName.trim()||!!communities.busy()">Crear grupo</button><p>Los miembros eligen a qué grupos unirse.</p></section>}
-      <button class="leave-community" type="button" (click)="leave()" [disabled]="!!communities.busy()">Salir de la comunidad</button>
-    }@else{<div class="welcome"><span class="welcome-mark" aria-hidden="true">◎</span><h2>Conecta tus grupos</h2><p>Un espacio de avisos y conversaciones por temas, con los controles de Nivra.</p><button class="primary" type="button" (click)="newCommunity()">Nueva comunidad</button></div>}
-  </section>
-</main></ion-content>
+
+      @if(communities.loading()){
+        <p class="hint" role="status">Actualizando comunidades…</p>
+      }
+      @if(communities.error() && !selectedId() && !creating()){
+        <p class="feedback error" role="alert">{{communities.error()}} <button type="button" (click)="communities.load()">Reintentar</button></p>
+      }
+      <nav class="community-list" aria-label="Tus comunidades">
+        @for(item of filtered(); track item.id){
+          <button type="button" class="community-item" [class.active]="item.id === selectedId()" [attr.aria-current]="item.id === selectedId() ? 'page' : null" (click)="select(item)">
+            <span class="face">
+              @if(item.photo){<img [src]="item.photo" alt="" loading="lazy" decoding="async">}
+              @else{<span>{{item.name.slice(0,2).toUpperCase()}}</span>}
+            </span>
+            <span class="item-copy"><strong>{{item.name}}</strong><small>{{item.groups.length}} grupos · {{item.memberCount}} miembros</small></span>
+            <svg class="community-icon arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+          </button>
+        }@empty{
+          @if(!communities.loading()){
+            <div class="empty">
+              @if(query.trim()){
+                <strong>No encontramos comunidades</strong>
+                <p>Prueba con otro nombre o limpia la búsqueda.</p>
+              }@else{
+                <strong>Un lugar para tus grupos</strong>
+                <p>Crea una comunidad o acepta una invitación para empezar.</p>
+                <button type="button" class="primary" (click)="newCommunity()">Crear comunidad</button>
+              }
+            </div>
+          }
+        }
+      </nav>
+    </aside>
+
+    <section class="community-detail">
+      <button type="button" class="back-link mobile-back" (click)="cancelEditor()">
+        <span aria-hidden="true">←</span> {{editing ? 'Volver a la comunidad' : 'Comunidades'}}
+      </button>
+      @if(communities.error() && (selectedId() || creating())){
+        <p class="feedback error" role="alert">{{communities.error()}} <button type="button" (click)="communities.load()">Reintentar</button></p>
+      }
+      @if(notice){<p class="feedback" [appTransientNotice]="notice" (noticeExpired)="notice=''" role="status">{{notice}}</p>}
+      @if(formError){<p class="feedback error" [appTransientNotice]="formError" (noticeExpired)="formError=''" role="alert">{{formError}}</p>}
+
+      @if(creating() || editing){
+        <form class="create-community" (ngSubmit)="create()">
+          <header class="editor-head">
+            <span class="eyebrow">{{editing ? 'TU COMUNIDAD' : 'UN NUEVO ESPACIO'}}</span>
+            <h2>{{editing ? 'Editar comunidad' : 'Nueva comunidad'}}</h2>
+            <p>Organiza tus grupos y comparte noticias desde Avisos.</p>
+          </header>
+          <label class="photo-picker">
+            <input type="file" accept="image/png,image/jpeg,image/webp" (change)="pickPhoto($event)" aria-label="Foto de la comunidad">
+            @if(photo){<img [src]="photo" alt="Vista previa de la comunidad">}
+            @else{
+              <span class="face" aria-hidden="true"><svg class="community-icon" viewBox="0 0 24 24"><path d="M4 7h4l1.5-2h5L16 7h4a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2Z"/><circle cx="12" cy="13" r="3.4"/></svg></span>
+            }
+            <span class="item-copy"><strong>Foto de la comunidad</strong><small>{{photo ? 'Cambiar imagen' : 'Añadir una imagen · Opcional'}}</small></span>
+          </label>
+          <label class="field">Nombre
+            <input name="communityName" [(ngModel)]="name" maxlength="160" placeholder="Por ejemplo, Barrio Las Flores" autocomplete="off" required>
+          </label>
+          <label class="field">Descripción <span class="optional">Opcional</span>
+            <textarea name="communityDescription" [(ngModel)]="description" maxlength="1000" rows="3" placeholder="¿Qué reúne a tu comunidad?"></textarea>
+          </label>
+          @if(!editing){
+            <fieldset class="group-picker">
+              <legend>Añadir grupos existentes <span class="optional">Opcional</span></legend>
+              <p>Sus miembros se incorporarán a Avisos. Cada grupo conserva su conversación y su historial.</p>
+              @for(group of availableGroups(); track group.id){
+                <label class="check-row" [class.checked]="groupIds.has(group.id)">
+                  <input type="checkbox" [checked]="groupIds.has(group.id)" (change)="toggleGroup(group.id)">
+                  @if(chat.conversationPhoto(group)){<img [src]="chat.conversationPhoto(group)" alt="" loading="lazy">}
+                  <span>{{chat.conversationTitle(group)}}</span>
+                </label>
+              }@empty{<p class="hint">Puedes crear un grupo después de guardar.</p>}
+            </fieldset>
+          }
+          <footer class="form-footer">
+            <div class="footer-copy"><span>Los mensajes usan el cifrado de Nivra.</span>
+              @if(groupIds.size && !editing){<small>{{groupIds.size}} {{groupIds.size === 1 ? 'grupo elegido' : 'grupos elegidos'}}</small>}
+            </div>
+            <div class="footer-actions">
+              <button type="button" (click)="cancelEditor()" [disabled]="!!communities.busy()">Cancelar</button>
+              <button class="primary" type="submit" [disabled]="!name.trim() || !!communities.busy()" [attr.aria-busy]="!!communities.busy()">{{communities.busy() ? 'Guardando…' : editing ? 'Guardar cambios' : 'Crear comunidad'}}</button>
+            </div>
+          </footer>
+        </form>
+      }@else if(selected(); as item){
+        <header class="community-cover">
+          <span class="face large">
+            @if(item.photo){<img [src]="item.photo" alt="">}
+            @else{<span>{{item.name.slice(0,2).toUpperCase()}}</span>}
+          </span>
+          <div>
+            <span class="eyebrow">COMUNIDAD</span>
+            <h2>{{item.name}}</h2>
+            @if(item.description){<p>{{item.description}}</p>}
+            <div class="community-stats"><span>{{item.memberCount}} miembros</span><span>{{item.groups.length}} grupos</span></div>
+          </div>
+        </header>
+
+        <a class="announcements" [routerLink]="['/app/chats', item.id]">
+          <span class="announcement-icon" aria-hidden="true"><svg class="community-icon" viewBox="0 0 24 24"><path d="m4 10 13-5v14L4 14V10Zm3 5 1 5h3l-1-4m9-7 2-2m-2 8 2 2"/></svg></span>
+          <span class="item-copy"><strong>Avisos de la comunidad</strong><small>Las novedades de tus administradores</small></span>
+          <svg class="community-icon arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
+        </a>
+
+        @if(isAdmin(item)){
+          <nav class="community-actions" aria-label="Administrar comunidad">
+            <button class="primary" type="button" (click)="invite()" [disabled]="!!communities.busy()">Invitar</button>
+            <button type="button" (click)="edit(item)" [disabled]="!!communities.busy()">Editar</button>
+            <a class="text-action" [routerLink]="['/app/chats',item.id]">Avisos y miembros <span aria-hidden="true">↗</span></a>
+          </nav>
+          @if(shareUrl){
+            <label class="field share-link">Enlace de invitación
+              <input readonly [value]="shareUrl" aria-label="Enlace de invitación a la comunidad">
+            </label>
+          }
+        }
+
+        <section class="community-groups" aria-labelledby="community-groups-title">
+          <header><h3 id="community-groups-title">Grupos de la comunidad</h3><span class="count">{{item.groups.length}}</span></header>
+          @for(group of item.groups; track group.id){
+            <article class="linked-group">
+              <span class="face">
+                @if(group.photo){<img [src]="group.photo" alt="" loading="lazy">}
+                @else{<span>{{group.name.slice(0,2).toUpperCase()}}</span>}
+              </span>
+              <div class="item-copy"><strong>{{group.name}}</strong><small>{{group.memberCount}} miembros</small></div>
+              @if(group.joined){
+                <a class="text-action" [routerLink]="['/app/chats',group.id]" [attr.aria-label]="'Abrir '+group.name">Abrir</a>
+              }@else{
+                <button type="button" (click)="join(group.id)" [disabled]="!!communities.busy()">Unirme</button>
+              }
+              @if(isAdmin(item)){
+                <button type="button" class="icon-button unlink" (click)="unlink(group.id)" [disabled]="!!communities.busy()" [attr.aria-label]="'Desvincular '+group.name">×</button>
+              }
+            </article>
+          }@empty{<div class="empty"><strong>Cada grupo tiene su espacio</strong><p>Los avisos llegan a toda la comunidad.</p></div>}
+        </section>
+
+        @if(isAdmin(item)){
+          <section class="manage-groups" aria-labelledby="manage-groups-title">
+            <h3 id="manage-groups-title">Organiza tu comunidad</h3>
+            <p>Los miembros eligen a qué grupos unirse.</p>
+            <div class="management-grid">
+              <form class="manage-card" (ngSubmit)="link()">
+                <label class="field">Vincular un grupo existente
+                  <select name="linkId" [(ngModel)]="linkId" [disabled]="!availableGroups().length">
+                    <option value="">{{availableGroups().length ? 'Selecciona un grupo' : 'Sin grupos disponibles'}}</option>
+                    @for(group of availableGroups(); track group.id){<option [value]="group.id">{{chat.conversationTitle(group)}}</option>}
+                  </select>
+                </label>
+                <button type="submit" [disabled]="!linkId || !!communities.busy()">Vincular grupo</button>
+              </form>
+              <form class="manage-card" (ngSubmit)="createGroup()">
+                <label class="field">Crear un grupo nuevo
+                  <input name="newGroupName" [(ngModel)]="newGroupName" maxlength="160" placeholder="Nombre del grupo">
+                </label>
+                <button type="submit" [disabled]="!newGroupName.trim() || !!communities.busy()">Crear grupo</button>
+              </form>
+            </div>
+          </section>
+        }
+        <button class="leave-community" type="button" (click)="leave()" [disabled]="!!communities.busy()">Salir de la comunidad</button>
+      }@else{
+        <div class="welcome">
+          <span class="welcome-mark" aria-hidden="true">◎</span>
+          <h2>Conecta tus grupos</h2>
+          <p>Abre una comunidad o crea un espacio para tus avisos y conversaciones.</p>
+          <button class="primary" type="button" (click)="newCommunity()">Nueva comunidad</button>
+        </div>
+      }
+    </section>
+  </main>
+</ion-content>

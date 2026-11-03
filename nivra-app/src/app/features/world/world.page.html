@@ -125,7 +125,8 @@
           }
         </div>
       </article>
-      <details class="world-group-hub"><summary><ion-icon name="people-outline"></ion-icon><span>Grupos y comunidades<small>Tus conversaciones, juntas en un lugar</small></span><ion-icon name="chevron-forward-outline"></ion-icon></summary><app-group-hub /></details>
+      <app-community-hub class="span-12" />
+      <details class="world-group-hub"><summary><ion-icon name="people-outline"></ion-icon><span>Tus grupos<small>Tus conversaciones, juntas en un lugar</small></span><ion-icon name="chevron-forward-outline"></ion-icon></summary><app-group-hub /></details>
     </section>
 
     <ion-modal class="nivra-story-viewer-modal" [isOpen]="!!social.activeStory() && social.storyViewerOwner() === 'world'" (didDismiss)="social.storyViewerOwner() === 'world' && closeStoryViewer()">

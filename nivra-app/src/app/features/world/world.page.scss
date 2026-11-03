@@ -1164,7 +1164,8 @@ ion-modal.story-stats-modal {
 .world-surface .story-launcher p { grid-column:2; margin:0; font-size:13px; max-width:520px; }
 .world-surface .story-launcher small { grid-column:2; font-size:11px; margin:0; }
 .world-surface .story-launch-button { grid-column:3; grid-row:1/4; margin:0; min-height:48px; border-radius:18px; padding:12px 20px; }
-.world-surface .stories-feed { border:0; background:transparent; box-shadow:none; padding:0; }
+.world-surface .stories-feed { border:0; border-radius:0; overflow:visible; background:transparent; box-shadow:none; padding:0; }
+.world-surface .stories-feed > .panel-headline { padding: 2px 4px; }
 .world-surface .panel-headline h2 { font-size:18px; margin:0 0 6px; letter-spacing:-.4px; }
 .world-surface .card-sub { font-size:12px; }
 .world-surface .story-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr)); gap:12px; margin-top:18px; }

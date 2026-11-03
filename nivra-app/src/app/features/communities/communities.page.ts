@@ -1,4 +1,4 @@
-import { Component, DestroyRef, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, DestroyRef, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { IonContent } from '@ionic/angular/standalone';
@@ -17,6 +17,7 @@ export class CommunitiesPage {
   private readonly route=inject(ActivatedRoute);
   private readonly router=inject(Router);
   private readonly destroyRef=inject(DestroyRef);
+  private readonly content = viewChild(IonContent);
   readonly selectedId=signal('');
   readonly creating=signal(false);
   editing=false;
@@ -30,6 +31,10 @@ export class CommunitiesPage {
   notice='';formError='';shareUrl='';query='';
   constructor(){this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe(params=>{
     this.creating.set(params.get('create')==='1');this.selectedId.set(params.get('id')??'');this.shareUrl='';this.editing=false;
+    this.linkId = '';
+    this.newGroupName = '';
+    this.formError = '';
+    void this.content()?.scrollToTop(0);
   });
     effect(()=>{const scope=this.scope();untracked(()=>{if(scope===this.uiScope)return;this.uiScope=scope;
       this.selectedId.set('');this.creating.set(false);this.editing=false;this.name='';this.description='';this.photo=null;
@@ -42,6 +47,16 @@ export class CommunitiesPage {
   select(item:Community):void{void this.router.navigate(['/app/communities'],{queryParams:{id:item.id}});}
   newCommunity():void{void this.router.navigate(['/app/communities'],{queryParams:{create:1}});}
   back():void{void this.router.navigate(['/app/communities']);}
+  cancelEditor(): void {
+    if (this.communities.busy()) return;
+    if (!this.editing) {
+      this.back();
+      return;
+    }
+    this.editing = false;
+    this.formError = '';
+    void this.content()?.scrollToTop(0);
+  }
   toggleGroup(id:string):void{const next=new Set(this.groupIds);next.has(id)?next.delete(id):next.add(id);this.groupIds=next;}
   async pickPhoto(event:Event):Promise<void>{
     const input=event.target as HTMLInputElement,file=input.files?.[0];input.value='';if(!file)return;
@@ -59,7 +74,7 @@ export class CommunitiesPage {
     const result=await this.communities.create({name:this.name.trim(),description:this.description.trim(),photo:this.photo,groupIds:[...this.groupIds]});
     if(result&&!this.destroyRef.destroyed){this.name='';this.description='';this.photo=null;this.groupIds=new Set();this.notice='Tu comunidad está lista.';this.select(result);}
   }
-  edit(item:Community):void{this.name=item.name;this.description=item.description;this.photo=item.photo;this.editing=true;this.shareUrl='';}
+  edit(item:Community):void{this.name=item.name;this.description=item.description;this.photo=item.photo;this.editing=true;this.shareUrl='';void this.content()?.scrollToTop(0);}
   async leave():Promise<void>{const item=this.selected();if(!item||!window.confirm('¿Salir de esta comunidad y de sus grupos? Los mensajes guardados se conservan. Si administras un grupo, otro miembro continuará como administrador.'))return;
     if(await this.communities.leave(item.id)){this.notice='Saliste de la comunidad.';this.back();}
   }

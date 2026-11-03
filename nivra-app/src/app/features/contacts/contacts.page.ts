@@ -60,6 +60,12 @@ export class ContactsPage implements OnInit,OnDestroy {
     }, 300);
   }
 
+  clearSearchQuery(): void {
+    this.query = '';
+    this.searchChanged();
+    void this.input?.setFocus();
+  }
+
   async request(person: UserSummary): Promise<void> {
     await this.run(person.id, async current => {
       await this.social.requestFriend(person);

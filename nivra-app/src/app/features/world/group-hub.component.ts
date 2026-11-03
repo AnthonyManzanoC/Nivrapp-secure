@@ -4,11 +4,10 @@ import { RouterLink } from '@angular/router';
 import { ChatService } from '../../core/services/chat.service';
 import { AuthService } from '../../core/services/auth.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
-import { CommunityHubComponent } from './community-hub.component';
 
 @Component({
-  selector: 'app-group-hub', standalone: true, imports: [CommunityHubComponent, FormsModule, RouterLink, TranslatePipe],
-  template: `<app-community-hub /><section aria-labelledby="group-hub-title">
+  selector: 'app-group-hub', standalone: true, imports: [FormsModule, RouterLink, TranslatePipe],
+  template: `<section aria-labelledby="group-hub-title">
     <header><div><small>{{'GROUP_HUB.LABEL' | translate:'TU GENTE, EN UN LUGAR'}}</small><h2 id="group-hub-title">{{'GROUP_HUB.TITLE' | translate:'Tus grupos'}}</h2></div><span>{{groups().length}}</span></header>
     <p>{{'GROUP_HUB.COPY' | translate:'Retoma una conversación o encuentra los avisos de tus administradores.'}}</p>
     <label class="search"><span>{{'COMMON.SEARCH' | translate:'Buscar'}}</span><input type="search" [ngModel]="query()" (ngModelChange)="query.set($event)" [placeholder]="'GROUP_HUB.SEARCH' | translate:'Nombre del grupo'" /></label>

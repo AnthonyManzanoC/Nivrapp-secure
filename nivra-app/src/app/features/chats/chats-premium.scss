@@ -33,11 +33,20 @@
 .search-start p { margin:0; font-size:13px; line-height:1.6; }
 .recent-actions button { min-height:36px; border-radius:20px; }
 .search-box ion-input { --highlight-color-focused:transparent; --highlight-color-valid:transparent; }
+.search-active .search-panel { background:var(--nivra-panel-solid); }
+.search-active .search-box {
+  background: var(--nivra-bg-3);
+  border-color: var(--nivra-line);
+}
+.search-active .search-box:focus-within {
+  border-color: var(--nivra-selection-line);
+  box-shadow: 0 0 0 2px var(--nivra-ring);
+}
 .search-box ion-input::part(native) { outline:none; box-shadow:none; }
 @media(max-width:768px) {
  .search-active .side-head,.search-active .story-strip,.search-active .story-publish-notice { display:none; }
  .search-active .search-panel { padding-top:calc(12px + var(--ion-safe-area-top,env(safe-area-inset-top,0px))); }
- .search-active .search-box { border-radius:30px; box-shadow:none; border-color:transparent; background:var(--nivra-hover,#f3f5f4); padding-inline:6px 14px; }
+ .search-active .search-box { border-radius:26px; padding-inline:4px; }
  .search-active .search-back { display:grid; place-items:center; flex:0 0 40px; width:40px; height:44px; color:var(--nivra-text); border:0; background:none; }
  .search-active .search-back ion-icon { font-size:24px; }
  .search-active .search-box>ion-icon,.search-active .search-cancel { display:none; }
