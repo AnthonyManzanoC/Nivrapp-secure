@@ -13,16 +13,16 @@ import { NETWORK_POLICY_RUNTIME } from '../services/network-policy.service';
 
 describe('transport failover request semantics', () => {
   const primary = 'https://primary.test', backup = 'https://backup.test';
-  let selected: string, session: any, recover: jasmine.Spy;
+  let selected: string, session: any, generation: number, recover: jasmine.Spy;
   const request = (method = 'GET', path = '/messages') => new HttpRequest(method, primary + path, null);
   const run = (req: HttpRequest<unknown>, handler: HttpHandlerFn) => TestBed.runInInjectionContext(() => firstValueFrom(apiFailoverInterceptor(req, handler)));
   beforeEach(() => {
-    selected = primary; session = { user: { id: 'alice' }, device: { id: 'phone' } };
+    selected = primary; session = { user: { id: 'alice' }, device: { id: 'phone' } }; generation = 1;
     recover = jasmine.createSpy('recover').and.callFake(async () => { selected = backup; return true; });
     TestBed.configureTestingModule({ providers: [
       { provide: ApiEndpointPool, useValue: { prepareForRequest: async () => undefined, reportSuccess: () => undefined, isConfiguredUrl: (url: string) => new URL(url).origin === primary,
         rewrite: (url: string) => selected + new URL(url).pathname, recover } },
-      { provide: AuthService, useValue: { session: () => session } },
+      { provide: AuthService, useValue: { session: () => session, sessionGeneration: () => generation } },
       { provide: NETWORK_POLICY_RUNTIME, useValue: { hints: () => ({}), onlineHint: () => true, now: () => Date.now(), random: () => .5 } },
     ] });
   });
@@ -47,6 +47,12 @@ describe('transport failover request semantics', () => {
     recover.and.callFake(async () => { session = { user: { id: 'bob' }, device: { id: 'other' } }; selected = backup; return true; });
     const next = jasmine.createSpy('next').and.returnValue(throwError(() => new HttpErrorResponse({ status: 0 })));
     await expectAsync(run(request(), next)).toBeRejected(); expect(next).toHaveBeenCalledTimes(1);
+  });
+  it('discards a retry after signing back into the original account and device', async () => {
+    recover.and.callFake(async () => { generation += 2; selected = backup; return true; });
+    const next = jasmine.createSpy('next').and.returnValue(throwError(() => new HttpErrorResponse({ status: 503 })));
+    await expectAsync(run(request(), next)).toBeRejected();
+    expect(next).toHaveBeenCalledTimes(1);
   });
   it('recovers away from an old node missing the hybrid write route without replaying the mutation', async () => {
     const next = jasmine.createSpy('next').and.returnValue(throwError(() => new HttpErrorResponse({ status: 404 })));

@@ -325,6 +325,9 @@ export class ChatService implements OnDestroy {
           void this.hydrateConversationProfiles([conversation]);
         }
       }
+      if (event.type === 'conversation.removed') {
+        void this.bootstrap().catch(() => undefined);
+      }
       if (event.type === 'conversation.typing') {
         void this.applyTyping(event.payload);
       }

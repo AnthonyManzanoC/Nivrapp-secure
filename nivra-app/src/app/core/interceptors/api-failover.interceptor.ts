@@ -11,8 +11,10 @@ export function apiFailoverInterceptor(req: HttpRequest<unknown>, next: HttpHand
   const auth = inject(AuthService);
   const network = inject(NetworkPolicyService);
   const session = auth.session();
+  const generation = auth.sessionGeneration?.();
   const hybridWrite = req.method === 'POST' && new URL(req.url).pathname.endsWith('/messages/ratchet');
-  const sameSession = () => auth.session()?.user.id === session?.user.id && auth.session()?.device.id === session?.device.id;
+  const sameSession = () => auth.sessionGeneration?.() === generation
+    && auth.session()?.user.id === session?.user.id && auth.session()?.device.id === session?.device.id;
   const safe = req.method === 'GET' || req.method === 'HEAD'
     || (req.method === 'POST' && new URL(req.url).pathname === '/keys/batch');
   // Downloads and uploads keep their own progress/limits; small read requests cannot hang forever.
