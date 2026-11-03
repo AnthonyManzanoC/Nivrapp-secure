@@ -34,6 +34,8 @@ builder.Services.AddSingleton(TimeProvider.System); builder.Services.AddSingleto
 builder.Services.AddHttpClient(); builder.Services.Configure<NivraPushOptions>(_=>{});
 builder.Services.AddSingleton<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>(new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider());
 builder.Services.AddSingleton<PushNotificationService>();
+builder.Services.AddSingleton<PasswordHasher>(); builder.Services.AddSingleton<LiveKitTokenService>();
+builder.Services.AddSingleton<EncryptedFileStorage>(_=>throw new InvalidOperationException("Fixture does not access file storage"));
 builder.Services.AddRateLimiter(options => options.AddPolicy("auth", context => System.Threading.RateLimiting.RateLimitPartition.GetNoLimiter("fixture")));
 builder.Services.Configure<NivraSecurityOptions>(options => options.TokenSigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
 await using var app = builder.Build();
@@ -45,6 +47,7 @@ app.UseExceptionHandler(handler => handler.Run(context =>
     return context.Response.WriteAsJsonAsync(new { code = "synthetic_test_failure" });
 }));
 app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.UseRateLimiter(); app.MapCommunityEndpoints(); app.MapGroupInviteEndpoints(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapRatchetHybridEndpoints(); app.MapHistoryArchiveEndpoints();
+typeof(EndpointExtensions).GetMethod("MapVaultRoomEndpoints",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,[app]);
 app.MapPost("/fixture/message-policy", async (SendMessageRequest request, HttpContext http, NivraDbContext db, CancellationToken ct) => {
     if (http.GetCurrentUser() is not { } user) return Results.Unauthorized();
     if (!await RatchetMessagePolicy.ValidAsync(db, user.UserId, user.DeviceId, "chat-lab", request.ClientMessageId, request.Recipients, ct, requireHybrid: true, request.SharedPayloadIv, request.SharedPayloadCiphertext)) return Results.BadRequest();
@@ -272,6 +275,7 @@ await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", n
 await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab-other", Guid.NewGuid()), HttpStatusCode.Forbidden, "vault membership is required on both sides");
 await CommunityChecks.Run(app,tokens);
 await CallAnswerChecks.Run(app.Services);
+await VaultAccessChecks.Run(app,tokens);
 if (args.Contains("--serve-for-interop"))
 {
     // Synthetic bearer tokens are passed to the parent test harness only. That

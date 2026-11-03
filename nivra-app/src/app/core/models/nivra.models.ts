@@ -472,6 +472,7 @@ export interface VaultRoom {
   owner: UserSummary;
   name: string;
   accessMode: 'PinOnly' | 'InviteOnly' | 'WaitingRoom' | string;
+  requiresPin?: boolean;
   retentionMode: 'Persistent' | 'BurnOnExit' | 'ExpiresAfterTtl' | string;
   encryptedWelcome?: string | null;
   participantIds?: string[];

@@ -16,7 +16,7 @@
       @if(invitedRoom(); as room) {
         <article class="panel span-12 pending-invite-panel">
           <div><strong>Te invitaron a {{room.name}}</strong><span class="card-sub">{{vault.accessLabel(room.accessMode)}} · {{vault.retentionLabel(room.retentionMode)}}</span></div>
-          @if(room.accessMode !== 'InviteOnly'){<ion-input mode="ios" fill="outline" type="password" [(ngModel)]="roomPinById[room.id]" placeholder="PIN acordado" aria-label="PIN de la sala invitada"></ion-input>}
+          @if(requiresRoomPin(room)){<ion-input mode="ios" fill="outline" type="password" [(ngModel)]="roomPinById[room.id]" placeholder="PIN acordado" aria-label="PIN de la sala invitada"></ion-input>}
           <ion-button mode="ios" (click)="joinRoom(room)" [disabled]="isBusy('join:'+room.id)">Entrar a la sala</ion-button>
         </article>
       }
@@ -185,9 +185,11 @@
                 <span>{{ room.members.length }} miembros</span>
               </div>
               @if (vault.currentMember(room)?.status !== 'Active') {
-                @if (vault.canAttemptJoin(room)) {
+                @if (vault.currentMember(room)?.status === 'Waiting') {
+                  <span class="room-invitation-badge" role="status">Esperando aprobación del dueño</span>
+                } @else if (vault.canAttemptJoin(room)) {
                   <div class="join-row">
-                    <ion-input [hidden]="room.accessMode === 'InviteOnly'" mode="ios" fill="outline" [(ngModel)]="roomPinById[room.id]" type="password" [placeholder]="'VAULT.ROOM_PIN' | translate:'PIN de sala'"></ion-input>
+                    @if(requiresRoomPin(room)){<ion-input mode="ios" fill="outline" [(ngModel)]="roomPinById[room.id]" type="password" [placeholder]="'VAULT.ROOM_PIN' | translate:'PIN de sala'"></ion-input>}
                     <ion-button mode="ios" fill="clear" (click)="joinRoom(room)" [disabled]="isBusy('join:' + room.id)" [attr.aria-label]="'VAULT.ENTER' | translate:'Entrar'">
                       <ion-icon name="enter-outline"></ion-icon>
                     </ion-button>
@@ -392,7 +394,7 @@
             <h2>{{ 'VAULT.CREATE_PRIVATE_ROOM' | translate:'Crear sala privada' }}</h2>
             <span class="card-sub">{{ 'VAULT.CREATE_PRIVATE_ROOM_COPY' | translate:'Vault compartida con miembros y archivos cifrados.' }}</span>
           </div>
-          <button class="room-create-close" type="button" (click)="roomComposerOpen=false" aria-label="Cerrar creación de sala"><ion-icon name="close-outline"></ion-icon></button>
+          <button class="room-create-close" type="button" [disabled]="isBusy('room:create')" (click)="roomComposerOpen=false" aria-label="Cerrar creación de sala"><ion-icon name="close-outline"></ion-icon></button>
         </div>
         <p class="room-create-intro">Un espacio para tu equipo. Elige quién entra y cuánto tiempo se conserva lo compartido.</p><div class="room-create-preview"><span>{{(roomName.trim() || "N").slice(0,2).toUpperCase()}}</span><div><strong>{{roomName.trim() || "Tu nueva sala"}}</strong><small>{{vault.accessLabel(roomAccessMode)}} · {{vault.retentionLabel(retentionMode)}}</small></div></div><div class="form-grid">
           <label>

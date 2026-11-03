@@ -405,7 +405,8 @@ public sealed record VaultRoomResponse(
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
     DateTimeOffset? ExpiresAt,
-    DateTimeOffset? ClosedAt);
+    DateTimeOffset? ClosedAt,
+    bool RequiresPin = false);
 
 public sealed record VaultRoomMemberResponse(
     string UserId,

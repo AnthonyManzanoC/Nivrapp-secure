@@ -13,7 +13,7 @@ export function v9Fixtures(user:any,photo:string){
   };
   const rooms:any[]=[{id:'studio',name:'Estudio creativo',accessMode:'PinOnly',retentionMode:'Persistent',owner:user,
     members:[{userId:user.id,displayName:user.displayName,status:'Active'},{userId:'peer-sofia',displayName:'Sofía',status:'Active'},{userId:'peer-daniel',displayName:'Daniel',status:'Invited'}]},
-    {id:'invitation',name:'Ideas de fin de semana',accessMode:'InviteOnly',retentionMode:'ExpiresAfterTtl',owner:{id:'peer-daniel'},members:[{userId:user.id,status:'Invited'}]},
+    {id:'invitation',name:'Ideas de fin de semana',accessMode:'InviteOnly',requiresPin:false,retentionMode:'ExpiresAfterTtl',owner:{id:'peer-daniel'},members:[{userId:user.id,status:'Invited'}]},
   ];
   const vault:any={unlocked:signal(false),loading:signal(false),items:signal([]),rooms:signal(rooms),people:signal([{id:'peer-martina',displayName:'Martina',alias:'martina'}]),
     activeRoomId:signal('studio'),activeMessages:signal([
@@ -26,7 +26,7 @@ export function v9Fixtures(user:any,photo:string){
     canAttemptJoin:()=>true,canInviteGuests:(room:any)=>room?.owner.id===user.id,canModerate:(room:any)=>room?.owner.id===user.id,
     roomStatusLabel:()=> 'Abierta',retentionLabel:(mode:string)=>mode==='Persistent'?'Se conserva':mode==='BurnOnExit'?'Borrar al salir':'1 hora',
     accessLabel:(mode:string)=>mode==='InviteOnly'?'Solo invitados':mode==='WaitingRoom'?'Con aprobación':'Invitados + PIN',
-    memberLabel:(m:any)=>m.displayName||'Alex',messageSender:(m:any)=>m.mine?'Tú':'Sofía',asFile:()=>null,
+    memberLabel:(m:any)=>m.displayName||'Alex',messageSender:(m:any)=>m.mine?'Tú':'Sofía',asFile:()=>null,preview:(payload:any)=>payload?.text||'',
     selectRoom:async(id:string)=>{vault.activeRoomId.set(id);},searchPeople:async()=>{},createRoom:async()=>rooms[0],
   };
   vault.activeRoom=computed(()=>vault.rooms().find((r:any)=>r.id===vault.activeRoomId())??null);

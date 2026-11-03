@@ -127,4 +127,8 @@ Check((string)android["collapse_key"]! == "nivra-call-call1", "call updates coll
 Check(!incoming.ContainsKey("notification"), "FCM never proxies a generic notification instead of native call UI");
 var terminal = (Dictionary<string, object?>)Message("end_call")["android"]!;
 Check((string)terminal["ttl"]! == "300s", "terminal push survives longer to cancel a stale native ring");
+var dismissal=Message("call_answered_elsewhere");
+var dismissAndroid=(Dictionary<string,object?>)dismissal["android"]!;
+Check(!dismissal.ContainsKey("notification")&&(string)dismissAndroid["ttl"]! == "300s"&&(string)dismissAndroid["priority"]! == "HIGH",
+    "a losing device receives a bounded high-priority cancellation without a new visible alert");
 Console.WriteLine($"{checks} push checks passed.");

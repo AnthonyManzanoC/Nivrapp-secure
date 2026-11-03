@@ -3339,7 +3339,7 @@ public static partial class EndpointExtensions
             return Results.Created($"/vault/invites/{Uri.EscapeDataString(code)}", ToVaultInviteLinkResponse(invite, room, code, http));
         });
 
-        app.MapPost("/vault/invites/{code}/accept", async Task<IResult> (string code, AcceptVaultInviteRequest request, HttpContext http, NivraDbContext db, PasswordHasher hasher, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        app.MapPost("/vault/invites/{code}/accept", (string code, AcceptVaultInviteRequest request, HttpContext http, NivraDbContext db, PasswordHasher hasher, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3353,8 +3353,11 @@ public static partial class EndpointExtensions
                 return Error("invalid_vault_invite", "Codigo de invitacion invalido.");
             }
 
-            var now = timeProvider.GetUtcNow();
             var codeHash = PrivacyHashes.OpaqueCodeHash(trimmedCode);
+            var inviteRoomId = await db.VaultRoomInvites.AsNoTracking().Where(candidate => candidate.CodeHash == codeHash).Select(candidate => candidate.VaultRoomId).FirstOrDefaultAsync(cancellationToken);
+            if (inviteRoomId is null) return Error("vault_invite_expired", "Esta invitación ya no está disponible.", StatusCodes.Status410Gone);
+            await using var transaction = await CallCoordination.LockAsync(db, "vault-room:" + inviteRoomId, cancellationToken);
+            var now = timeProvider.GetUtcNow();
             var invite = await db.VaultRoomInvites.FirstOrDefaultAsync(candidate => candidate.CodeHash == codeHash, cancellationToken);
             if (invite is null || invite.RevokedAt is not null || invite.ExpiresAt <= now || invite.Uses >= invite.MaxUses)
             {
@@ -3373,17 +3376,17 @@ public static partial class EndpointExtensions
 
             if (room.PinHash is not null && !hasher.Verify(request.Pin ?? string.Empty, room.PinHash))
             {
-                return Error("invalid_pin", "PIN invalido.", StatusCodes.Status401Unauthorized);
+                return Error("invalid_pin", "PIN inválido.", StatusCodes.Status403Forbidden);
             }
 
             var memberId = $"{room.Id}:{current.UserId}";
             var member = await db.VaultRoomMembers.FirstOrDefaultAsync(candidate => candidate.Id == memberId, cancellationToken);
             var wasUsableMember = member is { Status: VaultMemberStatus.Active or VaultMemberStatus.Invited or VaultMemberStatus.Waiting };
-            var nextStatus = invite.RequireApproval || room.AccessMode == VaultAccessMode.WaitingRoom
+            var nextStatus = invite.RequireApproval || room.AccessMode == VaultAccessMode.WaitingRoom || member?.Status == VaultMemberStatus.Waiting
                 ? VaultMemberStatus.Waiting
                 : VaultMemberStatus.Active;
 
-            if (room.OwnerUserId == current.UserId)
+            if (room.OwnerUserId == current.UserId || member?.Status == VaultMemberStatus.Active)
             {
                 nextStatus = VaultMemberStatus.Active;
             }
@@ -3413,6 +3416,7 @@ public static partial class EndpointExtensions
             room.UpdatedAt = now;
 
             await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             var response = await ToVaultRoomResponseAsync(room, current.UserId, db, cancellationToken);
             if (nextStatus == VaultMemberStatus.Waiting)
             {
@@ -3429,9 +3433,9 @@ public static partial class EndpointExtensions
             }
 
             return Results.Ok(response);
-        });
+        })).RequireRateLimiting("auth");
 
-        group.MapPost("/{roomId}/join", async Task<IResult> (string roomId, JoinVaultRoomRequest request, HttpContext http, NivraDbContext db, PasswordHasher hasher, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        group.MapPost("/{roomId}/join", (string roomId, JoinVaultRoomRequest request, HttpContext http, NivraDbContext db, PasswordHasher hasher, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3439,6 +3443,7 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            await using var transaction = await CallCoordination.LockAsync(db, "vault-room:" + roomId, cancellationToken);
             var now = timeProvider.GetUtcNow();
             var room = await db.VaultRooms.FirstOrDefaultAsync(candidate =>
                 candidate.Id == roomId &&
@@ -3453,7 +3458,7 @@ public static partial class EndpointExtensions
             var memberId = $"{room.Id}:{current.UserId}";
             var member = await db.VaultRoomMembers.FirstOrDefaultAsync(candidate => candidate.Id == memberId, cancellationToken);
             var isOwner = room.OwnerUserId == current.UserId;
-            var isAuthorizedParticipant = member is { Status: VaultMemberStatus.Invited or VaultMemberStatus.Active };
+            var isAuthorizedParticipant = member is { Status: VaultMemberStatus.Invited or VaultMemberStatus.Waiting or VaultMemberStatus.Active };
 
             if (!isOwner && !isAuthorizedParticipant)
             {
@@ -3462,10 +3467,13 @@ public static partial class EndpointExtensions
 
             if (room.PinHash is not null && !hasher.Verify(request.Pin ?? string.Empty, room.PinHash))
             {
-                return Error("invalid_pin", "PIN invalido.", StatusCodes.Status401Unauthorized);
+                return Error("invalid_pin", "PIN inválido.", StatusCodes.Status403Forbidden);
             }
 
-            var nextStatus = VaultMemberStatus.Active;
+            var requiresApproval = !isOwner && (member?.Status == VaultMemberStatus.Waiting ||
+                room.AccessMode == VaultAccessMode.WaitingRoom && member?.Status != VaultMemberStatus.Active);
+            var sendRequest = requiresApproval && member?.Status != VaultMemberStatus.Waiting;
+            var nextStatus = requiresApproval ? VaultMemberStatus.Waiting : VaultMemberStatus.Active;
 
             if (member is null)
             {
@@ -3487,13 +3495,25 @@ public static partial class EndpointExtensions
             member.LeftAt = null;
             room.UpdatedAt = now;
             await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
             var response = await ToVaultRoomResponseAsync(room, current.UserId, db, cancellationToken);
-            await hub.Clients.Group(GroupsFor.User(room.OwnerUserId)).SendAsync("vault.joinRequested", response, cancellationToken);
+            if (sendRequest)
+            {
+                await hub.Clients.Group(GroupsFor.User(room.OwnerUserId)).SendAsync("vault.joinRequested", response, cancellationToken);
+                await pushNotifications.SendEventAsync(room.OwnerUserId, "Nivra", "Solicitud de entrada a boveda", "vault_join_requested", $"nivra-vault-join-{room.Id}-{current.UserId}", new Dictionary<string, string>
+                {
+                    ["roomId"] = room.Id, ["userId"] = current.UserId
+                }, cancellationToken);
+            }
+            else if (nextStatus == VaultMemberStatus.Active)
+            {
+                await NotifyUsers(hub, await VaultRoomAudienceAsync(db, room.Id, cancellationToken), "vault.approved", response);
+            }
             return Results.Ok(response);
-        });
+        })).RequireRateLimiting("auth");
 
-        group.MapPost("/{roomId}/members/{memberUserId}/approve", async Task<IResult> (string roomId, string memberUserId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        group.MapPost("/{roomId}/members/{memberUserId}/approve", (string roomId, string memberUserId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3501,7 +3521,9 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            var room = await db.VaultRooms.FirstOrDefaultAsync(candidate => candidate.Id == roomId && candidate.ClosedAt == null, cancellationToken);
+            await using var transaction = await CallCoordination.LockAsync(db, "vault-room:" + roomId, cancellationToken);
+            var now = timeProvider.GetUtcNow();
+            var room = await db.VaultRooms.FirstOrDefaultAsync(candidate => candidate.Id == roomId && candidate.ClosedAt == null && (candidate.ExpiresAt == null || candidate.ExpiresAt > now), cancellationToken);
             if (room is null || room.OwnerUserId != current.UserId)
             {
                 return Results.NotFound();
@@ -3513,12 +3535,12 @@ public static partial class EndpointExtensions
                 return Results.NotFound();
             }
 
-            var now = timeProvider.GetUtcNow();
             member.Status = VaultMemberStatus.Active;
             member.JoinedAt = now;
             member.LastSeenAt = now;
             room.UpdatedAt = now;
             await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
 
             var response = await ToVaultRoomResponseAsync(room, current.UserId, db, cancellationToken);
             await hub.Clients.Group(GroupsFor.User(memberUserId)).SendAsync("vault.approved", response, cancellationToken);
@@ -3528,7 +3550,7 @@ public static partial class EndpointExtensions
                 ["ownerUserId"] = current.UserId
             }, cancellationToken);
             return Results.Ok(response);
-        });
+        }));
 
         group.MapPost("/{roomId}/leave", async Task<IResult> (string roomId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
         {
@@ -5380,7 +5402,8 @@ public static partial class EndpointExtensions
             room.CreatedAt,
             room.UpdatedAt,
             room.ExpiresAt,
-            room.ClosedAt);
+            room.ClosedAt,
+            room.PinHash is not null);
     }
 
     private static async Task<HashSet<string>> ContactIdsFor(NivraDbContext db, string userId, CancellationToken cancellationToken)

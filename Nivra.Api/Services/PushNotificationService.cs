@@ -211,11 +211,12 @@ public sealed class PushNotificationService(
                 ["tag"] = $"nivra-call-{callId}"
             }, cancellationToken, silentDataOnly: true, parallelDelivery: true);
 
-    public Task<bool> DispatchCallAnsweredElsewhereAsync(string userId,string callId,string answeredDeviceId,CancellationToken ct) =>
+    public Task<bool> DispatchCallAnsweredElsewhereAsync(string userId,string callId,string answeredDeviceId,DateTimeOffset expiresAt,CancellationToken ct) =>
         SendToUserAsync(userId,"Nivra","Llamada contestada en otro dispositivo",new Dictionary<string,string>
         {
             ["type"]="call_answered_elsewhere",["callId"]=callId,["answeredByDeviceId"]=answeredDeviceId,
-            ["tag"]=$"nivra-call-{callId}",["silent"]="1"
+            ["tag"]=$"nivra-call-{callId}",["silent"]="1",
+            ["expiresAt"]=expiresAt.ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture)
         },ct,silentDataOnly:true,parallelDelivery:true,excludeDeviceId:answeredDeviceId);
 
     public async Task SendCallEndedAsync(
@@ -617,7 +618,7 @@ public sealed class PushNotificationService(
         var normalizedType = data.TryGetValue("type", out var type)
             ? type.Replace('_', '-').ToLowerInvariant()
             : "";
-        var isTerminalCall = normalizedType is "end-call" or "missed-call" or "call-ended" or "call-rejected" or "call-timeout" or "call-failed";
+        var isTerminalCall = normalizedType is "end-call" or "missed-call" or "call-ended" or "call-rejected" or "call-timeout" or "call-failed" or "call-answered-elsewhere";
         var isIncomingCall = normalizedType.Contains("call", StringComparison.Ordinal) && !isTerminalCall;
         var ttl = NotificationTtlSeconds(data, isIncomingCall ? 75 : isTerminalCall ? 300 : 86400);
         var webTtl = ttl.ToString(System.Globalization.CultureInfo.InvariantCulture);

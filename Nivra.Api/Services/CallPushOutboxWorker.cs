@@ -63,7 +63,7 @@ public sealed class CallPushOutboxWorker(IServiceScopeFactory scopes, TimeProvid
         var caller = call is null || job.AnsweredDeviceId != null ? null : await db.Users.AsNoTracking().FirstOrDefaultAsync(user => user.Id == call.InitiatorUserId, ct);
         var pushes = scope.ServiceProvider.GetRequiredService<PushNotificationService>();
         var result = await CallPushOutbox.DispatchAsync(call, job, clock.GetUtcNow(), (expires, token) => job.AnsweredDeviceId is { } answeredDevice
-            ? pushes.DispatchCallAnsweredElsewhereAsync(job.RecipientUserId, job.CallId, call?.ParticipantSessions.GetValueOrDefault(job.RecipientUserId)?.DeviceId ?? answeredDevice, token)
+            ? pushes.DispatchCallAnsweredElsewhereAsync(job.RecipientUserId, job.CallId, call?.ParticipantSessions.GetValueOrDefault(job.RecipientUserId)?.DeviceId ?? answeredDevice, expires, token)
             : pushes.DispatchIncomingCallAsync(job.RecipientUserId, call!.ConversationId, call.Id, call.InitiatorUserId,
                 caller?.DisplayName ?? caller?.Alias ?? "Nivra", call.Type, expires, token), ct);
         now = clock.GetUtcNow();

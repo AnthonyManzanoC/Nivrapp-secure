@@ -1197,7 +1197,7 @@ export class VaultService {
 
     const text = [
       `Nivra Vault: Te he invitado a mi Sala Privada "${room.name}".`,
-      room.accessMode === 'InviteOnly' ? 'Abre la invitación con tu cuenta para entrar.' : 'Usa el PIN acordado para entrar. Nivra comprueba tu invitación antes de desbloquear el contenido.',
+      (room.requiresPin ?? room.accessMode !== 'InviteOnly') ? 'Usa el PIN acordado para entrar. Nivra comprueba tu invitación antes de desbloquear el contenido.' : 'Abre la invitación con tu cuenta para entrar.',
       'Los mensajes siguen las reglas de retencion de la sala.',
       `https://nivrapp-secure.vercel.app/app/vault?room=${encodeURIComponent(room.id)}`,
     ].join('\n');

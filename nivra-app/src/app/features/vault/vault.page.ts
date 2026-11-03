@@ -204,7 +204,7 @@ export class VaultPage implements OnInit, OnDestroy {
     await this.run('room:create', async isCurrent => {
       const room = await this.vault.createRoom({
         name: this.roomName || 'Boveda Nivra',
-        pin: this.roomPin,
+        pin: this.roomAccessMode === 'InviteOnly' ? null : this.roomPin,
         accessMode: this.roomAccessMode,
         retentionMode: this.retentionMode,
         invitedUserIds: [...this.selectedInviteIds],
@@ -257,6 +257,12 @@ export class VaultPage implements OnInit, OnDestroy {
         if (!isCurrent()) return;
         this.notice = this.tr('VAULT.NOTICE_ROOM_OPENED', 'Sala Vault abierta.');
       });
+      return;
+    }
+    if (this.vault.currentMember(room)?.status === 'Waiting') return;
+    if (this.requiresRoomPin(room) && !this.roomPinById[room.id] && (room.requiresPin === true || room.accessMode !== 'InviteOnly')) {
+      this.invitedRoomId = room.id;
+      this.notice = 'Ingresa el PIN acordado para entrar a la sala.';
       return;
     }
     await this.joinRoom(room);
@@ -501,6 +507,7 @@ export class VaultPage implements OnInit, OnDestroy {
     if (!id || !this.isCurrentPage()) return;
     // A direct link identifies a room; it never grants membership or bypasses its PIN.
     const room = this.vault.rooms().find(value => value.id === id);
+    if (room && this.vault.currentMember(room)?.status === 'Waiting') { this.invitedRoomId = room.id; this.notice = 'El dueño de la sala aún debe aprobar tu entrada.'; return; }
     if (!room || !this.vault.canAttemptJoin(room)) { this.error = 'Esta sala no está disponible para tu cuenta.'; return; }
     this.invitedRoomId = room.id;
     if (this.vault.currentMember(room)?.status === 'Active') await this.vault.selectRoom(room.id);
@@ -510,6 +517,7 @@ export class VaultPage implements OnInit, OnDestroy {
     return this.vault.rooms().find(room => room.id === this.invitedRoomId && this.vault.canAttemptJoin(room)
       && this.vault.currentMember(room)?.status !== 'Active') ?? null;
   }
+  requiresRoomPin(room: VaultRoom): boolean { return room.requiresPin !== false; }
 
   private async shareText(text: string, url: string): Promise<void> {
     if (!this.isCurrentPage()) return;
