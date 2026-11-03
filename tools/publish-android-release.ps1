@@ -4,10 +4,12 @@ param(
   [Parameter(Mandatory=$true)][ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version,
   [Parameter(Mandatory=$true)][ValidatePattern('^[a-f0-9]{40}$')][string]$Commit,
   [switch]$ValidateOnly,
+  [switch]$StageOnly,
   [string]$ArtifactDirectory
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+if ($ValidateOnly -and $StageOnly) { throw 'Use either ValidateOnly or StageOnly.' }
 $workspacePath = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 if ([string]::IsNullOrWhiteSpace($ArtifactDirectory)) { $ArtifactDirectory = Join-Path $workspacePath 'artifacts' }
 $artifactDirectory = (Resolve-Path -LiteralPath $ArtifactDirectory).Path
@@ -134,6 +136,10 @@ try {
     if ($uploaded.name -cne $assetPlan.name -or $uploaded.state -ne 'uploaded' -or $uploaded.size -ne $assetPlan.size -or $uploaded.digest -cne $assetPlan.digest) { throw 'The uploaded asset does not match its verified name, size or digest.' }
     $publishedAssets += [pscustomobject]@{ name=$uploaded.name; size=$uploaded.size; digest=$uploaded.digest; url=$uploaded.browser_download_url }
     Write-Output "Verified GitHub asset: $($uploaded.name)"
+  }
+  if ($StageOnly) {
+    Write-Output "Staged and verified Nivra $Version. The release is still a draft."
+    return
   }
   $publishBody = @{ draft=$false } | ConvertTo-Json
   $published = Invoke-RestMethod -Method Patch -Uri "$apiBase/releases/$($release.id)" -Headers $headers -ContentType 'application/json' -Body $publishBody
