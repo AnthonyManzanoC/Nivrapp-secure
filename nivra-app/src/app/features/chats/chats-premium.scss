@@ -136,6 +136,7 @@
 .chat-selection-count strong { font-size: 19px; line-height: 1; }
 .chat-selection-count span { font-size: 10px; color: var(--nivra-muted); }
 .list .conversation-item.bulk-selected::part(native) { background: var(--nivra-selection); border-color: var(--nivra-selection-line); }
+.conversation-item .avatar-action { position: relative; }
 .chat-selection-mark {
   position: absolute;
   inset: auto -2px -2px auto;

@@ -178,9 +178,9 @@ async function main() {
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
     await tap('.search-box ion-input');
     await waitFor("!!document.querySelector('.chats-page.search-active')");
+    await capture('mobile-search-dark');
     assert(await backgroundUses('.search-panel','--nivra-panel-solid'),'expanded dark Chats header uses the panel surface');
     assert(await backgroundUses('.search-box','--nivra-bg-3'),'expanded dark Chats input uses the dark control surface');
-    await capture('mobile-search-dark');
     await viewport(1440,900,false);
     await call('Page.navigate',{url:base+'/app/contacts?theme=light'});
     await waitFor("!!document.querySelector('.contacts-page')");
@@ -348,6 +348,7 @@ async function main() {
     await tap('[data-chat-id=family] .conversation-title');
     await waitFor("document.querySelectorAll('.conversation-item.bulk-selected').length===2");
     assert(await evaluate("!location.pathname.includes('/app/chats/') && !document.querySelector('.mobile-message-fab')"),'selecting rows does not open a chat or obscure the list');
+    assert(await evaluate("[...document.querySelectorAll('.chat-selection-mark')].every(mark=>{const a=mark.parentElement.getBoundingClientRect(),r=mark.getBoundingClientRect();return r.left>=a.left&&r.top>=a.top&&r.right<=a.right+3&&r.bottom<=a.bottom+3})"),'selection badge stays attached to each avatar');
     await capture('mobile-chat-selection-dark');
     await tap('.chat-selection-toolbar button[aria-label="Fijar chats seleccionados"]');
     await waitFor("!document.querySelector('.chat-selection-toolbar') && document.querySelector('[data-chat-id=sofia]').classList.contains('pinned') && document.querySelector('[data-chat-id=family]').classList.contains('pinned')");
