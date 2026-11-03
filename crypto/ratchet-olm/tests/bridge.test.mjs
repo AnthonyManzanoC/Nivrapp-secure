@@ -49,6 +49,28 @@ async function pair(storage = memory()) {
   await alice.pinIdentity(bob.address, bob.publicIdentity); await bob.pinIdentity(alice.address, alice.publicIdentity);
   return { alice, bob, storage };
 }
+test('signing a linked device leaves the source ratchet intact and the new device uses independent hybrid prekeys', async () => {
+  const { alice, bob, storage } = await pair();
+  const linked = await LabWebDevice.open(bridge, 'olm-alice-linked', 1, storage, { createIfMissing: true });
+  try {
+    await alice.establish(bob.address, await bob.bundle());
+    const first = await alice.encrypt(bob.address, context('before-link'), { text: 'original session' });
+    assert.deepEqual(await bob.decrypt(alice.address, context('before-link'), first), { text: 'original session' });
+    const revision = storage.rows.get(JSON.stringify(['olm-alice', 1])).revision;
+    const statement = new TextEncoder().encode(JSON.stringify(['nivra-device-continuity-v1','alice','olm-alice','A'.repeat(43)+':'+ 'B'.repeat(43)]));
+    const signature = await alice.signDeviceContinuity(statement);
+    assert(bridge.verifyIdentity(alice.publicIdentity, statement, signature));
+    assert(!bridge.verifyIdentity(linked.publicIdentity, statement, signature));
+    assert.equal(storage.rows.get(JSON.stringify(['olm-alice', 1])).revision, revision);
+    await linked.pinIdentity(bob.address, bob.publicIdentity);
+    await bob.pinIdentity(linked.address, linked.publicIdentity);
+    await linked.establish(bob.address, await bob.bundle());
+    const latest = await linked.encrypt(bob.address, context('new-linked'), { text: 'no history copied' });
+    assert.deepEqual(await bob.decrypt(linked.address, context('new-linked'), latest), { text: 'no history copied' });
+    const reply = await bob.encrypt(alice.address, context('keep-old'), { text: 'original device stays connected' });
+    assert.deepEqual(await alice.decrypt(bob.address, context('keep-old'), reply), { text: 'original device stays connected' });
+  } finally { await linked.close(); await alice.close(); await bob.close(); }
+});
 test('permissive bridge uses separate agreement/signing keys and authenticates its prekeys', async () => {
   const identity = bridge.createIdentity();
   try {

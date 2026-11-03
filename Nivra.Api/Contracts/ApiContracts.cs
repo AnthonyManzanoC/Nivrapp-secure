@@ -91,11 +91,13 @@ public sealed record CompletePhoneAliasRequest(
     KeyBundleRequest KeyBundle,
     string? HardwareId);
 
-public sealed record QrLoginStartRequest(string DeviceName, KeyBundleRequest? KeyBundle, string? PublicKey, string? HardwareId);
+public sealed record QrLoginStartRequest(string DeviceName, KeyBundleRequest? KeyBundle, string? PublicKey, string? HardwareId,bool? IncludeHistory=null);
 
 public sealed record QrLoginStartResponse(string QrId, string Code, string SyncToken, string DeepLink, DateTimeOffset ExpiresAt);
 
-public sealed record QrLoginAuthorizeRequest(string QrId, string Code, string? EncryptedPayload);
+public sealed record DeviceContinuityRequest(string TargetIdentity,string Signature);
+public sealed record DeviceContinuityResponse(string SourceDeviceId,string Signature);
+public sealed record QrLoginAuthorizeRequest(string QrId, string Code, string? EncryptedPayload,DeviceContinuityRequest? DeviceContinuity=null,bool? HistoryIncluded=null);
 
 public sealed record QrLoginAuthorizedResponse(AuthResponse Auth, string EncryptedPayload);
 
@@ -125,7 +127,7 @@ public sealed record PublicDeviceKeyResponse(
     string DeviceId,
     string DeviceName,
     KeyBundle KeyBundle,
-    DateTimeOffset LastRotatedAt);
+    DateTimeOffset LastRotatedAt,DeviceContinuityResponse? Continuity=null);
 
 public sealed record PublicKeyDirectoryResponse(string UserId, string Alias, List<PublicDeviceKeyResponse> Devices);
 

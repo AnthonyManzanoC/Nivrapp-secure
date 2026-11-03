@@ -1,4 +1,4 @@
-import { Injectable, InjectionToken, OnDestroy, effect, inject } from '@angular/core';
+import { Injectable, InjectionToken, OnDestroy, effect, inject, untracked } from '@angular/core';
 import { firstValueFrom, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { ChatPayload, MessageHistoryRecoveryResponse, MessageResponse, PublicKeyDirectory, RecipientCipherRequest } from '../models/nivra.models';
@@ -10,6 +10,8 @@ import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 import { AppLockService } from './app-lock.service';
 import { RatchetBundle, RatchetDeviceRuntime, RatchetEnvelope, RatchetRuntimeFactory, openRatchetRuntime, ratchetBase64, ratchetBinary, ratchetHash, ratchetMessageId, ratchetArchiveContext } from './ratchet-runtime';
+import { verifyDeviceContinuity } from './ratchet-runtime';
+import { CheckedDeviceContinuity, checkedDeviceContinuities, continuityStatement } from '../utils/device-continuity';
 
 export const RATCHET_RUNTIME = new InjectionToken<RatchetRuntimeFactory>('Nivra ratchet runtime', { providedIn: 'root', factory: () => openRatchetRuntime });
 const ALGORITHM = 'NIVRA-HYBRID-RATCHET-MESSAGE-1';
@@ -39,9 +41,10 @@ export class RatchetMessagingService implements OnDestroy {
   private opening: Promise<RatchetDeviceRuntime> | null = null;
   private serial: Promise<unknown> = Promise.resolve();
   private generation = 0;
+  private primedScope = '';
   private enabledCache: { scope: string; at: number; enabled: boolean } | null = null;
   private readonly events = this.signalr.events$.subscribe(event => {
-    if (['connected', 'reconnected', 'ratchet.binding.requested'].includes(event.type)) void this.pump().catch(() => undefined);
+    if (['connected', 'reconnected', 'ratchet.binding.requested', 'device.listChanged'].includes(event.type)) void this.pump().catch(() => undefined);
   });
   private readonly timer = window.setInterval(() => { if (document.visibilityState !== 'hidden') void this.pump().catch(() => undefined); }, 60000);
 
@@ -52,6 +55,10 @@ export class RatchetMessagingService implements OnDestroy {
       if (this.runtimeScope && scope !== this.runtimeScope) {
         this.generation++; const previous = this.runtime; this.runtime = null; this.runtimeScope = ''; this.opening = null;
         void previous?.close().catch(() => undefined);
+      }
+      if(scope!==this.primedScope){
+        this.primedScope=scope;
+        if(scope)untracked(()=>void this.pump().catch(()=>undefined));
       }
     });
   }
@@ -78,6 +85,24 @@ export class RatchetMessagingService implements OnDestroy {
     const scope = JSON.stringify([session.user.id, session.device.id]);
     const assert = () => { const now = this.auth.session(); if (sessionGeneration !== this.auth.sessionGeneration?.() || generation !== this.generation || this.appLock.isContentLocked() || now?.user.id !== session.user.id || now.device.id !== session.device.id) throw Error('La cuenta o el dispositivo cambió.'); };
     return { userId: session.user.id, deviceId: session.device.id, alias: session.user.alias, scope, assert };
+  }
+  async signDeviceContinuity(targetIdentity:string):Promise<string>{
+    const owner=this.owner();
+    return this.run(async()=>{
+      owner.assert();const engine=await this.open(false);owner.assert();
+      if(!engine.signDeviceContinuity)throw Error('Actualiza Nivra para autorizar otro equipo.');
+      const signature=await engine.signDeviceContinuity(continuityStatement(owner.userId,owner.deviceId,targetIdentity));
+      owner.assert();return ratchetBase64(signature);
+    });
+  }
+  async deviceContinuities(directory:PublicKeyDirectory):Promise<CheckedDeviceContinuity[]>{
+    if(!directory.devices.some(device=>device.continuity))return [];
+    const owner=this.owner();
+    return this.run(async()=>{
+      owner.assert();const engine=await this.open(false);owner.assert();
+      const state=await this.state(engine);
+      const result=await checkedDeviceContinuities(directory,state.peers,verifyDeviceContinuity);owner.assert();return result;
+    }).catch(()=>[]);
   }
   private async enabled(): Promise<boolean> {
     if (!environment.ratchetEnabled) return false;
@@ -354,7 +379,8 @@ export class RatchetMessagingService implements OnDestroy {
         const publicJwk = this.crypto.parsePublicJwk(device?.keyBundle?.identityKey);
         if (!directory || !device || !publicJwk) throw Error('El dispositivo de origen ya no está autorizado.');
         if (message.senderUserId !== owner.userId) {
-          const trusted=await this.trust.forDelivery(owner.scope, directory, () => { try { owner.assert(); return true; } catch { return false; } });
+          const proofs=await checkedDeviceContinuities(directory,state.peers,verifyDeviceContinuity);
+          const trusted=await this.trust.forDelivery(owner.scope, directory, () => { try { owner.assert(); return true; } catch { return false; } },proofs);
           if (!trusted.devices.some(value=>value.deviceId===message.senderDeviceId)) throw Error('Este mensaje viene de un dispositivo nuevo pendiente de comprobar.');
         }
         await this.pin(engine, { userId: message.senderUserId, deviceId: message.senderDeviceId, publicJwk },

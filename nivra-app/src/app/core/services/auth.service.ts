@@ -1,4 +1,4 @@
-import { Injectable, NgZone, OnDestroy, computed, inject, signal } from '@angular/core';
+import { Injectable, Injector, NgZone, OnDestroy, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
@@ -36,6 +36,7 @@ import { NativeOnboardingService } from './native-onboarding.service';
 import { NivraNative } from './native-plugin';
 import { markWebPushAccountWipe, pendingWebPushAccountWipes } from './push-account-scopes';
 import { IdentityTrustService, IdentityTrustTransfer } from './identity-trust.service';
+import { continuityCoordinates, continuityIdentity } from '../utils/device-continuity';
 
 export class StoredAccountWipeRequiredError extends Error {
   constructor(readonly scope: { userId: string; deviceId: string }) { super('STORED_ACCOUNT_FORCE_WIPE'); }
@@ -65,6 +66,8 @@ interface ParsedQrLoginChallenge {
   publicSpki?: string | null;
   connectionId?: string | null;
   expiresAt?: string | null;
+  deviceIdentity?: string | null;
+  includeHistory?: boolean;
 }
 
 interface ProtectedAuthSessionEnvelope {
@@ -81,6 +84,7 @@ interface QrHistoryPayload {
   identityTrust?: IdentityTrustTransfer;
   keyring?: HistoricalDeviceKeyMaterial[];
   keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>;
+  historyIncluded?: boolean;
 }
 
 const FIREBASE_APP_NAME = 'nivra-web-phone-auth';
@@ -100,6 +104,7 @@ export class AuthService implements OnDestroy {
   private readonly api = inject(NivraApiService);
   private readonly crypto = inject(CryptoService);
   private readonly identityTrust = inject(IdentityTrustService);
+  private readonly injector = inject(Injector);
   private readonly secureVault = inject(NativeSecureVaultService);
   private readonly launchCache = inject(ChatLaunchCacheService);
   private readonly accountSessions = inject(AccountSessionsService);
@@ -587,7 +592,7 @@ export class AuthService implements OnDestroy {
     }
   }
 
-  async startQrLogin(): Promise<QrLoginChallenge> {
+  async startQrLogin(includeHistory=true): Promise<QrLoginChallenge> {
     const isCurrent = this.beginAuthenticationIntent();
     const generation = this.qrGeneration + 1;
     await this.stopQrLogin();
@@ -597,7 +602,7 @@ export class AuthService implements OnDestroy {
     this.qrState.set('starting');
     this.qrError.set(null);
     try {
-      return await this.createQrLogin(generation);
+      return await this.createQrLogin(generation,includeHistory);
     } catch (error) {
       if (generation === this.qrGeneration) {
         const stopped = this.stopQrLogin();
@@ -609,7 +614,7 @@ export class AuthService implements OnDestroy {
     }
   }
 
-  private async createQrLogin(generation: number): Promise<QrLoginChallenge> {
+  private async createQrLogin(generation: number,includeHistory=true): Promise<QrLoginChallenge> {
     const intent = this.authIntentEpoch;
     const isCurrent = () => !this.destroyed && generation === this.qrGeneration && intent === this.authIntentEpoch;
     const ephemeral = await this.crypto.createQrEphemeralKeys();
@@ -621,6 +626,7 @@ export class AuthService implements OnDestroy {
         deviceName: device.name,
         hardwareId: device.hardwareId,
         keyBundle: localKeys.keyBundle,
+        includeHistory,
         publicKey: this.crypto.base64UrlJson(ephemeral.publicJwk),
       }, { skipAuth: true }),
     );
@@ -672,6 +678,7 @@ export class AuthService implements OnDestroy {
       if (!isCurrent()) {
         return;
       }
+      if(!includeHistory&&(payload.historyIncluded!==false||payload.keyMaterial||payload.keyring?.length))throw Error('Este QR era solo para mensajes nuevos. Actualiza el otro equipo y vuelve a vincular.');
       await this.completeLocalQrAuth(auth, payload, localKeys, isCurrent);
       finished = true;
       if (isCurrent()) {
@@ -745,6 +752,8 @@ export class AuthService implements OnDestroy {
       pk: ephemeral.publicSpki || this.crypto.base64UrlJson(ephemeral.publicJwk),
       k: ephemeral.publicSpki ? 'spki' : 'jwk',
       exp: expiresAt,
+      identity: continuityIdentity(localKeys.publicJwk),
+      history: includeHistory?'1':'0',
     });
 
     return {
@@ -775,13 +784,17 @@ export class AuthService implements OnDestroy {
   }
 
   async authorizeQrLoginText(rawText: string): Promise<void> {
+    const text=this.extractQrLoginText(rawText);
+    if(text.startsWith('nivra://device/authorize?')) {await this.authorizeLiveDevice(text);return;}
     const challenge = this.parseQrLoginChallenge(rawText);
     const current = this.session();
+    const generation=this.sessionGeneration?.();
     if (!current?.tokens?.accessToken) {
       throw new Error('Necesitas una sesion activa para vincular otro dispositivo.');
     }
-    const keyMaterial = await this.crypto.currentKeyMaterial(current.user.alias, current.device.id);
-    const keyring = await this.crypto.exportDeviceKeyMaterialsForUser(current.user.id, current.user.alias);
+    const includeHistory=challenge.includeHistory!==false;
+    const keyMaterial = includeHistory?await this.crypto.currentKeyMaterial(current.user.alias, current.device.id):undefined;
+    const keyring = includeHistory?await this.crypto.exportDeviceKeyMaterialsForUser(current.user.id, current.user.alias):undefined;
     const identityTrust = await this.identityTrust.exportForLinkedDevice(current.user.id, current.device.id).catch(() => undefined);
     if (this.session()?.user.id !== current.user.id || this.session()?.device.id !== current.device.id) throw new Error('La sesión cambió durante la vinculación.');
     const device = await this.deviceProfile();
@@ -789,11 +802,12 @@ export class AuthService implements OnDestroy {
       userId: current.user.id,
       sourceDeviceId: current.device.id,
       ...(identityTrust ? { identityTrust } : {}),
-      keyring: keyring.map(key => ({ privateJwk: key.privateJwk, publicJwk: key.publicJwk, createdAt: key.createdAt })),
-      keyMaterial: {
+      historyIncluded:includeHistory,
+      ...(keyring?{keyring:keyring.map(key => ({ privateJwk: key.privateJwk, publicJwk: key.publicJwk, createdAt: key.createdAt }))}:{}),
+      ...(keyMaterial?{keyMaterial:{
         privateJwk: keyMaterial.privateJwk,
         publicJwk: keyMaterial.publicJwk,
-      },
+      }}:{}),
       sourceDeviceName: device.name,
       sourceHardwareId: device.hardwareId,
       linkedAt: new Date().toISOString(),
@@ -805,10 +819,15 @@ export class AuthService implements OnDestroy {
     const sealed = await this.crypto.encryptQrPayload(publicMaterial, challenge.qrId && challenge.code ? payload : { ...payload, auth: current });
     if (this.session()?.user.id !== current.user.id || this.session()?.device.id !== current.device.id) throw new Error('La sesión cambió durante la vinculación.');
     if (challenge.qrId && challenge.code) {
+      const signature=challenge.deviceIdentity?await this.signDeviceAuthorization(challenge.deviceIdentity).catch(()=>null):null;
+      if(!includeHistory&&!signature)throw Error('Abre Nivra en tu equipo habitual y deja que prepare su cifrado antes de autorizar el nuevo.');
+      if(this.sessionGeneration?.()!==generation||this.session()?.user.id!==current.user.id||this.session()?.device.id!==current.device.id)throw Error('La sesión cambió durante la vinculación.');
       await firstValueFrom(this.api.post('/api/auth/qr-login', {
         qrId: challenge.qrId,
         code: challenge.code,
         encryptedPayload: sealed,
+        historyIncluded:includeHistory,
+        ...(signature?{deviceContinuity:{targetIdentity:challenge.deviceIdentity,signature}}:{}),
       })).catch((error: unknown) => { throw new Error(authErrorMessage(error, 'qr').fallback); });
       return;
     }
@@ -820,6 +839,31 @@ export class AuthService implements OnDestroy {
       return;
     }
     throw new Error('QR de vinculacion incompleto.');
+  }
+
+  /** Authorizes this device's existing public key; no session or history is copied. */
+  async liveDeviceAuthorizationCode():Promise<string>{
+    const current=this.session(),generation=this.sessionGeneration();
+    if(!current)throw Error('Inicia sesión para autorizar este equipo.');
+    const identity=continuityIdentity((await this.ensureDeviceIdentity()).publicJwk);
+    if(!identity||this.sessionGeneration()!==generation||this.session()?.user.id!==current.user.id||this.session()?.device.id!==current.device.id)throw Error('No se pudo comprobar la llave de este equipo.');
+    const query=new URLSearchParams({user:current.user.id,device:current.device.id,identity,exp:String(Date.now()+180_000)});
+    return `nivra://device/authorize?${query}`;
+  }
+  private async authorizeLiveDevice(text:string):Promise<void>{
+    const current=this.session(),generation=this.sessionGeneration();
+    if(!current)throw Error('Inicia sesión en tu equipo habitual.');
+    const query=new URL(text).searchParams;
+    const userId=query.get('user'),target=query.get('device')||'',identity=query.get('identity')||'',expiry=Number(query.get('exp'));
+    if(userId!==current.user.id||target===current.device.id||!/^[-_A-Za-z0-9]{1,64}$/.test(target)||!continuityCoordinates.test(identity)||
+      !Number.isSafeInteger(expiry)||expiry<=Date.now()||expiry>Date.now()+300_000)throw Error('Este código venció o pertenece a otro equipo o cuenta.');
+    const signature=await this.signDeviceAuthorization(identity);
+    if(this.sessionGeneration()!==generation||this.session()?.user.id!==current.user.id||this.session()?.device.id!==current.device.id)throw Error('La sesión cambió antes de autorizar el equipo.');
+    await firstValueFrom(this.api.post(`/devices/${encodeURIComponent(target)}/authorize-live`,{targetIdentity:identity,signature}));
+  }
+  private async signDeviceAuthorization(identity:string):Promise<string>{
+    const {RatchetMessagingService}=await import('./ratchet-messaging.service');
+    return this.injector.get(RatchetMessagingService).signDeviceContinuity(identity);
   }
 
   async refreshToken(): Promise<boolean> {
@@ -1429,7 +1473,9 @@ export class AuthService implements OnDestroy {
   private async completeLocalQrAuth(auth: AuthSession, payload: QrHistoryPayload, localKeys: DeviceKeys, isCurrent: () => boolean): Promise<void> {
     if (!isCurrent()) return;
     if (!this.isValidAuthSession(auth) || (payload.userId && payload.userId !== auth.user.id)) throw new Error('El historial QR pertenece a otra cuenta.');
-    if (!payload.keyMaterial?.privateJwk || !payload.keyMaterial.publicJwk || (payload.keyring !== undefined && !Array.isArray(payload.keyring))) throw new Error('El paquete QR no contiene un historial válido.');
+    if ((payload.historyIncluded!==false&&(!payload.keyMaterial?.privateJwk||!payload.keyMaterial.publicJwk))||
+        (payload.historyIncluded===false&&(payload.keyMaterial||payload.keyring?.length))||
+        (payload.keyring !== undefined && !Array.isArray(payload.keyring))) throw new Error('El paquete QR no corresponde al modo de vinculación.');
     // The destination identity must have been generated on this device. The
     // sealed source payload supplies historical decryption keys only.
     const response = await this.api.fetch('/keys/batch', {
@@ -1444,7 +1490,7 @@ export class AuthService implements OnDestroy {
     const published = directories?.find(directory => directory.userId === auth.user.id)?.devices?.find(device => device.deviceId === auth.device.id);
     if (!this.crypto.samePublicKey(localKeys.publicJwk, this.crypto.parsePublicJwk(published?.keyBundle?.identityKey))) throw new Error('Actualiza Nivra y renueva el QR. No se pudo comprobar la identidad local de este dispositivo.');
     const historical = [...(payload.keyring ?? [])];
-    if (!historical.some(key => this.crypto.samePublicKey(key.publicJwk, payload.keyMaterial!.publicJwk))) historical.push(payload.keyMaterial);
+    if (payload.keyMaterial&&!historical.some(key => this.crypto.samePublicKey(key.publicJwk, payload.keyMaterial!.publicJwk))) historical.push(payload.keyMaterial);
     await this.completeImportedAuth(auth, localKeys, historical, isCurrent, payload);
   }
 
@@ -1824,6 +1870,8 @@ export class AuthService implements OnDestroy {
         k: params.get('k'),
         connectionId: this.qrParam(params, 'connectionId', 'connection_id', 'cid'),
         expiresAt: this.qrParam(params, 'exp', 'expiresAt', 'expires_at'),
+        deviceIdentity: params.get('identity'),
+        history: params.get('history'),
       };
     } catch {
       try {
@@ -1862,6 +1910,8 @@ export class AuthService implements OnDestroy {
       publicJwk,
       publicSpki,
       expiresAt,
+      deviceIdentity: typeof payload['deviceIdentity']==='string'&&continuityCoordinates.test(payload['deviceIdentity'])?payload['deviceIdentity']:null,
+      includeHistory: payload['history']!=='0'&&payload['includeHistory']!==false,
     };
   }
 

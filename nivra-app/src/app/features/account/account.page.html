@@ -675,6 +675,7 @@
             <p class="device-access-copy" role="status">{{ (account.loading() ? 'COMMON.LOADING' : 'ACCOUNT.NO_DEVICES') | translate:(account.loading() ? 'Cargando' : 'No hay otros dispositivos disponibles.') }}</p>
           }
         </div>
+        <app-live-device-link />
       </div>
       </details>
 
@@ -684,7 +685,7 @@
 
         <div class="mini-list">
           <span>{{ 'ACCOUNT.LINK_QR_COPY_1' | translate:'Escanea o pega aqui el QR generado en otro equipo.' }}</span>
-          <span>{{ 'ACCOUNT.LINK_QR_COPY_2' | translate:'Se envia la llave local cifrada al nuevo dispositivo.' }}</span>
+          <span>El equipo nuevo puede activar mensajes o pedir una copia cifrada del historial.</span>
         </div>
         @if (qrScannerOpen) {
           <div class="qr-scanner">

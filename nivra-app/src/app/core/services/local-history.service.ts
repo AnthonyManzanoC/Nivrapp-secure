@@ -331,7 +331,7 @@ export class LocalHistoryService {
     }
     const active = await this.activeMessages(accountKey, records);
     return active
-      .sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime())
+      .sort((left, right) => Date.parse(left.at) - Date.parse(right.at) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
       .slice(-safeLimit);
   }
 
@@ -448,6 +448,14 @@ export class LocalHistoryService {
   }
 
   async putMessages(accountKey: string, messages: ChatMessageVm[], isCurrent: () => boolean = () => true): Promise<void> {
+    await this.writeMessages(accountKey, messages, isCurrent, false);
+  }
+
+  async mergeArchiveMessages(accountKey: string, messages: ChatMessageVm[], isCurrent: () => boolean): Promise<void> {
+    await this.writeMessages(accountKey, messages, isCurrent, true);
+  }
+
+  private async writeMessages(accountKey: string, messages: ChatMessageVm[], isCurrent: () => boolean, preserveLive: boolean): Promise<void> {
     if (!accountKey || !messages.length) {
       return;
     }
@@ -455,7 +463,7 @@ export class LocalHistoryService {
     if (sqlite) {
       for (const message of messages) {
         if (!isCurrent()) throw new Error('El historial cambió durante la escritura.');
-        await this.sqlitePutMessage(sqlite, accountKey, message, isCurrent);
+        await this.sqlitePutMessage(sqlite, accountKey, message, isCurrent, preserveLive);
       }
       return;
     }
@@ -478,7 +486,10 @@ export class LocalHistoryService {
     if (!isCurrent()) throw new Error('El historial cambió durante la escritura.');
     const transaction = db.transaction(LOCAL_MESSAGE_STORE, 'readwrite');
     const store = transaction.objectStore(LOCAL_MESSAGE_STORE);
-    await Promise.all(records.map(record => store.put(record)));
+    await Promise.all(records.map(async record => {
+      const existing = preserveLive ? await store.get(record.key) as StoredChatMessage | undefined : undefined;
+      if (!existing || existing.decryptError === true) await store.put(record);
+    }));
     await transaction.done;
   }
 
@@ -1539,7 +1550,7 @@ export class LocalHistoryService {
       .filter((record): record is StoredChatMessage => Boolean(record));
     const active = await this.activeMessages(accountKey, records);
     return active
-      .sort((left, right) => new Date(left.at).getTime() - new Date(right.at).getTime())
+      .sort((left, right) => Date.parse(left.at) - Date.parse(right.at) || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
       .slice(-safeLimit);
   }
 
@@ -1556,7 +1567,7 @@ export class LocalHistoryService {
     };
   }
 
-  private async sqlitePutMessage(sqlite: SQLiteDBConnection, accountKey: string, message: ChatMessageVm, isCurrent: () => boolean = () => true): Promise<void> {
+  private async sqlitePutMessage(sqlite: SQLiteDBConnection, accountKey: string, message: ChatMessageVm, isCurrent: () => boolean = () => true, preserveLive = false): Promise<void> {
     if (!message?.conversationId || !message.id) {
       return;
     }
@@ -1571,9 +1582,10 @@ export class LocalHistoryService {
     };
     if (!isCurrent()) throw new Error('El historial cambió durante la escritura.');
     await sqlite.run(
-      `INSERT OR REPLACE INTO local_messages
+      `${preserveLive ? 'INSERT' : 'INSERT OR REPLACE'} INTO local_messages
        (key, account_key, conversation_id, id, at, expires_at_ms, opened_at_ms, delete_after_read, record_json)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+       ${preserveLive ? "ON CONFLICT(key) DO UPDATE SET at=excluded.at, expires_at_ms=excluded.expires_at_ms, opened_at_ms=excluded.opened_at_ms, delete_after_read=excluded.delete_after_read, record_json=excluded.record_json WHERE json_extract(local_messages.record_json, '$.decryptError') = 1" : ''}`,
       [
         record.key,
         accountKey,

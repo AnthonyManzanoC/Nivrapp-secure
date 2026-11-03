@@ -205,13 +205,11 @@ export class HistoryArchiveService implements OnDestroy {
       const guard = guards.get(message.id)!;
       if (!guard()) continue;
       const delivery: ChatMessageVm = { ...message, conversationId: `ratchet-receipt:${message.conversationId}`, payload: { type: 'ratchet-archive-delivery', archiveContext: ratchetArchiveContext(server), content: message.payload } };
-      await this.history.putMessages(owner.userId, [delivery], () => { owner.assert(); return guard(); }); owner.assert();
-      if (!await this.history.messageById(owner.userId, delivery.conversationId, delivery.id)) throw Error('No se pudo guardar la entrega del historial.');
-      if (['reaction', 'edit', 'delete'].includes(message.payload.type)) continue;
-      const existing = await this.history.messageById(owner.userId, message.conversationId, message.id); owner.assert();
-      if (existing && !existing.decryptError) continue;
-      await this.history.putMessages(owner.userId, [message], () => { owner.assert(); return guard(); }); owner.assert();
-      if (!await this.history.messageById(owner.userId, message.conversationId, message.id)) throw Error('No se pudo guardar el historial recibido.');
+      const records = ['reaction', 'edit', 'delete'].includes(message.payload.type) ? [delivery] : [delivery, message];
+      await this.history.mergeArchiveMessages(owner.userId, records, () => { owner.assert(); return guard(); }); owner.assert();
+      for (const record of records) {
+        if (!await this.history.messageById(owner.userId, record.conversationId, record.id)) throw Error('No se pudo guardar el historial recibido.');
+      }
     }
     this.imported$.next();
   }

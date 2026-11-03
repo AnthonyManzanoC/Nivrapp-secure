@@ -929,7 +929,9 @@ export class VaultService {
       let published = directory?.devices.filter(device => device.keyBundle?.identityKey) ?? [];
       if (!published.length && member.userId !== context.userId) throw Error('Un miembro necesita abrir Nivra y completar la actualización del cifrado.');
       if (directory && member.userId !== context.userId) {
-        const trusted=await this.injector.get(IdentityTrustService).forDelivery(JSON.stringify([context.userId, context.deviceId]), { ...directory, devices: published }, () => this.isCurrent(context));
+        const fresh={...directory,devices:published};
+        const trusted=await this.injector.get(IdentityTrustService).forDelivery(JSON.stringify([context.userId, context.deviceId]), fresh,
+          () => this.isCurrent(context),await this.ratchet.deviceContinuities?.(fresh) ?? []);
         published=trusted.devices;
       }
       this.checkContext(context);

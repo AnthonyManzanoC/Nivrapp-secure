@@ -66,6 +66,7 @@ export class AuthPage implements OnDestroy {
   displayName = '';
   qrDataUrl = '';
   qrChallenge: QrLoginChallenge | null = null;
+  qrIncludeHistory=false;
   notice = '';
   error = '';
   submitting = false;
@@ -141,7 +142,7 @@ export class AuthPage implements OnDestroy {
     await this.run(async () => {
       this.qrChallenge = null;
       this.qrDataUrl = '';
-      const challenge = await this.auth.startQrLogin();
+      const challenge = await this.auth.startQrLogin(this.qrIncludeHistory);
       const dataUrl = await QRCode.toDataURL(challenge.qrData, {
         width: 232,
         margin: 2,

@@ -463,6 +463,10 @@
         <span>Los mensajes van a los equipos conocidos. {{pending === 1 ? 'Hay un dispositivo nuevo por comprobar.' : 'Hay dispositivos nuevos por comprobar.'}}</span>
         <button type="button" (click)="verifyIdentity()">Revisar</button>
       </div>
+    } @else if(identityDeviceAuthorized();as authorized) {
+      <div class="identity-device-note" role="status" [appTransientNotice]="authorized" [appNoticeDuration]="6000">
+        <span>Tu contacto vinculó otro equipo. Nivra comprobó su llave de forma segura.</span>
+      </div>
     }
     @if (editingMessage) {
       <div class="edit-bar">

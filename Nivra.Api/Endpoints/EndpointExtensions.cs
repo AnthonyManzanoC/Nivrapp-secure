@@ -64,6 +64,7 @@ public static partial class EndpointExtensions
         app.MapRecoveryEndpoints();
         app.MapProfileEndpoints();
         app.MapDeviceAndKeyEndpoints();
+        app.MapDeviceContinuityEndpoints();
         app.MapRatchetPreKeyPilotEndpoints();
         app.MapRatchetClientEndpoints();
         app.MapRatchetHybridEndpoints();
@@ -400,7 +401,7 @@ public static partial class EndpointExtensions
             }
 
             if (request.KeyBundle is not null && !ValidHistoryPublicKey(request.KeyBundle.IdentityKey)) return Error("invalid_qr_identity", "La identidad del dispositivo QR no es válida.");
-            var challenge = qrLogin.Start(request.DeviceName, request.KeyBundle, request.PublicKey, request.HardwareId);
+            var challenge = qrLogin.Start(request.DeviceName, request.KeyBundle, request.PublicKey, request.HardwareId,request.IncludeHistory);
             var syncToken = $"{challenge.Id}.{challenge.Code}";
             return Results.Ok(new QrLoginStartResponse(
                 challenge.Id,
@@ -442,6 +443,8 @@ public static partial class EndpointExtensions
             {
                 return Error("invalid_qr_payload", "El payload cifrado de llaves es obligatorio.");
             }
+            if(challenge.IncludeHistory==false&&(request.HistoryIncluded!=false||request.DeviceContinuity==null))
+                return Error("qr_live_update_required","Actualiza Nivra en el equipo habitual para autorizar mensajes sin copiar el historial.",409);
 
             var user = await db.Users.FirstOrDefaultAsync(candidate => candidate.Id == current.UserId && candidate.DisabledAt == null, cancellationToken);
             if (user is null)
@@ -468,7 +471,10 @@ public static partial class EndpointExtensions
 
             var now = timeProvider.GetUtcNow();
             var linkedKeyBundle = QrTargetKeyBundle(challenge, sourceDevice);
+            if(request.DeviceContinuity!=null&&(!DeviceContinuityPolicy.Valid(request.DeviceContinuity,linkedKeyBundle.IdentityKey)||
+                challenge.HardwareId!=null&&challenge.HardwareId==sourceDevice.HardwareId))return Error("invalid_device_authorization","El QR no corresponde a la llave del equipo nuevo.",400);
             var device = await UpsertDeviceAsync(db, user.Id, challenge.DeviceName, challenge.HardwareId, linkedKeyBundle, now, trusted: true, cancellationToken);
+            if(request.DeviceContinuity!=null&&!DeviceContinuityPolicy.Apply(sourceDevice,device,request.DeviceContinuity))return Error("invalid_device_authorization","No se pudo autorizar este equipo.",400);
             db.SecurityAuditEvents.Add(new SecurityAuditEvent
             {
                 Id = NivraIds.NewId("aud"),
@@ -763,7 +769,7 @@ public static partial class EndpointExtensions
 
             var publicDevices = (await store.ActiveDevicesForUserAsync(user.Id, cancellationToken))
                 .Where(device => device.IsTrusted)
-                .Select(device => new PublicDeviceKeyResponse(device.Id, device.Name, device.KeyBundle, device.KeyBundle.LastRotatedAt))
+                .Select(device => new PublicDeviceKeyResponse(device.Id, device.Name, device.KeyBundle, device.KeyBundle.LastRotatedAt,DeviceContinuityPolicy.Read(device)))
                 .ToList();
 
             return Results.Ok(new PublicKeyDirectoryResponse(user.Id, user.Alias, publicDevices));
@@ -810,7 +816,7 @@ public static partial class EndpointExtensions
             var devicesByUser = devices
                 .GroupBy(device => device.UserId)
                 .ToDictionary(group => group.Key, group => group.Select(device =>
-                    new PublicDeviceKeyResponse(device.Id, device.Name, device.KeyBundle, device.KeyBundle.LastRotatedAt)).ToList());
+                    new PublicDeviceKeyResponse(device.Id, device.Name, device.KeyBundle, device.KeyBundle.LastRotatedAt,DeviceContinuityPolicy.Read(device))).ToList());
 
             var response = users
                 .Select(user => new PublicKeyDirectoryResponse(
@@ -835,6 +841,7 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
+            DeviceContinuityPolicy.ClearIfKeyChanges(device,request.IdentityKey);
             device.KeyBundle = ToKeyBundle(request, timeProvider.GetUtcNow());
             await store.SaveChangesAsync(cancellationToken);
             return Results.Ok(ToDeviceResponse(device));
@@ -4833,6 +4840,7 @@ public static partial class EndpointExtensions
         }
 
         device.Name = NormalizeDeviceName(deviceName);
+        DeviceContinuityPolicy.ClearIfKeyChanges(device,keyBundle.IdentityKey);
         device.KeyBundle = ToKeyBundle(keyBundle, now);
         device.IsTrusted = device.IsTrusted || trusted;
         device.LastSeenAt = now;

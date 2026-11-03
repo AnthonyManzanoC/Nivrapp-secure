@@ -1,11 +1,33 @@
 import { IdentityTrustService, IdentityTrustTransfer } from './identity-trust.service';
 import { PublicKeyDirectory } from '../models/nivra.models';
+import { checkedDeviceContinuities, continuityIdentity, continuityStatement } from '../utils/device-continuity';
 
 const directory = (coordinate: string): PublicKeyDirectory => ({userId:'peer',alias:'peer',devices:[{
   deviceId:'phone',deviceName:'phone',lastRotatedAt:'2026-10-03T00:00:00Z',
   keyBundle:{identityKey:JSON.stringify({kty:'EC',crv:'P-256',x:coordinate.repeat(43),y:'B'.repeat(43)}),signedPreKey:null,preKeySignature:null,oneTimePreKeys:[]},
 }]});
 describe('persistent identity pins',()=>{
+  it('authenticates an independently generated browser with an existing peer signing key and rejects directory tampering',async()=>{
+    const scope=crypto.randomUUID(),service=new IdentityTrustService(),known=directory('A');
+    await service.confirm(scope,known);
+    const signing=await crypto.subtle.generateKey({name:'Ed25519'},false,['sign','verify']);
+    const sourceIdentity=continuityIdentity(known.devices[0].keyBundle.identityKey);
+    const browser={...directory('C').devices[0],deviceId:'browser'};
+    const targetIdentity=continuityIdentity(browser.keyBundle.identityKey);
+    const signature=btoa(String.fromCharCode(...new Uint8Array(await crypto.subtle.sign('Ed25519',signing.privateKey,continuityStatement('peer','phone',targetIdentity)))));
+    const linked={...known,devices:[...known.devices,{...browser,continuity:{sourceDeviceId:'phone',signature}}]};
+    const peers={phone:{userId:'peer',legacy:sourceIdentity,identityKey:'locally-authenticated'}};
+    const verify=async (key:string,statement:Uint8Array,proof:string)=>key==='locally-authenticated'&&crypto.subtle.verify('Ed25519',signing.publicKey,Uint8Array.from(atob(proof),value=>value.charCodeAt(0)),Uint8Array.from(statement));
+    const checks=await checkedDeviceContinuities(linked,peers,verify);
+    expect(checks.length).toBe(1);
+    expect(await checkedDeviceContinuities({...linked,devices:[linked.devices[1]]},peers,verify)).toEqual([]);
+    expect(await checkedDeviceContinuities({...linked,devices:[known.devices[0],{...linked.devices[1],keyBundle:directory('D').devices[0].keyBundle}]},peers,verify)).toEqual([]);
+    expect(await checkedDeviceContinuities({...linked,userId:'other'},peers,verify)).toEqual([]);
+    expect((await service.forDelivery(scope,linked,()=>true,checks)).devices.map(value=>value.deviceId)).toEqual(['phone','browser']);
+    expect((await service.continuity(scope,linked)).state).toBe('verified');
+    expect(service.recentAuthorization(scope,'peer')).toBeGreaterThan(0);
+    expect(service.recentAuthorization('different-account','peer')).toBe(0);
+  });
   it('continues delivery to known keys when a browser is added, without trusting its key',async()=>{
     const scope=crypto.randomUUID(),service=new IdentityTrustService(),known=directory('A');
     await service.confirm(scope,known);

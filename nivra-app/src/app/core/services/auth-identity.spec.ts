@@ -193,7 +193,20 @@ describe('approved QR contact continuity handoff',()=>{
     expect(exporter).toHaveBeenCalledOnceWith('owner','phone');
     expect(encrypt.calls.first().args[1].identityTrust).toBe(continuity);
     expect(encrypt.calls.first().args[1].sourceDeviceId).toBe('phone');
-    expect(post.calls.first().args[1]).toEqual({qrId:'qr',code:'code',encryptedPayload:'encrypted-fixture'});
+    expect(post.calls.first().args[1]).toEqual({qrId:'qr',code:'code',encryptedPayload:'encrypted-fixture',historyIncluded:true});
+  });
+  it('signs the fresh device and opens live messaging without exporting historical private keys',async()=>{
+    const {service,encrypt,post}=sourceHarness();
+    const identity=`${'A'.repeat(43)}:${'B'.repeat(43)}`;
+    service.parseQrLoginChallenge=()=>({qrId:'qr',code:'code',publicSpki:'fixture-public-key',includeHistory:false,deviceIdentity:identity});
+    const keyring=spyOn(service.crypto,'exportDeviceKeyMaterialsForUser');
+    const key=spyOn(service.crypto,'currentKeyMaterial');
+    service.signDeviceAuthorization=jasmine.createSpy().and.resolveTo('fixture-signature');
+    await service.authorizeQrLoginText('fixture-qr');
+    expect(keyring).not.toHaveBeenCalled();expect(key).not.toHaveBeenCalled();
+    expect(encrypt.calls.first().args[1]).toEqual(jasmine.objectContaining({historyIncluded:false,identityTrust:continuity}));
+    expect(encrypt.calls.first().args[1].keyMaterial).toBeUndefined();
+    expect(post.calls.first().args[1].deviceContinuity).toEqual({targetIdentity:identity,signature:'fixture-signature'});
   });
   it('does not authorize the former account after a delayed continuity export',async()=>{
     const {service,encrypt,post,exporter}=sourceHarness();

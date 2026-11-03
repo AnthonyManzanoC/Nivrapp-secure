@@ -34,6 +34,7 @@ export interface RatchetStorage {
 }
 export interface RatchetDeviceRuntime {
   readonly publicIdentity: Uint8Array;
+  signDeviceContinuity?(message: Uint8Array): Promise<Uint8Array>;
   bundle(): Promise<RatchetBundle>;
   pendingBundles(): Promise<RatchetBundle[]>;
   acknowledgeBundles(ids: number[]): Promise<void>;
@@ -54,8 +55,8 @@ export interface RatchetDeviceRuntime {
 }
 export type RatchetRuntimeFactory = (name: string, storage: RatchetStorage, create: boolean) => Promise<RatchetDeviceRuntime>;
 
-let loaded: Promise<{ bridge: unknown; Device: { open: (...args: unknown[]) => Promise<RatchetDeviceRuntime> } }> | undefined;
-export const openRatchetRuntime: RatchetRuntimeFactory = async (name, storage, create) => {
+let loaded: Promise<{ bridge: { verifyIdentity(publicKey:Uint8Array,message:Uint8Array,signature:Uint8Array):boolean }; Device: { open: (...args: unknown[]) => Promise<RatchetDeviceRuntime> } }> | undefined;
+async function loadRatchetRuntime() {
   if (!environment.ratchetEnabled) throw Error('El cifrado avanzado no está disponible en esta compilación.');
   loaded ??= (async () => {
     const root = location.protocol === 'file:' ? new URL('nivra-crypto://app/') : new URL('assets/ratchet/', document.baseURI);
@@ -65,9 +66,16 @@ export const openRatchetRuntime: RatchetRuntimeFactory = async (name, storage, c
     const wrapper = await import(/* webpackIgnore: true */ new URL('web-device.mjs', root).href);
     return { bridge, Device: wrapper.LabWebDevice };
   })().catch(error => { loaded = undefined; throw error; });
-  const runtime = await loaded;
+  return loaded;
+}
+export const openRatchetRuntime: RatchetRuntimeFactory = async (name, storage, create) => {
+  const runtime = await loadRatchetRuntime();
   return runtime.Device.open(runtime.bridge, name, 1, storage, { createIfMissing: create });
 };
+export async function verifyDeviceContinuity(publicIdentity:string,message:Uint8Array,signature:string):Promise<boolean>{
+  const runtime=await loadRatchetRuntime();
+  return runtime.bridge.verifyIdentity(ratchetBinary(publicIdentity,64),message,ratchetBinary(signature,64));
+}
 
 export const ratchetBase64 = (bytes: Uint8Array): string => {
   let text = '';

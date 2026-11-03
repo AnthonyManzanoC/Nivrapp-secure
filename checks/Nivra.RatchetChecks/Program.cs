@@ -47,6 +47,7 @@ app.UseExceptionHandler(handler => handler.Run(context =>
     return context.Response.WriteAsJsonAsync(new { code = "synthetic_test_failure" });
 }));
 app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.UseRateLimiter(); app.MapCommunityEndpoints(); app.MapGroupInviteEndpoints(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapRatchetHybridEndpoints(); app.MapHistoryArchiveEndpoints();
+app.MapDeviceContinuityEndpoints();
 typeof(EndpointExtensions).GetMethod("MapVaultRoomEndpoints",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,[app]);
 app.MapPost("/fixture/message-policy", async (SendMessageRequest request, HttpContext http, NivraDbContext db, CancellationToken ct) => {
     if (http.GetCurrentUser() is not { } user) return Results.Unauthorized();
@@ -276,6 +277,26 @@ await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", n
 await CommunityChecks.Run(app,tokens);
 await CallAnswerChecks.Run(app.Services);
 await VaultAccessChecks.Run(app,tokens);
+const string liveTarget="dev-lab-alice-live";
+var liveIdentity=JsonSerializer.Serialize(new {kty="EC",crv="P-256",x=new string('A',43),y=new string('B',43)});
+var liveProof=new DeviceContinuityRequest(DeviceContinuityPolicy.Coordinates(liveIdentity)!,Public(64));
+await Mutate(db=>{
+    db.Devices.Add(new DeviceRecord { Id=liveTarget, UserId="usr-lab-alice", Name="Live-only synthetic device",
+        IsTrusted=true, CreatedAt=DateTimeOffset.UtcNow, KeyBundle=new() { IdentityKey=liveIdentity } });
+    return Task.CompletedTask;
+});
+var livePath=$"/devices/{liveTarget}/authorize-live";
+await Status(null,livePath,liveProof,HttpStatusCode.Unauthorized,"live linking requires an authenticated source");
+await Status("bob",livePath,liveProof,HttpStatusCode.NotFound,"a second account cannot authorize a device on the first");
+await Status("alice",livePath,liveProof with {TargetIdentity=new string('C',43)+":"+new string('B',43)},HttpStatusCode.BadRequest,"live linking cannot authorize a different published key");
+await Status("alice",livePath,liveProof,HttpStatusCode.NoContent,"signed live-only authorization can be registered without history");
+await Mutate(async db=>{
+    var target=await db.Devices.SingleAsync(device=>device.Id==liveTarget);
+    Check(DeviceContinuityPolicy.Read(target)==new DeviceContinuityResponse("dev-lab-alice",liveProof.Signature),"continuity persists only the public proof from the exact source");
+    Check(await db.SecurityAuditEvents.AnyAsync(row=>row.UserId=="usr-lab-alice"&&row.Action=="device.live_authorized"),"live authorization records an account audit event");
+    target.RevokedAt=DateTimeOffset.UtcNow;
+});
+await Status("alice",livePath,liveProof,HttpStatusCode.NotFound,"revoked devices cannot be reauthorized through the live endpoint");
 if (args.Contains("--serve-for-interop"))
 {
     // Synthetic bearer tokens are passed to the parent test harness only. That

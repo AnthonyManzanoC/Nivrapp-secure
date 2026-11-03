@@ -11,7 +11,7 @@ public sealed class QrLoginService(TimeProvider timeProvider, ISharedEphemeralSt
     private static readonly TimeSpan Lifetime = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan DeliveryLifetime = TimeSpan.FromSeconds(30);
 
-    public QrLoginChallenge Start(string deviceName, KeyBundleRequest? keyBundle, string? publicKey, string? hardwareId)
+    public QrLoginChallenge Start(string deviceName, KeyBundleRequest? keyBundle, string? publicKey, string? hardwareId,bool? includeHistory=null)
     {
         PurgeExpired();
 
@@ -25,7 +25,7 @@ public sealed class QrLoginService(TimeProvider timeProvider, ISharedEphemeralSt
             publicKey?.Trim(),
             hardwareId?.Trim(),
             timeProvider.GetUtcNow(),
-            timeProvider.GetUtcNow().Add(Lifetime));
+            timeProvider.GetUtcNow().Add(Lifetime),includeHistory);
 
         if (shared is null) _challenges[id] = challenge;
         else shared.Write(Key(id), Serialize(challenge), Lifetime);
@@ -183,7 +183,7 @@ public sealed class QrLoginChallenge(
     string? publicKey,
     string? hardwareId,
     DateTimeOffset createdAt,
-    DateTimeOffset expiresAt)
+    DateTimeOffset expiresAt,bool? includeHistory=null)
 {
     internal SemaphoreSlim AuthorizationGate { get; } = new(1, 1);
     public string Id { get; } = id;
@@ -195,6 +195,7 @@ public sealed class QrLoginChallenge(
     public string? ConnectionId { get; set; }
     public DateTimeOffset CreatedAt { get; } = createdAt;
     public DateTimeOffset ExpiresAt { get; } = expiresAt;
+    public bool? IncludeHistory { get; } = includeHistory;
     public DateTimeOffset? AuthorizedAt { get; set; }
     public QrLoginAuthorizedResponse? Authorization { get; set; }
 }

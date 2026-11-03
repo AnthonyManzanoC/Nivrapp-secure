@@ -4852,7 +4852,8 @@ export class ChatService implements OnDestroy {
       }
       const deliveryDirectory = { ...directory!, devices: publishedDevices };
       const trustedDirectory = participant.userId === current.user.id ? deliveryDirectory :
-        await this.identityTrust.forDelivery(JSON.stringify([current.user.id,current.device.id]), deliveryDirectory, () => this.isSendContextCurrent(sendContext));
+        await this.identityTrust.forDelivery(JSON.stringify([current.user.id,current.device.id]), deliveryDirectory, () => this.isSendContextCurrent(sendContext),
+          await this.ratchet?.deviceContinuities?.(deliveryDirectory) ?? []);
       directories.set(participant.userId, trustedDirectory);
       this.assertSendContext(sendContext);
     }

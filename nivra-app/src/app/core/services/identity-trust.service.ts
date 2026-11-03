@@ -1,6 +1,7 @@
 import { Injectable, signal } from '@angular/core';
 import { PublicKeyDirectory } from '../models/nivra.models';
 import { DirectoryFingerprint, deriveDirectoryFingerprint } from '../utils/identity-fingerprint';
+import type { CheckedDeviceContinuity } from '../utils/device-continuity';
 
 interface Pin {
   digest: string;
@@ -31,8 +32,13 @@ const DIGEST = /^[a-f0-9]{64}$/;
 export class IdentityTrustService {
   private readonly changed = signal<ReadonlySet<string>>(new Set());
   private readonly pending = signal<ReadonlyMap<string,number>>(new Map());
+  private readonly authorization = signal<{scope:string;userId:string;at:number}|null>(null);
   isChanged(scope:string,userId:string):boolean { return this.changed().has(JSON.stringify([scope,userId])); }
   pendingDeviceCount(scope:string,userId:string):number { return this.pending().get(JSON.stringify([scope,userId])) ?? 0; }
+  recentAuthorization(scope:string,userId:string):number {
+    const entry=this.authorization();
+    return entry?.scope===scope&&entry.userId===userId&&Date.now()-entry.at<10_000?entry.at:0;
+  }
   private database?: Promise<IDBDatabase>;
   private open():Promise<IDBDatabase>{
     return this.database ??= new Promise((resolve,reject)=>{
@@ -45,18 +51,22 @@ export class IdentityTrustService {
     await this.reconcile(scope,directory,isCurrent,false);
   }
   /** An extra unverified browser must not stop delivery to already pinned devices. */
-  async forDelivery(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true):Promise<PublicKeyDirectory>{
-    return this.reconcile(scope,directory,isCurrent,true);
+  async forDelivery(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true,proofs:CheckedDeviceContinuity[]=[]):Promise<PublicKeyDirectory>{
+    return this.reconcile(scope,directory,isCurrent,true,proofs);
   }
-  private async reconcile(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean,allowSubset:boolean):Promise<PublicKeyDirectory>{
+  private async reconcile(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean,allowSubset:boolean,proofs:CheckedDeviceContinuity[]=[]):Promise<PublicKeyDirectory>{
     const fingerprint=await deriveDirectoryFingerprint(directory);
     if(!isCurrent())throw new Error('La comprobación ya no está activa.');
-    let selected=directory,pending=0;
+    let selected=directory,pending=0,authorized=false;
     await this.update(scope,directory.userId,current=>{
       if(!isCurrent())throw new Error('La comprobación ya no está activa.');
       if(current?.digest===fingerprint.digest&&current.devices?.length)return current;
       if(current && current.digest!==fingerprint.digest && !this.hasKnownEncryptionKeys(current,fingerprint)) {
-        const match=this.knownDevices(current,fingerprint);
+        const match=this.knownDevices(current,fingerprint,proofs);
+        if(!match.replaced&&match.ids.size===fingerprint.deviceIdentities.length){
+          authorized=true;
+          return {...current,digest:fingerprint.digest,devices:fingerprint.deviceIdentities};
+        }
         if(allowSubset && !match.replaced && match.ids.size>0){
           selected={...directory,devices:directory.devices.filter(device=>match.ids.has(device.deviceId))};
           pending=fingerprint.deviceIdentities.length-match.ids.size;
@@ -73,6 +83,7 @@ export class IdentityTrustService {
     if(!isCurrent())throw new Error('La comprobación ya no está activa.');
     this.clearChanged(scope,directory.userId);
     this.setPending(scope,directory.userId,pending);
+    if(authorized)this.authorization.set({scope,userId:directory.userId,at:Date.now()});
     return selected;
   }
   /** Read-only continuity against a local pin; this never establishes new trust. */
@@ -187,16 +198,25 @@ export class IdentityTrustService {
     const result=this.knownDevices(pin,fingerprint);
     return !result.replaced&&result.ids.size===fingerprint.deviceIdentities.length;
   }
-  private knownDevices(pin:Pin,fingerprint:Pick<DirectoryFingerprint,'deviceIdentities'>):{ids:Set<string>;replaced:boolean}{
+  private knownDevices(pin:Pin,fingerprint:Pick<DirectoryFingerprint,'deviceIdentities'>,proofs:CheckedDeviceContinuity[]=[]):{ids:Set<string>;replaced:boolean}{
     const pinnedIds=new Map(pin.devices?.map(device=>[device.deviceId,device.identity]));
     const pinnedKeys=new Set(pinnedIds.values());
-    const ids=new Set<string>();let replaced=false;
+    const ids=new Set<string>(),replacements=new Set<string>();
     for(const device of fingerprint.deviceIdentities){
       const known=pinnedIds.get(device.deviceId);
-      if(known&&known!==device.identity){replaced=true;continue;}
+      if(known&&known!==device.identity){replacements.add(device.deviceId);continue;}
       if(known===device.identity||(!known&&pinnedKeys.has(device.identity)))ids.add(device.deviceId);
     }
-    return {ids,replaced};
+    const anchors=new Set(ids);
+    for(const proof of proofs){
+      // A signed sub-device gets a fresh ratchet address. Never replace a live
+      // address's previously authenticated key with another device's signature.
+      if(!replacements.has(proof.targetDeviceId)&&anchors.has(proof.sourceDeviceId)&&pinnedIds.get(proof.sourceDeviceId)===proof.sourceIdentity&&
+        fingerprint.deviceIdentities.some(device=>device.deviceId===proof.targetDeviceId&&device.identity===proof.targetIdentity)){
+        ids.add(proof.targetDeviceId);
+      }
+    }
+    return {ids,replaced:replacements.size>0};
   }
   private validId(value:unknown):value is string{return typeof value==='string'&&value.length>0&&value.length<=128&&value.trim()===value;}
   private validEntry(value:IdentityTrustTransferEntry):boolean{

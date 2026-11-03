@@ -36,6 +36,7 @@ const hash = async bytes => b64(new Uint8Array(await crypto.subtle.digest('SHA-2
 
 export class LabWebDevice {
   #core;
+  #bridge;
   #suite;
   #address;
   #public;
@@ -52,6 +53,7 @@ export class LabWebDevice {
   #poisoned = false;
 
   constructor(bridge, name, device = 1, restored = null) {
+    this.#bridge = bridge;
     this.#suite = bridge.protocolSuite?.() ?? SUITE;
     this.#address = peerAddress({ name, device });
     this.#scope = JSON.stringify([name, device]);
@@ -143,6 +145,16 @@ export class LabWebDevice {
   acknowledgeConsumedPreKeys(ids) { const copy = new Uint32Array(ids); return this.#mutate(() => this.#core.acknowledgeConsumedPreKeys?.(copy)); }
   hasSession(peer) { peer = peerAddress(peer); return this.#run(() => this.#sessions.has(JSON.stringify([peer.name, peer.device]))); }
   applicationState() { return this.#run(() => structuredClone(this.#application)); }
+  signDeviceContinuity(message) {
+    if (!(message instanceof Uint8Array) || message.length > 512 || !message.length || !this.#bridge.signIdentity) throw Error('Invalid device authorization');
+    const copy = message.slice();
+    return this.#run(async () => {
+      const saved = JSON.parse(await this.#core.exportPrivateStateForEncryption());
+      const identity = binary(saved.identity, 256 * 1024);
+      try { return this.#bridge.signIdentity(identity, copy); }
+      finally { identity.fill(0); }
+    });
+  }
   updateApplicationState(state) {
     const next = structuredClone(state);
     return this.#mutate(() => { this.#application = next; });

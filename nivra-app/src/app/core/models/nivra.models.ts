@@ -201,6 +201,7 @@ export interface PublicDeviceKey {
   deviceName: string;
   keyBundle: KeyBundle;
   lastRotatedAt: string;
+  continuity?: { sourceDeviceId: string; signature: string } | null;
 }
 
 export interface PublicKeyDirectory {

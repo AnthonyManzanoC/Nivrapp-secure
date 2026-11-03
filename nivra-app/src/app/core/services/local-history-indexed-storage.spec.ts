@@ -74,6 +74,20 @@ describe('encrypted browser history transaction boundaries', () => {
     expect(restored.some(item => item.decryptError)).toBeFalse();
   });
 
+  it('merges late archive pages without replacing a live message or authenticated receipt', async () => {
+    const live=message('2','live message'), old=message('1','older message');
+    const receipt={...live,conversationId:'ratchet-receipt:conversation',payload:{type:'ratchet-delivery',envelopeHash:'live-authenticated'}};
+    await Promise.all([
+      service.putMessages('account',[live,receipt]),
+      service.mergeArchiveMessages('account',[old,{...live,payload:{type:'text',text:'stale message'}},
+        {...receipt,payload:{type:'ratchet-archive-delivery',envelopeHash:'archive'}}],()=>true),
+    ]);
+    await service.mergeArchiveMessages('account',[old,{...live,payload:{type:'text',text:'late stale page'}}],()=>true);
+    expect((await service.conversationMessagesPage('account','conversation')).map(item=>[item.id,item.payload.text]))
+      .toEqual([['1','older message'],['2','live message']]);
+    expect((await service.messageById('account',receipt.conversationId,live.id))?.payload['envelopeHash']).toBe('live-authenticated');
+  });
+
   it('never falls back to plaintext persistence when a required protector is unavailable', async () => {
     getSecret.and.resolveTo(null);
     await expectAsync(service.putMessages('account', [message('1', 'must stay private')])).toBeRejectedWithError(/protector seguro/);

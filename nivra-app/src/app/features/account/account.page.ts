@@ -20,6 +20,7 @@ import { addIcons } from 'ionicons';
 import { backspaceOutline, cameraOutline, checkmarkCircleOutline, checkmarkOutline, chevronForwardOutline, closeOutline, copyOutline, createOutline, fingerPrintOutline, imageOutline, keypadOutline, lockClosedOutline, logOutOutline, moonOutline, notificationsOffOutline, notificationsOutline, personAddOutline, phonePortraitOutline, qrCodeOutline, refreshOutline, scanOutline, shareSocialOutline, shieldCheckmarkOutline, sunnyOutline, trashOutline, warningOutline } from 'ionicons/icons';
 import { AccountService } from '../../core/services/account.service';
 import { AuthService } from '../../core/services/auth.service';
+import { LiveDeviceLinkComponent } from './live-device-link.component';
 import { CallsService } from '../../core/services/calls.service';
 import { NivraDevice, PrivacySettings } from '../../core/models/nivra.models';
 import { AppLockService } from '../../core/services/app-lock.service';
@@ -53,7 +54,7 @@ interface ProfileDraft {
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent, AccountNavigationComponent],
+  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent, AccountNavigationComponent, LiveDeviceLinkComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss', './account-security.scss'],
 })
