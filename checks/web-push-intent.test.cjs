@@ -28,13 +28,25 @@ function workerHarness({ visible = true, existing = true, acknowledge = true, ac
   const state = { scopes: scopes || ['alice', 'bob'].map(userId => ({ userId, deviceId: `browser-${userId}` })), activeUserId: active, activeDeviceId: `browser-${active}` };
   const context = vm.createContext({ self, clients, state, saved, records,
     importScripts: () => { throw new Error('Offline worker fixture'); },
-    console, TextEncoder, TextDecoder, Uint8Array, atob, MessageChannel, setTimeout, clearTimeout,
+    console, TextEncoder, TextDecoder, Uint8Array, atob, MessageChannel, queueMicrotask, setTimeout, clearTimeout,
   });
   vm.runInContext(fs.readFileSync(path.resolve(__dirname, '../nivra-app/src/firebase-messaging-sw.js'), 'utf8'), context);
   vm.runInContext(`readPushState = async () => state;
     writePushState = async (key, value) => saved.set(key, JSON.parse(JSON.stringify(value)));
     markPendingWipe = async data => saved.set('pendingWipes', [{userId:data.recipientUserId,deviceId:data.recipientDeviceId}]);
-    idbOpen = async () => ({close(){}}); idbGetAll = async () => records;`, context);
+    idbOpen = async () => ({
+      close(){},
+      transaction(){
+        const tx={objectStore:()=>({
+          get(key){const req={result:saved.get(key)};queueMicrotask(()=>req.onsuccess());return req;},
+          put(value,key){saved.set(key,JSON.parse(JSON.stringify(value)));queueMicrotask(()=>tx.oncomplete());}
+        })};
+        return tx;
+      }
+    });
+    pushStateDb = idbOpen;
+    idbGet = async (_db,store,key) => store === 'state' ? saved.get(key) : undefined;
+    idbGetAll = async () => records;`, context);
   async function dispatch(name, data) {
     let complete;
     handlers.get(name)({ ...data, waitUntil: promise => { complete = promise; } });
@@ -60,6 +72,21 @@ test('a visible tab for the other account cannot swallow its background notice',
   assert.deepEqual(worker.shown[0].actions, []);
   assert.equal(worker.shown[0].data.recipientUserId, 'alice');
   assert.equal(worker.focused(), 0);
+});
+
+test('answering on a different device closes only the losing ring and blocks its delayed duplicate',async()=>{
+  const losing={...privateMessage,type:'incoming_call',callId:'call-one'};
+  const other={...losing,recipientUserId:'bob',recipientDeviceId:'browser-bob'};
+  let closed=0, otherClosed=0;
+  const worker=workerHarness({existing:false,existingNotifications:[
+    {data:losing,close:()=>closed++},{data:other,close:()=>otherClosed++},
+  ]});
+  await worker.dispatch('push',receive({...losing,type:'call_answered_elsewhere',answeredByDeviceId:'phone-alice'}));
+  await worker.dispatch('push',receive(losing));
+  assert.equal(closed,1);assert.equal(otherClosed,0);assert.equal(worker.shown.length,0);
+  await worker.dispatch('push',receive({...other,type:'call_answered_elsewhere',answeredByDeviceId:'browser-bob'}));
+  await worker.dispatch('push',receive(other));
+  assert.equal(worker.shown.length,1);assert.equal(worker.shown[0].data.recipientUserId,'bob');
 });
 
 test('unregistered or incomplete scopes are rejected without forwarding or displaying', async () => {

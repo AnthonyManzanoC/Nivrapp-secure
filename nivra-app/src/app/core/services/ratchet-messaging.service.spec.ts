@@ -4,6 +4,8 @@ import { CryptoService } from './crypto.service';
 import { RatchetMessagingService, RatchetTarget } from './ratchet-messaging.service';
 import { RatchetBundle, openRatchetRuntime, ratchetTransport } from './ratchet-runtime';
 import { MessageResponse } from '../models/nivra.models';
+import { IdentityTrustService } from './identity-trust.service';
+import { continuityIdentity } from '../utils/device-continuity';
 
 describe('actual application Double Ratchet delivery', () => {
   let clients: any[], directory: Map<string, any>, bundles: Map<string, RatchetBundle[]>, proofs: Map<string, any>, requests: Map<string, Set<string>>;
@@ -26,6 +28,13 @@ describe('actual application Double Ratchet delivery', () => {
         saved.set(device, { revision: revision + 1, state: structuredClone(state) }); return revision + 1;
       },
       putMessages: async (_user: string, values: any[]) => { for (const value of values) messages.set(`${value.conversationId}:${value.id}`, structuredClone(value)); },
+      mergeArchiveMessages: async (_user: string, values: any[], current:()=>boolean) => {
+        if (!current()) throw Error('History scope changed');
+        for (const value of values) {
+          const key = `${value.conversationId}:${value.id}`, previous = messages.get(key);
+          if (!previous || previous.decryptError) messages.set(key, structuredClone(value));
+        }
+      },
       messageById: async (_user: string, chat: string, id: string) => structuredClone(messages.get(`${chat}:${id}`) ?? null) };
     const target: RatchetTarget = { userId: owner.user.id, deviceId: owner.device.id, publicJwk: keys.publicJwk };
     const record = { target, service, owner, saved, messages, keys }; directory.set(target.deviceId, record);
@@ -45,13 +54,43 @@ describe('actual application Double Ratchet delivery', () => {
       if (path === '/ratchet/olm/bindings/request') { for (const id of body.deviceIds) { const pending = requests.get(id) ?? new Set<string>(); pending.add(target.deviceId); requests.set(id, pending); } return of(null); }
       if (path === '/ratchet/olm/bindings') { for (const binding of body.bindings) { proofs.set(`${target.deviceId}:${binding.targetDeviceId}`, binding); requests.get(target.deviceId)?.delete(binding.targetDeviceId); } return of(null); }
       if (path.startsWith('/ratchet/olm/devices/')) { const id = path.split('/')[4], bundle = bundles.get(id)?.shift(); return bundle ? of({ deviceId: id, requestId: body.requestId, bundle }) : throwError(() => Error('No prekeys')); }
-      if (path === '/keys/batch') return of(body.userIds.map((id: string) => ({ userId: id, devices: [...directory.values()].filter(remote => remote.target.userId === id).map(remote => ({ deviceId: remote.target.deviceId, keyBundle: { identityKey: JSON.stringify(remote.keys.publicJwk) } })) })));
+      if (path === '/keys/batch') return of(body.userIds.map((id: string) => ({ userId: id, devices: [...directory.values()].filter(remote => remote.target.userId === id).map(remote => ({ deviceId: remote.target.deviceId, continuity:remote.continuity,keyBundle: { identityKey: JSON.stringify(remote.keys.publicJwk) } })) })));
       return throwError(() => Error('Unexpected POST ' + path));
     } };
     clients.push(service); return record;
   }
   const response = (sender: any, recipients: any[], clientMessageId = 'msg-one'): MessageResponse => ({ id: 'server-' + clientMessageId, conversationId: 'chat-test', clientMessageId,
     senderUserId: sender.target.userId, senderDeviceId: sender.target.deviceId, kind: 'Text', recipients, serverReceivedAt: new Date().toISOString(), deleteAfterRead: false, receipts: [] });
+
+  it('accepts a newly signed device in a previously verified chat without importing history',async()=>{
+    const unique=crypto.randomUUID();
+    const source=await client(`source-${unique}`),peer=await client(`peer-${unique}`);
+    peer.service.trust=new IdentityTrustService();
+    const send=async(from:any,to:any,id:string)=>{
+      const payload={type:'text',text:id},targets=[from.target,to.target];
+      await from.service.encrypt('chat-test',id,payload,targets,null).catch(()=>undefined);
+      await to.service.pump();
+      const packets=await from.service.encrypt('chat-test',id,payload,targets,null);
+      expect(await to.service.decrypt(response(from,packets,id),packets[1])).toEqual(payload);
+    };
+    await source.service.pump();await peer.service.pump();
+    await send(source,peer,'existing-message');
+    const scope=JSON.stringify([peer.target.userId,peer.target.deviceId]);
+    const known={userId:source.target.userId,alias:source.owner.user.alias,devices:[{
+      deviceId:source.target.deviceId,deviceName:'Known source',lastRotatedAt:'',
+      keyBundle:{identityKey:JSON.stringify(source.keys.publicJwk),signedPreKey:null,preKeySignature:null,oneTimePreKeys:[]},
+    }]};
+    await peer.service.trust.confirm(scope,known);
+    const linked=await client(`linked-${unique}`,source.owner.user.alias);
+    const proof=await source.service.signDeviceContinuity(continuityIdentity(linked.keys.publicJwk));
+    Object.assign(linked,{continuity:{sourceDeviceId:source.target.deviceId,signature:proof}});
+    await linked.service.pump();
+    expect(linked.messages.size).toBe(0);
+    await send(linked,peer,'live-without-history');
+    await send(peer,linked,'reply-without-history');
+    await send(source,peer,'old-device-still-connected');
+    expect(peer.service.trust.isChanged(scope,source.target.userId)).toBeFalse();
+  },30000);
 
   it('keeps notes to self encrypted, retryable and readable after restarting the client', async () => {
     const alice=await client('alice');await alice.service.pump();
@@ -173,10 +212,10 @@ describe('actual application Double Ratchet delivery', () => {
     await receiving.beginReceive(transfer, source.target.deviceId, JSON.stringify(source.keys.publicJwk));
     await sending.pump(); await linked.service.pump(); await sending.pump();
     expect(pages.size).toBeGreaterThan(2);
-    const save = linked.service.history.putMessages; let fail = true;
-    linked.service.history.putMessages = async (user: string, messages: any[]) => {
+    const save = linked.service.history.mergeArchiveMessages; let fail = true;
+    linked.service.history.mergeArchiveMessages = async (user: string, messages: any[], current:()=>boolean) => {
       if (fail && messages.some(message => message.conversationId === 'chat-test')) { fail = false; throw Error('interrupted history import'); }
-      return save(user, messages);
+      return save(user, messages, current);
     };
     await receiving.pump(); await receiving.pump(); await sending.pump();
     expect(linked.messages.get('chat-test:msg_history_one')?.payload.text).toBe(text);
