@@ -17,6 +17,12 @@ namespace Nivra.Api.Infrastructure.Migrations
                 type: "character varying(64)",
                 maxLength: 64,
                 nullable: true);
+            migrationBuilder.AddColumn<DateTimeOffset>(
+                name: "DismissedAt",
+                schema: "public",
+                table: "call_push_outbox",
+                type: "timestamp with time zone",
+                nullable: true);
         }
 
         /// <inheritdoc />
@@ -24,6 +30,10 @@ namespace Nivra.Api.Infrastructure.Migrations
         {
             migrationBuilder.DropColumn(
                 name: "AnsweredDeviceId",
+                schema: "public",
+                table: "call_push_outbox");
+            migrationBuilder.DropColumn(
+                name: "DismissedAt",
                 schema: "public",
                 table: "call_push_outbox");
         }

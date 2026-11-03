@@ -39,7 +39,8 @@ public static class CallAnswerChecks
             var db=scope.ServiceProvider.GetRequiredService<NivraDbContext>();
             var call=await db.Calls.AsNoTracking().SingleAsync(c=>c.Id==callId);
             var pending=await db.CallPushOutbox.AsNoTracking().SingleAsync(c=>c.CallId==callId);
-            Check(pending.RecipientUserId==bob&&pending.AnsweredDeviceId==call.ParticipantSessions[bob].DeviceId&&pending.CompletedAt==null,"answer schedules a durable, account-specific dismissal even after the wake-up was delivered");
+            Check(pending.RecipientUserId==bob&&pending.AnsweredDeviceId==call.ParticipantSessions[bob].DeviceId&&pending.DismissedAt==null,"answer schedules a durable, account-specific dismissal even after the wake-up was delivered");
+            Check(pending.CompletedAt!=null&&CallPushOutbox.Ready(now.AddSeconds(2)).Compile()(pending),"only v9 workers can lease a dismissal during a mixed-version deployment");
             Check(!CallPushOutbox.ShouldSend(call,pending,now.AddSeconds(2)),"a dismissal never sends a second wake-up");
             var sends=0;
             Check(await CallPushOutbox.DispatchAsync(call,pending,now.AddSeconds(2),(_,_)=>{sends++;return Task.FromResult(false);},CancellationToken.None)==CallPushDelivery.Retry&&sends==1,"temporary provider failure retries the dismissal");

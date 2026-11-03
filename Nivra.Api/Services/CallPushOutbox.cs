@@ -28,7 +28,7 @@ public static class CallPushOutbox
     }
 
     public static Expression<Func<CallPushOutboxItem, bool>> Ready(DateTimeOffset now) => item =>
-        item.CompletedAt == null && item.ExpiresAt > now && item.NextAttemptAt <= now &&
+        (item.AnsweredDeviceId == null ? item.CompletedAt == null : item.DismissedAt == null) && item.ExpiresAt > now && item.NextAttemptAt <= now &&
         (item.LeaseUntil == null || item.LeaseUntil <= now);
 
     public static bool ShouldSend(CallSession? call, CallPushOutboxItem item, DateTimeOffset now) =>
@@ -47,18 +47,19 @@ public static class CallPushOutbox
         db.CallPushOutbox.Where(item => item.CallId == callId && item.RecipientUserId == userId && item.CompletedAt == null);
 
     // Switch the durable invitation to a silent dismissal in the same transaction as the claim.
-    // A delivered wake-up still needs a dismissal, and repeat answers must not resurrect it.
+    // Keep the legacy wake-up completed. Older API instances sharing this database
+    // cannot lease the dismissal, and repeat answers cannot resurrect it.
     public static Task<int> AcknowledgeAsync(NivraDbContext db, string callId, string userId, string deviceId, DateTimeOffset now, CancellationToken ct) =>
         db.CallPushOutbox.Where(item=>item.CallId==callId&&item.RecipientUserId==userId&&item.AnsweredDeviceId==null&&item.ExpiresAt>now)
             .ExecuteUpdateAsync(update=>update.SetProperty(item=>item.AnsweredDeviceId,deviceId)
-                .SetProperty(item=>item.CompletedAt,(DateTimeOffset?)null).SetProperty(item=>item.NextAttemptAt,now)
+                .SetProperty(item=>item.CompletedAt,now).SetProperty(item=>item.NextAttemptAt,now)
                 .SetProperty(item=>item.Attempts,0).SetProperty(item=>item.LeaseId,(string?)null).SetProperty(item=>item.LeaseUntil,(DateTimeOffset?)null),ct);
 
     public static async Task<CallPushDelivery> DispatchAsync(CallSession? call, CallPushOutboxItem item, DateTimeOffset now,
         Func<DateTimeOffset, CancellationToken, Task<bool>> send, CancellationToken cancellationToken, TimeSpan? sendBudget = null)
     {
         var dismiss = item.AnsweredDeviceId != null;
-        if (dismiss ? call?.Id != item.CallId || item.CompletedAt != null || item.ExpiresAt <= now || !call.ParticipantUserIds.Contains(item.RecipientUserId)
+        if (dismiss ? call?.Id != item.CallId || item.DismissedAt != null || item.ExpiresAt <= now || !call.ParticipantUserIds.Contains(item.RecipientUserId)
                     : !ShouldSend(call, item, now)) return CallPushDelivery.Discard;
         var expires = dismiss || item.ExpiresAt < call!.StartedAt + InvitationLifetime ? item.ExpiresAt : call.StartedAt + InvitationLifetime;
         var budget = expires - now;

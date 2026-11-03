@@ -13,4 +13,5 @@ public sealed class CallPushOutboxItem
     public DateTimeOffset? LeaseUntil { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public string? AnsweredDeviceId { get; set; }
+    public DateTimeOffset? DismissedAt { get; set; }
 }

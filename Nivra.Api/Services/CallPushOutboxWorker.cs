@@ -70,6 +70,7 @@ public sealed class CallPushOutboxWorker(IServiceScopeFactory scopes, TimeProvid
         var owned = db.CallPushOutbox.Where(item => item.CallId == job.CallId && item.RecipientUserId == job.RecipientUserId && item.LeaseId == lease);
         if (result != CallPushDelivery.Retry || now >= job.ExpiresAt)
             await owned.ExecuteUpdateAsync(update => update.SetProperty(item => item.CompletedAt, now)
+                .SetProperty(item => item.DismissedAt, job.AnsweredDeviceId == null ? (DateTimeOffset?)null : now)
                 .SetProperty(item => item.LeaseUntil, (DateTimeOffset?)null).SetProperty(item => item.LeaseId, (string?)null), ct);
         else
             await owned.ExecuteUpdateAsync(update => update.SetProperty(item => item.NextAttemptAt, now + CallPushOutbox.RetryDelay(job.Attempts + 1))
