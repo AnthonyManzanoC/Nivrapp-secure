@@ -1,5 +1,46 @@
 @use "../shared-page";
 
+.vault-hero { gap: 12px; flex-wrap: wrap; }
+.vault-hero > div { flex: 1; min-width: 180px; }
+.create-room-cta { display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 12px 18px; border: 0; border-radius: 16px; background: var(--nivra-brand); color: var(--nivra-on-brand); font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; }
+.create-room-cta ion-icon { font-size: 21px; }
+.vault-create-modal { --width: 620px; --height: min(850px, 94dvh); --border-radius: 26px; --box-shadow: 0 24px 90px #0005; }
+.vault-create-modal ion-content { --background: var(--nivra-panel-solid); }
+.room-create-dialog { padding: 28px; color: var(--nivra-text); }
+.room-create-dialog h2 { font-size: 23px; letter-spacing: -.035em; }
+.room-create-symbol { display: grid; place-items: center; width: 48px; height: 48px; flex: none; background: color-mix(in srgb, var(--nivra-brand) 14%, var(--nivra-panel-solid)); color: var(--nivra-brand-2); font-size: 30px; font-weight: 700; border-radius: 16px; }
+.room-create-close { display: grid; place-items: center; margin-left: auto; width: 40px; height: 40px; flex: none; border: 1px solid var(--nivra-line); border-radius: 50%; background: var(--nivra-panel-2); color: var(--nivra-text); font-size: 22px; }
+.room-create-dialog .panel-title { align-items: center; gap: 14px; }
+.room-create-dialog .card-sub { font-size: 12px; line-height: 1.5; }
+.room-create-intro,.room-invite-summary { color: var(--nivra-muted); font-size: 13px; line-height: 1.6; }
+.room-create-preview { display: flex; align-items: center; gap: 14px; padding: 18px; margin: 22px 0; border: 1px solid var(--nivra-line); border-radius: 20px; background: color-mix(in srgb, var(--nivra-brand) 7%, var(--nivra-panel-solid)); }
+.room-create-preview > span { display: grid; place-items: center; width: 52px; height: 52px; flex: none; border-radius: 18px; background: var(--nivra-brand); color: var(--nivra-on-brand); font-size: 21px; font-weight: 800; }
+.room-create-preview > div { display: grid; gap: 5px; min-width: 0; }
+.room-create-preview strong { overflow-wrap: anywhere; }
+.room-create-preview small { font-size: 12px; color: var(--nivra-muted); }
+.room-create-dialog .form-grid { gap: 18px; }
+.room-create-dialog label[hidden] { display: none !important; }
+.room-create-dialog label > span { font-size: 13px; font-weight: 650; color: var(--nivra-text); }
+.room-create-dialog ion-input,.room-create-dialog .native-select { --background: var(--nivra-panel-2); background: var(--nivra-panel-2); --border-radius: 14px; border-radius: 14px; color: var(--nivra-text); }
+.room-create-submit { width: 100%; min-height: 50px; --border-radius: 16px; }
+.dialog-feedback { padding: 0 28px; color: var(--ion-color-danger); font-size: 13px; }
+.room-invitation-badge { display: inline-flex; align-items: center; width: fit-content; padding: 5px 9px; border-radius: 9px; background: color-mix(in srgb, var(--nivra-brand) 12%, var(--nivra-panel-solid)); color: var(--nivra-brand-2); font-size: 11px; font-weight: 700; }
+.room-card.invited-target { outline: 2px solid var(--nivra-brand-2); outline-offset: 2px; }
+.room-list-panel .room-card { border-radius: 20px; padding: 16px; }
+.room-list-panel .room-avatar { border-radius: 18px; }
+.room-workspace { border-radius: 26px; overflow: hidden; }
+.room-workspace .room-head { gap: 10px; }
+.room-workspace .composer { border-radius: 20px; background: var(--nivra-panel-solid); border: 1px solid var(--nivra-line); padding: 8px; }
+.room-workspace .owner-invite-panel { border-radius: 18px; }
+@media(max-width: 680px) {
+  .vault-create-modal { --width: 100%; --height: 100%; --border-radius: 0; }
+  .room-create-dialog { padding: calc(22px + var(--ion-safe-area-top, 0px)) 20px calc(24px + var(--ion-safe-area-bottom, 0px)); }
+  .room-create-dialog .panel-title { flex-wrap: nowrap; }
+  .room-create-dialog h2 { font-size: 21px; }
+  .room-create-symbol { width: 40px; height: 40px; border-radius: 14px; }
+  .create-room-cta { padding: 10px 14px; }
+}
+
 .vault-surface {
   --vault-green: var(--ion-color-primary);
   --vault-cyan: var(--ion-color-primary-tint);

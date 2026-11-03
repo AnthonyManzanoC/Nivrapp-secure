@@ -257,6 +257,10 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
 
+                    b.Property<string>("AnsweredDeviceId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
                     b.Property<int>("Attempts")
                         .HasColumnType("integer");
 
@@ -412,6 +416,49 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasIndex("CallId", "TargetUserId", "CreatedAt");
 
                     b.ToTable("call_signals", "public");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.CommunityGroupRecord", b =>
+                {
+                    b.Property<string>("CommunityId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ConversationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("LinkedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("CommunityId", "ConversationId");
+
+                    b.HasIndex("ConversationId")
+                        .IsUnique();
+
+                    b.ToTable("community_groups", "public");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.CommunityRecord", b =>
+                {
+                    b.Property<string>("Id")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("communities", "public");
                 });
 
             modelBuilder.Entity("Nivra.Api.Domain.ContactBlockRecord", b =>
@@ -1721,6 +1768,30 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.CallSession", null)
                         .WithMany()
                         .HasForeignKey("CallId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.CommunityGroupRecord", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.CommunityRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CommunityId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nivra.Api.Domain.ConversationRecord", null)
+                        .WithMany()
+                        .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.CommunityRecord", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.ConversationRecord", null)
+                        .WithOne()
+                        .HasForeignKey("Nivra.Api.Domain.CommunityRecord", "Id")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

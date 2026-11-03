@@ -3,6 +3,7 @@
 @if(error){<p [appTransientNotice]="error" [appNoticeDuration]="15000" class="feedback error" role="alert">{{error}}</p>}@if(notice){<p [appTransientNotice]="notice" (noticeExpired)="notice=''" class="feedback" role="status">{{notice}}</p>}
 <section class="contact-shortcuts" aria-label="Crear y conectar">
 <button type="button" (click)="compose('group')"><span><ion-icon name="people-outline"></ion-icon></span><strong>Nuevo grupo</strong><small>Conversa con tu gente</small></button>
+<button type="button" (click)="newCommunity()"><span><ion-icon name="people-outline"></ion-icon></span><strong>Nueva comunidad</strong><small>Organiza tus grupos y avisos</small></button>
 <button type="button" (click)="focusSearch()"><span><ion-icon name="person-add-outline"></ion-icon></span><strong>Nuevo contacto</strong><small>Busca un alias o ID</small></button>
 <button type="button" (click)="compose('pass')"><span><ion-icon name="qr-code-outline"></ion-icon></span><strong>Mi pase Nivra</strong><small>Comparte tu QR y enlace</small></button>
 <button type="button" (click)="compose('story')"><span><ion-icon name="camera-outline"></ion-icon></span><strong>Nueva historia</strong><small>Comparte un momento</small></button>

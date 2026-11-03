@@ -72,6 +72,7 @@ export class PushService {
   private webConfigPromise?: Promise<ResolvedFirebaseWebConfig | null>;
   private readonly visualDedupe = new Map<string, number>();
   private readonly browserCallNotifications = new Map<string, Notification>();
+  private readonly silencedRings = new Map<string, number>();
   private readonly browserNotifications = new Set<Notification>();
   private pushClickQueue: Promise<void> = Promise.resolve();
   private readonly pushClicks = new Map<string, { at: number; promise: Promise<void> }>();
@@ -764,7 +765,19 @@ export class PushService {
       return;
     }
     if (!savedRecipient) return;
+    const ringKey = JSON.stringify([userId, deviceId, data['callId']]);
+    if (type === 'call-answered-elsewhere') {
+      if (data['callId'] && data['answeredByDeviceId'] && data['answeredByDeviceId'] !== deviceId) {
+        const now = Date.now();
+        for (const [key, expires] of this.silencedRings) if (expires <= now) this.silencedRings.delete(key);
+        this.silencedRings.set(ringKey, now + 120_000);
+        while (this.silencedRings.size > 100) this.silencedRings.delete(this.silencedRings.keys().next().value!);
+        await this.cancelCallNotification(data['callId'], { userId, deviceId });
+      }
+      return;
+    }
     const incoming = type === 'incoming-call' || type === 'incomingcall';
+    if (incoming && (this.silencedRings.get(ringKey) ?? 0) > Date.now()) return;
     // A caller's other installation may receive an outgoing mirror. It must
     // never ring or offer to answer as though it were a callee account.
     if (incoming && (data['callerUserId'] || data['initiatorUserId']) === userId) return;
@@ -1029,7 +1042,9 @@ export class PushService {
       return { type: 'story', tag: `nivra-${event.type}` };
     }
     if (event.type.startsWith('vault.')) {
-      return { type: event.type.replace('.', '_'), tag: `nivra-${event.type}` };
+      const payload = this.recordPayload(event.payload);
+      const roomId = this.stringValue(payload, 'roomId') || this.stringValue(payload, 'id');
+      return { type: event.type.replace('.', '_'), roomId, tag: `nivra-${event.type}-${roomId}` };
     }
     if (event.type === 'conversation.created') {
       const conversation = this.recordPayload(event.payload);

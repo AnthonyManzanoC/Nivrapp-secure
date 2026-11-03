@@ -5,7 +5,7 @@ import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
 import { StatusBar } from '@capacitor/status-bar';
-import { IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, LoadingController } from '@ionic/angular/standalone';
+import { IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, IonModal, LoadingController } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import {
   addCircleOutline,
@@ -45,7 +45,7 @@ import { MediaStreamDirective } from '../../shared/media-stream.directive';
 @Component({
   selector: 'app-vault',
   standalone: true,
-  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, MediaStreamDirective],
+  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonSpinner, IonTextarea, IonModal, MediaStreamDirective],
   templateUrl: './vault.page.html',
   styleUrls: ['./vault.page.scss'],
 })
@@ -78,8 +78,14 @@ export class VaultPage implements OnInit, OnDestroy {
   roomPinById: Record<string, string> = {};
   selectedInviteIds = new Set<string>();
   isFullscreen = false;
+  roomComposerOpen = false;
+  invitedRoomId = '';
   private searchTimer: number | null = null;
   private destroyed = false;
+  private initialized = false;
+  private readonly routeUpdates = this.route.queryParamMap?.subscribe(() => {
+    if (this.initialized && this.isCurrentPage()) void this.openInvitedRoom();
+  });
   private readonly fullscreenChangeHandler = () => this.syncFullscreenState();
 
   constructor() {
@@ -121,6 +127,8 @@ export class VaultPage implements OnInit, OnDestroy {
       if (!this.isCurrentPage()) return;
       await this.vault.load();
       if (!this.isCurrentPage()) return;
+      this.initialized = true;
+      await this.openInvitedRoom();
       await this.acceptIncomingInvite();
     } catch (error) { if (this.isCurrentPage()) throw error; }
   }
@@ -128,6 +136,7 @@ export class VaultPage implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     const ownsScope = this.ownsMountedScope();
     this.destroyed = true;
+    this.routeUpdates?.unsubscribe();
     this.clearLocalNoteDraft();
     document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
     if (this.searchTimer !== null) {
@@ -191,6 +200,7 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async createRoom(): Promise<void> {
+    if (this.isBusy('room:create')) return;
     await this.run('room:create', async isCurrent => {
       const room = await this.vault.createRoom({
         name: this.roomName || 'Boveda Nivra',
@@ -202,6 +212,7 @@ export class VaultPage implements OnInit, OnDestroy {
       });
       if (!isCurrent()) return;
       this.roomName = '';
+      this.roomComposerOpen = false;
       this.roomPin = '';
       this.inviteQuery = '';
       this.selectedInviteIds.clear();
@@ -444,6 +455,8 @@ export class VaultPage implements OnInit, OnDestroy {
     this.title = '';
     this.body = '';
     this.noteAttachments = [];
+    this.roomName = ''; this.roomPin = ''; this.inviteQuery = ''; this.roomMessage = '';
+    this.selectedInviteIds.clear(); this.roomPinById = {}; this.roomComposerOpen = false; this.invitedRoomId = '';
   }
 
   private ownsMountedScope(): boolean {
@@ -481,6 +494,21 @@ export class VaultPage implements OnInit, OnDestroy {
     } catch {
       // run() captures UI errors; keep the code visible so the user can add a PIN.
     }
+  }
+
+  private async openInvitedRoom(): Promise<void> {
+    const id = this.route.snapshot.queryParamMap.get('room') || '';
+    if (!id || !this.isCurrentPage()) return;
+    // A direct link identifies a room; it never grants membership or bypasses its PIN.
+    const room = this.vault.rooms().find(value => value.id === id);
+    if (!room || !this.vault.canAttemptJoin(room)) { this.error = 'Esta sala no está disponible para tu cuenta.'; return; }
+    this.invitedRoomId = room.id;
+    if (this.vault.currentMember(room)?.status === 'Active') await this.vault.selectRoom(room.id);
+    else this.notice = `Te invitaron a ${room.name}. Revisa el acceso en la lista de salas.`;
+  }
+  invitedRoom(): VaultRoom | null {
+    return this.vault.rooms().find(room => room.id === this.invitedRoomId && this.vault.canAttemptJoin(room)
+      && this.vault.currentMember(room)?.status !== 'Active') ?? null;
   }
 
   private async shareText(text: string, url: string): Promise<void> {

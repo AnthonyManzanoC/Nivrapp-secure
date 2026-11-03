@@ -34,9 +34,17 @@ import { AppLockService } from '../src/app/core/services/app-lock.service';
 import { UnreadTabService } from '../src/app/core/services/unread-tab.service';
 import { ClientCompatibilityService } from '../src/app/core/services/client-compatibility.service';
 import { NivraApiService } from '../src/app/core/services/nivra-api.service';
+import { CommunityService } from '../src/app/core/services/community.service';
+import { CommunitiesPage } from '../src/app/features/communities/communities.page';
+import { VaultPage } from '../src/app/features/vault/vault.page';
+import { VaultService } from '../src/app/core/services/vault.service';
+import { DeviceWipeService } from '../src/app/core/services/device-wipe.service';
+import { PanicPinService } from '../src/app/core/services/panic-pin.service';
+import { v9Fixtures } from './v9-fixtures';
 
 const previewAvatar = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="#addbd0"/><circle cx="50" cy="37" r="18" fill="#275c55"/><ellipse cx="50" cy="102" rx="40" ry="45" fill="#275c55"/></svg>');
 const user = { id: 'preview-owner', alias: 'alex', displayName: 'Alex', profilePhotoDataUrl: previewAvatar };
+const v9=v9Fixtures(user,previewAvatar);
 const items = signal<any[]>([
   { id: 'design', name: 'Estudio Creativo', preview: 'La nueva propuesta está lista ✨', type: 'Group', pinned: true, unread: true },
   { id: 'sofia', name: 'Sofía Martínez', preview: 'Nos vemos a las seis. ¡Qué ganas!', type: 'Direct', unread: true },
@@ -46,14 +54,14 @@ const items = signal<any[]>([
   { id: 'valentina', name: 'Valentina', preview: 'Nota de voz · 0:24', type: 'Direct' },
   { id: 'empty', name: 'Contacto de prueba', preview: 'Cifrado extremo a extremo', type: 'Direct' },
   { id: 'archive', name: 'Proyecto anterior', preview: 'Todo entregado, gracias equipo.', type: 'Group', archived: true },
-].map((item, i) => ({ ...item, participants: [{ userId: user.id }, { userId: 'peer-' + i, alias: item.id, displayName: item.name }], updatedAt: `2026-10-31T14:${String(42 - i * 3).padStart(2, '0')}:00Z` })));
+].map((item, i) => ({ ...item, participants: [{ userId: user.id,role:"Owner" }, { userId: 'peer-' + i, alias: item.id, displayName: item.name }], updatedAt: `2026-10-31T14:${String(42 - i * 3).padStart(2, '0')}:00Z` })));
 const mutate = (item: any, key: string, value: boolean) => { items.update(all => all.map(row => row.id === item.id ? { ...row, [key]: value } : row)); return Promise.resolve(); };
 const chat: any = {
   conversations: items, contacts: signal([]), messagesByConversation: signal({}), selectedConversationId: signal(null),
   loading: signal(false), listUpdating: signal(false), syncError: signal(''), localHistoryCheckState: signal('idle'),
   deviceHistory: { state: signal('idle'), recoveryStatus: signal('approval'), targetFingerprint: signal('fixture') },
   chatFolderConversations: (folder: string) => items().filter(item => folder === 'archived' ? item.archived : !item.archived && (folder === 'pinned' ? item.pinned : folder === 'unread' ? item.unread : true)),
-  conversationTitle: (item: any) => item.name, conversationSubtitle: (item: any) => item.preview, conversationPhoto: () => null,
+  conversationTitle: (item: any) => item.name, conversationSubtitle: (item: any) => item.preview, conversationPhoto: (item:any) => item?.id==='design'?previewAvatar:null,
   avatarLabel: (item: any) => item.name.split(' ').map((word: string) => word[0]).slice(0, 2).join(''),
   conversationIsNivraId: () => false,
   hasUnreadConversation: (item: any) => !!item.unread,
@@ -179,12 +187,18 @@ bootstrapApplication(PreviewRoot, { providers: [
   provideIonicAngular(), provideRouter([{ path: 'app', component: ShellPage, children: [
     { path: 'chats', component: ChatsPage, children: [{ path: ':id', component: PreviewConversation }] },
     { path: 'contacts', component: ContactsPage },
+    { path: 'communities', component: CommunitiesPage },
+    { path: 'vault', component: VaultPage },
     { path: 'games', component: PreviewGames },
     { path: 'world', component: WorldPage },{ path: 'composer', component: PreviewComposer },{ path: 'viewer', component: PreviewViewer },{ path: 'invitation', component: PreviewInvitation },
     { path: '**', component: PreviewEmpty },
   ] },{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls}, { path: '**', redirectTo: 'app/chats' }]),
-  { provide: AuthService, useValue: { session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
+  { provide: AuthService, useValue: { sessionGeneration:signal(1), session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
   { provide: ChatService, useValue: chat },
+  { provide: CommunityService, useValue: v9.communities },
+  { provide: VaultService, useValue: v9.vault },
+  { provide: DeviceWipeService, useValue: {} },
+  { provide: PanicPinService, useValue: {} },
   { provide: SocialService, useValue: social },
   { provide: ContactSyncService,useValue:{syncCachedContactsInBackground:async()=>{},radarHasNewContact:()=>false,lastDeviceContactCount:()=>0,syncing:()=>false}},
   { provide: CallsService, useValue: previewCalls },

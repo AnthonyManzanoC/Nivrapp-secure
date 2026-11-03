@@ -25,7 +25,7 @@ describe('vault account and activation isolation', () => {
   let cryptography: Record<string, jasmine.Spy>;
   let ratchet: { encrypt: jasmine.Spy; discardEphemeral: jasmine.Spy };
   let realtime: { events$: Subject<any>; joinVaultRoom: jasmine.Spy; sendVaultRoomMessage: jasmine.Spy };
-  let chat: { createDirectConversation: jasmine.Spy; sendText: jasmine.Spy };
+  let chat: { createDirectConversation: jasmine.Spy; sendText: jasmine.Spy; enqueueText: jasmine.Spy };
   let downloads: { file: jasmine.Spy };
   let privacy: { enable: jasmine.Spy; disable: jasmine.Spy };
   const settle = async () => { for (let turn = 0; turn < 30; turn++) await Promise.resolve(); };
@@ -56,7 +56,7 @@ describe('vault account and activation isolation', () => {
     };
     realtime = { events$: new Subject(), joinVaultRoom: jasmine.createSpy().and.resolveTo(), sendVaultRoomMessage: jasmine.createSpy().and.resolveTo() };
     ratchet = { encrypt: jasmine.createSpy().and.resolveTo([]), discardEphemeral: jasmine.createSpy().and.resolveTo() };
-    chat = { createDirectConversation: jasmine.createSpy().and.resolveTo({ id: 'conversation-A' }), sendText: jasmine.createSpy().and.resolveTo() };
+    chat = { createDirectConversation: jasmine.createSpy().and.resolveTo({ id: 'conversation-A' }), sendText: jasmine.createSpy().and.resolveTo(), enqueueText: jasmine.createSpy().and.resolveTo() };
     downloads = { file: jasmine.createSpy().and.resolveTo(new ArrayBuffer(1)) };
     privacy = { enable: jasmine.createSpy().and.resolveTo(), disable: jasmine.createSpy().and.resolveTo() };
     TestBed.configureTestingModule({ providers: [VaultService,
@@ -191,7 +191,21 @@ describe('vault account and activation isolation', () => {
     let finish!: (value: unknown) => void; chat.createDirectConversation.and.returnValue(new Promise(resolve => { finish = resolve; }));
     const context = (vault as any).captureContext();
     const pending = (vault as any).notifyVaultInvites(roomA, ['peer'], null, context); await settle(); switchTo(b);
-    finish({ id: 'A-conversation' }); await pending; expect(chat.sendText).not.toHaveBeenCalled();
+    finish({ id: 'A-conversation' }); await pending; expect(chat.sendText).not.toHaveBeenCalled(); expect(chat.enqueueText).not.toHaveBeenCalled();
+  });
+
+  it('persists the invitation in the encrypted outbox with a room link and no PIN', async () => {
+    const room={...roomA,accessMode:'PinOnly',expiresAt:new Date(Date.now()+3600_000).toISOString()};
+    await (vault as any).notifyVaultInvites(room,['peer'],'secret-fixture-pin',(vault as any).captureContext());
+    expect(chat.enqueueText).toHaveBeenCalledTimes(1);expect(chat.sendText).not.toHaveBeenCalled();
+    const [conversation,text,policy]=chat.enqueueText.calls.first().args;
+    expect(conversation.id).toBe('conversation-A');expect(text).toContain('/app/vault?room=room-A');expect(text).not.toContain('secret-fixture-pin');
+    expect(policy.ttlSeconds).toBeGreaterThan(3500);expect(policy.ttlSeconds).toBeLessThanOrEqual(3600);
+  });
+
+  it('never turns an expired invitation into a permanent direct message', async () => {
+    await (vault as any).notifyVaultInvites({...roomA,expiresAt:new Date(Date.now()-1000).toISOString()},['peer'],null,(vault as any).captureContext());
+    expect(chat.enqueueText).not.toHaveBeenCalled();
   });
 
   it('keeps selected room storage per user and device and ignores ownerless legacy selection', () => {

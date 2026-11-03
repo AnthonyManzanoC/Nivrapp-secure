@@ -211,6 +211,13 @@ public sealed class PushNotificationService(
                 ["tag"] = $"nivra-call-{callId}"
             }, cancellationToken, silentDataOnly: true, parallelDelivery: true);
 
+    public Task<bool> DispatchCallAnsweredElsewhereAsync(string userId,string callId,string answeredDeviceId,CancellationToken ct) =>
+        SendToUserAsync(userId,"Nivra","Llamada contestada en otro dispositivo",new Dictionary<string,string>
+        {
+            ["type"]="call_answered_elsewhere",["callId"]=callId,["answeredByDeviceId"]=answeredDeviceId,
+            ["tag"]=$"nivra-call-{callId}",["silent"]="1"
+        },ct,silentDataOnly:true,parallelDelivery:true,excludeDeviceId:answeredDeviceId);
+
     public async Task SendCallEndedAsync(
         string userId,
         string? conversationId,
@@ -334,7 +341,8 @@ public sealed class PushNotificationService(
         bool? includeNotificationPayloadOverride = null,
         bool silentDataOnly = false,
         string? targetDeviceId = null,
-        bool parallelDelivery = false)
+        bool parallelDelivery = false,
+        string? excludeDeviceId = null)
     {
         var pushOptions = options.CurrentValue;
         FcmRuntimeConfig? fcmConfig = null;
@@ -357,10 +365,11 @@ public sealed class PushNotificationService(
         var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
         if (await ContactBlockPolicy.SuppressPushAsync(db, userId, data, cancellationToken)) return true;
         var tokens = await PushDestinations(db.PushTokens, db.Devices, userId, data, targetDeviceId)
+            .Where(token=>excludeDeviceId==null||token.DeviceId!=excludeDeviceId)
             .ToListAsync(cancellationToken);
         if (tokens.Count == 0)
         {
-            return false;
+            return excludeDeviceId != null; // No other linked device needs to stop ringing.
         }
 
         var changed = false;

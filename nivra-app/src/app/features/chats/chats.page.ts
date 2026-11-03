@@ -55,7 +55,7 @@ import { HistoryStatusSnoozeService } from '../../core/services/history-status-s
 import { rankConversationTitles } from './conversation-search';
 
 type ChatSearchScope = 'all' | 'chats' | 'people';
-type ChatMenuAction = 'new-chat' | 'new-group' | 'new-story' | 'share-pass' | 'refresh' | 'settings' | 'enable-alerts' | 'broadcasts';
+type ChatMenuAction = 'new-chat' | 'new-group' | 'new-community' | 'new-story' | 'share-pass' | 'refresh' | 'settings' | 'enable-alerts' | 'broadcasts';
 type ConversationMenuAction = 'pin' | 'mute' | 'archive';
 
 @Component({
@@ -618,6 +618,7 @@ export class ChatsPage implements OnDestroy {
     switch (pending.action) {
       case 'new-chat': this.startNewChat(); break;
       case 'new-group': this.openGroupModal(); break;
+      case 'new-community': void this.router.navigate(['/app/communities'],{queryParams:{create:1}}); break;
       case 'broadcasts': void this.router.navigateByUrl('/app/broadcasts'); break;
       case 'new-story': this.openStoryComposer(); break;
       case 'share-pass': void this.openShareAccount(); break;

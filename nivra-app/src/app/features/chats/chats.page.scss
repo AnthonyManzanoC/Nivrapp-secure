@@ -517,6 +517,12 @@ ion-modal.history-storage-modal { --width: min(440px, calc(100vw - 32px)); --hei
 }
 
 .list::-webkit-scrollbar { width: 4px; }
+@media (max-width: 900px) {
+  .conversation-list-stage > .list {
+    padding-bottom: calc(100px + var(--ion-safe-area-bottom, env(safe-area-inset-bottom, 0px)));
+    scroll-padding-bottom: 100px;
+  }
+}
 .list::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--nivra-muted) 28%, transparent); }
 
 .list-item {

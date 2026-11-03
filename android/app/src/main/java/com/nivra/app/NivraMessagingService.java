@@ -69,6 +69,15 @@ public class NivraMessagingService extends MessagingService {
         ensureNotificationChannels();
         String type = normalizeType(data.get("type"));
         String callId = stringValue(data, "callId");
+        if (type.equals("call-answered-elsewhere")) {
+            String winner = stringValue(data, "answeredByDeviceId");
+            if (!callId.isEmpty() && !winner.isEmpty() && !winner.equals(stringValue(data, "recipientDeviceId"))) {
+                NivraCallPushPolicy.markEnded(this, data, callId);
+                cancelNotification(data, notificationId(callId));
+                NivraNativePlugin.clearIncomingCallNotification(this, callId, stringValue(data, "recipientUserId"), stringValue(data, "recipientDeviceId"));
+            }
+            return;
+        }
         if (type.equals("end-call") || type.equals("call-ended") || type.equals("call-rejected") || type.equals("missed-call")) {
             NivraCallPushPolicy.markEnded(this, data, callId);
             cancelNotification(data, notificationId(callId.isEmpty() ? stringValue(data, "tag") : callId));

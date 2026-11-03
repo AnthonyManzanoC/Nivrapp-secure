@@ -163,6 +163,36 @@ describe('saved account push registration and routing', () => {
     expect(order.indexOf('native-alice')).toBeLessThan(order.indexOf('answer'));
   });
 
+  it('keeps Ruth as caller when the callee account is also saved on that phone', async () => {
+    credentials.set([account('ruth'), account('anthony')]); session.set(account('ruth'));
+    calls.activeCall.and.returnValue({id:'ruth-to-anthony',initiatorUserId:'ruth'});
+    await (service as any).handlePushData({type:'incoming_call',callId:'ruth-to-anthony',recipientUserId:'anthony',recipientDeviceId:'phone-anthony',action:'accept'},'native-action');
+    expect(switchAccount).not.toHaveBeenCalled();expect(calls.handleNotificationCallAction).not.toHaveBeenCalled();
+    expect(session().user.id).toBe('ruth');expect(service.lastMessage()).toBeNull();
+  });
+
+  it('silences only the losing device of the addressed account and ignores a late duplicate ring', async () => {
+    credentials.set([account('ruth'),account('anthony')]);session.set(account('ruth'));
+    const toast=spyOn<any>(service,'showForegroundToast').and.resolveTo();
+    spyOn<any>(service,'isAppInteractive').and.returnValue(true);
+    const recipient={recipientUserId:'anthony',recipientDeviceId:'phone-anthony',callId:'same-call'};
+    await (service as any).handlePushData({...recipient,type:'call_answered_elsewhere',answeredByDeviceId:'phone-anthony'},'native-fcm');
+    expect(native.clearIncomingCall).not.toHaveBeenCalled();
+    await (service as any).handlePushData({...recipient,type:'call_answered_elsewhere',answeredByDeviceId:'desktop-anthony'},'native-fcm');
+    expect(native.clearIncomingCall).toHaveBeenCalledOnceWith('same-call',{userId:'anthony',deviceId:'phone-anthony'});
+    await (service as any).handlePushData({...recipient,type:'incoming_call',callerUserId:'ruth'},'native-fcm');
+    expect(toast).not.toHaveBeenCalled();expect(switchAccount).not.toHaveBeenCalled();
+    expect(service.lastMessage()).toBeNull();expect(session().user.id).toBe('ruth');
+  });
+
+  it('preserves a Vault invitation tap for the exact saved recipient', async () => {
+    credentials.set([account('ruth'),account('anthony')]);session.set(account('ruth'));
+    await (service as any).handlePushData({type:'vault_invited',roomId:'private-room',recipientUserId:'anthony',recipientDeviceId:'phone-anthony'},'native-action');
+    expect(switchAccount).toHaveBeenCalledOnceWith('anthony','phone-anthony');
+    expect(service.lastMessage()?.data?.['roomId']).toBe('private-room');
+    expect(calls.handleNotificationCallAction).not.toHaveBeenCalled();
+  });
+
   it('deduplicates concurrent live and durable native deliveries of the same explicit action', async () => {
     credentials.set([account(), account('bob')]); session.set(account('bob'));
     const tap = { type: 'incoming_call', callId: 'call-alice', recipientUserId: 'alice', recipientDeviceId: 'phone-alice', action: 'accept', nivraIntentId: 'native-intent-one' };

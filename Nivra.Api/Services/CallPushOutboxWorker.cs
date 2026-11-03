@@ -37,7 +37,7 @@ public sealed class CallPushOutboxWorker(IServiceScopeFactory scopes, TimeProvid
             var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
             var now = clock.GetUtcNow();
             jobs = await db.CallPushOutbox.AsNoTracking().Where(CallPushOutbox.Ready(now))
-                .OrderBy(item => item.NextAttemptAt).Take(8).ToListAsync(ct);
+                .OrderByDescending(item => item.AnsweredDeviceId != null).ThenBy(item => item.NextAttemptAt).Take(8).ToListAsync(ct);
             if (now >= nextPrune)
             {
                 nextPrune = now.AddMinutes(1);
@@ -55,11 +55,16 @@ public sealed class CallPushOutboxWorker(IServiceScopeFactory scopes, TimeProvid
         var now = clock.GetUtcNow();
         var lease = Guid.NewGuid().ToString("N");
         if (await CallPushOutbox.TryLeaseAsync(db, job.CallId, job.RecipientUserId, lease, now, ct) != 1) return;
+        // An answer can change a wake-up into a dismissal between selection and lease.
+        var leased = await db.CallPushOutbox.AsNoTracking().FirstOrDefaultAsync(item => item.CallId == job.CallId && item.RecipientUserId == job.RecipientUserId && item.LeaseId == lease, ct);
+        if (leased is null) return;
+        job = leased;
         var call = await db.Calls.AsNoTracking().FirstOrDefaultAsync(item => item.Id == job.CallId, ct);
-        var caller = call is null ? null : await db.Users.AsNoTracking().FirstOrDefaultAsync(user => user.Id == call.InitiatorUserId, ct);
+        var caller = call is null || job.AnsweredDeviceId != null ? null : await db.Users.AsNoTracking().FirstOrDefaultAsync(user => user.Id == call.InitiatorUserId, ct);
         var pushes = scope.ServiceProvider.GetRequiredService<PushNotificationService>();
-        var result = await CallPushOutbox.DispatchAsync(call, job, clock.GetUtcNow(), (expires, token) =>
-            pushes.DispatchIncomingCallAsync(job.RecipientUserId, call!.ConversationId, call.Id, call.InitiatorUserId,
+        var result = await CallPushOutbox.DispatchAsync(call, job, clock.GetUtcNow(), (expires, token) => job.AnsweredDeviceId is { } answeredDevice
+            ? pushes.DispatchCallAnsweredElsewhereAsync(job.RecipientUserId, job.CallId, call?.ParticipantSessions.GetValueOrDefault(job.RecipientUserId)?.DeviceId ?? answeredDevice, token)
+            : pushes.DispatchIncomingCallAsync(job.RecipientUserId, call!.ConversationId, call.Id, call.InitiatorUserId,
                 caller?.DisplayName ?? caller?.Alias ?? "Nivra", call.Type, expires, token), ct);
         now = clock.GetUtcNow();
         var owned = db.CallPushOutbox.Where(item => item.CallId == job.CallId && item.RecipientUserId == job.RecipientUserId && item.LeaseId == lease);

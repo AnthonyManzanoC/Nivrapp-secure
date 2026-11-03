@@ -54,7 +54,8 @@ public static partial class EndpointExtensions
             var conversation = await db.Conversations.Include(x => x.Participants).FirstOrDefaultAsync(x => x.Id == invite.ConversationId, ct);
             if (!InviteAdmin(conversation, invite.CreatorUserId)) return Results.NotFound();
             http.Response.Headers.CacheControl = "no-store";
-            return Results.Ok(new { name = conversation!.GroupName ?? "Grupo Nivra", members = conversation.Participants.Count(x => x.RemovedAt == null), invite.ExpiresAt });
+            return Results.Ok(new { name = conversation!.GroupName ?? "Grupo Nivra", members = conversation.Participants.Count(x => x.RemovedAt == null), invite.ExpiresAt,
+                communityId = await db.Communities.AnyAsync(c=>c.Id==conversation.Id,ct) ? conversation.Id : null });
         }).RequireRateLimiting("auth");
         app.MapPost("/group-invites/accept", async Task<IResult> (GroupInviteCode request, HttpContext http, NivraDbContext db, INivraStore store, TimeProvider clock, IHubContext<NivraHub> hub, CancellationToken ct) =>
         {
@@ -77,6 +78,7 @@ public static partial class EndpointExtensions
                 if (!GroupInvitePolicy.CanRedeem(invite, conversation, user.UserId, now)) return Results.NotFound();
                 if (existing is null)
                 {
+                    if (await db.Communities.AnyAsync(x=>x.Id==conversation.Id,ct) && conversation.Participants.Count(p=>p.RemovedAt==null)>=CommunityPolicy.MaxMembers) return Results.Conflict();
                     if (invite.Uses >= invite.MaxUses) return Results.Conflict();
                     conversation.Participants.Add(new ConversationParticipant { UserId = user.UserId, Role = ParticipantRole.Member, CanInvite = NormalizeGroupSettings(conversation.Settings).AddMembers == "all", JoinedAt = now });
                     conversation.UpdatedAt = now;
@@ -85,7 +87,7 @@ public static partial class EndpointExtensions
                 }
                 await tx.CommitAsync(ct);
                 joinedId = conversation.Id;
-                return Results.Ok(new { conversationId = conversation.Id });
+                return Results.Ok(new { conversationId = conversation.Id, communityId = await db.Communities.AnyAsync(c=>c.Id==conversation.Id,ct) ? conversation.Id : null });
             });
             if (joinedId != null)
             {

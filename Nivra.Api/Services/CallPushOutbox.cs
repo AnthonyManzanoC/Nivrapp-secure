@@ -33,7 +33,7 @@ public static class CallPushOutbox
 
     public static bool ShouldSend(CallSession? call, CallPushOutboxItem item, DateTimeOffset now) =>
         call is not null && call.Id == item.CallId && (call.Status is CallStatus.Ringing or CallStatus.Active) && call.EndedAt is null &&
-        item.CompletedAt == null && item.ExpiresAt > now && call.StartedAt + InvitationLifetime > now &&
+        item.AnsweredDeviceId == null && item.CompletedAt == null && item.ExpiresAt > now && call.StartedAt + InvitationLifetime > now &&
         item.RecipientUserId != call.InitiatorUserId && call.ParticipantUserIds.Contains(item.RecipientUserId) &&
         !call.ParticipantSessions.ContainsKey(item.RecipientUserId);
 
@@ -46,16 +46,21 @@ public static class CallPushOutbox
     public static IQueryable<CallPushOutboxItem> PendingRecipient(NivraDbContext db, string callId, string userId) =>
         db.CallPushOutbox.Where(item => item.CallId == callId && item.RecipientUserId == userId && item.CompletedAt == null);
 
-    // Persist acknowledgement in the answer transaction. Leaving a group again
-    // must not make that account's original invitation eligible for a retry.
-    public static Task<int> AcknowledgeAsync(NivraDbContext db, string callId, string userId, DateTimeOffset now, CancellationToken ct) =>
-        PendingRecipient(db, callId, userId).ExecuteUpdateAsync(update => update.SetProperty(item => item.CompletedAt, now), ct);
+    // Switch the durable invitation to a silent dismissal in the same transaction as the claim.
+    // A delivered wake-up still needs a dismissal, and repeat answers must not resurrect it.
+    public static Task<int> AcknowledgeAsync(NivraDbContext db, string callId, string userId, string deviceId, DateTimeOffset now, CancellationToken ct) =>
+        db.CallPushOutbox.Where(item=>item.CallId==callId&&item.RecipientUserId==userId&&item.AnsweredDeviceId==null&&item.ExpiresAt>now)
+            .ExecuteUpdateAsync(update=>update.SetProperty(item=>item.AnsweredDeviceId,deviceId)
+                .SetProperty(item=>item.CompletedAt,(DateTimeOffset?)null).SetProperty(item=>item.NextAttemptAt,now)
+                .SetProperty(item=>item.Attempts,0).SetProperty(item=>item.LeaseId,(string?)null).SetProperty(item=>item.LeaseUntil,(DateTimeOffset?)null),ct);
 
     public static async Task<CallPushDelivery> DispatchAsync(CallSession? call, CallPushOutboxItem item, DateTimeOffset now,
         Func<DateTimeOffset, CancellationToken, Task<bool>> send, CancellationToken cancellationToken, TimeSpan? sendBudget = null)
     {
-        if (!ShouldSend(call, item, now)) return CallPushDelivery.Discard;
-        var expires = item.ExpiresAt < call!.StartedAt + InvitationLifetime ? item.ExpiresAt : call.StartedAt + InvitationLifetime;
+        var dismiss = item.AnsweredDeviceId != null;
+        if (dismiss ? call?.Id != item.CallId || item.CompletedAt != null || item.ExpiresAt <= now || !call.ParticipantUserIds.Contains(item.RecipientUserId)
+                    : !ShouldSend(call, item, now)) return CallPushDelivery.Discard;
+        var expires = dismiss || item.ExpiresAt < call!.StartedAt + InvitationLifetime ? item.ExpiresAt : call.StartedAt + InvitationLifetime;
         var budget = expires - now;
         if (budget > (sendBudget ?? SendBudget)) budget = sendBudget ?? SendBudget;
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);

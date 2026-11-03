@@ -1171,9 +1171,9 @@ export class ChatService implements OnDestroy {
     });
   }
 
-  enqueueText(conversation: Conversation, text: string) {
+  enqueueText(conversation: Conversation, text: string, policy: MessagePolicyOptions = {}) {
     this.assertPrivateChatUnlocked(conversation.id);
-    return this.textOutbox.enqueue(conversation, text);
+    return this.textOutbox.enqueue(conversation, text, policy);
   }
 
   async sendFile(

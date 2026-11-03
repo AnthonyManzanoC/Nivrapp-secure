@@ -11,6 +11,8 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     public DbSet<GroupInviteLink> GroupInviteLinks => Set<GroupInviteLink>();
+    public DbSet<CommunityRecord> Communities => Set<CommunityRecord>();
+    public DbSet<CommunityGroupRecord> CommunityGroups => Set<CommunityGroupRecord>();
     public DbSet<HistoryKeyTransfer> HistoryKeyTransfers => Set<HistoryKeyTransfer>();
     public DbSet<HistoryKeyTransferResponse> HistoryKeyTransferResponses => Set<HistoryKeyTransferResponse>();
 
@@ -65,6 +67,21 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        modelBuilder.Entity<CommunityRecord>(entity =>
+        {
+            entity.ToTable("communities"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasMaxLength(64);
+            entity.Property(x => x.Description).HasMaxLength(1000);
+            entity.HasOne<ConversationRecord>().WithOne().HasForeignKey<CommunityRecord>(x => x.Id).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<CommunityGroupRecord>(entity =>
+        {
+            entity.ToTable("community_groups"); entity.HasKey(x => new { x.CommunityId, x.ConversationId });
+            entity.Property(x => x.CommunityId).HasMaxLength(64); entity.Property(x => x.ConversationId).HasMaxLength(64);
+            entity.HasIndex(x => x.ConversationId).IsUnique();
+            entity.HasOne<CommunityRecord>().WithMany().HasForeignKey(x => x.CommunityId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<ConversationRecord>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<RatchetPilotDevice>(entity =>
         {
             entity.ToTable("ratchet_pilot_devices", table =>
@@ -649,6 +666,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(item => item.CallId).HasMaxLength(64);
             entity.Property(item => item.RecipientUserId).HasMaxLength(64);
             entity.Property(item => item.LeaseId).HasMaxLength(32);
+            entity.Property(item => item.AnsweredDeviceId).HasMaxLength(64);
             entity.HasIndex(item => new { item.CompletedAt, item.NextAttemptAt, item.LeaseUntil });
             entity.HasIndex(item => item.ExpiresAt);
             entity.HasOne<CallSession>().WithMany().HasForeignKey(item => item.CallId).OnDelete(DeleteBehavior.Cascade);

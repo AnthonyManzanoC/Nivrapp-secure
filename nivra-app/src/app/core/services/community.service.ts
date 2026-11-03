@@ -1,0 +1,88 @@
+import { DestroyRef, Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
+import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { firstValueFrom } from 'rxjs';
+import { AuthService } from './auth.service';
+import { ChatService } from './chat.service';
+import { NivraApiService } from './nivra-api.service';
+import { SignalrService } from './signalr.service';
+
+export interface CommunityGroup { id:string; name:string; photo:string|null; memberCount:number; joined:boolean; }
+export interface Community { id:string; name:string; description:string; photo:string|null; role:string; memberCount:number; updatedAt:string; groups:CommunityGroup[]; }
+
+@Injectable({providedIn:'root'})
+export class CommunityService {
+  private readonly api=inject(NivraApiService);
+  private readonly auth=inject(AuthService);
+  private readonly chat=inject(ChatService);
+  private readonly realtime=inject(SignalrService);
+  private readonly destroyRef=inject(DestroyRef);
+  private readonly state=signal<{scope:string;items:Community[]}>({scope:'',items:[]});
+  private revision=0;
+  private observedScope='';
+  private readonly intents=new Map<string,{signature:string;requestId:string}>();
+  readonly loading=signal(false);
+  readonly busy=signal('');
+  readonly error=signal('');
+  readonly items=computed(()=>this.state().scope===this.scope()?this.state().items:[]);
+  private scope():string {const s=this.auth.session();return JSON.stringify([s?.user.id,s?.device.id,this.auth.sessionGeneration?.()??0]);}
+  constructor(){
+    effect(()=>{this.auth.session();this.auth.sessionGeneration?.();untracked(()=>{
+      const scope=this.scope();if(scope===this.observedScope)return;this.observedScope=scope;
+      this.revision++;this.state.set({scope,items:[]});this.busy.set('');this.error.set('');this.loading.set(false);this.intents.clear();
+      if(this.auth.session())void this.load();
+    });});
+    this.realtime.events$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(event=>{
+      if(['community.changed','conversation.updated','conversation.removed','reconnected'].includes(event.type))void this.load();
+    });
+    this.destroyRef.onDestroy(()=>this.revision++);
+  }
+  async load():Promise<void>{
+    if(!this.auth.session()||this.destroyRef.destroyed)return;
+    const scope=this.scope(),revision=++this.revision;this.loading.set(true);
+    try {const items=await firstValueFrom(this.api.get<Community[]>('/communities'));
+      if(scope===this.scope()&&revision===this.revision&&!this.destroyRef.destroyed){this.state.set({scope,items});this.error.set('');}
+    }catch(error){if(scope===this.scope()&&revision===this.revision)this.error.set(this.message(error));}
+    finally{if(scope===this.scope()&&revision===this.revision)this.loading.set(false);}
+  }
+  create(value:{name:string;description:string;photo:string|null;groupIds:string[]}):Promise<Community|null>{return this.createOnce('create',value,requestId=>firstValueFrom(this.api.post<Community>('/communities',{...value,requestId})));}
+  update(id:string,value:{name:string;description:string;photo:string|null}):Promise<Community|null>{return this.mutate('edit:'+id,()=>firstValueFrom(this.api.patch<Community>(`/communities/${encodeURIComponent(id)}`,value)));}
+  async leave(id:string):Promise<boolean>{const scope=this.scope();const done=!!await this.mutate('leave:'+id,async()=>{await firstValueFrom(this.api.post(`/communities/${encodeURIComponent(id)}/leave`,{}));return true;});
+    if(done&&scope===this.scope())this.state.update(s=>({...s,items:s.items.filter(c=>c.id!==id)}));return done;
+  }
+  link(id:string,conversationId:string):Promise<Community|null>{return this.mutate('link:'+id,()=>firstValueFrom(this.api.post<Community>(`/communities/${encodeURIComponent(id)}/groups`,{conversationId})));}
+  async unlink(id:string,groupId:string):Promise<void>{await this.mutate('unlink:'+groupId,async()=>{await firstValueFrom(this.api.delete(`/communities/${encodeURIComponent(id)}/groups/${encodeURIComponent(groupId)}`));return null;});}
+  async join(id:string,groupId:string):Promise<string|null>{
+    const result=await this.mutate('join:'+groupId,()=>firstValueFrom(this.api.post<{conversationId:string}>(`/communities/${encodeURIComponent(id)}/groups/${encodeURIComponent(groupId)}/join`,{})));
+    return result?.conversationId??null;
+  }
+  createGroup(id:string,name:string,participantUserIds:string[]):Promise<Community|null>{return this.createOnce('group:'+id,{name,participantUserIds},requestId=>firstValueFrom(this.api.post<Community>(`/communities/${encodeURIComponent(id)}/groups/create`,{name,participantUserIds,requestId})));}
+  async inviteLink(id:string):Promise<string|null>{
+    const response=await this.mutate('invite:'+id,()=>firstValueFrom(this.api.post<{code:string}>(`/conversations/${encodeURIComponent(id)}/invite-links`,{})));
+    return response ? `https://nivrapp-secure.vercel.app/group/invite#${encodeURIComponent(response.code)}` : null;
+  }
+  private async mutate<T>(key:string,action:()=>Promise<T>):Promise<T|null>{
+    if(this.busy())return null;
+    const scope=this.scope();this.busy.set(key);this.error.set('');
+    try {const result=await action();if(scope!==this.scope()||this.destroyRef.destroyed)return null;
+      if(result&&typeof result==='object'&&'groups' in result&&'id' in result){
+        const community=result as unknown as Community;
+        this.state.update(s=>({scope,items:[community,...s.items.filter(c=>c.id!==community.id)]}));
+      }
+      // A failed refresh must not turn a committed creation into a second creation.
+      await Promise.allSettled([this.load(),this.chat.refreshChats()]);
+      return scope===this.scope()&&!this.destroyRef.destroyed?result:null;
+    }catch(error){if(scope===this.scope())this.error.set(this.message(error));return null;}
+    finally{if(scope===this.scope())this.busy.set('');}
+  }
+  private async createOnce(key:string,value:unknown,action:(requestId:string)=>Promise<Community>):Promise<Community|null>{
+    if(this.busy())return null;
+    const scope=this.scope(),signature=JSON.stringify(value);
+    const prior=this.intents.get(key);
+    const intent=prior?.signature===signature?prior:{signature,requestId:crypto.randomUUID()};
+    this.intents.set(key,intent);
+    const result=await this.mutate(key,()=>action(intent.requestId));
+    if(result&&scope===this.scope()&&this.intents.get(key)===intent)this.intents.delete(key);
+    return result;
+  }
+  private message(error:unknown):string{return (error as {error?:{message?:string}})?.error?.message || 'No se pudo actualizar la comunidad. Comprueba la conexión y vuelve a intentarlo.';}
+}

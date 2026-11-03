@@ -224,6 +224,7 @@ export class ContactsPage implements OnInit,OnDestroy {
  focusSearch():void{this.requestsOpen=false;this.searchOpen=true;requestAnimationFrame(()=>void this.input?.setFocus());}
  closeSearch():void{this.query='';this.searchOpen=false;this.searchChanged();void this.input?.getInputElement().then(input=>input.blur());}
  back():void{void this.router.navigateByUrl('/app/chats');}
+ newCommunity():void{void this.router.navigate(['/app/communities'],{queryParams:{create:1}});}
  compose(kind:'group'|'story'|'pass'):void{void this.router.navigate(['/app/chats'],{queryParams:{compose:kind}});}
  reviewRequests():void{this.closeSearch();this.requestsOpen=true;requestAnimationFrame(()=>document.getElementById('contact-friend-requests')?.scrollIntoView({block:'start',behavior:'smooth'}));}
  async openSelf():Promise<void>{const user=this.auth.session()?.user;if(user)await this.openPerson({...user,isContact:false,isMutualContact:false,isFavorite:false,friendshipState:'none'} as UserSummary);}

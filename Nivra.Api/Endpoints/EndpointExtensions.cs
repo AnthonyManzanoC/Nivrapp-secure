@@ -73,6 +73,7 @@ public static partial class EndpointExtensions
         app.MapContactBlockEndpoints();
         app.MapDirectoryAndFriendEndpoints();
         app.MapConversationAndMessageEndpoints();
+        app.MapCommunityEndpoints();
         app.MapMessageHistoryRecoveryEndpoints();
         app.MapStoryEndpoints();
         app.MapFileEndpoints();
@@ -1384,7 +1385,7 @@ public static partial class EndpointExtensions
             return Results.Ok(messages.Select(message => ToMessageResponseForUser(message, current.UserId, current.DeviceId)).ToList());
         });
 
-        conversations.MapPatch("/{conversationId}", async Task<IResult> (string conversationId, PatchConversationRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        conversations.MapPatch("/{conversationId}", async Task<IResult> (string conversationId, PatchConversationRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1425,6 +1426,8 @@ public static partial class EndpointExtensions
                     return Error("forbidden", "Solo los admins pueden cambiar la configuracion del grupo.", StatusCodes.Status403Forbidden);
                 }
 
+                if (await db.Communities.AnyAsync(x=>x.Id==conversationId,cancellationToken) && NormalizeGroupSettings(request.Settings).SendMessages!="admins")
+                    return Error("community_announcements", "En Avisos solo publican los administradores de la comunidad.", 400);
                 conversation.Settings = NormalizeGroupSettings(request.Settings);
                 ApplyGroupInvitePolicy(conversation);
             }
@@ -1445,7 +1448,7 @@ public static partial class EndpointExtensions
             return Results.Ok(response);
         });
 
-        conversations.MapPost("/{conversationId}/participants", async Task<IResult> (string conversationId, AddConversationParticipantsRequest request, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
+        conversations.MapPost("/{conversationId}/participants", async Task<IResult> (string conversationId, AddConversationParticipantsRequest request, HttpContext http, NivraDbContext db, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1488,6 +1491,9 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
+            if (await db.Communities.AnyAsync(c=>c.Id==conversationId,cancellationToken) &&
+                conversation.Participants.Count(p=>p.RemovedAt==null)+requestedIds.Count(id=>!conversation.Participants.Any(p=>p.UserId==id&&p.RemovedAt==null))>CommunityPolicy.MaxMembers)
+                return Error("community_members", "La comunidad admite hasta 512 miembros.",409);
             var membersCanInvite = NormalizeGroupSettings(conversation.Settings).AddMembers == "all";
             var addedIds = new List<string>();
             foreach (var userId in requestedIds)
@@ -1602,7 +1608,7 @@ public static partial class EndpointExtensions
             return Results.Ok(response);
         });
 
-        conversations.MapPost("/{conversationId}/leave", async Task<IResult> (string conversationId, HttpContext http, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
+        conversations.MapPost("/{conversationId}/leave", async Task<IResult> (string conversationId, HttpContext http, NivraDbContext db, INivraStore store, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1621,6 +1627,8 @@ public static partial class EndpointExtensions
                 return Error("invalid_conversation", "Solo puedes salir de chats grupales.", StatusCodes.Status400BadRequest);
             }
 
+            if (await db.Communities.AnyAsync(c=>c.Id==conversationId,cancellationToken))
+                return await LeaveCommunityAsync(conversationId,current.UserId,db,store,timeProvider,hub,cancellationToken);
             var participant = conversation.Participants.FirstOrDefault(candidate => candidate.UserId == current.UserId && candidate.RemovedAt is null);
             if (participant is null)
             {
@@ -3820,7 +3828,7 @@ public static partial class EndpointExtensions
             if (!claimed) return CallOwnedElsewhere();
             if (current.UserId != call.InitiatorUserId || call.ParticipantSessions.Count > 1) call.Status = CallStatus.Active;
             await store.SaveChangesAsync(cancellationToken);
-            await CallPushOutbox.AcknowledgeAsync(db, call.Id, current.UserId, timeProvider.GetUtcNow(), cancellationToken);
+            await CallPushOutbox.AcknowledgeAsync(db, call.Id, current.UserId, current.DeviceId, timeProvider.GetUtcNow(), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("call_answered_elsewhere", new
             {
@@ -4019,7 +4027,7 @@ public static partial class EndpointExtensions
             db.CallSignals.Add(signal);
             await store.SaveChangesAsync(cancellationToken);
             if (signalType is "accepted" or "answer")
-                await CallPushOutbox.AcknowledgeAsync(db, call.Id, current.UserId, now, cancellationToken);
+                await CallPushOutbox.AcknowledgeAsync(db, call.Id, current.UserId, current.DeviceId, now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             var recipientGroup = targetSession is null ? GroupsFor.User(request.TargetUserId) : GroupsFor.Device(targetSession.DeviceId);
             await hub.Clients.Group(recipientGroup).SendAsync("call.signal", new

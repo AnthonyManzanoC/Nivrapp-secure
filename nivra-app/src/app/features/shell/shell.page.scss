@@ -531,3 +531,13 @@
  .incoming-action { min-height:68px; flex-direction:column; gap:6px; padding:12px; border-radius:28px; font-size:14px; }
  .incoming-action ion-icon { font-size:28px; }
 }
+
+/* The active call owns a row; it never covers Contacts or the message composer. */
+.app-stage { display:flex; flex-direction:column; }
+.route-stage { position:relative; flex:1 1 0; min-height:0; min-width:0; overflow:hidden; }
+.call-navigation-slot { flex:0 0 auto; min-width:0; }
+.call-navigation-slot .ongoing-call { position:static; width:100%; max-width:none; margin:0; padding:8px 16px; border:0; border-bottom:1px solid var(--nivra-line); border-radius:0; box-shadow:none; background:color-mix(in srgb,var(--nivra-brand) 10%,var(--nivra-panel-solid)); min-height:56px; justify-content:space-between; }
+.call-navigation-slot .ongoing-call-return { flex:1; min-width:0; min-height:40px; }
+.call-navigation-slot .ongoing-call-return strong { color:var(--nivra-text); font-size:13px; }
+.call-navigation-slot .ongoing-call-return small { color:var(--nivra-brand-2); font-size:11px; }
+.call-navigation-slot .ongoing-call ion-icon { color:var(--nivra-brand-2); font-size:23px; flex:none; }

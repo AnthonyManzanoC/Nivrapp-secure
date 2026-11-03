@@ -74,6 +74,7 @@ export const routes: Routes = [
         ],
       },
       { path: 'contacts', loadComponent: () => import('./features/contacts/contacts.page').then(m => m.ContactsPage) },
+      { path: 'communities', loadComponent: () => import('./features/communities/communities.page').then(m => m.CommunitiesPage) },
       {
         path: 'broadcasts',
         loadComponent: () => import('./features/broadcasts/broadcasts.page').then(m => m.BroadcastsPage),

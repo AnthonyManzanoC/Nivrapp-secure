@@ -227,6 +227,10 @@ export class AppComponent {
         void this.router.navigateByUrl('/app/calls');
       } else if (pushType === 'contact-joined') {
         void this.router.navigateByUrl('/app/world');
+      } else if (pushType.startsWith('vault-') && data['roomId']) {
+        void this.router.navigate(['/app/vault'], { queryParams: { room: data['roomId'] } });
+      } else if (data['communityId']) {
+        void this.router.navigate(['/app/communities'], { queryParams: { id: data['communityId'] } });
       } else if (data['conversationId']) {
         void this.router.navigateByUrl(`/app/chats/${encodeURIComponent(data['conversationId'])}`);
       }

@@ -382,6 +382,7 @@
       <div class="chats-actions-menu" role="menu" (keydown)="onChatMenuKeydown($event)" [attr.aria-label]="'CHATS.MORE_ACTIONS' | translate:'Más opciones de chats'">
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('new-chat')"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.NEW_CHAT' | translate:'Nuevo chat' }}</button>
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('new-group')"><ion-icon name="people-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.NEW_GROUP' | translate:'Nuevo grupo' }}</button>
+        <button type="button" role="menuitem" (click)="chooseChatMenuAction('new-community')"><ion-icon name="people-outline" aria-hidden="true"></ion-icon>Nueva comunidad</button>
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('broadcasts')"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon>{{ 'BROADCAST.TITLE' | translate:'Listas de difusión' }}</button>
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('new-story')"><ion-icon name="image-outline" aria-hidden="true"></ion-icon>{{ 'WORLD.NEW_STORY' | translate:'Nueva historia' }}</button>
         <button type="button" role="menuitem" (click)="chooseChatMenuAction('share-pass')"><ion-icon name="share-social-outline" aria-hidden="true"></ion-icon>{{ 'CHATS.SHARE_PASS' | translate:'Compartir pase' }}</button>

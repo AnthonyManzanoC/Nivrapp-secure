@@ -1197,23 +1197,31 @@ export class VaultService {
 
     const text = [
       `Nivra Vault: Te he invitado a mi Sala Privada "${room.name}".`,
-      'Usa el PIN acordado para entrar. Primero Nivra valida que estes en la lista de invitados y luego desbloquea el contenido.',
+      room.accessMode === 'InviteOnly' ? 'Abre la invitación con tu cuenta para entrar.' : 'Usa el PIN acordado para entrar. Nivra comprueba tu invitación antes de desbloquear el contenido.',
       'Los mensajes siguen las reglas de retencion de la sala.',
+      `https://nivrapp-secure.vercel.app/app/vault?room=${encodeURIComponent(room.id)}`,
     ].join('\n');
 
-    await Promise.all(members.map(async (member) => {
+    // Limit connection work; persist each encrypted invitation before sending it.
+    const send = async (member: VaultRoomMember) => {
       try {
         this.checkContext(context);
         const conversation = await this.chat.createDirectConversation(this.memberAsPerson(member));
         this.checkContext(context);
-        await this.chat.sendText(conversation, text, {
-          ttlSeconds: this.ttlSecondsForRoom(room),
+        const ttlSeconds = this.ttlSecondsForRoom(room);
+        if (room.expiresAt && !ttlSeconds) return;
+        await this.chat.enqueueText(conversation, text, {
+          ttlSeconds,
         });
         this.checkContext(context);
       } catch {
         // Best-effort E2EE invite: backend push + vault.invited still notify the member.
       }
-    }));
+    };
+    for (let offset = 0; offset < members.length; offset += 3) {
+      this.checkContext(context);
+      await Promise.all(members.slice(offset, offset + 3).map(send));
+    }
   }
 
   private invitedUserIdsFromRoom(room: VaultRoom, fallbackIds: string[]): string[] {

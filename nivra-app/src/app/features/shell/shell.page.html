@@ -41,15 +41,12 @@
           <a [href]="compatibility.updateUrl" target="_blank" rel="noopener noreferrer">Actualizar Nivra</a>
         </div>
       }
-      <router-outlet></router-outlet>
-    </section>
-
-    @if (calls.activeCall() && calls.phase() !== 'ringing') {
-      @if (!onCallsPage() || calls.audioOutput.playbackBlocked()) {
+      <div class="call-navigation-slot">
+    @if (calls.activeCall() && calls.phase() !== 'ringing' && !onCallsPage()) {
         <aside class="ongoing-call" aria-label="Llamada en curso">
           @if (!onCallsPage()) {
             <button type="button" (click)="openCalls()" class="ongoing-call-return">
-              <ion-icon name="call-outline"></ion-icon>
+              <ion-icon [name]="calls.activeCall()?.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
               <span><strong>{{ calls.callTitle(calls.activeCall()) }}</strong><small>Volver a la llamada</small></span>
             </button>
           }
@@ -57,12 +54,14 @@
             <button type="button" class="resume-audio" (click)="calls.audioOutput.resume()">Activar audio</button>
           }
         </aside>
-      }
     }
 
     @if (!calls.activeCall() && calls.resumableCall() && !onCallsPage()) {
       <aside class="ongoing-call" aria-label="Llamada todavía activa"><button type="button" class="ongoing-call-return" (click)="openCalls()"><ion-icon name="call-outline"></ion-icon><span><strong>Tu llamada sigue activa</strong><small>Volver a unirme</small></span></button></aside>
     }
+      </div>
+      <div class="route-stage"><router-outlet></router-outlet></div>
+    </section>
     @if (calls.activeCall() && calls.phase() === 'connected' && !appLock.isContentLocked() && calls.games?.invitationVisible()) {
       <app-call-game-invitation [label]="calls.gameInvitationLabel()" (accepted)="calls.games.acceptInvitation();openCalls()" (dismissed)="calls.games.dismissInvitation()" />
     }

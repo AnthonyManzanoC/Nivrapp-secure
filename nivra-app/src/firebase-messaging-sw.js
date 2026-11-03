@@ -95,6 +95,18 @@ async function showNivraNotification(data) {
   const state = await readPushState();
   if (!registeredScope(state, data)) return;
   const clientsList = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+  const type = normalizeType(data.type);
+  if (type === 'call-answered-elsewhere') {
+    if (!data.callId || !data.answeredByDeviceId || data.answeredByDeviceId === data.recipientDeviceId) return;
+    await rememberSilencedRing(data);
+    for (const notification of await self.registration.getNotifications()) {
+      if (ringKey(normalizeData(notification.data || {})) === ringKey(data)) notification.close();
+    }
+    for (const client of clientsList) client.postMessage({ type: 'nivra.push.received', intent: 'receive', data });
+    return;
+  }
+  const incoming = type === 'incoming-call' || type === 'incomingcall';
+  if (incoming && await isSilencedRing(data)) return;
   if (normalizeType(data.type) === 'force-wipe' && data.code === 'FORCE_WIPE') {
     await markPendingWipe(data);
     for (const client of clientsList) client.postMessage({ type: 'nivra.push.received', intent: 'receive', data });
@@ -105,6 +117,7 @@ async function showNivraNotification(data) {
   const acknowledged = await Promise.all(visible.map(client => deliverReceipt(client, data)));
   if (acknowledged.some(Boolean)) return;
   const visual = await visualForData(data, state);
+  if (incoming && await isSilencedRing(data)) return;
   await self.registration.showNotification(visual.title, {
     body: visual.body, tag: visual.tag, data,
     icon: '/assets/icon/favicon.png', badge: '/assets/icon/favicon.png',
@@ -113,6 +126,30 @@ async function showNivraNotification(data) {
     actions: visual.type === 'incoming-call' && activeScope(state, data)
       ? [{ action: 'accept', title: 'Contestar' }, { action: 'decline', title: 'Rechazar' }] : []
   });
+}
+
+function ringKey(data) { return JSON.stringify([data.recipientUserId, data.recipientDeviceId, data.callId]); }
+
+async function isSilencedRing(data) {
+  const db = await pushStateDb();
+  try { const rows = await idbGet(db, 'state', 'silencedRings'); return (rows?.[ringKey(data)] || 0) > Date.now(); }
+  finally { db.close(); }
+}
+
+async function rememberSilencedRing(data) {
+  const db = await pushStateDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('state', 'readwrite'); const store = tx.objectStore('state');
+      const request = store.get('silencedRings');
+      request.onsuccess = () => {
+        const now = Date.now();
+        const rows = Object.entries(request.result || {}).filter(([, expires]) => expires > now).slice(-99);
+        store.put({ ...Object.fromEntries(rows), [ringKey(data)]: now + 120_000 }, 'silencedRings');
+      };
+      tx.oncomplete = resolve; tx.onerror = () => reject(tx.error); tx.onabort = () => reject(tx.error);
+    });
+  } finally { db.close(); }
 }
 
 function deliverReceipt(client, data) {
