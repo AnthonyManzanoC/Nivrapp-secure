@@ -1,4 +1,4 @@
-import { Component, DestroyRef, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, effect, inject, signal, untracked, viewChild } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { IonContent } from '@ionic/angular/standalone';
@@ -18,11 +18,20 @@ export class CommunitiesPage {
   private readonly router=inject(Router);
   private readonly destroyRef=inject(DestroyRef);
   private readonly content = viewChild(IonContent);
+  private readonly groupManager = viewChild<ElementRef<HTMLElement>>('groupManager');
   readonly selectedId=signal('');
   readonly creating=signal(false);
+  readonly fromChats = signal(false);
   editing=false;
   private uiScope=this.scope();
   readonly selected=computed(()=>this.communities.items().find(item=>item.id===this.selectedId())??null);
+  readonly groupSections = computed(() => {
+    const groups = this.selected()?.groups ?? [];
+    return [
+      { id: 'joined', title: 'Grupos a los que perteneces', groups: groups.filter(group => group.joined) },
+      { id: 'available', title: 'Grupos a los que puedes unirte', groups: groups.filter(group => !group.joined) },
+    ].filter(section => section.groups.length > 0);
+  });
   readonly availableGroups=computed(()=>{
     const linked=new Set(this.communities.items().flatMap(c=>[c.id,...c.groups.map(g=>g.id)]));
     return this.chat.conversations().filter(c=>this.chat.isGroup(c)&&!linked.has(c.id)&&c.participants.some(p=>p.userId===this.auth.session()?.user.id&&!p.removedAt&&['Owner','Admin'].includes(p.role)));
@@ -30,6 +39,7 @@ export class CommunitiesPage {
   name='';description='';photo:string|null=null;groupIds=new Set<string>();linkId='';newGroupName='';
   notice='';formError='';shareUrl='';query='';
   constructor(){this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe(params=>{
+    this.fromChats.set(params.get('from') === 'chats');
     this.creating.set(params.get('create')==='1');this.selectedId.set(params.get('id')??'');this.shareUrl='';this.editing=false;
     this.linkId = '';
     this.newGroupName = '';
@@ -44,9 +54,19 @@ export class CommunitiesPage {
   private scope():string{return JSON.stringify([this.auth.session()?.user.id,this.auth.session()?.device.id,this.auth.sessionGeneration?.()??0]);}
   isAdmin(item:Community):boolean{return ['Owner','Admin'].includes(item.role);}
   filtered():Community[]{const q=this.query.trim().toLocaleLowerCase();return this.communities.items().filter(c=>c.name.toLocaleLowerCase().includes(q));}
-  select(item:Community):void{void this.router.navigate(['/app/communities'],{queryParams:{id:item.id}});}
-  newCommunity():void{void this.router.navigate(['/app/communities'],{queryParams:{create:1}});}
-  back():void{void this.router.navigate(['/app/communities']);}
+  select(item:Community):void{this.navigate({id:item.id});}
+  newCommunity():void{this.navigate({create:1});}
+  back():void{this.navigate({});}
+  private navigate(queryParams: { id?: string; create?: number }): void {
+    void this.router.navigate(['/app/communities'], {
+      queryParams: this.fromChats() ? { ...queryParams, from: 'chats' } : queryParams,
+    });
+  }
+  showGroupManager(): void {
+    const heading = this.groupManager()?.nativeElement;
+    heading?.focus({ preventScroll: true });
+    heading?.scrollIntoView({ block: 'start', behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+  }
   cancelEditor(): void {
     if (this.communities.busy()) return;
     if (!this.editing) {

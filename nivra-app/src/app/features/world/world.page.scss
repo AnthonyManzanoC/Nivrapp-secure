@@ -1146,6 +1146,21 @@ ion-modal.story-stats-modal {
 .world-eyebrow { color:var(--nivra-muted); font-size:10px; font-weight:700; letter-spacing:2px; }
 .world-surface .page-head h1 { margin:10px 0 8px; font-size:36px; letter-spacing:-1.4px; }
 .world-surface .page-head p { margin:0; font-size:14px; color:var(--nivra-muted); }
+.world-communities-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  margin-top: 8px;
+  padding-inline: 11px;
+  border: 1px solid var(--nivra-selection-line);
+  border-radius: 14px;
+  background: var(--nivra-selection);
+  color: var(--nivra-brand-2);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+}
 .world-contacts { position:relative; width:44px; height:44px; display:grid; place-items:center; color:var(--nivra-text); border-radius:50%; text-decoration:none; }
 .world-contacts ion-icon { font-size:25px; }
 .world-contacts>span { position:absolute; inset:-2px -2px auto auto; min-width:18px; height:18px; font-size:11px; display:grid; place-items:center; color:#05382b; background:var(--nivra-brand); border-radius:50%; }

@@ -1,6 +1,19 @@
-<ion-content fullscreen class="chats-page" [class.search-active]="query.trim() || showRecentSearches" [attr.data-tab-swipe-lock]="query.trim() || showRecentSearches ? 'true' : null" [class.three-line-list]="appSettings.settings().chatListDensity === 'three-line'">
+<ion-content fullscreen class="chats-page" [class.search-active]="query.trim() || showRecentSearches" [attr.data-tab-swipe-lock]="query.trim() || showRecentSearches || selectionActive() ? 'true' : null" [class.three-line-list]="appSettings.settings().chatListDensity === 'three-line'">
   <section class="chat-layout">
-    <aside class="sidebar" [class.has-story-strip]="storyHighlights().length && !query.trim() && !showRecentSearches">
+    <aside class="sidebar" [class.chat-selection-active]="selectionActive()" [class.has-story-strip]="storyHighlights().length && !query.trim() && !showRecentSearches">
+      @if(selectionActive()){
+        <header class="chat-selection-toolbar" aria-label="Acciones para chats seleccionados" [attr.aria-busy]="bulkChatBusy">
+          <button type="button" (click)="resetChatSelection()" [disabled]="bulkChatBusy" aria-label="Salir de la selección"><ion-icon name="arrow-back-outline" aria-hidden="true"></ion-icon></button>
+          <div class="chat-selection-count" role="status"><strong>{{selectedChats().length}}</strong><span>{{selectedChats().length === 1 ? 'seleccionado' : 'seleccionados'}}</span></div>
+          @if(bulkChatBusy){<ion-spinner name="crescent" aria-label="Actualizando selección"></ion-spinner>}
+          <button type="button" (click)="runBulkChatAction('pin')" [disabled]="bulkChatBusy" [attr.aria-label]="bulkPin() ? 'Fijar chats seleccionados' : 'Desfijar chats seleccionados'" [title]="bulkPin() ? 'Fijar' : 'Desfijar'"><ion-icon name="pin-outline" aria-hidden="true"></ion-icon></button>
+          <button class="bulk-delete-action" type="button" (click)="bulkDeleteOpen = true" [disabled]="bulkChatBusy || !canBulkDelete()" aria-label="Eliminar chats seleccionados para mí" [title]="canBulkDelete() ? 'Eliminar para mí' : 'Algunos chats se administran desde su propia información'"><ion-icon name="trash-outline" aria-hidden="true"></ion-icon></button>
+          <button type="button" (click)="runBulkChatAction('archive')" [disabled]="bulkChatBusy" [attr.aria-label]="bulkArchive() ? 'Archivar chats seleccionados' : 'Desarchivar chats seleccionados'" [title]="bulkArchive() ? 'Archivar' : 'Desarchivar'"><ion-icon name="archive-outline" aria-hidden="true"></ion-icon></button>
+        </header>
+        @if(conversationActionError){
+          <p class="bulk-chat-error" role="alert" [appTransientNotice]="conversationActionError" [appNoticeDuration]="15000" (noticeExpired)="conversationActionError=''">{{conversationActionError}}</p>
+        }
+      }
       <header class="side-head">
         <div class="side-heading">
           <span class="workspace-eyebrow">NIVRA · PRIVATE MESSENGER</span>
@@ -226,50 +239,71 @@
           }
 
           <div class="conversation-list-stage" [class.is-loading]="showConversationSkeleton()" [attr.aria-busy]="conversationIndexLoading()">
-          @if (!androidStoryGesturesEnabled() && !detailActive && !showRecentSearches) {
+          @if (!androidStoryGesturesEnabled() && !detailActive && !showRecentSearches && !selectionActive()) {
             <ion-refresher slot="fixed" mode="ios" [disabled]="refreshing" (ionRefresh)="onPullRefresh($event)">
               <ion-refresher-content pullingIcon="chevron-down-outline" refreshingSpinner="crescent"></ion-refresher-content>
             </ion-refresher>
           }
           @if (showConversationSkeleton()) { <app-chat-loading class="full-list-loading" [rowCount]="9" /> }
           <ion-list #conversationList class="list ion-content-scroll-host" lines="none" [attr.inert]="showConversationSkeleton() ? '' : null" [attr.aria-hidden]="showConversationSkeleton() ? 'true' : null" (scroll)="onChatListScroll($event)">
+            @if(selectedFolder === 'all' && !selectionActive() && !showConversationSkeleton()){
+              <button class="chats-communities-entry" type="button" (click)="openCommunities()">
+                <span class="community-list-icon"><ion-icon name="people-outline" aria-hidden="true"></ion-icon></span>
+                <span><strong>Comunidades</strong><small>{{communityById().size ? communityById().size + (communityById().size === 1 ? ' comunidad' : ' comunidades') : 'Tus grupos y avisos, en un lugar'}}</small></span>
+                <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
+              </button>
+            }
             @for (conversation of conversationsForFolder(); track conversation.id) {
-              <ion-item-sliding>
+              @let community = communityById().get(conversation.id);
+              @let selected = selectedChatIds().has(conversation.id);
+              <ion-item-sliding [disabled]="selectionActive()">
 
 
                 <ion-item
                   button
                   [detail]="false"
                   class="list-item conversation-item"
+                  [attr.data-chat-id]="conversation.id"
                   [class.active]="chat.selectedConversationId() === conversation.id"
                   [class.pinned]="chat.isConversationPinned(conversation.id)"
                   [class.muted]="chat.isConversationMuted(conversation.id)"
                   [class.unread]="chat.hasUnreadConversation(conversation)"
+                  [class.community-conversation]="!!community"
+                  [class.bulk-selected]="selected"
+                  [attr.aria-pressed]="selectionActive() ? selected : null"
                   [attr.aria-current]="chat.selectedConversationId() === conversation.id ? 'page' : null"
-                  (contextmenu)="openConversationMenu(conversation, $event)"
-                  (click)="openConversation(conversation.id)">
+                  (pointerdown)="startConversationPress(conversation, $event)"
+                  (pointermove)="moveConversationPress($event)"
+                  (pointerup)="cancelConversationPress($event)"
+                  (pointerleave)="cancelConversationPress($event)"
+                  (pointercancel)="cancelConversationPress($event)"
+                  (contextmenu)="onConversationContextMenu(conversation, $event)"
+                  (click)="onConversationRowClick(conversation, $event)">
                   <span
                     slot="start"
                     class="avatar-action"
-                    role="button"
-                    tabindex="0"
+                    [attr.role]="selectionActive() || community ? null : 'button'"
+                    [attr.tabindex]="selectionActive() || community ? null : 0"
                     [class.has-story]="conversationHasStory(conversation)"
                     [class.story-unviewed]="conversationHasUnviewedStory(conversation)"
                     [class.story-group]="chat.isGroup(conversation)"
                     [class.story-viewed]="conversationHasStory(conversation) && !conversationHasUnviewedStory(conversation)"
-                    (click)="abrirHistoria(conversation, $event)"
-                    (touchstart)="startAvatarPress(conversation, $event)"
+                    (click)="selectionActive() || community ? null : abrirHistoria(conversation, $event)"
+                    (touchstart)="selectionActive() || community ? null : startAvatarPress(conversation, $event)"
                     (touchend)="cancelAvatarPress()"
                     (touchcancel)="cancelAvatarPress()"
                     (touchmove)="cancelAvatarPress()"
-                    (keydown.enter)="abrirHistoria(conversation, $event)"
-                    (keydown.space)="abrirHistoria(conversation, $event)"
-                    [attr.aria-label]="'WORLD.VIEW_STORY' | translate:'Ver historia'">
-                    @if (chat.conversationPhoto(conversation)) {
+                    (keydown.enter)="selectionActive() || community ? null : abrirHistoria(conversation, $event)"
+                    (keydown.space)="selectionActive() || community ? null : abrirHistoria(conversation, $event)"
+                    [attr.aria-label]="selectionActive() || community ? null : ('WORLD.VIEW_STORY' | translate:'Ver historia')">
+                    @if (community?.photo && !privateChats.isProtected(conversation.id)) {
+                      <img class="avatar avatar-img" [src]="community?.photo" alt="">
+                    } @else if (chat.conversationPhoto(conversation)) {
                       <img class="avatar avatar-img" [src]="chat.conversationPhoto(conversation)" alt="">
                     } @else {
                       <ion-avatar class="avatar">{{ chat.avatarLabel(conversation) }}</ion-avatar>
                     }
+                    @if(selected){<span class="chat-selection-mark" aria-hidden="true"><ion-icon name="checkmark-outline"></ion-icon></span>}
                   </span>
                   <ion-label class="item-copy">
                     <strong class="conversation-title"><span>{{ chat.conversationTitle(conversation) }}</span>@if (chat.conversationIsNivraId(conversation)) { <small class="nivra-id-badge" [title]="'CHATS.NIVRA_ID_ACCOUNT' | translate:'Cuenta Nivra ID'" [attr.aria-label]="'CHATS.NIVRA_ID_ACCOUNT' | translate:'Cuenta Nivra ID'"><ion-icon name="finger-print-outline" aria-hidden="true"></ion-icon><span>ID</span></small> }@if (chat.isConversationPinned(conversation.id)) { <ion-icon name="pin-outline" [attr.aria-label]="'CHATS.PINNED_TAG' | translate:'Fijado'"></ion-icon> }@if (chat.isConversationMuted(conversation.id)) { <ion-icon name="notifications-off-outline" [attr.aria-label]="'CHATS.MUTED_TAG' | translate:'Silenciado'"></ion-icon> }</strong>
@@ -280,7 +314,7 @@
                     } @else if (conversationHistoryPending(conversation)) {
                       <small class="conversation-history-pending">{{ 'HISTORY_DEVICE.PENDING' | translate:'Historial cifrado pendiente' }}</small>
                     } @else {
-                      <small>{{ chat.conversationSubtitle(conversation) }}</small>
+                      <small>@if(community){<span class="community-preview-label">Avisos · </span>}{{ chat.conversationSubtitle(conversation) }}</small>
                     }
                     @if (appSettings.settings().chatListDensity === 'three-line' && !privateChats.isProtected(conversation.id)) {
                       @if (chat.conversationListPresence(conversation); as presence) { <em>{{ presence }}</em> }
@@ -290,7 +324,7 @@
                     <ion-note>{{ (conversation.lastMessageAt || conversation.updatedAt) | localizedDate:'shortTime' }}</ion-note>
                     <div class="conversation-tail-actions">
                     @if (chat.hasUnreadConversation(conversation)) { <span class="conversation-unread-dot" role="img" [attr.aria-label]="'CHATS.UNREAD_TAG' | translate:'No leido'"></span> }
-                    <button class="conversation-more" type="button" (click)="openConversationMenu(conversation, $event)" (keydown.enter)="$event.stopPropagation()" (keydown.space)="$event.stopPropagation()" [disabled]="!!conversationActionBusy" aria-haspopup="menu" [attr.aria-expanded]="conversationMenuOpen && conversationMenuTarget?.id === conversation.id" [attr.aria-label]="('CHATS.MORE_ACTIONS' | translate:'Más opciones de chats') + ' · ' + chat.conversationTitle(conversation)" [title]="'CHATS.MORE_ACTIONS' | translate:'Más opciones de chats'">
+                    <button class="conversation-more" type="button" (click)="openConversationMenu(conversation, $event)" (keydown.enter)="$event.stopPropagation()" (keydown.space)="$event.stopPropagation()" [disabled]="!!conversationActionBusy" [hidden]="selectionActive()" aria-haspopup="menu" [attr.aria-expanded]="conversationMenuOpen && conversationMenuTarget?.id === conversation.id" [attr.aria-label]="('CHATS.MORE_ACTIONS' | translate:'Más opciones de chats') + ' · ' + chat.conversationTitle(conversation)" [title]="'CHATS.MORE_ACTIONS' | translate:'Más opciones de chats'">
                       @if (conversationActionBusy === conversation.id) { <ion-spinner name="crescent" aria-hidden="true"></ion-spinner> }
                       @else { <ion-icon name="ellipsis-vertical-outline" aria-hidden="true"></ion-icon> }
                     </button>
@@ -334,7 +368,7 @@
           </div>
         </section>
       }
-      @if(!detailActive && !query.trim() && !showRecentSearches){
+      @if(!detailActive && !query.trim() && !showRecentSearches && !selectionActive()){
         <button type="button" class="mobile-message-fab" [class.expanded]="contactsFabExpanded" (click)="startNewChat()" aria-label="Nuevo mensaje, abrir Contactos"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon><span>Nuevo mensaje</span></button>
       }
     </aside>
@@ -348,6 +382,20 @@
       }
     </section>
   </section>
+
+  <ion-modal class="bulk-chat-delete-modal" [isOpen]="bulkDeleteOpen" (didDismiss)="bulkDeleteOpen = false" aria-labelledby="bulk-chat-delete-title">
+    <ng-template>
+      <section class="bulk-chat-delete-dialog">
+        <h2 id="bulk-chat-delete-title">¿Eliminar {{selectedChats().length === 1 ? 'este chat' : 'estos '+selectedChats().length+' chats'}} para ti?</h2>
+        <p>Se quitarán de tu lista junto con tu copia de los mensajes. Las demás personas conservarán sus chats.</p>
+        @if (selectedHasGroups()) { <p>Al eliminar un chat grupal también sales de ese grupo.</p> }
+        <div>
+          <button type="button" (click)="bulkDeleteOpen = false">Cancelar</button>
+          <button class="bulk-delete-confirm" type="button" (click)="runBulkChatAction('delete')" [disabled]="!canBulkDelete()">Eliminar para mí</button>
+        </div>
+      </section>
+    </ng-template>
+  </ion-modal>
 
   <ion-modal class="history-storage-modal" [isOpen]="historyPanelOpen" (didDismiss)="historyPanelOpen = false">
     <ng-template>
@@ -399,6 +447,7 @@
       @if (conversationMenuTarget; as conversation) {
         <div class="chats-actions-menu" role="menu" (keydown)="onChatMenuKeydown($event)" [attr.aria-label]="chat.conversationTitle(conversation)">
           <p class="conversation-menu-title">{{ chat.conversationTitle(conversation) }}</p>
+          <button type="button" role="menuitem" (click)="chooseConversationAction('select')"><ion-icon name="checkmark-outline" aria-hidden="true"></ion-icon>Seleccionar chat</button>
           <button type="button" role="menuitem" (click)="chooseConversationAction('pin')"><ion-icon name="pin-outline" aria-hidden="true"></ion-icon>{{ chat.isConversationPinned(conversation.id) ? ('CHATS.UNPIN' | translate:'Desfijar') : ('CHATS.PIN' | translate:'Fijar') }}</button>
           <button type="button" role="menuitem" (click)="chooseConversationAction('mute')"><ion-icon [name]="chat.isConversationMuted(conversation.id) ? 'notifications-outline' : 'notifications-off-outline'" aria-hidden="true"></ion-icon>{{ chat.isConversationMuted(conversation.id) ? ('CHATS.UNMUTE' | translate:'Activar') : ('CHATS.MUTE' | translate:'Silenciar') }}</button>
           <button type="button" role="menuitem" (click)="chooseConversationAction('archive')"><ion-icon name="archive-outline" aria-hidden="true"></ion-icon>{{ chat.isConversationArchived(conversation.id) ? ('CHATS.UNARCHIVE' | translate:'Desarchivar') : ('CHATS.ARCHIVE' | translate:'Archivar') }}</button>

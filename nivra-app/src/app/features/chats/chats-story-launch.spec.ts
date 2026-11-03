@@ -6,6 +6,7 @@ import { EMPTY } from 'rxjs';
 import { AuthService } from '../../core/services/auth.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { ChatService } from '../../core/services/chat.service';
+import { CommunityService } from '../../core/services/community.service';
 import { SocialService } from '../../core/services/social.service';
 import { LocalHistoryService } from '../../core/services/local-history.service';
 import { NativeDeviceService } from '../../core/services/native-device.service';
@@ -47,6 +48,7 @@ describe('Chats story creation entry', () => {
       { provide: AuthService, useValue: { session: signal({ user: { id: 'me', alias: 'maria' } }), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false) } },
       { provide: AppSettingsService, useValue: {} },
       { provide: ChatService, useValue: chat },
+      { provide: CommunityService, useValue: { items: signal([]) } },
       { provide: SocialService, useValue: { stories: signal([]), worldStories: signal([]), load: async () => undefined } },
       { provide: LocalHistoryService, useValue: history },
       { provide: NativeDeviceService, useValue: {} },

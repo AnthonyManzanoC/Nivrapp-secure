@@ -78,3 +78,85 @@
  .sidebar:has(.mobile-message-fab) .list { padding-bottom:90px; }
 }
 @media(prefers-reduced-motion:reduce){.mobile-message-fab,.mobile-message-fab span{transition:none;}}
+
+.chats-communities-entry {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 60px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--nivra-selection-line);
+  border-radius: 15px;
+  background: var(--nivra-selection);
+  color: var(--nivra-text);
+  text-align: start;
+  cursor: pointer;
+}
+.chats-communities-entry > span:nth-child(2) { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.chats-communities-entry strong { font-size: 14px; }
+.chats-communities-entry small { font-size: 11px; color: var(--nivra-muted); }
+.community-list-icon { display: grid; place-items: center; width: 39px; height: 39px; flex: 0 0 39px; border-radius: 12px; color: var(--nivra-brand-2); background: var(--nivra-panel-solid); }
+.community-list-icon ion-icon { font-size: 20px; }
+.chats-communities-entry > ion-icon, .community-preview-label { color: var(--nivra-brand-2); }
+.community-conversation .avatar { border-radius: 13px; }
+.community-preview-label { font-weight: 650; }
+
+.chat-selection-active :is(.side-head, .story-strip-shell, .search-panel, .chat-folders, .history-status-row, .story-publish-notice, .conversation-more) { display: none; }
+.chat-selection-toolbar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  gap: 4px;
+  padding: calc(8px + var(--ion-safe-area-top, 0px)) 8px 8px;
+  border-bottom: 1px solid var(--nivra-selection-line);
+  background: var(--nivra-selection);
+  color: var(--nivra-text);
+}
+.chat-selection-toolbar button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.chat-selection-toolbar button:hover { background: var(--nivra-panel-2); }
+.chat-selection-toolbar button:disabled { opacity: .45; cursor: default; }
+.chat-selection-toolbar button.bulk-delete-action { color: var(--nivra-danger); }
+.chat-selection-toolbar ion-icon { font-size: 22px; }
+.chat-selection-toolbar ion-spinner { width: 18px; height: 18px; flex: none; }
+.bulk-chat-error { flex: none; margin: 0; padding: 8px 12px; color: var(--nivra-danger); font-size: 12px; }
+.chat-selection-count { display: grid; flex: 1; min-width: 0; gap: 2px; }
+.chat-selection-count strong { font-size: 19px; line-height: 1; }
+.chat-selection-count span { font-size: 10px; color: var(--nivra-muted); }
+.list .conversation-item.bulk-selected::part(native) { background: var(--nivra-selection); border-color: var(--nivra-selection-line); }
+.chat-selection-mark {
+  position: absolute;
+  inset: auto -2px -2px auto;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--nivra-panel-solid);
+  border-radius: 50%;
+  background: var(--nivra-brand);
+  color: var(--nivra-on-brand);
+}
+.chat-selection-mark ion-icon { font-size: 13px; }
+.conversation-item .item-copy { user-select: none; }
+@media(max-width: 340px){ .chat-selection-count span { display: none; } }
+
+.bulk-chat-delete-modal { --width: min(440px, 94vw); --height: auto; --border-radius: 20px; --background: var(--nivra-panel-solid); }
+.bulk-chat-delete-dialog { padding: 22px; color: var(--nivra-text); }
+.bulk-chat-delete-dialog h2 { margin: 0 0 9px; font-size: 19px; }
+.bulk-chat-delete-dialog p { color: var(--nivra-muted); line-height: 1.5; }
+.bulk-chat-delete-dialog > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.bulk-chat-delete-dialog button { min-height: 44px; padding: 9px 14px; border: 1px solid var(--nivra-line); border-radius: 12px; background: var(--nivra-panel-2); color: var(--nivra-text); font: inherit; font-weight: 650; cursor: pointer; }
+.bulk-chat-delete-dialog .bulk-delete-confirm { background: color-mix(in srgb, var(--nivra-danger) 8%, var(--nivra-panel-solid)); color: var(--nivra-danger); border-color: color-mix(in srgb, var(--nivra-danger) 40%, var(--nivra-line)); }

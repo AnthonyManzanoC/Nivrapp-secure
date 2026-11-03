@@ -6,6 +6,7 @@ import { EMPTY } from 'rxjs';
 import { AuthService } from '../../core/services/auth.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { ChatService } from '../../core/services/chat.service';
+import { CommunityService } from '../../core/services/community.service';
 import { SocialService } from '../../core/services/social.service';
 import { LocalHistoryService } from '../../core/services/local-history.service';
 import { NativeDeviceService } from '../../core/services/native-device.service';
@@ -69,6 +70,7 @@ describe('Chats actions and scoped search', () => {
       clearSelectedConversation: () => undefined,
       chatFolderConversations: (folder: string) => chat.conversations().filter((item: any) => folder === 'archived' ? item.id === 'archived' : item.id !== 'archived'),
       conversationTitle: (item: any) => item.title,
+      isGroup: () => false,
       searchPeople: jasmine.createSpy().and.resolveTo([]),
       createDirectConversation: jasmine.createSpy().and.resolveTo({ id: 'new-direct' }),
       isConversationPinned: () => false,
@@ -77,6 +79,7 @@ describe('Chats actions and scoped search', () => {
       setConversationPinned: jasmine.createSpy().and.resolveTo(),
       setConversationMuted: jasmine.createSpy().and.resolveTo(),
       setConversationArchived: jasmine.createSpy().and.resolveTo(),
+      deleteConversation: jasmine.createSpy().and.resolveTo(),
       profileSummary: (item: any) => item,
     };
     TestBed.configureTestingModule({ providers: [
@@ -84,6 +87,7 @@ describe('Chats actions and scoped search', () => {
       { provide: AuthService, useValue: auth },
       { provide: AppSettingsService, useValue: {} },
       { provide: ChatService, useValue: chat },
+      { provide: CommunityService, useValue: { items: signal([]), loading: signal(false), error: signal('') } },
       { provide: SocialService, useValue: { stories: signal([]), worldStories: signal([]), load: async () => undefined } },
       { provide: LocalHistoryService, useValue: { storageError: signal(''), storageState: signal('ready'), storageBusy: () => false, retryNativeStorage: async () => true, clearStorageError: () => undefined } },
       { provide: NativeDeviceService, useValue: {} },
@@ -119,6 +123,22 @@ describe('Chats actions and scoped search', () => {
     expect(page.matchingConversations().map((item) => item.id)).toEqual(['archived']);
     expect(chat.searchPeople).not.toHaveBeenCalled();
   }));
+
+  it('requires confirmation for bulk deletion and stops before the next chat when the account changes', async () => {
+    page.selectedChatIds.set(new Set(['family', 'archived']));
+    await page.runBulkChatAction('delete');
+    expect(chat.deleteConversation).not.toHaveBeenCalled();
+
+    let finishFirst!: () => void;
+    chat.deleteConversation.and.callFake(() => new Promise<void>(resolve => finishFirst = resolve));
+    page.bulkDeleteOpen = true;
+    const pending = page.runBulkChatAction('delete');
+    expect(chat.deleteConversation).toHaveBeenCalledOnceWith(jasmine.objectContaining({ id: 'family' }), 'me');
+    auth.session.set({ user: { id: 'ux-other', alias: 'other' }, device: { id: 'other-device' } });
+    finishFirst();
+    await pending;
+    expect(chat.deleteConversation).toHaveBeenCalledTimes(1);
+  });
 
   it('invalidates the previous response immediately before the input debounce elapses', async () => {
     const first = deferred<any[]>();

@@ -201,7 +201,10 @@ p { font-size: 13px; }
 }
 .community-groups, .manage-groups { margin-top: 24px; }
 .community-groups > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.group-section { margin-top: 14px; }
+.group-section h4 { margin: 0 0 6px; color: var(--nivra-muted); font-size: 12px; font-weight: 650; }
 .linked-group { margin-top: 7px; }
+.manage-groups h3 { scroll-margin-top: 12px; }
 .unlink { color: var(--nivra-danger); }
 .manage-groups > p { margin: 6px 0 12px; }
 .management-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }

@@ -4,6 +4,9 @@
       <div>
         <span class="world-eyebrow">TUS MOMENTOS, TU GENTE</span><h1>{{ 'WORLD.TITLE' | translate:'Mundo' }}</h1>
         <p>{{ 'WORLD.STORIES_COPY' | translate:'Historias, novedades y grupos a tu manera.' }}</p>
+        <a class="world-communities-shortcut" routerLink="/app/communities">
+          Comunidades <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
+        </a>
       </div>
       <a class="world-contacts" routerLink="/app/contacts" aria-label="Contactos y solicitudes"><ion-icon name="people-outline"></ion-icon>@if(social.incomingRequests().length){<span>{{social.incomingRequests().length}}</span>}</a>
       <ion-button mode="ios" fill="clear" (click)="social.load()" [disabled]="social.loading()" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">

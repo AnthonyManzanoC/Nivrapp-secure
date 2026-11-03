@@ -49,6 +49,7 @@ const items = signal<any[]>([
   { id: 'design', name: 'Estudio Creativo', preview: 'La nueva propuesta está lista ✨', type: 'Group', pinned: true, unread: true },
   { id: 'sofia', name: 'Sofía Martínez', preview: 'Nos vemos a las seis. ¡Qué ganas!', type: 'Direct', unread: true },
   { id: 'family', name: 'Familia', preview: 'Mamá: Les comparto las fotos del viaje', type: 'Group' },
+  { id: 'community-preview', name: 'Barrio Las Flores', preview: 'Encuentro del barrio este sábado', type: 'Group', unread: true },
   { id: 'daniel', name: 'Daniel Ruiz', preview: 'Gracias por la llamada de hoy.', type: 'Direct' },
   { id: 'weekend', name: 'Planes del finde', preview: 'Tú: Ese lugar se ve increíble', type: 'Group', muted: true },
   { id: 'valentina', name: 'Valentina', preview: 'Nota de voz · 0:24', type: 'Direct' },
@@ -72,6 +73,10 @@ const chat: any = {
   setConversationPinned: (item: any, value: boolean) => mutate(item, 'pinned', value),
   setConversationMuted: (item: any, value: boolean) => mutate(item, 'muted', value),
   setConversationArchived: (item: any, value: boolean) => mutate(item, 'archived', value),
+  deleteConversation: async (item: any, scope: string) => {
+    if (scope !== 'me') throw Error('Bulk delete must use the current account');
+    items.update(all => all.filter(row => row.id !== item.id));
+  },
   clearSelectedConversation: () => chat.selectedConversationId.set(null), searchPeople: async () => [],
   selectConversation: async (id: string) => chat.selectedConversationId.set(id),
   refreshChats: async () => true, presenceLabel: (item: any) => item.id === 'empty' ? 'cifrado extremo a extremo' : item.type === 'Group' ? '3 participantes' : 'online', checkLocalHistory: async () => {},

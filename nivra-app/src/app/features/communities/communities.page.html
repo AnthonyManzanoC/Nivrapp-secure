@@ -1,8 +1,8 @@
 <ion-content class="page">
   <main class="community-page" [class.detail-open]="!!selectedId() || creating()">
     <aside class="community-directory" aria-labelledby="community-directory-title">
-      <a class="back-link" routerLink="/app/world">
-        <span aria-hidden="true">←</span> Mundo
+      <a class="back-link" [routerLink]="fromChats() ? '/app/chats' : '/app/world'">
+        <span aria-hidden="true">←</span> {{fromChats() ? 'Chats' : 'Mundo'}}
       </a>
       <header class="directory-head">
         <div>
@@ -133,7 +133,8 @@
           <nav class="community-actions" aria-label="Administrar comunidad">
             <button class="primary" type="button" (click)="invite()" [disabled]="!!communities.busy()">Invitar</button>
             <button type="button" (click)="edit(item)" [disabled]="!!communities.busy()">Editar</button>
-            <a class="text-action" [routerLink]="['/app/chats',item.id]">Avisos y miembros <span aria-hidden="true">↗</span></a>
+            <button type="button" (click)="showGroupManager()">+ Añadir grupos</button>
+            <a class="text-action" [routerLink]="['/app/chats',item.id]" [queryParams]="{info:1}">Avisos y miembros <span aria-hidden="true">↗</span></a>
           </nav>
           @if(shareUrl){
             <label class="field share-link">Enlace de invitación
@@ -144,7 +145,10 @@
 
         <section class="community-groups" aria-labelledby="community-groups-title">
           <header><h3 id="community-groups-title">Grupos de la comunidad</h3><span class="count">{{item.groups.length}}</span></header>
-          @for(group of item.groups; track group.id){
+          @for(section of groupSections(); track section.id){
+            <section class="group-section" [attr.aria-labelledby]="'community-'+section.id">
+              <h4 [id]="'community-'+section.id">{{section.title}}</h4>
+          @for(group of section.groups; track group.id){
             <article class="linked-group">
               <span class="face">
                 @if(group.photo){<img [src]="group.photo" alt="" loading="lazy">}
@@ -160,12 +164,14 @@
                 <button type="button" class="icon-button unlink" (click)="unlink(group.id)" [disabled]="!!communities.busy()" [attr.aria-label]="'Desvincular '+group.name">×</button>
               }
             </article>
+          }
+            </section>
           }@empty{<div class="empty"><strong>Cada grupo tiene su espacio</strong><p>Los avisos llegan a toda la comunidad.</p></div>}
         </section>
 
         @if(isAdmin(item)){
           <section class="manage-groups" aria-labelledby="manage-groups-title">
-            <h3 id="manage-groups-title">Organiza tu comunidad</h3>
+            <h3 #groupManager id="manage-groups-title" tabindex="-1">Organiza tu comunidad</h3>
             <p>Los miembros eligen a qué grupos unirse.</p>
             <div class="management-grid">
               <form class="manage-card" (ngSubmit)="link()">

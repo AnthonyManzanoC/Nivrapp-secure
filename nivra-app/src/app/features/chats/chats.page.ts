@@ -31,6 +31,7 @@ import { ChatMessageVm, Contact, Conversation, Story, StoryComment, UserSummary 
 import { AuthService } from '../../core/services/auth.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { ChatFolderFilter, ChatService } from '../../core/services/chat.service';
+import { CommunityService } from '../../core/services/community.service';
 import { QuickContactCardComponent, QuickContactAction } from '../../shared/quick-contact-card.component';
 import { CallsService } from '../../core/services/calls.service';
 import { SocialService } from '../../core/services/social.service';
@@ -57,6 +58,7 @@ import { rankConversationTitles } from './conversation-search';
 type ChatSearchScope = 'all' | 'chats' | 'people';
 type ChatMenuAction = 'new-chat' | 'new-group' | 'new-community' | 'new-story' | 'share-pass' | 'refresh' | 'settings' | 'enable-alerts' | 'broadcasts';
 type ConversationMenuAction = 'pin' | 'mute' | 'archive';
+type BulkChatAction = 'pin' | 'archive' | 'delete';
 
 @Component({
   selector: 'app-chats',
@@ -100,6 +102,22 @@ export class ChatsPage implements OnDestroy {
   private readonly injector = inject(Injector);
   readonly privateChats = inject(PrivateChatLockService);
   readonly chat = inject(ChatService);
+  private readonly communities = inject(CommunityService);
+  readonly communityById = computed(() => new Map(this.communities.items().map(item => [item.id, item])));
+  readonly selectedChatIds = signal<ReadonlySet<string>>(new Set());
+  readonly selectedChats = computed(() => {
+    const ids = this.selectedChatIds();
+    return ids.size ? this.chat.conversations().filter(item => ids.has(item.id)) : [];
+  });
+  readonly selectionActive = computed(() => this.selectedChats().length > 0);
+  readonly bulkPin = computed(() => this.selectedChats().some(item => !this.chat.isConversationPinned(item.id)));
+  readonly bulkArchive = computed(() => this.selectedChats().some(item => !this.chat.isConversationArchived(item.id)));
+  readonly selectedHasGroups = computed(() => this.selectedChats().some(item => this.chat.isGroup(item)));
+  readonly canBulkDelete = computed(() => this.selectedChats().length > 0 && this.selectedChats().every(item => this.canDeleteFromList(item)));
+  bulkChatBusy = false;
+  bulkDeleteOpen = false;
+  private rowPress: { pointerId: number; x: number; y: number; timer: number } | null = null;
+  private ignoredRowClick = '';
   readonly social = inject(SocialService);
   readonly appSettings = inject(AppSettingsService);
   readonly localHistory = inject(LocalHistoryService);
@@ -305,6 +323,8 @@ export class ChatsPage implements OnDestroy {
         this.chatMenuOpen = false;
         this.pendingMenuAction = null;
         this.closeConversationMenu();
+        this.resetChatSelection();
+        this.bulkChatBusy = false;
         this.conversationActionBusy = '';
         this.conversationActionNotice = '';
         this.conversationActionError = '';
@@ -358,6 +378,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.cancelConversationPress();
     if (this.contactsFabTimer !== null) window.clearTimeout(this.contactsFabTimer);
     this.storyStripResize?.disconnect(); this.storyStripMutation?.disconnect();
     this.alive = false;
@@ -553,6 +574,10 @@ export class ChatsPage implements OnDestroy {
   };
 
   private readonly onDocumentKeydown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape' && this.selectionActive() && !this.bulkDeleteOpen && !this.bulkChatBusy) {
+      event.preventDefault();
+      this.resetChatSelection();
+    }
     if ((this.pendingConversationFocus || this.listWasLoading) && ['Tab', 'Escape'].includes(event.key)) this.forgetConversationFocus();
   };
 
@@ -618,7 +643,7 @@ export class ChatsPage implements OnDestroy {
     switch (pending.action) {
       case 'new-chat': this.startNewChat(); break;
       case 'new-group': this.openGroupModal(); break;
-      case 'new-community': void this.router.navigate(['/app/communities'],{queryParams:{create:1}}); break;
+      case 'new-community': void this.router.navigate(['/app/communities'], { queryParams: { create: 1, from: 'chats' } }); break;
       case 'broadcasts': void this.router.navigateByUrl('/app/broadcasts'); break;
       case 'new-story': this.openStoryComposer(); break;
       case 'share-pass': void this.openShareAccount(); break;
@@ -669,7 +694,7 @@ export class ChatsPage implements OnDestroy {
     this.conversationMenuScope = '';
   }
 
-  async chooseConversationAction(action: ConversationMenuAction): Promise<void> {
+  async chooseConversationAction(action: ConversationMenuAction | 'select'): Promise<void> {
     const conversation = this.conversationMenuTarget;
     const scope = this.conversationMenuScope;
     if (!conversation || !this.isCurrentScope(scope)) {
@@ -677,6 +702,10 @@ export class ChatsPage implements OnDestroy {
       return;
     }
     this.closeConversationMenu();
+    if (action === 'select') {
+      this.toggleChatSelection(conversation.id);
+      return;
+    }
     await this.runConversationAction(conversation, action);
   }
 
@@ -688,6 +717,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   ionViewWillLeave(): void {
+    this.resetChatSelection();
     this.resetNativeStoryGesture();
     this.showRecentSearches = false;
     this.recentCollapsed = true;
@@ -814,6 +844,132 @@ export class ChatsPage implements OnDestroy {
     void this.chat.selectConversation(conversationId);
   }
 
+  openCommunities(id?: string): void {
+    void this.router.navigate(['/app/communities'], { queryParams: id ? { id, from: 'chats' } : { from: 'chats' } });
+  }
+
+  onConversationRowClick(conversation: Conversation, event: MouseEvent): void {
+    if (event.detail > 0 && this.ignoredRowClick === conversation.id) {
+      this.ignoredRowClick = '';
+      return;
+    }
+    if (this.selectionActive() || event.shiftKey) {
+      this.toggleChatSelection(conversation.id);
+    } else if (this.communityById().has(conversation.id) && !this.privateChats.isProtected(conversation.id)) {
+      this.openCommunities(conversation.id);
+    } else {
+      void this.openConversation(conversation.id);
+    }
+  }
+
+  startConversationPress(conversation: Conversation, event: PointerEvent): void {
+    if (!event.isPrimary || event.button !== 0) return;
+    this.cancelConversationPress();
+    this.ignoredRowClick = '';
+    if (this.selectionActive() || this.conversationActionBusy || this.showConversationSkeleton() ||
+        event.composedPath().some(target => target instanceof HTMLElement && target.matches('.avatar-action, .conversation-more'))) return;
+    const scope = this.searchContext();
+    const press = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, timer: 0 };
+    press.timer = window.setTimeout(() => {
+      if (this.rowPress !== press) return;
+      this.rowPress = null;
+      if (!this.isCurrentScope(scope) || this.showConversationSkeleton() || !this.conversationsForFolder().some(item => item.id === conversation.id)) return;
+      this.closeConversationMenu();
+      this.cancelAvatarPress();
+      this.ignoredRowClick = conversation.id;
+      this.toggleChatSelection(conversation.id);
+    }, 480);
+    this.rowPress = press;
+  }
+
+  moveConversationPress(event: PointerEvent): void {
+    const press = this.rowPress;
+    if (press?.pointerId === event.pointerId && Math.hypot(event.clientX - press.x, event.clientY - press.y) > 10) {
+      this.cancelConversationPress();
+    }
+  }
+
+  cancelConversationPress(event?: PointerEvent): void {
+    if (!this.rowPress || event && event.pointerId !== this.rowPress.pointerId) return;
+    window.clearTimeout(this.rowPress.timer);
+    this.rowPress = null;
+  }
+
+  onConversationContextMenu(conversation: Conversation, event: MouseEvent): void {
+    if (this.selectionActive() || this.rowPress) {
+      event.preventDefault();
+      return;
+    }
+    this.openConversationMenu(conversation, event);
+  }
+
+  resetChatSelection(): void {
+    this.cancelConversationPress();
+    this.selectedChatIds.set(new Set());
+    this.bulkDeleteOpen = false;
+    this.ignoredRowClick = '';
+  }
+
+  private toggleChatSelection(id: string): void {
+    if (this.bulkChatBusy || this.conversationActionBusy) return;
+    const next = new Set(this.selectedChats().map(item => item.id));
+    if (next.has(id)) next.delete(id);
+    else next.add(id);
+    this.selectedChatIds.set(next);
+    this.resetNativeStoryGesture();
+  }
+
+  private canDeleteFromList(conversation: Conversation): boolean {
+    if (this.privateChats.isProtected(conversation.id) || this.communityById().has(conversation.id)) return false;
+    if (!this.chat.isGroup(conversation)) return true;
+    const owner = this.auth.session()?.user.id;
+    return !this.communities.loading() && !this.communities.error()
+      && !conversation.participants.some(member => member.userId === owner && !member.removedAt && member.role === 'Owner');
+  }
+
+  async runBulkChatAction(action: BulkChatAction): Promise<void> {
+    if (this.bulkChatBusy || this.conversationActionBusy) return;
+    const chats = this.selectedChats();
+    if (!chats.length || action === 'delete' && (!this.bulkDeleteOpen || !this.canBulkDelete())) return;
+    const scope = this.searchContext();
+    const setFlag = action === 'pin' ? this.bulkPin() : this.bulkArchive();
+    const detailId = this.detailActive ? this.chat.selectedConversationId() : null;
+    const detailUrl = this.router.url;
+    const failed = new Set<string>();
+    let completed = 0;
+    let closedDetail = false;
+    this.bulkDeleteOpen = false;
+    this.bulkChatBusy = true;
+    this.conversationActionNotice = '';
+    this.conversationActionError = '';
+    try {
+      for (const item of chats) {
+        if (!this.isCurrentScope(scope)) return;
+        const current = this.chat.conversations().find(conversation => conversation.id === item.id);
+        if (!current) continue;
+        try {
+          if (action === 'pin') await this.chat.setConversationPinned(current, setFlag);
+          else if (action === 'archive') await this.chat.setConversationArchived(current, setFlag);
+          else {
+            if (!this.canDeleteFromList(current)) { failed.add(item.id); continue; }
+            await this.chat.deleteConversation(current, 'me');
+            closedDetail ||= item.id === detailId;
+          }
+          completed++;
+        } catch {
+          failed.add(item.id);
+        }
+      }
+      if (!this.isCurrentScope(scope)) return;
+      this.selectedChatIds.set(failed);
+      if (failed.size) this.conversationActionError = `No se pudo completar la acción en ${failed.size} ${failed.size === 1 ? 'chat' : 'chats'}.`;
+      if (completed) this.conversationActionNotice = `${completed} ${completed === 1 ? 'chat actualizado' : 'chats actualizados'}.`;
+      if (closedDetail && this.router.url === detailUrl) await this.router.navigateByUrl('/app/chats');
+    } finally {
+      if (this.isCurrentScope(scope)) this.bulkChatBusy = false;
+    }
+  }
+
   conversationHasStory(conversation: Conversation): boolean {
     return this.conversationStories(conversation).length > 0;
   }
@@ -842,6 +998,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   onChatListScroll(event: Event): void {
+    this.cancelConversationPress();
     const list = event.target as HTMLElement;
     const delta = list.scrollTop - this.contactsFabTop;
     if (Math.abs(delta) > 8) {
@@ -877,7 +1034,7 @@ export class ChatsPage implements OnDestroy {
 
   readonly onNativeStoryTouchStart = (event: TouchEvent): void => {
     this.resetNativeStoryGesture();
-    if (!this.androidStoryGesturesEnabled() || this.showConversationSkeleton() || event.touches.length !== 1) return;
+    if (!this.androidStoryGesturesEnabled() || this.selectionActive() || this.showConversationSkeleton() || event.touches.length !== 1) return;
     const list = event.currentTarget as HTMLElement;
     if (!list || this.nativeStorySlideIsActive(event)) return;
     const touch = event.touches[0];
