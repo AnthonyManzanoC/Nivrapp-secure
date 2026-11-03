@@ -218,6 +218,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!current || this.isGroupConversation()) return false;
     return Boolean(this.conversation()?.participants.some(p => !p.removedAt && p.userId !== current.user.id && this.identityTrust.isChanged(JSON.stringify([current.user.id,current.device.id]),p.userId)));
   }
+  identityPendingDevices(): number {
+    const current=this.auth.session();
+    if(!current||this.isGroupConversation())return 0;
+    const peer=this.conversation()?.participants.find(p=>!p.removedAt&&p.userId!==current.user.id);
+    return peer?this.identityTrust.pendingDeviceCount(JSON.stringify([current.user.id,current.device.id]),peer.userId):0;
+  }
   async verifyIdentity(): Promise<void> {
     const conversation = this.conversation();
     const current = this.auth.session();

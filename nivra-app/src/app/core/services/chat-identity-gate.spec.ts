@@ -8,7 +8,7 @@ describe('message identity gate',()=>{
     service.auth={session:()=>({user:{id:'self',alias:'self'},device:{id:'phone'}})};
     service.crypto={currentKeyMaterial:async()=>({publicJwk:{}}),parsePublicJwk:()=>({}),encryptForPublicKey:encrypt};
     service.auth.ensureDeviceIdentity=async()=>service.crypto.currentKeyMaterial();
-    service.identityTrust={check:jasmine.createSpy('check').and.resolveTo()};
+    service.identityTrust={forDelivery:jasmine.createSpy('forDelivery').and.callFake(async (_scope:any,directory:any)=>directory)};
     service.contacts=()=>[];
     service.api={post:jasmine.createSpy('post').and.returnValue(of([
       {userId:'self',devices:[{deviceId:'phone',keyBundle:{identityKey:'self'}}]},
@@ -18,7 +18,7 @@ describe('message identity gate',()=>{
     return {service,encrypt,conversation};
   }
   it('refuses to encrypt any recipient when the contact identity changed',async()=>{
-    const {service,encrypt,conversation}=harness();service.identityTrust.check.and.rejectWith(new Error('changed'));
+    const {service,encrypt,conversation}=harness();service.identityTrust.forDelivery.and.rejectWith(new Error('changed'));
     await expectAsync(service.encryptedRecipients(conversation,{type:'text',text:'private'})).toBeRejectedWithError('changed');
     expect(encrypt).not.toHaveBeenCalled();
   });
@@ -29,7 +29,7 @@ describe('message identity gate',()=>{
   });
   it('encrypts normally after checking an unchanged contact',async()=>{
     const {service,encrypt,conversation}=harness();const result=await service.encryptedRecipients(conversation,{type:'text',text:'private'});
-    expect(service.identityTrust.check).toHaveBeenCalled();expect(encrypt).toHaveBeenCalledTimes(2);expect(result.length).toBe(2);
+    expect(service.identityTrust.forDelivery).toHaveBeenCalled();expect(encrypt).toHaveBeenCalledTimes(2);expect(result.length).toBe(2);
   });
   it('delivers to every published device while ignoring legacy sessions with no published key',async()=>{
     const {service,encrypt,conversation}=harness();
@@ -45,6 +45,17 @@ describe('message identity gate',()=>{
     service.api.post.and.returnValue(of([{userId:'self',devices:[{deviceId:'phone',keyBundle:{identityKey:'self'}}]},{userId:'peer',devices:[{deviceId:'legacy-peer',keyBundle:{identityKey:null}}]}]));
     await expectAsync(service.encryptedRecipients(conversation,{type:'text',text:'private'})).toBeRejectedWithError(/My old contact.*dispositivo autorizado/);
     expect(encrypt).not.toHaveBeenCalled();
+  });
+  it('never passes a quarantined browser to the hybrid encryption engine',async()=>{
+    const {service,conversation}=harness();
+    service.api.post.and.returnValue(of([
+      {userId:'self',devices:[{deviceId:'phone',keyBundle:{identityKey:'self'}}]},
+      {userId:'peer',devices:[{deviceId:'other',keyBundle:{identityKey:'peer'}},{deviceId:'unknown-browser',keyBundle:{identityKey:'unknown'}}]},
+    ]));
+    service.identityTrust.forDelivery.and.callFake(async (_scope:any,directory:any)=>({...directory,devices:directory.devices.filter((device:any)=>device.deviceId!=='unknown-browser')}));
+    const hybrid=jasmine.createSpy('hybrid').and.resolveTo([{deviceId:'other',userId:'peer',ciphertext:'sealed'}]);service.ratchet={encrypt:hybrid};
+    await service.encryptedRecipients({...conversation,id:'test-chat'},{type:'text',text:'secret'},null,undefined,'web-test-message');
+    expect(hybrid.calls.first().args[3].map((target:any)=>target.deviceId)).toEqual(['phone','other']);
   });
   it('refuses a malformed published key even if another contact device is healthy',async()=>{
     const {service,encrypt,conversation}=harness();service.crypto.parsePublicJwk=(key:string)=>key==='malformed'?null:{};

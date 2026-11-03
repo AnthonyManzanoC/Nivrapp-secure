@@ -163,7 +163,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
         this.contactAlias = pair[1].alias;
         this.continuity = continuity.state;
         this.continuitySource = continuity.source;
-        this.comparisonExpanded = continuity.state === 'changed';
+        this.comparisonExpanded = continuity.state === 'changed' || continuity.state === 'pending-device';
         this.verified = continuity.state === 'verified';
         this.verifiedAt = continuity.verifiedAt ?? '';
         this.checkedAt = new Date().toISOString();

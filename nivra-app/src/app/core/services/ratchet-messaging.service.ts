@@ -353,7 +353,10 @@ export class RatchetMessagingService implements OnDestroy {
         const directory = directories.find(item => item.userId === message.senderUserId), device = directory?.devices.find(item => item.deviceId === message.senderDeviceId);
         const publicJwk = this.crypto.parsePublicJwk(device?.keyBundle?.identityKey);
         if (!directory || !device || !publicJwk) throw Error('El dispositivo de origen ya no está autorizado.');
-        if (message.senderUserId !== owner.userId) await this.trust.check(owner.scope, directory, () => { try { owner.assert(); return true; } catch { return false; } });
+        if (message.senderUserId !== owner.userId) {
+          const trusted=await this.trust.forDelivery(owner.scope, directory, () => { try { owner.assert(); return true; } catch { return false; } });
+          if (!trusted.devices.some(value=>value.deviceId===message.senderDeviceId)) throw Error('Este mensaje viene de un dispositivo nuevo pendiente de comprobar.');
+        }
         await this.pin(engine, { userId: message.senderUserId, deviceId: message.senderDeviceId, publicJwk },
           { userId: message.senderUserId, deviceId: message.senderDeviceId, signalDeviceNumber: 1, identityKey: header.identityKey, registrationId: header.registrationId }, header.binding);
         }

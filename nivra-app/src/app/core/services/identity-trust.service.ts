@@ -20,7 +20,7 @@ export interface IdentityTrustTransfer {
   entries: IdentityTrustTransferEntry[];
 }
 export interface IdentityContinuity {
-  state: 'unknown' | 'unchanged' | 'verified' | 'changed';
+  state: 'unknown' | 'unchanged' | 'verified' | 'pending-device' | 'changed';
   verifiedAt?: string;
   source?: 'this-device' | 'linked-device';
 }
@@ -30,7 +30,9 @@ const DIGEST = /^[a-f0-9]{64}$/;
 @Injectable({providedIn:'root'})
 export class IdentityTrustService {
   private readonly changed = signal<ReadonlySet<string>>(new Set());
+  private readonly pending = signal<ReadonlyMap<string,number>>(new Map());
   isChanged(scope:string,userId:string):boolean { return this.changed().has(JSON.stringify([scope,userId])); }
+  pendingDeviceCount(scope:string,userId:string):number { return this.pending().get(JSON.stringify([scope,userId])) ?? 0; }
   private database?: Promise<IDBDatabase>;
   private open():Promise<IDBDatabase>{
     return this.database ??= new Promise((resolve,reject)=>{
@@ -40,17 +42,38 @@ export class IdentityTrustService {
     });
   }
   async check(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true):Promise<void>{
+    await this.reconcile(scope,directory,isCurrent,false);
+  }
+  /** An extra unverified browser must not stop delivery to already pinned devices. */
+  async forDelivery(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true):Promise<PublicKeyDirectory>{
+    return this.reconcile(scope,directory,isCurrent,true);
+  }
+  private async reconcile(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean,allowSubset:boolean):Promise<PublicKeyDirectory>{
     const fingerprint=await deriveDirectoryFingerprint(directory);
     if(!isCurrent())throw new Error('La comprobación ya no está activa.');
+    let selected=directory,pending=0;
     await this.update(scope,directory.userId,current=>{
       if(!isCurrent())throw new Error('La comprobación ya no está activa.');
+      if(current?.digest===fingerprint.digest&&current.devices?.length)return current;
       if(current && current.digest!==fingerprint.digest && !this.hasKnownEncryptionKeys(current,fingerprint)) {
+        const match=this.knownDevices(current,fingerprint);
+        if(allowSubset && !match.replaced && match.ids.size>0){
+          selected={...directory,devices:directory.devices.filter(device=>match.ids.has(device.deviceId))};
+          pending=fingerprint.deviceIdentities.length-match.ids.size;
+          // Preserve the trusted pin. An unverified key cannot overwrite or enlarge it.
+          return current;
+        }
+        this.setPending(scope,directory.userId,0);
         this.changed.update(previous=>new Set([...previous,JSON.stringify([scope,directory.userId])]));
-        throw new Error('La identidad de este contacto ha cambiado. Abre Verificar identidad y compara el código antes de continuar.');
+        // Re-evaluate queued messages after the user confirms; never encrypt while this fails.
+        throw Object.assign(new Error('La identidad de este contacto ha cambiado. Abre Verificar identidad y compara el código antes de continuar.'),{retryable:true});
       }
       return {...current,digest:fingerprint.digest,verified:current?.verified??false,devices:fingerprint.deviceIdentities};
     });
+    if(!isCurrent())throw new Error('La comprobación ya no está activa.');
     this.clearChanged(scope,directory.userId);
+    this.setPending(scope,directory.userId,pending);
+    return selected;
   }
   /** Read-only continuity against a local pin; this never establishes new trust. */
   async continuity(scope:string,directory:PublicKeyDirectory):Promise<IdentityContinuity>{
@@ -62,7 +85,10 @@ export class IdentityTrustService {
       tx.onabort=()=>reject(tx.error || new Error('No se pudo comprobar la identidad.'));
     });
     if(!pin)return {state:'unknown'};
-    if(pin.digest!==fingerprint.digest && !this.hasKnownEncryptionKeys(pin,fingerprint))return {state:'changed'};
+    if(pin.digest!==fingerprint.digest && !this.hasKnownEncryptionKeys(pin,fingerprint)){
+      const match=this.knownDevices(pin,fingerprint);
+      return {state:!match.replaced&&match.ids.size>0?'pending-device':'changed'};
+    }
     return {state:pin.verified?'verified':'unchanged',...(pin.verifiedAt?{verifiedAt:pin.verifiedAt}:{}),source:pin.linkedFromDeviceId?'linked-device':'this-device'};
   }
   async confirm(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true):Promise<void>{
@@ -73,6 +99,7 @@ export class IdentityTrustService {
       return {digest:fingerprint.digest,devices:fingerprint.deviceIdentities,verified:true,verifiedAt:new Date().toISOString()};
     });
     this.clearChanged(scope,directory.userId);
+    this.setPending(scope,directory.userId,0);
   }
 
   /** Export this owner's exact source-device namespace; never another account's pins. */
@@ -138,8 +165,13 @@ export class IdentityTrustService {
             if(!isCurrent())throw new Error('La vinculación ya no está activa.');
             const current=request.result as Pin|undefined;
             // A delayed handoff must not erase a different identity already observed here.
-            if(current&&(current.digest!==entry.digest||current.verified||!entry.verified))return;
-            store.put({...current,digest:entry.digest,verified:entry.verified,...(entry.verifiedAt?{verifiedAt:entry.verifiedAt}:{}),...(entry.devices?{devices:entry.devices}:{}),linkedFromDeviceId:sourceDeviceId} satisfies Pin,key);imported++;
+            if(current&&(current.verified||!entry.verified))return;
+            const reconcile=Boolean(current&&current.digest!==entry.digest);
+            if(reconcile&&(!current?.devices?.length||!this.hasKnownEncryptionKeys(entry,{deviceIdentities:current.devices})))return;
+            // A linked browser can already have seen a safe subset (for example,
+            // after an old device was removed). Keep that directory and restore verification.
+            const observed=reconcile?current!:entry;
+            store.put({...current,digest:observed.digest,verified:entry.verified,...(entry.verifiedAt?{verifiedAt:entry.verifiedAt}:{}),...(observed.devices?{devices:observed.devices}:{}),linkedFromDeviceId:sourceDeviceId} satisfies Pin,key);imported++;
           }catch(reason){error=reason;tx.abort();}
         };
       }
@@ -147,15 +179,24 @@ export class IdentityTrustService {
     });
   }
 
-  private hasKnownEncryptionKeys(pin:Pin,fingerprint:DirectoryFingerprint):boolean{
+  private hasKnownEncryptionKeys(pin:Pin,fingerprint:Pick<DirectoryFingerprint,'deviceIdentities'>):boolean{
     if(!pin.devices?.length||!fingerprint.deviceIdentities.length)return false;
     // Delivery encrypts to identityKey itself. An extra device using an exact
     // known public key exposes no new private-key holder. A replaced known
     // device, or any previously unseen encryption key, still fails closed.
-    return fingerprint.deviceIdentities.every(device=>{
-      const known=pin.devices!.find(candidate=>candidate.deviceId===device.deviceId);
-      return known?known.identity===device.identity:pin.devices!.some(candidate=>candidate.identity===device.identity);
-    });
+    const result=this.knownDevices(pin,fingerprint);
+    return !result.replaced&&result.ids.size===fingerprint.deviceIdentities.length;
+  }
+  private knownDevices(pin:Pin,fingerprint:Pick<DirectoryFingerprint,'deviceIdentities'>):{ids:Set<string>;replaced:boolean}{
+    const pinnedIds=new Map(pin.devices?.map(device=>[device.deviceId,device.identity]));
+    const pinnedKeys=new Set(pinnedIds.values());
+    const ids=new Set<string>();let replaced=false;
+    for(const device of fingerprint.deviceIdentities){
+      const known=pinnedIds.get(device.deviceId);
+      if(known&&known!==device.identity){replaced=true;continue;}
+      if(known===device.identity||(!known&&pinnedKeys.has(device.identity)))ids.add(device.deviceId);
+    }
+    return {ids,replaced};
   }
   private validId(value:unknown):value is string{return typeof value==='string'&&value.length>0&&value.length<=128&&value.trim()===value;}
   private validEntry(value:IdentityTrustTransferEntry):boolean{
@@ -167,14 +208,24 @@ export class IdentityTrustService {
       &&(value.verifiedAt===undefined||typeof value.verifiedAt==='string'&&/^\d{4}-\d{2}-\d{2}T[\d:.]+Z$/.test(value.verifiedAt)&&value.verifiedAt.length<=32&&Number.isFinite(Date.parse(value.verifiedAt))&&Date.parse(value.verifiedAt)<=Date.now()+60_000);
   }
   private clearChanged(scope:string,userId:string):void{
-    this.changed.update(previous=>{const next=new Set(previous);next.delete(JSON.stringify([scope,userId]));return next;});
+    const key=JSON.stringify([scope,userId]);
+    this.changed.update(previous=>{if(!previous.has(key))return previous;const next=new Set(previous);next.delete(key);return next;});
+  }
+  private setPending(scope:string,userId:string,count:number):void{
+    const key=JSON.stringify([scope,userId]);
+    this.pending.update(previous=>{
+      if((previous.get(key)??0)===count)return previous;
+      const next=new Map(previous);if(count)next.set(key,count);else next.delete(key);
+      while(next.size>512)next.delete(next.keys().next().value!);
+      return next;
+    });
   }
   private async update(scope:string,userId:string,change:(pin:Pin|undefined)=>Pin):Promise<void>{
     const db=await this.open();
     await new Promise<void>((resolve,reject)=>{
       const tx=db.transaction('pins','readwrite');const store=tx.objectStore('pins');
       const key=JSON.stringify([scope,userId]);const request=store.get(key);let error:unknown;
-      request.onsuccess=()=>{try{store.put(change(request.result),key);}catch(reason){error=reason;tx.abort();}};
+      request.onsuccess=()=>{try{const next=change(request.result);if(next!==request.result)store.put(next,key);}catch(reason){error=reason;tx.abort();}};
       tx.oncomplete=()=>resolve();tx.onabort=()=>reject(error || tx.error || new Error('No se pudo guardar la verificación.'));tx.onerror=()=>reject(tx.error);
     });
   }

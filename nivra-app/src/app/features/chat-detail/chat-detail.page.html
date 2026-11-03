@@ -458,6 +458,11 @@
     }
     @if (identityChanged()) {
       <app-chat-identity-change-notice [disabled]="sending || profileActionBusy" (verify)="verifyIdentity()" />
+    } @else if(identityPendingDevices();as pending) {
+      <div class="identity-device-note" role="status" [appTransientNotice]="pending" [appNoticeDuration]="12000">
+        <span>Los mensajes van a los equipos conocidos. {{pending === 1 ? 'Hay un dispositivo nuevo por comprobar.' : 'Hay dispositivos nuevos por comprobar.'}}</span>
+        <button type="button" (click)="verifyIdentity()">Revisar</button>
+      </div>
     }
     @if (editingMessage) {
       <div class="edit-bar">
@@ -982,7 +987,7 @@
               </span>
               <div>
                 <strong>{{ 'CHAT.VERIFY_IDENTITY' | translate:'Verificar identidad' }}</strong>
-                <small>{{ identityChanged() ? ('CHAT.PROFILE_IDENTITY_CHANGED' | translate:'La identidad cambió. Compárala con tu contacto.') : ('CHAT.PROFILE_IDENTITY_COPY' | translate:'Compara el código de seguridad con tu contacto.') }}</small>
+                <small>{{ identityChanged() ? ('CHAT.PROFILE_IDENTITY_CHANGED' | translate:'La identidad cambió. Compárala con tu contacto.') : identityPendingDevices() ? 'Dispositivo nuevo pendiente de comprobar' : ('CHAT.PROFILE_IDENTITY_COPY' | translate:'Compara el código de seguridad con tu contacto.') }}</small>
               </div>
               <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
             </button>

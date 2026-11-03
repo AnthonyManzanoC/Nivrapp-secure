@@ -926,9 +926,12 @@ export class VaultService {
     const targets: RatchetTarget[] = [];
     for (const member of members) {
       const directory = directories.find(directory => directory.userId === member.userId);
-      const published = directory?.devices.filter(device => device.keyBundle?.identityKey) ?? [];
+      let published = directory?.devices.filter(device => device.keyBundle?.identityKey) ?? [];
       if (!published.length && member.userId !== context.userId) throw Error('Un miembro necesita abrir Nivra y completar la actualización del cifrado.');
-      if (directory && member.userId !== context.userId) await this.injector.get(IdentityTrustService).check(JSON.stringify([context.userId, context.deviceId]), directory, () => this.isCurrent(context));
+      if (directory && member.userId !== context.userId) {
+        const trusted=await this.injector.get(IdentityTrustService).forDelivery(JSON.stringify([context.userId, context.deviceId]), { ...directory, devices: published }, () => this.isCurrent(context));
+        published=trusted.devices;
+      }
       this.checkContext(context);
       for (const device of published) {
         const publicJwk = this.crypto.parsePublicJwk(device.keyBundle.identityKey);

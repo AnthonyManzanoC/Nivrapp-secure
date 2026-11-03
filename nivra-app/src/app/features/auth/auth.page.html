@@ -123,6 +123,7 @@
       } @else {
         <section class="qr-card">
           <p class="qr-help">{{ 'LOGIN.QR_HELP' | translate:'Abre Nivra en el dispositivo donde ya tienes tu cuenta. En Cuenta, busca Vincular por QR y escanea este código.' }}</p>
+          <p class="qr-help">Al vincular con QR conservas las verificaciones de tus contactos en este navegador.</p>
           <div class="qr-frame" [class.expired]="qrExpired()" [attr.aria-busy]="submitting || auth.qrState() === 'authorizing'">
             @if (submitting || auth.qrState() === 'authorizing') {
               <ion-spinner name="crescent" [attr.aria-label]="'COMMON.LOADING' | translate:'Cargando'"></ion-spinner>

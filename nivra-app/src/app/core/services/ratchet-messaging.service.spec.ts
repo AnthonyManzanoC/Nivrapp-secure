@@ -16,7 +16,7 @@ describe('actual application Double Ratchet delivery', () => {
     const owner = { user: { id: `usr-${accountName}`, alias: accountName }, device: { id: `dev-${name}` } };
     service.auth = { session: () => owner, ensureDeviceIdentity: async () => keys };
     service.crypto = Object.create(CryptoService.prototype); service.crypto.currentKeyMaterial = async () => keys;
-    service.trust = { check: jasmine.createSpy('identityCheck').and.resolveTo() };
+    service.trust = { forDelivery: jasmine.createSpy('identityCheck').and.callFake(async (_scope:any,directory:any)=>directory) };
     service.appLock = { isContentLocked: () => false };
     service.factory = openRatchetRuntime; service.runtime = null; service.runtimeScope = ''; service.opening = null; service.generation = 0; service.serial = Promise.resolve(); service.enabledCache = null;
     const saved = new Map<string, any>(), messages = new Map<string, any>();

@@ -41,7 +41,7 @@ describe('chat sends stay with their original account and device', () => {
       ]),
     };
     service.auth = { session };
-    service.identityTrust = { check: jasmine.createSpy('identityCheck').and.resolveTo() };
+    service.identityTrust = { forDelivery: jasmine.createSpy('identityCheck').and.callFake(async (_scope:any,directory:any)=>directory) };
     service.auth.ensureDeviceIdentity = async () => {
       const started = session();
       return { ...await service.crypto.currentKeyMaterial(), userId: started.user.id, deviceId: started.device.id };

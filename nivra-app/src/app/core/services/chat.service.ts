@@ -4851,8 +4851,9 @@ export class ChatService implements OnDestroy {
         throw new Error(`No se pudieron comprobar las llaves de ${label}. Pídele que actualice Nivra e inicie sesión de nuevo; el mensaje no se ha enviado.`);
       }
       const deliveryDirectory = { ...directory!, devices: publishedDevices };
-      directories.set(participant.userId, deliveryDirectory);
-      if (participant.userId !== current.user.id) await this.identityTrust.check(JSON.stringify([current.user.id,current.device.id]), deliveryDirectory, () => this.isSendContextCurrent(sendContext));
+      const trustedDirectory = participant.userId === current.user.id ? deliveryDirectory :
+        await this.identityTrust.forDelivery(JSON.stringify([current.user.id,current.device.id]), deliveryDirectory, () => this.isSendContextCurrent(sendContext));
+      directories.set(participant.userId, trustedDirectory);
       this.assertSendContext(sendContext);
     }
 

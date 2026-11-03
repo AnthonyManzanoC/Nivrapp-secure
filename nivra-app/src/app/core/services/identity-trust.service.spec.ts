@@ -6,6 +6,41 @@ const directory = (coordinate: string): PublicKeyDirectory => ({userId:'peer',al
   keyBundle:{identityKey:JSON.stringify({kty:'EC',crv:'P-256',x:coordinate.repeat(43),y:'B'.repeat(43)}),signedPreKey:null,preKeySignature:null,oneTimePreKeys:[]},
 }]});
 describe('persistent identity pins',()=>{
+  it('continues delivery to known keys when a browser is added, without trusting its key',async()=>{
+    const scope=crypto.randomUUID(),service=new IdentityTrustService(),known=directory('A');
+    await service.confirm(scope,known);
+    const added={...known,devices:[...known.devices,{...directory('C').devices[0],deviceId:'new-browser'}]};
+    expect((await service.forDelivery(scope,added)).devices.map(device=>device.deviceId)).toEqual(['phone']);
+    expect(service.pendingDeviceCount(scope,'peer')).toBe(1);expect(service.isChanged(scope,'peer')).toBeFalse();
+    expect(service.pendingDeviceCount('another-account','peer')).toBe(0);
+    expect((await service.continuity(scope,added)).state).toBe('pending-device');
+    expect((await service.continuity(scope,known)).state).toBe('verified');
+    await service.confirm(scope,added);
+    expect((await service.forDelivery(scope,added)).devices.length).toBe(2);expect(service.pendingDeviceCount(scope,'peer')).toBe(0);
+  });
+  it('retains the actual replacement warning even when a second original device remains',async()=>{
+    const scope=crypto.randomUUID(),service=new IdentityTrustService(),original=directory('A');
+    const second={...directory('D').devices[0],deviceId:'tablet'};
+    await service.confirm(scope,{...original,devices:[...original.devices,second]});
+    const replaced={...original,devices:[...directory('C').devices,second]};
+    await expectAsync(service.forDelivery(scope,replaced)).toBeRejectedWithError(/identidad.*cambiado/);
+    expect(service.isChanged(scope,'peer')).toBeTrue();expect(service.pendingDeviceCount(scope,'peer')).toBe(0);
+  });
+  it('requires comparison when none of the known keys remains',async()=>{
+    const scope=crypto.randomUUID(),service=new IdentityTrustService();await service.confirm(scope,directory('A'));
+    const added={...directory('C'),devices:[{...directory('C').devices[0],deviceId:'replacement-browser'}]};
+    await expectAsync(service.forDelivery(scope,added)).toBeRejectedWithError(/identidad.*cambiado/);
+    expect((await service.continuity(scope,added)).state).toBe('changed');
+  });
+  it('restores an approved verification on a linked browser that observed only the remaining known key',async()=>{
+    const owner=crypto.randomUUID(),service=new IdentityTrustService();const source=JSON.stringify([owner,'phone']),target=JSON.stringify([owner,'new-browser']);
+    const known=directory('A'),all={...known,devices:[...known.devices,{...directory('C').devices[0],deviceId:'retired-device'}]};
+    await service.confirm(source,all);await service.check(target,known);
+    const transfer=await service.exportForLinkedDevice(owner,'phone');
+    expect(await service.importFromLinkedDevice(target,'phone',transfer)).toBe(1);
+    expect((await service.continuity(target,known)).state).toBe('verified');
+    expect((await service.continuity(target,known)).source).toBe('linked-device');
+  });
   it('automatically accepts an additional device only when it uses the exact known encryption key',async()=>{
     const scope=crypto.randomUUID();const service=new IdentityTrustService();const original=directory('A');
     await service.confirm(scope,original);

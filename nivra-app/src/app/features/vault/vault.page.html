@@ -6,7 +6,7 @@
         <h1>{{ 'VAULT.TITLE' | translate:'Boveda' }}</h1>
         <p>{{ 'VAULT.COPY' | translate:'Cifrado local, salas privadas y archivos E2EE.' }}</p>
       </div>
-      <button class="create-room-cta" type="button" (click)="roomComposerOpen=true"><ion-icon name="add-circle-outline"></ion-icon><span>Crear sala</span></button>
+      <button class="create-room-cta" type="button" (click)="roomComposerOpen=true"><ion-icon name="add-circle-outline"></ion-icon><span>Crear sala privada</span></button>
       <ion-button mode="ios" fill="clear" (click)="vault.load()" [attr.aria-label]="'COMMON.REFRESH' | translate:'Actualizar'">
         @if (vault.loading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="refresh-outline"></ion-icon> }
       </ion-button>
