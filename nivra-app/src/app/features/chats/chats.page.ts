@@ -117,7 +117,7 @@ export class ChatsPage implements OnDestroy {
   bulkChatBusy = false;
   bulkDeleteOpen = false;
   private rowPress: { pointerId: number; x: number; y: number; timer: number } | null = null;
-  private ignoredRowClick = '';
+  private ignoreSelectionReleaseClick = false;
   readonly social = inject(SocialService);
   readonly appSettings = inject(AppSettingsService);
   readonly localHistory = inject(LocalHistoryService);
@@ -341,6 +341,7 @@ export class ChatsPage implements OnDestroy {
     this.listLoadingFocusEffect = effect(() => this.preserveConversationFocus(this.showConversationSkeleton()));
     document.addEventListener('focusin', this.onDocumentFocus, true);
     document.addEventListener('pointerdown', this.onDocumentPointerDown, true);
+    document.addEventListener('click', this.onDocumentClick, true);
     document.addEventListener('keydown', this.onDocumentKeydown, true);
     document.addEventListener('visibilitychange', this.onHistoryVisibility);
     addIcons({ arrowBackOutline, callOutline, videocamOutline, informationCircleOutline,
@@ -392,6 +393,7 @@ export class ChatsPage implements OnDestroy {
     document.removeEventListener('visibilitychange', this.onHistoryVisibility);
     document.removeEventListener('focusin', this.onDocumentFocus, true);
     document.removeEventListener('pointerdown', this.onDocumentPointerDown, true);
+    document.removeEventListener('click', this.onDocumentClick, true);
     document.removeEventListener('keydown', this.onDocumentKeydown, true);
     this.forgetConversationFocus();
     this.clearSyncNoticeTimer();
@@ -570,7 +572,16 @@ export class ChatsPage implements OnDestroy {
   };
 
   private readonly onDocumentPointerDown = (event: PointerEvent): void => {
+    this.ignoreSelectionReleaseClick = false;
     if (!this.belongsToConversationList(event.target as Node | null)) this.forgetConversationFocus();
+  };
+
+  private readonly onDocumentClick = (event: MouseEvent): void => {
+    if (!this.ignoreSelectionReleaseClick || (event.detail === 0 && !(event instanceof PointerEvent && event.pointerType))) return;
+    // The toolbar can move rows under the finger before the browser emits its click.
+    this.ignoreSelectionReleaseClick = false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
   };
 
   private readonly onDocumentKeydown = (event: KeyboardEvent): void => {
@@ -805,7 +816,7 @@ export class ChatsPage implements OnDestroy {
 
   private searchContext(): string {
     const session = this.auth.session();
-    return JSON.stringify([session?.user.id ?? '', session?.device?.id ?? '']);
+    return JSON.stringify([session?.user.id ?? '', session?.device?.id ?? '', this.auth.sessionGeneration?.() ?? 0]);
   }
 
   private isCurrentScope(scope: string): boolean {
@@ -849,10 +860,6 @@ export class ChatsPage implements OnDestroy {
   }
 
   onConversationRowClick(conversation: Conversation, event: MouseEvent): void {
-    if (event.detail > 0 && this.ignoredRowClick === conversation.id) {
-      this.ignoredRowClick = '';
-      return;
-    }
     if (this.selectionActive() || event.shiftKey) {
       this.toggleChatSelection(conversation.id);
     } else if (this.communityById().has(conversation.id) && !this.privateChats.isProtected(conversation.id)) {
@@ -865,7 +872,6 @@ export class ChatsPage implements OnDestroy {
   startConversationPress(conversation: Conversation, event: PointerEvent): void {
     if (!event.isPrimary || event.button !== 0) return;
     this.cancelConversationPress();
-    this.ignoredRowClick = '';
     if (this.selectionActive() || this.conversationActionBusy || this.showConversationSkeleton() ||
         event.composedPath().some(target => target instanceof HTMLElement && target.matches('.avatar-action, .conversation-more'))) return;
     const scope = this.searchContext();
@@ -876,7 +882,7 @@ export class ChatsPage implements OnDestroy {
       if (!this.isCurrentScope(scope) || this.showConversationSkeleton() || !this.conversationsForFolder().some(item => item.id === conversation.id)) return;
       this.closeConversationMenu();
       this.cancelAvatarPress();
-      this.ignoredRowClick = conversation.id;
+      this.ignoreSelectionReleaseClick = true;
       this.toggleChatSelection(conversation.id);
     }, 480);
     this.rowPress = press;
@@ -907,7 +913,7 @@ export class ChatsPage implements OnDestroy {
     this.cancelConversationPress();
     this.selectedChatIds.set(new Set());
     this.bulkDeleteOpen = false;
-    this.ignoredRowClick = '';
+    this.ignoreSelectionReleaseClick = false;
   }
 
   private toggleChatSelection(id: string): void {

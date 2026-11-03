@@ -59,7 +59,7 @@ describe('Chats actions and scoped search', () => {
   });
 
   beforeEach(() => {
-    auth = { session: signal({ user: { id: 'ux-me', alias: 'maria' }, device: { id: 'ux-device' } }), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), relinkDevice: jasmine.createSpy('relinkDevice').and.resolveTo() };
+    auth = { session: signal({ user: { id: 'ux-me', alias: 'maria' }, device: { id: 'ux-device' } }), sessionGeneration: signal(0), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), relinkDevice: jasmine.createSpy('relinkDevice').and.resolveTo() };
     router = { events: EMPTY, url: '/app/chats', navigate: jasmine.createSpy().and.resolveTo(true), navigateByUrl: jasmine.createSpy().and.resolveTo(true), parseUrl: () => ({ root: { children: {} } }) };
     chat = {
       conversations: signal([{ id: 'family', title: 'Familía' }, { id: 'archived', title: 'Equipo' }]),
@@ -134,7 +134,11 @@ describe('Chats actions and scoped search', () => {
     page.bulkDeleteOpen = true;
     const pending = page.runBulkChatAction('delete');
     expect(chat.deleteConversation).toHaveBeenCalledOnceWith(jasmine.objectContaining({ id: 'family' }), 'me');
+    const originalSession = auth.session();
     auth.session.set({ user: { id: 'ux-other', alias: 'other' }, device: { id: 'other-device' } });
+    auth.sessionGeneration.update((value: number) => value + 1);
+    auth.session.set(originalSession);
+    auth.sessionGeneration.update((value: number) => value + 1);
     finishFirst();
     await pending;
     expect(chat.deleteConversation).toHaveBeenCalledTimes(1);
