@@ -205,7 +205,7 @@ ion-modal.call-exit-modal {
   button {
     min-height: 44px; padding: 10px 16px; border: 1px solid var(--nivra-line); border-radius: 24px;
     color: var(--nivra-muted); background: transparent; font-size: 13px; font-weight: 650; white-space: nowrap;
-    &.selected { color: var(--nivra-brand-2); border-color: color-mix(in srgb, var(--nivra-brand) 40%, transparent); background: color-mix(in srgb, var(--nivra-brand) 12%, transparent); }
+    &.selected { color: var(--nivra-brand-2); border-color: var(--nivra-selection-line); background: var(--nivra-selection); }
   }
 }
 .history-empty {

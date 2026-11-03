@@ -246,6 +246,7 @@ async function main() {
     await waitFor("location.pathname==='/app/chats'");
     assert(await evaluate("!!document.querySelector('.active-call-banner') || document.body.textContent.includes('Volver a la llamada')"),'minimize keeps the active call available');
     await waitFor("!!document.querySelector('.ongoing-call') && !!document.querySelector('.mobile-message-fab')");
+    assert(await evaluate("(()=>{const fab=document.querySelector('.mobile-message-fab'), sample=document.createElement('span'); sample.style.color='var(--nivra-brand)'; fab.appendChild(sample); const themed=getComputedStyle(fab).backgroundColor===getComputedStyle(sample).color; sample.remove(); return themed;})()"),'Contacts action uses the app theme color');
     assert(await evaluate("(()=>{const a=document.querySelector('.ongoing-call').getBoundingClientRect(),b=document.querySelector('.mobile-message-fab').getBoundingClientRect();return a.bottom<=b.top||a.right<=b.left||a.left>=b.right;})()"),'active call navigation must not cover Contacts');
     await evaluate("document.querySelector('.list').scrollTop=document.querySelector('.list').scrollHeight");
     await capture('mobile-call-and-contacts');

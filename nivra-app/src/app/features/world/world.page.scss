@@ -1209,9 +1209,9 @@ ion-modal.story-stats-modal {
 .world-surface .story-bucket-row.viewed { opacity:1; }
 .world-surface .story-open em { color:var(--nivra-muted); font-style:normal; }
 .world-surface .story-open strong { color:var(--nivra-text); }
-.world-filters button[aria-pressed=true] { background:color-mix(in srgb,var(--nivra-brand) 16%,var(--nivra-panel-solid)); color:var(--nivra-brand-2); }
+.world-filters button[aria-pressed=true] { background:var(--nivra-selection); border-color:var(--nivra-selection-line); color:var(--nivra-brand-2); }
 .world-search { border:1px solid transparent; }
-.world-search:focus-within { border-color:var(--nivra-brand); box-shadow:0 0 0 3px color-mix(in srgb,var(--nivra-brand) 10%,transparent); }
+.world-search:focus-within { border-color:var(--nivra-selection-line); box-shadow:0 0 0 2px var(--nivra-ring); }
 .world-surface .story-open:focus-visible { outline:2px solid var(--nivra-brand); outline-offset:0; }
 .world-surface .story-bucket-row .row-actions ion-button { min-width:44px; min-height:44px; --padding-start:10px; --padding-end:10px; }
 @media(max-width:380px) {

@@ -61,7 +61,7 @@
 @media(max-width:768px){
  .side-actions .new-chat-button { display:none; }
  .sidebar { position:relative; }
- .mobile-message-fab { position:absolute; z-index:10; right:18px; bottom:18px; display:flex; align-items:center; justify-content:center; gap:0; height:56px; width:56px; border:0; border-radius:18px; color:var(--ion-color-primary-contrast,#fff); background:var(--ion-color-primary); box-shadow:0 5px 18px #003e2926; cursor:pointer; transition:width .22s ease,gap .22s ease; }
+ .mobile-message-fab { position:absolute; z-index:10; right:18px; bottom:18px; display:flex; align-items:center; justify-content:center; gap:0; height:56px; width:56px; border:0; border-radius:18px; color:var(--nivra-on-brand); background:var(--nivra-brand); box-shadow:0 5px 16px color-mix(in srgb, var(--nivra-brand-2) 25%, transparent); cursor:pointer; transition:width .22s ease,gap .22s ease; }
  .mobile-message-fab ion-icon { font-size:26px; flex:none; }
  .mobile-message-fab span { max-width:0; opacity:0; overflow:hidden; white-space:nowrap; font-size:13px; font-weight:700; transition:max-width .22s ease,opacity .18s ease; }
  .mobile-message-fab.expanded,.mobile-message-fab:focus-visible { width:180px; gap:10px; }

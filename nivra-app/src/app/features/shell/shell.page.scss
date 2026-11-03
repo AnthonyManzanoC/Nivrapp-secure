@@ -51,8 +51,8 @@
   .ongoing-call-return { display: flex; align-items: center; gap: 12px; min-width: 0; text-align: start; }
   span { display: grid; gap: 3px; min-width: 0; }
   strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  small { font-size: 12px; color: var(--nivra-brand); }
-  .resume-audio { background: var(--nivra-brand); color: #06241b; font-weight: 700; }
+  small { font-size: 12px; color: var(--nivra-brand-2); }
+  .resume-audio { background: var(--nivra-brand); color: var(--nivra-on-brand); font-weight: 700; }
 }
 
 .workspace {

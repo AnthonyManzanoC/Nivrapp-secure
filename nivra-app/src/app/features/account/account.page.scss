@@ -18,7 +18,10 @@
 
 .profile-hero.profile-photo-row {
   display:grid; grid-template-columns:104px minmax(0,1fr); gap:18px; align-items:center;
-  background:linear-gradient(145deg,color-mix(in srgb,var(--nivra-brand) 11%,var(--nivra-panel-solid)),var(--nivra-panel-solid));
+  background:
+    radial-gradient(ellipse at top left, color-mix(in srgb, var(--nivra-brand) 14%, transparent), transparent 72%),
+    var(--nivra-panel-solid);
+  border-color: var(--nivra-selection-line);
   .profile-avatar-control { grid-column:1; grid-row:1; width:104px; align-self:center; }
   .profile-photo-actions { display:contents; }
   .profile-hero-copy { grid-column:2; grid-row:1; margin:0; }

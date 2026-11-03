@@ -30,6 +30,7 @@ button,input,textarea,select{font:inherit}button,a,input,select,textarea{outline
 .directory-search .community-icon { width: 18px; height: 18px; color: var(--nivra-muted); }
 .directory-search:focus-within { box-shadow: 0 0 0 2px var(--nivra-ring); }
 .directory-search input:focus-visible { outline: none; }
+.create-community :is(input, textarea)::placeholder { color: var(--nivra-muted); opacity: 1; font-weight: 500; }
 
 @media (hover: hover) and (pointer: fine) {
   .photo-picker:hover, .community-item:hover, .announcements:hover {

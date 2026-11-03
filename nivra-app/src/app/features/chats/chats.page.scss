@@ -314,7 +314,7 @@ time {
 .search-cancel ion-icon { font-size: 20px; }
 .search-scopes { display: flex; gap: 7px; padding-top: 9px; overflow-x: auto; scrollbar-width: none; }
 .search-scopes button { display: flex; flex: none; align-items: center; gap: 5px; border: 1px solid var(--nivra-line); border-radius: 999px; min-height: 44px; padding: 6px 12px; font: inherit; font-size: 12px; font-weight: 650; color: var(--nivra-muted); background: transparent; cursor: pointer; }
-.search-scopes button.selected { color: var(--nivra-brand-2); border-color: color-mix(in srgb, var(--nivra-brand) 28%, var(--nivra-line)); background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); }
+.search-scopes button.selected { color: var(--nivra-brand-2); border-color: var(--nivra-selection-line); background: var(--nivra-selection); }
 .search-scopes ion-icon { font-size: 14px; }
 .search-hint, .sync-notice { margin: 9px 3px 0; color: var(--nivra-muted); font-size: 12px; line-height: 1.5; }
 .sync-notice { display: flex; align-items: center; gap: 6px; color: var(--nivra-brand-2); }

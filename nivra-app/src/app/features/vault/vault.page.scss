@@ -30,6 +30,8 @@
 .room-list-panel .room-avatar { border-radius: 18px; }
 .room-workspace { border-radius: 26px; overflow: hidden; }
 .room-workspace .room-head { gap: 10px; }
+.room-workspace .room-head ion-button ion-icon { flex: none; }
+.room-workspace .room-head :is(.invite-link-action, .voice-start) :is(ion-icon, ion-spinner) { margin-inline-end: 6px; }
 .room-workspace .composer { border-radius: 20px; background: var(--nivra-panel-solid); border: 1px solid var(--nivra-line); padding: 8px; }
 .room-workspace .owner-invite-panel { border-radius: 18px; }
 @media(min-width: 980px) {

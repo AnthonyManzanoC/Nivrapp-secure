@@ -68,41 +68,9 @@ body :is(app-world, app-account, app-vault, app-calls, app-contacts) .page-head 
   text-wrap: balance;
 }
 
-body :is(app-world .world-filters, app-calls .history-filters, app-chats .search-scopes) button[aria-pressed="true"] {
-  background: var(--nivra-selection);
-  color: var(--nivra-brand-2);
-  border-color: var(--nivra-selection-line);
-}
-
-body :is(app-chats .search-box, app-contacts .people-panel .search-line, app-world .world-search):focus-within {
+body :is(app-chats .search-box, app-contacts .people-panel .search-line):focus-within {
   border-color: var(--nivra-selection-line);
   box-shadow: 0 0 0 2px var(--nivra-ring);
-}
-
-body app-vault .room-head ion-button ion-icon {
-  flex: none;
-}
-
-body app-vault .room-head :is(.invite-link-action, .voice-start) :is(ion-icon, ion-spinner) {
-  margin-inline-end: 6px;
-}
-
-body app-account .profile-hero {
-  background:
-    radial-gradient(ellipse at top left, color-mix(in srgb, var(--nivra-brand) 14%, transparent), transparent 72%),
-    var(--nivra-panel-solid);
-  border-color: var(--nivra-selection-line);
-}
-
-body app-shell .ongoing-call .resume-audio { color: var(--nivra-on-brand); }
-body app-shell .ongoing-call .ongoing-call-return small { color: var(--nivra-brand-2); }
-
-@media (max-width: 768px) {
-  body app-chats .mobile-message-fab {
-    background: var(--nivra-brand);
-    color: var(--nivra-on-brand);
-    box-shadow: 0 5px 16px color-mix(in srgb, var(--nivra-brand-2) 25%, transparent);
-  }
 }
 
 @media (hover: hover) and (pointer: fine) {
