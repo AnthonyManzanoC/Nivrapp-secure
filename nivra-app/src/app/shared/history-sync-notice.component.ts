@@ -43,7 +43,7 @@ import { FormsModule } from '@angular/forms';
   } @else if (showWaiting && (history.state() !== 'idle' || identityError)) {
     @if (compact) {
       <button type="button" class="history-compact" (click)="detailsOpen = true" aria-haspopup="dialog" [attr.aria-label]="titleKey() | translate:titleFallback()">
-        @if (retryBusy()) { <ion-spinner name="crescent" aria-hidden="true" /> } @else { <ion-icon name="lock-closed-outline" aria-hidden="true" /> }
+        @if (retryBusy() && (!deferredTimeline || history.state() === 'syncing')) { <ion-spinner name="crescent" aria-hidden="true" /> } @else { <ion-icon name="lock-closed-outline" aria-hidden="true" /> }
         <span>{{ titleKey() | translate:titleFallback() }}</span><ion-icon name="chevron-forward-outline" aria-hidden="true" />
       </button>
       <ion-modal class="history-sync-modal" [isOpen]="detailsOpen" (didDismiss)="detailsOpen = false">

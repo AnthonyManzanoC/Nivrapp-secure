@@ -2,6 +2,7 @@ import { signal } from '@angular/core';
 import { fakeAsync, tick, flushMicrotasks } from '@angular/core/testing';
 import { ChatDetailPage } from './chat-detail.page';
 import { ChatService } from '../../core/services/chat.service';
+import { threadHistoryForDevice } from './chat-thread.helpers';
 
 describe('Nonblocking durable text composer', () => {
   function harness() {
@@ -17,6 +18,7 @@ describe('Nonblocking durable text composer', () => {
     });
     Object.assign(page, { auth: { session }, conversation: () => ({ id: 'chat', participants: [] }),
       chat: { selectedMessages: confirmed, sendTyping: jasmine.createSpy().and.resolveTo() },
+      threadHistory: () => threadHistoryForDevice(confirmed(), session().device.createdAt),
       textOutbox: { enqueue, forConversation: () => pending(), retry: jasmine.createSpy().and.resolveTo(), discard: jasmine.createSpy().and.resolveTo() },
       privateChatLocked: locked, composerGeneration: 0, destroyed: false, sending: false, textSaving: false, textQueueError: '', draft: ' Hola ', attachmentError: '',
       canSendMessages: () => true, isBlocked: () => false, currentPolicy: () => ({ ttlSeconds: null }),

@@ -717,7 +717,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!session || !conversation || this.privateChatLocked()) return confirmed;
     const queued = this.textOutbox.forConversation(conversation.id);
     if (!queued.length) return confirmed;
-    const confirmedIds = new Set(confirmed.filter(message => message.mine).map(message => message.clientMessageId));
+    const confirmedIds = new Set(this.chat.selectedMessages().filter(message => message.mine).map(message => message.clientMessageId));
     const pending = queued.filter(row => row.senderUserId === session.user.id
       && row.senderDeviceId === session.device.id && !confirmedIds.has(row.clientMessageId));
     return pending.length ? [...confirmed, ...pending] : confirmed;

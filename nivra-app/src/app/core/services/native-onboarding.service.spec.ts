@@ -10,12 +10,25 @@ describe('NativeOnboardingService', () => {
     expect(TestBed.inject(NativeOnboardingService).isComplete()).toBeFalse();
   });
 
-  it('remembers completion across app launches', () => {
+  it('remembers completion across packaged app launches with the existing storage key', () => {
+    spyOn(Capacitor, 'isNativePlatform').and.returnValue(true);
     const values = new Map<string, string>();
     spyOn(Storage.prototype, 'getItem').and.callFake(key => values.get(key) ?? null);
     const write = spyOn(Storage.prototype, 'setItem').and.callFake((key, value) => { values.set(key, value); });
     TestBed.inject(NativeOnboardingService).complete();
     expect(write).toHaveBeenCalledOnceWith('nivra.nativeOnboarding.v1', 'complete');
+    expect(new NativeOnboardingService().isComplete()).toBeTrue();
+  });
+
+  it('remembers web completion in a new page instance and reads the legacy browser marker', () => {
+    spyOn(Capacitor, 'isNativePlatform').and.returnValue(false);
+    const values = new Map<string, string>([['nivra.nativeOnboarding.v1', 'complete']]);
+    spyOn(Storage.prototype, 'getItem').and.callFake(key => values.get(key) ?? null);
+    spyOn(Storage.prototype, 'setItem').and.callFake((key, value) => { values.set(key, value); });
+    const web = TestBed.inject(NativeOnboardingService);
+    expect(web.isComplete()).toBeTrue();
+    web.complete();
+    values.delete('nivra.nativeOnboarding.v1');
     expect(new NativeOnboardingService().isComplete()).toBeTrue();
   });
 
