@@ -57,7 +57,38 @@ public static class CommunityChecks
         var children=await Task.WhenAll(Enumerable.Range(0,5).Select(async _=>{using var r=await Request("alice",HttpMethod.Post,$"/communities/{id}/groups/create",childDraft);return await Read(r);}));
         Check(children.All(c=>c.Groups.Count==2),"new child group creation is idempotent under retries");
         var child=children[0].Groups.Single(c=>c.Id!="community-existing").Id;
-        using(var r=await Request("bob",HttpMethod.Post,$"/communities/{id}/groups/{child}/join",new{}))Check(r.StatusCode==HttpStatusCode.OK,"member joins a linked group explicitly");
+        var childPath=$"/communities/{id}/groups/{child}";
+        var reviewPath=$"{childPath}/requests/usr-lab-bob";
+        var submissions=await Task.WhenAll(Enumerable.Range(0,5).Select(async n=>{
+            using var r=await Request("bob",HttpMethod.Post,$"{childPath}/{(n%2==0?"request":"join")}",new{});
+            return r.StatusCode;
+        }));
+        Check(submissions.All(status=>status==HttpStatusCode.Accepted),"concurrent requests and older clients require approval");
+        using(var r=await Request("bob",HttpMethod.Get,$"/communities/{id}"))
+        {
+            var group=(await Read(r)).Groups.Single(g=>g.Id==child);
+            Check(group.RequestPending&&!group.Joined&&!group.CanReview,"requester sees one pending request without membership");
+        }
+        using(var r=await Request("bob",HttpMethod.Get,$"/communities/{id}/join-requests"))
+            Check((await r.Content.ReadFromJsonAsync<CommunityGroupRequestView[]>())!.Length==0,"members cannot list requests for groups they do not manage");
+        using(var r=await Request("bob",HttpMethod.Post,reviewPath,new{accept=true}))
+            Check(r.StatusCode==HttpStatusCode.NotFound,"requester cannot approve their own access");
+        using(var r=await Request("stranger",HttpMethod.Get,$"/communities/{id}/join-requests"))
+            Check(r.StatusCode==HttpStatusCode.NotFound,"outsider cannot see the approval queue");
+        using(var r=await Request("alice",HttpMethod.Get,$"/communities/{id}/join-requests"))
+            Check((await r.Content.ReadFromJsonAsync<CommunityGroupRequestView[]>())!.Single().UserId=="usr-lab-bob","group admin sees one request after concurrent retries");
+        using(var r=await Request("alice",HttpMethod.Post,reviewPath,new{}))
+            Check(r.StatusCode==HttpStatusCode.BadRequest,"review requires an explicit decision");
+        var approvals=await Task.WhenAll(Enumerable.Range(0,4).Select(async _=>{
+            using var r=await Request("alice",HttpMethod.Post,reviewPath,new{accept=true});
+            return r.StatusCode;
+        }));
+        Check(approvals.All(status=>status==HttpStatusCode.NoContent),"parallel approvals grant membership once");
+        using(var r=await Request("bob",HttpMethod.Get,$"/communities/{id}"))
+        {
+            var group=(await Read(r)).Groups.Single(g=>g.Id==child);
+            Check(group.Joined&&!group.RequestPending&&group.MemberCount==2,"approval enables the chat and clears the pending state");
+        }
         using(var r=await Request("stranger",HttpMethod.Post,$"/communities/{id}/groups/{child}/join",new{}))Check(r.StatusCode==HttpStatusCode.NotFound,"outsider cannot join by guessing IDs");
         using(var r=await Request("bob",HttpMethod.Post,$"/communities/{id}/groups/community-standalone/join",new{}))Check(r.StatusCode==HttpStatusCode.NotFound,"cannot join an unrelated group through a community");
         using(var r=await Request("bob",HttpMethod.Post,$"/conversations/{id}/invite-links",new{}))Check(r.StatusCode==HttpStatusCode.NotFound,"only administrators can create invitation links");
@@ -72,6 +103,12 @@ public static class CommunityChecks
             using var membership=await Request("stranger",HttpMethod.Get,"/communities/"+id);
             Check((await Read(membership)).Role=="Member","invitation cannot grant administrator privileges");
         }
+        using(var r=await Request("stranger",HttpMethod.Post,$"{childPath}/request",new{}))
+            Check(r.StatusCode==HttpStatusCode.Accepted,"new community member may request access to the child group");
+        using(var r=await Request("alice",HttpMethod.Post,$"{childPath}/requests/usr-lab-stranger",new{accept=false}))
+            Check(r.StatusCode==HttpStatusCode.NoContent,"group admin can decline");
+        using(var r=await Request("stranger",HttpMethod.Post,$"{childPath}/request",new{}))
+            Check(r.StatusCode==HttpStatusCode.Conflict,"declined request cannot immediately flood the admin queue");
         using(var r=await Request("alice",HttpMethod.Post,$"/communities/{id}/groups",new LinkCommunityGroupRequest("community-existing")))Check((await Read(r)).Groups.Count==2,"link retry does not duplicate membership");
         using(var r=await Request("bob",HttpMethod.Delete,$"/communities/{id}/groups/{child}"))Check(r.StatusCode==HttpStatusCode.NotFound,"member cannot unlink a group");
         using(var r=await Request("alice",HttpMethod.Delete,$"/communities/{id}/groups/{child}"))Check(r.StatusCode==HttpStatusCode.NoContent,"admin can unlink without deleting the conversation");

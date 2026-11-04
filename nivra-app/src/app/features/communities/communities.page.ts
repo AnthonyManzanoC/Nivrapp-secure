@@ -2,8 +2,9 @@ import { Component, DestroyRef, ElementRef, computed, effect, inject, signal, un
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { IonContent } from '@ionic/angular/standalone';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Community, CommunityService } from '../../core/services/community.service';
+import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
+import { catchError, map, of, startWith, switchMap } from 'rxjs';
+import { Community, CommunityJoinRequest, CommunityService } from '../../core/services/community.service';
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
@@ -25,11 +26,28 @@ export class CommunitiesPage {
   editing=false;
   private uiScope=this.scope();
   readonly selected=computed(()=>this.communities.items().find(item=>item.id===this.selectedId())??null);
+  private readonly reviewTarget = computed(() => {
+    const item = this.selected();
+    return item?.groups.some(group => group.canReview) ? { id: item.id, scope: this.scope() } : null;
+  });
+  private readonly reviewLoad = toSignal(toObservable(this.reviewTarget).pipe(switchMap(target => {
+    if (!target) return of(null);
+    const initial = { ...target, requests: [] as CommunityJoinRequest[], error: false, loading: true };
+    return this.communities.joinRequests(target.id).pipe(
+      map(requests => ({ ...initial, requests, loading: false })),
+      catchError(() => of({ ...initial, error: true, loading: false })),
+      startWith(initial),
+    );
+  })), { initialValue: null });
+  readonly reviewQueue = computed(() => {
+    const load = this.reviewLoad();
+    return load?.id === this.selectedId() && load.scope === this.scope() && this.reviewTarget() ? load : null;
+  });
   readonly groupSections = computed(() => {
     const groups = this.selected()?.groups ?? [];
     return [
       { id: 'joined', title: 'Grupos a los que perteneces', groups: groups.filter(group => group.joined) },
-      { id: 'available', title: 'Grupos a los que puedes unirte', groups: groups.filter(group => !group.joined) },
+      { id: 'available', title: 'Grupos a los que puedes solicitar acceso', groups: groups.filter(group => !group.joined) },
     ].filter(section => section.groups.length > 0);
   });
   readonly availableGroups=computed(()=>{
@@ -53,6 +71,7 @@ export class CommunitiesPage {
   }
   private scope():string{return JSON.stringify([this.auth.session()?.user.id,this.auth.session()?.device.id,this.auth.sessionGeneration?.()??0]);}
   isAdmin(item:Community):boolean{return ['Owner','Admin'].includes(item.role);}
+  groupName(id: string): string { return this.selected()?.groups.find(group => group.id === id)?.name ?? 'Grupo'; }
   filtered():Community[]{const q=this.query.trim().toLocaleLowerCase();return this.communities.items().filter(c=>c.name.toLocaleLowerCase().includes(q));}
   select(item:Community):void{this.navigate({id:item.id});}
   newCommunity():void{this.navigate({create:1});}
@@ -100,7 +119,21 @@ export class CommunitiesPage {
   }
   async link():Promise<void>{const item=this.selected();if(!item||!this.linkId)return;const result=await this.communities.link(item.id,this.linkId);if(result){this.linkId='';this.notice='Grupo vinculado.';}}
   async createGroup():Promise<void>{const item=this.selected();if(!item||!this.newGroupName.trim())return;const result=await this.communities.createGroup(item.id,this.newGroupName.trim(),[]);if(result){this.newGroupName='';this.notice='Grupo creado. Los miembros de la comunidad pueden unirse.';}}
-  async join(groupId:string):Promise<void>{const item=this.selected();if(!item)return;const joined=await this.communities.join(item.id,groupId);if(joined&&!this.destroyRef.destroyed)await this.router.navigate(['/app/chats',joined]);}
+  async join(groupId: string): Promise<void> {
+    const id = this.selectedId();
+    if (!id) return;
+    const result = await this.communities.requestJoin(id, groupId);
+    if (!result || this.destroyRef.destroyed || this.selectedId() !== id) return;
+    if (result.conversationId) await this.router.navigate(['/app/chats', result.conversationId]);
+    else if (result.pending) this.notice = 'Solicitud enviada. Un administrador del grupo puede aprobarla.';
+  }
+  async review(request: CommunityJoinRequest, accept: boolean): Promise<void> {
+    const id = this.selectedId();
+    if (!id) return;
+    if (await this.communities.reviewJoinRequest(id, request, accept) && !this.destroyRef.destroyed && this.selectedId() === id) {
+      this.notice = accept ? 'Solicitud aprobada.' : 'Solicitud rechazada.';
+    }
+  }
   async invite():Promise<void>{const item=this.selected();if(!item)return;const url=await this.communities.inviteLink(item.id);if(url&&!this.destroyRef.destroyed){this.shareUrl=url;try{await navigator.clipboard.writeText(url);this.notice='Enlace copiado. Caduca en 24 horas y puedes revocarlo desde la información de Avisos.';}catch{this.notice='Copia el enlace para invitar.';}}}
   async unlink(groupId:string):Promise<void>{const item=this.selected();if(!item)return;await this.communities.unlink(item.id,groupId);if(!this.communities.error())this.notice='Se desvinculó el grupo. Sus conversaciones se conservan.';}
 }

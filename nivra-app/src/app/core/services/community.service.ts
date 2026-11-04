@@ -6,8 +6,10 @@ import { ChatService } from './chat.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
 
-export interface CommunityGroup { id:string; name:string; photo:string|null; memberCount:number; joined:boolean; }
+export interface CommunityGroup { id:string; name:string; photo:string|null; memberCount:number; joined:boolean; requestPending?:boolean; canReview?:boolean; canRequest?:boolean; }
 export interface Community { id:string; name:string; description:string; photo:string|null; role:string; memberCount:number; updatedAt:string; groups:CommunityGroup[]; }
+export interface CommunityJoinRequest { groupId: string; userId: string; name: string; requestedAt: string; }
+interface JoinResult { conversationId?: string; pending?: boolean; }
 
 interface DirectoryRead { scope: string; dirty: boolean; done: Promise<void>; }
 
@@ -93,16 +95,32 @@ export class CommunityService {
   }
   link(id:string,conversationId:string):Promise<Community|null>{return this.mutate('link:'+id,()=>firstValueFrom(this.api.post<Community>(`/communities/${encodeURIComponent(id)}/groups`,{conversationId})));}
   async unlink(id:string,groupId:string):Promise<void>{await this.mutate('unlink:'+groupId,async()=>{await firstValueFrom(this.api.delete(`/communities/${encodeURIComponent(id)}/groups/${encodeURIComponent(groupId)}`));return null;});}
-  async join(id:string,groupId:string):Promise<string|null>{
-    const result=await this.mutate('join:'+groupId,()=>firstValueFrom(this.api.post<{conversationId:string}>(`/communities/${encodeURIComponent(id)}/groups/${encodeURIComponent(groupId)}/join`,{})));
-    return result?.conversationId??null;
+  requestJoin(id: string, groupId: string): Promise<JoinResult | null> {
+    const scope = this.scope();
+    return this.mutate('join:'+groupId, async () => {
+      const result = await firstValueFrom(this.api.post<JoinResult>(`/communities/${encodeURIComponent(id)}/groups/${encodeURIComponent(groupId)}/request`, {}));
+      if (result.pending && scope === this.scope() && !this.destroyRef.destroyed) {
+        this.state.update(state => state.scope !== scope ? state : {...state, items: state.items.map(item => item.id !== id
+          ? item : {...item, groups: item.groups.map(group => group.id === groupId ? {...group, requestPending: true} : group)})});
+      }
+      return result;
+    }, true);
+  }
+  joinRequests(id: string) {
+    return this.api.get<CommunityJoinRequest[]>(`/communities/${encodeURIComponent(id)}/join-requests`);
+  }
+  reviewJoinRequest(id: string, request: CommunityJoinRequest, accept: boolean): Promise<boolean | null> {
+    return this.mutate('review:'+request.groupId+':'+request.userId, async () => {
+      await firstValueFrom(this.api.post(`/communities/${encodeURIComponent(id)}/groups/${encodeURIComponent(request.groupId)}/requests/${encodeURIComponent(request.userId)}`, {accept}));
+      return true;
+    }, true);
   }
   createGroup(id:string,name:string,participantUserIds:string[]):Promise<Community|null>{return this.createOnce('group:'+id,{name,participantUserIds},requestId=>firstValueFrom(this.api.post<Community>(`/communities/${encodeURIComponent(id)}/groups/create`,{name,participantUserIds,requestId})));}
   async inviteLink(id:string):Promise<string|null>{
     const response=await this.mutate('invite:'+id,()=>firstValueFrom(this.api.post<{code:string}>(`/conversations/${encodeURIComponent(id)}/invite-links`,{})));
     return response ? `https://nivrapp-secure.vercel.app/group/invite#${encodeURIComponent(response.code)}` : null;
   }
-  private async mutate<T>(key:string,action:()=>Promise<T>):Promise<T|null>{
+  private async mutate<T>(key:string,action:()=>Promise<T>,directoryOnly=false):Promise<T|null>{
     if(this.busy())return null;
     const scope=this.scope();this.busy.set(key);this.error.set('');
     try {const result=await action();if(scope!==this.scope()||this.destroyRef.destroyed)return null;
@@ -112,6 +130,8 @@ export class CommunityService {
         this.state.update(s=>({scope,items:[community,...(s.scope===scope?s.items:[]).filter(c=>c.id!==community.id)]}));
         // The server already committed the change. Keep the form responsive on a weak connection.
         void refresh();
+      } else if (directoryOnly) {
+        void this.load(true);
       } else {
         await refresh();
       }

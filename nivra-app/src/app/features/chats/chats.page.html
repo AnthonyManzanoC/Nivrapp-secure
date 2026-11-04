@@ -18,6 +18,7 @@
         <div class="side-heading">
           <span class="workspace-eyebrow">NIVRA · PRIVATE MESSENGER</span>
           <h1>{{ 'CHATS.TITLE' | translate:'Chats' }}</h1>
+          <div class="chat-heading-shortcuts">
           @if (storiesCollapsed && !query.trim() && !showRecentSearches) {
             <button type="button" class="compact-stories" (click)="expandStories()" [attr.aria-label]="'CHATS.EXPAND_STORIES' | translate:'Mostrar historias'" aria-expanded="false">
               @for (highlight of storyHighlights().slice(0, 3); track highlight.id) {
@@ -45,6 +46,12 @@
               <span>{{ conversationsForFolder().length }} {{ 'CHATS.CONVERSATIONS' | translate:'conversaciones' }}</span>
             }
           }
+          @if (!query.trim() && !showRecentSearches) {
+            <button class="chat-communities-shortcut" type="button" (click)="openCommunities()">
+              <ion-icon name="people-outline" aria-hidden="true"></ion-icon><span>Comunidades</span>
+            </button>
+          }
+          </div>
         </div>
         <div class="side-actions">
           <button class="new-chat-button" type="button" (click)="startNewChat()" [attr.aria-label]="'CHATS.NEW_CHAT' | translate:'Nuevo chat'" [title]="'CHATS.NEW_CHAT' | translate:'Nuevo chat'">
@@ -246,13 +253,6 @@
           }
           @if (showConversationSkeleton()) { <app-chat-loading class="full-list-loading" [rowCount]="9" /> }
           <ion-list #conversationList class="list ion-content-scroll-host" lines="none" [attr.inert]="showConversationSkeleton() ? '' : null" [attr.aria-hidden]="showConversationSkeleton() ? 'true' : null" (scroll)="onChatListScroll($event)">
-            @if(selectedFolder === 'all' && !selectionActive() && !showConversationSkeleton()){
-              <button class="chats-communities-entry" type="button" (click)="openCommunities()">
-                <span class="community-list-icon"><ion-icon name="people-outline" aria-hidden="true"></ion-icon></span>
-                <span><strong>Comunidades</strong><small>{{communityById().size ? communityById().size + (communityById().size === 1 ? ' comunidad' : ' comunidades') : 'Tus grupos y avisos, en un lugar'}}</small></span>
-                <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
-              </button>
-            }
             @for (conversation of conversationsForFolder(); track conversation.id) {
               @let community = communityById().get(conversation.id);
               @let selected = selectedChatIds().has(conversation.id);

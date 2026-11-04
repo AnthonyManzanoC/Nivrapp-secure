@@ -1,9 +1,24 @@
 import { ChatMessageVm } from '../../core/models/nivra.models';
-import { canQuoteMessage, insertComposerEmoji, isReplySwipe, localMessageDay, messageDeliveryState, searchThreadMessages } from './chat-thread.helpers';
+import { canQuoteMessage, insertComposerEmoji, isReplySwipe, localMessageDay, messageDeliveryState, searchThreadMessages, threadHistoryForDevice } from './chat-thread.helpers';
 
 describe('Chat thread interactions', () => {
   const vm = (id: string, text: string, extra: Partial<ChatMessageVm> = {}): ChatMessageVm => ({
     id, conversationId: 'chat', mine: true, senderUserId: 'me', at: '2026-10-06T12:00:00Z', payload: { type: 'text', text }, ...extra,
+  });
+  it('defers only unreadable messages from before device registration and restores them once readable', () => {
+    const before = vm('old', '', { decryptError: true });
+    const oldReadable = vm('cached', 'Copia local');
+    const live = vm('new', 'Hola', { at: '2026-10-08T12:00:00Z' });
+    const recentFailure = vm('new-failure', '', { at: live.at, decryptError: true });
+    const badTimestamp = vm('unknown-date', '', { at: '', decryptError: true });
+    const enrollment = '2026-10-07T00:00:00Z';
+    const items = [before, oldReadable, live, recentFailure, badTimestamp];
+    expect(threadHistoryForDevice(items, enrollment)).toEqual({ visible: items.slice(1), deferred: true });
+    expect(items[0]).toBe(before);
+    const recovered = [{...before, decryptError: false}, ...items.slice(1)];
+    expect(threadHistoryForDevice(recovered, enrollment)).toEqual({ visible: recovered, deferred: false });
+    expect(threadHistoryForDevice([], enrollment, before.at)).toEqual({ visible: [], deferred: true });
+    expect(threadHistoryForDevice(items, undefined)).toEqual({ visible: items, deferred: false });
   });
 
   it('searches accents and case without exporting messages', () => {

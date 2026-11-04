@@ -442,6 +442,35 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.ToTable("community_groups", "public");
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.CommunityGroupRequestRecord", b =>
+                {
+                    b.Property<string>("CommunityId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("ConversationId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("UserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset?>("DeclinedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("RequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("CommunityId", "ConversationId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("CommunityId", "UserId");
+
+                    b.ToTable("community_group_requests", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.CommunityRecord", b =>
                 {
                     b.Property<string>("Id")
@@ -1794,6 +1823,21 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.ConversationRecord", null)
                         .WithMany()
                         .HasForeignKey("ConversationId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.CommunityGroupRequestRecord", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nivra.Api.Domain.CommunityGroupRecord", null)
+                        .WithMany()
+                        .HasForeignKey("CommunityId", "ConversationId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

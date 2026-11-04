@@ -36,7 +36,11 @@ import { FormsModule } from '@angular/forms';
       }
     </aside>
   </ng-template>
-  @if (showWaiting && (history.state() !== 'idle' || identityError)) {
+  @if (showWaiting && deferredTimeline && history.state() === 'idle' && !identityError && !needsRelink) {
+    <button type="button" class="history-compact" (click)="linkRequested.emit()">
+      <ion-icon name="lock-closed-outline" aria-hidden="true" /><span>{{ 'HISTORY_DEVICE.SYNC_OPTIONAL' | translate:'Sincronizar historial anterior' }}</span><ion-icon name="chevron-forward-outline" aria-hidden="true" />
+    </button>
+  } @else if (showWaiting && (history.state() !== 'idle' || identityError)) {
     @if (compact) {
       <button type="button" class="history-compact" (click)="detailsOpen = true" aria-haspopup="dialog" [attr.aria-label]="titleKey() | translate:titleFallback()">
         @if (retryBusy()) { <ion-spinner name="crescent" aria-hidden="true" /> } @else { <ion-icon name="lock-closed-outline" aria-hidden="true" /> }
@@ -69,9 +73,11 @@ export class HistorySyncNoticeComponent {
   @Input() showApprovals = true;
   @Input() approvalLimit = 32;
   @Input() compact = false;
+  @Input() deferredTimeline = false;
   @Input() identityError = false;
   @Input() needsRelink = false;
   @Output() readonly relinkRequested = new EventEmitter<void>();
+  @Output() readonly linkRequested = new EventEmitter<void>();
   detailsOpen = false;
   constructor() {
     addIcons({ chevronForwardOutline, closeOutline, lockClosedOutline, shieldCheckmarkOutline, phonePortraitOutline });
@@ -89,6 +95,7 @@ export class HistorySyncNoticeComponent {
     if (this.missingSource()) return 'HISTORY_DEVICE.ORIGINAL_KEY_TITLE';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'HISTORY_DEVICE.PARTIAL_TITLE';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'HISTORY_DEVICE.REFRESH_FAILED_TITLE';
+    if (this.deferredTimeline && this.history.state() === 'waiting') return 'HISTORY_DEVICE.SYNC_OPTIONAL';
     return this.history.state() === 'syncing' ? 'HISTORY_DEVICE.SYNCING'
       : this.history.state() === 'unavailable' ? 'HISTORY_DEVICE.UNAVAILABLE_TITLE' : 'HISTORY_DEVICE.PENDING';
   }
@@ -99,6 +106,7 @@ export class HistorySyncNoticeComponent {
     if (this.missingSource()) return 'Parte del historial necesita su llave original';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'partial') return 'Parte del historial sigue protegida';
     if (this.history.state() !== 'syncing' && this.history.recoveryStatus?.() === 'retryable') return 'Falta comprobar algunos mensajes';
+    if (this.deferredTimeline && this.history.state() === 'waiting') return 'Sincronizar historial anterior';
     return this.history.state() === 'syncing' ? 'Sincronizando tu historial'
       : this.history.state() === 'unavailable' ? 'El historial sigue pendiente' : 'Historial cifrado pendiente';
   }

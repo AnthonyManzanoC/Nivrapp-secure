@@ -79,27 +79,30 @@
 }
 @media(prefers-reduced-motion:reduce){.mobile-message-fab,.mobile-message-fab span{transition:none;}}
 
-.chats-communities-entry {
+.chat-heading-shortcuts {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 10px;
-  width: 100%;
-  min-height: 60px;
-  margin-bottom: 6px;
-  padding: 8px 10px;
-  border: 1px solid var(--nivra-selection-line);
-  border-radius: 15px;
-  background: var(--nivra-selection);
+  gap: 4px 8px;
+  font-size: 12px;
+}
+.chat-communities-shortcut {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 5px 9px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 999px;
+  background: var(--nivra-panel-solid);
   color: var(--nivra-text);
-  text-align: start;
+  font-size: 11px;
+  font-weight: 650;
   cursor: pointer;
 }
-.chats-communities-entry > span:nth-child(2) { flex: 1; min-width: 0; display: grid; gap: 3px; }
-.chats-communities-entry strong { font-size: 14px; }
-.chats-communities-entry small { font-size: 11px; color: var(--nivra-muted); }
-.community-list-icon { display: grid; place-items: center; width: 39px; height: 39px; flex: 0 0 39px; border-radius: 12px; color: var(--nivra-brand-2); background: var(--nivra-panel-solid); }
-.community-list-icon ion-icon { font-size: 20px; }
-.chats-communities-entry > ion-icon, .community-preview-label { color: var(--nivra-brand-2); }
+.chat-communities-shortcut:is(:hover, :focus-visible) { border-color: var(--nivra-selection-line); background: var(--nivra-selection); }
+.chat-communities-shortcut ion-icon { font-size: 15px; }
+.chat-communities-shortcut ion-icon, .community-preview-label { color: var(--nivra-brand-2); }
 .community-conversation .avatar { border-radius: 13px; }
 .community-preview-label { font-weight: 650; }
 

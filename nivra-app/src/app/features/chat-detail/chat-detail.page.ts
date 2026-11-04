@@ -94,7 +94,7 @@ import { GroupInviteShareComponent } from './group-invite-share.component';
 import { IdentityTrustService } from '../../core/services/identity-trust.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
-import { canQuoteMessage, insertComposerEmoji, isReplySwipe, localMessageDay, messageDeliveryState, searchThreadMessages } from './chat-thread.helpers';
+import { canQuoteMessage, insertComposerEmoji, isReplySwipe, localMessageDay, messageDeliveryState, searchThreadMessages, threadHistoryForDevice } from './chat-thread.helpers';
 import { ChatExpressionPickerComponent } from '../../shared/chat-expression-picker/chat-expression-picker.component';
 import { HistorySyncNoticeComponent } from '../../shared/history-sync-notice.component';
 import { HistoryLocalCheckComponent } from '../../shared/history-local-check.component';
@@ -393,6 +393,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     { label: '7 dias', labelKey: 'COMMON.7_DAYS', value: 604800 },
   ];
   readonly conversation = computed(() => this.chat.selectedConversation());
+  readonly threadHistory = computed(() => threadHistoryForDevice(this.chat.selectedMessages(), this.auth.session()?.device.createdAt, this.conversation()?.lastMessageAt));
+  readonly threadLoading = computed(() => !this.threadHistory().deferred && this.chat.selectedMessagesLoading());
   readonly messages = computed(() => this.displayedMessages());
   readonly hasReadableMessages = computed(() => this.messages().some(message => !message.decryptError));
   private voiceRecorder: MediaRecorder | null = null;
@@ -710,12 +712,19 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private displayedMessages(): ChatMessageVm[] {
-    const confirmed = this.chat.selectedMessages();
+    const confirmed = this.threadHistory().visible;
     const session = this.auth.session(); const conversation = this.conversation();
     if (!session || !conversation || this.privateChatLocked()) return confirmed;
-    const pending = this.textOutbox.forConversation(conversation.id).filter(row => row.senderUserId === session.user.id
-      && row.senderDeviceId === session.device.id && !confirmed.some(message => message.mine && message.clientMessageId === row.clientMessageId));
-    return [...confirmed, ...pending];
+    const queued = this.textOutbox.forConversation(conversation.id);
+    if (!queued.length) return confirmed;
+    const confirmedIds = new Set(confirmed.filter(message => message.mine).map(message => message.clientMessageId));
+    const pending = queued.filter(row => row.senderUserId === session.user.id
+      && row.senderDeviceId === session.device.id && !confirmedIds.has(row.clientMessageId));
+    return pending.length ? [...confirmed, ...pending] : confirmed;
+  }
+
+  openHistoryLink(): void {
+    void this.router.navigate(['/app/account'], { fragment: 'account-link' });
   }
 
   async back(): Promise<void> {

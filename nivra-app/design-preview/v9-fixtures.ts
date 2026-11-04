@@ -1,15 +1,27 @@
 import { computed, signal } from '@angular/core';
+import { of } from 'rxjs';
 
 // Synthetic services for the actual production components. No API or notifications.
 export function v9Fixtures(user:any,photo:string){
   const community={id:'community-preview',name:'Barrio Las Flores',description:'Nuestro barrio, conectado. Avisos, ideas y encuentros para todos.',photo,role:'Owner',memberCount:48,updatedAt:new Date().toISOString(),groups:[
-    {id:'design',name:'Equipo creativo',photo,memberCount:12,joined:true},
-    {id:'family',name:'Actividades y encuentros',photo:null,memberCount:24,joined:false},
+    {id:'design',name:'Equipo creativo',photo,memberCount:12,joined:true,canReview:true},
+    {id:'family',name:'Actividades y encuentros',photo:null,memberCount:24,joined:false,canRequest:true},
   ]};
+  let pending=[{groupId:'design',userId:'peer-martina',name:'Martina',requestedAt:new Date().toISOString()}];
   const communities:any={items:signal<any[]>([community]),loading:signal(false),busy:signal(''),error:signal(''),load:async()=>{},
     create:async(value:any)=>{const item={...community,...value,id:'community-new',groups:[]};communities.items.update((all:any[])=>[...all,item]);return item;},
     update:async(id:string,value:any)=>{const item={...community,...value,id};communities.items.update((all:any[])=>all.map(c=>c.id===id?item:c));return item;},
-    link:async()=>community,unlink:async()=>{},join:async()=> 'family',createGroup:async()=>community,leave:async()=>true,inviteLink:async()=> 'https://example.test/group/invite#synthetic',
+    link:async()=>community,unlink:async()=>{},createGroup:async()=>community,leave:async()=>true,inviteLink:async()=> 'https://example.test/group/invite#synthetic',
+    joinRequests:()=>of(pending),
+    requestJoin:async(id:string,groupId:string)=>{
+      communities.items.update((all:any[])=>all.map(item=>item.id!==id?item:{...item,groups:item.groups.map((group:any)=>group.id===groupId?{...group,requestPending:true}:group)}));
+      return {pending:true};
+    },
+    reviewJoinRequest:async(id:string,request:{userId:string})=>{
+      pending=pending.filter(item=>item.userId!==request.userId);
+      communities.items.update((all:any[])=>all.map(item=>item.id===id?{...item}:item));
+      return true;
+    },
   };
   const rooms:any[]=[{id:'studio',name:'Estudio creativo',accessMode:'PinOnly',retentionMode:'Persistent',owner:user,
     members:[{userId:user.id,displayName:user.displayName,status:'Active'},{userId:'peer-sofia',displayName:'Sofía',status:'Active'},{userId:'peer-daniel',displayName:'Daniel',status:'Invited'}]},

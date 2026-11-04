@@ -106,9 +106,26 @@ describe('web and packaged app entry guards', () => {
     expect(await enter(guest)).toBeTrue();
   });
 
-  it('keeps browser auth direct and permits returning to welcome after logout', async () => {
-    expect(await enter(guest)).toBeTrue();
+  it('shows the welcome on the first browser app entry', async () => {
+    expect(destination(await enter(guest))).toBe('/welcome');
     expect(await enter(welcomeGuest)).toBeTrue();
+  });
+
+  it('remembers a completed browser welcome after logout and routes old links to auth', async () => {
+    const onboarding = TestBed.inject(NativeOnboardingService);
+    const key = 'nivra.webOnboarding.v1';
+    const previous = localStorage.getItem(key);
+    try {
+      completed.and.callThrough();
+      onboarding.complete();
+      onboarding.restart();
+      expect(localStorage.getItem(key)).toBe('complete');
+      expect(await enter(guest)).toBeTrue();
+      expect(destination(await enter(welcomeGuest))).toBe('/auth');
+    } finally {
+      if (previous === null) localStorage.removeItem(key);
+      else localStorage.setItem(key, previous);
+    }
   });
 
   it('does not erase pending invitations while routing a native guest through the welcome', async () => {

@@ -63,7 +63,7 @@
   @if (!auth.deviceIdentityError() && !auth.deviceIdentityNeedsRelink()) {
     <app-history-local-check [state]="chat.localHistoryCheckState()" [compact]="true" (retry)="chat.checkLocalHistory()" />
   }
-  <app-history-sync-notice [showApprovals]="false" [compact]="true" [showWaiting]="chat.localHistoryCheckState() === 'idle' || !!auth.deviceIdentityError() || auth.deviceIdentityNeedsRelink()" [identityError]="!!auth.deviceIdentityError()" [needsRelink]="auth.deviceIdentityNeedsRelink()" (relinkRequested)="auth.relinkDevice()" />
+  <app-history-sync-notice [showApprovals]="false" [compact]="true" [deferredTimeline]="threadHistory().deferred" [showWaiting]="threadHistory().deferred || chat.localHistoryCheckState() === 'idle' || !!auth.deviceIdentityError() || auth.deviceIdentityNeedsRelink()" [identityError]="!!auth.deviceIdentityError()" [needsRelink]="auth.deviceIdentityNeedsRelink()" (relinkRequested)="auth.relinkDevice()" (linkRequested)="openHistoryLink()" />
   @if (searchOpen) {
     <section class="thread-search" [attr.aria-label]="'CHAT.SEARCH_CHAT' | translate:'Buscar en este chat'">
       <div class="thread-search-input">
@@ -112,16 +112,14 @@
     <ion-infinite-scroll
       position="top"
       threshold="120px"
-      [disabled]="openingLatest || !chat.hasOlderMessages(conversation()?.id)"
+      [disabled]="openingLatest || (threadHistory().deferred && !hasReadableMessages()) || !chat.hasOlderMessages(conversation()?.id)"
       (ionInfinite)="loadOlderMessages($event)">
       <ion-infinite-scroll-content loadingSpinner="crescent"></ion-infinite-scroll-content>
     </ion-infinite-scroll>
-    <div class="messages" [attr.aria-busy]="chat.selectedMessagesLoading()">
-      @if (chat.selectedMessagesLoading()) { <app-chat-loading mode="messages" [compact]="hasReadableMessages()" /> }
+    <div class="messages" [attr.aria-busy]="threadLoading()">
+      @if (threadLoading() && !hasReadableMessages()) { <app-chat-loading mode="messages" /> }
       @for (message of messages(); track message.id; let messageIndex = $index) {
-        @if (message.decryptError && chat.selectedMessagesLoading()) {
-          @if (hasReadableMessages()) { <app-chat-loading mode="messages" [single]="true" /> }
-        } @else {
+        @if (!message.decryptError || !threadLoading()) {
         @if (showMessageDay(messageIndex)) {
           <div class="message-day" role="separator"><span>{{ message.at | localizedDate:'mediumDate' }}</span></div>
         }
@@ -429,7 +427,7 @@
         }
         }
       } @empty {
-        @if (!chat.selectedMessagesLoading()) {
+        @if (!threadLoading()) {
           <div class="empty-thread">
           @if (conversationPhoto()) {
             <img class="avatar large avatar-img" [src]="conversationPhoto()" alt="">
@@ -437,7 +435,7 @@
             <span class="avatar large">{{ conversation() ? chat.avatarLabel(conversation()!) : 'N' }}</span>
           }
           <h2>{{ conversation() ? chat.conversationTitle(conversation()!) : 'Nivra' }}</h2>
-          <p>{{ (chat.deviceHistory.state() !== 'idle' ? 'HISTORY_LOADING.PENDING_MESSAGES' : 'CHAT.ENCRYPTED_READY') | translate:(chat.deviceHistory.state() !== 'idle' ? 'Tus mensajes anteriores aparecerán cuando se vincule el historial.' : 'Chat cifrado listo.') }}</p>
+          <p>{{ (threadHistory().deferred || chat.deviceHistory.state() !== 'idle' ? 'HISTORY_LOADING.NEW_DEVICE_READY' : 'CHAT.ENCRYPTED_READY') | translate:(threadHistory().deferred || chat.deviceHistory.state() !== 'idle' ? 'Ya puedes conversar. Vincula el historial para ver tus mensajes anteriores.' : 'Chat cifrado listo.') }}</p>
           </div>
         }
       }

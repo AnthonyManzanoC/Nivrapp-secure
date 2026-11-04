@@ -327,9 +327,9 @@ async function main() {
     await evaluate("document.querySelector('.form-footer [type=submit]').click()");
     await waitFor("document.querySelector('.community-cover h2')?.textContent.includes('Comunidad de prueba')");
     await call('Page.navigate',{url:base+'/app/chats?theme=dark'});
-    await waitFor("!!document.querySelector('.chats-communities-entry')");
+    await waitFor("!!document.querySelector('.chat-heading-shortcuts .chat-communities-shortcut') && !document.querySelector('.conversation-list-stage .chat-communities-shortcut')");
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
-    await tap('.chats-communities-entry');
+    await tap('.chat-communities-shortcut');
     await waitFor("document.querySelector('.community-directory .back-link')?.getAttribute('href')==='/app/chats'");
     await tap('.community-directory .back-link');
     await waitFor("!!document.querySelector('[data-chat-id=community-preview].community-conversation')");
@@ -337,6 +337,13 @@ async function main() {
     await tap('[data-chat-id=community-preview] .conversation-title');
     await waitFor("document.querySelector('.community-cover h2')?.textContent.includes('Barrio Las Flores')");
     assert(await evaluate("document.querySelectorAll('.group-section').length===2"),'community shows joined and available groups separately');
+    await waitFor("!!document.querySelector('.community-review-row')");
+    await capture('mobile-community-requests-dark');
+    await evaluate("document.querySelector('.community-review-row [aria-label^=Aceptar]').click()");
+    await waitFor("!document.querySelector('.community-review-row')");
+    await evaluate("document.querySelector('.linked-group [aria-label^=Solicitar]').click()");
+    await waitFor("document.querySelector('.linked-group .group-request-state')?.textContent.includes('Pendiente')");
+    assert(await evaluate("location.pathname==='/app/communities'"),'sending a request does not open the group');
     await tap('.mobile-back');
     await waitFor("!document.querySelector('.community-page.detail-open')");
     await tap('.community-directory .back-link');

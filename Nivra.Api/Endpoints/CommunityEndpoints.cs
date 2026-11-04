@@ -14,7 +14,10 @@ public sealed record CreateCommunityRequest(string Name, string? Description, st
 public sealed record LinkCommunityGroupRequest(string ConversationId);
 public sealed record CreateCommunityGroupRequest(string Name, List<string>? ParticipantUserIds, Guid RequestId);
 public sealed record UpdateCommunityRequest(string Name, string? Description, string? Photo);
-public sealed record CommunityGroupView(string Id, string Name, string? Photo, int MemberCount, bool Joined);
+public sealed record CommunityGroupView(string Id, string Name, string? Photo, int MemberCount, bool Joined,
+    bool RequestPending, bool CanReview, bool CanRequest);
+public sealed record CommunityGroupRequestView(string GroupId, string UserId, string Name, DateTimeOffset RequestedAt);
+public sealed record ReviewCommunityGroupRequest(bool? Accept);
 public sealed record CommunityView(string Id, string Name, string Description, string? Photo, string Role,
     int MemberCount, DateTimeOffset UpdatedAt, List<CommunityGroupView> Groups);
 
@@ -170,28 +173,100 @@ public static partial class EndpointExtensions
                 await tx.CommitAsync(ct);await CommunityNotify(parent!,store,hub,ct);return Results.NoContent();
             });
         });
-        routes.MapPost("/{id}/groups/{groupId}/join", async (string id, string groupId, HttpContext http, NivraDbContext db,
-            INivraStore store, TimeProvider clock, IHubContext<NivraHub> hub, CancellationToken ct) =>
+        var requestGroupJoin = async Task<IResult> (string id, string groupId, HttpContext http, NivraDbContext db,
+            TimeProvider clock, IHubContext<NivraHub> hub, CancellationToken ct) =>
         {
             var user = http.GetCurrentUser(); if (user == null) return Results.Unauthorized();
             return await CallCoordination.RunAsync<IResult>(db, async () =>
             {
                 await using var tx = await CallCoordination.LockAsync(db, "community:" + id, ct);
+                var parent = await CommunityConversation(db, id, ct);
+                if (!CommunityPolicy.IsMember(parent, user.UserId)
+                    || !await db.CommunityGroups.AnyAsync(x => x.CommunityId == id && x.ConversationId == groupId, ct)) return Results.NotFound();
                 // Serialize with invite redemption as well as joins from other API instances.
                 await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM public.conversations WHERE \"Id\" = {groupId} FOR UPDATE", ct);
-                var parent = await CommunityConversation(db, id, ct); var child = await CommunityConversation(db, groupId, ct);
-                if (!await db.CommunityGroups.AnyAsync(x => x.CommunityId == id && x.ConversationId == groupId, ct) || !CommunityPolicy.CanJoin(parent, child, user.UserId)) return Results.NotFound();
-                if (!child!.Participants.Any(p => p.UserId == user.UserId))
+                var child = await CommunityConversation(db, groupId, ct);
+                if (!CommunityPolicy.CanJoin(parent, child, user.UserId)) return Results.NotFound();
+                if (CommunityPolicy.IsMember(child, user.UserId)) return Results.Ok(new { conversationId = groupId });
+                if (child!.Participants.Count(p => p.RemovedAt == null) >= CommunityPolicy.MaxMembers)
+                    return Error("group_full", "Este grupo ya está completo.", 409);
+                var pending = await db.CommunityGroupRequests.FindAsync([id, groupId, user.UserId], ct);
+                if (pending is { DeclinedAt: null }) return Results.Accepted(value: new { pending = true });
+                var now = clock.GetUtcNow();
+                if (pending?.DeclinedAt > now.AddDays(-1))
+                    return Error("request_declined", "El grupo rechazó tu solicitud. Puedes volver a solicitar acceso mañana.", 409);
+                if (pending == null)
+                    db.CommunityGroupRequests.Add(new() { CommunityId = id, ConversationId = groupId, UserId = user.UserId, RequestedAt = now });
+                else
                 {
-                    if (child.Participants.Count(p => p.RemovedAt == null) >= CommunityPolicy.MaxMembers) return Results.Conflict();
-                    var now = clock.GetUtcNow();
-                    child.Participants.Add(new ConversationParticipant { UserId = user.UserId, Role = ParticipantRole.Member,
-                        CanInvite = child.Settings.AddMembers == "all", JoinedAt = now }); child.UpdatedAt = now;
-                    await db.SaveChangesAsync(ct);
+                    pending.RequestedAt = now;
+                    pending.DeclinedAt = null;
                 }
+                await db.SaveChangesAsync(ct);
                 await tx.CommitAsync(ct);
-                await CommunityNotify(child, store, hub, ct);
-                return Results.Ok(new { conversationId = child.Id });
+                var reviewers = CommunityReviewRecipients(parent!, child, user.UserId);
+                await NotifyUsers(hub, reviewers, "community.changed", new { communityId = id, joinRequestsChanged = true });
+                return Results.Accepted(value: new { pending = true });
+            });
+        };
+        routes.MapPost("/{id}/groups/{groupId}/join", requestGroupJoin);
+        routes.MapPost("/{id}/groups/{groupId}/request", requestGroupJoin);
+        routes.MapGet("/{id}/join-requests", async (string id, HttpContext http, NivraDbContext db, CancellationToken ct) =>
+        {
+            var user = http.GetCurrentUser(); if (user == null) return Results.Unauthorized();
+            if (!await db.CommunityGroups.AnyAsync(group => group.CommunityId == id, ct)
+                || !CommunityPolicy.IsMember(await CommunityConversation(db, id, ct), user.UserId)) return Results.NotFound();
+            var requests = await (from pending in db.CommunityGroupRequests.AsNoTracking()
+                join account in db.Users.AsNoTracking() on pending.UserId equals account.Id
+                where pending.CommunityId == id && pending.DeclinedAt == null
+                    && db.Conversations.Any(c => c.Id == id && c.Participants.Any(p => p.UserId == pending.UserId && p.RemovedAt == null))
+                    && db.Conversations.Any(c => c.Id == pending.ConversationId
+                        && c.Participants.Any(p => p.UserId == user.UserId && p.RemovedAt == null
+                            && (p.Role == ParticipantRole.Owner || p.Role == ParticipantRole.Admin))
+                        && !c.Participants.Any(p => p.UserId == pending.UserId))
+                orderby pending.RequestedAt, pending.UserId, pending.ConversationId
+                select new CommunityGroupRequestView(pending.ConversationId, pending.UserId,
+                    account.DisplayName ?? account.Alias, pending.RequestedAt)).Take(100).ToListAsync(ct);
+            return Results.Ok(requests);
+        });
+        routes.MapPost("/{id}/groups/{groupId}/requests/{requesterId}", async (string id, string groupId, string requesterId,
+            ReviewCommunityGroupRequest review, HttpContext http, NivraDbContext db, INivraStore store,
+            TimeProvider clock, IHubContext<NivraHub> hub, CancellationToken ct) =>
+        {
+            var user = http.GetCurrentUser(); if (user == null) return Results.Unauthorized();
+            if (review.Accept is not bool accept) return Results.BadRequest();
+            return await CallCoordination.RunAsync<IResult>(db, async () =>
+            {
+                await using var tx = await CallCoordination.LockAsync(db, "community:" + id, ct);
+                var parent = await CommunityConversation(db, id, ct);
+                if (!CommunityPolicy.IsMember(parent, user.UserId) || !CommunityPolicy.IsMember(parent, requesterId)
+                    || !await db.CommunityGroups.AnyAsync(x => x.CommunityId == id && x.ConversationId == groupId, ct)) return Results.NotFound();
+                await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM public.conversations WHERE \"Id\" = {groupId} FOR UPDATE", ct);
+                var child = await CommunityConversation(db, groupId, ct);
+                if (!CommunityPolicy.IsAdmin(child, user.UserId) || !CommunityPolicy.CanJoin(parent, child, requesterId)) return Results.NotFound();
+                var pending = await db.CommunityGroupRequests.FindAsync([id, groupId, requesterId], ct);
+                if (pending == null || pending.DeclinedAt != null)
+                    return accept && CommunityPolicy.IsMember(child, requesterId) ? Results.NoContent() : Results.NotFound();
+                var now = clock.GetUtcNow();
+                if (accept)
+                {
+                    if (!CommunityPolicy.IsMember(child, requesterId))
+                    {
+                        if (child!.Participants.Count(p => p.RemovedAt == null) >= CommunityPolicy.MaxMembers)
+                            return Error("group_full", "Este grupo ya está completo.", 409);
+                        child.Participants.Add(new ConversationParticipant { UserId = requesterId, Role = ParticipantRole.Member,
+                            CanInvite = child.Settings.AddMembers == "all", JoinedAt = now });
+                        child.UpdatedAt = now;
+                    }
+                    db.CommunityGroupRequests.Remove(pending);
+                }
+                else pending.DeclinedAt = now;
+                await db.SaveChangesAsync(ct);
+                await tx.CommitAsync(ct);
+                if (accept) await CommunityNotify(child!, store, hub, ct);
+                var reviewers = CommunityReviewRecipients(parent!, child!, requesterId);
+                await NotifyUsers(hub, reviewers, "community.changed", new { communityId = id, joinRequestsChanged = true });
+                return Results.NoContent();
             });
         });
         routes.MapPost("/{id}/leave", async (string id, HttpContext http, NivraDbContext db, INivraStore store,
@@ -217,6 +292,7 @@ public static partial class EndpointExtensions
             foreach(var key in ids.Order(StringComparer.Ordinal))
                 await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM public.conversations WHERE \"Id\" = {key} FOR UPDATE",ct);
             db.ChangeTracker.Clear();
+            await db.CommunityGroupRequests.Where(request => request.CommunityId == id && request.UserId == userId).ExecuteDeleteAsync(ct);
             var groups=await db.Conversations.Include(c=>c.Participants).Where(c=>ids.Contains(c.Id)).ToListAsync(ct);
             var changed=new List<ConversationRecord>();var now=clock.GetUtcNow();
             foreach(var group in groups)
@@ -243,6 +319,14 @@ public static partial class EndpointExtensions
     private static Task<ConversationRecord?> CommunityConversation(NivraDbContext db, string id, CancellationToken ct) =>
         db.Conversations.Include(c => c.Participants).FirstOrDefaultAsync(c => c.Id == id, ct);
 
+    private static IEnumerable<string> CommunityReviewRecipients(ConversationRecord parent, ConversationRecord group, string requesterId)
+    {
+        var members = parent.Participants.Where(p => p.RemovedAt == null).Select(p => p.UserId).ToHashSet();
+        return group.Participants.Where(p => p.RemovedAt == null
+                && (p.Role is ParticipantRole.Owner or ParticipantRole.Admin) && members.Contains(p.UserId))
+            .Select(p => p.UserId).Append(requesterId).Distinct(StringComparer.Ordinal);
+    }
+
     private static async Task<CommunityView?> CommunityResponse(NivraDbContext db, CommunityRecord row, string userId, CancellationToken ct) =>
         (await CommunityResponses(db,[row],userId,ct)).SingleOrDefault();
 
@@ -259,7 +343,10 @@ public static partial class EndpointExtensions
             where allowed.Contains(link.CommunityId)
             orderby link.LinkedAt,c.Id
             select new {link.CommunityId, Group=new CommunityGroupView(c.Id,c.GroupName??"Grupo",c.GroupAvatar,
-                c.Participants.Count(p=>p.RemovedAt==null),c.Participants.Any(p=>p.UserId==userId&&p.RemovedAt==null))}).ToListAsync(ct);
+                c.Participants.Count(p=>p.RemovedAt==null),c.Participants.Any(p=>p.UserId==userId&&p.RemovedAt==null),
+                db.CommunityGroupRequests.Any(r=>r.CommunityId==link.CommunityId&&r.ConversationId==c.Id&&r.UserId==userId&&r.DeclinedAt==null),
+                c.Participants.Any(p=>p.UserId==userId&&p.RemovedAt==null&&(p.Role==ParticipantRole.Owner||p.Role==ParticipantRole.Admin)),
+                !c.Participants.Any(p=>p.UserId==userId&&p.RemovedAt!=null))}).ToListAsync(ct);
         var byParent=children.ToLookup(c=>c.CommunityId,c=>c.Group);
         return rows.Where(row=>parents.ContainsKey(row.Id)).Select(row=>{
             var parent=parents[row.Id];return new CommunityView(row.Id,parent.GroupName??"Comunidad",row.Description,parent.GroupAvatar,

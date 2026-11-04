@@ -7,14 +7,17 @@ import { NativeOnboardingService } from './core/services/native-onboarding.servi
 const authenticated = async () => {
   const auth = inject(AuthService);
   const router = inject(Router);
-  return await auth.ensureSessionRestored() ? true : router.parseUrl('/auth');
+  const onboarding = inject(NativeOnboardingService);
+  if (!await auth.ensureSessionRestored()) return router.parseUrl('/auth');
+  if (!onboarding.isPackagedApp() && !onboarding.isComplete()) onboarding.complete();
+  return true;
 };
 export const guest = async () => {
   const auth = inject(AuthService);
   const router = inject(Router);
   const onboarding = inject(NativeOnboardingService);
   if (await auth.ensureSessionRestored()) return router.parseUrl('/app/chats');
-  return onboarding.isPackagedApp() && !onboarding.isComplete() ? router.parseUrl('/welcome') : true;
+  return onboarding.isComplete() ? true : router.parseUrl('/welcome');
 };
 
 export const welcomeGuest = async () => {
@@ -22,7 +25,7 @@ export const welcomeGuest = async () => {
   const router = inject(Router);
   const onboarding = inject(NativeOnboardingService);
   if (await auth.ensureSessionRestored()) return router.parseUrl('/app/chats');
-  return true;
+  return !onboarding.isPackagedApp() && onboarding.isComplete() ? router.parseUrl('/auth') : true;
 };
 
 export const landingGuest = async () => {

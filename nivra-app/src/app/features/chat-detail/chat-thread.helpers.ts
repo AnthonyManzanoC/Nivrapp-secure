@@ -1,5 +1,14 @@
 import { ChatMessageVm } from '../../core/models/nivra.models';
 
+export function threadHistoryForDevice(messages: ChatMessageVm[], deviceCreatedAt?: string, latestAt?: string | null) {
+  const cutoff = Date.parse(deviceCreatedAt ?? '');
+  if (!Number.isFinite(cutoff)) return { visible: messages, deferred: false };
+  const visible = messages.filter(message => !(message.decryptError && Date.parse(message.at) < cutoff));
+  const deferred = visible.length !== messages.length
+    || (!messages.length && Date.parse(latestAt ?? '') < cutoff);
+  return { visible: visible.length === messages.length ? messages : visible, deferred };
+}
+
 export function canQuoteMessage(message: ChatMessageVm | null, now = Date.now()): boolean {
   return Boolean(message && !message.decryptError && !message.deleteAfterRead && !message.payload['viewOnceOpened']
     && (!message.expiresAt || Date.parse(message.expiresAt) > now));

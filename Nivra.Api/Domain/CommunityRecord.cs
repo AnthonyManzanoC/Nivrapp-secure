@@ -16,3 +16,12 @@ public sealed class CommunityGroupRecord
     public required string ConversationId { get; init; }
     public DateTimeOffset LinkedAt { get; init; }
 }
+
+public sealed class CommunityGroupRequestRecord
+{
+    public required string CommunityId { get; init; }
+    public required string ConversationId { get; init; }
+    public required string UserId { get; init; }
+    public DateTimeOffset RequestedAt { get; set; }
+    public DateTimeOffset? DeclinedAt { get; set; }
+}

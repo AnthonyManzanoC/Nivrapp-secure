@@ -13,6 +13,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     public DbSet<GroupInviteLink> GroupInviteLinks => Set<GroupInviteLink>();
     public DbSet<CommunityRecord> Communities => Set<CommunityRecord>();
     public DbSet<CommunityGroupRecord> CommunityGroups => Set<CommunityGroupRecord>();
+    public DbSet<CommunityGroupRequestRecord> CommunityGroupRequests => Set<CommunityGroupRequestRecord>();
     public DbSet<HistoryKeyTransfer> HistoryKeyTransfers => Set<HistoryKeyTransfer>();
     public DbSet<HistoryKeyTransferResponse> HistoryKeyTransferResponses => Set<HistoryKeyTransferResponse>();
 
@@ -81,6 +82,18 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasIndex(x => x.ConversationId).IsUnique();
             entity.HasOne<CommunityRecord>().WithMany().HasForeignKey(x => x.CommunityId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<ConversationRecord>().WithMany().HasForeignKey(x => x.ConversationId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<CommunityGroupRequestRecord>(entity =>
+        {
+            entity.ToTable("community_group_requests");
+            entity.HasKey(x => new { x.CommunityId, x.ConversationId, x.UserId });
+            entity.Property(x => x.CommunityId).HasMaxLength(64);
+            entity.Property(x => x.ConversationId).HasMaxLength(64);
+            entity.Property(x => x.UserId).HasMaxLength(64);
+            entity.HasIndex(x => new { x.CommunityId, x.UserId });
+            entity.HasOne<CommunityGroupRecord>().WithMany()
+                .HasForeignKey(x => new { x.CommunityId, x.ConversationId }).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<UserAccount>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
         });
         modelBuilder.Entity<RatchetPilotDevice>(entity =>
         {

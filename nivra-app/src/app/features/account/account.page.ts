@@ -1,8 +1,8 @@
 import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
-import { Component, ElementRef, NgZone, OnDestroy, OnInit, ViewChild, effect, inject } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, NgZone, OnDestroy, OnInit, ViewChild, effect, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { Router } from '@angular/router';
+import { ActivatedRoute, Router } from '@angular/router';
 import { Subject, Subscription, from, of } from 'rxjs';
 import { catchError, debounceTime, map, switchMap } from 'rxjs/operators';
 import {
@@ -58,7 +58,7 @@ interface ProfileDraft {
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss', './account-security.scss'],
 })
-export class AccountPage implements OnInit, OnDestroy {
+export class AccountPage implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('accountSurface') private accountSurface?: ElementRef<HTMLElement>;
   readonly auth = inject(AuthService);
   readonly account = inject(AccountService);
@@ -72,6 +72,7 @@ export class AccountPage implements OnInit, OnDestroy {
   readonly androidUpdates = inject(AndroidUpdateService);
   readonly desktopUpdates = inject(DesktopUpdateService);
   private readonly router = inject(Router);
+  private readonly route = inject(ActivatedRoute, { optional: true });
   private readonly loadingController = inject(LoadingController);
   private readonly ngZone = inject(NgZone);
   alias = '';
@@ -230,6 +231,12 @@ export class AccountPage implements OnInit, OnDestroy {
         void this.stopContactScanner();
       }
     });
+  }
+
+  ngAfterViewInit(): void {
+    if (this.route?.snapshot.fragment === 'account-link') {
+      this.openAccountSectionById('account-link');
+    }
   }
 
   async ngOnInit(): Promise<void> {

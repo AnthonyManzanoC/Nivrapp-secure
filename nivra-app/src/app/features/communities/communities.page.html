@@ -143,6 +143,26 @@
           }
         }
 
+        @if(reviewQueue(); as queue){
+          @if(queue.error || queue.requests.length){
+            <section class="community-review" aria-labelledby="community-review-title">
+              <header><h3 id="community-review-title">Solicitudes de acceso</h3><span class="count">{{queue.requests.length}}</span></header>
+              @if(queue.error){
+                <p role="status">No se pudieron cargar las solicitudes.</p>
+                <button type="button" (click)="communities.load()">Reintentar</button>
+              }
+              @for(request of queue.requests; track request.groupId + ':' + request.userId){
+                <article class="community-review-row">
+                  <div class="item-copy"><strong>{{request.name}}</strong><small>{{groupName(request.groupId)}}</small></div>
+                  <div class="review-actions">
+                    <button type="button" [disabled]="!!communities.busy()" (click)="review(request,false)" [attr.aria-label]="'Rechazar solicitud de '+request.name">Rechazar</button>
+                    <button type="button" class="primary" [disabled]="!!communities.busy()" (click)="review(request,true)" [attr.aria-label]="'Aceptar solicitud de '+request.name">Aceptar</button>
+                  </div>
+                </article>
+              }
+            </section>
+          }
+        }
         <section class="community-groups" aria-labelledby="community-groups-title">
           <header><h3 id="community-groups-title">Grupos de la comunidad</h3><span class="count">{{item.groups.length}}</span></header>
           @for(section of groupSections(); track section.id){
@@ -157,8 +177,12 @@
               <div class="item-copy"><strong>{{group.name}}</strong><small>{{group.memberCount}} miembros</small></div>
               @if(group.joined){
                 <a class="text-action" [routerLink]="['/app/chats',group.id]" [attr.aria-label]="'Abrir '+group.name">Abrir</a>
+              }@else if(group.requestPending){
+                <span class="group-request-state">Pendiente</span>
+              }@else if(group.canRequest){
+                <button type="button" (click)="join(group.id)" [disabled]="!!communities.busy()" [attr.aria-label]="'Solicitar acceso a '+group.name">{{communities.busy() === 'join:'+group.id ? 'Enviando…' : 'Solicitar acceso'}}</button>
               }@else{
-                <button type="button" (click)="join(group.id)" [disabled]="!!communities.busy()">Unirme</button>
+                <span class="group-request-state">{{group.canRequest === false ? 'Por invitación' : 'Acceso en actualización'}}</span>
               }
               @if(isAdmin(item)){
                 <button type="button" class="icon-button unlink" (click)="unlink(group.id)" [disabled]="!!communities.busy()" [attr.aria-label]="'Desvincular '+group.name">×</button>
@@ -172,7 +196,7 @@
         @if(isAdmin(item)){
           <section class="manage-groups" aria-labelledby="manage-groups-title">
             <h3 #groupManager id="manage-groups-title" tabindex="-1">Organiza tu comunidad</h3>
-            <p>Los miembros eligen a qué grupos unirse.</p>
+            <p>Los miembros solicitan acceso. Los administradores de cada grupo deciden quién se une.</p>
             <div class="management-grid">
               <form class="manage-card" (ngSubmit)="link()">
                 <label class="field">Vincular un grupo existente
