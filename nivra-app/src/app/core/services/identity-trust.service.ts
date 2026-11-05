@@ -218,6 +218,9 @@ export class IdentityTrustService {
       if(proof.accountRoot&&pin.accountRoot===proof.accountRoot&&!replacements.has(proof.targetDeviceId)&&fingerprint.deviceIdentities.some(device=>device.deviceId===proof.targetDeviceId&&device.identity===proof.targetIdentity)){
         ids.add(proof.targetDeviceId);continue;
       }
+      // A root certificate is not a legacy device endorsement. Its account root
+      // must have been pinned or authenticated before it can authorize anything.
+      if(proof.accountRoot)continue;
       // A signed sub-device gets a fresh ratchet address. Never replace a live
       // address's previously authenticated key with another device's signature.
       if(!replacements.has(proof.targetDeviceId)&&anchors.has(proof.sourceDeviceId)&&pinnedIds.get(proof.sourceDeviceId)===proof.sourceIdentity&&

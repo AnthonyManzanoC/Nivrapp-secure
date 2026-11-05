@@ -235,9 +235,9 @@ export class RatchetMessagingService implements OnDestroy {
     await engine.pinIdentity({ name: target.deviceId, device: 1 }, ratchetBinary(entry.identityKey, 64), state); owner.assert();
   }
 
-  private async pinAccountDevice(engine:RatchetDeviceRuntime,target:RatchetTarget,entry:DirectoryEntry,state:ApplicationState):Promise<boolean>{
+  private async pinAccountDevice(engine:RatchetDeviceRuntime,target:RatchetTarget,entry:DirectoryEntry,state:ApplicationState,knownDirectory?:PublicKeyDirectory):Promise<boolean>{
     const owner=this.owner();
-    const directories=await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch',{userIds:[target.userId],aliases:[]}).pipe(timeout(15000)));owner.assert();
+    const directories=knownDirectory?[knownDirectory]:await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch',{userIds:[target.userId],aliases:[]}).pipe(timeout(15000)));owner.assert();
     const directory=directories.find(item=>item.userId===target.userId),device=directory?.devices.find(item=>item.deviceId===target.deviceId),certificate=device?.accountCertificate;
     if(!directory||!certificate||certificate.hybridKey!==entry.identityKey||certificate.legacyKey!==this.coordinates(target.publicJwk))return false;
     const proofs=await checkedAccountDevices(directory,state.peers,verifyDeviceContinuity);owner.assert();
@@ -277,7 +277,13 @@ export class RatchetMessagingService implements OnDestroy {
       const keyPackage = { type: 'nivra-content-key', key: body.key, bodyHash: await ratchetHash([body.iv, body.ciphertext]) };
       const entries = new Map((await this.directory(targets.map(target => target.deviceId))).map(entry => [entry.deviceId, entry])); owner.assert();
       if (targets.some(target => target.deviceId !== owner.deviceId && !entries.has(target.deviceId))) throw pendingRatchet('Un dispositivo del chat necesita actualizar Nivra. El mensaje queda pendiente y se enviará automáticamente cuando esté preparado.');
-      const missing = targets.filter(target => entries.has(target.deviceId) && target.deviceId !== owner.deviceId && !state.peers[target.deviceId] && !entries.get(target.deviceId)?.bindingHeader).map(target => target.deviceId);
+      const candidates=targets.filter(target=>entries.has(target.deviceId)&&target.deviceId!==owner.deviceId&&!state.peers[target.deviceId]&&!entries.get(target.deviceId)?.bindingHeader);
+      if(candidates.length){
+        const users=[...new Set(candidates.map(target=>target.userId))],directories:PublicKeyDirectory[]=[];
+        for(let index=0;index<users.length;index+=128)directories.push(...await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch',{userIds:users.slice(index,index+128),aliases:[]}).pipe(timeout(15000))));owner.assert();
+        for(const target of candidates){const directory=directories.find(item=>item.userId===target.userId);if(directory?.accountIdentity)await this.pinAccountDevice(engine,target,entries.get(target.deviceId)!,state,directory);owner.assert();}
+      }
+      const missing = candidates.filter(target=>!state.peers[target.deviceId]).map(target=>target.deviceId);
       if (missing.length) {
         for (let index = 0; index < missing.length; index += 128) await firstValueFrom(this.api.post('/ratchet/olm/bindings/request', { deviceIds: missing.slice(index, index + 128) }).pipe(timeout(15000)));
         throw pendingRatchet('El otro dispositivo está preparando el cifrado seguro. El mensaje permanece pendiente y se reintentará.');

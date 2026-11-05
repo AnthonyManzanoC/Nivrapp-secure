@@ -54,7 +54,7 @@ public static partial class EndpointExtensions
             var conversation = await db.Conversations.Include(x => x.Participants).FirstOrDefaultAsync(x => x.Id == invite.ConversationId, ct);
             if (!InviteAdmin(conversation, invite.CreatorUserId)) return Results.NotFound();
             http.Response.Headers.CacheControl = "no-store";
-            return Results.Ok(new { name = conversation!.GroupName ?? "Grupo Nivra", members = conversation.Participants.Count(x => x.RemovedAt == null), invite.ExpiresAt,
+            return Results.Ok(new { name = conversation!.GroupName ?? "Grupo Nivra", photo=conversation.GroupAvatar, members = conversation.Participants.Count(x => x.RemovedAt == null), invite.ExpiresAt,
                 communityId = await db.Communities.AnyAsync(c=>c.Id==conversation.Id,ct) ? conversation.Id : null });
         }).RequireRateLimiting("auth");
         app.MapPost("/group-invites/accept", async Task<IResult> (GroupInviteCode request, HttpContext http, NivraDbContext db, INivraStore store, TimeProvider clock, IHubContext<NivraHub> hub, CancellationToken ct) =>

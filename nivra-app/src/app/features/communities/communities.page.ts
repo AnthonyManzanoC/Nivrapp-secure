@@ -32,11 +32,12 @@ export class CommunitiesPage {
   memberBusy = '';
   members(): Participant[] {
     const query = this.memberQuery.trim().toLocaleLowerCase();
-    return (this.announcementConversation()?.participants ?? []).filter(member => !member.removedAt && (!query || `${member.displayName ?? ''} ${member.alias ?? ''}`.toLocaleLowerCase().includes(query)))
+    return (this.announcementConversation()?.participants ?? []).filter(member => !member.removedAt && (!query || `${this.memberName(member)} ${member.alias ?? ''}`.toLocaleLowerCase().includes(query)))
       .sort((a,b) => Number(['Owner','Admin'].includes(b.role))-Number(['Owner','Admin'].includes(a.role)) || (a.displayName || a.alias || '').localeCompare(b.displayName || b.alias || ''));
   }
   memberName(member: Participant): string { return this.chat.participantDisplayName(member.userId,member); }
   memberPhoto(member: Participant): string { return this.chat.participantPhoto(member.userId,member); }
+  canManageMember(member:Participant):boolean{return member.role!=='Owner'&&member.userId!==this.auth.session()?.user.id;}
   editing=false;
   private uiScope=this.scope();
   readonly selected=computed(()=>this.communities.items().find(item=>item.id===this.selectedId())??null);

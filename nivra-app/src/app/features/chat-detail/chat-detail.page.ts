@@ -93,6 +93,7 @@ import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { StoryActivityComponent } from '../story-viewer/story-activity.component';
 import { GroupInviteShareComponent } from './group-invite-share.component';
 import { CommunityService } from '../../core/services/community.service';
+import { internalInvitationRoute } from '../../core/utils/internal-invitation';
 import { IdentityTrustService } from '../../core/services/identity-trust.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
@@ -776,6 +777,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     await this.router.navigateByUrl('/app/chats');
+  }
+
+  openMessageLink(event:MouseEvent,href:string):void{
+    event.stopPropagation();
+    if(event.ctrlKey||event.metaKey||event.shiftKey||event.altKey)return;
+    const route=internalInvitationRoute(href);
+    if(route){event.preventDefault();void this.router.navigateByUrl(route);}
   }
 
   attachFiles(event: Event, mode: AttachmentMode = 'document'): void {

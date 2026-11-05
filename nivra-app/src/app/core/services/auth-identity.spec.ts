@@ -13,7 +13,7 @@ describe('hybrid login preserves device key identity', () => {
     post = jasmine.createSpy('post');
     prepareKeys = jasmine.createSpy('prepareKeys').and.resolveTo(keys);
     service = Object.assign(Object.create(AuthService.prototype), {
-      api: { post }, busy: signal(false),
+      api: { post }, busy: signal(false), session: signal(null),
       crypto: { prepareDeviceKeys: prepareKeys, createDeviceKeys: jasmine.createSpy().and.resolveTo(keys) },
       deviceProfile: () => Promise.resolve({ hardwareId: 'test-device', name: 'Test browser' }),
       completeAuth: jasmine.createSpy('completeAuth').and.resolveTo(),
@@ -185,6 +185,7 @@ describe('approved QR contact continuity handoff',()=>{
       session:signal<any>(auth),parseQrLoginChallenge:()=>({qrId:'qr',code:'code',publicSpki:'fixture-public-key'}),
       crypto:{currentKeyMaterial:async()=>({privateJwk:{},publicJwk:{}}),exportDeviceKeyMaterialsForUser:async()=>[],encryptQrPayload:encrypt},
       identityTrust:{exportForLinkedDevice:exporter},deviceProfile:async()=>({name:'phone',hardwareId:'fixture-hardware'}),api:{post},
+      injector:{get:()=>({exportForDevice:async()=>undefined})},
     });
     return {service,encrypt,post,exporter};
   }

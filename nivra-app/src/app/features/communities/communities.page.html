@@ -146,7 +146,7 @@
             <label class="field">Buscar miembro<input type="search" [(ngModel)]="memberQuery" placeholder="Nombre o alias" autocomplete="off"></label>
             @for(member of members();track member.userId){
               <article class="community-member"><span class="face">@if(memberPhoto(member)){<img [src]="memberPhoto(member)" alt="" loading="lazy">}@else{ {{memberName(member).slice(0,2).toUpperCase()}} }</span><div class="item-copy"><strong>{{memberName(member)}}</strong><small>{{member.role==='Owner'?'Creador de la comunidad':member.role==='Admin'?'Administrador':'Miembro'}}@if(member.alias){ · &#64;{{member.alias}} }</small></div>
-                @if(isAdmin(item) && member.role!=='Owner'){<button type="button" [disabled]="!!memberBusy" (click)="toggleAdmin(member)">{{memberBusy===member.userId?'Guardando…':member.role==='Admin'?'Quitar admin':'Hacer admin'}}</button>}
+                @if(isAdmin(item) && canManageMember(member)){<button type="button" [disabled]="!!memberBusy" (click)="toggleAdmin(member)">{{memberBusy===member.userId?'Guardando…':member.role==='Admin'?'Quitar admin':'Hacer admin'}}</button>}
               </article>
             }@empty{<p>{{memberQuery ? 'No encontramos a ese miembro.' : 'Actualizando miembros…'}}</p>}
           </section>

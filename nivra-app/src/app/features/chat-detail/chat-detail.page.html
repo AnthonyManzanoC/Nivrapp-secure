@@ -290,7 +290,7 @@
                     <p class="file-caption message-text">
                       @for (part of richTextParts(file.text); track $index) {
                         @if (part.href) {
-                          <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="$event.stopPropagation()">{{ part.text }}</a>
+                          <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="openMessageLink($event, part.href!)">{{ part.text }}</a>
                         } @else {
                           <span>{{ part.text }}</span>
                         }
@@ -340,7 +340,7 @@
                     <p class="file-caption media-caption message-text">
                       @for (part of richTextParts(file.text); track $index) {
                         @if (part.href) {
-                          <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="$event.stopPropagation()">{{ part.text }}</a>
+                          <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="openMessageLink($event, part.href!)">{{ part.text }}</a>
                         } @else {
                           <span>{{ part.text }}</span>
                         }
@@ -383,7 +383,7 @@
                   <p class="file-caption message-text">
                     @for (part of richTextParts(file.text); track $index) {
                       @if (part.href) {
-                        <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="$event.stopPropagation()">{{ part.text }}</a>
+                        <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="openMessageLink($event, part.href!)">{{ part.text }}</a>
                       } @else {
                         <span>{{ part.text }}</span>
                       }
@@ -395,7 +395,7 @@
               <p class="message-text">
                 @for (part of richTextParts(message.payload.text || chat.preview(message.payload)); track $index) {
                   @if (part.href) {
-                    <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="$event.stopPropagation()">{{ part.text }}</a>
+                    <a class="message-link" [href]="part.href" [attr.target]="part.external ? '_blank' : null" rel="noopener noreferrer" (click)="openMessageLink($event, part.href!)">{{ part.text }}</a>
                   } @else {
                     <span>{{ part.text }}</span>
                   }
