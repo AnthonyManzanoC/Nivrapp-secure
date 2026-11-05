@@ -416,6 +416,7 @@ async function main() {
       await viewport(390,844,true);
       await call('Page.navigate',{url:base+'/app/communities?theme='+theme+'&id=community-preview&info=1'});
       await waitFor("document.querySelectorAll('.community-member').length===2");
+      assert(await evaluate("[...document.querySelectorAll('.linked-group .item-copy')].every(item=>item.getBoundingClientRect().width>=120)"),'community group names retain readable space beside their actions');
       await evaluate("document.querySelector('.preview-controls').style.display='none';document.querySelector('.community-members').scrollIntoView()");
       await capture('mobile-community-members-'+theme);
       await evaluate("document.querySelector('.community-actions .primary').click()");
