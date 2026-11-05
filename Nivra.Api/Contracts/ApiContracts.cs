@@ -21,10 +21,11 @@ public sealed record LoginRequest(
     string DeviceName,
     KeyBundleRequest? KeyBundle,
     string? HardwareId,
-    bool ResolveOnly = false);
+    bool ResolveOnly = false,
+    string? RecoverRatchetDeviceId = null);
 
 public sealed record PrivateRegisterRequest(string Password, string DeviceName, KeyBundleRequest KeyBundle, string? HardwareId);
-public sealed record LoginIdentityResponse(string Alias, string UserId, string? DeviceId, string? IdentityKey);
+public sealed record LoginIdentityResponse(string Alias, string UserId, string? DeviceId, string? IdentityKey, bool RatchetRegistered=false);
 
 public sealed record RefreshTokenRequest(string RefreshToken);
 

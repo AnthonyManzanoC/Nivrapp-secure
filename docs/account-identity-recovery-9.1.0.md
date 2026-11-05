@@ -19,6 +19,8 @@ Un contacto ya fijado solo adopta una raíz cuando su dispositivo de cifrado pre
 
 La raíz no se sustituye automáticamente. Si todos los secretos y las copias de recuperación se pierden, no es posible inventar la identidad anterior. Tampoco es posible autenticar retroactivamente una raíz que un contacto nunca llegó a conocer sin una prueba anterior válida.
 
+Si al volver a iniciar con contraseña el servidor reconoce la dirección de Double Ratchet y falta su snapshot local, el cliente solicita sustituir únicamente esa dirección. Se conservan las llaves históricas. La solicitud identifica la dirección perdida para que varios inicios simultáneos y sus reintentos converjan en un equipo nuevo, sin retirar el equipo recién recuperado.
+
 ## Validación
 
 Las pruebas cubren firmas y alteraciones, cuentas cruzadas, recuperación por contraseña y frase, alta simultánea, revisiones antiguas, persistencia en PostgreSQL, transferencia sin historial y una conversación real con el motor híbrido después de retirar el dispositivo anterior. Los flujos visuales usan datos ficticios y servicios sin red. Las llamadas y las rutas físicas de audio siguen necesitando pruebas con teléfonos y redes reales antes de afirmar cobertura de esos equipos.

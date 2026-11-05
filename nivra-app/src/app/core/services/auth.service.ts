@@ -444,9 +444,9 @@ export class AuthService implements OnDestroy {
     try {
       const device = await this.deviceProfile();
       if (!isCurrent()) return;
-      let identity: { alias: string; userId: string; deviceId?: string | null; identityKey?: string | null } | undefined;
+      let identity: { alias: string; userId: string; deviceId?: string | null; identityKey?: string | null; ratchetRegistered?: boolean } | undefined;
       if (mode === 'login') {
-        identity = await firstValueFrom(this.api.post<{ alias: string; userId: string; deviceId?: string | null; identityKey?: string | null }>('/auth/login', {
+        identity = await firstValueFrom(this.api.post<{ alias: string; userId: string; deviceId?: string | null; identityKey?: string | null; ratchetRegistered?: boolean }>('/auth/login', {
           alias: normalizeNivraNumber(normalizedAlias) || `@${normalizedAlias.replace(/^@/, '')}`, password, deviceName: device.name,
           hardwareId: device.hardwareId, keyBundle: null, resolveOnly: true,
         }, { skipAuth: true }));
@@ -461,6 +461,15 @@ export class AuthService implements OnDestroy {
         ? await this.crypto.createDeviceKeys()
         : await this.crypto.prepareDeviceKeys(normalizedAlias, mode === 'register', identity);
       if (!isCurrent()) return;
+      let recoverRatchetDeviceId: string | undefined;
+      if(environment.ratchetEnabled&&identity?.ratchetRegistered===true&&identity.deviceId){
+        const {LocalHistoryService}=await import('./local-history.service');
+        if(!isCurrent())return;
+        const saved=await this.injector.get(LocalHistoryService).readRatchetState(identity.userId,identity.deviceId).catch(()=>undefined);
+        if(!isCurrent())return;
+        // A transient storage error is not evidence that the ratchet was erased.
+        if(saved===null)recoverRatchetDeviceId=identity.deviceId;
+      }
       const payload = {
         alias: mode === 'login' ? `@${normalizedAlias}` : normalizedAlias,
         password,
@@ -470,6 +479,7 @@ export class AuthService implements OnDestroy {
         email: null,
         phone: null,
         keyBundle: keys.keyBundle,
+        ...(recoverRatchetDeviceId?{recoverRatchetDeviceId}:{}),
       };
       const auth = await firstValueFrom(
         this.api.post<AuthSession>(mode === 'register' ? '/auth/register' : '/auth/login', payload, { skipAuth: true }),

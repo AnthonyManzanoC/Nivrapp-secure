@@ -28,11 +28,11 @@ public static class DeviceEnrollmentChecks
             var jwk = JsonSerializer.Serialize(new {kty="EC", crv="P-256", x=Coordinate(point.X!), y=Coordinate(point.Y!)});
             return new(jwk, jwk, "fixture", []);
         }
-        async Task<DeviceRecord> Enroll(KeyBundleRequest keys)
+        async Task<DeviceRecord> Enroll(KeyBundleRequest keys,string? lostDeviceId=null)
         {
             await using var scope = app.Services.CreateAsyncScope();
             var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
-            return await (Task<DeviceRecord>)method.Invoke(null, [db, owner, "Reinstalled client", hardware, keys, DateTimeOffset.UtcNow, true, CancellationToken.None])!;
+            return await (Task<DeviceRecord>)method.Invoke(null, [db, owner, "Reinstalled client", hardware, keys, DateTimeOffset.UtcNow, true, CancellationToken.None,lostDeviceId])!;
         }
         var originalKeys = Keys();
         var first = await Enroll(originalKeys);
@@ -69,6 +69,13 @@ public static class DeviceEnrollmentChecks
             Check(await db.Devices.CountAsync(row => row.UserId == owner && row.HardwareId == hardware && row.RevokedAt == null) == 1,
                 "database retains one active hardware binding");
         }
+        await using(var scope=app.Services.CreateAsyncScope()){
+            var db=scope.ServiceProvider.GetRequiredService<NivraDbContext>();db.Add(new RatchetPilotDevice{DeviceId=replacement.Id,UserId=owner,IdentityKey=Convert.ToBase64String(new byte[64]),SignalDeviceNumber=1,RegistrationId=1,AddressMode=2,CreatedAt=DateTimeOffset.UtcNow});await db.SaveChangesAsync();
+        }
+        var restoredRatchets=await Task.WhenAll(Enumerable.Range(0,6).Select(_=>Enroll(replacementKeys,replacement.Id)));
+        Check(restoredRatchets.All(device=>device.Id!=replacement.Id)&&restoredRatchets.Select(device=>device.Id).Distinct().Count()==1,"lost ratchet state gets one fresh address even when historical identity keys survive");
+        Check(restoredRatchets.All(device=>device.KeyBundle.IdentityKey==replacementKeys.IdentityKey),"recovery preserves the historical private-key identity instead of rotating message archives");
+        Check((await Enroll(replacementKeys,replacement.Id)).Id==restoredRatchets[0].Id,"a delayed recovery retry cannot retire the new device again");
         Console.WriteLine($"PASS {count} PostgreSQL device reenrollment checks");
     }
 }

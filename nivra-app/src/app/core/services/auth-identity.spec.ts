@@ -47,6 +47,28 @@ describe('hybrid login preserves device key identity', () => {
     expect(service.busy()).toBeFalse();
   });
 
+  it('requests a fresh ratchet address after authenticated login if only the ratchet snapshot was lost',async()=>{
+    const readRatchetState=jasmine.createSpy('readRatchetState').and.resolveTo(null);
+    Object.assign(service,{injector:{get:()=>({readRatchetState})}});
+    post.and.returnValues(of({alias:'old.alias',userId:'account',deviceId:'old-device',ratchetRegistered:true}),of(session));
+    await service.loginWithAlias('old.alias','synthetic-test-password','login');
+    expect(readRatchetState).toHaveBeenCalledOnceWith('account','old-device');
+    expect(post.calls.mostRecent().args[1].recoverRatchetDeviceId).toBe('old-device');
+    expect(post.calls.mostRecent().args[1].keyBundle).toBe(keys.keyBundle);
+  });
+  it('retains an existing ratchet address when its encrypted snapshot survives',async()=>{
+    Object.assign(service,{injector:{get:()=>({readRatchetState:async()=>({revision:1,state:{retained:true}})})}});
+    post.and.returnValues(of({alias:'old.alias',userId:'account',deviceId:'old-device',ratchetRegistered:true}),of(session));
+    await service.loginWithAlias('old.alias','synthetic-test-password','login');
+    expect(post.calls.mostRecent().args[1].recoverRatchetDeviceId).toBeUndefined();
+  });
+  it('does not retire active sessions because local storage is temporarily unavailable',async()=>{
+    Object.assign(service,{injector:{get:()=>({readRatchetState:async()=>{throw Error('storage temporarily busy');}})}});
+    post.and.returnValues(of({alias:'old.alias',userId:'account',deviceId:'old-device',ratchetRegistered:true}),of(session));
+    await service.loginWithAlias('old.alias','synthetic-test-password','login');
+    expect(post.calls.mostRecent().args[1].recoverRatchetDeviceId).toBeUndefined();
+  });
+
   it('uses a fresh isolated identity when an older API resolves only a mutable alias', async () => {
     post.and.returnValues(of({ alias: 'reassigned' }), of(session));
     await service.loginWithAlias('@reassigned', 'synthetic-test-password', 'login');

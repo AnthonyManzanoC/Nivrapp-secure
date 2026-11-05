@@ -193,11 +193,12 @@ public static partial class EndpointExtensions
                 // device keys stored under the account's canonical alias.
                 var hardwareId = NormalizeHardwareId(request.HardwareId);
                 var existingDevice = hardwareId is null ? null : await db.Devices.AsNoTracking().FirstOrDefaultAsync(candidate => candidate.UserId == user.Id && candidate.HardwareId == hardwareId && candidate.RevokedAt == null && candidate.IsTrusted, cancellationToken);
-                return Results.Ok(new LoginIdentityResponse(user.Alias, user.Id, existingDevice?.Id, existingDevice?.KeyBundle.IdentityKey));
+                var ratchetRegistered=existingDevice is not null&&await db.Set<RatchetPilotDevice>().AnyAsync(row=>row.DeviceId==existingDevice.Id&&row.UserId==user.Id&&row.AddressMode==2,cancellationToken);
+                return Results.Ok(new LoginIdentityResponse(user.Alias, user.Id, existingDevice?.Id, existingDevice?.KeyBundle.IdentityKey,ratchetRegistered));
             }
 
             var now = timeProvider.GetUtcNow();
-            var device = await UpsertDeviceAsync(db, user.Id, request.DeviceName, request.HardwareId, request.KeyBundle ?? new KeyBundleRequest(null, null, null, []), now, trusted: true, cancellationToken);
+            var device = await UpsertDeviceAsync(db, user.Id, request.DeviceName, request.HardwareId, request.KeyBundle ?? new KeyBundleRequest(null, null, null, []), now, trusted: true, cancellationToken,request.RecoverRatchetDeviceId);
             var tokens = await tokenService.CreateSessionAsync(store, user, device, ClientIp(http), http.Request.Headers.UserAgent.ToString(), cancellationToken);
             await store.AddAuditAsync(user.Id, "auth.login", ClientIp(http), $"Device={device.Id}", now, cancellationToken);
 
@@ -4826,7 +4827,8 @@ public static partial class EndpointExtensions
         KeyBundleRequest keyBundle,
         DateTimeOffset now,
         bool trusted,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        string? recoverRatchetDeviceId=null)
     {
         return await CallCoordination.RunAsync(db, async () =>
         {
@@ -4834,7 +4836,8 @@ public static partial class EndpointExtensions
             var normalizedHardwareId = NormalizeHardwareId(hardwareId);
             var device = normalizedHardwareId is null ? null : await db.Devices.FirstOrDefaultAsync(candidate =>
                 candidate.UserId == userId && candidate.HardwareId == normalizedHardwareId, cancellationToken);
-            if (device is not null && (device.RevokedAt is not null ||
+            var lostRatchetState=device is not null&&device.Id==recoverRatchetDeviceId&&await db.Set<RatchetPilotDevice>().AnyAsync(row=>row.DeviceId==device.Id&&row.UserId==userId&&row.AddressMode==2,cancellationToken);
+            if (device is not null && (lostRatchetState || device.RevokedAt is not null ||
                 DeviceContinuityPolicy.Coordinates(device.KeyBundle.IdentityKey) != DeviceContinuityPolicy.Coordinates(keyBundle.IdentityKey)))
             {
                 // Retired addresses keep their original keys and revoked sessions.
