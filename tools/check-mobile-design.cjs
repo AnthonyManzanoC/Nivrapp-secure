@@ -412,6 +412,25 @@ async function main() {
     await tap('.create-room-cta');
     await waitFor("!!document.querySelector('.room-create-dialog')");
     await capture('desktop-vault-create');
+    for(const theme of ['light','dark']){
+      await viewport(390,844,true);
+      await call('Page.navigate',{url:base+'/app/communities?theme='+theme+'&id=community-preview&info=1'});
+      await waitFor("document.querySelectorAll('.community-member').length===2");
+      await evaluate("document.querySelector('.preview-controls').style.display='none';document.querySelector('.community-members').scrollIntoView()");
+      await capture('mobile-community-members-'+theme);
+      await evaluate("document.querySelector('.community-actions .primary').click()");
+      await waitFor("!!document.querySelector('app-group-invite-share')");
+      await evaluate("document.querySelector('app-group-invite-share button').click()");
+      await waitFor("!!document.querySelector('app-group-invite-share input[readonly]')");
+      await evaluate("document.querySelector('app-group-invite-share .actions button:last-child').click();document.querySelector('app-group-invite-share').scrollIntoView()");
+      await waitFor("document.querySelectorAll('app-group-invite-share .target').length>1");
+      await capture('mobile-community-invitation-'+theme);
+      await call('Page.navigate',{url:base+'/preview/recovery?theme='+theme});
+      await waitFor("!!document.querySelector('app-account-identity-recovery input[type=password]')");
+      await evaluate("document.querySelector('.preview-controls').style.display='none'");
+      await capture('mobile-account-recovery-'+theme);
+      assert(await evaluate("document.documentElement.scrollWidth<=innerWidth"),'recovery controls fit a phone');
+    }
     assert.deepEqual(errors,[],'preview must not throw runtime errors');
     console.log('PASS mobile search, Contacts, self notes entry and desktop layout; screenshots saved.');
   } finally { socket?.close(); chrome.kill(); server.close(); }

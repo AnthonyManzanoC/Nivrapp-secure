@@ -1,6 +1,7 @@
 // Separate build entry: NEVER imported by src/main.ts or shipped in production.
 // Renders the actual shell/chats components with synthetic, network-free services.
-import { Component, signal } from '@angular/core';
+import { Component, inject, signal } from '@angular/core';
+import { of } from 'rxjs';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { provideRouter, RouterLink, RouterOutlet } from '@angular/router';
 import { IonInput, IonTextarea, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent, provideIonicAngular } from '@ionic/angular/standalone';
@@ -22,6 +23,7 @@ import { ChatService } from '../src/app/core/services/chat.service';
 import { SocialService } from '../src/app/core/services/social.service';
 import { CallsService } from '../src/app/core/services/calls.service';
 import { AccountIdentityService } from '../src/app/core/services/account-identity.service';
+import { AccountIdentityRecoveryComponent } from '../src/app/features/account/account-identity-recovery.component';
 import { CallsPage } from '../src/app/features/calls/calls.page';
 import { CallTranslationService } from '../src/app/core/services/call-translation.service';
 import { SignalrService } from '../src/app/core/services/signalr.service';
@@ -81,6 +83,7 @@ const chat: any = {
   clearSelectedConversation: () => chat.selectedConversationId.set(null), searchPeople: async () => [],
   selectConversation: async (id: string) => chat.selectedConversationId.set(id),
   refreshChats: async () => true, presenceLabel: (item: any) => item.id === 'empty' ? 'cifrado extremo a extremo' : item.type === 'Group' ? '3 participantes' : 'online', checkLocalHistory: async () => {},
+  hydrateConversationProfile:async()=>{},canSendToConversation:()=>true,isConversationBlocked:()=>false,
   conversationListPresence: (item: any) => ChatService.prototype.conversationListPresence.call(chat, item),
 };
 const previewSettings = signal({ chatListDensity: 'three-line' });
@@ -194,6 +197,9 @@ class PreviewRoot {
   private applyTheme() { for (const root of [document.documentElement, document.body]) { root.classList.toggle('nivra-light-theme', this.light); root.classList.toggle('ion-palette-dark', !this.light); } }
 }
 
+@Component({selector:'preview-account-recovery',standalone:true,imports:[AccountIdentityRecoveryComponent],template:'<main style="padding:20px;max-width:600px;margin:auto"><app-account-identity-recovery /></main>'})
+class PreviewAccountRecovery { constructor(){ (inject(AccountIdentityService).state as any).set('password'); } }
+
 bootstrapApplication(PreviewRoot, { providers: [
   provideIonicAngular(), provideRouter([{ path: 'app', component: ShellPage, children: [
     { path: 'chats', component: ChatsPage, children: [{ path: ':id', component: PreviewConversation }] },
@@ -204,7 +210,7 @@ bootstrapApplication(PreviewRoot, { providers: [
     { path: 'games', component: PreviewGames },
     { path: 'world', component: WorldPage },{ path: 'composer', component: PreviewComposer },{ path: 'viewer', component: PreviewViewer },{ path: 'invitation', component: PreviewInvitation },
     { path: '**', component: PreviewEmpty },
-  ] },{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls}, { path: '**', redirectTo: 'app/chats' }]),
+  ] },{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls},{path:'preview/recovery',component:PreviewAccountRecovery}, { path: '**', redirectTo: 'app/chats' }]),
   { provide: AuthService, useValue: { sessionGeneration:signal(1), session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
   { provide: ChatService, useValue: chat },
   { provide: CommunityService, useValue: v9.communities },
@@ -221,7 +227,7 @@ bootstrapApplication(PreviewRoot, { providers: [
   { provide: AppLockService, useValue: { isContentLocked: signal(false) } },
   { provide: PrivateChatLockService, useValue: { isProtected: () => false } },
   { provide: ClientCompatibilityService, useValue: { check: async () => {}, updateRequired: signal(false) } },
-  { provide: NivraApiService, useValue: { baseUrl: '' } },
+  { provide: NivraApiService, useValue: { baseUrl: '',post:()=>of({id:'synthetic-invite',code:'a'.repeat(43)}),get:()=>of([]) } },
   { provide: AppSettingsService, useValue: { settings: previewSettings } },
   { provide: LocalHistoryService, useValue: { storageError: signal(''), storageState: signal('ready'), storageBusy: signal(false) } },
   { provide: NativeDeviceService, useValue: {} },
