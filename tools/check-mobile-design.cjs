@@ -270,6 +270,18 @@ async function main() {
     await tap('.call-quick-replies button');
     await waitFor("!!document.querySelector('.call-result')");
     await capture('mobile-call-reply-result');
+    await call('Page.navigate',{url:base+'/app/calls?theme=dark&mode=missed-voice'});
+    await waitFor("!!document.querySelector('app-call-result.expanded-result .close-result')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    assert.equal(await evaluate("document.querySelectorAll('.result-actions button').length"),2,'outgoing result offers message and redial');
+    await capture('mobile-outgoing-missed-voice');
+    await viewport(320,568,true);
+    assert(await evaluate("(()=>{const r=document.querySelector('.call-result').getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.top>=0&&r.bottom<=innerHeight})()"),'post-call actions fit a small phone');
+    await viewport(390,844,true);
+    await call('Page.navigate',{url:base+'/app/calls?theme=light&mode=missed-video'});
+    await waitFor("!!document.querySelector('app-call-result.expanded-result .video')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('mobile-outgoing-missed-video');
     await call('Page.navigate',{url:base+'/app/chats?theme=light&incoming=video'});
     await waitFor("!!document.querySelector('.video-incoming')");
     await evaluate("document.querySelector('.preview-controls').style.display='none'");

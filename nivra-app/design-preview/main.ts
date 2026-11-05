@@ -110,6 +110,10 @@ chat.participantPhoto = () => '';
 class PreviewCalls {
   constructor() {
     const mode = new URLSearchParams(location.search).get('mode');
+    if(mode === 'missed-voice' || mode === 'missed-video'){
+      previewCalls.activeCall.set(null);previewCalls.phase.set('idle');
+      previewCalls.lastResult.set({call:{id:'synthetic-missed',conversationId:'sofia',type:mode === 'missed-video'?'Video':'Voice',participantUserIds:[user.id,'peer-1'],initiatorUserId:user.id,startedAt:new Date().toISOString()},kind:'missed',incoming:false});
+    }
     if (mode === 'voice' || mode === 'video') {
       previewCalls.activeCall.set({ id: 'synthetic-active', conversationId: 'sofia', type: mode === 'video' ? 'Video' : 'Voice', status: 'Active', initiatorUserId: user.id, participantUserIds: ['peer-1'], startedAt: new Date().toISOString() });
       previewCalls.phase.set('connected');
