@@ -9,9 +9,10 @@ interface Pin {
   verifiedAt?: string;
   devices?: DirectoryFingerprint['deviceIdentities'];
   linkedFromDeviceId?: string;
+  accountRoot?: string;
 }
 
-export interface IdentityTrustTransferEntry { userId: string; digest: string; verified: boolean; verifiedAt?: string; devices?: DirectoryFingerprint['deviceIdentities']; }
+export interface IdentityTrustTransferEntry { userId: string; digest: string; verified: boolean; verifiedAt?: string; devices?: DirectoryFingerprint['deviceIdentities']; accountRoot?: string; }
 /** Public pins only, transported inside an explicitly approved E2EE handoff. */
 export interface IdentityTrustTransfer {
   v: 1;
@@ -60,25 +61,29 @@ export class IdentityTrustService {
     let selected=directory,pending=0,authorized=false;
     await this.update(scope,directory.userId,current=>{
       if(!isCurrent())throw new Error('La comprobación ya no está activa.');
-      if(current?.digest===fingerprint.digest&&current.devices?.length)return current;
+      const acceptedRoot=current?.accountRoot??proofs.find(proof=>proof.accountRoot&&(!current||proof.rootEndorsed&&current.devices?.some(device=>device.deviceId===proof.sourceDeviceId&&device.identity===proof.sourceIdentity)))?.accountRoot;
+      // An established root can never be replaced by a server-supplied directory.
+      if(current?.accountRoot&&directory.accountIdentity?.rootKey&&current.accountRoot!==directory.accountIdentity.rootKey)throw Object.assign(new Error('La identidad raíz de este contacto cambió. Revisa su identidad antes de continuar.'),{retryable:true});
+      const pinned=current?{...current,...(acceptedRoot?{accountRoot:acceptedRoot}:{})}:undefined;
+      if(current?.digest===fingerprint.digest&&current.devices?.length)return pinned!;
       if(current && current.digest!==fingerprint.digest && !this.hasKnownEncryptionKeys(current,fingerprint)) {
-        const match=this.knownDevices(current,fingerprint,proofs);
+        const match=this.knownDevices(pinned!,fingerprint,proofs);
         if(!match.replaced&&match.ids.size===fingerprint.deviceIdentities.length){
           authorized=true;
-          return {...current,digest:fingerprint.digest,devices:fingerprint.deviceIdentities};
+          return {...pinned!,digest:fingerprint.digest,devices:fingerprint.deviceIdentities};
         }
         if(allowSubset && !match.replaced && match.ids.size>0){
           selected={...directory,devices:directory.devices.filter(device=>match.ids.has(device.deviceId))};
           pending=fingerprint.deviceIdentities.length-match.ids.size;
           // Preserve the trusted pin. An unverified key cannot overwrite or enlarge it.
-          return current;
+          return pinned!;
         }
         this.setPending(scope,directory.userId,0);
         this.changed.update(previous=>new Set([...previous,JSON.stringify([scope,directory.userId])]));
         // Re-evaluate queued messages after the user confirms; never encrypt while this fails.
         throw Object.assign(new Error('La identidad de este contacto ha cambiado. Abre Verificar identidad y compara el código antes de continuar.'),{retryable:true});
       }
-      return {...current,digest:fingerprint.digest,verified:current?.verified??false,devices:fingerprint.deviceIdentities};
+      return {...current,...(acceptedRoot?{accountRoot:acceptedRoot}:{}),digest:fingerprint.digest,verified:current?.verified??false,devices:fingerprint.deviceIdentities};
     });
     if(!isCurrent())throw new Error('La comprobación ya no está activa.');
     this.clearChanged(scope,directory.userId);
@@ -105,9 +110,9 @@ export class IdentityTrustService {
   async confirm(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true):Promise<void>{
     const fingerprint=await deriveDirectoryFingerprint(directory);
     if(!isCurrent())throw new Error('La comparación ya no está activa.');
-    await this.update(scope,directory.userId,()=>{
+    await this.update(scope,directory.userId,current=>{
       if(!isCurrent())throw new Error('La comparación ya no está activa.');
-      return {digest:fingerprint.digest,devices:fingerprint.deviceIdentities,verified:true,verifiedAt:new Date().toISOString()};
+      return {...(current?.accountRoot?{accountRoot:current.accountRoot}:{}),digest:fingerprint.digest,devices:fingerprint.deviceIdentities,verified:true,verifiedAt:new Date().toISOString()};
     });
     this.clearChanged(scope,directory.userId);
     this.setPending(scope,directory.userId,0);
@@ -127,7 +132,7 @@ export class IdentityTrustService {
         try{
           const [ownerScope,contactId]=JSON.parse(String(cursor.key));const pin=cursor.value as Pin;
           if(ownerScope===scope && contactId!==userId && this.validEntry({...pin,userId:contactId}) && !this.isChanged(scope,contactId)){
-            found.push({userId:contactId,digest:pin.digest,verified:pin.verified,...(pin.verifiedAt?{verifiedAt:pin.verifiedAt}:{}),...(pin.devices?{devices:pin.devices}: {})});
+            found.push({userId:contactId,digest:pin.digest,verified:pin.verified,...(pin.verifiedAt?{verifiedAt:pin.verifiedAt}:{}),...(pin.devices?{devices:pin.devices}: {}),...(pin.accountRoot?{accountRoot:pin.accountRoot}:{})});
           }
         }catch{/* Unrelated legacy keys cannot establish continuity for this account. */}
         cursor.continue();
@@ -182,7 +187,8 @@ export class IdentityTrustService {
             // A linked browser can already have seen a safe subset (for example,
             // after an old device was removed). Keep that directory and restore verification.
             const observed=reconcile?current!:entry;
-            store.put({...current,digest:observed.digest,verified:entry.verified,...(entry.verifiedAt?{verifiedAt:entry.verifiedAt}:{}),...(observed.devices?{devices:observed.devices}:{}),linkedFromDeviceId:sourceDeviceId} satisfies Pin,key);imported++;
+            if(current?.accountRoot&&entry.accountRoot&&current.accountRoot!==entry.accountRoot)return;
+            store.put({...current,digest:observed.digest,verified:entry.verified,...(entry.verifiedAt?{verifiedAt:entry.verifiedAt}:{}),...(observed.devices?{devices:observed.devices}:{}),...(current?.accountRoot||entry.accountRoot?{accountRoot:current?.accountRoot??entry.accountRoot}:{}),linkedFromDeviceId:sourceDeviceId} satisfies Pin,key);imported++;
           }catch(reason){error=reason;tx.abort();}
         };
       }
@@ -209,6 +215,9 @@ export class IdentityTrustService {
     }
     const anchors=new Set(ids);
     for(const proof of proofs){
+      if(proof.accountRoot&&pin.accountRoot===proof.accountRoot&&!replacements.has(proof.targetDeviceId)&&fingerprint.deviceIdentities.some(device=>device.deviceId===proof.targetDeviceId&&device.identity===proof.targetIdentity)){
+        ids.add(proof.targetDeviceId);continue;
+      }
       // A signed sub-device gets a fresh ratchet address. Never replace a live
       // address's previously authenticated key with another device's signature.
       if(!replacements.has(proof.targetDeviceId)&&anchors.has(proof.sourceDeviceId)&&pinnedIds.get(proof.sourceDeviceId)===proof.sourceIdentity&&
@@ -221,6 +230,7 @@ export class IdentityTrustService {
   private validId(value:unknown):value is string{return typeof value==='string'&&value.length>0&&value.length<=128&&value.trim()===value;}
   private validEntry(value:IdentityTrustTransferEntry):boolean{
     return this.validId(value?.userId)&&typeof value.digest==='string'&&DIGEST.test(value.digest)&&typeof value.verified==='boolean'
+      &&(value.accountRoot===undefined||typeof value.accountRoot==='string'&&/^[A-Za-z0-9_-]{43}:[A-Za-z0-9_-]{43}$/.test(value.accountRoot))
       &&(!value.verified||typeof value.verifiedAt==='string')
       &&(value.devices===undefined||Array.isArray(value.devices)&&value.devices.length>0&&value.devices.length<=128
         &&new Set(value.devices.map(device=>device?.deviceId)).size===value.devices.length

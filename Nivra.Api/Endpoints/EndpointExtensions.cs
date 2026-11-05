@@ -759,7 +759,7 @@ public static partial class EndpointExtensions
 
         var keys = app.MapGroup("/keys");
 
-        keys.MapGet("/{alias}", async Task<IResult> (string alias, INivraStore store, CancellationToken cancellationToken) =>
+        keys.MapGet("/{alias}", async Task<IResult> (string alias, INivraStore store, NivraDbContext db, CancellationToken cancellationToken) =>
         {
             var user = await store.FindUserByAliasAsync(alias, cancellationToken);
             if (user is null || user.DisabledAt is not null)
@@ -769,10 +769,11 @@ public static partial class EndpointExtensions
 
             var publicDevices = (await store.ActiveDevicesForUserAsync(user.Id, cancellationToken))
                 .Where(device => device.IsTrusted)
-                .Select(device => new PublicDeviceKeyResponse(device.Id, device.Name, device.KeyBundle, device.KeyBundle.LastRotatedAt,DeviceContinuityPolicy.Read(device)))
+                .Select(device => new PublicDeviceKeyResponse(device.Id, device.Name, device.KeyBundle, device.KeyBundle.LastRotatedAt,DeviceContinuityPolicy.Read(device),AccountIdentityPolicy.Certificate(device)))
                 .ToList();
 
-            return Results.Ok(new PublicKeyDirectoryResponse(user.Id, user.Alias, publicDevices));
+            var root=AccountIdentityPolicy.Read(await db.AccountIdentities.AsNoTracking().SingleOrDefaultAsync(x=>x.UserId==user.Id,cancellationToken));
+            return Results.Ok(new PublicKeyDirectoryResponse(user.Id, user.Alias, publicDevices,root));
         });
 
         keys.MapPost("/batch", async Task<IResult> (PublicKeyBatchRequest request, HttpContext http, NivraDbContext db, CancellationToken cancellationToken) =>
@@ -816,13 +817,15 @@ public static partial class EndpointExtensions
             var devicesByUser = devices
                 .GroupBy(device => device.UserId)
                 .ToDictionary(group => group.Key, group => group.Select(device =>
-                    new PublicDeviceKeyResponse(device.Id, device.Name, device.KeyBundle, device.KeyBundle.LastRotatedAt,DeviceContinuityPolicy.Read(device))).ToList());
+                    new PublicDeviceKeyResponse(device.Id, device.Name, device.KeyBundle, device.KeyBundle.LastRotatedAt,DeviceContinuityPolicy.Read(device),AccountIdentityPolicy.Certificate(device))).ToList());
+
+            var accountIdentities=(await db.AccountIdentities.AsNoTracking().Where(x=>ids.Contains(x.UserId)).ToListAsync(cancellationToken)).ToDictionary(x=>x.UserId,AccountIdentityPolicy.Read);
 
             var response = users
                 .Select(user => new PublicKeyDirectoryResponse(
                     user.Id,
                     user.Alias,
-                    devicesByUser.TryGetValue(user.Id, out var publicDevices) ? publicDevices : []))
+                    devicesByUser.TryGetValue(user.Id, out var publicDevices) ? publicDevices : [], accountIdentities.GetValueOrDefault(user.Id)))
                 .ToList();
             return Results.Ok(response);
         });

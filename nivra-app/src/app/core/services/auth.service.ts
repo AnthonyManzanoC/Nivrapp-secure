@@ -82,6 +82,7 @@ interface QrHistoryPayload {
   userId?: string;
   sourceDeviceId?: string;
   identityTrust?: IdentityTrustTransfer;
+  accountIdentity?: import('./account-identity.service').AccountIdentityTransfer;
   keyring?: HistoricalDeviceKeyMaterial[];
   keyMaterial?: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>;
   historyIncluded?: boolean;
@@ -476,6 +477,9 @@ export class AuthService implements OnDestroy {
       if (!isCurrent()) return;
       if (identity?.userId && auth.user?.id !== identity.userId) throw new Error('La identidad de la cuenta cambió durante el inicio de sesión. Vuelve a intentar.');
       await this.completeAuth(auth, keys, isCurrent);
+      if(isCurrent()&&this.session()?.user.id===auth.user.id)void import('./ratchet-messaging.service').then(({RatchetMessagingService})=>{
+        return isCurrent()?this.injector.get(RatchetMessagingService).activateAccountIdentity(password):undefined;
+      }).catch(()=>undefined);
     } finally {
       if (isCurrent()) this.busy.set(false);
     }
@@ -496,6 +500,8 @@ export class AuthService implements OnDestroy {
       }, { skipAuth: true }));
       if (!isCurrent()) return;
       await this.completeAuth(auth, keys, isCurrent);
+      if(isCurrent()&&this.session()?.user.id===auth.user.id)void import('./ratchet-messaging.service').then(({RatchetMessagingService})=>
+        isCurrent()?this.injector.get(RatchetMessagingService).activateAccountIdentity(password):undefined).catch(()=>undefined);
     } finally {
       if (isCurrent()) this.busy.set(false);
     }
@@ -796,12 +802,15 @@ export class AuthService implements OnDestroy {
     const keyMaterial = includeHistory?await this.crypto.currentKeyMaterial(current.user.alias, current.device.id):undefined;
     const keyring = includeHistory?await this.crypto.exportDeviceKeyMaterialsForUser(current.user.id, current.user.alias):undefined;
     const identityTrust = await this.identityTrust.exportForLinkedDevice(current.user.id, current.device.id).catch(() => undefined);
+    const {AccountIdentityService}=await import('./account-identity.service');
+    const accountIdentity=await this.injector.get(AccountIdentityService).exportForDevice().catch(()=>undefined);
     if (this.session()?.user.id !== current.user.id || this.session()?.device.id !== current.device.id) throw new Error('La sesión cambió durante la vinculación.');
     const device = await this.deviceProfile();
     const payload = {
       userId: current.user.id,
       sourceDeviceId: current.device.id,
       ...(identityTrust ? { identityTrust } : {}),
+      ...(accountIdentity ? { accountIdentity } : {}),
       historyIncluded:includeHistory,
       ...(keyring?{keyring:keyring.map(key => ({ privateJwk: key.privateJwk, publicJwk: key.publicJwk, createdAt: key.createdAt }))}:{}),
       ...(keyMaterial?{keyMaterial:{
@@ -1499,7 +1508,7 @@ export class AuthService implements OnDestroy {
     keyMaterial: Pick<StoredDeviceKeys, 'privateJwk' | 'publicJwk'>,
     keyring?: HistoricalDeviceKeyMaterial[],
     isCurrent: () => boolean = () => true,
-    handoff?: Pick<QrHistoryPayload, 'identityTrust' | 'sourceDeviceId'>,
+    handoff?: Pick<QrHistoryPayload, 'identityTrust' | 'sourceDeviceId' | 'accountIdentity'>,
   ): Promise<void> {
     if (!isCurrent() || !await this.allowAccountActivation(auth, isCurrent)) return;
     if (keyring?.length) await this.crypto.importHistoricalDeviceKeys(auth.user.id, auth.user.alias, keyring, isCurrent);
@@ -1514,6 +1523,12 @@ export class AuthService implements OnDestroy {
       if (!isCurrent()) return;
     }
     if (!await this.persistSession(auth, isCurrent) || !isCurrent()) return;
+    if(handoff?.accountIdentity){
+      const {AccountIdentityService}=await import('./account-identity.service');
+      if(!isCurrent())return;
+      await this.injector.get(AccountIdentityService).importForDevice(handoff.accountIdentity).catch(()=>undefined);
+      if(!isCurrent())return;
+    }
     this.addingAccount.set(false);
     this.addingReturnUserId = null;
     this.markFreshAuthNavigation();

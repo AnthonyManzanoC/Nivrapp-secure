@@ -360,3 +360,4 @@ p { font-size: 13px; }
   font-size: 12px;
   white-space: nowrap;
 }
+.community-members{margin-block:22px;padding:20px;border:1px solid var(--nivra-line);border-radius:20px;background:var(--nivra-panel-2)}.community-members>header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}.community-members>.field{margin-top:16px}.community-member{display:flex;align-items:center;gap:12px;padding-block:14px;border-bottom:1px solid var(--nivra-line)}.community-member:last-child{border-bottom:0}.community-member button{flex-shrink:0;font-size:11px}.info-back{display:inline-flex}.community-members .eyebrow{display:block;font-size:9px;margin-bottom:6px}app-group-invite-share{display:block;margin-block:18px}@media(max-width:440px){.community-members{padding:14px}.community-member{flex-wrap:wrap}.community-member .item-copy{flex:1 1 120px}.community-member button{margin-inline-start:auto}}

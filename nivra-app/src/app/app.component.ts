@@ -452,11 +452,16 @@ export class AppComponent {
 
     try {
       const url = new URL(rawUrl);
-      if (url.hostname.toLowerCase() !== 'nivrapp-secure.vercel.app') {
+      if (url.protocol !== 'https:' || url.username || url.password || (url.port && url.port !== '443') || url.hostname.toLowerCase() !== 'nivrapp-secure.vercel.app') {
         return;
       }
 
       const path = url.pathname.replace(/\/+$/, '');
+      if (path === '/group/invite') {
+        const code = url.hash.slice(1);
+        if (/^[A-Za-z0-9_-]{43}$/.test(code)) void this.router.navigateByUrl('/group/invite#' + code);
+        return;
+      }
       if (path === '/recover') {
         void this.router.navigateByUrl('/recover' + url.hash);
         return;

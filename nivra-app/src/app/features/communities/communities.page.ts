@@ -8,8 +8,10 @@ import { Community, CommunityJoinRequest, CommunityService } from '../../core/se
 import { AuthService } from '../../core/services/auth.service';
 import { ChatService } from '../../core/services/chat.service';
 import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
+import { GroupInviteShareComponent } from '../chat-detail/group-invite-share.component';
+import { Participant } from '../../core/models/nivra.models';
 
-@Component({selector:'app-communities',standalone:true,imports:[FormsModule,RouterLink,IonContent,TransientNoticeDirective],
+@Component({selector:'app-communities',standalone:true,imports:[FormsModule,RouterLink,IonContent,TransientNoticeDirective,GroupInviteShareComponent],
   templateUrl:'./communities.page.html',styleUrls:['./communities.page.scss']})
 export class CommunitiesPage {
   readonly communities=inject(CommunityService);
@@ -23,6 +25,18 @@ export class CommunitiesPage {
   readonly selectedId=signal('');
   readonly creating=signal(false);
   readonly fromChats = signal(false);
+  readonly infoOpen = signal(false);
+  readonly invitationOpen = signal(false);
+  readonly announcementConversation = computed(() => this.chat.conversations().find(item => item.id === this.selectedId()) ?? null);
+  memberQuery = '';
+  memberBusy = '';
+  members(): Participant[] {
+    const query = this.memberQuery.trim().toLocaleLowerCase();
+    return (this.announcementConversation()?.participants ?? []).filter(member => !member.removedAt && (!query || `${member.displayName ?? ''} ${member.alias ?? ''}`.toLocaleLowerCase().includes(query)))
+      .sort((a,b) => Number(['Owner','Admin'].includes(b.role))-Number(['Owner','Admin'].includes(a.role)) || (a.displayName || a.alias || '').localeCompare(b.displayName || b.alias || ''));
+  }
+  memberName(member: Participant): string { return this.chat.participantDisplayName(member.userId,member); }
+  memberPhoto(member: Participant): string { return this.chat.participantPhoto(member.userId,member); }
   editing=false;
   private uiScope=this.scope();
   readonly selected=computed(()=>this.communities.items().find(item=>item.id===this.selectedId())??null);
@@ -58,6 +72,8 @@ export class CommunitiesPage {
   notice='';formError='';shareUrl='';query='';
   constructor(){this.route.queryParamMap.pipe(takeUntilDestroyed()).subscribe(params=>{
     this.fromChats.set(params.get('from') === 'chats');
+    this.infoOpen.set(params.get('info') === '1');
+    this.invitationOpen.set(false); this.memberQuery = ''; this.memberBusy = '';
     this.creating.set(params.get('create')==='1');this.selectedId.set(params.get('id')??'');this.shareUrl='';this.editing=false;
     this.linkId = '';
     this.newGroupName = '';
@@ -65,7 +81,7 @@ export class CommunitiesPage {
     void this.content()?.scrollToTop(0);
   });
     effect(()=>{const scope=this.scope();untracked(()=>{if(scope===this.uiScope)return;this.uiScope=scope;
-      this.selectedId.set('');this.creating.set(false);this.editing=false;this.name='';this.description='';this.photo=null;
+      this.selectedId.set('');this.creating.set(false);this.infoOpen.set(false);this.invitationOpen.set(false);this.memberQuery='';this.memberBusy='';this.editing=false;this.name='';this.description='';this.photo=null;
       this.groupIds=new Set();this.linkId='';this.newGroupName='';this.notice='';this.formError='';this.shareUrl='';this.query='';
     });});
   }
@@ -75,8 +91,18 @@ export class CommunitiesPage {
   filtered():Community[]{const q=this.query.trim().toLocaleLowerCase();return this.communities.items().filter(c=>c.name.toLocaleLowerCase().includes(q));}
   select(item:Community):void{this.navigate({id:item.id});}
   newCommunity():void{this.navigate({create:1});}
-  back():void{this.navigate({});}
-  private navigate(queryParams: { id?: string; create?: number }): void {
+  back():void{this.navigate(this.infoOpen() ? {id:this.selectedId()} : {});}
+  openInfo(): void { this.navigate({id:this.selectedId(),info:1}); void this.chat.refreshChats().then(() => this.chat.hydrateConversationProfile(this.announcementConversation())).catch(() => undefined); }
+  chatContext(): {community: string; communityFrom?: string} { return this.fromChats() ? {community:this.selectedId(),communityFrom:'chats'} : {community:this.selectedId()}; }
+  async toggleAdmin(member: Participant): Promise<void> {
+    const conversation=this.announcementConversation(),item=this.selected(),scope=this.scope();
+    if(!conversation||!item||!this.isAdmin(item)||member.role==='Owner'||this.memberBusy)return;
+    this.memberBusy=member.userId;
+    try { await this.chat.setGroupParticipantAdmin(conversation,member.userId,member.role!=='Admin'); if(scope===this.scope()&&!this.destroyRef.destroyed){this.notice='Permisos actualizados.';void this.communities.load(true);} }
+    catch { if(scope===this.scope()&&!this.destroyRef.destroyed)this.notice='No se pudieron actualizar los permisos. Revisa tu conexión.'; }
+    finally { if(scope===this.scope()&&!this.destroyRef.destroyed)this.memberBusy=''; }
+  }
+  private navigate(queryParams: { id?: string; create?: number; info?: number }): void {
     void this.router.navigate(['/app/communities'], {
       queryParams: this.fromChats() ? { ...queryParams, from: 'chats' } : queryParams,
     });
@@ -88,6 +114,7 @@ export class CommunitiesPage {
   }
   cancelEditor(): void {
     if (this.communities.busy()) return;
+    if (this.infoOpen()) { this.back(); return; }
     if (!this.editing) {
       this.back();
       return;
@@ -124,7 +151,7 @@ export class CommunitiesPage {
     if (!id) return;
     const result = await this.communities.requestJoin(id, groupId);
     if (!result || this.destroyRef.destroyed || this.selectedId() !== id) return;
-    if (result.conversationId) await this.router.navigate(['/app/chats', result.conversationId]);
+    if (result.conversationId) await this.router.navigate(['/app/chats', result.conversationId], {queryParams:this.chatContext()});
     else if (result.pending) this.notice = 'Solicitud enviada. Un administrador del grupo puede aprobarla.';
   }
   async review(request: CommunityJoinRequest, accept: boolean): Promise<void> {
@@ -134,6 +161,6 @@ export class CommunitiesPage {
       this.notice = accept ? 'Solicitud aprobada.' : 'Solicitud rechazada.';
     }
   }
-  async invite():Promise<void>{const item=this.selected();if(!item)return;const url=await this.communities.inviteLink(item.id);if(url&&!this.destroyRef.destroyed){this.shareUrl=url;try{await navigator.clipboard.writeText(url);this.notice='Enlace copiado. Caduca en 24 horas y puedes revocarlo desde la información de Avisos.';}catch{this.notice='Copia el enlace para invitar.';}}}
+  invite():void{this.invitationOpen.update(open=>!open);}
   async unlink(groupId:string):Promise<void>{const item=this.selected();if(!item)return;await this.communities.unlink(item.id,groupId);if(!this.communities.error())this.notice='Se desvinculó el grupo. Sus conversaciones se conservan.';}
 }

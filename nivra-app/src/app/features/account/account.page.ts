@@ -41,6 +41,7 @@ import { LauncherAppearanceComponent } from '../../shared/launcher-appearance.co
 import { AccountSwitcherComponent } from '../../shared/account-switcher.component';
 import { NIVRA_UPDATE_URL } from '../../core/release';
 import { AccountNavigationComponent, type AccountSectionId } from './account-navigation.component';
+import { AccountIdentityRecoveryComponent } from './account-identity-recovery.component';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const PIN_LENGTH = 4;
@@ -54,7 +55,7 @@ interface ProfileDraft {
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent, AccountNavigationComponent, LiveDeviceLinkComponent],
+  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent, AccountNavigationComponent, LiveDeviceLinkComponent,AccountIdentityRecoveryComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss', './account-security.scss'],
 })

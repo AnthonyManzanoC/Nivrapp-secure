@@ -92,6 +92,7 @@ import { PrivacyEnforcementService } from '../../core/services/privacy-enforceme
 import { StoryViewerComponent } from '../story-viewer/story-viewer.component';
 import { StoryActivityComponent } from '../story-viewer/story-activity.component';
 import { GroupInviteShareComponent } from './group-invite-share.component';
+import { CommunityService } from '../../core/services/community.service';
 import { IdentityTrustService } from '../../core/services/identity-trust.service';
 import { ChatMediaGalleryComponent } from './chat-media-gallery.component';
 import { ImageCropperComponent } from '../image-cropper/image-cropper.component';
@@ -769,6 +770,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   async back(): Promise<void> {
     if(this.selectionMode){this.cancelSelection();return;}
+    const community = this.route?.snapshot?.queryParamMap?.get('community');
+    if (community && /^[A-Za-z0-9_-]{1,128}$/.test(community)) {
+      await this.router.navigate(['/app/communities'], {queryParams: {id:community,...(this.route.snapshot.queryParamMap.get('communityFrom')==='chats'?{from:'chats'}:{})}});
+      return;
+    }
     await this.router.navigateByUrl('/app/chats');
   }
 
@@ -1423,7 +1429,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     await this.closeChatMenu();
     if (this.destroyed || this.auth?.session()?.user.id !== userId || this.conversation?.()?.id !== conversationId) return;
     this.cancelSelection();
-    await this.router.navigateByUrl('/app/chats');
+    await this.back();
   }
 
   openAttachmentMenu(event: Event): void {
@@ -1553,6 +1559,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!conversation) {
       return;
     }
+    if (this.injector?.get(CommunityService).items().some(item => item.id === conversation.id)) {
+      void this.router.navigate(['/app/communities'], {queryParams: {id:conversation.id,info:1,...(this.route.snapshot.queryParamMap.get('communityFrom')==='chats'?{from:'chats'}:{})}});
+      return;
+    }
     this.prepareGroupInfoDraft(conversation);
     this.profileParticipantQuery = '';
     this.profileMediaFilter = 'all';
@@ -1568,7 +1578,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!id || this.destroyed || this.privateChatLocked() || this.privateConversationId() !== id || this.conversation()?.id !== id) return;
     this.pendingContactInfoId = null;
     this.openContactInfo();
-    void this.router.navigate([], { relativeTo: this.route, queryParams: { info: null }, queryParamsHandling: 'merge', replaceUrl: true });
+    if(this.contactInfoOpen)void this.router.navigate([], { relativeTo: this.route, queryParams: { info: null }, queryParamsHandling: 'merge', replaceUrl: true });
   }
 
   closeContactInfo(): void {

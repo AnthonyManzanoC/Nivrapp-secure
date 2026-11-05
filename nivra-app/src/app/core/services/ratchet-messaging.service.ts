@@ -1,4 +1,4 @@
-import { Injectable, InjectionToken, OnDestroy, effect, inject, untracked } from '@angular/core';
+import { Injectable, InjectionToken, Injector, OnDestroy, effect, inject, untracked } from '@angular/core';
 import { firstValueFrom, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { ChatPayload, MessageHistoryRecoveryResponse, MessageResponse, PublicKeyDirectory, RecipientCipherRequest } from '../models/nivra.models';
@@ -12,6 +12,8 @@ import { AppLockService } from './app-lock.service';
 import { RatchetBundle, RatchetDeviceRuntime, RatchetEnvelope, RatchetRuntimeFactory, openRatchetRuntime, ratchetBase64, ratchetBinary, ratchetHash, ratchetMessageId, ratchetArchiveContext } from './ratchet-runtime';
 import { verifyDeviceContinuity } from './ratchet-runtime';
 import { CheckedDeviceContinuity, checkedDeviceContinuities, continuityStatement } from '../utils/device-continuity';
+import { checkedAccountDevices } from '../utils/account-device-trust';
+import { AccountIdentityService, AccountIdentityContext } from './account-identity.service';
 
 export const RATCHET_RUNTIME = new InjectionToken<RatchetRuntimeFactory>('Nivra ratchet runtime', { providedIn: 'root', factory: () => openRatchetRuntime });
 const ALGORITHM = 'NIVRA-HYBRID-RATCHET-MESSAGE-1';
@@ -36,6 +38,7 @@ export class RatchetMessagingService implements OnDestroy {
   private readonly signalr = inject(SignalrService);
   private readonly factory = inject(RATCHET_RUNTIME);
   private readonly appLock = inject(AppLockService);
+  private readonly injector = inject(Injector);
   private runtime: RatchetDeviceRuntime | null = null;
   private runtimeScope = '';
   private opening: Promise<RatchetDeviceRuntime> | null = null;
@@ -96,12 +99,12 @@ export class RatchetMessagingService implements OnDestroy {
     });
   }
   async deviceContinuities(directory:PublicKeyDirectory):Promise<CheckedDeviceContinuity[]>{
-    if(!directory.devices.some(device=>device.continuity))return [];
+    if(!directory.accountIdentity&&!directory.devices.some(device=>device.continuity))return [];
     const owner=this.owner();
     return this.run(async()=>{
       owner.assert();const engine=await this.open(false);owner.assert();
       const state=await this.state(engine);
-      const result=await checkedDeviceContinuities(directory,state.peers,verifyDeviceContinuity);owner.assert();return result;
+      const result=[...await checkedDeviceContinuities(directory,state.peers,verifyDeviceContinuity),...await checkedAccountDevices(directory,state.peers,verifyDeviceContinuity)];owner.assert();return result;
     }).catch(()=>[]);
   }
   private async enabled(): Promise<boolean> {
@@ -169,6 +172,20 @@ export class RatchetMessagingService implements OnDestroy {
       await firstValueFrom(this.api.post('/ratchet/olm/prekeys', { bundles: batch }).pipe(timeout(15000)));
       await engine.acknowledgeBundles(batch.map(bundle => bundle.preKeyId));
     }
+    // Account recovery is optional for existing installations and cannot block messaging.
+    const owner=this.owner();
+    await this.injector.get(AccountIdentityService).certify(await this.accountIdentityContext(engine)).catch(()=>undefined);owner.assert();
+  }
+  private async accountIdentityContext(engine:RatchetDeviceRuntime):Promise<AccountIdentityContext>{
+    const owner=this.owner(),own=await this.auth.ensureDeviceIdentity();owner.assert();
+    return {hybridIdentity:ratchetBase64(engine.publicIdentity),legacyIdentity:this.coordinates(own.publicJwk),endorse:async bytes=>{
+      if(!engine.signDeviceContinuity)throw Error('Actualiza este dispositivo para activar la recuperación.');
+      const signature=await engine.signDeviceContinuity(bytes);owner.assert();return ratchetBase64(signature);
+    }};
+  }
+  async activateAccountIdentity(password:string,recoveryPhrase?:string):Promise<void>{
+    return this.run(async()=>{const owner=this.owner(),engine=await this.open(true);await this.publish(engine);owner.assert();
+      await this.injector.get(AccountIdentityService).activate(password,await this.accountIdentityContext(engine),recoveryPhrase);owner.assert();});
   }
   async pump(): Promise<void> {
     return this.run(async () => {
@@ -202,6 +219,7 @@ export class RatchetMessagingService implements OnDestroy {
       return;
     }
     if (!binding) {
+      if(await this.pinAccountDevice(engine,target,entry,state)){owner.assert();return;}
       await firstValueFrom(this.api.post('/ratchet/olm/bindings/request', { deviceIds: [target.deviceId] }).pipe(timeout(15000)));
       throw pendingRatchet('El otro dispositivo está preparando el cifrado seguro. El mensaje permanece pendiente y se reintentará.');
     }
@@ -215,6 +233,19 @@ export class RatchetMessagingService implements OnDestroy {
       || proof['targetUserId'] !== owner.userId || proof['targetDeviceId'] !== owner.deviceId || proof['targetLegacy'] !== this.coordinates(own.publicJwk)) throw Error('La vinculación cifrada no es válida para este dispositivo.');
     state.peers[target.deviceId] = { userId: target.userId, identityKey: entry.identityKey, registrationId: entry.registrationId, legacy: this.coordinates(target.publicJwk) };
     await engine.pinIdentity({ name: target.deviceId, device: 1 }, ratchetBinary(entry.identityKey, 64), state); owner.assert();
+  }
+
+  private async pinAccountDevice(engine:RatchetDeviceRuntime,target:RatchetTarget,entry:DirectoryEntry,state:ApplicationState):Promise<boolean>{
+    const owner=this.owner();
+    const directories=await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch',{userIds:[target.userId],aliases:[]}).pipe(timeout(15000)));owner.assert();
+    const directory=directories.find(item=>item.userId===target.userId),device=directory?.devices.find(item=>item.deviceId===target.deviceId),certificate=device?.accountCertificate;
+    if(!directory||!certificate||certificate.hybridKey!==entry.identityKey||certificate.legacyKey!==this.coordinates(target.publicJwk))return false;
+    const proofs=await checkedAccountDevices(directory,state.peers,verifyDeviceContinuity);owner.assert();
+    if(!proofs.some(proof=>proof.targetDeviceId===target.deviceId))return false;
+    const trusted=await this.trust.forDelivery(owner.scope,directory,()=>{try{owner.assert();return true;}catch{return false;}},proofs);owner.assert();
+    if(!trusted.devices.some(item=>item.deviceId===target.deviceId))return false;
+    state.peers[target.deviceId]={userId:target.userId,identityKey:entry.identityKey,registrationId:entry.registrationId,legacy:this.coordinates(target.publicJwk)};
+    await engine.pinIdentity({name:target.deviceId,device:1},ratchetBinary(entry.identityKey,64),state);owner.assert();return true;
   }
 
   /** New messages always use the hybrid ratchet; unavailable peers remain queued. */
@@ -379,7 +410,7 @@ export class RatchetMessagingService implements OnDestroy {
         const publicJwk = this.crypto.parsePublicJwk(device?.keyBundle?.identityKey);
         if (!directory || !device || !publicJwk) throw Error('El dispositivo de origen ya no está autorizado.');
         if (message.senderUserId !== owner.userId) {
-          const proofs=await checkedDeviceContinuities(directory,state.peers,verifyDeviceContinuity);
+          const proofs=[...await checkedDeviceContinuities(directory,state.peers,verifyDeviceContinuity),...await checkedAccountDevices(directory,state.peers,verifyDeviceContinuity)];
           const trusted=await this.trust.forDelivery(owner.scope, directory, () => { try { owner.assert(); return true; } catch { return false; } },proofs);
           if (!trusted.devices.some(value=>value.deviceId===message.senderDeviceId)) throw Error('Este mensaje viene de un dispositivo nuevo pendiente de comprobar.');
         }

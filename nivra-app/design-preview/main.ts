@@ -21,6 +21,7 @@ import { AuthService } from '../src/app/core/services/auth.service';
 import { ChatService } from '../src/app/core/services/chat.service';
 import { SocialService } from '../src/app/core/services/social.service';
 import { CallsService } from '../src/app/core/services/calls.service';
+import { AccountIdentityService } from '../src/app/core/services/account-identity.service';
 import { CallsPage } from '../src/app/features/calls/calls.page';
 import { CallTranslationService } from '../src/app/core/services/call-translation.service';
 import { SignalrService } from '../src/app/core/services/signalr.service';
@@ -199,6 +200,7 @@ bootstrapApplication(PreviewRoot, { providers: [
     { path: 'contacts', component: ContactsPage },
     { path: 'communities', component: CommunitiesPage },
     { path: 'vault', component: VaultPage },
+    { path: 'calls', component: PreviewCalls },
     { path: 'games', component: PreviewGames },
     { path: 'world', component: WorldPage },{ path: 'composer', component: PreviewComposer },{ path: 'viewer', component: PreviewViewer },{ path: 'invitation', component: PreviewInvitation },
     { path: '**', component: PreviewEmpty },
@@ -212,6 +214,7 @@ bootstrapApplication(PreviewRoot, { providers: [
   { provide: SocialService, useValue: social },
   { provide: ContactSyncService,useValue:{syncCachedContactsInBackground:async()=>{},radarHasNewContact:()=>false,lastDeviceContactCount:()=>0,syncing:()=>false}},
   { provide: CallsService, useValue: previewCalls },
+  { provide: AccountIdentityService, useValue: {state:signal('ready'),error:signal(''),phrase:async()=>''} },
   { provide: CallTranslationService, useValue: { enabled: signal(false), active: signal(false) } },
   { provide: SignalrService, useValue: { connected: signal(true) } },
   { provide: UnreadTabService, useValue: { unreadChats: signal(2) } },

@@ -179,6 +179,7 @@ public sealed class DeviceRecord
     public KeyBundle KeyBundle { get; set; } = new();
     public string? ContinuitySourceDeviceId { get; set; }
     public string? ContinuitySignature { get; set; }
+    public string? AccountCertificateJson { get; set; }
     public bool IsTrusted { get; set; }
     public DateTimeOffset CreatedAt { get; init; }
     public DateTimeOffset? LastSeenAt { get; set; }

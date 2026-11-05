@@ -35,5 +35,6 @@ public static class DeviceContinuityPolicy
     {
         if(Coordinates(device.KeyBundle.IdentityKey)==Coordinates(nextIdentity))return;
         device.ContinuitySourceDeviceId=null;device.ContinuitySignature=null;
+        device.AccountCertificateJson=null;
     }
 }

@@ -1327,7 +1327,7 @@
             </section>
             @if (isCurrentUserGroupAdmin()) {
               <div class="profile-invite">
-                <app-group-invite-share [conversationId]="conversation()!.id" />
+                <app-group-invite-share [conversationId]="conversation()!.id" [title]="chat.conversationTitle(conversation()!)" />
               </div>
             }
             <button

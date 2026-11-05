@@ -26,7 +26,7 @@ export const WEB_LAUNCH_RUNTIME = new InjectionToken<WebLaunchRuntime>('WebLaunc
         && ['http:', 'https:'].includes(location.protocol),
       storage,
       now: () => new Date(),
-      sensitiveRoute: () => /^\/(?:auth|recover|contact|vault\/invite)(?:\/|$)/.test(location.pathname),
+      sensitiveRoute: () => /^\/(?:auth|recover|contact|vault\/invite|group\/invite)(?:\/|$)/.test(location.pathname),
       fetchVersion: async (signal) => {
         const response = await fetch(`/assets/release.json?client=${encodeURIComponent(NIVRA_VERSION)}`, {
           cache: 'no-store', credentials: 'omit', signal,

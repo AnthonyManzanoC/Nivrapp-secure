@@ -276,6 +276,7 @@ app.UseCallCompatibility();
 
 app.MapNivraApi();
 app.MapGroupInviteEndpoints();
+app.MapAccountIdentityEndpoints();
 app.MapGet("/client/compatibility", () => Results.Ok(ClientCompatibility.Description()));
 app.MapGet("/client/android-release", (HttpContext context) =>
 {

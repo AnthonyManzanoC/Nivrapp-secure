@@ -6,6 +6,7 @@ import { RatchetBundle, openRatchetRuntime, ratchetTransport } from './ratchet-r
 import { MessageResponse } from '../models/nivra.models';
 import { IdentityTrustService } from './identity-trust.service';
 import { continuityIdentity } from '../utils/device-continuity';
+import { AccountDeviceCertificate, accountDeviceStatement, accountRootStatement, createAccountIdentity, identityB64, signAccountIdentity } from '../utils/account-identity';
 
 describe('actual application Double Ratchet delivery', () => {
   let clients: any[], directory: Map<string, any>, bundles: Map<string, RatchetBundle[]>, proofs: Map<string, any>, requests: Map<string, Set<string>>;
@@ -19,6 +20,7 @@ describe('actual application Double Ratchet delivery', () => {
     service.auth = { session: () => owner, ensureDeviceIdentity: async () => keys };
     service.crypto = Object.create(CryptoService.prototype); service.crypto.currentKeyMaterial = async () => keys;
     service.trust = { forDelivery: jasmine.createSpy('identityCheck').and.callFake(async (_scope:any,directory:any)=>directory) };
+    service.injector = {get:()=>({certify:async()=>undefined})};
     service.appLock = { isContentLocked: () => false };
     service.factory = openRatchetRuntime; service.runtime = null; service.runtimeScope = ''; service.opening = null; service.generation = 0; service.serial = Promise.resolve(); service.enabledCache = null;
     const saved = new Map<string, any>(), messages = new Map<string, any>();
@@ -54,13 +56,38 @@ describe('actual application Double Ratchet delivery', () => {
       if (path === '/ratchet/olm/bindings/request') { for (const id of body.deviceIds) { const pending = requests.get(id) ?? new Set<string>(); pending.add(target.deviceId); requests.set(id, pending); } return of(null); }
       if (path === '/ratchet/olm/bindings') { for (const binding of body.bindings) { proofs.set(`${target.deviceId}:${binding.targetDeviceId}`, binding); requests.get(target.deviceId)?.delete(binding.targetDeviceId); } return of(null); }
       if (path.startsWith('/ratchet/olm/devices/')) { const id = path.split('/')[4], bundle = bundles.get(id)?.shift(); return bundle ? of({ deviceId: id, requestId: body.requestId, bundle }) : throwError(() => Error('No prekeys')); }
-      if (path === '/keys/batch') return of(body.userIds.map((id: string) => ({ userId: id, devices: [...directory.values()].filter(remote => remote.target.userId === id).map(remote => ({ deviceId: remote.target.deviceId, continuity:remote.continuity,keyBundle: { identityKey: JSON.stringify(remote.keys.publicJwk) } })) })));
+      if (path === '/keys/batch') return of(body.userIds.map((id: string) => ({ userId: id, accountIdentity:[...directory.values()].find(remote=>remote.target.userId===id&&remote.accountIdentity)?.accountIdentity,devices: [...directory.values()].filter(remote => remote.target.userId === id).map(remote => ({ deviceId: remote.target.deviceId, continuity:remote.continuity,accountCertificate:remote.accountCertificate,keyBundle: { identityKey: JSON.stringify(remote.keys.publicJwk) } })) })));
       return throwError(() => Error('Unexpected POST ' + path));
     } };
     clients.push(service); return record;
   }
   const response = (sender: any, recipients: any[], clientMessageId = 'msg-one'): MessageResponse => ({ id: 'server-' + clientMessageId, conversationId: 'chat-test', clientMessageId,
     senderUserId: sender.target.userId, senderDeviceId: sender.target.deviceId, kind: 'Text', recipients, serverReceivedAt: new Date().toISOString(), deleteAfterRead: false, receipts: [] });
+
+  it('exchanges real hybrid-ratchet messages with a recovered signed subdevice without importing history or contacting a retired device',async()=>{
+    const alice=await client('alice'),bob=await client('bob'),root=await createAccountIdentity('usr-bob');
+    await alice.service.pump();await bob.service.pump();
+    // Establish the original authenticated peer and contact pin.
+    await alice.service.encrypt('chat-test','prime',{type:'text',text:'prime'},[bob.target],null).catch(()=>undefined);await bob.service.pump();
+    const initial=await alice.service.encrypt('chat-test','prime',{type:'text',text:'prime'},[bob.target],null);
+    await bob.service.decrypt(response(alice,initial,'prime'),initial[0]);
+    const trust=new IdentityTrustService(),scope=JSON.stringify(['usr-alice','dev-alice']);alice.service.trust=trust;
+    const known={userId:'usr-bob',alias:'bob',devices:[{deviceId:bob.target.deviceId,deviceName:'',lastRotatedAt:'',keyBundle:{identityKey:JSON.stringify(bob.keys.publicJwk),signedPreKey:null,preKeySignature:null,oneTimePreKeys:[]}}]};
+    await trust.confirm(scope,known);
+    const statement={v:1 as const,rootKey:root.rootKey,sourceDeviceId:bob.target.deviceId,sourceHybrid:identityB64(bob.service.runtime.publicIdentity),sourceLegacy:continuityIdentity(bob.keys.publicJwk)};
+    const identity={...statement,endorsement:identityB64(await bob.service.runtime.signDeviceContinuity(accountRootStatement('usr-bob',statement)))};
+    async function certify(record:any){const certificate:AccountDeviceCertificate={v:1,rootKey:root.rootKey,deviceId:record.target.deviceId,legacyKey:continuityIdentity(record.keys.publicJwk),hybridKey:identityB64(record.service.runtime.publicIdentity),signature:''};certificate.signature=await signAccountIdentity(root,accountDeviceStatement('usr-bob',certificate));record.accountCertificate=certificate;record.accountIdentity=identity;}
+    await certify(bob);
+    const current=(await new Promise<any>(resolve=>alice.service.api.post('/keys/batch',{userIds:['usr-bob']}).subscribe(resolve)))[0];
+    await trust.forDelivery(scope,current,()=>true,await alice.service.deviceContinuities(current));
+    const newBob=await client('bob-reinstalled','bob');await newBob.service.pump();await certify(newBob);directory.delete(bob.target.deviceId);
+    const payload={type:'text',text:'new device, no history'};
+    const delivered=await alice.service.encrypt('chat-test','after-reinstall',payload,[newBob.target],null);
+    expect((await newBob.service.decrypt(response(alice,delivered,'after-reinstall'),delivered[0])).text).toBe('new device, no history');
+    expect(trust.isChanged(scope,'usr-bob')).toBeFalse();
+    const answer=await newBob.service.encrypt('chat-test','new-answer',{type:'text',text:'reply'},[alice.target],null);
+    expect((await alice.service.decrypt(response(newBob,answer,'new-answer'),answer[0])).text).toBe('reply');
+  });
 
   it('accepts a newly signed device in a previously verified chat without importing history',async()=>{
     const unique=crypto.randomUUID();

@@ -205,6 +205,7 @@
         <details class="profile-recovery-section">
           <summary>{{ 'ACCOUNT.PROFILE_RECOVERY' | translate:'Recuperación de cuenta' }}</summary>
           <app-recovery-email (stateChange)="onRecoveryEmailState($event)"></app-recovery-email>
+          <app-account-identity-recovery />
         </details>
       </div>
       </details>

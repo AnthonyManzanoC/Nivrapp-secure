@@ -202,12 +202,14 @@ export interface PublicDeviceKey {
   keyBundle: KeyBundle;
   lastRotatedAt: string;
   continuity?: { sourceDeviceId: string; signature: string } | null;
+  accountCertificate?: import('../utils/account-identity').AccountDeviceCertificate | null;
 }
 
 export interface PublicKeyDirectory {
   userId: string;
   alias: string;
   devices: PublicDeviceKey[];
+  accountIdentity?: import('../utils/account-identity').AccountRootPublic | null;
 }
 
 export interface RecipientCipherRequest {

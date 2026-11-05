@@ -74,6 +74,38 @@ namespace Nivra.Api.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.AccountIdentityRecord", b =>
+                {
+                    b.Property<string>("UserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("PasswordBackup")
+                        .IsRequired()
+                        .HasMaxLength(16384)
+                        .HasColumnType("character varying(16384)");
+
+                    b.Property<string>("PublicJson")
+                        .IsRequired()
+                        .HasMaxLength(4096)
+                        .HasColumnType("character varying(4096)");
+
+                    b.Property<string>("RecoveryBackup")
+                        .IsRequired()
+                        .HasMaxLength(16384)
+                        .HasColumnType("character varying(16384)");
+
+                    b.Property<int>("Revision")
+                        .HasColumnType("integer");
+
+                    b.HasKey("UserId");
+
+                    b.ToTable("account_identities", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.AccountRecoveryChallenge", b =>
                 {
                     b.Property<string>("TokenHash")
@@ -601,6 +633,9 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Property<string>("Id")
                         .HasMaxLength(64)
                         .HasColumnType("character varying(64)");
+
+                    b.Property<string>("AccountCertificateJson")
+                        .HasColumnType("text");
 
                     b.Property<string>("ContinuitySignature")
                         .HasMaxLength(88)
@@ -1743,6 +1778,15 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.HasOne("Nivra.Api.Domain.UserAccount", null)
                         .WithMany()
                         .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.AccountIdentityRecord", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithOne()
+                        .HasForeignKey("Nivra.Api.Domain.AccountIdentityRecord", "UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

@@ -1,7 +1,7 @@
 import type { PublicKeyDirectory } from '../models/nivra.models';
 
 export interface DeviceContinuityProof { sourceDeviceId: string; signature: string; }
-export interface CheckedDeviceContinuity { sourceDeviceId: string; sourceIdentity: string; targetDeviceId: string; targetIdentity: string; }
+export interface CheckedDeviceContinuity { sourceDeviceId: string; sourceIdentity: string; targetDeviceId: string; targetIdentity: string; accountRoot?: string; rootEndorsed?: boolean; }
 export interface ContinuityPeer { userId: string; identityKey: string; legacy: string; }
 export const continuityCoordinates = /^[A-Za-z0-9_-]{43}:[A-Za-z0-9_-]{43}$/;
 const idPattern=/^[A-Za-z0-9_-]{1,128}$/;

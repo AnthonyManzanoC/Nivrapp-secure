@@ -62,6 +62,14 @@ describe('AppComponent', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it('opens native group and community invitations only from canonical HTTPS links with a valid private fragment',()=>{
+    const app=Object.create(AppComponent.prototype) as any,navigate=jasmine.createSpy('navigate').and.resolveTo(true);app.router={navigateByUrl:navigate};
+    const code='a'.repeat(43);app.handleAppUrlOpen('https://nivrapp-secure.vercel.app/group/invite#'+code);
+    expect(navigate).toHaveBeenCalledOnceWith('/group/invite#'+code);navigate.calls.reset();
+    for(const url of ['https://example.test/group/invite#'+code,'http://nivrapp-secure.vercel.app/group/invite#'+code,'https://nivrapp-secure.vercel.app/group/invite#invalid','https://nivrapp-secure.vercel.app:8443/group/invite#'+code])app.handleAppUrlOpen(url);
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it('coalesces overlapping native resume events', async () => {
     const app = TestBed.createComponent(AppComponent).componentInstance;
     let complete!: () => void;

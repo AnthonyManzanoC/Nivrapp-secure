@@ -56,8 +56,8 @@
     </aside>
 
     <section class="community-detail">
-      <button type="button" class="back-link mobile-back" (click)="cancelEditor()">
-        <span aria-hidden="true">←</span> {{editing ? 'Volver a la comunidad' : 'Comunidades'}}
+      <button type="button" class="back-link mobile-back" [class.info-back]="infoOpen()" (click)="cancelEditor()">
+        <span aria-hidden="true">←</span> {{editing || infoOpen() ? 'Volver a la comunidad' : 'Comunidades'}}
       </button>
       @if(communities.error() && (selectedId() || creating())){
         <p class="feedback error" role="alert">{{communities.error()}} <button type="button" (click)="communities.load()">Reintentar</button></p>
@@ -123,7 +123,7 @@
           </div>
         </header>
 
-        <a class="announcements" [routerLink]="['/app/chats', item.id]">
+        <a class="announcements" [routerLink]="['/app/chats', item.id]" [queryParams]="chatContext()">
           <span class="announcement-icon" aria-hidden="true"><svg class="community-icon" viewBox="0 0 24 24"><path d="m4 10 13-5v14L4 14V10Zm3 5 1 5h3l-1-4m9-7 2-2m-2 8 2 2"/></svg></span>
           <span class="item-copy"><strong>Avisos de la comunidad</strong><small>Las novedades de tus administradores</small></span>
           <svg class="community-icon arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>
@@ -134,13 +134,22 @@
             <button class="primary" type="button" (click)="invite()" [disabled]="!!communities.busy()">Invitar</button>
             <button type="button" (click)="edit(item)" [disabled]="!!communities.busy()">Editar</button>
             <button type="button" (click)="showGroupManager()">+ Añadir grupos</button>
-            <a class="text-action" [routerLink]="['/app/chats',item.id]" [queryParams]="{info:1}">Avisos y miembros <span aria-hidden="true">↗</span></a>
+            <button class="text-action" type="button" (click)="openInfo()">Información y miembros <span aria-hidden="true">↗</span></button>
           </nav>
-          @if(shareUrl){
-            <label class="field share-link">Enlace de invitación
-              <input readonly [value]="shareUrl" aria-label="Enlace de invitación a la comunidad">
-            </label>
-          }
+          @if(invitationOpen()) { <app-group-invite-share [conversationId]="item.id" [community]="true" [title]="item.name" /> }
+        }@else{<button type="button" (click)="openInfo()">Información y miembros</button>}
+
+        @if(infoOpen()){
+          <section class="community-members" aria-labelledby="community-members-title">
+            <header><div><span class="eyebrow">INFORMACIÓN DE LA COMUNIDAD</span><h3 id="community-members-title">Miembros y administradores</h3></div><span class="count">{{item.memberCount}}</span></header>
+            <p>Los avisos llegan a todos los miembros. Cada grupo conserva sus propios administradores y solicitudes de acceso.</p>
+            <label class="field">Buscar miembro<input type="search" [(ngModel)]="memberQuery" placeholder="Nombre o alias" autocomplete="off"></label>
+            @for(member of members();track member.userId){
+              <article class="community-member"><span class="face">@if(memberPhoto(member)){<img [src]="memberPhoto(member)" alt="" loading="lazy">}@else{ {{memberName(member).slice(0,2).toUpperCase()}} }</span><div class="item-copy"><strong>{{memberName(member)}}</strong><small>{{member.role==='Owner'?'Creador de la comunidad':member.role==='Admin'?'Administrador':'Miembro'}}@if(member.alias){ · &#64;{{member.alias}} }</small></div>
+                @if(isAdmin(item) && member.role!=='Owner'){<button type="button" [disabled]="!!memberBusy" (click)="toggleAdmin(member)">{{memberBusy===member.userId?'Guardando…':member.role==='Admin'?'Quitar admin':'Hacer admin'}}</button>}
+              </article>
+            }@empty{<p>{{memberQuery ? 'No encontramos a ese miembro.' : 'Actualizando miembros…'}}</p>}
+          </section>
         }
 
         @if(reviewQueue(); as queue){
@@ -176,7 +185,7 @@
               </span>
               <div class="item-copy"><strong>{{group.name}}</strong><small>{{group.memberCount}} miembros</small></div>
               @if(group.joined){
-                <a class="text-action" [routerLink]="['/app/chats',group.id]" [attr.aria-label]="'Abrir '+group.name">Abrir</a>
+                <a class="text-action" [routerLink]="['/app/chats',group.id]" [queryParams]="chatContext()" [attr.aria-label]="'Abrir '+group.name">Abrir</a>
               }@else if(group.requestPending){
                 <span class="group-request-state">Pendiente</span>
               }@else if(group.canRequest){

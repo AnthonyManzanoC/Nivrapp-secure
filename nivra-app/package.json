@@ -36,6 +36,7 @@
     "@capacitor/status-bar": "8.0.2",
     "@ionic/angular": "^8.0.0",
     "@microsoft/signalr": "^10.0.0",
+    "@scure/bip39": "2.4.0",
     "firebase": "^12.14.0",
     "html5-qrcode": "^2.3.8",
     "idb": "^8.0.3",

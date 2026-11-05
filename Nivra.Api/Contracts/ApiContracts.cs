@@ -127,9 +127,9 @@ public sealed record PublicDeviceKeyResponse(
     string DeviceId,
     string DeviceName,
     KeyBundle KeyBundle,
-    DateTimeOffset LastRotatedAt,DeviceContinuityResponse? Continuity=null);
+    DateTimeOffset LastRotatedAt,DeviceContinuityResponse? Continuity=null, AccountDeviceCertificate? AccountCertificate=null);
 
-public sealed record PublicKeyDirectoryResponse(string UserId, string Alias, List<PublicDeviceKeyResponse> Devices);
+public sealed record PublicKeyDirectoryResponse(string UserId, string Alias, List<PublicDeviceKeyResponse> Devices, AccountRootPublic? AccountIdentity=null);
 
 public sealed record PublicKeyBatchRequest(List<string>? UserIds, List<string>? Aliases);
 

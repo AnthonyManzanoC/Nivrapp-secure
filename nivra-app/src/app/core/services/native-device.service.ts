@@ -131,6 +131,7 @@ export interface NivraNativePlugin {
   requestIgnoreBatteryOptimizations(): Promise<BatteryOptimizationResponse>;
   diagnostics(): Promise<NativeDiagnostics>;
   writeClipboard(options: { value: string; label?: string }): Promise<void>;
+  shareText(options: { text: string; title: string }): Promise<void>;
   saveFileChunkedStart(options: { fileName: string; mimeType: string; public: boolean; mediaKind: MediaKind }): Promise<SaveSessionResponse>;
   saveFileChunk(options: { sessionId: string; base64: string }): Promise<void>;
   saveFileChunkedFinish(options: { sessionId: string }): Promise<SaveFileResponse>;
@@ -375,6 +376,19 @@ export class NativeDeviceService {
       return;
     }
     await navigator.clipboard.writeText(value);
+  }
+
+  async shareText(text: string, title = 'Nivra'): Promise<'shared' | 'copied' | 'cancelled'> {
+    if (Capacitor.getPlatform() === 'android') {
+      await NivraNative.shareText({ text, title });
+      return 'shared';
+    }
+    if (navigator.share) {
+      try { await navigator.share({ text, title }); return 'shared'; }
+      catch (error) { if (error instanceof DOMException && error.name === 'AbortError') return 'cancelled'; }
+    }
+    await this.copyToClipboard(text, title);
+    return 'copied';
   }
 
   async diagnostics(): Promise<Record<string, unknown>> {

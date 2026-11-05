@@ -48,7 +48,7 @@ app.UseExceptionHandler(handler => handler.Run(context =>
     context.Response.StatusCode = 500;
     return context.Response.WriteAsJsonAsync(new { code = "synthetic_test_failure" });
 }));
-app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.UseRateLimiter(); app.MapCommunityEndpoints(); app.MapGroupInviteEndpoints(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapRatchetHybridEndpoints(); app.MapHistoryArchiveEndpoints();
+app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.UseRateLimiter(); app.MapCommunityEndpoints(); app.MapGroupInviteEndpoints(); app.MapAccountIdentityEndpoints(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapRatchetHybridEndpoints(); app.MapHistoryArchiveEndpoints();
 app.MapDeviceContinuityEndpoints();
 typeof(EndpointExtensions).GetMethod("MapVaultRoomEndpoints",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,[app]);
 app.MapPost("/fixture/message-policy", async (SendMessageRequest request, HttpContext http, NivraDbContext db, CancellationToken ct) => {
@@ -278,6 +278,7 @@ await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", n
 await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab-other", Guid.NewGuid()), HttpStatusCode.Forbidden, "vault membership is required on both sides");
 await CommunityChecks.Run(app,tokens);
 await DeviceEnrollmentChecks.Run(app);
+await AccountIdentityChecks.Run(app,tokens);
 await CallAnswerChecks.Run(app.Services);
 await VaultAccessChecks.Run(app,tokens);
 const string liveTarget="dev-lab-alice-live";

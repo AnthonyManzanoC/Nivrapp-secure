@@ -686,6 +686,21 @@ public class NivraNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void shareText(PluginCall call) {
+        String text = call.getString("text", "");
+        if (text.isBlank() || text.length() > 12000) { call.reject("Invalid shared text"); return; }
+        getActivity().runOnUiThread(() -> {
+            try {
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("text/plain");
+                send.putExtra(Intent.EXTRA_TEXT, text);
+                getActivity().startActivity(Intent.createChooser(send, call.getString("title", "Nivra")));
+                call.resolve();
+            } catch (Exception error) { call.reject("No se pudo abrir el menú para compartir"); }
+        });
+    }
+
+    @PluginMethod
     public void writeClipboard(PluginCall call) {
         String value = call.getString("value", "");
         String label = call.getString("label", "Nivra");

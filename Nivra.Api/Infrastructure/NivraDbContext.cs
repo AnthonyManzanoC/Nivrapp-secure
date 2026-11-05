@@ -11,6 +11,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
 {
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     public DbSet<GroupInviteLink> GroupInviteLinks => Set<GroupInviteLink>();
+    public DbSet<AccountIdentityRecord> AccountIdentities => Set<AccountIdentityRecord>();
     public DbSet<CommunityRecord> Communities => Set<CommunityRecord>();
     public DbSet<CommunityGroupRecord> CommunityGroups => Set<CommunityGroupRecord>();
     public DbSet<CommunityGroupRequestRecord> CommunityGroupRequests => Set<CommunityGroupRequestRecord>();
@@ -68,6 +69,15 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        modelBuilder.Entity<AccountIdentityRecord>(entity =>
+        {
+            entity.ToTable("account_identities"); entity.HasKey(x => x.UserId);
+            entity.Property(x => x.UserId).HasMaxLength(64);
+            entity.Property(x => x.PublicJson).HasMaxLength(4096);
+            entity.Property(x => x.PasswordBackup).HasMaxLength(16384);
+            entity.Property(x => x.RecoveryBackup).HasMaxLength(16384);
+            entity.HasOne<UserAccount>().WithOne().HasForeignKey<AccountIdentityRecord>(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<CommunityRecord>(entity =>
         {
             entity.ToTable("communities"); entity.HasKey(x => x.Id);
