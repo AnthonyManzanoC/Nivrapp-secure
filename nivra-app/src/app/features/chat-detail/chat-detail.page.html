@@ -444,6 +444,17 @@
       <button type="button" slot="fixed" class="jump-latest" (click)="jumpToLatest()" [attr.aria-label]="'CHAT.LATEST_MESSAGES' | translate:'Ir a los últimos mensajes'"><ion-icon name="chevron-down-outline"></ion-icon></button>
     }
   </ion-content>
+  <ion-modal [isOpen]="incognitoConfirmOpen" (didDismiss)="incognitoConfirmOpen = false">
+    <ng-template>
+      <section class="incognito-confirm">
+        <ion-icon name="lock-closed-outline" aria-hidden="true"></ion-icon>
+        <h2>Chat incógnito</h2>
+        <p>Se abre un espacio cifrado con este contacto. Los mensajes viven en la sala y se limpian cuando cualquiera sale o se desconecta.</p>
+        <p>La otra persona puede conservar capturas. Revisa que ambos estén listos para entrar.</p>
+        <div><ion-button fill="clear" (click)="incognitoConfirmOpen = false" [disabled]="!!busyAction">Cancelar</ion-button><ion-button (click)="startIncognito()" [disabled]="!!busyAction">{{busyAction === 'incognito' ? 'Abriendo…' : 'Abrir e invitar'}}</ion-button></div>
+      </section>
+    </ng-template>
+  </ion-modal>
 
   <ion-footer class="composer-footer" [style.display]="selectionMode ? 'none' : null">
     @if (textQueueError || textOutbox.storageError()) {
@@ -704,6 +715,9 @@
           {{ isArchived() ? ('CHATS.UNARCHIVE' | translate:'Desarchivar') : ('CHATS.ARCHIVE' | translate:'Archivar') }}
         </button>
         <button type="button" (click)="closeConversationView()"><ion-icon name="close-outline"></ion-icon>{{ 'CHAT.CLOSE_CHAT' | translate:'Cerrar chat' }}</button>
+        @if(!chat.isGroup(conversation()) && !chat.isSelfConversation(conversation()) && !isBlocked()){
+          <button type="button" (click)="offerIncognito()"><ion-icon name="lock-closed-outline"></ion-icon>Chat incógnito</button>
+        }
         @if (!chat.isSelfConversation(conversation())) {
         <button type="button" (click)="toggleBlock()">
           <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'"></ion-icon>

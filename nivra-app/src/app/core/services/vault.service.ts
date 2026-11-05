@@ -1,7 +1,7 @@
 import { DestroyRef, Injectable, Injector, computed, effect, inject, signal, untracked, type WritableSignal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { Room, RoomEvent } from 'livekit-client';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, timeout } from 'rxjs';
 import {
   ChatPayload,
   DecodedVaultItem,
@@ -61,6 +61,7 @@ export class VaultService {
   private readonly resetters: Array<() => void> = [];
   private scopeEpoch = 0;
   private destroyed = false;
+  private readonly roomRevisions = new Map<string, number>();
   private searchRevision = 0;
   private loadRevision = 0;
   private voiceRevision = 0;
@@ -160,6 +161,7 @@ export class VaultService {
   }
 
   private resetScopeState(): void {
+    this.roomRevisions.clear();
     this.scopeEpoch++;
     this.searchRevision++;
     this.loadRevision++;
@@ -309,6 +311,7 @@ export class VaultService {
     encryptedWelcome?: string | null;
     invitedUserIds?: string[];
     ttlSeconds?: number | null;
+    notifyInChat?: boolean;
   }): Promise<VaultRoom> {
     const context = this.captureContext();
     const room = await firstValueFrom(this.api.post<VaultRoom>('/vault/rooms', {
@@ -326,7 +329,7 @@ export class VaultService {
       await this.selectRoom(room.id);
       this.checkContext(context);
     }
-    await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, options.invitedUserIds ?? []), options.pin || null, context);
+    if (options.notifyInChat !== false) await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, options.invitedUserIds ?? []), options.pin || null, context);
     this.checkContext(context);
     return room;
   }
@@ -362,7 +365,18 @@ export class VaultService {
 
   async leaveRoom(roomId: string): Promise<void> {
     const context = this.captureContext();
-    await firstValueFrom(this.api.post(`/vault/rooms/${encodeURIComponent(roomId)}/leave`, {}));
+    const ephemeral = this.rooms().find(room => room.id === roomId)?.retentionMode === 'BurnOnExit';
+    if (ephemeral) {
+      this.clearRoomMessages(roomId);
+      if (this.activeRoomId() === roomId) this.setActiveRoom(null);
+      this.rooms.update(rooms => rooms.filter(room => room.id !== roomId));
+    }
+    try {
+      await firstValueFrom(this.api.post(`/vault/rooms/${encodeURIComponent(roomId)}/leave`, {}).pipe(timeout(12000)));
+    } catch (error) {
+      if (!ephemeral || !this.isCurrent(context)) throw error;
+      await this.realtime.leaveVaultRoom(roomId);
+    }
     this.checkContext(context);
     if (this.activeRoomId() === roomId) {
       this.setActiveRoom(null);
@@ -876,13 +890,18 @@ export class VaultService {
     if (!room) {
       throw new Error('Abre una sala Vault primero.');
     }
+    const roomRevision = this.roomRevisions.get(room.id) ?? 0;
+    const checkRoom = () => {
+      this.checkContext(context);
+      if ((this.roomRevisions.get(room.id) ?? 0) !== roomRevision) throw new Error('La sala ya se cerró.');
+    };
     this.sending.set(true);
     const clientMessageId = `vault-${crypto.randomUUID()}`;
     try {
       await this.realtime.joinVaultRoom(room.id);
-      this.checkContext(context);
+      checkRoom();
       const recipients = await this.encryptedRecipients(room, payload, fileObjectId, context, clientMessageId);
-      this.checkContext(context);
+      checkRoom();
       if (!recipients.length) {
         throw new Error('No hay llaves publicas disponibles para esta boveda.');
       }
@@ -892,7 +911,7 @@ export class VaultService {
         ...ratchetTransport(recipients),
         fileObjectId,
       });
-      this.checkContext(context);
+      checkRoom();
       if (this.isCurrent(context)) {
         this.upsertMessage({
           id: clientMessageId,
@@ -1002,6 +1021,9 @@ export class VaultService {
       return;
     }
     const context = this.captureContext();
+    const roomRevision = this.roomRevisions.get(message.vaultRoomId) ?? 0;
+    const room = this.rooms().find(room => room.id === message.vaultRoomId);
+    if (room?.retentionMode === 'BurnOnExit' && this.activeRoomId() !== room.id) return;
     if (message.senderDeviceId === current.device.id) {
       return;
     }
@@ -1028,6 +1050,7 @@ export class VaultService {
     }
 
     if (!this.isCurrent(context)) return;
+    if ((this.roomRevisions.get(message.vaultRoomId) ?? 0) !== roomRevision) return;
     this.upsertMessage({
       id: message.id,
       vaultRoomId: message.vaultRoomId,
@@ -1100,11 +1123,20 @@ export class VaultService {
     const key = this.activeRoomStorageKey();
     this.activeRoomId.set(roomId);
     if (!key) return;
-    try { if (roomId) localStorage.setItem(key, roomId); else localStorage.removeItem(key); }
+    const ephemeral = this.rooms().find(room => room.id === roomId)?.retentionMode === 'BurnOnExit';
+    try { if (roomId && !ephemeral) localStorage.setItem(key, roomId); else localStorage.removeItem(key); }
     catch { /* Room selection is optional and never crosses account scopes. */ }
   }
 
   private clearRoomMessages(roomId: string): void {
+    this.roomRevisions.set(roomId, (this.roomRevisions.get(roomId) ?? 0) + 1);
+    const fileIds = new Set((this.messagesByRoom()[roomId] ?? []).map(message => message.fileObjectId).filter(Boolean));
+    this.mediaPreviews.update(previews => {
+      const next = {...previews};
+      for (const id of fileIds) if (id && next[id]) { if (next[id].url) URL.revokeObjectURL(next[id].url!); delete next[id]; }
+      return next;
+    });
+    void this.ratchet.forgetConversation(roomId).catch(() => undefined);
     this.messagesByRoom.update((state) => {
       if (!state[roomId]) {
         return state;

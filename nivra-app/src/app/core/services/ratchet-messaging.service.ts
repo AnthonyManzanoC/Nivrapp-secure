@@ -392,7 +392,7 @@ export class RatchetMessagingService implements OnDestroy {
           if (pending.envelopeHash !== await ratchetHash(envelope)) throw Error('El mensaje pendiente cambió.');
           payload = pending.payload as ChatPayload; incomingId = pending.id;
         } else {
-          payload = await engine.decrypt({ name: message.senderDeviceId, device: 1 }, context, envelope) as ChatPayload;
+          payload = await engine.decrypt({ name: message.senderDeviceId, device: 1 }, context, envelope, ephemeral) as ChatPayload;
           incomingId = (await engine.pendingReceived()).find(item => item.context.conversationId === context.conversationId && item.context.messageId === context.messageId && item.peer.name === message.senderDeviceId)?.id;
         }
         if (payload.type !== 'nivra-content-key' || typeof payload['key'] !== 'string' || payload['bodyHash'] !== await ratchetHash([header.payloadIv, header.payloadCiphertext])) throw Error('El cuerpo cifrado no corresponde al mensaje.');
@@ -428,6 +428,7 @@ export class RatchetMessagingService implements OnDestroy {
       const engine = await this.open(false), state = await this.state(engine);
       const outgoing = Object.entries(state.outgoing).filter(([, pending]) => pending.conversationId === conversationId);
       for (const [id] of outgoing) delete state.outgoing[id];
+      for (const [id, reservation] of Object.entries(state.reservations ?? {})) if (reservation.conversationId === conversationId) delete state.reservations![id];
       await engine.updateApplicationState(state);
       for (const [id] of outgoing) await engine.releaseOutgoing(conversationId, await ratchetMessageId(id));
       for (const pending of await engine.pendingReceived()) if (pending.context.conversationId === conversationId) await engine.acknowledgeReceived(pending.id);

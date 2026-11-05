@@ -35,7 +35,8 @@ builder.Services.AddHttpClient(); builder.Services.Configure<NivraPushOptions>(_
 builder.Services.AddSingleton<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>(new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider());
 builder.Services.AddSingleton<PushNotificationService>();
 builder.Services.AddSingleton<PasswordHasher>(); builder.Services.AddSingleton<LiveKitTokenService>();
-builder.Services.AddSingleton<EncryptedFileStorage>(_=>throw new InvalidOperationException("Fixture does not access file storage"));
+builder.Services.Configure<NivraStorageOptions>(options => { options.LocalPath = Path.Combine(Path.GetTempPath(), "nivra-ci-vault-" + Guid.NewGuid().ToString("N")); });
+builder.Services.AddSingleton<EncryptedFileStorage>();
 builder.Services.AddRateLimiter(options => options.AddPolicy("auth", context => System.Threading.RateLimiting.RateLimitPartition.GetNoLimiter("fixture")));
 builder.Services.Configure<NivraSecurityOptions>(options => options.TokenSigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
 await using var app = builder.Build();
@@ -275,6 +276,7 @@ await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", n
 await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab-expired", Guid.NewGuid()), HttpStatusCode.Forbidden, "expired vault cannot reserve a session");
 await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab-other", Guid.NewGuid()), HttpStatusCode.Forbidden, "vault membership is required on both sides");
 await CommunityChecks.Run(app,tokens);
+await DeviceEnrollmentChecks.Run(app);
 await CallAnswerChecks.Run(app.Services);
 await VaultAccessChecks.Run(app,tokens);
 const string liveTarget="dev-lab-alice-live";

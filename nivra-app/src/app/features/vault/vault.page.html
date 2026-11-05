@@ -224,6 +224,7 @@
                 <span>
                   <strong>{{ room.name }}</strong>
                   <small>{{ vault.accessLabel(room.accessMode) }} - {{ activeMembers(room).length }} activos</small>
+                  @if(room.retentionMode === 'BurnOnExit'){<small>Chat incógnito · Se cierra y limpia al salir</small>}
                 </span>
               </div>
               <div class="member-dots">

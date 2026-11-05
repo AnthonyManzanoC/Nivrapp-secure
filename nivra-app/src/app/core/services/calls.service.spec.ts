@@ -147,6 +147,32 @@ describe('call session isolation', () => {
     expect(router.url).toBe('/app/chats'); localStorage.removeItem('nivra.callReturn.me.shared-device');
   });
 
+  it('keeps an outgoing result visible and restores the original community after autoclose', fakeAsync(() => {
+    TestBed.flushEffects();
+    const router=TestBed.inject(Router) as any;
+    router.url='/app/communities?id=one&from=chats';
+    router.navigateByUrl.and.callFake(async(path:string)=>{router.url=path;return true;});
+    void service.openCallView(); flushMicrotasks();
+    service.activeCall.set(invitation);service.phase.set('calling');
+    (service as any).cleanup({remember:false});
+    (service as any).showCallResult({call:invitation,kind:'missed',incoming:false});
+    flushMicrotasks();
+    expect(router.url).toBe('/app/calls');
+    tick(11999);expect(service.lastResult()).not.toBeNull();
+    tick(1);flushMicrotasks();
+    expect(service.lastResult()).toBeNull();
+    expect(router.url).toBe('/app/communities?id=one&from=chats');
+  }));
+
+  it('clears terminal realtime snapshots before they can render an active ended-call card', async () => {
+    TestBed.flushEffects();
+    service.activeCall.set(invitation);service.phase.set('calling');
+    await (service as any).applyActiveCallUpdate({...invitation,status:'Missed',endedAt:new Date().toISOString()});
+    expect(service.activeCall()).toBeNull();
+    expect(service.phase()).toBe('idle');
+    expect(service.lastResult()?.kind).toBe('missed');
+  });
+
   it('applies a weak-link video budget to the sender without changing microphone or camera consent', async () => {
     spyOn<any>(service, 'networkInformation').and.returnValue({ effectiveType: '2g' });
     const parameters = { encodings: [{}] };
@@ -271,6 +297,15 @@ describe('call session isolation', () => {
     expect(audio.setCallSession).toHaveBeenCalledWith(invitation.id, true);
     (service as any).cleanup({ remember: false });
     expect(audio.setCallSession).toHaveBeenCalledWith(null);
+  });
+
+  it('prepares routing while the outgoing call rings, before microphone capture completes', () => {
+    TestBed.flushEffects();
+    service.activeCall.set({...invitation,initiatorUserId:'me'});
+    service.phase.set('calling');
+    TestBed.flushEffects();
+    expect(service.localStream()).toBeNull();
+    expect(TestBed.inject(CallAudioOutputService).setCallSession).toHaveBeenCalledWith(invitation.id,false);
   });
 
   it('keeps listen mute independent from microphone mute and communication route ownership', () => {

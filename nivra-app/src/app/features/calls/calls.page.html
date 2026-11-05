@@ -296,9 +296,10 @@
                     <ion-icon name="videocam-outline"></ion-icon>
                   </ion-button>
                 }
-                <ion-button mode="ios" fill="clear" (click)="openAudioRoutes()" [attr.aria-expanded]="audioRoutesOpen" [attr.aria-label]="'Salida de audio: ' + calls.audioOutput.selectedRouteLabel()" [title]="calls.audioOutput.selectedRouteLabel()">
+                <ion-button mode="ios" fill="clear" (click)="toggleSpeakerRoute()" [class.active]="isSpeakerOutput()" [disabled]="calls.audioOutput.routeBusy()" [attr.aria-label]="'Altavoz y salida de audio: ' + calls.audioOutput.selectedRouteLabel()" [title]="calls.audioOutput.selectedRouteLabel()">
                   <ion-icon [name]="audioRouteIcon()"></ion-icon>
                 </ion-button>
+                <ion-button mode="ios" fill="clear" (click)="openAudioRoutes()" aria-label="Elegir auricular o Bluetooth" [attr.aria-expanded]="audioRoutesOpen"><ion-icon name="chevron-down-outline"></ion-icon></ion-button>
                 <ion-button mode="ios" fill="clear" class="games-button"
                   [class.active]="calls.games.panelOpen()" [class.has-game]="calls.games.state()"
                   [disabled]="calls.phase() !== 'connected'" (click)="toggleGames()"

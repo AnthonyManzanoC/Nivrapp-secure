@@ -143,6 +143,8 @@ export class VaultPage implements OnInit, OnDestroy {
       window.clearTimeout(this.searchTimer);
     }
     if (ownsScope) {
+      const room = this.vault.activeRoom();
+      if (room?.retentionMode === 'BurnOnExit') void this.vault.leaveRoom(room.id).catch(() => undefined);
       void this.exitVaultFullscreen();
       void this.vault.disablePrivacyShield();
     }

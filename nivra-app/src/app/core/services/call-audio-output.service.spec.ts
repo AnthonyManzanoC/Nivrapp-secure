@@ -207,6 +207,18 @@ describe('CallAudioOutputService', () => {
       expect(stream.getAudioTracks()[0].enabled).toBeTrue();
     });
 
+    it('switches a ringing call to speaker without muting playback or stopping its stream', async () => {
+      service.setCallSession('ringing');
+      await service.refreshRoutes();
+      service.availableRoutes.update(routes=>[...routes,{id:'spk',label:'Altavoz',kind:'speaker'}]);
+      service.sync({ring:stream},false);
+      const stop=spyOn(stream.getAudioTracks()[0],'stop');
+      expect(await service.toggleSpeakerRoute()).toBeTrue();
+      expect(bridge.selectCallAudioRoute).toHaveBeenCalledWith({callId:'ringing',routeId:'spk'});
+      expect((document.querySelector('audio[aria-hidden="true"]') as HTMLAudioElement).muted).toBeFalse();
+      expect(stop).not.toHaveBeenCalled();
+    });
+
     it('releases the old native session before starting the next and ignores old device events', async () => {
       service.setCallSession('old');
       await service.refreshRoutes();

@@ -36,10 +36,15 @@ import { FormsModule } from '@angular/forms';
       }
     </aside>
   </ng-template>
-  @if (showWaiting && deferredTimeline && history.state() === 'idle' && !identityError && !needsRelink) {
-    <button type="button" class="history-compact" (click)="linkRequested.emit()">
-      <ion-icon name="lock-closed-outline" aria-hidden="true" /><span>{{ 'HISTORY_DEVICE.SYNC_OPTIONAL' | translate:'Sincronizar historial anterior' }}</span><ion-icon name="chevron-forward-outline" aria-hidden="true" />
-    </button>
+  @if (showWaiting && deferredTimeline && !identityError && !needsRelink) {
+    <aside class="history-new-device" role="status">
+      <ion-icon name="lock-closed-outline" aria-hidden="true" />
+      <div><strong>Tu chat ya está listo</strong><p>Iniciaste sesión en un dispositivo nuevo. Sincroniza el historial pendiente si deseas ver los mensajes anteriores.</p></div>
+      <button type="button" (click)="showHistoryDetails()">{{history.state() === 'syncing' ? 'Ver sincronización' : 'Sincronizar historial'}}</button>
+    </aside>
+    <ion-modal class="history-sync-modal" [isOpen]="detailsOpen" (didDismiss)="detailsOpen = false">
+      <ng-template><section class="history-sync-details"><header><h2>Sincronizar historial</h2><button type="button" (click)="detailsOpen = false" aria-label="Cerrar"><ion-icon name="close-outline" aria-hidden="true" /></button></header><ng-container [ngTemplateOutlet]="waitingNotice" /></section></ng-template>
+    </ion-modal>
   } @else if (showWaiting && (history.state() !== 'idle' || identityError)) {
     @if (compact) {
       <button type="button" class="history-compact" (click)="detailsOpen = true" aria-haspopup="dialog" [attr.aria-label]="titleKey() | translate:titleFallback()">
@@ -79,6 +84,10 @@ export class HistorySyncNoticeComponent {
   @Output() readonly relinkRequested = new EventEmitter<void>();
   @Output() readonly linkRequested = new EventEmitter<void>();
   detailsOpen = false;
+  showHistoryDetails(): void {
+    if (this.history.state() === 'idle') this.linkRequested.emit();
+    else this.detailsOpen = true;
+  }
   constructor() {
     addIcons({ chevronForwardOutline, closeOutline, lockClosedOutline, shieldCheckmarkOutline, phonePortraitOutline });
     effect(() => { this.history.approvalEpoch(); this.detailsOpen = false; for (const id of Object.keys(this.compared)) delete this.compared[id]; });

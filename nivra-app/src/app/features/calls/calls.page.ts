@@ -245,6 +245,15 @@ export class CallsPage {
     }
   }
 
+  async toggleSpeakerRoute(): Promise<void> {
+    if (!await this.calls.audioOutput.toggleSpeakerRoute()) await this.openAudioRoutes();
+    else await this.calls.resumeAudioPlayback();
+  }
+
+  isSpeakerOutput(): boolean {
+    return this.calls.audioOutput.availableRoutes().some(route => route.id === this.calls.audioOutput.selectedRouteId() && route.kind === 'speaker');
+  }
+
   async openAudioRoutes(): Promise<void> {
     const callId = this.calls.activeCall()?.id;
     if (!callId) return;

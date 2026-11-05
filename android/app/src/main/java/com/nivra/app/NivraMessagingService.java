@@ -122,7 +122,7 @@ public class NivraMessagingService extends MessagingService {
         NotificationCompat.Builder builder = new NotificationCompat.Builder(this, incomingCall ? CHANNEL_CALLS : CHANNEL_MESSAGES)
             .addExtras(privacyRoute)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("Nivra")
+            .setContentTitle(missedCall ? "Llamada perdida" : "Nivra")
             .setContentText(bodyForType(type))
             .setContentIntent(openIntent)
             .setAutoCancel(!incomingCall)
@@ -130,7 +130,14 @@ public class NivraMessagingService extends MessagingService {
             .setOnlyAlertOnce(true)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPriority(incomingCall ? NotificationCompat.PRIORITY_MAX : NotificationCompat.PRIORITY_HIGH)
-            .setCategory(incomingCall ? NotificationCompat.CATEGORY_CALL : NotificationCompat.CATEGORY_MESSAGE);
+            .setCategory(incomingCall ? NotificationCompat.CATEGORY_CALL : missedCall ? NotificationCompat.CATEGORY_MISSED_CALL : NotificationCompat.CATEGORY_MESSAGE);
+
+        if (missedCall) {
+            builder.setSubText("Nivra")
+                .setTimeoutAfter(120_000)
+                .addAction(android.R.drawable.ic_menu_call, "Ver llamada", openIntent)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText("Tienes una llamada sin atender. Abre Nivra para responder por mensaje o devolverla."));
+        }
 
         if (incomingCall) {
             builder

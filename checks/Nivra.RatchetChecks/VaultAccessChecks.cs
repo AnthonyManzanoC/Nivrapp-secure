@@ -64,6 +64,18 @@ public static class VaultAccessChecks
         var redeemed=await Task.WhenAll(new[]{"carol","stranger"}.Select(async actor=>
         {using var response=await Send(actor,HttpMethod.Post,invitePath,new AcceptVaultInviteRequest(pin));return response.StatusCode;}));
         Check(redeemed.Count(s=>s==HttpStatusCode.OK)==1&&redeemed.Count(s=>s==HttpStatusCode.Gone)==1,"concurrent claims cannot exceed one allowed invitation use");
+        using(var response=await Send("alice",HttpMethod.Post,"/vault/rooms",new CreateVaultRoomRequest("Chat incógnito",null,VaultAccessMode.InviteOnly,VaultRetentionMode.BurnOnExit,null,[bob],null)))
+        {
+            var ephemeral=await Read<VaultRoomResponse>(response);
+            using(var joined=await Send("bob",HttpMethod.Post,$"/vault/rooms/{ephemeral.Id}/join",new JoinVaultRoomRequest(null)))
+                Check(joined.StatusCode==HttpStatusCode.OK,"invited participant enters the ephemeral room");
+            using(var left=await Send("bob",HttpMethod.Post,$"/vault/rooms/{ephemeral.Id}/leave",new{}))
+                Check(left.StatusCode==HttpStatusCode.NoContent,"leaving closes an ephemeral room");
+            using(var reentry=await Send("alice",HttpMethod.Post,$"/vault/rooms/{ephemeral.Id}/join",new JoinVaultRoomRequest(null)))
+                Check(reentry.StatusCode==HttpStatusCode.NotFound,"another device cannot reopen the closed ephemeral room");
+            using(var repeated=await Send("bob",HttpMethod.Post,$"/vault/rooms/{ephemeral.Id}/leave",new{}))
+                Check(repeated.StatusCode==HttpStatusCode.NoContent,"a repeated exit remains idempotent");
+        }
         Console.WriteLine($"PASS {checks} PostgreSQL Vault access checks");
     }
 }

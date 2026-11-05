@@ -3559,7 +3559,7 @@ public static partial class EndpointExtensions
             return Results.Ok(response);
         }));
 
-        group.MapPost("/{roomId}/leave", async Task<IResult> (string roomId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, EncryptedFileStorage storage, CancellationToken cancellationToken) =>
+        group.MapPost("/{roomId}/leave", (string roomId, HttpContext http, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, EncryptedFileStorage storage, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3567,7 +3567,8 @@ public static partial class EndpointExtensions
                 return Results.Unauthorized();
             }
 
-            var room = await db.VaultRooms.FirstOrDefaultAsync(candidate => candidate.Id == roomId && candidate.ClosedAt == null, cancellationToken);
+            await using var transaction = await CallCoordination.LockAsync(db, "vault-room:" + roomId, cancellationToken);
+            var room = await db.VaultRooms.FirstOrDefaultAsync(candidate => candidate.Id == roomId, cancellationToken);
             var member = await db.VaultRoomMembers.FirstOrDefaultAsync(candidate => candidate.VaultRoomId == roomId && candidate.UserId == current.UserId, cancellationToken);
             if (room is null || member is null)
             {
@@ -3575,9 +3576,10 @@ public static partial class EndpointExtensions
             }
 
             var now = timeProvider.GetUtcNow();
+            var wasActive = member.Status == VaultMemberStatus.Active;
             member.Status = VaultMemberStatus.Left;
             member.LeftAt = now;
-            if (room.RetentionMode == VaultRetentionMode.BurnOnExit || room.OwnerUserId == current.UserId)
+            if (room.ClosedAt == null && ((room.RetentionMode == VaultRetentionMode.BurnOnExit && wasActive) || room.OwnerUserId == current.UserId))
             {
                 room.ClosedAt = now;
                 await BurnVaultRoomFilesAsync(db, storage, room.Id, cancellationToken);
@@ -3585,9 +3587,10 @@ public static partial class EndpointExtensions
 
             room.UpdatedAt = now;
             await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             await NotifyUsers(hub, await VaultRoomAudienceAsync(db, room.Id, cancellationToken), "vault.left", new { roomId, userId = current.UserId, closedAt = room.ClosedAt });
             return Results.NoContent();
-        });
+        }));
 
         group.MapGet("/{roomId}/voice-token", async Task<IResult> (string roomId, HttpContext http, NivraDbContext db, LiveKitTokenService liveKit, TimeProvider timeProvider, CancellationToken cancellationToken) =>
         {
@@ -4822,30 +4825,40 @@ public static partial class EndpointExtensions
         bool trusted,
         CancellationToken cancellationToken)
     {
-        var normalizedHardwareId = NormalizeHardwareId(hardwareId);
-        DeviceRecord? device = null;
-        if (normalizedHardwareId is not null)
+        return await CallCoordination.RunAsync(db, async () =>
         {
-            device = await db.Devices.FirstOrDefaultAsync(candidate =>
-                candidate.UserId == userId &&
-                candidate.HardwareId == normalizedHardwareId,
-                cancellationToken);
-        }
-
-        if (device is null)
-        {
-            device = NewDevice(userId, deviceName, normalizedHardwareId, keyBundle, now, trusted);
-            db.Devices.Add(device);
+            await using var transaction = await CallCoordination.LockAsync(db, "device-enrollment:" + userId, cancellationToken);
+            var normalizedHardwareId = NormalizeHardwareId(hardwareId);
+            var device = normalizedHardwareId is null ? null : await db.Devices.FirstOrDefaultAsync(candidate =>
+                candidate.UserId == userId && candidate.HardwareId == normalizedHardwareId, cancellationToken);
+            if (device is not null && (device.RevokedAt is not null ||
+                DeviceContinuityPolicy.Coordinates(device.KeyBundle.IdentityKey) != DeviceContinuityPolicy.Coordinates(keyBundle.IdentityKey)))
+            {
+                // Retired addresses keep their original keys and revoked sessions.
+                // A delayed push or old ratchet state cannot target the fresh login.
+                device.HardwareId = null;
+                device.RevokedAt ??= now;
+                var sessions = await db.Sessions.Where(session => session.DeviceId == device.Id && session.RevokedAt == null).ToListAsync(cancellationToken);
+                foreach (var session in sessions) session.RevokedAt = now;
+                await db.SaveChangesAsync(cancellationToken);
+                device = null;
+            }
+            if (device is null)
+            {
+                device = NewDevice(userId, deviceName, normalizedHardwareId, keyBundle, now, trusted);
+                db.Devices.Add(device);
+            }
+            else
+            {
+                device.Name = NormalizeDeviceName(deviceName);
+                device.KeyBundle = ToKeyBundle(keyBundle, now);
+                device.IsTrusted = device.IsTrusted || trusted;
+                device.LastSeenAt = now;
+            }
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return device;
-        }
-
-        device.Name = NormalizeDeviceName(deviceName);
-        DeviceContinuityPolicy.ClearIfKeyChanges(device,keyBundle.IdentityKey);
-        device.KeyBundle = ToKeyBundle(keyBundle, now);
-        device.IsTrusted = device.IsTrusted || trusted;
-        device.LastSeenAt = now;
-        device.RevokedAt = null;
-        return device;
+        });
     }
 
     private static DeviceRecord NewDevice(string userId, string deviceName, string? hardwareId, KeyBundleRequest keyBundle, DateTimeOffset now, bool trusted)

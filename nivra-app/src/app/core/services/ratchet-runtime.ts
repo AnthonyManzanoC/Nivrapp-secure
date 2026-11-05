@@ -45,7 +45,7 @@ export interface RatchetDeviceRuntime {
   establish(peer: RatchetAddress, bundle: RatchetBundle): Promise<void>;
   encrypt(peer: RatchetAddress, context: RatchetContext, payload: unknown): Promise<RatchetEnvelope>;
   encryptMany(requests: Array<{ peer: RatchetAddress; context: RatchetContext; payload: unknown }>): Promise<RatchetEnvelope[]>;
-  decrypt(peer: RatchetAddress, context: RatchetContext, envelope: RatchetEnvelope): Promise<unknown>;
+  decrypt(peer: RatchetAddress, context: RatchetContext, envelope: RatchetEnvelope, ephemeral?: boolean): Promise<unknown>;
   applicationState(): Promise<unknown>;
   updateApplicationState(state: unknown): Promise<void>;
   pendingReceived(): Promise<RatchetIncoming[]>;

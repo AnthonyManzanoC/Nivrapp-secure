@@ -139,6 +139,13 @@ export class CallAudioOutputService implements OnDestroy {
     } catch { if (epoch === this.routeEpoch) this.routeError.set('No se autorizó otra salida de audio.'); return false; }
   }
 
+  async toggleSpeakerRoute(): Promise<boolean> {
+    if (!this.native || !this.sessionId || this.routeBusy()) return false;
+    const kind = this.availableRoutes().find(route => route.id === this.selectedRouteId())?.kind;
+    const target = this.availableRoutes().find(route => route.kind === (kind === 'speaker' ? 'earpiece' : 'speaker'));
+    return target ? this.selectRoute(target.id) : false;
+  }
+
   async selectRoute(id: string): Promise<boolean> {
     const epoch = this.routeEpoch;
     const callId = this.sessionId;

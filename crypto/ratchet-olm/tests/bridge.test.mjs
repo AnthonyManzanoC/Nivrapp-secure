@@ -12,6 +12,21 @@ function memory() {
 }
 const context = messageId => ({ conversationId: 'olm-chat', messageId });
 
+test('ephemeral reception commits the ratchet without retaining a recoverable message', async () => {
+  const {alice, bob} = await pair();
+  try {
+    await alice.establish(bob.address, await bob.bundle());
+    const value = {text:'memory-only room'};
+    const envelope = await alice.encrypt(bob.address, context('ephemeral-1'), value);
+    assert.deepEqual(await bob.decrypt(alice.address, context('ephemeral-1'), envelope, true), value);
+    assert.equal((await bob.pendingReceived()).length, 0);
+    await assert.rejects(bob.decrypt(alice.address, context('ephemeral-1'), envelope, true));
+    const next = await alice.encrypt(bob.address, context('normal-after-ephemeral'), {text:'regular history'});
+    assert.deepEqual(await bob.decrypt(alice.address, context('normal-after-ephemeral'), next), {text:'regular history'});
+    assert.equal((await bob.pendingReceived()).length, 1);
+  } finally {await alice.close();await bob.close();}
+});
+
 test('a copied live session loses access after an honest two-way DH ratchet rotation', async () => {
   const { alice, bob, storage } = await pair(); let compromised;
   try {

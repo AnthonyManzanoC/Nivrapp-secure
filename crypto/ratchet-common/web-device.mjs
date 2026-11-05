@@ -214,7 +214,7 @@ export class LabWebDevice {
         return result;
       } finally { plain.fill(0); keyBytes?.fill(0); capsule?.fill(0); }
   }
-  decrypt(peer, context, envelope) {
+  decrypt(peer, context, envelope, ephemeral = false) {
     peer = peerAddress(peer);
     const aad = contextBytes(context, peer, this.#address, this.#suite);
     // Snapshot caller input before the first asynchronous operation.
@@ -227,7 +227,7 @@ export class LabWebDevice {
       const ratchet = binary(envelope.keyMessage, 131072);
       const id = await hash(aad);
       if (this.#inbox.has(id)) throw Error('Repeated message: recover the stored incoming delivery');
-      if (this.#inbox.size >= 64) throw Error('Incoming delivery queue full: save pending history first');
+      if (!ephemeral && this.#inbox.size >= 64) throw Error('Incoming delivery queue full: save pending history first');
       let capsule, keyBytes, plain;
       try {
         capsule = await this.#core.decrypt(peer.name, peer.device, envelope.type, ratchet);
@@ -242,7 +242,7 @@ export class LabWebDevice {
         if (this.#core.consumedPreKeys) for (const consumed of this.#core.consumedPreKeys()) this.#bundles.delete(consumed);
         // Keep a recoverable copy until the application confirms its own
         // history write. A process exit after commit must not lose plaintext.
-        this.#inbox.set(id, { peer, context: JSON.parse(decoder.decode(aad)).context, envelopeHash: await hash(encoder.encode(JSON.stringify(envelope))), payload: structuredClone(result) });
+        if (!ephemeral) this.#inbox.set(id, { peer, context: JSON.parse(decoder.decode(aad)).context, envelopeHash: await hash(encoder.encode(JSON.stringify(envelope))), payload: structuredClone(result) });
         return result;
       } finally { capsule?.fill(0); keyBytes?.fill(0); plain?.fill(0); }
     });

@@ -23,8 +23,8 @@ describe('vault account and activation isolation', () => {
   let vault: VaultService;
   let api: { get: jasmine.Spy; post: jasmine.Spy; delete: jasmine.Spy; putRaw: jasmine.Spy };
   let cryptography: Record<string, jasmine.Spy>;
-  let ratchet: { encrypt: jasmine.Spy; discardEphemeral: jasmine.Spy };
-  let realtime: { events$: Subject<any>; joinVaultRoom: jasmine.Spy; sendVaultRoomMessage: jasmine.Spy };
+  let ratchet: { encrypt: jasmine.Spy; discardEphemeral: jasmine.Spy; forgetConversation: jasmine.Spy };
+  let realtime: { events$: Subject<any>; joinVaultRoom: jasmine.Spy; leaveVaultRoom: jasmine.Spy; sendVaultRoomMessage: jasmine.Spy };
   let chat: { createDirectConversation: jasmine.Spy; sendText: jasmine.Spy; enqueueText: jasmine.Spy };
   let downloads: { file: jasmine.Spy };
   let privacy: { enable: jasmine.Spy; disable: jasmine.Spy };
@@ -54,8 +54,8 @@ describe('vault account and activation isolation', () => {
       encryptForPublicKey: jasmine.createSpy().and.resolveTo({ ciphertext: 'sealed', header: 'header' }),
       parsePublicJwk: jasmine.createSpy().and.returnValue({ kty: 'EC' }),
     };
-    realtime = { events$: new Subject(), joinVaultRoom: jasmine.createSpy().and.resolveTo(), sendVaultRoomMessage: jasmine.createSpy().and.resolveTo() };
-    ratchet = { encrypt: jasmine.createSpy().and.resolveTo([]), discardEphemeral: jasmine.createSpy().and.resolveTo() };
+    realtime = { events$: new Subject(), joinVaultRoom: jasmine.createSpy().and.resolveTo(), leaveVaultRoom: jasmine.createSpy().and.resolveTo(), sendVaultRoomMessage: jasmine.createSpy().and.resolveTo() };
+    ratchet = { encrypt: jasmine.createSpy().and.resolveTo([]), discardEphemeral: jasmine.createSpy().and.resolveTo(), forgetConversation:jasmine.createSpy().and.resolveTo() };
     chat = { createDirectConversation: jasmine.createSpy().and.resolveTo({ id: 'conversation-A' }), sendText: jasmine.createSpy().and.resolveTo(), enqueueText: jasmine.createSpy().and.resolveTo() };
     downloads = { file: jasmine.createSpy().and.resolveTo(new ArrayBuffer(1)) };
     privacy = { enable: jasmine.createSpy().and.resolveTo(), disable: jasmine.createSpy().and.resolveTo() };
@@ -74,6 +74,19 @@ describe('vault account and activation isolation', () => {
   afterEach(async () => {
     TestBed.resetTestingModule(); await settle();
     for (const account of [a, b]) { localStorage.removeItem(`nivra.vault.${account.user.id}`); localStorage.removeItem(activeKey(account)); }
+  });
+
+  it('clears an ephemeral room before a slow leave response can return', async () => {
+    prime();
+    vault.rooms.set([{...roomA, retentionMode:'BurnOnExit'}]);
+    const pending = new Subject<unknown>();
+    api.post.and.returnValue(pending);
+    const leave = vault.leaveRoom(roomA.id);
+    expect(vault.activeRoomId()).toBeNull();
+    expect(vault.messagesByRoom()[roomA.id]).toBeUndefined();
+    expect(ratchet.forgetConversation).toHaveBeenCalledWith(roomA.id);
+    pending.next({}); pending.complete();
+    await leave;
   });
 
   it('conceals every old account value synchronously before any scope effect runs', () => {

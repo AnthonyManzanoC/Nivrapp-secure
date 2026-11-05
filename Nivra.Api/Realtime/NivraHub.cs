@@ -493,6 +493,33 @@ public sealed class NivraHub(
         }
     }
 
+    public Task LeaveVaultRoom(string roomId) => CallCoordination.RunAsync(db, async () =>
+    {
+        if (!TryGetCurrentUser(out var current) ||
+            !await store.IsSessionActiveAsync(current.SessionId, current.UserId, current.DeviceId, timeProvider.GetUtcNow(), Context.ConnectionAborted))
+            throw new HubException("La sesión ya no está autorizada.");
+        await using var transaction = await CallCoordination.LockAsync(db, "vault-room:" + roomId, Context.ConnectionAborted);
+        var room = await db.VaultRooms.FirstOrDefaultAsync(item => item.Id == roomId, Context.ConnectionAborted);
+        var member = await db.VaultRoomMembers.FirstOrDefaultAsync(item => item.VaultRoomId == roomId && item.UserId == current.UserId, Context.ConnectionAborted);
+        if (room == null || member == null) throw new HubException("La sala no está disponible.");
+        var now = timeProvider.GetUtcNow();
+        var wasActive = member.Status == VaultMemberStatus.Active;
+        member.Status = VaultMemberStatus.Left;
+        member.LeftAt = now;
+        if (room.ClosedAt == null && ((room.RetentionMode == VaultRetentionMode.BurnOnExit && wasActive) || room.OwnerUserId == current.UserId))
+        {
+            room.ClosedAt = now;
+            await BurnVaultRoomFilesAsync(roomId, Context.ConnectionAborted);
+        }
+        room.UpdatedAt = now;
+        await db.SaveChangesAsync(Context.ConnectionAborted);
+        await transaction.CommitAsync(Context.ConnectionAborted);
+        var audience = await db.VaultRoomMembers.Where(item => item.VaultRoomId == roomId).Select(item => item.UserId).ToListAsync(Context.ConnectionAborted);
+        await NotifyUsersAsync(audience, "vault.left", new {roomId, userId=current.UserId, closedAt=room.ClosedAt});
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupsFor.VaultRoom(roomId));
+        return true;
+    });
+
     public Task SendVaultRoomMessage(string roomId, VaultRealtimeMessageRequest request) => SendVaultCore(roomId, request, configuration?.GetValue<bool>("Ratchet:RequireHybrid") == true);
     public Task SendVaultRoomRatchetMessage(string roomId, VaultRealtimeMessageRequest request) => SendVaultCore(roomId, request, true);
     private async Task SendVaultCore(string roomId, VaultRealtimeMessageRequest request, bool requireHybrid)

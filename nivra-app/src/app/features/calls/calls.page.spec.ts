@@ -33,6 +33,7 @@ describe('call video presentation', () => {
       canEndGroupForEveryone: jasmine.createSpy().and.returnValue(false),
       speaker: signal(true), muted: signal(false), toggleOutputMute: jasmine.createSpy(),
       audioOutput: {
+        toggleSpeakerRoute:jasmine.createSpy().and.resolveTo(false), routeBusy:signal(false),
         refreshRoutes: jasmine.createSpy().and.resolveTo(), selectRoute: jasmine.createSpy().and.resolveTo(true),
         availableRoutes: signal([{ id: 'ear', label: 'Auricular', kind: 'earpiece' }, { id: 'bt', label: 'Bluetooth', kind: 'bluetooth' }]),
         selectedRouteId: signal('ear'),

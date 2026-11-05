@@ -182,6 +182,11 @@ export class SignalrService implements OnDestroy {
     await this.connection?.invoke('JoinVaultRoom', roomId).catch(() => undefined);
   }
 
+  async leaveVaultRoom(roomId: string): Promise<void> {
+    await this.ensureConnected();
+    await this.connection?.invoke('LeaveVaultRoom', roomId);
+  }
+
   async sendVaultRoomMessage(
     roomId: string,
     payload: {

@@ -1,6 +1,6 @@
 import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
-import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
+import { AfterViewInit, ChangeDetectorRef, Component, ElementRef, HostListener, Injector, OnDestroy, OnInit, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PrivateChatLockService } from '../../core/services/private-chat-lock.service';
 import { PrivateChatLockComponent } from '../../shared/private-chat-lock.component';
@@ -77,6 +77,7 @@ import { Subscription } from 'rxjs';
 import { CallSession, ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
 import { TextOutboxService } from '../../core/services/text-outbox.service';
+import { VaultService } from '../../core/services/vault.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
@@ -267,6 +268,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   readonly auth = inject(AuthService);
   private readonly cdr = inject(ChangeDetectorRef);
   private readonly route = inject(ActivatedRoute);
+  private readonly injector = inject(Injector);
+  incognitoConfirmOpen = false;
   private readonly router = inject(Router);
   private readonly gestureController = inject(GestureController);
   private readonly toastController = inject(ToastController);
@@ -725,6 +728,35 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   openHistoryLink(): void {
     void this.router.navigate(['/app/account'], { fragment: 'account-link' });
+  }
+
+  async offerIncognito(): Promise<void> {
+    await this.chatOptions?.dismiss();
+    this.chatMenuOpen = false;
+    this.incognitoConfirmOpen = true;
+  }
+
+  async startIncognito(): Promise<void> {
+    const conversation = this.conversation();
+    const session = this.auth.session();
+    if (!conversation || !session || this.chat.isGroup(conversation) || this.chat.isSelfConversation(conversation) || this.busyAction) return;
+    const peer = conversation.participants.find(member => member.userId !== session.user.id && !member.removedAt);
+    if (!peer || this.isBlocked() || this.privateChatLocked()) return;
+    const generation = this.auth.sessionGeneration();
+    this.busyAction = 'incognito';
+    try {
+      const room = await this.injector.get(VaultService).createRoom({
+        name: 'Chat incógnito', accessMode: 'InviteOnly', retentionMode: 'BurnOnExit',
+        invitedUserIds: [peer.userId], notifyInChat: false,
+      });
+      if (this.destroyed || generation !== this.auth.sessionGeneration()) return;
+      this.incognitoConfirmOpen = false;
+      await this.router.navigate(['/app/vault'], {queryParams: {room: room.id}});
+    } catch (error) {
+      if (!this.destroyed && generation === this.auth.sessionGeneration()) this.notice = error instanceof Error ? error.message : 'No se pudo abrir el chat incógnito.';
+    } finally {
+      if (!this.destroyed && generation === this.auth.sessionGeneration()) this.busyAction = '';
+    }
   }
 
   async back(): Promise<void> {
