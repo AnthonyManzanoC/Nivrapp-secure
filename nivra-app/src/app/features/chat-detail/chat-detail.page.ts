@@ -743,16 +743,24 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const peer = conversation.participants.find(member => member.userId !== session.user.id && !member.removedAt);
     if (!peer || this.isBlocked() || this.privateChatLocked()) return;
     const generation = this.auth.sessionGeneration();
+    const vault = this.injector.get(VaultService);
+    let createdRoomId = '';
     this.busyAction = 'incognito';
     try {
-      const room = await this.injector.get(VaultService).createRoom({
+      const room = await vault.createRoom({
         name: 'Chat incógnito', accessMode: 'InviteOnly', retentionMode: 'BurnOnExit',
         invitedUserIds: [peer.userId], notifyInChat: false,
       });
-      if (this.destroyed || generation !== this.auth.sessionGeneration()) return;
+      createdRoomId = room.id;
+      if (generation !== this.auth.sessionGeneration()) return;
+      if (this.destroyed) { await vault.leaveRoom(room.id).catch(() => undefined); return; }
       this.incognitoConfirmOpen = false;
-      await this.router.navigate(['/app/vault'], {queryParams: {room: room.id}});
+      if (!await this.router.navigate(['/app/vault'], {queryParams: {room: room.id}})) {
+        await vault.leaveRoom(room.id).catch(() => undefined);
+        this.notice = 'No se pudo abrir la sala. Vuelve a intentarlo.';
+      }
     } catch (error) {
+      if (createdRoomId && generation === this.auth.sessionGeneration()) await vault.leaveRoom(createdRoomId).catch(() => undefined);
       if (!this.destroyed && generation === this.auth.sessionGeneration()) this.notice = error instanceof Error ? error.message : 'No se pudo abrir el chat incógnito.';
     } finally {
       if (!this.destroyed && generation === this.auth.sessionGeneration()) this.busyAction = '';

@@ -444,7 +444,7 @@
       <button type="button" slot="fixed" class="jump-latest" (click)="jumpToLatest()" [attr.aria-label]="'CHAT.LATEST_MESSAGES' | translate:'Ir a los últimos mensajes'"><ion-icon name="chevron-down-outline"></ion-icon></button>
     }
   </ion-content>
-  <ion-modal [isOpen]="incognitoConfirmOpen" (didDismiss)="incognitoConfirmOpen = false">
+  <ion-modal [isOpen]="incognitoConfirmOpen" [canDismiss]="!busyAction" (didDismiss)="incognitoConfirmOpen = false">
     <ng-template>
       <section class="incognito-confirm">
         <ion-icon name="lock-closed-outline" aria-hidden="true"></ion-icon>

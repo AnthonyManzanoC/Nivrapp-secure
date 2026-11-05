@@ -35,7 +35,8 @@ builder.Services.AddHttpClient(); builder.Services.Configure<NivraPushOptions>(_
 builder.Services.AddSingleton<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>(new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider());
 builder.Services.AddSingleton<PushNotificationService>();
 builder.Services.AddSingleton<PasswordHasher>(); builder.Services.AddSingleton<LiveKitTokenService>();
-builder.Services.Configure<NivraStorageOptions>(options => { options.LocalPath = Path.Combine(Path.GetTempPath(), "nivra-ci-vault-" + Guid.NewGuid().ToString("N")); });
+builder.Services.AddSingleton<Microsoft.Extensions.Options.IOptions<NivraStorageOptions>>(
+    Microsoft.Extensions.Options.Options.Create(new NivraStorageOptions { LocalPath = Path.Combine(Path.GetTempPath(), "nivra-ci-vault-" + Guid.NewGuid().ToString("N")) }));
 builder.Services.AddSingleton<EncryptedFileStorage>();
 builder.Services.AddRateLimiter(options => options.AddPolicy("auth", context => System.Threading.RateLimiting.RateLimitPartition.GetNoLimiter("fixture")));
 builder.Services.Configure<NivraSecurityOptions>(options => options.TokenSigningKey = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)));
