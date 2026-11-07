@@ -42,3 +42,9 @@ El [protocolo de sesiones con usuarios](usability-first-session-9.2.0.md) queda 
 ## Operación pendiente
 
 Las llamadas y notificaciones en teléfonos físicos, restricciones de fabricantes, TURN y la auditoría independiente conservan sus requisitos. iOS no tiene proyecto nativo generado. Configurar avisos no prueba su entrega; una red o sistema pueden impedirla. La nueva propiedad del diagnóstico requiere desplegar la API actual para confirmarla desde el servidor.
+
+## Artefactos publicados
+
+Código funcional: d51d6069322851175020ee0854aca72e13ab6001. Publicación: https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/tag/v9.2.0.
+
+El verificador confirmó 1.452 archivos web de escritorio/ZIP y 1.451 en Android, con firma Android existente y build no depurable. Las descargas públicas del APK y EXE coinciden por tamaño y SHA-256 con los artefactos locales. Se revisaron 69 capturas sintéticas de diseño. Los checksums completos viajan en Nivra-9.2.0-SHA256.txt.
