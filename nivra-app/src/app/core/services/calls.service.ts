@@ -3,7 +3,8 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { callBandwidth } from './call-bandwidth';
 import { Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
-import { Room, RoomEvent, Track, type AudioCaptureOptions, type VideoCaptureOptions } from 'livekit-client';
+import type { Room, Track, AudioCaptureOptions, VideoCaptureOptions } from 'livekit-client';
+import { loadLiveKit } from './livekit-loader';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { CallPhase, CallSession, CallSignalEvent, GroupCallRoom, PublicKeyDirectory, RecipientCipherRequest } from '../models/nivra.models';
@@ -21,6 +22,10 @@ import { GroupCallCryptoService, type GroupEncryptionContext } from './group-cal
 import { decodeAuthenticatedMediaKeySignal } from './authenticated-media-signal';
 import { NativeScreenShareService } from './native-screen-share.service';
 import { CALL_CAMERA_PREFERENCES, cameraFailureMessage, canRetryCameraCapture, captureCallMedia } from './call-media-capture';
+
+// Public SDK source identifiers; using them does not load the media SDK.
+const LIVEKIT_TRACK_SOURCE = { Camera: 'camera' as Track.Source, ScreenShare: 'screen_share' as Track.Source,
+  ScreenShareAudio: 'screen_share_audio' as Track.Source };
 
 interface PeerState {
   connection: RTCPeerConnection;
@@ -114,6 +119,7 @@ export class CallsService implements OnDestroy {
   readonly audioOutput = inject(CallAudioOutputService);
   readonly games = inject(CallGameSessionService);
   private readonly groupCrypto = inject(GroupCallCryptoService);
+  private livekit?: typeof import('livekit-client');
   private readonly nativeScreen = inject(NativeScreenShareService);
   private screenShareBusy = false;
   private readonly chat = inject(ChatService);
@@ -1192,9 +1198,9 @@ export class CallsService implements OnDestroy {
     if (this.isGroupCall(call) && this.liveKitRoom) {
       const room = this.liveKitRoom;
       try {
-        await room.localParticipant.publishTrack(screenTrack, { source: Track.Source.ScreenShare, name: 'Pantalla', simulcast: false });
+        await room.localParticipant.publishTrack(screenTrack, { source: LIVEKIT_TRACK_SOURCE.ScreenShare, name: 'Pantalla', simulcast: false });
         for (const audioTrack of displayStream.getAudioTracks()) {
-          await room.localParticipant.publishTrack(audioTrack, { source: Track.Source.ScreenShareAudio, name: 'Audio de pantalla' });
+          await room.localParticipant.publishTrack(audioTrack, { source: LIVEKIT_TRACK_SOURCE.ScreenShareAudio, name: 'Audio de pantalla' });
         }
         if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
           for (const track of displayStream.getTracks()) { await room.localParticipant.unpublishTrack(track); track.stop(); }
@@ -1359,6 +1365,8 @@ export class CallsService implements OnDestroy {
     if (this.activeCall()?.id !== call.id) { return; }
     await this.disconnectLiveKitRoomForReconnect();
     if (this.activeCall()?.id !== call.id) return;
+    this.livekit = await loadLiveKit();
+    if (this.activeCall()?.id !== call.id) return;
     const encryptionContext = await this.groupCrypto.prepare(call, this.currentUserId() ?? '', async (target, type, payload) => {
       const current = this.activeCall();
       if (current?.id !== call.id) throw new Error('La llamada ya se cerró.');
@@ -1366,7 +1374,7 @@ export class CallsService implements OnDestroy {
     });
     if (this.activeCall()?.id !== call.id) { encryptionContext.dispose(); return; }
     this.groupEncryptionContext = encryptionContext;
-    const room = new Room({
+    const room = new this.livekit!.Room({
       encryption: encryptionContext.encryption,
       audioCaptureDefaults: CALL_AUDIO_PROCESSING,
       adaptiveStream: true,
@@ -1374,40 +1382,40 @@ export class CallsService implements OnDestroy {
     });
     this.liveKitRoom = room;
     this.games.configure(this.activeCall() ?? call, this.currentUserId() ?? '');
-    room.on(RoomEvent.TrackSubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
+    room.on(this.livekit!.RoomEvent.TrackSubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
       this.addLiveKitRemoteTrack(participant?.identity || crypto.randomUUID(), track, publication);
     });
-    room.on(RoomEvent.TrackUnsubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
+    room.on(this.livekit!.RoomEvent.TrackUnsubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
       this.removeLiveKitRemoteTrack(participant?.identity || '', track, publication);
     });
-    room.on(RoomEvent.ParticipantConnected, () => {
+    room.on(this.livekit!.RoomEvent.ParticipantConnected, () => {
       this.refreshLiveKitRemoteStreams();
     });
-    room.on(RoomEvent.ParticipantDisconnected, (participant: { identity?: string }) => {
+    room.on(this.livekit!.RoomEvent.ParticipantDisconnected, (participant: { identity?: string }) => {
       if (participant?.identity) {
         this.removeRemoteStream(participant.identity);
       }
     });
-    room.on(RoomEvent.LocalTrackPublished, () => this.syncLiveKitLocalTracks());
-    room.on(RoomEvent.LocalTrackUnpublished, () => this.syncLiveKitLocalTracks());
+    room.on(this.livekit!.RoomEvent.LocalTrackPublished, () => this.syncLiveKitLocalTracks());
+    room.on(this.livekit!.RoomEvent.LocalTrackUnpublished, () => this.syncLiveKitLocalTracks());
     const reconcilePublication = () => {
       if (this.liveKitRoom !== room || this.activeCall()?.id !== call.id) return;
       this.syncLiveKitLocalTracks();
       this.refreshLiveKitRemoteStreams();
     };
-    room.on(RoomEvent.TrackMuted, reconcilePublication);
-    room.on(RoomEvent.TrackUnmuted, reconcilePublication);
-    room.on(RoomEvent.SignalReconnecting, () => {
+    room.on(this.livekit!.RoomEvent.TrackMuted, reconcilePublication);
+    room.on(this.livekit!.RoomEvent.TrackUnmuted, reconcilePublication);
+    room.on(this.livekit!.RoomEvent.SignalReconnecting, () => {
       if (this.activeCall()?.id === call.id) {
         this.setConnectingPhase();
       }
     });
-    room.on(RoomEvent.Reconnecting, () => {
+    room.on(this.livekit!.RoomEvent.Reconnecting, () => {
       if (this.activeCall()?.id === call.id) {
         this.setConnectingPhase();
       }
     });
-    room.on(RoomEvent.Reconnected, () => {
+    room.on(this.livekit!.RoomEvent.Reconnected, () => {
       if (this.activeCall()?.id === call.id) {
         this.refreshLiveKitRemoteStreams();
         this.syncLiveKitLocalTracks();
@@ -1415,7 +1423,7 @@ export class CallsService implements OnDestroy {
         this.error.set('');
       }
     });
-    room.on(RoomEvent.Disconnected, () => {
+    room.on(this.livekit!.RoomEvent.Disconnected, () => {
       if (this.activeCall()?.id === call.id) {
         this.clearConnectionWatchdog();
         this.phase.set('failed');
@@ -1464,7 +1472,7 @@ export class CallsService implements OnDestroy {
       try {
         for (const track of screen.getTracks().filter(track => track.readyState === 'live')) {
           await room.localParticipant.publishTrack(track, {
-            source: track.kind === 'video' ? Track.Source.ScreenShare : Track.Source.ScreenShareAudio,
+            source: track.kind === 'video' ? LIVEKIT_TRACK_SOURCE.ScreenShare : LIVEKIT_TRACK_SOURCE.ScreenShareAudio,
             name: track.kind === 'video' ? 'Pantalla' : 'Audio de pantalla', simulcast: false,
           });
           if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) return;
@@ -1505,7 +1513,7 @@ export class CallsService implements OnDestroy {
     const isCurrent = () => generation === this.mediaGeneration && this.liveKitRoom === room && this.activeCall()?.id === callId;
     if (!isCurrent()) return;
     const publish = async (options?: VideoCaptureOptions) => {
-      const camera = participant.getTrackPublication?.(Track.Source.Camera)?.track;
+      const camera = participant.getTrackPublication?.(LIVEKIT_TRACK_SOURCE.Camera)?.track;
       if (enabled && camera?.mediaStreamTrack &&
           (camera.mediaStreamTrack.readyState === 'ended' || camera.mediaStreamTrack.muted) && camera.restartTrack) {
         // An interrupted device can leave a publication whose unmute is a no-op.
@@ -1699,7 +1707,7 @@ export class CallsService implements OnDestroy {
     room.removeAllListeners();
     const publications = Array.from(room.localParticipant.trackPublications.values());
     if (!this.screenShareStream && this.screenSharing()) {
-      const tracks = publications.filter(publication => publication.source === Track.Source.ScreenShare || publication.source === Track.Source.ScreenShareAudio)
+      const tracks = publications.filter(publication => publication.source === LIVEKIT_TRACK_SOURCE.ScreenShare || publication.source === LIVEKIT_TRACK_SOURCE.ScreenShareAudio)
         .map(publication => publication.track?.mediaStreamTrack).filter((track): track is MediaStreamTrack => !!track && track.readyState === 'live');
       if (tracks.some(track => track.kind === 'video')) {
         const stream = new MediaStream(tracks);

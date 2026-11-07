@@ -1,5 +1,6 @@
 import { Injectable, InjectionToken, inject } from '@angular/core';
-import { BaseKeyProvider, createKeyMaterialFromBuffer, isE2EESupported, type Room, type RoomOptions } from 'livekit-client';
+import type { Room, RoomOptions } from 'livekit-client';
+import type { PublisherKeyProvider } from './publisher-key-provider';
 import { CallSession } from '../models/nivra.models';
 
 export const GROUP_MEDIA_ENCRYPTION = 'livekit-e2ee-v1';
@@ -21,22 +22,15 @@ export interface GroupCryptoPlatform {
 export const GROUP_CRYPTO_PLATFORM = new InjectionToken<GroupCryptoPlatform>('GROUP_CRYPTO_PLATFORM', {
   providedIn: 'root',
   factory: () => ({
-    supported: () => typeof Worker !== 'undefined' && typeof crypto?.subtle !== 'undefined' && isE2EESupported(),
+    // Same capability probes as the pinned SDK, without eagerly importing it.
+    supported: () => typeof Worker !== 'undefined' && typeof crypto?.subtle !== 'undefined' && typeof window !== 'undefined'
+      && (typeof (window as unknown as { RTCRtpScriptTransform?: unknown }).RTCRtpScriptTransform !== 'undefined'
+        || (typeof RTCRtpSender !== 'undefined' && typeof (RTCRtpSender.prototype as RTCRtpSender & { createEncodedStreams?: unknown }).createEncodedStreams !== 'undefined')),
     // Copied unchanged from the installed SDK by angular.json; no CDN or remote code is loaded.
     createWorker: () => new Worker(new URL('assets/crypto/nivra-e2ee.worker.js', document.baseURI)),
     handshakeTimeoutMs: 15_000,
   }),
 });
-
-class PublisherKeyProvider extends BaseKeyProvider {
-  constructor() {
-    super({ sharedKey: false, keySize: 256, keyringSize: 1, ratchetWindowSize: 0, failureTolerance: -1 });
-  }
-  async install(userId: string, rawKey: Uint8Array): Promise<void> {
-    const key = await createKeyMaterialFromBuffer(rawKey.slice().buffer);
-    this.onSetEncryptionKey(key, userId, 0);
-  }
-}
 
 interface PublisherKey {
   raw: Uint8Array;
@@ -76,6 +70,7 @@ export class GroupCallCryptoService {
   private readonly platform = inject(GROUP_CRYPTO_PLATFORM);
   private readonly states = new Map<string, CryptoState>();
   private readonly pending = new Map<string, PendingSignal[]>();
+  private lifecycle = 0;
 
   supported(): boolean { return this.platform.supported(); }
   isMediaKeySignal(type: string): type is MediaKeySignalType {
@@ -85,6 +80,9 @@ export class GroupCallCryptoService {
   async prepare(call: CallSession, localUserId: string, send: SendEncryptedMediaSignal): Promise<GroupEncryptionContext> {
     if (call.mediaEncryption !== GROUP_MEDIA_ENCRYPTION) throw new Error('Esta sala requiere una llamada nueva con cifrado grupal actualizado.');
     if (!this.supported()) throw new Error('Este navegador no admite cifrado de llamadas grupales. Actualiza el navegador o usa un dispositivo compatible.');
+    const lifecycle = this.lifecycle;
+    const { PublisherKeyProvider } = await import('./publisher-key-provider');
+    if (lifecycle !== this.lifecycle) throw new Error('La llamada se cerró mientras se preparaba el cifrado.');
     const localSession = this.sessionFor(call, localUserId);
     if (!localSession) throw new Error('Confirma primero esta sesión de llamada.');
     let state = this.states.get(call.id);
@@ -209,6 +207,7 @@ export class GroupCallCryptoService {
   }
 
   clear(callId: string): void {
+    ++this.lifecycle;
     this.pending.delete(callId);
     const state = this.states.get(callId);
     if (!state) return;

@@ -432,6 +432,36 @@ async function main() {
       await capture('mobile-account-recovery-'+theme);
       assert(await evaluate("document.documentElement.scrollWidth<=innerWidth"),'recovery controls fit a phone');
     }
+    for (const [width,height,mobile] of [[390,844,true],[1440,900,false]]) {
+      await viewport(width,height,mobile);
+      for (const theme of ['light','dark']) {
+        await call('Page.navigate',{url:base+'/app/guide?theme='+theme});
+        await waitFor("document.querySelectorAll('.guide .tasks article').length===5");
+        assert.equal(await evaluate("document.querySelectorAll('.guide .features details').length"),12,'all features are explained');
+        await evaluate("document.querySelector('.preview-controls').style.display='none'");
+        assert(await evaluate("document.documentElement.scrollWidth<=innerWidth"),'guide fits viewport');
+        await capture('guide-'+width+'-'+theme);
+        await call('Page.navigate',{url:base+'/app/notification-check?theme='+theme});
+        await waitFor("!!document.querySelector('app-notification-check li')");
+        await evaluate("document.querySelector('.preview-controls').style.display='none'");
+        assert(await evaluate("document.documentElement.scrollWidth<=innerWidth"),'notification check fits viewport');
+        await capture('notification-check-'+width+'-'+theme);
+        await call('Page.navigate',{url:base+'/app/vault?room=incognito-preview&mode=incognito&theme='+theme});
+        await waitFor("!!document.querySelector('.incognito-view .vault-chat')");
+        await evaluate("document.querySelector('.preview-controls').style.display='none'");
+        assert.equal(await evaluate("getComputedStyle(document.querySelector('.incognito-view .unlock-panel')).display"),'none','incognito hides unrelated Vault panels');
+        assert(await evaluate("document.documentElement.scrollWidth<=innerWidth"),'temporary chat fits viewport');
+        assert(await evaluate("(()=>{const c=document.querySelector('.vault-chat').getBoundingClientRect();const s=document.querySelector('.vault-input-area').getBoundingClientRect();return c.height>150 && s.top>=c.bottom-2;})()"),'composer remains below the message timeline');
+        await capture('incognito-'+width+'-'+theme);
+        await call('Page.navigate',{url:base+'/preview/incognito-dialog?theme='+theme});
+        await waitFor("!!document.querySelector('#preview-open-incognito')");
+        await evaluate("document.querySelector('#preview-open-incognito').click()");
+        await waitFor("!!document.querySelector('ion-modal.nivra-incognito-modal .incognito-confirm')");
+        await evaluate("document.querySelector('.preview-controls').style.display='none'");
+        assert(await evaluate("(()=>{const r=document.querySelector('.nivra-incognito-modal .incognito-confirm').getBoundingClientRect();return r.height<550 && r.left>=0 && r.right<=innerWidth;})()"),'confirmation has a compact readable layout');
+        await capture('incognito-dialog-'+width+'-'+theme);
+      }
+    }
     assert.deepEqual(errors,[],'preview must not throw runtime errors');
     console.log('PASS mobile search, Contacts, self notes entry and desktop layout; screenshots saved.');
   } finally { socket?.close(); chrome.kill(); server.close(); }

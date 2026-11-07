@@ -51,6 +51,12 @@ describe('group media encryption', () => {
     await expectAsync(alice.prepare({ ...call, mediaEncryption: null }, 'alice', async () => undefined)).toBeRejected();
     expect(terminated.length).toBe(0);
   });
+  it('does not create keys or workers for a call closed while the SDK loads', async () => {
+    const pending = alice.prepare(call, 'alice', async () => undefined);
+    alice.clear(call.id);
+    await expectAsync(pending).toBeRejectedWithError(/cerró/);
+    expect(terminated.length).toBe(0);
+  });
   it('fails closed if an active peer never confirms encryption', async () => {
     await expectAsync(alice.prepare(call, 'alice', async () => undefined)).toBeRejectedWithError(/No se confirmó/);
     expect(terminated[0]).toHaveBeenCalled();

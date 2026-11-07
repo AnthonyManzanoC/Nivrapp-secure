@@ -2,7 +2,9 @@ import { TransientNoticeDirective } from '../../shared/transient-notice.directiv
 import { CommonModule } from '@angular/common';
 import { AfterViewInit, Component, ElementRef, NgZone, OnDestroy, OnInit, ViewChild, effect, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
-import { ActivatedRoute, Router } from '@angular/router';
+import { NotificationCheckComponent } from '../guide/notification-check.component';
+import { ACCOUNT_SEARCH_SECTIONS } from './account-navigation.component';
+import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Subject, Subscription, from, of } from 'rxjs';
 import { catchError, debounceTime, map, switchMap } from 'rxjs/operators';
 import {
@@ -55,7 +57,7 @@ interface ProfileDraft {
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent, AccountNavigationComponent, LiveDeviceLinkComponent,AccountIdentityRecoveryComponent],
+  imports: [NotificationCheckComponent, RouterLink, TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent, AccountNavigationComponent, LiveDeviceLinkComponent,AccountIdentityRecoveryComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss', './account-security.scss'],
 })
@@ -96,6 +98,7 @@ export class AccountPage implements OnInit, AfterViewInit, OnDestroy {
   private profileOwnerScope = '';
   private photoCropScope = '';
   private active = true;
+  private fragmentSub?: Subscription;
   private reloadInFlight: Promise<void> | null = null;
   private aliasRevision = 0;
   private noticeValue = '';
@@ -235,9 +238,11 @@ export class AccountPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngAfterViewInit(): void {
-    if (this.route?.snapshot.fragment === 'account-link') {
-      this.openAccountSectionById('account-link');
-    }
+    const openFragment = (fragment: string | null) => {
+      if (ACCOUNT_SEARCH_SECTIONS.some(section => section.id === fragment)) this.openAccountSectionById(fragment as AccountSectionId);
+    };
+    openFragment(this.route?.snapshot.fragment || null);
+    this.fragmentSub = this.route?.fragment?.subscribe(openFragment);
   }
 
   async ngOnInit(): Promise<void> {
@@ -248,6 +253,7 @@ export class AccountPage implements OnInit, AfterViewInit, OnDestroy {
 
   ngOnDestroy(): void {
     this.active = false;
+    this.fragmentSub?.unsubscribe();
     this.aliasCheckSub?.unsubscribe();
     if (this.noticeTimer !== null) {
       window.clearTimeout(this.noticeTimer);

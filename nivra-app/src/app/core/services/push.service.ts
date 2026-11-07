@@ -5,7 +5,7 @@ import { LocalNotifications } from '@capacitor/local-notifications';
 import { ToastController } from '@ionic/angular/standalone';
 import { deleteApp, initializeApp, getApps, type FirebaseApp, type FirebaseOptions } from 'firebase/app';
 import { getMessaging, getToken, isSupported, type MessagePayload, type Messaging, onMessage } from 'firebase/messaging';
-import { firstValueFrom } from 'rxjs';
+import { firstValueFrom, timeout } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { FirebaseWebConfigResponse, MessageResponse, PushStatusResponse, PushTokenResponse, RealtimeEvent } from '../models/nivra.models';
 import { AuthService } from './auth.service';
@@ -80,6 +80,7 @@ export class PushService {
   readonly supported = signal(false);
   readonly permission = signal<NotificationPermission | 'unsupported'>('default');
   readonly serverReady = signal(false);
+  readonly registeredOnServer = signal<boolean | null>(null);
   readonly tokenId = signal<string | null>(null);
   readonly lastMessage = signal<MessagePayload | null>(null);
   readonly error = signal('');
@@ -111,6 +112,7 @@ export class PushService {
       } else if (this.observedNativeSession) {
         this.observedNativeSession = false;
         this.tokenId.set(null);
+        this.registeredOnServer.set(null);
         this.serverReady.set(false);
         void this.syncNativeRegistration().catch(() => undefined);
       }
@@ -195,20 +197,27 @@ export class PushService {
   }
 
   async refreshStatus(): Promise<boolean> {
-    if (!this.auth.isAuthenticated()) {
-      return false;
-    }
-    if (!await this.auth.ensureFreshSession()) {
-      return false;
-    }
-    const status = await firstValueFrom(this.api.get<PushStatusResponse>('/push-tokens/status')).catch(() => null);
-    if (status) {
-      this.serverReady.set(Capacitor.isNativePlatform() ? status.fcmReady ?? status.serverReady : status.serverReady);
-    }
-    if ('Notification' in window) {
-      this.permission.set(Notification.permission);
-    }
-    return Boolean(status);
+    const session = this.auth.session();
+    const scope = session ? session.user.id + ':' + session.device.id : '';
+    const generation = this.auth.sessionGeneration?.();
+    const current = () => {
+      const now = this.auth.session();
+      return !!scope && !!now && scope === now.user.id + ':' + now.device.id && generation === this.auth.sessionGeneration?.();
+    };
+    if (!this.auth.isAuthenticated() || !await this.auth.ensureFreshSession() || !current()) return false;
+    // Android permission is native. WebView's Notification.permission is unrelated.
+    if (Capacitor.isNativePlatform()) {
+      const permission = await FirebaseMessaging.checkPermissions().catch(() => null);
+      if (!current()) return false;
+      if (permission) this.permission.set(this.mapNativePermission(permission.receive));
+    } else if ('Notification' in window) this.permission.set(Notification.permission);
+    else this.permission.set('unsupported');
+    const status = await firstValueFrom(this.api.get<PushStatusResponse>('/push-tokens/status').pipe(timeout(12_000))).catch(() => null);
+    if (!current()) return false;
+    if (!status) { this.serverReady.set(false); this.registeredOnServer.set(null); return false; }
+    this.serverReady.set(Capacitor.isNativePlatform() ? status.fcmReady ?? status.serverReady : status.serverReady);
+    this.registeredOnServer.set(status.hasRegistration ?? null);
+    return true;
   }
 
   async revokeCurrentToken(): Promise<void> {
@@ -218,6 +227,7 @@ export class PushService {
     }
     await firstValueFrom(this.api.delete(`/push-tokens/${encodeURIComponent(id)}`));
     this.tokenId.set(null);
+    this.registeredOnServer.set(false);
   }
 
   async notifyRealtimeEvent(event: RealtimeEvent): Promise<void> {
@@ -715,6 +725,7 @@ export class PushService {
     }));
     if (!sameAccount()) return;
     this.tokenId.set(response.id);
+    this.registeredOnServer.set(true);
     this.serverReady.set(Capacitor.isNativePlatform() ? response.fcmReady ?? response.serverReady : response.serverReady);
     if (!Capacitor.isNativePlatform()) {
       // The refresh credential authorizes this one membership operation only;

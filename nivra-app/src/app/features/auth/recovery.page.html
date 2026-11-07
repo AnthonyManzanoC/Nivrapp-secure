@@ -23,5 +23,6 @@
   @if (!completed && !token) {
     <details><summary>{{ t('NO_EMAIL', 'No configuré un correo de recuperación') }}</summary><p class="copy">{{ t('NO_EMAIL_COPY', 'Necesitas un correo previamente verificado para recuperar tu contraseña. Si conservas una sesión abierta, revisa las opciones en Cuenta.') }}</p></details>
   }
+  <details><summary>{{ 'GUIDE.RECOVERY_TITLE' | translate:'Recuperar tu cuenta y recuperar tus chats' }}</summary><p class="copy">{{ 'GUIDE.RECOVERY_HISTORY' | translate:'Sincronizar el historial trae conversaciones anteriores desde otro equipo autorizado que todavía las conserve. Entrar con tu contraseña no devuelve automáticamente esos mensajes. Si se perdieron todas las copias y sus llaves, puede que no se puedan recuperar.' }}</p></details>
   <p class="privacy-note">{{ t('PRIVACY', 'El correo recupera tu acceso. Las conversaciones cifradas siguen necesitando las llaves guardadas en tus dispositivos.') }}</p>
 </section></main></ion-content>

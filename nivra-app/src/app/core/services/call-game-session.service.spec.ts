@@ -14,7 +14,7 @@ describe('shared call game session', () => {
     participantUserIds: ['alice', 'bob', 'carol'], participantSessions: {
       alice: { deviceId: 'a', clientSessionId: 'aa' }, bob: { deviceId: 'b', clientSessionId: 'bb' }, carol: { deviceId: 'c', clientSessionId: 'cc' },
     } };
-  beforeEach(() => {
+  beforeEach(async () => {
     peers = new Map();
     for (const id of call.participantUserIds) {
       const transport = { packets$: new Subject<CallGamePacket>(), connectedPeers: signal(call.participantUserIds.filter(other => other !== id)),
@@ -24,6 +24,7 @@ describe('shared call game session', () => {
         } };
       TestBed.configureTestingModule({ providers: [{ provide: CallGameTransportService, useValue: transport }] });
       const service = TestBed.runInInjectionContext(() => new CallGameSessionService());
+      await service.loadEngine();
       service.configure(call, id);
       peers.set(id, { service, transport });
       TestBed.resetTestingModule();
@@ -31,6 +32,28 @@ describe('shared call game session', () => {
     alice = peers.get('alice')!.service; bob = peers.get('bob')!.service; carol = peers.get('carol')!.service;
   });
   afterEach(() => peers.forEach(peer => peer.service.ngOnDestroy()));
+  it('preserves packet order while the game engine downloads', async () => {
+    const engine = (bob as any).engine;
+    (bob as any).engine = undefined;
+    let release!: () => void;
+    const loaded = new Promise<void>(resolve => release = () => { (bob as any).engine = engine; resolve(); });
+    spyOn(bob, 'loadEngine').and.callFake(() => { (bob as any).enginePending = loaded; return loaded; });
+    const transport = peers.get('bob')!.transport;
+    transport.packets$.next({ senderUserId: 'alice', body: { type: 'state', state: engine.createCallGame('tic-tac-toe', 'loading-game', 'alice') } });
+    transport.packets$.next({ senderUserId: 'alice', body: { type: 'state', state: null } });
+    release(); await loaded; await Promise.resolve();
+    expect(bob.state()).toBeNull();
+  });
+  it('discards a game received for a call that ended during loading', async () => {
+    const engine = (bob as any).engine;
+    (bob as any).engine = undefined;
+    let release!: () => void;
+    const loaded = new Promise<void>(resolve => release = () => { (bob as any).engine = engine; resolve(); });
+    spyOn(bob, 'loadEngine').and.returnValue(loaded);
+    peers.get('bob')!.transport.packets$.next({ senderUserId: 'alice', body: { type: 'state', state: engine.createCallGame('tic-tac-toe', 'old-call-game', 'alice') } });
+    bob.reset(); release(); await loaded; await Promise.resolve();
+    expect(bob.state()).toBeNull();
+  });
   const act = (service: CallGameSessionService, type: 'join' | 'start' | 'move', index = 0) => {
     const state = service.state()!;
     service.act(type === 'move' ? { type, gameId: state.id, expectedRevision: state.revision, index } : { type, gameId: state.id, expectedRevision: state.revision });

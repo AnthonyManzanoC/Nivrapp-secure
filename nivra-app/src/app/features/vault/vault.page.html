@@ -1,5 +1,10 @@
 <ion-content fullscreen class="page">
-  <main class="surface vault-surface" [class.is-fullscreen]="isFullscreen">
+  <main class="surface vault-surface" [class.is-fullscreen]="isFullscreen" [class.incognito-view]="isIncognito()">
+    @if (isIncognito()) {
+      <header class="incognito-header"><span class="incognito-mark"><ion-icon name="lock-closed-outline" aria-hidden="true" /></span><div><span class="eyebrow">{{ 'INCOGNITO.TITLE' | translate:'Chat incógnito' }}</span><h1>{{incognitoPeer()}}</h1><p role="status">{{ (!roomOnline() ? 'INCOGNITO.OFFLINE' : canSendHere() ? 'INCOGNITO.READY' : incognitoRoom() ? 'INCOGNITO.WAITING' : vault.loading() ? 'INCOGNITO.OPENING' : 'INCOGNITO.ENDED') | translate:(!roomOnline() ? 'Sin conexión. Conservamos tu texto para que puedas reintentar.' : canSendHere() ? 'Ambos están dentro · Conversación temporal' : incognitoRoom() ? 'Esperando a que tu contacto entre para conversar' : vault.loading() ? 'Abriendo conversación…' : 'La conversación temporal terminó') }}</p></div><button type="button" (click)="exitIncognito()" [disabled]="!!busyId" aria-label="Salir del chat incógnito"><ion-icon name="close-outline" aria-hidden="true" /></button></header>
+      <p class="incognito-explainer">{{ 'INCOGNITO.EXPLAINER' | translate:'Los mensajes se limpian al salir o desconectarse un participante. La otra persona puede conservar capturas.' }}</p>
+    }
+    @if (vault.loadError?.()) {<p class="notice" role="status">{{vault.loadError()}} <button type="button" (click)="retryRoom()" [disabled]="!!busyId">{{ 'COMMON.RETRY' | translate:'Reintentar' }}</button></p>}
     <header class="page-head vault-hero">
       <div>
         <span class="eyebrow">{{ 'VAULT.EYEBROW' | translate:'Nivra Vault' }}</span>
@@ -327,7 +332,7 @@
                 </div>
               }
 
-              <div class="vault-chat">
+              <div #roomTimeline class="vault-chat" (scroll)="timelineScrolled()" role="log" aria-label="Mensajes de la sala" aria-relevant="additions text">
                 @for (message of vault.activeMessages(); track message.id) {
                   <div class="vault-message" [class.mine]="message.mine" [class.system]="message.payload.type === 'system'">
                     <small>{{ vault.messageSender(message) }} - {{ message.at | localizedDate:'shortTime' }}</small>
@@ -360,18 +365,19 @@
                     }
                   </div>
                 } @empty {
-                  <div class="empty-copy">{{ 'VAULT.ROOM_READY' | translate:'Sala lista para mensajes cifrados.' }}</div>
+                  <div class="empty-copy"><ion-icon name="lock-closed-outline" aria-hidden="true" /><p>{{ (isIncognito() ? 'INCOGNITO.EMPTY' : 'VAULT.ROOM_READY') | translate:(isIncognito() ? 'Este momento es de ustedes. Cuando ambos estén dentro, envía el primer mensaje.' : 'Sala lista para mensajes cifrados.') }}</p></div>
                 }
               </div>
             </div>
 
+            @if (error && isIncognito()) {<p class="incognito-error" role="alert">{{error}}</p>}
             <footer class="composer vault-input-area">
               <input #vaultFile hidden type="file" (change)="fileSelected($event)" />
-              <ion-button mode="ios" fill="clear" (click)="vaultFile.click()" [attr.aria-label]="'VAULT.ATTACH' | translate:'Adjuntar'">
+              <ion-button mode="ios" fill="clear" (click)="vaultFile.click()" [disabled]="!canSendHere() || vault.uploading() || !!busyId" [attr.aria-label]="'VAULT.ATTACH' | translate:'Adjuntar'">
                 @if (vault.uploading()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="attach-outline"></ion-icon> }
               </ion-button>
-              <ion-textarea mode="ios" autoGrow="true" rows="1" [(ngModel)]="roomMessage" [placeholder]="'VAULT.MESSAGE_PLACEHOLDER' | translate:'Mensaje Vault'"></ion-textarea>
-              <ion-button mode="ios" (click)="sendMessage()" [disabled]="!roomMessage.trim() || vault.sending()">
+              <ion-textarea mode="ios" autoGrow="true" rows="1" [(ngModel)]="roomMessage" [placeholder]="(isIncognito() ? 'INCOGNITO.PLACEHOLDER' : 'VAULT.MESSAGE_PLACEHOLDER') | translate:(isIncognito() ? 'Mensaje temporal…' : 'Mensaje Vault')" [disabled]="!canSendHere()"></ion-textarea>
+              <ion-button mode="ios" (click)="sendMessage()" [disabled]="!roomMessage.trim() || vault.sending() || !!busyId || !canSendHere()" aria-label="Enviar mensaje">
                 @if (vault.sending()) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="send-outline"></ion-icon> }
               </ion-button>
             </footer>
@@ -379,8 +385,8 @@
         } @else {
           <div class="vault-empty-stage">
             <ion-icon name="shield-checkmark-outline"></ion-icon>
-            <h2>{{ 'VAULT.OPEN_ROOM_TITLE' | translate:'Abre una sala Vault' }}</h2>
-            <p>{{ 'VAULT.OPEN_ROOM_COPY' | translate:'Mensajes, archivos y presencia privada aparecen aqui.' }}</p>
+            <h2>{{ (isIncognito() ? 'INCOGNITO.ENDED' : 'VAULT.OPEN_ROOM_TITLE') | translate:(isIncognito() ? 'La conversación temporal terminó' : 'Abre una sala Vault') }}</h2>
+            <p>{{ (isIncognito() ? 'INCOGNITO.CLOSED_COPY' : 'VAULT.OPEN_ROOM_COPY') | translate:(isIncognito() ? 'Puedes volver al chat normal y abrir otra conversación temporal cuando ambos estén listos.' : 'Mensajes, archivos y presencia privada aparecen aqui.') }}</p>@if(isIncognito()){<ion-button (click)="exitIncognito()">{{ 'INCOGNITO.BACK' | translate:'Volver al chat' }}</ion-button>}
           </div>
         }
       </article>

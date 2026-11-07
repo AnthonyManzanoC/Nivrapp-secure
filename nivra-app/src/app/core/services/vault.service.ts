@@ -1,6 +1,7 @@
 import { DestroyRef, Injectable, Injector, computed, effect, inject, signal, untracked, type WritableSignal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
-import { Room, RoomEvent } from 'livekit-client';
+import type { Room } from 'livekit-client';
+import { loadLiveKit } from './livekit-loader';
 import { firstValueFrom, timeout } from 'rxjs';
 import {
   ChatPayload,
@@ -79,7 +80,11 @@ export class VaultService {
     Object.values(previews).forEach(preview => { if (preview.url) URL.revokeObjectURL(preview.url); });
   });
   readonly people = this.scopedSignal<UserSummary[]>(() => []);
+  private readonly pendingRoomLeaves = new Set<string>();
+  readonly roomConnected = computed(() => this.realtime.connected?.() ?? true);
+  readonly loadError = this.scopedSignal<string>(() => '');
   readonly activeRoomId = this.scopedSignal<string | null>(() => null);
+  readonly joinedRoomId = this.scopedSignal<string | null>(() => null);
   readonly loading = this.scopedSignal(() => false);
   readonly sending = this.scopedSignal(() => false);
   readonly uploading = this.scopedSignal(() => false);
@@ -121,6 +126,7 @@ export class VaultService {
       if (event.type === 'connected' || event.type === 'reconnected') {
         void this.rejoinActiveRoom();
       }
+      if (event.type === 'disconnected') this.joinedRoomId.set(null);
     });
 
     effect(() => {
@@ -163,6 +169,7 @@ export class VaultService {
   private resetScopeState(): void {
     this.roomRevisions.clear();
     this.scopeEpoch++;
+    this.pendingRoomLeaves.clear();
     this.searchRevision++;
     this.loadRevision++;
     this.voiceRevision++;
@@ -209,17 +216,19 @@ export class VaultService {
     this.loading.set(true);
     try {
       const [items, rooms] = await Promise.all([
-        firstValueFrom(this.api.get<VaultItem[]>('/vault/items')).catch(() => []),
-        firstValueFrom(this.api.get<VaultRoom[]>('/vault/rooms')).catch(() => []),
+        firstValueFrom(this.api.get<VaultItem[]>('/vault/items').pipe(timeout(12000))).catch(() => null),
+        firstValueFrom(this.api.get<VaultRoom[]>('/vault/rooms').pipe(timeout(12000))).catch(() => null),
       ]);
       if (!this.isCurrent(context) || revision !== this.loadRevision) return;
+      this.loadError.set(items === null || rooms === null ? 'No se pudo actualizar todo. Conservamos lo que ya estaba abierto. Revisa tu conexión y reintenta.' : '');
       const key = this.key;
-      const decoded = key ? await this.decodeItems(items, key, context) : items.map((item) => ({ ...item }));
+      const decoded = items === null ? this.items() : key ? await this.decodeItems(items, key, context) : items.map((item) => ({ ...item }));
       if (!this.isCurrent(context) || revision !== this.loadRevision) return;
-      this.rooms.set(rooms);
+      if (rooms !== null) this.rooms.set(rooms.filter(room => !this.pendingRoomLeaves.has(room.id)));
       this.items.set(decoded);
       const activeId = this.activeRoomId();
-      if (activeId && !rooms.some((room) => room.id === activeId && this.currentMember(room)?.status === 'Active')) {
+      if (activeId && rooms !== null && !rooms.some((room) => room.id === activeId && !room.closedAt && this.currentMember(room)?.status === 'Active')) {
+        this.clearRoomMessages(activeId);
         this.setActiveRoom(null);
       }
     } catch (error) {
@@ -322,7 +331,7 @@ export class VaultService {
       encryptedWelcome: options.encryptedWelcome || null,
       invitedUserIds: options.invitedUserIds ?? [],
       ttlSeconds: options.retentionMode === 'ExpiresAfterTtl' ? options.ttlSeconds ?? 3600 : null,
-    }));
+    }).pipe(timeout(15000)));
     this.checkContext(context);
     this.syncRoom(room);
     if (this.currentMember(room)?.status === 'Active') {
@@ -354,12 +363,19 @@ export class VaultService {
   async selectRoom(roomId: string): Promise<void> {
     const context = this.captureContext();
     const room = this.rooms().find((candidate) => candidate.id === roomId);
-    if (!room || this.currentMember(room)?.status !== 'Active') {
+    if (!room || room.closedAt || this.currentMember(room)?.status !== 'Active') {
       throw new Error('Debes entrar a la sala primero.');
     }
+    const previous = this.activeRoom();
+    if (previous && previous.id !== roomId && previous.retentionMode === 'BurnOnExit') {
+      await this.leaveRoom(previous.id);
+      this.checkContext(context);
+    }
     this.setActiveRoom(roomId);
+    this.joinedRoomId.set(null);
     await this.realtime.joinVaultRoom(roomId);
     this.checkContext(context);
+    this.joinedRoomId.set(roomId);
     this.messagesByRoom.update((state) => ({ ...state, [roomId]: state[roomId] ?? [] }));
   }
 
@@ -367,15 +383,17 @@ export class VaultService {
     const context = this.captureContext();
     const ephemeral = this.rooms().find(room => room.id === roomId)?.retentionMode === 'BurnOnExit';
     if (ephemeral) {
+      this.pendingRoomLeaves.add(roomId);
       this.clearRoomMessages(roomId);
       if (this.activeRoomId() === roomId) this.setActiveRoom(null);
       this.rooms.update(rooms => rooms.filter(room => room.id !== roomId));
     }
     try {
       await firstValueFrom(this.api.post(`/vault/rooms/${encodeURIComponent(roomId)}/leave`, {}).pipe(timeout(12000)));
+      if (this.isCurrent(context)) this.pendingRoomLeaves.delete(roomId);
     } catch (error) {
       if (!ephemeral || !this.isCurrent(context)) throw error;
-      await this.realtime.leaveVaultRoom(roomId);
+      await this.realtime.leaveVaultRoom(roomId).catch(() => undefined);
     }
     this.checkContext(context);
     if (this.activeRoomId() === roomId) {
@@ -648,6 +666,8 @@ export class VaultService {
         throw new Error('El servidor no devolvio credenciales LiveKit validas.');
       }
 
+      const { Room, RoomEvent } = await loadLiveKit();
+      if (!current()) throw new Error('La cuenta o la sala de audio cambió.');
       liveRoom = new Room();
       this.voiceRoom = liveRoom;
       liveRoom.on(RoomEvent.TrackSubscribed, (track: unknown, _publication: unknown, participant: { identity?: string }) => {
@@ -893,8 +913,11 @@ export class VaultService {
     const roomRevision = this.roomRevisions.get(room.id) ?? 0;
     const checkRoom = () => {
       this.checkContext(context);
-      if ((this.roomRevisions.get(room.id) ?? 0) !== roomRevision) throw new Error('La sala ya se cerró.');
+      if (room.closedAt || this.pendingRoomLeaves.has(room.id) || (this.roomRevisions.get(room.id) ?? 0) !== roomRevision) throw new Error('La sala ya se cerró.');
     };
+    if (room.retentionMode === 'BurnOnExit' && !room.members.some(member => member.userId !== context.userId && member.status === 'Active')) {
+      throw new Error('Espera a que tu contacto entre al chat incógnito. Los mensajes temporales no se guardan para entregarlos después.');
+    }
     this.sending.set(true);
     const clientMessageId = `vault-${crypto.randomUUID()}`;
     try {
@@ -1081,6 +1104,7 @@ export class VaultService {
       void this.load();
       return;
     }
+    if (this.pendingRoomLeaves.has(room.id)) return;
     this.rooms.update((rooms) => [room, ...rooms.filter((candidate) => candidate.id !== room.id)]
       .sort((left, right) => new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime()));
   }
@@ -1110,10 +1134,22 @@ export class VaultService {
     this.ensureCurrentScope();
     if (!this.auth.session?.()) return;
     const context = this.captureContext();
+    for (const pendingId of [...this.pendingRoomLeaves]) {
+      try {
+        await firstValueFrom(this.api.post(`/vault/rooms/${encodeURIComponent(pendingId)}/leave`, {}).pipe(timeout(12000)));
+        if (!this.isCurrent(context)) return;
+        this.pendingRoomLeaves.delete(pendingId);
+      } catch { /* Keep the local tombstone until this session confirms the leave. */ }
+      if (!this.isCurrent(context)) return;
+    }
     const roomId = this.activeRoomId();
     const room = roomId ? this.rooms().find((candidate) => candidate.id === roomId) : null;
     if (roomId && (!room || this.currentMember(room)?.status === 'Active')) {
-      await this.realtime.joinVaultRoom(roomId).catch(() => undefined);
+      this.joinedRoomId.set(null);
+      try {
+        await this.realtime.joinVaultRoom(roomId);
+        if (this.isCurrent(context) && this.activeRoomId() === roomId) this.joinedRoomId.set(roomId);
+      } catch { if (this.isCurrent(context)) await this.load(); }
       if (!this.isCurrent(context)) return;
     }
   }

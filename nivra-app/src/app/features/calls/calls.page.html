@@ -235,7 +235,7 @@
             }
 
             @if (calls.games.panelOpen() && calls.phase() !== 'ringing') {
-              <app-call-game-panel class="call-game-area"
+              @defer (when calls.games.panelOpen()) { <app-call-game-panel class="call-game-area"
                 [activeGameAvailable]="calls.games.browsing() && !!calls.games.state() && calls.games.state()?.status !== 'finished'"
                 (resume)="calls.games.browsing.set(false)"
                 [state]="calls.games.browsing() ? null : calls.games.state()" [currentUserId]="gameUserId()"
@@ -243,7 +243,7 @@
                 [error]="calls.games.error()" (create)="calls.games.create($event)"
                 (action)="calls.games.act($event)" (closed)="calls.games.leaveGame(true)" (catalogue)="calls.games.leaveGame()"
                 (pointerdown)="$event.stopPropagation()" (click)="$event.stopPropagation()">
-              </app-call-game-panel>
+              </app-call-game-panel> }
             }
             <div class="call-controls" (focusin)="onControlsFocus(true)" (focusout)="onControlsFocus(false)">
               @if (calls.phase() === 'ringing') {

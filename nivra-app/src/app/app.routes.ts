@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 import { inject } from '@angular/core';
-import { Router } from '@angular/router';
+import { Router, UrlSegment } from '@angular/router';
+import { ProductGuideService } from './core/services/product-guide.service';
 import { AuthService } from './core/services/auth.service';
 import { NativeOnboardingService } from './core/services/native-onboarding.service';
 
@@ -39,6 +40,15 @@ export const landingGuest = async () => {
   return true;
 };
 
+// Preserve invitations, call actions and conversation deep links.
+export const firstSteps = (_route: unknown, segments: UrlSegment[]) => {
+  const auth = inject(AuthService);
+  const guide = inject(ProductGuideService);
+  const router = inject(Router);
+  const userId = auth.session()?.user.id;
+  return segments.length === 1 && userId && !guide.progress(userId).introduced
+    ? router.parseUrl('/app/guide') : true;
+};
 export const routes: Routes = [
   { path: 'group/invite', loadComponent: () => import('./features/chat-detail/group-invite.page').then(m => m.GroupInvitePage) },
   { path: 'recover', loadComponent: () => import('./features/auth/recovery.page').then(m => m.RecoveryPage) },
@@ -65,9 +75,12 @@ export const routes: Routes = [
     canMatch: [authenticated],
     loadComponent: () => import('./features/shell/shell.page').then((m) => m.ShellPage),
     children: [
+      { path: 'guide', loadComponent: () => import('./features/guide/guide.page').then(m => m.GuidePage) },
+      { path: 'notification-check', loadComponent: () => import('./features/guide/notification-check.page').then(m => m.NotificationCheckPage) },
       { path: 'identity/:userId', loadComponent: () => import('./features/chat-detail/identity-verification.page').then(m => m.IdentityVerificationPage) },
       {
         path: 'chats',
+        canMatch: [firstSteps],
         loadComponent: () => import('./features/chats/chats.page').then((m) => m.ChatsPage),
         children: [
           {

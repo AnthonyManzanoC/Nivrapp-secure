@@ -1,6 +1,6 @@
 import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
-import { Component, OnDestroy, OnInit, effect, inject } from '@angular/core';
+import { Component, ElementRef, ViewChild, OnDestroy, OnInit, effect, inject } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { ActivatedRoute, Router } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
@@ -84,13 +84,30 @@ export class VaultPage implements OnInit, OnDestroy {
   private destroyed = false;
   private initialized = false;
   private readonly routeUpdates = this.route.queryParamMap?.subscribe(() => {
-    if (this.initialized && this.isCurrentPage()) void this.openInvitedRoom();
+    if (this.initialized && this.isCurrentPage()) void this.openInvitedRoom().catch(() => { if (this.isCurrentPage()) this.error = 'No se pudo abrir la sala. Reintenta con conexión.'; });
   });
+  @ViewChild('roomTimeline') private roomTimeline?: ElementRef<HTMLElement>;
+  private incognitoSeen = false;
+  private stickToBottom = true;
+  private scrollFrame = 0;
   private readonly fullscreenChangeHandler = () => this.syncFullscreenState();
 
   constructor() {
     effect(() => {
-      if (!this.ownsMountedScope()) this.clearLocalNoteDraft();
+      if (!this.ownsMountedScope()) { this.clearLocalNoteDraft(); this.roomMessage = ''; }
+      if (this.vault.activeRoom()?.retentionMode === 'BurnOnExit') this.incognitoSeen = true;
+    });
+    effect(() => {
+      const room = this.vault.activeRoom();
+      this.vault.activeMessages?.();
+      if (!room) { this.roomMessage = ''; return; }
+      if (this.stickToBottom) {
+        cancelAnimationFrame(this.scrollFrame);
+        this.scrollFrame = requestAnimationFrame(() => {
+          const list = this.roomTimeline?.nativeElement;
+          if (this.isCurrentPage() && list) list.scrollTop = list.scrollHeight;
+        });
+      }
     });
     addIcons({
       addCircleOutline,
@@ -130,12 +147,13 @@ export class VaultPage implements OnInit, OnDestroy {
       this.initialized = true;
       await this.openInvitedRoom();
       await this.acceptIncomingInvite();
-    } catch (error) { if (this.isCurrentPage()) throw error; }
+    } catch { if (this.isCurrentPage()) this.error = 'No se pudo abrir la sala. Revisa tu conexión y vuelve a intentarlo.'; }
   }
 
   ngOnDestroy(): void {
     const ownsScope = this.ownsMountedScope();
     this.destroyed = true;
+    cancelAnimationFrame(this.scrollFrame);
     this.routeUpdates?.unsubscribe();
     this.clearLocalNoteDraft();
     document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
@@ -361,10 +379,15 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async sendMessage(): Promise<void> {
+    if (!this.isCurrentPage() || this.busyId || this.vault.sending() || !this.canSendHere()) return;
+    const text = this.roomMessage;
+    const roomId = this.vault.activeRoom()?.id;
+    if (!text.trim()) return;
     await this.run('vault:send', async isCurrent => {
-      await this.vault.sendRoomText(this.roomMessage);
+      await this.vault.sendRoomText(text);
       if (!isCurrent()) return;
-      this.roomMessage = '';
+      if (this.vault.activeRoom()?.id === roomId && this.roomMessage === text) this.roomMessage = '';
+      this.stickToBottom = true;
     });
   }
 
@@ -372,7 +395,7 @@ export class VaultPage implements OnInit, OnDestroy {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0] ?? null;
     input.value = '';
-    if (!file) {
+    if (!file || !this.isCurrentPage() || this.busyId || !this.canSendHere()) {
       return;
     }
     await this.run('vault:file', async isCurrent => {
@@ -520,6 +543,40 @@ export class VaultPage implements OnInit, OnDestroy {
       && this.vault.currentMember(room)?.status !== 'Active') ?? null;
   }
   requiresRoomPin(room: VaultRoom): boolean { return room.requiresPin !== false; }
+
+  incognitoRoom(): VaultRoom | null {
+    const active = this.vault.activeRoom();
+    if (active?.retentionMode === 'BurnOnExit') return active;
+    return this.invitedRoom()?.retentionMode === 'BurnOnExit' ? this.invitedRoom() : null;
+  }
+  isIncognito(): boolean { return this.incognitoSeen || !!this.incognitoRoom() || this.route.snapshot.queryParamMap.get('mode') === 'incognito'; }
+  roomOnline(): boolean { return this.vault.roomConnected?.() !== false; }
+  canSendHere(): boolean {
+    const room = this.vault.activeRoom();
+    return !!room && !room.closedAt && (!this.isIncognito() || (this.roomOnline()
+      && (!this.vault.joinedRoomId || this.vault.joinedRoomId() === room.id)
+      && this.activeMembers(room).some(member => !this.vault.isCurrentUser(member.userId))));
+  }
+  incognitoPeer(): string {
+    const peer = this.incognitoRoom()?.members.find(member => !this.vault.isCurrentUser(member.userId));
+    return peer ? this.vault.memberLabel(peer) : 'Chat incógnito';
+  }
+  timelineScrolled(): void {
+    const list = this.roomTimeline?.nativeElement;
+    if (list) this.stickToBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 96;
+  }
+  async exitIncognito(): Promise<void> {
+    if (this.busyId) return;
+    await this.run('incognito:exit', async isCurrent => {
+      const room = this.incognitoRoom();
+      this.roomMessage = '';
+      if (room && this.vault.currentMember(room)?.status === 'Active') await this.vault.leaveRoom(room.id);
+      if (!isCurrent()) return;
+      const from = this.route.snapshot.queryParamMap.get('from') || '';
+      await this.router.navigateByUrl(/^[A-Za-z0-9_-]{1,128}$/.test(from) ? '/app/chats/' + from : '/app/chats');
+    });
+  }
+  async retryRoom(): Promise<void> { await this.run('room:retry', async isCurrent => { await this.vault.load(); if (isCurrent()) await this.openInvitedRoom(); }); }
 
   private async shareText(text: string, url: string): Promise<void> {
     if (!this.isCurrentPage()) return;

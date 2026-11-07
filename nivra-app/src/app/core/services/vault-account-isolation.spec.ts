@@ -1,6 +1,6 @@
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
-import { Subject, of } from 'rxjs';
+import { Subject, of, throwError } from 'rxjs';
 import { AuthService } from './auth.service';
 import { ChatService } from './chat.service';
 import { CryptoService } from './crypto.service';
@@ -36,6 +36,28 @@ describe('vault account and activation isolation', () => {
     vault.messagesByRoom.set({ 'room-A': [{ id: 'message-A', payload: { type: 'text', text: 'PRIVATE MESSAGE A' } } as any] });
     vault.people.set([{ id: 'person-A', displayName: 'PRIVATE PERSON A' } as any]); vault.activeRoomId.set('room-A');
   };
+
+  it('preserves the open room and messages when a refresh loses connectivity', async () => {
+    prime(); api.get.and.returnValue(throwError(() => new Error('offline')));
+    await vault.load();
+    expect(vault.activeRoomId()).toBe('room-A'); expect(vault.rooms().length).toBe(1);
+    expect(vault.activeMessages().length).toBe(1); expect(vault.loadError()).toContain('conexión');
+  });
+  it('never resurrects an incognito room left offline and retries its close after reconnecting', async () => {
+    prime(); const temporary: any = { ...roomA, retentionMode: 'BurnOnExit' }; vault.rooms.set([temporary]);
+    api.post.and.returnValue(throwError(() => new Error('offline')));
+    await vault.leaveRoom('room-A'); expect(vault.activeRoomId()).toBeNull(); expect(vault.activeMessages()).toEqual([]);
+    api.get.and.callFake((path: string) => of(path === '/vault/rooms' ? [temporary] : []));
+    await vault.load(); expect(vault.rooms()).toEqual([]);
+    api.post.and.returnValue(of({})); realtime.events$.next({ type: 'reconnected' }); await settle();
+    expect(api.post).toHaveBeenCalledWith('/vault/rooms/room-A/leave', {});
+    expect(realtime.joinVaultRoom).not.toHaveBeenCalled();
+  });
+  it('does not send temporary text before the invited contact joins', async () => {
+    prime(); vault.rooms.set([{ ...roomA, retentionMode: 'BurnOnExit' } as any]);
+    await expectAsync(vault.sendRoomText('not for offline delivery')).toBeRejectedWithError(/Espera/);
+    expect(realtime.sendVaultRoomMessage).not.toHaveBeenCalled(); expect(ratchet.encrypt).not.toHaveBeenCalled();
+  });
 
   beforeEach(async () => {
     for (const account of [a, b]) { localStorage.removeItem(`nivra.vault.${account.user.id}`); localStorage.removeItem(activeKey(account)); }

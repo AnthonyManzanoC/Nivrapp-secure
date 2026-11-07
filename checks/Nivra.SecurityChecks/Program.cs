@@ -3,12 +3,19 @@ using System.Net.Http.Headers;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Reflection;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Nivra.Api.Domain;
 using Nivra.Api.Infrastructure;
 using Nivra.Api.Security;
+using Nivra.Api.Services;
+using Nivra.Api.Endpoints;
+using Nivra.Api.Realtime;
+using Nivra.Api.Contracts;
+using Microsoft.AspNetCore.SignalR;
 
 var checks = 0;
 void Check(bool condition, string label)
@@ -29,6 +36,10 @@ builder.Services.AddScoped<INivraStore, PgSqlNivraStore>();
 builder.Services.Configure<NivraSecurityOptions>(options => options.TokenSigningKey = signingKey);
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<TokenService>();
+builder.Services.AddHttpClient();
+builder.Services.AddDataProtection().UseEphemeralDataProtectionProvider();
+builder.Services.Configure<NivraPushOptions>(options => { });
+builder.Services.AddSingleton<PushNotificationService>();
 await using var app = builder.Build();
 app.UseNivraSecurityHeaders();
 app.UseExceptionHandler(handler => handler.Run(context =>
@@ -40,6 +51,7 @@ app.UseNivraAuth();
 app.MapGet("/private", (HttpContext context) => context.GetCurrentUser() is { } user
     ? Results.Ok(new { user.UserId }) : Results.Unauthorized());
 app.MapGet("/failure", (HttpContext _) => { throw new InvalidOperationException("synthetic error"); });
+typeof(EndpointExtensions).GetMethod("MapNotificationEndpoints", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, [app]);
 await app.StartAsync();
 using var client = new HttpClient { BaseAddress = new Uri(app.Urls.Single()) };
 
@@ -101,6 +113,46 @@ foreach (var kind in new[] { "expired", "disabled", "device", "foreign-device", 
 }
 
 var active = await Session("tamper");
+await using (var temporaryScope = app.Services.CreateAsyncScope())
+{
+    var db = temporaryScope.ServiceProvider.GetRequiredService<NivraDbContext>();
+    var savedSession = await db.Sessions.SingleAsync(row => row.UserId == "user-tamper");
+    db.VaultRooms.Add(new VaultRoom { Id = "incognito-waiting", OwnerUserId = "user-tamper", Name = "Synthetic temporary chat", RetentionMode = VaultRetentionMode.BurnOnExit, CreatedAt = DateTimeOffset.UtcNow, UpdatedAt = DateTimeOffset.UtcNow });
+    db.VaultRoomMembers.Add(new VaultRoomMember { Id = "incognito-owner", VaultRoomId = "incognito-waiting", UserId = "user-tamper", Status = VaultMemberStatus.Active, CreatedAt = DateTimeOffset.UtcNow });
+    await db.SaveChangesAsync();
+    var hub = new NivraHub(null!, temporaryScope.ServiceProvider.GetRequiredService<INivraStore>(), db, null!, new RealtimePresence(), null!, null!, null!, NullLogger<NivraHub>.Instance, TimeProvider.System)
+    { Context = new TemporaryChatContext(new CurrentUser("user-tamper", "device-tamper", savedSession.Id)) };
+    var rejected = false;
+    try { await hub.SendVaultRoomRatchetMessage("incognito-waiting", new VaultRealtimeMessageRequest("pending-text", MessageKind.Text, [new RecipientCipherRequest("user-tamper", "device-tamper", "opaque", null, null)], null)); }
+    catch (HubException error) { rejected = error.Message.Contains("Espera"); }
+    Check(rejected, "temporary messages cannot be silently sent before the contact joins");
+}
+async Task<bool> HasPushRegistration(string token)
+{
+    using var response = await Request(token, "/push-tokens/status");
+    Check(response.IsSuccessStatusCode, "notification status is accessible to an active session");
+    var content = await response.Content.ReadAsStringAsync();
+    Check(!content.Contains("private-push-token") && !content.Contains("tokenHash") && !content.Contains("deviceId"), "notification diagnosis never discloses push destinations or device identifiers");
+    using var json = JsonDocument.Parse(content);
+    return json.RootElement.GetProperty("hasRegistration").GetBoolean();
+}
+await Mutate(db =>
+{
+    db.PushTokens.Add(new PushTokenRecord { Id = "other-device-registration", UserId = "user-tamper", DeviceId = "other-device", Provider = "fcm", TokenHash = "private-push-token", CreatedAt = DateTimeOffset.UtcNow });
+    return Task.CompletedTask;
+});
+Check(!await HasPushRegistration(active.AccessToken), "another device's registration does not mark this device ready");
+await Mutate(db =>
+{
+    db.PushTokens.Add(new PushTokenRecord { Id = "current-registration", UserId = "user-tamper", DeviceId = "device-tamper", Provider = "fcm", TokenHash = "private-push-token-current", CreatedAt = DateTimeOffset.UtcNow });
+    return Task.CompletedTask;
+});
+Check(await HasPushRegistration(active.AccessToken), "this account and device's active registration is recognized");
+var otherAccount = await Session("push-other");
+Check(!await HasPushRegistration(otherAccount.AccessToken), "notification readiness remains isolated between accounts");
+await Mutate(async db => (await db.PushTokens.FindAsync("current-registration"))!.RevokedAt = DateTimeOffset.UtcNow);
+Check(!await HasPushRegistration(active.AccessToken), "revoked notification registration is no longer ready");
+using (var anonymousPush = await Request(null, "/push-tokens/status")) Check(anonymousPush.StatusCode == HttpStatusCode.Unauthorized, "anonymous notification diagnosis is denied");
 var parts = active.AccessToken.Split('.');
 foreach (var token in new[] { "invalid", "a.b", "...", "%%%.%%%", parts[0] + ".AAAA", "A" + active.AccessToken[1..], new string('a', 4097) })
     Check(await Rejected(token), "malformed or tampered token rejected (length " + token.Length + ")");
@@ -130,3 +182,14 @@ using (var error = await Request(null, "/failure"))
 using (var anonymous = await Request(null)) Check(anonymous.StatusCode == HttpStatusCode.Unauthorized, "anonymous private request is denied");
 await app.StopAsync();
 Console.WriteLine($"PASS {checks} security checks; isolated local HTTP server and synthetic data only.");
+
+sealed class TemporaryChatContext(CurrentUser user) : HubCallerContext
+{
+    public override string ConnectionId => "isolated-temporary-chat";
+    public override string? UserIdentifier => user.UserId;
+    public override System.Security.Claims.ClaimsPrincipal? User => null;
+    public override IDictionary<object, object?> Items { get; } = new Dictionary<object, object?> { ["current_user"] = user };
+    public override Microsoft.AspNetCore.Http.Features.IFeatureCollection Features { get; } = new Microsoft.AspNetCore.Http.Features.FeatureCollection();
+    public override CancellationToken ConnectionAborted => CancellationToken.None;
+    public override void Abort() { }
+}

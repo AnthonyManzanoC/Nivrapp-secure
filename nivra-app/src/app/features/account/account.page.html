@@ -19,6 +19,7 @@
       </ion-button>
     </header>
 
+    <p><a routerLink="/app/guide">{{ 'GUIDE.HELP_LINK' | translate:'Guía de Nivra: aprende a usar cada función' }} →</a></p>
     <app-account-navigation (openSection)="openAccountSectionById($event)" />
 
     <section class="grid">
@@ -551,24 +552,14 @@
         <summary>{{ 'ACCOUNT.NOTIFICATIONS' | translate:'Notificaciones' }}</summary>
         <div class="account-section-body">
 
-        <div class="mini-list">
-          <span>{{ 'ACCOUNT.PERMISSION' | translate:'Permiso' }}: {{ push.permission() }}</span>
-          <span>{{ 'ACCOUNT.FCM_SERVER' | translate:'Servidor FCM' }}: {{ push.serverReady() ? ('ACCOUNT.READY' | translate:'listo') : ('ACCOUNT.PENDING' | translate:'pendiente') }}</span>
-          <span>{{ 'ACCOUNT.LOCAL_TOKEN' | translate:'Token local' }}: {{ push.tokenId() ? ('ACCOUNT.REGISTERED' | translate:'registrado') : ('ACCOUNT.UNREGISTERED' | translate:'sin registrar') }}</span>
-        </div>
+        @defer (on viewport) { <app-notification-check /> }
+        @placeholder { <a routerLink="/app/notification-check">{{ 'NOTIFY.TITLE' | translate:'Comprueba tus notificaciones' }} →</a> }
         <div class="account-actions">
-          <ion-button mode="ios" fill="outline" (click)="enablePush()" [disabled]="saving || push.permission() === 'unsupported'">
-            <ion-icon slot="start" name="notifications-outline"></ion-icon>
-            {{ 'ACCOUNT.ENABLE_NOTIFICATIONS' | translate:'Activar avisos' }}
-          </ion-button>
           <ion-button mode="ios" fill="clear" color="danger" (click)="revokePush()" [disabled]="saving || !push.tokenId()">
             <ion-icon slot="start" name="notifications-off-outline"></ion-icon>
-            {{ 'ACCOUNT.REVOKE_TOKEN' | translate:'Revocar token' }}
+            {{ 'NOTIFY.DISABLE' | translate:'Desactivar avisos en este dispositivo' }}
           </ion-button>
         </div>
-        @if (push.error()) {
-          <p class="error">{{ push.error() }}</p>
-        }
       </div>
       </details>
 

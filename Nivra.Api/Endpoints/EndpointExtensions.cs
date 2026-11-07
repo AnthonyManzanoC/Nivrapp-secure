@@ -4380,12 +4380,14 @@ public static partial class EndpointExtensions
             return Results.Ok(new ContactHashSyncResponse(hashes.Count, hashes.Count));
         });
 
-        group.MapGet("/status", (HttpContext http, PushNotificationService pushNotifications) =>
+        group.MapGet("/status", async Task<IResult> (HttpContext http, PushNotificationService pushNotifications, INivraStore store, CancellationToken cancellationToken) =>
         {
             var current = http.GetCurrentUser();
-            return current is null
-                ? Results.Unauthorized()
-                : Results.Ok(new { serverReady = pushNotifications.IsConfigured, fcmReady = pushNotifications.IsFcmConfigured, webPushReady = pushNotifications.IsWebPushConfigured, provider = "Fcm" });
+            if (current is null) return Results.Unauthorized();
+            var registrations = await store.ActivePushTokensForUserAsync(current.UserId, cancellationToken);
+            return Results.Ok(new { serverReady = pushNotifications.IsConfigured, fcmReady = pushNotifications.IsFcmConfigured,
+                webPushReady = pushNotifications.IsWebPushConfigured, provider = "Fcm",
+                hasRegistration = registrations.Any(token => token.DeviceId == current.DeviceId && token.RevokedAt == null) });
         });
 
         group.MapDelete("/{pushTokenId}", async Task<IResult> (string pushTokenId, HttpContext http, INivraStore store, TimeProvider timeProvider, CancellationToken cancellationToken) =>

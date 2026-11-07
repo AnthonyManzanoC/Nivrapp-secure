@@ -27,8 +27,9 @@ export function v9Fixtures(user:any,photo:string){
     members:[{userId:user.id,displayName:user.displayName,status:'Active'},{userId:'peer-sofia',displayName:'Sofía',status:'Active'},{userId:'peer-daniel',displayName:'Daniel',status:'Invited'}]},
     {id:'invitation',name:'Ideas de fin de semana',accessMode:'InviteOnly',requiresPin:false,retentionMode:'ExpiresAfterTtl',owner:{id:'peer-daniel'},members:[{userId:user.id,status:'Invited'}]},
   ];
+  if (new URLSearchParams(location.search).get('mode') === 'incognito') rooms.push({id:'incognito-preview',name:'Chat incógnito',accessMode:'InviteOnly',requiresPin:false,retentionMode:'BurnOnExit',owner:user,members:[{userId:user.id,displayName:user.displayName,status:'Active'},{userId:'peer-sofia',displayName:'Sofía',status:'Active'}]});
   const vault:any={unlocked:signal(false),loading:signal(false),items:signal([]),rooms:signal(rooms),people:signal([{id:'peer-martina',displayName:'Martina',alias:'martina'}]),
-    activeRoomId:signal('studio'),activeMessages:signal([
+    activeRoomId:signal(new URLSearchParams(location.search).get('mode') === 'incognito' ? 'incognito-preview' : 'studio'),activeMessages:signal([
       {id:'1',mine:false,at:new Date().toISOString(),payload:{type:'text',text:'Bienvenidos al espacio del equipo. Aquí reunimos nuestras ideas.'}},
       {id:'2',mine:true,at:new Date().toISOString(),payload:{type:'text',text:'Perfecto. Ya tengo lista la propuesta para mañana ✨'}},
     ]),mediaPreviews:signal({}),sending:signal(false),uploading:signal(false),voicePhase:signal('idle'),voiceRoomId:signal(null),voiceError:signal(''),voiceConnected:signal(false),
@@ -39,6 +40,7 @@ export function v9Fixtures(user:any,photo:string){
     roomStatusLabel:()=> 'Abierta',retentionLabel:(mode:string)=>mode==='Persistent'?'Se conserva':mode==='BurnOnExit'?'Borrar al salir':'1 hora',
     accessLabel:(mode:string)=>mode==='InviteOnly'?'Solo invitados':mode==='WaitingRoom'?'Con aprobación':'Invitados + PIN',
     memberLabel:(m:any)=>m.displayName||'Alex',messageSender:(m:any)=>m.mine?'Tú':'Sofía',asFile:()=>null,preview:(payload:any)=>payload?.text||'',
+    leaveRoom:async(id:string)=>{vault.rooms.update((rooms:any[])=>rooms.filter(room=>room.id!==id));vault.activeRoomId.set(null);vault.activeMessages.set([]);},
     selectRoom:async(id:string)=>{vault.activeRoomId.set(id);},searchPeople:async()=>{},createRoom:async()=>rooms[0],
   };
   vault.activeRoom=computed(()=>vault.rooms().find((r:any)=>r.id===vault.activeRoomId())??null);

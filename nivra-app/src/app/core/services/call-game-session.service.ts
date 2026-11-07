@@ -1,10 +1,10 @@
 import { Injectable, OnDestroy, computed, effect, inject, signal, untracked } from '@angular/core';
 import { Subscription } from 'rxjs';
 import { CallSession } from '../models/nivra.models';
-import { CALL_GAME_KINDS, callGameBoardSize, applyCallGameAction, createCallGame, type CallGameAction, type CallGameKind, type CallGameState } from '../games/call-game-engine';
+import type { CallGameAction, CallGameKind, CallGameState } from '../games/call-game-engine';
 import { CallGameTransportService, type CallGamePacket } from './call-game-transport.service';
 
-const KINDS: readonly string[] = CALL_GAME_KINDS;
+const KINDS: readonly string[] = ['tic-tac-toe', 'connect-four', 'trivia', 'gomoku', 'take-away', 'reversi', 'hex', 'dots-boxes'];
 
 /** One coordinator serializes moves; the game's creator controls its lobby.
  * State lives only for the call. A participant cannot submit a move for someone else.
@@ -21,6 +21,13 @@ export class CallGameSessionService implements OnDestroy {
   private invitationGameId = '';
   private dismissedInvitationId = '';
   private readonly invitationTimers = new Set<ReturnType<typeof setTimeout>>();
+  private engine?: typeof import('../games/call-game-engine');
+  private enginePending?: Promise<void>;
+  private epoch = 0;
+  async loadEngine(): Promise<void> {
+    if (this.engine) return;
+    return this.enginePending ??= import('../games/call-game-engine').then(engine => { this.engine = engine; }).finally(() => { this.enginePending = undefined; });
+  }
   private callId = '';
   private localUserId = '';
   private users: string[] = [];
@@ -62,7 +69,7 @@ export class CallGameSessionService implements OnDestroy {
     } else if (current && this.coordinator === localUserId) {
       for (const playerId of current.playerIds.filter(id => !this.users.includes(id))) {
         const latest = this.state()!;
-        const result = applyCallGameAction(latest, playerId, { type: 'leave', gameId: latest.id, expectedRevision: latest.revision });
+        const result = this.engine!.applyCallGameAction(latest, playerId, { type: 'leave', gameId: latest.id, expectedRevision: latest.revision });
         if (result.accepted) this.setGameState(result.state);
       }
       if (this.state() !== current || previousCoordinator !== this.coordinator) this.broadcast();
@@ -99,6 +106,7 @@ export class CallGameSessionService implements OnDestroy {
   }
 
   reset(): void {
+    ++this.epoch;
     this.clearInvitationTimers();
     this.invitationVisible.set(false); this.invitationGameId = ''; this.dismissedInvitationId = '';
     this.callId = '';
@@ -175,6 +183,12 @@ export class CallGameSessionService implements OnDestroy {
 
   private receive({ senderUserId, body }: CallGamePacket): void {
     if (!this.callId || !this.users.includes(senderUserId)) return;
+    if (!this.engine && (this.enginePending || body['type'] === 'create' || body['type'] === 'action' || (body['type'] === 'state' && body['state'] != null))) {
+      const epoch = this.epoch;
+      void this.loadEngine().then(() => { if (epoch === this.epoch) this.receive({ senderUserId, body }); })
+        .catch(() => { if (epoch === this.epoch) this.error.set('No se pudo cargar el juego. Revisa tu conexión y vuelve a intentarlo.'); });
+      return;
+    }
     if (body['type'] === 'state') {
       if (senderUserId !== this.coordinator || !this.validState(body['state'])) return;
       const next = body['state'] as CallGameState | null;
@@ -206,12 +220,12 @@ export class CallGameSessionService implements OnDestroy {
     if (body['type'] === 'create') {
       if (!KINDS.includes(String(body['kind']))) return;
       if (current && current.status !== 'finished') { this.reject(senderUserId, 'Ya hay una partida disponible. Únete desde Juegos.'); return; }
-      this.setGameState(createCallGame(body['kind'] as CallGameKind, crypto.randomUUID(), senderUserId));
+      this.setGameState(this.engine!.createCallGame(body['kind'] as CallGameKind, crypto.randomUUID(), senderUserId));
       this.broadcast();
       return;
     }
     if (body['type'] !== 'action' || !current || !this.validAction(body['action'])) return;
-    const result = applyCallGameAction(current, senderUserId, body['action'] as CallGameAction);
+    const result = this.engine!.applyCallGameAction(current, senderUserId, body['action'] as CallGameAction);
     if (!result.accepted) {
       this.reject(senderUserId, result.error || 'El movimiento ya cambió. Revisa la partida e intenta de nuevo.');
       this.broadcast([senderUserId]);
@@ -258,7 +272,7 @@ export class CallGameSessionService implements OnDestroy {
       this.users.includes(s.hostUserId) && Array.isArray(s.playerIds) && s.playerIds.length <= 12 &&
       s.playerIds.every(id => this.users.includes(id)) && new Set(s.playerIds).size === s.playerIds.length &&
       ['lobby', 'playing', 'finished'].includes(s.status) && Number.isSafeInteger(s.revision) && s.revision >= 0 &&
-      Number.isSafeInteger(s.round) && Array.isArray(s.board) && s.board.length === callGameBoardSize(s.kind) &&
+      Number.isSafeInteger(s.round) && Array.isArray(s.board) && s.board.length === this.engine!.callGameBoardSize(s.kind) &&
       s.board.every(cell => cell === null || s.playerIds.includes(cell)) &&
       (s.turnUserId === null || s.playerIds.includes(s.turnUserId)) &&
       (s.winnerId === null || s.playerIds.includes(s.winnerId)) && typeof s.draw === 'boolean' &&

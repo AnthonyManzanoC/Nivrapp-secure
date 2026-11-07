@@ -444,13 +444,14 @@
       <button type="button" slot="fixed" class="jump-latest" (click)="jumpToLatest()" [attr.aria-label]="'CHAT.LATEST_MESSAGES' | translate:'Ir a los últimos mensajes'"><ion-icon name="chevron-down-outline"></ion-icon></button>
     }
   </ion-content>
-  <ion-modal [isOpen]="incognitoConfirmOpen" [canDismiss]="!busyAction" (didDismiss)="incognitoConfirmOpen = false">
+  <ion-modal #incognitoModal class="nivra-incognito-modal" [isOpen]="incognitoConfirmOpen" [canDismiss]="canDismissIncognito" (didDismiss)="incognitoConfirmOpen = false">
     <ng-template>
       <section class="incognito-confirm">
         <ion-icon name="lock-closed-outline" aria-hidden="true"></ion-icon>
         <h2>Chat incógnito</h2>
         <p>Se abre un espacio cifrado con este contacto. Los mensajes viven en la sala y se limpian cuando cualquiera sale o se desconecta.</p>
         <p>La otra persona puede conservar capturas. Revisa que ambos estén listos para entrar.</p>
+        @if (notice) { <p class="incognito-feedback" role="alert">{{notice}}</p> }
         <div><ion-button fill="clear" (click)="incognitoConfirmOpen = false" [disabled]="!!busyAction">Cancelar</ion-button><ion-button (click)="startIncognito()" [disabled]="!!busyAction">{{busyAction === 'incognito' ? 'Abriendo…' : 'Abrir e invitar'}}</ion-button></div>
       </section>
     </ng-template>

@@ -1,10 +1,12 @@
 // Separate build entry: NEVER imported by src/main.ts or shipped in production.
 // Renders the actual shell/chats components with synthetic, network-free services.
+import { GuidePage } from '../src/app/features/guide/guide.page';
+import { NotificationCheckPage } from '../src/app/features/guide/notification-check.page';
 import { Component, inject, signal } from '@angular/core';
 import { of } from 'rxjs';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { provideRouter, RouterLink, RouterOutlet } from '@angular/router';
-import { IonInput, IonTextarea, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent, provideIonicAngular } from '@ionic/angular/standalone';
+import { IonModal, IonInput, IonTextarea, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent, provideIonicAngular } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { arrowBackOutline, callOutline, videocamOutline } from 'ionicons/icons';
 import { ShellPage } from '../src/app/features/shell/shell.page';
@@ -180,6 +182,8 @@ class PreviewGames {
   }
   act(action:Parameters<typeof applyCallGameAction>[2]):void { if(this.state)this.state=applyCallGameAction(this.state,'alex',action).state; }
 }
+@Component({selector:'preview-incognito-dialog',standalone:true,imports:[IonModal,IonButton,IonIcon],template:`<button id="preview-open-incognito" (click)="open=true">Abrir confirmación</button><ion-modal mode="ios" class="nivra-incognito-modal" [isOpen]="open"><ng-template><section class="incognito-confirm"><ion-icon name="lock-closed-outline" /><h2>Chat incógnito</h2><p>Se abre un espacio cifrado con este contacto. Los mensajes viven en la sala y se limpian cuando cualquiera sale o se desconecta.</p><p>La otra persona puede conservar capturas. Revisa que ambos estén listos para entrar.</p><div><ion-button fill="clear">Cancelar</ion-button><ion-button>Abrir e invitar</ion-button></div></section></ng-template></ion-modal>`})
+class PreviewIncognitoDialog { open=false; }
 @Component({
   selector: 'app-root', standalone: true, imports: [RouterOutlet],
   template: `<router-outlet /><aside class="preview-controls"><span>Vista de prueba · Datos ficticios</span><button type="button" (click)="toggleDensity()">Cambiar líneas</button><button type="button" (click)="toggleTheme()">{{ light ? 'Tema oscuro' : 'Tema claro' }}</button></aside>`,
@@ -203,6 +207,8 @@ class PreviewAccountRecovery { constructor(){ (inject(AccountIdentityService).st
 bootstrapApplication(PreviewRoot, { providers: [
   provideIonicAngular(), provideRouter([{ path: 'app', component: ShellPage, children: [
     { path: 'chats', component: ChatsPage, children: [{ path: ':id', component: PreviewConversation }] },
+    { path: 'guide', component: GuidePage },
+    { path: 'notification-check', component: NotificationCheckPage },
     { path: 'contacts', component: ContactsPage },
     { path: 'communities', component: CommunitiesPage },
     { path: 'vault', component: VaultPage },
@@ -210,7 +216,7 @@ bootstrapApplication(PreviewRoot, { providers: [
     { path: 'games', component: PreviewGames },
     { path: 'world', component: WorldPage },{ path: 'composer', component: PreviewComposer },{ path: 'viewer', component: PreviewViewer },{ path: 'invitation', component: PreviewInvitation },
     { path: '**', component: PreviewEmpty },
-  ] },{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls},{path:'preview/recovery',component:PreviewAccountRecovery}, { path: '**', redirectTo: 'app/chats' }]),
+  ] },{path:'preview/incognito-dialog',component:PreviewIncognitoDialog},{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls},{path:'preview/recovery',component:PreviewAccountRecovery}, { path: '**', redirectTo: 'app/chats' }]),
   { provide: AuthService, useValue: { sessionGeneration:signal(1), session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
   { provide: ChatService, useValue: chat },
   { provide: CommunityService, useValue: v9.communities },
@@ -231,6 +237,6 @@ bootstrapApplication(PreviewRoot, { providers: [
   { provide: AppSettingsService, useValue: { settings: previewSettings } },
   { provide: LocalHistoryService, useValue: { storageError: signal(''), storageState: signal('ready'), storageBusy: signal(false) } },
   { provide: NativeDeviceService, useValue: {} },
-  { provide: PushService, useValue: { permission: signal('unsupported'), registering: signal(false) } },
+  { provide: PushService, useValue: { permission: signal('default'), registering: signal(false), tokenId: signal(null), registeredOnServer: signal(false), serverReady: signal(true), error: signal(''), refreshStatus: async () => true, requestPermissionAndRegister: async () => false } },
   { provide: TranslateService, useValue: { instant: (_key: string, fallback: string) => fallback, currentLanguage: signal('es') } },
 ] }).catch(error => console.error(error));

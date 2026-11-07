@@ -479,7 +479,7 @@ public sealed class NivraHub(
             Context.ConnectionAborted);
         if (!canEnter)
         {
-            return;
+            throw new HubException("La sala terminó o ya no tienes acceso. Vuelve al chat para iniciar otra conversación.");
         }
 
         await Groups.AddToGroupAsync(Context.ConnectionId, GroupsFor.VaultRoom(roomId));
@@ -536,6 +536,8 @@ public sealed class NivraHub(
         if (request.Recipients.Count > 1024 || string.IsNullOrWhiteSpace(request.ClientMessageId) || request.ClientMessageId.Length > 128) throw new HubException("Mensaje de sala inválido.");
         if (!await store.IsSessionActiveAsync(currentUser.SessionId, currentUser.UserId, currentUser.DeviceId, now, Context.ConnectionAborted)) throw new HubException("La sesión de este dispositivo dejó de estar autorizada.");
         var activeUsers = await db.VaultRoomMembers.Where(member => member.VaultRoomId == roomId && member.Status == VaultMemberStatus.Active).Select(member => member.UserId).ToListAsync(Context.ConnectionAborted);
+        if (activeUsers.Count < 2 && await db.VaultRooms.AnyAsync(room => room.Id == roomId && room.RetentionMode == VaultRetentionMode.BurnOnExit, Context.ConnectionAborted))
+            throw new HubException("Espera a que tu contacto entre al chat incógnito antes de enviar.");
         var deviceIds = request.Recipients.Select(recipient => recipient.DeviceId).Distinct().ToArray();
         var devices = await db.Devices.AsNoTracking().Where(device => deviceIds.Contains(device.Id) && device.RevokedAt == null && device.IsTrusted && db.Users.Any(user => user.Id == device.UserId && user.DisabledAt == null)).ToDictionaryAsync(device => device.Id, Context.ConnectionAborted);
         if (!request.Recipients.Select(recipient => recipient.UserId).ToHashSet(StringComparer.Ordinal).SetEquals(activeUsers) ||

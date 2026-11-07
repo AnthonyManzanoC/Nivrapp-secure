@@ -1,215 +1,102 @@
-# Nivra Backend
+# Nivra Private Messenger
 
-La versión 8.1.0, Android build 52, integra un motor común Double Ratchet basado en vodozemac y un saludo híbrido X25519 + ML-KEM-768. Los mensajes nuevos requieren dispositivos actualizados; se conserva la lectura del historial anterior y la transferencia cifrada aprobada entre dispositivos. Mantiene la cola de textos, el diseño de escritorio y Cerrar chat. Véanse [el protocolo, las pruebas y el despliegue de 8.1.0](docs/release-8.1.0.md).
+Código actual: **9.2.0**, Android **build 58**. Revisión: 6 de noviembre de 2026.
 
-Backend MVP para Nivra: una app de mensajería privada, gratuita primero, con base técnica para cifrado extremo a extremo en cliente, paquetes opacos en servidor, bóveda cifrada, archivos cifrados, llamadas WebRTC y sincronización segura.
+Nivra es un mensajero con chats privados y grupales, contactos, comunidades, historias, listas de difusión, bóveda y llamadas. Comparte una interfaz Angular/Ionic entre Web, Android (Capacitor) y Windows (Electron); la API .NET usa PostgreSQL y SignalR.
 
-La capa de datos ya usa PostgreSQL/Supabase con Entity Framework Core y migraciones automáticas al arrancar.
-El backend funciona como API pura + SignalR. El SPA vanilla original se conserva en `Nivra.Api/wwwroot_legacy` como historial y guia de migracion; el nuevo frontend vive en `nivra-app` con Angular + Ionic.
+## Empezar a usar Nivra
 
-La versión 8.0.0, Android build 50, consolida una renovación visual de acceso y chats, mejora búsqueda y rendimiento en segundo plano, y refuerza la validación de sesiones, los límites de solicitudes y las cabeceras de seguridad. El piloto Double Ratchet AES-256-GCM continúa aislado y experimental; el protocolo criptográfico de producción no cambia en esta versión. Véanse [los cambios, pruebas y límites de 8.0.0](docs/release-8.0.0.md).
+La primera entrada a Chats en una cuenta sin guía completada abre **Guía de Nivra**. Explica cinco tareas: revisar el perfil, agregar un contacto, enviar un mensaje, llamar y preparar la recuperación. Permite explorar por cuenta propia y volver desde **Cuenta → Guía de Nivra**. El progreso es una lista de prácticas marcada por el usuario, guardada por cuenta en ese dispositivo; no certifica que la recuperación esté configurada.
 
-La consolidación de la versión 8.0.0 mejora diseño, búsqueda, rendimiento y validación de sesiones, actualiza dependencias y añade pruebas de seguridad reproducibles. Incluye un piloto aislado de libsignal con AES-256-GCM; Double Ratchet todavía no está activado en los clientes publicados.
+La guía incluye doce áreas funcionales con accesos directos. Los enlaces de invitación, chats específicos y acciones de llamadas mantienen su destino. Cuenta también incorpora **Notificaciones → Comprueba tus notificaciones**, disponible directamente en /app/notification-check.
 
-La versión 7.6.0, Android build 48, mueve las acciones de chats a la izquierda, corrige el acceso al perfil y el tema del acceso, y reduce lecturas redundantes en la sincronización de PostgreSQL. Véanse [los cambios y límites de 7.6.0](docs/release-7.6.0.md).
+**Recuperación:** recuperar el acceso permite entrar de nuevo. El correo verificado ayuda a restablecer la contraseña y la frase protege la identidad de cuenta. Sincronizar el historial necesita contenido y llaves disponibles en un equipo autorizado. Perder todas las copias puede impedir recuperar mensajes antiguos.
 
-La versión 7.5.0, Android build 47, unifica el idioma de entrada y Cuenta, adapta Recuperación al idioma y tema del sistema, regresa a Bienvenida al cerrar la última cuenta y añade una tarjeta rápida de contacto. Reúne las acciones de chat a la derecha, pule Llamadas y permite guardar adjuntos autorizados en el dispositivo. Véanse [los cambios, validación y límites de 7.5.0](docs/release-7.5.0.md).
+## Matriz del estado real
 
-La versión 7.4.0, Android build 46, recupera el historial localmente en el APK sin pedir ayuda automáticamente a otros equipos. Mantiene la aprobación de solicitudes entrantes y ofrece recuperación externa explícita para llaves antiguas. Véanse [los cambios, validación y límites de 7.4.0](docs/release-7.4.0.md).
+Esta tabla describe el repositorio, no una certificación del despliegue público. Los resultados de la entrega se registran en [validación 9.2.0](docs/release-9.2.0.md).
 
-La versión 7.3.0, Android build 45, recupera automáticamente las comprobaciones de historial local interrumpidas por la red, evita solicitudes de vinculación imposibles cuando el directorio confirma un único dispositivo y distingue los avisos de recuperación local de las llaves originales no disponibles. Véanse [los cambios, validación y límites de 7.3.0](docs/release-7.3.0.md).
+| Área | Estado en código | Dependencias y límites |
+| --- | --- | --- |
+| Web | Implementada | Servidor web con rutas SPA y API autorizada por CORS. |
+| Android | Proyecto nativo, push, almacenamiento y llamadas | APK firmado con el certificado existente. Validar permisos, batería y fabricantes en teléfonos físicos. |
+| Windows | Electron e instalador NSIS | Avisos del sistema mientras la app está ejecutándose; no requiere token FCM. |
+| iOS | Dependencias compartidas | No hay proyecto iOS generado ni instalador. Requiere macOS/Xcode, firma y configuración Apple. |
+| Bienvenida y guía | Implementadas en el cliente compartido | Progreso local por cuenta. Nuevos textos completos en español e inglés; otros idiomas usan el fallback existente. |
+| Diagnóstico de avisos | Permiso, conexión, servicio y registro por dispositivo | En Android consulta permiso nativo. Windows explica sus avisos del sistema. No simula una prueba de entrega FCM. |
+| Acceso y dispositivos | Alias/ID, QR, sesiones, revocación | La autenticación Firebase por teléfono se conserva; su activación sigue pendiente por decisión del propietario. |
+| Contactos | Solicitudes, invitaciones y bloqueo | Las cuentas privadas requieren identificación exacta o pase. |
+| Chats y grupos | Mensajes, adjuntos, edición, reacciones, recibos y cola de textos | Los reintentos requieren cliente abierto y desbloqueado; dependen de red y compatibilidad de dispositivos. |
+| Notas propias y difusión | Implementadas | Las difusiones se entregan por conversaciones privadas. |
+| Comunidades | Agrupación de grupos, miembros e invitaciones | Permisos por rol; límites de código no equivalen a capacidad de carga comprobada. |
+| Historias/Mundo | Texto y multimedia, audiencia y respuestas | Revisar audiencia antes de publicar. Formato criptográfico propio. |
+| Chat incógnito | Vista temporal con estado del contacto, salida al chat y diseño claro/oscuro | Ambos deben entrar antes de enviar. Una salida o desconexión cierra la sala; los participantes pueden conservar capturas. |
+| Bóveda y salas | Elementos, acceso e invitaciones | Revisar duración y condiciones de cada sala. Voz requiere LiveKit. |
+| Mensajes cifrados | Double Ratchet con vodozemac, saludo híbrido X25519/ML-KEM-768 | Composición propia de Nivra; auditoría independiente pendiente. No es el formato de Signal. |
+| Identidad recuperable | Certificados de dispositivos y copias cifradas | Recuperar identidad no restaura automáticamente el historial. |
+| Historial multidispositivo | Transferencia aprobada y reanudable | Necesita un origen autorizado que conserve datos/llaves; no recupera mensajes eliminados o vencidos. |
+| Llamadas directas | WebRTC y señalización protegida | TURN sigue pendiente de operación; algunas redes pueden fallar. La conexión directa puede revelar IP entre participantes. |
+| Llamadas grupales | LiveKit y cifrado por publicador | Configuración LiveKit y validación física; revisión externa de distribución de claves pendiente. |
+| Pantalla, juegos y traducción | Implementadas según plataforma | Permisos del sistema; traducción depende del dispositivo. Juegos se cargan al usarlos. |
+| Monetización | Endpoints de planes y anuncios | No implica pasarela de pagos ni suscripciones comerciales operativas. |
+| Remitente sellado | Diseño documentado | No activado; no se promete ausencia de metadatos. |
 
-La versión 7.2.0, Android build 44, incorpora búsqueda de ajustes con navegación directa y recupera envíos fallidos sin sobrescribir el siguiente texto que el usuario esté redactando. Conserva los identificadores de reintento y el aislamiento entre cuentas. Véanse [los cambios y validación de 7.2.0](docs/release-7.2.0.md).
+## Arquitectura y carga inicial
 
-La versión 6.1.3, Android build 40, corrige la aceptación de llamadas desde la segunda cuenta, los errores de conexión que permanecían sobre video conectado y los reintentos que interferían con la preparación del audio. Añade traducción local opcional de llamadas por subtítulos, voz o ambos en dispositivos compatibles. La API utiliza una cola persistente para que un proveedor de notificaciones lento no retrase la creación de la llamada. Véanse [los cambios, requisitos y validación de 6.1.3](docs/release-6.1.3.md).
+- nivra-app: Angular/Ionic; rutas de pantallas con carga diferida.
+- Nivra.Api: API .NET 9, PostgreSQL/Entity Framework y SignalR.
+- android: integración Capacitor y funciones nativas.
+- Nivra.Desktop: Electron, almacenamiento protegido y actualización.
+- crypto: motor común Rust/WASM, pruebas y laboratorios históricos.
+- checks, tools y .github/workflows: validación y publicación.
 
-La versión 6.1.1, Android build 38, añadió navegación táctil entre pestañas, doble toque para cambiar de cuenta y aviso de historial ocultable durante 24 horas. Separó la entrada del launcher de la actividad principal Android para corregir el cierre al cambiar entre cuentas con iconos distintos. Véanse [los cambios y validación de 6.1.1](docs/release-6.1.1.md).
+LiveKit se importa al conectar una sala que lo necesita. Sus proveedores de llaves se cargan por separado; se conserva el requisito de activar el cifrado antes de publicar medios. El motor de juegos se descarga al crear/recibir una partida y su panel al abrirlo. Bóveda y Comunidades mantienen sus rutas diferidas.
 
-La versión 6.1.0 corrigió el regreso involuntario a Chats al añadir otra cuenta y las transacciones que impedían guardar el icono. Incorpora fotos con fragmentos musicales de hasta quince segundos, selección y vista previa de audio y reproducción compartida entre los visores de historias. Conserva las dos cuentas, las difusiones cifradas y la apariencia sincronizada de 6.0.0. La música requiere la API 6.1.0 y su migración aditiva. Véanse [los cambios, validación y límites de 6.1.0](docs/release-6.1.0.md), [la entrega 6.0.0](docs/release-6.0.0.md), [los alcances del icono en Windows](Nivra.Desktop/README.md) y [el procedimiento de publicación](docs/release-update-feed.md).
+La medición de compilación local pasa de 3,23 MB iniciales a aproximadamente 2,73 MB. Es tamaño de recursos, no una medición de velocidad, batería o memoria en teléfonos. Android incluye todos los recursos dentro del APK y los carga al necesitarlos; no depende de descargarlos de Internet al abrir cada función.
 
-La versión 2.0.0 incorpora verificación QR rápida, bienvenida y búsqueda de chats, salas con salida/reingreso, avisos Android nativos y actualización verificada del APK. Véase [la guía de versión y despliegue](docs/release-2.0.0.md).
+## Ejecutar en desarrollo
 
-## Principios
+Requisitos: .NET 9, PostgreSQL, Node y npm compatibles con Angular 20; JDK 21 y Android SDK para Android. Usar secretos por variables de entorno o gestor del proveedor.
 
-- El backend no lee contenido de mensajes, archivos ni metadata sensible.
-- Los clientes cifran antes de enviar; el servidor enruta y almacena paquetes cifrados pendientes.
-- El borrado remoto es una solicitud sincronizada entre clientes, no una promesa absoluta.
-- Las notificaciones deben enviarse sin contenido sensible.
-- No se implementan funciones orientadas a evasión legal, ocultamiento de evidencia o abuso.
-
-## Ejecutar
-
-```powershell
+~~~powershell
+npm ci
+npm --prefix nivra-app ci
+npm --prefix Nivra.Desktop ci
 $env:ASPNETCORE_ENVIRONMENT = "Development"
-dotnet run --project .\Nivra.Api\Nivra.Api.csproj --urls http://localhost:5055
-npm --prefix .\nivra-app run start -- --host 127.0.0.1 --port 8100
-```
+dotnet run --project Nivra.Api/Nivra.Api.csproj --urls http://localhost:5055
+~~~
 
-El script del frontend usa `ng serve --force-esbuild` para que el servidor local soporte rutas profundas como `/auth` y `/app/chats`.
+En otra terminal:
 
-La ruta `/` presenta Nivra Private Messenger a visitantes web, con acceso a la aplicación, instrucciones y descargas directas del APK Android y del instalador EXE Windows. Android/Windows muestran una bienvenida con idioma y «Siguiente» antes del primer inicio de sesión; las sesiones abiertas conservan la entrada directa a sus chats.
+~~~powershell
+npm run web:start
+~~~
 
-Para esta etapa, la presentación y el mensajero se despliegan juntos en el proyecto Vercel existente: comparten dominio y sesiones, y `nivra-app/vercel.json` conserva las rutas `/auth` y `/app/*`. Separar la presentación en otro proyecto tendría sentido si se requiere un sitio comercial con contenido, posicionamiento y despliegues independientes.
+La configuración de conexión y los secretos son propios del entorno. No copiar credenciales de producción a archivos versionados. La API aplica migraciones al arrancar: revisar y respaldar antes de desplegar.
 
-La API expone:
+## Comprobar y empaquetar
 
-- `GET /health`
-- `GET /health/ready`
-- `GET /client/android-release`
-- `POST /auth/register`
-- `POST /auth/login`
-- `POST /auth/refresh`
-- `POST /auth/logout`
-- `GET/PATCH /me`
-- `GET/POST/DELETE /devices`
-- `GET /keys/{alias}`
-- `POST /keys/prekeys`
-- `GET/POST/DELETE /contacts`
-- `POST /contacts/radar/scan`
-- `GET/POST/PATCH /conversations`
-- `POST /conversations/{conversationId}/messages`
-- `GET /messages/pending`
-- `GET /messages/sync`
-- `POST /messages/sync/ack`
-- `POST /messages/{messageId}/receipt`
-- `POST/GET/PUT /files`
-- `GET/POST/PATCH/DELETE /vault/items`
-- `POST /vault/rooms/{roomId}/invite-links`
-- `POST /vault/invites/{code}/accept`
-- `POST /calls/start`
-- `GET /calls/{callId}/room-token`
-- `PATCH /calls/{callId}/type`
-- `POST /calls/{callId}/invite`
-- `POST /calls/{callId}/signal`
-- `POST /calls/{callId}/end`
-- `GET/PATCH /privacy`
-- `POST/DELETE /push-tokens`
-- `POST /push-tokens/native-renew`
-- `GET /monetization/entitlements`
-- `GET /monetization/ad-catalog`
-- `POST /monetization/ad-impressions`
-- `GET /sync/bootstrap`
-- `POST /data/delete-request`
-- SignalR: `/hubs/realtime`
-- Frontend Angular/Ionic: `http://localhost:8100`
-- SPA legacy preservado: `Nivra.Api/wwwroot_legacy`
+~~~powershell
+dotnet build Nivra.sln
+npm --prefix nivra-app run build
+$env:CHROME_BIN = 'C:\Program Files\Google\Chrome\Application\chrome.exe'
+node nivra-app/node_modules/@angular/cli/bin/ng.js test --watch=false --browsers=ChromeHeadlessNoGpu --progress=false
+powershell -NoProfile -File checks/run-security-checks.ps1
+npm run cap:sync
+npm --prefix Nivra.Desktop run build-exe
+npm --prefix Nivra.Desktop run build-installer
+~~~
 
-## Producción
+Android: tools/build-android-production.ps1 exige la llave existente y sus contraseñas por entorno. tools/verify-release.ps1 verifica versiones, firma, recursos web e integridad antes de producir el feed. Nunca anunciar instaladores sin esta comprobación. Consultar [publicación](docs/release-update-feed.md).
 
-Antes de producción:
+## Configuración de producción
 
-1. Cambiar `Security:TokenSigningKey` por un secreto real cargado desde variables de entorno o secret manager.
-2. Mover `ConnectionStrings:Supabase` a variable de entorno o secret manager antes de publicar el repo.
-3. Configurar Supabase Storage S3 por variables de entorno: `Storage__Provider=SupabaseS3`, `Storage__Bucket=nivra-vault`, `Storage__Endpoint=https://<project>.supabase.co/storage/v1/s3`, `Storage__AccessKeyId` y `Storage__SecretAccessKey`.
-4. Activar push real con FCM: `Push__Enabled=true`, `Push__Fcm__ProjectId=<firebase-project-id>` y `Push__Fcm__ServiceAccountJsonBase64=<service-account-json-base64>`. El cliente registra tokens en `/push-tokens`; en Capacitor se usa `@capacitor-firebase/messaging` y `@capacitor/local-notifications`.
-5. Agregar rate limiting por IP, alias y dispositivo.
-6. Agregar verificación de abuso sin leer contenido: límites, reputación de cuenta, reportes de perfil y bloqueo.
-7. Auditar criptografía del cliente. El servidor nunca debe inventar cifrado propio para mensajes.
-8. Configurar TURN en `WebRtc__IceServers` para redes NAT estrictas. Para evitar exponer la IP entre participantes, usar credenciales TURN efímeras y `WebRtc__RelayOnly=true`.
-9. Antes de anunciar E2EE en llamadas grupales, habilitar LiveKit E2EE con una llave creada y distribuida exclusivamente por clientes.
+Configurar como mínimo: conexión PostgreSQL; Security__TokenSigningKey estable y secreto; almacenamiento cifrado local o S3; CORS; push FCM/WebPush según plataforma; URL/credenciales LiveKit para salas; TURN para redes restrictivas. No exponer claves de servicio en clientes ni repositorios.
 
-Configuración mínima recomendada para llamadas directas en producción:
+Las opciones de ratchet de producción son Ratchet__Enabled=true, Ratchet__RequireHybrid=true y laboratorios desactivados. /health informa vida; /health/ready permite comprobar preparación efectiva. Los valores del proveedor pueden sustituir los del repositorio.
 
-```text
-WebRtc__IceServers__0__Urls__0=stun:turn.example.com:3478
-WebRtc__IceServers__1__Urls__0=turn:turn.example.com:3478?transport=udp
-WebRtc__IceServers__1__Urls__1=turns:turn.example.com:5349?transport=tcp
-WebRtc__IceServers__1__Username=<credencial-efimera>
-WebRtc__IceServers__1__Credential=<secreto-efimero>
-WebRtc__RelayOnly=false
-```
+Consultar [preparación de seguridad](nivra-app/docs/security-production-readiness.md), [identidad y recuperación](docs/account-identity-recovery-9.1.0.md) y [límites de remitente sellado](docs/sealed-sender-deployment-gates.md).
 
-Debe existir una ruta TURN sobre UDP y otra sobre TLS/TCP para cubrir redes móviles, Wi‑Fi corporativo y NAT simétrico. `RelayOnly=true` fuerza máxima privacidad de IP, con el costo de enviar todo el tráfico por el relay.
+## Límites de la validación
 
-Las llamadas grupales y la conversión de una llamada directa al invitar a una tercera persona requieren LiveKit:
-
-```text
-LiveKit__Url=wss://livekit.example.com
-LiveKit__ApiKey=<api-key>
-LiveKit__ApiSecret=<api-secret>
-LiveKit__TokenMinutes=45
-```
-
-El backend no inicia una llamada grupal ni agrega el tercer participante si LiveKit no está configurado. Los tokens son efímeros, se emiten solo a participantes de una llamada activa y quedan limitados a la sala de esa llamada.
-
-El estado y los bloqueos criptográficos verificables se documentan en `nivra-app/docs/security-production-readiness.md`.
-
-Hardening incluido:
-
-- rate limiting global y especifico para auth;
-- CORS por lista blanca;
-- headers de seguridad;
-- manejo centralizado de errores con `traceId`;
-- migraciones automaticas al arrancar;
-- limite de subida cifrada de 50 MB;
-- logging SQL reducido en development;
-- SignalR con fallback de polling en el frontend.
-- reconexion SignalR con descarga y ACK por lote de `/messages/sync`;
-- push FCM sin contenido sensible cuando el receptor esta fuera de SignalR.
-
-Frontend Angular/Ionic:
-
-- login por alias, Firebase Phone Auth y QR;
-- shell responsive tipo WhatsApp/Telegram para web, PC y movil;
-- lista de chats con busqueda debounce y recientes;
-- detalle de chat con `ion-header`, `ion-content`, `ion-footer`, compositor y ajuste de teclado Capacitor;
-- adjuntos cifrados E2EE con reserva `/files`, subida binaria, descarga y preview local;
-- reacciones, recibos entregado/leido, ACK de sync y eventos de borrado/limpieza;
-- historial local-first con IndexedDB en Web/Desktop y SQLite nativo en Android/iOS;
-- sync incremental por watermark en `/messages/sync?since=...`;
-- llamadas WebRTC con estados, limpieza de streams/tracks y mensajes de sistema creados por cliente E2EE;
-- mensajes directos y grupales con sobres E2EE por dispositivo, padding y categoría de transporte uniformes, reintento transitorio con deduplicación idempotente por `clientMessageId` y validación de cobertura de participantes;
-- indicadores de escritura cifrados por dispositivo y eventos de edición/reacción ligados al remitente autenticado;
-- privacidad de foto de perfil aplicada por servidor (`everyone`, `contacts`, `nobody`) y actualización en tiempo real sin exponer la imagen en el evento;
-- push FCM web/nativo con data-push silencioso para llamadas entrantes;
-- pantallas iniciales conectadas para Mundo, Boveda, Llamadas y Cuenta;
-- radar cifrado de contactos por hashes SHA-256 calculados en cliente;
-- enlaces efimeros de Vault con codigo hasheado en servidor y flujo post-login;
-- servicios Angular para JWT, SignalR, Firebase, WebCrypto ECDH P-256 + AES-GCM;
-- salida configurada en `nivra-app/dist/nivra-app/browser` para Vercel/Capacitor;
-- modo oscuro, responsive web/movil.
-
-Pendiente de portar desde `wwwroot_legacy` en las siguientes iteraciones:
-
-- escaner QR nativo avanzado y previews enriquecidos;
-- historias multimedia y monetizacion visual completa;
-- iOS requiere macOS/Xcode, `GoogleService-Info.plist` y APNs en Firebase para generar el proyecto nativo.
-
-Artefactos locales generados:
-
-- APK debug 1.0.4: `android/app/build/outputs/apk/debug/app-debug.apk`
-- EXE Windows 1.0.4: `Nivra.Desktop/dist/Nivra-win32-x64/Nivra.exe`
-- JDK 21 portable usado para Android: `tools/jdk/jdk-21.0.11+10`
-
-## Base de datos
-
-Paquetes usados:
-
-- `Npgsql.EntityFrameworkCore.PostgreSQL`
-- `Microsoft.EntityFrameworkCore.Design`
-- `Microsoft.EntityFrameworkCore.Tools`
-
-Migraciones:
-
-```powershell
-dotnet ef migrations add InitialNivraPostgres --project .\Nivra.Api\Nivra.Api.csproj --startup-project .\Nivra.Api\Nivra.Api.csproj --output-dir Infrastructure\Migrations
-dotnet ef database update --project .\Nivra.Api\Nivra.Api.csproj --startup-project .\Nivra.Api\Nivra.Api.csproj
-dotnet ef migrations has-pending-model-changes --project .\Nivra.Api\Nivra.Api.csproj --startup-project .\Nivra.Api\Nivra.Api.csproj
-```
-
-Migraciones aplicadas:
-
-- `20260528234436_InitialNivraPostgres`
-- `20260528235000_CreateSupabaseVaultBucket`
-- `20260529223000_PushTokenCiphertext`
-- `20260603035228_PhoneRadarVaultInviteLinks`
-
-## Modelo gratis primero
-
-El backend está pensado para que Nivra arranque gratis:
-
-- cuentas gratuitas;
-- bóveda limitada por cuota futura;
-- llamadas P2P vía WebRTC;
-- publicidad ética sin leer mensajes: `ad-catalog` solo acepta región/idioma y `ad-impressions` guarda agregados por día, campaña y placement;
-- planes premium después: más bóveda, más dispositivos, backup cifrado y funciones profesionales.
+Compilar, aprobar pruebas y recibir una llamada en un teléfono real son evidencias distintas. La auditoría criptográfica externa, las pruebas con usuarios nuevos, los ensayos físicos de llamadas/notificaciones y las pruebas de carga deben registrarse con sus resultados. Ningún indicador de configuración garantiza entrega ni funcionamiento sin fallos en todas las redes y dispositivos.

@@ -39,7 +39,7 @@ import { FormsModule } from '@angular/forms';
   @if (showWaiting && deferredTimeline && !identityError && !needsRelink) {
     <aside class="history-new-device" role="status">
       <ion-icon name="lock-closed-outline" aria-hidden="true" />
-      <div><strong>Tu chat ya está listo</strong><p>Iniciaste sesión en un dispositivo nuevo. Sincroniza el historial pendiente si deseas ver los mensajes anteriores.</p></div>
+      <div><strong>Tu chat ya está listo</strong><p>Ya recuperaste el acceso a tu cuenta. Para ver mensajes anteriores, sincroniza desde otro equipo autorizado que todavía conserve tus conversaciones y sus llaves.</p></div>
       <button type="button" (click)="showHistoryDetails()">{{history.state() === 'syncing' ? 'Ver sincronización' : 'Sincronizar historial'}}</button>
     </aside>
     <ion-modal class="history-sync-modal" [isOpen]="detailsOpen" (didDismiss)="detailsOpen = false">

@@ -257,6 +257,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (text !== null && !this.draft) this.draft = text;
   }
   @ViewChild(IonContent) private content?: IonContent;
+  @ViewChild('incognitoModal') private incognitoModal?: IonModal;
+  readonly canDismissIncognito = (_data?: unknown, role?: string) => !this.busyAction || role === 'incognito-start';
   @ViewChild('chatOptions') private chatOptions?: IonPopover;
   @ViewChild('micButton', { read: ElementRef }) private micButton?: ElementRef<HTMLElement>;
   @ViewChild('draftInput') private draftInput?: IonTextarea;
@@ -747,6 +749,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const generation = this.auth.sessionGeneration();
     const vault = this.injector.get(VaultService);
     let createdRoomId = '';
+    this.notice = '';
     this.busyAction = 'incognito';
     try {
       const room = await vault.createRoom({
@@ -756,8 +759,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       createdRoomId = room.id;
       if (generation !== this.auth.sessionGeneration()) return;
       if (this.destroyed) { await vault.leaveRoom(room.id).catch(() => undefined); return; }
+      await this.incognitoModal?.dismiss(undefined, 'incognito-start');
+      if (this.destroyed || generation !== this.auth.sessionGeneration()) {
+        if (generation === this.auth.sessionGeneration()) await vault.leaveRoom(room.id).catch(() => undefined);
+        return;
+      }
       this.incognitoConfirmOpen = false;
-      if (!await this.router.navigate(['/app/vault'], {queryParams: {room: room.id}})) {
+      if (!await this.router.navigate(['/app/vault'], {queryParams: {room: room.id, mode: 'incognito', from: conversation.id}})) {
         await vault.leaveRoom(room.id).catch(() => undefined);
         this.notice = 'No se pudo abrir la sala. Vuelve a intentarlo.';
       }

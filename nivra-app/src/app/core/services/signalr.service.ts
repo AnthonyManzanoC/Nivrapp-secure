@@ -179,7 +179,8 @@ export class SignalrService implements OnDestroy {
 
   async joinVaultRoom(roomId: string): Promise<void> {
     await this.ensureConnected();
-    await this.connection?.invoke('JoinVaultRoom', roomId).catch(() => undefined);
+    if (!this.connection) throw new Error('No hay conexión con la sala. Revisa tu red y vuelve a intentarlo.');
+    await this.connection.invoke('JoinVaultRoom', roomId);
   }
 
   async leaveVaultRoom(roomId: string): Promise<void> {
@@ -199,6 +200,7 @@ export class SignalrService implements OnDestroy {
     },
   ): Promise<void> {
     await this.ensureConnected();
+    if (!this.connection) throw new Error('No hay conexión con la sala. Tu mensaje no se confirmó.');
     const request = {
       clientMessageId: payload.clientMessageId,
       kind: payload.kind,

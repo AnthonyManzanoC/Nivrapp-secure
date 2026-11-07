@@ -607,6 +607,7 @@ export interface ContactHashSyncResponse {
 }
 
 export interface PushStatusResponse {
+  hasRegistration?: boolean;
   serverReady: boolean;
   fcmReady?: boolean;
   webPushReady?: boolean;

@@ -1,5 +1,8 @@
 import { Injectable, OnDestroy, signal } from '@angular/core';
-import { Room, RoomEvent, type RemoteParticipant } from 'livekit-client';
+import type { Room, RemoteParticipant } from 'livekit-client';
+// SDK event names are stable wire values; keep this transport independent of media SDK loading.
+const RoomEvent = { DataReceived: 'dataReceived', ParticipantConnected: 'participantConnected',
+  ParticipantDisconnected: 'participantDisconnected', Connected: 'connected' } as const;
 import { Subject } from 'rxjs';
 
 export interface CallGamePacket { senderUserId: string; body: Record<string, unknown>; }
@@ -53,15 +56,15 @@ export class CallGameTransportService implements OnDestroy {
     const receive = (payload: Uint8Array, participant?: RemoteParticipant, _kind?: unknown, topic?: string) => {
       if (topic === TOPIC && participant?.identity) { this.receive(participant.identity, payload); }
     };
-    room.on(RoomEvent.DataReceived, receive);
-    room.on(RoomEvent.ParticipantConnected, update);
-    room.on(RoomEvent.ParticipantDisconnected, update);
-    room.on(RoomEvent.Connected, update);
+    room.on(RoomEvent.DataReceived as import('livekit-client').RoomEvent.DataReceived, receive);
+    room.on(RoomEvent.ParticipantConnected as import('livekit-client').RoomEvent.ParticipantConnected, update);
+    room.on(RoomEvent.ParticipantDisconnected as import('livekit-client').RoomEvent.ParticipantDisconnected, update);
+    room.on(RoomEvent.Connected as import('livekit-client').RoomEvent.Connected, update);
     this.roomCleanup = () => {
-      room.off(RoomEvent.DataReceived, receive);
-      room.off(RoomEvent.ParticipantConnected, update);
-      room.off(RoomEvent.ParticipantDisconnected, update);
-      room.off(RoomEvent.Connected, update);
+      room.off(RoomEvent.DataReceived as import('livekit-client').RoomEvent.DataReceived, receive);
+      room.off(RoomEvent.ParticipantConnected as import('livekit-client').RoomEvent.ParticipantConnected, update);
+      room.off(RoomEvent.ParticipantDisconnected as import('livekit-client').RoomEvent.ParticipantDisconnected, update);
+      room.off(RoomEvent.Connected as import('livekit-client').RoomEvent.Connected, update);
     };
     update();
   }
