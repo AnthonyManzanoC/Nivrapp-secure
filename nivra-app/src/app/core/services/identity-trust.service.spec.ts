@@ -7,6 +7,19 @@ const directory = (coordinate: string): PublicKeyDirectory => ({userId:'peer',al
   keyBundle:{identityKey:JSON.stringify({kty:'EC',crv:'P-256',x:coordinate.repeat(43),y:'B'.repeat(43)}),signedPreKey:null,preKeySignature:null,oneTimePreKeys:[]},
 }]});
 describe('persistent identity pins',()=>{
+  it('reports a changed account root even when its legacy device keys still match',async()=>{
+    const owner=crypto.randomUUID(),service=new IdentityTrustService(),known=directory('A');
+    const source=JSON.stringify([owner,'phone']),target=JSON.stringify([owner,'browser']);
+    await service.confirm(source,known);
+    const transfer=await service.exportForLinkedDevice(owner,'phone');
+    transfer.entries[0].accountRoot='R'.repeat(43)+':'+ 'S'.repeat(43);
+    await service.importFromLinkedDevice(target,'phone',transfer);
+    const changed={...known,accountIdentity:{rootKey:'T'.repeat(43)+':'+ 'U'.repeat(43)}} as PublicKeyDirectory;
+    expect((await service.continuity(target,changed)).state).toBe('changed');
+    await expectAsync(service.forDelivery(target,changed)).toBeRejectedWith(jasmine.objectContaining({code:'identity_changed'}));
+    expect(service.isChanged(target,'peer')).toBeTrue();
+    expect((await service.continuity(target,known)).state).toBe('verified');
+  });
   it('authenticates an independently generated browser with an existing peer signing key and rejects directory tampering',async()=>{
     const scope=crypto.randomUUID(),service=new IdentityTrustService(),known=directory('A');
     await service.confirm(scope,known);

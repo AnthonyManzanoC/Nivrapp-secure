@@ -1,5 +1,19 @@
 @use "../shared-page";
 
+.page { --background: var(--nivra-bg); }
+
+@media (max-width: 768px) {
+  .surface:not(.call-mode)::after {
+    content: '';
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 30;
+    height: calc(8px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)));
+    background: var(--nivra-bg);
+    pointer-events: none;
+  }
+}
+
 ion-modal.call-exit-modal {
   --width: min(440px, calc(100vw - 32px));
   --height: auto;

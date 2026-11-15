@@ -7,6 +7,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
     <div class="copy">
       <strong role="status">{{ 'CHAT.TEXT_NOT_SENT' | translate:'Mensaje sin enviar' }}</strong>
       <p class="message" dir="auto">{{ text }}</p>
+      @if (reason) { <p class="hint">{{ reason }}</p> }
       <p class="hint">{{ 'CHAT.TEXT_RETRY_HINT' | translate:'Reintenta o descarta este mensaje para continuar. El texto nuevo que escribiste se conserva.' }}</p>
     </div>
     <div class="actions">
@@ -21,6 +22,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 })
 export class FailedTextSendComponent {
   @Input() text = '';
+  @Input() reason = '';
   @Input() retryDisabled = false;
   @Input() busy = false;
   @Output() retry = new EventEmitter<void>();

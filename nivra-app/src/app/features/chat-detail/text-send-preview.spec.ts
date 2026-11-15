@@ -74,16 +74,18 @@ describe('Nonblocking durable text composer', () => {
     expect(h.page.router.navigateByUrl).toHaveBeenCalledWith('/app/chats');
     expect(h.page.textOutbox.discard).not.toHaveBeenCalled();
   });
-  it('times out identity preparation before a queued send and never posts after its late completion', fakeAsync(() => {
+  it('uses the slow-network deadline for queued identity preparation and never posts after its late completion', fakeAsync(() => {
     const service: any = Object.create(ChatService.prototype);
     let finish!: (value: unknown) => void; let error: Error | null = null;
     service.auth = { session: () => ({ user: { id: 'a' }, device: { id: 'phone' } }),
       ensureDeviceIdentity: () => new Promise(resolve => finish = resolve) };
     service.assertPrivateChatUnlocked = () => undefined;
+    service.network = { readTimeoutMs: () => 60000 };
     service.api = { post: jasmine.createSpy() };
     void service.sendPayload({ id: 'chat' }, { type: 'text', text: 'Queued' }, 'Text', null, { queueManaged: true })
       .catch((failure: Error) => error = failure);
-    tick(30001); flushMicrotasks(); expect((error as Error | null)?.name).toBe('TimeoutError');
+    tick(30001); flushMicrotasks(); expect(error).toBeNull();
+    tick(30000); flushMicrotasks(); expect((error as Error | null)?.name).toBe('TimeoutError');
     finish({ userId: 'a', deviceId: 'phone' }); flushMicrotasks();
     expect(service.api.post).not.toHaveBeenCalled();
   }));

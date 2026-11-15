@@ -391,6 +391,7 @@ describe('Chats actions and scoped search', () => {
       expect(page.contactsFabExpanded).toBeTrue();tick(4500);expect(page.contactsFabExpanded).toBeFalse();
     }));
     let list: { scrollTop: number; scrollHeight: number; clientHeight: number };
+    let mobileHeader: jasmine.Spy;
     const touch = (x: number, y: number, count = 1, target: EventTarget | null = null): TouchEvent => ({
       currentTarget: list, target: target ?? list,
       touches: Array.from({ length: count }, (_, identifier) => ({ identifier, clientX: x + identifier, clientY: y })),
@@ -403,6 +404,77 @@ describe('Chats actions and scoped search', () => {
     beforeEach(() => {
       list = { scrollTop: 0, scrollHeight: 1_400, clientHeight: 500 };
       spyOn(page, 'androidStoryGesturesEnabled').and.returnValue(true);
+      mobileHeader = spyOn(page, 'mobileChatHeaderEnabled').and.returnValue(false);
+    });
+
+    it('folds the entire mobile header while reading and restores compact controls before the full stories at the top', fakeAsync(() => {
+      mobileHeader.and.returnValue(true);
+      page.storiesCollapsed = false;
+      scroll(150);
+      expect(page.mobileChatHeaderHidden()).toBeTrue();
+      // Preserve the expanded height until the enclosing accordion finishes.
+      expect(page.storiesCollapsed).toBeFalse();
+      tick(260);
+      scroll(120);
+      expect(page.mobileChatHeaderHidden()).toBeFalse();
+      expect(page.storiesCollapsed).toBeTrue();
+      tick(260);
+      scroll(0);
+      expect(page.mobileChatHeaderHidden()).toBeFalse();
+      expect(page.storiesCollapsed).toBeFalse();
+      expect(chat.refreshChats).not.toHaveBeenCalled();
+      tick(4_500);
+    }));
+
+    it('keeps search and selection controls available and clears the mobile state on desktop resize', () => {
+      const mobile = mobileHeader.and.returnValue(true);
+      page.mobileHeaderCollapsed = true;
+      page.onSearchFocus();
+      expect(page.mobileChatHeaderHidden()).toBeFalse();
+      scroll(150);
+      expect(page.mobileHeaderCollapsed).toBeFalse();
+      page.showRecentSearches = false;
+      page.mobileHeaderCollapsed = true;
+      page.selectedChatIds.set(new Set(['family']));
+      expect(page.mobileChatHeaderHidden()).toBeFalse();
+      page.selectedChatIds.set(new Set());
+      mobile.and.returnValue(false);
+      page.onChatViewportResize();
+      expect(page.mobileHeaderCollapsed).toBeFalse();
+    });
+
+    it('ignores a clamped scroll offset caused by the extra room from collapsing the header', fakeAsync(() => {
+      mobileHeader.and.returnValue(true);
+      scroll(150);
+      expect(page.mobileChatHeaderHidden()).toBeTrue();
+      tick(300);
+      list.clientHeight = 750;
+      scroll(80);
+      expect(page.mobileChatHeaderHidden()).toBeTrue();
+      tick(120);
+      scroll(50);
+      expect(page.mobileChatHeaderHidden()).toBeFalse();
+      tick(4500);
+    }));
+
+    it('folds and restores the full mobile header with a short list without stealing horizontal swipes', () => {
+      mobileHeader.and.returnValue(true);
+      list.scrollHeight = 100;
+      page.storiesCollapsed = false;
+      page.onNativeStoryTouchStart(touch(120, 190));
+      page.onNativeStoryTouchMove(touch(124, 138));
+      page.onNativeStoryTouchEnd(touch(124, 138, 0));
+      expect(page.mobileChatHeaderHidden()).toBeTrue();
+      page.onNativeStoryTouchStart(touch(120, 120));
+      page.onNativeStoryTouchMove(touch(190, 132));
+      page.onNativeStoryTouchEnd(touch(190, 132, 0));
+      expect(page.mobileChatHeaderHidden()).toBeTrue();
+      page.onNativeStoryTouchStart(touch(120, 120));
+      page.onNativeStoryTouchMove(touch(123, 190));
+      page.onNativeStoryTouchEnd(touch(123, 190, 0));
+      expect(page.mobileChatHeaderHidden()).toBeFalse();
+      expect(page.storiesCollapsed).toBeFalse();
+      expect(chat.refreshChats).not.toHaveBeenCalled();
     });
 
     it('reveals stories after a downward pull that starts at the top, without refreshing chats', () => {

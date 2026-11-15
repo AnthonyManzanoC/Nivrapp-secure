@@ -1,6 +1,6 @@
 # Nivra Private Messenger
 
-Código actual: **9.3.0**, Android **build 59**. Revisión: 14 de noviembre de 2026.
+Código actual: **9.3.1**, Android **build 60**. Revisión: 15 de noviembre de 2026.
 
 Nivra es un mensajero con chats privados y grupales, contactos, comunidades, historias, listas de difusión, bóveda y llamadas. Comparte una interfaz Angular/Ionic entre Web, Android (Capacitor) y Windows (Electron); la API .NET usa PostgreSQL y SignalR.
 
@@ -10,13 +10,13 @@ La [revisión de estabilidad del 14 de noviembre](docs/reliability-review-2026-1
 
 La primera entrada a Chats en una cuenta sin guía completada abre **Guía de Nivra**. Explica cinco tareas: revisar el perfil, agregar un contacto, enviar un mensaje, llamar y preparar la recuperación. Permite explorar por cuenta propia y volver desde **Cuenta → Guía de Nivra**. El progreso es una lista de prácticas marcada por el usuario, guardada por cuenta en ese dispositivo; no certifica que la recuperación esté configurada.
 
-La guía incluye doce áreas funcionales con accesos directos. Los enlaces de invitación, chats específicos y acciones de llamadas mantienen su destino. Cuenta también incorpora **Notificaciones → Comprueba tus notificaciones**, disponible directamente en /app/notification-check.
+La guía incluye dieciséis áreas funcionales con accesos directos, buscador y explicaciones de los estados de mensajes y la recuperación automática. Los enlaces de invitación, chats específicos y acciones de llamadas mantienen su destino. Cuenta también incorpora **Notificaciones → Comprueba tus notificaciones**, disponible directamente en /app/notification-check.
 
 **Recuperación:** recuperar el acceso permite entrar de nuevo. El correo verificado ayuda a restablecer la contraseña y la frase protege la identidad de cuenta. Sincronizar el historial necesita contenido y llaves disponibles en un equipo autorizado. Perder todas las copias puede impedir recuperar mensajes antiguos.
 
 ## Matriz del estado real
 
-Esta tabla describe el repositorio, no una certificación del despliegue público. Los resultados de la entrega se registran en [validación 9.3.0](docs/release-9.3.0.md).
+Esta tabla describe el repositorio, no una certificación del despliegue público. Los resultados de la entrega se registran en [validación 9.3.1](docs/release-9.3.1.md).
 
 | Área | Estado en código | Dependencias y límites |
 | --- | --- | --- |

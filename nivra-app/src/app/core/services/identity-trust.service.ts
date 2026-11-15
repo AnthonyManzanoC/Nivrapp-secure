@@ -63,7 +63,11 @@ export class IdentityTrustService {
       if(!isCurrent())throw new Error('La comprobación ya no está activa.');
       const acceptedRoot=current?.accountRoot??proofs.find(proof=>proof.accountRoot&&(!current||proof.rootEndorsed&&current.devices?.some(device=>device.deviceId===proof.sourceDeviceId&&device.identity===proof.sourceIdentity)))?.accountRoot;
       // An established root can never be replaced by a server-supplied directory.
-      if(current?.accountRoot&&directory.accountIdentity?.rootKey&&current.accountRoot!==directory.accountIdentity.rootKey)throw Object.assign(new Error('La identidad raíz de este contacto cambió. Revisa su identidad antes de continuar.'),{retryable:true});
+      if(current?.accountRoot&&directory.accountIdentity?.rootKey&&current.accountRoot!==directory.accountIdentity.rootKey){
+        this.setPending(scope,directory.userId,0);
+        this.changed.update(previous=>new Set([...previous,JSON.stringify([scope,directory.userId])]));
+        throw Object.assign(new Error('La identidad raíz de este contacto cambió. Revisa su identidad antes de continuar.'),{retryable:true,code:'identity_changed'});
+      }
       const pinned=current?{...current,...(acceptedRoot?{accountRoot:acceptedRoot}:{})}:undefined;
       if(current?.digest===fingerprint.digest&&current.devices?.length)return pinned!;
       if(current && current.digest!==fingerprint.digest && !this.hasKnownEncryptionKeys(current,fingerprint)) {
@@ -81,7 +85,7 @@ export class IdentityTrustService {
         this.setPending(scope,directory.userId,0);
         this.changed.update(previous=>new Set([...previous,JSON.stringify([scope,directory.userId])]));
         // Re-evaluate queued messages after the user confirms; never encrypt while this fails.
-        throw Object.assign(new Error('La identidad de este contacto ha cambiado. Abre Verificar identidad y compara el código antes de continuar.'),{retryable:true});
+        throw Object.assign(new Error('La identidad de este contacto ha cambiado. Abre Verificar identidad y compara el código antes de continuar.'),{retryable:true,code:'identity_changed'});
       }
       return {...current,...(acceptedRoot?{accountRoot:acceptedRoot}:{}),digest:fingerprint.digest,verified:current?.verified??false,devices:fingerprint.deviceIdentities};
     });
@@ -101,6 +105,7 @@ export class IdentityTrustService {
       tx.onabort=()=>reject(tx.error || new Error('No se pudo comprobar la identidad.'));
     });
     if(!pin)return {state:'unknown'};
+    if(pin.accountRoot&&directory.accountIdentity?.rootKey&&pin.accountRoot!==directory.accountIdentity.rootKey)return {state:'changed'};
     if(pin.digest!==fingerprint.digest && !this.hasKnownEncryptionKeys(pin,fingerprint)){
       const match=this.knownDevices(pin,fingerprint);
       return {state:!match.replaced&&match.ids.size>0?'pending-device':'changed'};

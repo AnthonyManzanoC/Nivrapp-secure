@@ -3,7 +3,36 @@
   <section aria-labelledby="first-steps"><div class="steps-heading"><h2 id="first-steps">{{ 'GUIDE.STEPS' | translate:'Tus primeros pasos' }}</h2><span class="progress-count" aria-hidden="true">{{ progress().completed.length }} / 5</span></div><progress max="5" [value]="progress().completed.length" aria-labelledby="first-steps"></progress><p class="progress-copy" role="status">{{ progress().completed.length }} / 5 · {{ 'GUIDE.PROGRESS' | translate:'Marca lo que ya practicaste. Tu progreso se guarda en este dispositivo.' }}</p>
     <div class="tasks">@for (task of tasks; track task.id; let i = $index) {<article [class.completed]="progress().completed.includes(task.id)"><span class="number" aria-hidden="true">{{ i + 1 }}</span><div><h3>{{ ('GUIDE.TASK_' + task.id + '_TITLE') | translate:task.title }}</h3><p>{{ ('GUIDE.TASK_' + task.id + '_COPY') | translate:task.copy }}</p><a [routerLink]="task.path" [fragment]="task.fragment || undefined" (click)="learn()">{{ ('GUIDE.TASK_' + task.id + '_ACTION') | translate:task.action }} →</a><label><input type="checkbox" [checked]="progress().completed.includes(task.id)" (change)="guide.toggle(userId(), task.id)">{{ 'GUIDE.PRACTICED' | translate:'Ya lo practiqué' }}</label></div></article>}</div>
   </section>
+  <section class="guide-section" aria-labelledby="automatic-title">
+    <h2 id="automatic-title">{{ 'GUIDE.AUTOMATIC_TITLE' | translate:'Qué hace Nivra por ti' }}</h2>
+    <p class="section-intro">{{ 'GUIDE.AUTOMATIC_INTRO' | translate:'Conoce lo que ocurre al usar la app y cuándo hace falta tu ayuda.' }}</p>
+    <div class="automatic-grid">@for (item of automatic; track item.id) {
+      <article class="automatic-card"><div><h3>{{ ('GUIDE.AUTO_' + item.id + '_TITLE') | translate:item.title }}</h3><p>{{ ('GUIDE.AUTO_' + item.id + '_COPY') | translate:item.copy }}</p></div></article>
+    }</div>
+  </section>
+  <section class="guide-section" aria-labelledby="delivery-title">
+    <h2 id="delivery-title">{{ 'GUIDE.DELIVERY_TITLE' | translate:'Cómo saber si llegó tu mensaje' }}</h2>
+    <p class="section-intro">{{ 'GUIDE.DELIVERY_INTRO' | translate:'Mira el símbolo junto a la hora. En la información del mensaje puedes consultar las confirmaciones disponibles.' }}</p>
+    <dl class="delivery-states">@for (state of deliveryStates; track state.id) {
+      <div><dt><span class="receipt-mark" [class.read]="state.id === 'read'" aria-hidden="true">{{ state.mark }}</span>{{ ('GUIDE.STATE_' + state.id + '_TITLE') | translate:state.title }}</dt><dd>{{ ('GUIDE.STATE_' + state.id + '_COPY') | translate:state.copy }}</dd></div>
+    }</dl>
+    <details class="pending-help"><summary>{{ 'GUIDE.PENDING_TITLE' | translate:'Mi mensaje sigue pendiente, ¿qué reviso?' }}</summary>
+      <ol>
+        <li>{{ 'GUIDE.PENDING_CONNECTION' | translate:'Comprueba que puedes navegar por Internet. Vuelve a Nivra, activa la cuenta que envió el mensaje y desbloquea la app o el chat si lo pide.' }}</li>
+        <li>{{ 'GUIDE.PENDING_NOTICE' | translate:'Revisa el aviso junto al mensaje. Un permiso, una identidad que cambió o un fallo al guardar pueden necesitar una acción. Usa Reintentar cuando aparezca; evita escribir el mismo mensaje varias veces.' }}</li>
+        <li>{{ 'GUIDE.PENDING_DEVICES' | translate:'Si acabas de cambiar de equipo, revisa Dispositivos e historial. Vincular el historial recupera mensajes anteriores; un reloj de envío indica una tarea de la cola actual.' }}</li>
+        <li>{{ 'GUIDE.PENDING_SERVICE' | translate:'Si ocurre en todos tus chats incluso con buena conexión, revisa los avisos de servicio y la versión de la app. El reloj por sí solo no permite saber si el servidor tiene una incidencia o si se alcanzó una cuota de almacenamiento.' }}</li>
+      </ol>
+      <div class="help-actions"><a routerLink="/app/account" fragment="account-devices" (click)="learn()">{{ 'GUIDE.DEVICES_ACTION' | translate:'Revisar mis dispositivos' }} →</a><a routerLink="/app/account" fragment="account-help" (click)="learn()">{{ 'GUIDE.DIAGNOSTICS_ACTION' | translate:'Abrir ajustes y diagnóstico' }} →</a></div>
+      <p>{{ 'GUIDE.PENDING_NOTIFICATIONS' | translate:'Un aviso que no llega al teléfono es distinto de un mensaje pendiente de envío. Para los avisos, revisa los permisos de notificación y las restricciones de batería.' }}</p>
+      <a routerLink="/app/notification-check" (click)="learn()">{{ 'GUIDE.NOTIFICATIONS_ACTION' | translate:'Comprobar notificaciones' }} →</a>
+    </details>
+  </section>
   <aside><h2>{{ 'GUIDE.RECOVERY_TITLE' | translate:'Recuperar tu cuenta y recuperar tus chats' }}</h2><p>{{ 'GUIDE.RECOVERY_ACCESS' | translate:'Recuperar tu cuenta te permite volver a entrar. El correo verificado ayuda a cambiar la contraseña; tu frase protege la identidad con la que te reconocen tus contactos.' }}</p><p>{{ 'GUIDE.RECOVERY_HISTORY' | translate:'Sincronizar el historial trae conversaciones anteriores desde otro equipo autorizado que todavía las conserve. Entrar con tu contraseña no devuelve automáticamente esos mensajes. Si se perdieron todas las copias y sus llaves, puede que no se puedan recuperar.' }}</p><a routerLink="/app/account" fragment="account-profile" (click)="learn()">{{ 'GUIDE.RECOVERY_ACTION' | translate:'Configurar mi recuperación' }} →</a></aside>
-  <section aria-labelledby="all-features"><h2 id="all-features">{{ 'GUIDE.ALL' | translate:'Todo lo que puedes hacer' }}</h2><div class="features">@for (feature of features; track feature.path + feature.title; let i = $index) {<details><summary>{{ ('GUIDE.FEATURE_' + i + '_TITLE') | translate:feature.title }}</summary><p>{{ ('GUIDE.FEATURE_' + i + '_COPY') | translate:feature.copy }}</p><a [routerLink]="feature.path" [fragment]="feature.fragment" (click)="learn()">{{ 'GUIDE.OPEN' | translate:'Abrir' }} →</a></details>}</div></section>
+  <section aria-labelledby="all-features"><h2 id="all-features">{{ 'GUIDE.ALL' | translate:'Todo lo que puedes hacer' }}</h2>
+    <label class="feature-search"><span>{{ 'GUIDE.SEARCH_LABEL' | translate:'Encuentra una función' }}</span><input type="search" [value]="featureQuery()" (input)="featureQuery.set($any($event.target).value)" [placeholder]="'GUIDE.SEARCH_PLACEHOLDER' | translate:'Busca historias, verificación, llamadas…'" aria-controls="guide-feature-results"></label>
+    <div class="features" id="guide-feature-results">@for (feature of filteredFeatures(); track feature.key) {<details><summary>{{ (feature.key + '_TITLE') | translate:feature.title }}</summary><p>{{ (feature.key + '_COPY') | translate:feature.copy }}</p><a [routerLink]="feature.path" [fragment]="feature.fragment" (click)="learn()">{{ 'GUIDE.OPEN' | translate:'Abrir' }} →</a></details>}</div>
+    @if (!filteredFeatures().length) {<p class="search-empty" role="status">{{ 'GUIDE.SEARCH_EMPTY' | translate:'No encontramos esa función. Prueba otra palabra o borra la búsqueda para ver todas.' }}</p>}
+  </section>
   <footer><button type="button" class="primary" (click)="finish()">{{ 'GUIDE.FINISH' | translate:'Continuar a mis chats' }}</button></footer>
 </main></ion-content>

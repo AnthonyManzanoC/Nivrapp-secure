@@ -462,9 +462,12 @@
       <p class="composer-error" role="alert">{{ textQueueError || textOutbox.storageError() }}</p>
     }
     @if (failedTextAttempt(); as failed) {
-      <app-failed-text-send [text]="failed.text" [busy]="sending"
+      <app-failed-text-send [text]="failed.text" [reason]="textOutbox.failureMessage(failed.message)" [busy]="sending"
         [retryDisabled]="sending || isBlocked() || !canSendMessages()"
         (retry)="retryFailedText()" (discard)="discardFailedText()" />
+    }
+    @if (pendingTextStatus(); as pendingStatus) {
+      <p class="queued-text-status" role="status" aria-live="polite">{{ pendingStatus }}</p>
     }
     @if (identityChanged()) {
       <app-chat-identity-change-notice [disabled]="sending || profileActionBusy" (verify)="verifyIdentity()" />

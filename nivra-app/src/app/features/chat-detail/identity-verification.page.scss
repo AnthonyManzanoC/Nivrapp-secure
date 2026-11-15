@@ -1,16 +1,16 @@
 :host {
   --identity-safe-top: var(--safe-area-inset-top, var(--ion-safe-area-top, env(safe-area-inset-top, 0px)));
   --identity-safe-bottom: var(--safe-area-inset-bottom, var(--ion-safe-area-bottom, env(safe-area-inset-bottom, 0px)));
-  display: block; height: 100%; min-height: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; color: var(--nivra-text); padding-bottom: calc(28px + var(--identity-safe-bottom)); scroll-padding-top: calc(80px + var(--identity-safe-top)); background: radial-gradient(ellipse at 50% 0, color-mix(in srgb, var(--nivra-brand) 6%, transparent), transparent 55%);
+  display: block; height: 100%; min-height: 0; overflow-y: auto; scrollbar-width: none; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; color: var(--nivra-text); padding-bottom: calc(28px + var(--identity-safe-bottom)); scroll-padding-top: calc(80px + var(--identity-safe-top)); background: radial-gradient(ellipse at 50% 0, color-mix(in srgb, var(--nivra-brand) 8%, transparent), transparent 55%), var(--nivra-bg);
 }
 :host::-webkit-scrollbar { display: none; }
 * { box-sizing: border-box; }
 .identity-sheet { max-width: 600px; margin: 0 auto; padding: 0 max(20px, var(--safe-area-inset-right, env(safe-area-inset-right, 0px))) 0 max(20px, var(--safe-area-inset-left, env(safe-area-inset-left, 0px))); }
-.identity-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: calc(80px + var(--identity-safe-top)); padding: calc(18px + var(--identity-safe-top)) 0 14px; margin-bottom: 20px; background: var(--ion-background-color); border-bottom: 1px solid var(--nivra-line); }
+.identity-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: calc(80px + var(--identity-safe-top)); padding: calc(18px + var(--identity-safe-top)) 0 14px; margin-bottom: 20px; background: var(--nivra-bg); border-bottom: 1px solid var(--nivra-line-strong); }
 .back-action { display: inline-flex; align-items: center; gap: 7px; min-width: 44px; min-height: 44px; padding: 8px 12px; border: 1px solid color-mix(in srgb, var(--nivra-brand) 12%, transparent); border-radius: 12px; background: color-mix(in srgb, var(--nivra-brand) 7%, transparent); color: var(--nivra-text); font: inherit; font-weight: 650; flex-shrink: 0; cursor: pointer; }
 .privacy-label { min-width: 0; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nivra-muted); line-height: 1.4; }
 .privacy-label ion-icon { font-size: 17px; color: var(--nivra-brand-2); flex-shrink: 0; }
-.identity-card { border: 1px solid var(--nivra-line); border-radius: 26px; padding: clamp(22px, 5vw, 36px); background: var(--nivra-panel-solid); box-shadow: var(--nivra-shadow-soft); }
+.identity-card { border: 1px solid var(--nivra-line-strong); border-radius: 26px; padding: clamp(22px, 5vw, 36px); background: linear-gradient(155deg, color-mix(in srgb, var(--nivra-brand) 5%, var(--nivra-panel-solid)), var(--nivra-panel-solid) 45%); box-shadow: var(--nivra-shadow-soft); }
 .identity-heading { text-align: center; }
 .identity-mark { display: grid; place-items: center; margin: 0 auto 16px; width: 52px; height: 52px; border: 1px solid color-mix(in srgb, var(--nivra-brand) 20%, transparent); border-radius: 17px; background: color-mix(in srgb, var(--nivra-brand) 10%, transparent); color: var(--nivra-brand-2); font-size: 28px; }
 h1 { font-size: clamp(24px, 5vw, 30px); line-height: 1.15; letter-spacing: -.025em; margin: 0 0 12px; }
@@ -21,7 +21,7 @@ h1 { font-size: clamp(24px, 5vw, 30px); line-height: 1.15; letter-spacing: -.025
 .continuity-card strong { display: block; font-size: 14px; }
 .continuity-card p { font-size: 12px; line-height: 1.6; color: var(--nivra-muted); margin: 4px 0 0; }
 .continuity-card small { display: block; font-size: 11px; line-height: 1.5; color: var(--nivra-muted); margin-top: 8px; }
-.continuity-card.checked { border-color: color-mix(in srgb, var(--nivra-brand) 23%, var(--nivra-line)); background: color-mix(in srgb, var(--nivra-brand) 6%, transparent); }
+.continuity-card.checked { border-color: color-mix(in srgb, var(--nivra-brand) 32%, var(--nivra-line)); background: color-mix(in srgb, var(--nivra-brand) 9%, var(--nivra-panel-solid)); }
 .continuity-card.checked > ion-icon { color: var(--nivra-brand-2); }
 .continuity-card.changed { border-color: color-mix(in srgb, var(--nivra-amber) 28%, var(--nivra-line)); background: color-mix(in srgb, var(--nivra-amber) 7%, transparent); }
 .continuity-card.changed > ion-icon { color: var(--nivra-amber); }
@@ -35,13 +35,13 @@ h1 { font-size: clamp(24px, 5vw, 30px); line-height: 1.15; letter-spacing: -.025
 .other-methods { margin-top: 18px; border: 1px solid var(--nivra-line); border-radius: 15px; padding: 0 14px 14px; }
 .other-methods:not([open]) { padding-bottom: 0; }
 .other-methods summary { min-height: 48px; padding: 13px 0; color: var(--nivra-muted); font-size: 12px; font-weight: 650; cursor: pointer; }
-.safety-code { margin: 2px 0 18px; padding: 12px; border: 1px solid var(--nivra-line); border-radius: 12px; background: color-mix(in srgb, var(--nivra-muted) 4%, transparent); font-family: monospace; font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; text-align: center; user-select: all; }
+.safety-code { margin: 2px 0 18px; padding: 12px; border: 1px solid var(--nivra-line-strong); border-radius: 12px; color: var(--nivra-text); background: var(--nivra-bg); font-family: monospace; font-size: 14px; line-height: 1.8; overflow-wrap: anywhere; text-align: center; user-select: all; }
 .comparison-field { display: grid; gap: 9px; font-size: 12px; font-weight: 600; }
 .comparison-field input { min-width: 0; min-height: 48px; width: 100%; padding: 12px; border: 1px solid var(--nivra-line); border-radius: 12px; background: transparent; color: inherit; font: inherit; font-weight: 400; }
 .comparison-field input::placeholder { color: var(--nivra-muted); }
 .image-action, .confirm-action { display: flex; justify-content: center; align-items: center; gap: 9px; width: 100%; min-height: 48px; padding: 12px 16px; border: 1px solid var(--nivra-line); border-radius: 13px; font: inherit; font-size: 13px; font-weight: 700; line-height: 1.35; cursor: pointer; }
 .image-action { margin-top: 10px; color: var(--nivra-text); background: transparent; }
-.confirm-action { margin-top: 12px; color: #052b22; background: var(--nivra-brand); border-color: transparent; }
+.confirm-action { margin-top: 12px; color: var(--nivra-on-brand); background: var(--nivra-brand); border-color: transparent; }
 button:focus-visible, input:focus, summary:focus-visible { outline: 2px solid var(--nivra-brand-2); outline-offset: 3px; }
 button:disabled { opacity: .55; cursor: default; }
 button ion-icon { font-size: 21px; flex: 0 0 auto; }

@@ -84,6 +84,27 @@ describe('Identity verification return and comparison', () => {
 
   afterEach(() => pages.forEach(page => page.ngOnDestroy()));
 
+  it('rechecks after connection recovery without marking the person verified', async () => {
+    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('visible');
+    spyOnProperty(navigator, 'onLine', 'get').and.returnValue(true);
+    const page = createPage();
+    page.loading = false;
+    const load = spyOn(page, 'loadIdentity').and.resolveTo();
+    window.dispatchEvent(new Event('online'));
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(trust.confirm).not.toHaveBeenCalled();
+    page.comparison = 'code being compared';
+    window.dispatchEvent(new Event('focus'));
+    expect(load).toHaveBeenCalledTimes(1);
+    page.comparison = '';
+    lock.isLocked.set(true);
+    window.dispatchEvent(new Event('online'));
+    expect(load).toHaveBeenCalledTimes(1);
+    page.ngOnDestroy();
+    window.dispatchEvent(new Event('online'));
+    expect(load).toHaveBeenCalledTimes(1);
+  });
+
   it('returns through history to the exact conversation that opened verification', () => {
     createPage().back();
     expect(location.back).toHaveBeenCalledTimes(1);

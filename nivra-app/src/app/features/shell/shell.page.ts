@@ -3,11 +3,14 @@ import { AfterViewInit, Component, computed, ElementRef, inject, NgZone, OnDestr
 import { NavigationEnd, Router, RouterLink, RouterOutlet } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { IonApp, IonIcon } from '@ionic/angular/standalone';
+import { Capacitor } from '@capacitor/core';
 import { addIcons } from 'ionicons';
 import {
   albumsOutline,
   callOutline,
   chatbubbleEllipsesOutline,
+  chevronBackOutline,
+  chevronForwardOutline,
   closeOutline,
   globeOutline,
   lockClosedOutline,
@@ -28,6 +31,8 @@ import { TabSwipeDirective } from '../../shared/tab-swipe.directive';
 import { CallGameInvitationComponent } from '../../shared/call-game-invitation.component';
 import { CallResultComponent } from '../../shared/call-result.component';
 
+const RAIL_EXPANDED_KEY = 'nivra.navigation.rail-expanded';
+
 @Component({
   selector: 'app-shell',
   standalone: true,
@@ -36,6 +41,8 @@ import { CallResultComponent } from '../../shared/call-result.component';
   styleUrls: ['./shell.page.scss'],
 })
 export class ShellPage implements AfterViewInit, OnDestroy {
+  readonly collapsibleRail = !Capacitor.isNativePlatform();
+  readonly railExpanded = signal(this.readRailExpanded());
   readonly failedAvatar = signal('');
   readonly auth = inject(AuthService);
   readonly calls = inject(CallsService);
@@ -84,6 +91,8 @@ export class ShellPage implements AfterViewInit, OnDestroy {
       albumsOutline,
       callOutline,
       chatbubbleEllipsesOutline,
+      chevronBackOutline,
+      chevronForwardOutline,
       closeOutline,
       globeOutline,
       lockClosedOutline,
@@ -120,6 +129,19 @@ export class ShellPage implements AfterViewInit, OnDestroy {
     this.element.nativeElement.removeEventListener('click', this.onNavigationClick, true);
     window.removeEventListener('blur', this.clearAccountTap);
     document.removeEventListener('visibilitychange', this.clearAccountTap);
+  }
+
+  toggleRail(): void {
+    if (!this.collapsibleRail) return;
+    this.railExpanded.update(expanded => !expanded);
+    try { localStorage.setItem(RAIL_EXPANDED_KEY, String(this.railExpanded())); }
+    catch { /* The toggle remains usable when storage is unavailable. */ }
+  }
+
+  private readRailExpanded(): boolean {
+    if (!this.collapsibleRail) return false;
+    try { return localStorage.getItem(RAIL_EXPANDED_KEY) === 'true'; }
+    catch { return false; }
   }
 
   private handleNavigationClick(event: MouseEvent): void {

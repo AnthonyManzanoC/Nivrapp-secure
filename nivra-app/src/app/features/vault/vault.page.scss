@@ -1,5 +1,19 @@
 @use "../shared-page";
 
+.page { --background: var(--nivra-bg); }
+
+@media (max-width: 768px) {
+  .vault-surface:not(.is-fullscreen):not(.incognito-view)::after {
+    content: '';
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 30;
+    height: calc(8px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)));
+    background: var(--nivra-bg);
+    pointer-events: none;
+  }
+}
+
 .vault-hero { gap: 12px; flex-wrap: wrap; }
 .vault-hero > div { flex: 1; min-width: 180px; }
 .create-room-cta { display: inline-flex; align-items: center; gap: 8px; min-height: 46px; padding: 12px 18px; border: 0; border-radius: 16px; background: var(--nivra-brand); color: var(--nivra-on-brand); font: inherit; font-size: 13px; font-weight: 750; cursor: pointer; }

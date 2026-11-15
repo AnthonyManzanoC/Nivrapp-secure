@@ -1279,7 +1279,7 @@ export class ChatService implements OnDestroy {
     fileObjectId: string | null = null,
     options: SendPayloadOptions = {},
   ): Promise<MessageResponse | null> {
-    const deadline = Date.now() + 30000;
+    const deadline = Date.now() + this.chatReadTimeoutMs();
     const historyGeneration = this.historyGeneration(conversation.id);
     const bounded = <T>(work: Promise<T>): Promise<T> => options.queueManaged
       ? firstValueFrom(from(work).pipe(timeout(Math.max(1, deadline - Date.now())))) : work;
@@ -4850,7 +4850,7 @@ export class ChatService implements OnDestroy {
       const publishedDevices = directory?.devices.filter(device => Boolean(device.keyBundle?.identityKey?.trim())) ?? [];
       if (!publishedDevices.length || publishedDevices.some(device => !device.deviceId || !this.crypto.parsePublicJwk(device.keyBundle?.identityKey))) {
         const label = participant.displayName || participant.alias || this.contacts().find(contact => contact.userId === participant.userId)?.displayName || 'Este contacto';
-        if (!publishedDevices.length) throw new Error(`${label} no tiene un dispositivo autorizado con llaves disponibles. Debe abrir Nivra e iniciar sesión para recibir mensajes cifrados.`);
+        if (!publishedDevices.length) throw Object.assign(new Error(`${label} no tiene un dispositivo autorizado con llaves disponibles. Debe abrir Nivra e iniciar sesión para recibir mensajes cifrados.`), { retryable: true, code: 'recipient_keys_unavailable' });
         throw new Error(`No se pudieron comprobar las llaves de ${label}. Pídele que actualice Nivra e inicie sesión de nuevo; el mensaje no se ha enviado.`);
       }
       const deliveryDirectory = { ...directory!, devices: publishedDevices };

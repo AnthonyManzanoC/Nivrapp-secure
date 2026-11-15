@@ -5,7 +5,7 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { IonIcon, IonSpinner } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { arrowBackOutline, cameraOutline, checkmarkCircleOutline, closeOutline, copyOutline, imageOutline, shieldCheckmarkOutline, warningOutline } from 'ionicons/icons';
-import { firstValueFrom, Subscription } from 'rxjs';
+import { firstValueFrom, Subscription, timeout } from 'rxjs';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { AuthService } from '../../core/services/auth.service';
@@ -16,6 +16,7 @@ import { PublicKeyDirectory } from '../../core/models/nivra.models';
 import { CryptoService } from '../../core/services/crypto.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { deriveUnverifiedSafetyNumber } from '../../core/utils/identity-fingerprint';
+import { NetworkPolicyService } from '../../core/services/network-policy.service';
 
 type IdentityQrScanner = Pick<import('html5-qrcode').Html5Qrcode, 'start' | 'stop' | 'clear' | 'scanFile'>;
 export const IDENTITY_QR_SCANNER_LOADER = new InjectionToken<() => Promise<(elementId: string) => IdentityQrScanner>>('IDENTITY_QR_SCANNER_LOADER', {
@@ -49,6 +50,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   private readonly translate = inject(TranslateService);
   private readonly zone = inject(NgZone);
   private readonly scannerLoader = inject(IDENTITY_QR_SCANNER_LOADER);
+  private readonly network = inject(NetworkPolicyService);
   private readonly navigation = this.router.getCurrentNavigation();
   private readonly returnUrl = identityConversationReturnUrl(this.navigation?.extras.state?.['identityReturnUrl'])
     ?? identityConversationReturnUrl((this.location.getState() as Record<string, unknown> | null)?.['identityReturnUrl']);
@@ -62,6 +64,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   private routeSub?: Subscription;
   private boundScope = this.sessionScope();
   private wasLocked = this.lock.isLocked();
+  private lastAutomaticCheck = 0;
   private readonly scopeEffect = effect(() => {
     const scope = this.sessionScope();
     const locked = this.lock.isLocked();
@@ -77,7 +80,9 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   });
   private readonly onVisibilityChange = () => {
     if (document.visibilityState === 'hidden' && this.cameraOpen) this.cancelCamera();
+    if (document.visibilityState !== 'hidden') this.refreshWhenAvailable();
   };
+  private readonly onConnectionAvailable = () => this.refreshWhenAvailable();
   code = '';
   qr = '';
   comparison = '';
@@ -100,6 +105,8 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   constructor() {
     addIcons({ arrowBackOutline, cameraOutline, checkmarkCircleOutline, closeOutline, copyOutline, imageOutline, shieldCheckmarkOutline, warningOutline });
     document.addEventListener('visibilitychange', this.onVisibilityChange);
+    window.addEventListener('online', this.onConnectionAvailable);
+    window.addEventListener('focus', this.onConnectionAvailable);
   }
 
   ngOnInit(): void {
@@ -125,6 +132,8 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
     this.scopeEffect.destroy();
     this.routeSub?.unsubscribe();
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    window.removeEventListener('online', this.onConnectionAvailable);
+    window.removeEventListener('focus', this.onConnectionAvailable);
     void this.stopCamera();
   }
 
@@ -135,6 +144,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
     const request = ++this.comparisonRequest;
     const active = () => this.active(request, scope?.user.id, scope?.device.id, target);
     this.loading = true;
+    this.lastAutomaticCheck = Date.now();
     this.message = '';
     this.verified = false;
     this.continuity = 'idle';
@@ -175,6 +185,16 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
     }
   }
 
+  private refreshWhenAvailable(): void {
+    if (!this.target || this.destroyed || this.lock.isLocked() || this.loading || this.busy || this.scanning
+      || this.cameraOpen || this.cameraCapturePending || this.comparison.trim()
+      || document.visibilityState === 'hidden' || navigator.onLine === false) return;
+    // Resume checks must not erase a code being entered or repeatedly restart
+    // a camera/QR comparison. A failed load can recover immediately online.
+    if (this.qr && Date.now() - this.lastAutomaticCheck < 15_000) return;
+    void this.loadIdentity();
+  }
+
   private async qrForComparison(code: string): Promise<string> {
     const qrModule = await import('qrcode');
     return qrModule.toDataURL(`nivra-identity-v1:${code}`, { width: 256, margin: 2 });
@@ -202,7 +222,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
     const current = this.auth.session();
     const target = this.target;
     if (!current || !target || current.user.id === target) throw new Error();
-    const list = await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds: [current.user.id, target], aliases: [] }));
+    const list = await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch', { userIds: [current.user.id, target], aliases: [] }).pipe(timeout(this.network.readTimeoutMs())));
     const own = list.find(x => x.userId === current.user.id);
     const other = list.find(x => x.userId === target);
     if (!own || !other) throw new Error();

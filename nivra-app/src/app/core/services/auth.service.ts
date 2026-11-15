@@ -1164,17 +1164,31 @@ export class AuthService implements OnDestroy {
   }
 
   private async deviceIdentityJson<T>(path: string, auth: AuthSession, body: unknown, isCurrent: () => boolean): Promise<T> {
-    const response = await this.api.fetch(path, { method: body === undefined ? 'GET' : 'POST', credentials: 'omit',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.tokens.accessToken}`, 'X-Nivra-Device-Id': auth.device.id },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    }, path !== '/auth/repair-device', isCurrent);
+    let response: Response;
+    try {
+      response = await this.api.fetch(path, { method: body === undefined ? 'GET' : 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${auth.tokens.accessToken}`, 'X-Nivra-Device-Id': auth.device.id },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }, path !== '/auth/repair-device', isCurrent);
+    } catch (error) {
+      if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación de las llaves.');
+      // fetch uses TypeError for a failed connection and DOMException for its
+      // deadline. Preserve that distinction for sync and the durable outbox.
+      if (error instanceof TypeError || error instanceof DOMException && ['AbortError', 'TimeoutError'].includes(error.name)) {
+        throw Object.assign(new Error('No se pudieron comprobar las llaves de este dispositivo. Nivra volverá a intentarlo con conexión.'), { status: 0, retryable: true });
+      }
+      throw error;
+    }
     if (!isCurrent()) throw new Error('La sesión cambió durante la recuperación de las llaves.');
     if (!response.ok) {
       if (path === '/auth/repair-device' && [404, 409, 410].includes(response.status)) {
         this.deviceIdentityNeedsRelink?.set(true);
         throw new Error('Esta sesión antigua necesita volver a vincularse. Escanea un QR nuevo desde tu teléfono; el historial local se conserva.');
       }
-      throw new Error('No se pudieron comprobar las llaves de este dispositivo. Revisa la conexión y vuelve a intentar.');
+      throw Object.assign(new Error('No se pudieron comprobar las llaves de este dispositivo. Revisa la conexión y vuelve a intentar.'), {
+        status: response.status, headers: response.headers,
+        retryable: [408, 425, 429, 500, 502, 503, 504].includes(response.status),
+      });
     }
     return await response.json() as T;
   }

@@ -12,6 +12,7 @@ export interface QueuedText extends ChatMessageVm {
   blocked: boolean;
   queueOrder: number;
   lastStatus?: number;
+  lastFailure?: 'recipient-keys' | 'identity' | 'network' | 'server' | 'rate-limit' | 'authorization' | 'unknown';
 }
 @Injectable({ providedIn: 'root' })
 export class TextOutboxService {
@@ -128,7 +129,7 @@ export class TextOutboxService {
     await this.mutate(async () => {
       const entry = this.entries().find(row => row.id === id); if (!entry) return;
       const epoch = this.epoch;
-      const next = { ...entry, blocked: false, retryAt: 0 };
+      const next = { ...entry, blocked: false, retryAt: 0, lastFailure: undefined };
       await this.persist(this.scope, next);
       if (epoch === this.epoch) this.entries.update(rows => rows.map(row => row.id === id ? next : row));
     });
@@ -148,6 +149,20 @@ export class TextOutboxService {
     const confirmed = new Set(messages.filter(row => row.mine && row.status !== 'sending').map(row => row.clientMessageId));
     for (const entry of this.entries()) if (confirmed.has(entry.clientMessageId)) {
       void this.removeConfirmed(entry, this.scope, this.epoch).catch(() => undefined);
+    }
+  }
+  failureMessage(entry: ChatMessageVm): string {
+    const queued = this.entries().find(row => row.id === entry.id);
+    if (!queued) return '';
+    if (!queued.attempts) return navigator.onLine === false ? 'Sin conexión. El texto quedó guardado en este equipo y se enviará al recuperar la conexión.' : '';
+    switch (queued.lastFailure) {
+      case 'recipient-keys': return 'Esperando las llaves de tu contacto. Cuando abra Nivra, el envío se reintentará automáticamente.';
+      case 'identity': return 'El código de seguridad cambió. Revisa la identidad de tu contacto para continuar.';
+      case 'network': return 'Esperando conexión. Nivra volverá a intentar el envío automáticamente.';
+      case 'server': return 'El servidor aún no pudo aceptar el mensaje. Nivra volverá a intentarlo automáticamente.';
+      case 'rate-limit': return 'El servidor pidió esperar. El envío continuará automáticamente.';
+      case 'authorization': return 'No se autorizó el envío. Comprueba la sesión y los permisos de este chat.';
+      default: return queued.blocked ? 'No se pudo completar el envío. Revisa el mensaje y vuelve a intentarlo.' : 'El mensaje sigue guardado en este equipo y se volverá a intentar.';
     }
   }
   wake(): void {
@@ -178,6 +193,7 @@ export class TextOutboxService {
       const retryAfter = (error as { headers?: { get?(name: string): string | null } })?.headers?.get?.('Retry-After');
       const hintedDelay = retryAfter ? (/^\d+$/.test(retryAfter) ? Number(retryAfter) * 1000 : Date.parse(retryAfter) - Date.now()) : 0;
       const next = { ...entry, attempts: entry.attempts + 1, blocked: !transient,
+        lastFailure: this.failureKind(error, status),
         lastStatus: Number.isFinite(status) ? status : 0,
         retryAt: Date.now() + Math.max(Math.min(300000, Number.isFinite(hintedDelay) ? hintedDelay : 0),
           this.network.retryDelayMs(entry.attempts, 2000, 60000)) };
@@ -201,11 +217,33 @@ export class TextOutboxService {
         || `${row.senderUserId}:text-outbox:v1:${row.senderDeviceId}` !== scope
         || row.payload['__nivraOutbox'] !== this.binding(row as QueuedText))) throw new Error('Invalid queue ownership');
       if (epoch !== this.epoch) return;
+      // Older clients lost the HTTP status of key-directory failures and
+      // permanently blocked them as status 0. Recheck once using the current
+      // classifier, preserving the message ID and every identity/permission check.
+      for (const row of rows as QueuedText[]) {
+        if (row.blocked && row.lastStatus === 0 && row.lastFailure === undefined) {
+          row.blocked = false;
+          row.retryAt = 0;
+          row.lastFailure = 'unknown';
+          await this.persist(scope, row);
+          if (epoch !== this.epoch) return;
+        }
+      }
       this.entries.set((rows as QueuedText[]).sort((a, b) => a.queueOrder - b.queueOrder));
       this.resumeNetwork();
     } catch {
       if (epoch === this.epoch) this.storageError.set('No se pudo abrir la cola cifrada. Reabre la cuenta; los datos locales se conservaron.');
     }
+  }
+  private failureKind(error: unknown, status: number): QueuedText['lastFailure'] {
+    const code = (error as { code?: string } | null)?.code;
+    if (code === 'recipient_keys_unavailable') return 'recipient-keys';
+    if (code === 'identity_changed') return 'identity';
+    if (status === 429) return 'rate-limit';
+    if ([401, 403].includes(status)) return 'authorization';
+    if ([500, 502, 503, 504].includes(status)) return 'server';
+    if (status === 0 || [408, 425].includes(status) || (error as Error)?.name === 'TimeoutError') return 'network';
+    return 'unknown';
   }
   private async persist(scope: string, entry: QueuedText): Promise<void> {
     await this.history.putMessages(scope, [entry]);

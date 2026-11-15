@@ -1,6 +1,6 @@
 import { TransientNoticeDirective } from '../../shared/transient-notice.directive';
 import { CommonModule } from '@angular/common';
-import { Component, Injector, EffectRef, ElementRef, NgZone, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
+import { Component, HostListener, Injector, EffectRef, ElementRef, NgZone, OnDestroy, ViewChild, computed, effect, inject, signal, untracked } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { PrivateChatLockService } from '../../core/services/private-chat-lock.service';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
@@ -243,6 +243,13 @@ export class ChatsPage implements OnDestroy {
   private alive = true;
   storyHighlightOpening = '';
   storiesCollapsed = true;
+  mobileHeaderCollapsed = false;
+  private chatHeaderScrollTop = 0;
+  private chatHeaderScrollDirection = 0;
+  private chatHeaderScrollTravel = 0;
+  private chatHeaderLayoutUntil = 0;
+  private chatHeaderViewportHeight = 0;
+  private chatHeaderContentHeight = 0;
   readonly storyStripCanBack = signal(false);
   readonly storyStripCanNext = signal(false);
   private storyStripNav?: ElementRef<HTMLElement>;
@@ -271,14 +278,14 @@ export class ChatsPage implements OnDestroy {
       behavior:window.matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
   }
   private conversationList?: ElementRef<HTMLElement>;
-  private nativeStoryTouch: { id: number; x: number; y: number; atTop: boolean; pull: boolean; expanded: boolean; collapse: boolean } | null = null;
+  private nativeStoryTouch: { id: number; x: number; y: number; atTop: boolean; pull: boolean; expanded: boolean; collapse: boolean; reveal: boolean } | null = null;
   private nativeStoryScrollTop = 0;
   private nativeStoryReturnArmed = false;
   private nativeStoryGestureUntil = 0;
   @ViewChild('conversationList', { read: ElementRef }) private set conversationListRef(ref: ElementRef<HTMLElement> | undefined) {
     this.detachNativeStoryGesture();
     this.conversationList = ref;
-    if (!ref || !this.androidStoryGesturesEnabled()) return;
+    if (!ref) return;
     const list = ref.nativeElement;
     list.addEventListener('touchstart', this.onNativeStoryTouchStart, { passive: true, capture: true });
     list.addEventListener('touchmove', this.onNativeStoryTouchMove, { passive: true, capture: true });
@@ -312,7 +319,10 @@ export class ChatsPage implements OnDestroy {
         this.refreshing = false;
         this.historyPanelOpen = false;
         this.forgetConversationFocus();
-        this.storiesCollapsed = true;
+        this.storiesCollapsed = !this.mobileChatHeaderEnabled();
+        this.mobileHeaderCollapsed = false;
+        this.chatHeaderScrollTop = 0;
+        this.chatHeaderScrollTravel = 0;
         this.resetNativeStoryGesture();
         this.showRecentSearches = false;
         this.recentSearches = this.loadRecent();
@@ -739,6 +749,7 @@ export class ChatsPage implements OnDestroy {
   }
 
   onSearchFocus(): void {
+    this.mobileHeaderCollapsed = false;
     if (!this.query.trim()) {
       this.showRecentSearches = true;
       this.recentCollapsed = false;
@@ -1006,6 +1017,7 @@ export class ChatsPage implements OnDestroy {
   onChatListScroll(event: Event): void {
     this.cancelConversationPress();
     const list = event.target as HTMLElement;
+    this.updateMobileChatHeader(list);
     const delta = list.scrollTop - this.contactsFabTop;
     if (Math.abs(delta) > 8) {
       this.contactsFabTop = list.scrollTop;
@@ -1030,7 +1042,7 @@ export class ChatsPage implements OnDestroy {
         }
       }
     }
-    if (list.scrollTop > 80 && list.scrollHeight - list.clientHeight > 180) {
+    if (list.scrollTop > 80 && list.scrollHeight - list.clientHeight > 180 && !this.mobileHeaderCollapsed) {
       // Keep long lists compact while reading rows away from their beginning.
       this.storiesCollapsed = true;
     }
@@ -1038,16 +1050,77 @@ export class ChatsPage implements OnDestroy {
 
   androidStoryGesturesEnabled(): boolean { return this.nativeAndroid; }
 
+  mobileChatHeaderEnabled(): boolean { return window.matchMedia('(max-width: 768px)').matches; }
+
+  mobileChatHeaderHidden(): boolean {
+    return this.mobileHeaderCollapsed && this.mobileChatHeaderEnabled()
+      && !this.query.trim() && !this.showRecentSearches && !this.selectionActive()
+      && !this.showConversationSkeleton();
+  }
+
+  @HostListener('window:resize')
+  onChatViewportResize(): void {
+    if (!this.mobileChatHeaderEnabled()) this.mobileHeaderCollapsed = false;
+  }
+
+  private updateMobileChatHeader(list: HTMLElement): void {
+    const top = Math.max(0, list.scrollTop);
+    const delta = top - this.chatHeaderScrollTop;
+    this.chatHeaderScrollTop = top;
+    const layoutChanged = this.chatHeaderViewportHeight > 0
+      && (Math.abs(list.clientHeight - this.chatHeaderViewportHeight) > 1
+        || Math.abs(list.scrollHeight - this.chatHeaderContentHeight) > 1);
+    this.chatHeaderViewportHeight = list.clientHeight;
+    this.chatHeaderContentHeight = list.scrollHeight;
+    if (!this.mobileChatHeaderEnabled() || this.query.trim() || this.showRecentSearches
+      || this.selectionActive() || this.showConversationSkeleton()) {
+      this.mobileHeaderCollapsed = false;
+      this.chatHeaderScrollTravel = 0;
+      return;
+    }
+    if (layoutChanged) {
+      // Growing the list viewport can clamp its scroll offset. That is a
+      // layout event, not the user reversing direction to reopen the header.
+      this.chatHeaderLayoutUntil = Date.now() + 100;
+      this.chatHeaderScrollTravel = 0;
+      return;
+    }
+    // Changing the header height can clamp scrollTop on a short list. Ignore
+    // that layout adjustment so it cannot immediately reverse the accordion.
+    if (Date.now() < this.chatHeaderLayoutUntil || Math.abs(delta) < 1) return;
+    const direction = Math.sign(delta);
+    this.chatHeaderScrollTravel = direction === this.chatHeaderScrollDirection
+      ? this.chatHeaderScrollTravel + Math.abs(delta) : Math.abs(delta);
+    this.chatHeaderScrollDirection = direction;
+    if (direction > 0 && top > 40 && this.chatHeaderScrollTravel >= 28) {
+      this.setMobileChatHeaderCollapsed(true);
+    } else if (direction < 0 && (top <= 8 || this.chatHeaderScrollTravel >= 16)) {
+      this.setMobileChatHeaderCollapsed(false);
+      if (top <= 8) this.storiesCollapsed = false;
+    }
+  }
+
+  private setMobileChatHeaderCollapsed(collapsed: boolean): void {
+    if (this.mobileHeaderCollapsed === collapsed) return;
+    if (!collapsed) this.storiesCollapsed = true;
+    this.mobileHeaderCollapsed = collapsed;
+    this.chatHeaderScrollTravel = 0;
+    this.chatHeaderLayoutUntil = Date.now() + 240;
+  }
+
   readonly onNativeStoryTouchStart = (event: TouchEvent): void => {
     this.resetNativeStoryGesture();
-    if (!this.androidStoryGesturesEnabled() || this.selectionActive() || this.showConversationSkeleton() || event.touches.length !== 1) return;
+    if ((!this.androidStoryGesturesEnabled() && !this.mobileChatHeaderEnabled()) || this.query.trim()
+      || this.showRecentSearches || this.selectionActive() || this.showConversationSkeleton() || event.touches.length !== 1) return;
     const list = event.currentTarget as HTMLElement;
     if (!list || this.nativeStorySlideIsActive(event)) return;
     const touch = event.touches[0];
     this.nativeStoryScrollTop = list.scrollTop;
     if (list.scrollTop > 8) this.nativeStoryGestureUntil = Date.now() + 1_600;
     this.nativeStoryTouch = { id: touch.identifier, x: touch.clientX, y: touch.clientY,
-      atTop: list.scrollTop <= 8, pull: false, expanded: !this.storiesCollapsed, collapse: false };
+      atTop: list.scrollTop <= 8, pull: false,
+      expanded: !this.storiesCollapsed || this.mobileChatHeaderEnabled() && !this.mobileHeaderCollapsed,
+      collapse: false, reveal: false };
   };
 
   readonly onNativeStoryTouchMove = (event: TouchEvent): void => {
@@ -1067,6 +1140,7 @@ export class ChatsPage implements OnDestroy {
     // A short list cannot scroll far enough to hide the strip. Observe the
     // upward gesture itself so the same accordion works with zero or one row.
     gesture.collapse = gesture.expanded && dy <= -40 && dx <= 20;
+    gesture.reveal = dy >= 24 && dx <= 20;
   };
 
   readonly onNativeStoryTouchEnd = (event: TouchEvent): void => {
@@ -1074,12 +1148,18 @@ export class ChatsPage implements OnDestroy {
     const list = event.currentTarget as HTMLElement;
     this.nativeStoryTouch = null;
     if (gesture?.collapse && !this.showConversationSkeleton() && !this.nativeStorySlideIsActive(event)) {
-      this.collapseStories();
+      if (this.mobileChatHeaderEnabled()) {
+        this.resetNativeStoryGesture();
+        this.setMobileChatHeaderCollapsed(true);
+      } else this.collapseStories();
       return;
     }
     if (gesture?.pull && list?.scrollTop <= 8 && !this.showConversationSkeleton() && !this.nativeStorySlideIsActive(event)) {
       this.resetNativeStoryGesture();
       this.expandStories();
+    } else if (gesture?.reveal && this.mobileChatHeaderEnabled() && !this.showConversationSkeleton()
+      && !this.nativeStorySlideIsActive(event)) {
+      this.setMobileChatHeaderCollapsed(false);
     }
   };
 
@@ -1107,6 +1187,7 @@ export class ChatsPage implements OnDestroy {
 
   expandStories(): void {
     this.resetNativeStoryGesture();
+    this.setMobileChatHeaderCollapsed(false);
     this.storiesCollapsed = false;
     this.conversationList?.nativeElement.scrollTo({ top: 0, behavior: 'instant' });
   }

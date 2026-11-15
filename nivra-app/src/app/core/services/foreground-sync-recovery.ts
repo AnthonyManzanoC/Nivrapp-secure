@@ -10,7 +10,7 @@ interface ForegroundSyncRuntime {
 }
 
 export function isRecoverableSyncError(error: unknown): boolean {
-  return error instanceof TimeoutError || (error instanceof HttpErrorResponse
+  return (error as { retryable?: boolean } | null)?.retryable === true || error instanceof TimeoutError || (error instanceof HttpErrorResponse
     && [0, 408, 425, 429, 500, 502, 503, 504].includes(error.status));
 }
 

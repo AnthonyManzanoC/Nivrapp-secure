@@ -1,4 +1,4 @@
-:host { display: block; min-width: 0; }
+:host { display: block; min-width: 0; container-type: inline-size; }
 .welcome { width: min(760px, 100%); margin: auto; padding: clamp(26px, 4vh, 60px) clamp(20px, 4vw, 56px); color: var(--nivra-text); }
 .welcome-hero { display: grid; justify-items: center; text-align: center; gap: 12px; }
 .brand-mark { display: grid; place-items: center; width: 90px; height: 90px; border: 1px solid color-mix(in srgb, var(--nivra-brand) 18%, transparent); border-radius: 28px; background: color-mix(in srgb, var(--nivra-brand) 7%, var(--nivra-panel-solid)); box-shadow: 0 16px 48px color-mix(in srgb, var(--nivra-brand) 12%, transparent); }
@@ -55,4 +55,13 @@ button:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 3p
 .compact .guide-icon { width: 32px; height: 32px; border-radius: 10px; font-size: 17px; }
 @media (min-width: 769px) { .compact .welcome-hero, .compact .welcome-guide, .compact .privacy-note, .compact .call-alerts-setup, .compact .call-alerts-notice { display: none; } .compact { padding: 16px 14px; } .compact .welcome-start { margin: 0; } }
 @media (max-width: 768px) { .welcome { padding-block: 26px; } }
+/* The expanded rail can leave a narrow pane even on a wide desktop viewport. */
+@container (max-width: 480px) {
+  .welcome:not(.compact) { padding-inline: 12px; }
+  .welcome:not(.compact) .welcome-guide { grid-template-columns: minmax(0, 1fr); }
+  .welcome:not(.compact) .guide-card { grid-template-columns: minmax(0, 1fr); gap: 10px; padding: 14px; }
+  .welcome:not(.compact) .guide-card > ion-icon { display: none; }
+  .welcome:not(.compact) .welcome-start > button { width: 100%; }
+  .welcome:not(.compact) h2 { font-size: clamp(24px, 8cqi, 32px); }
+}
 @media (prefers-reduced-motion: reduce) { button { transition: none !important; } .primary-action:hover, .secondary-action:hover { transform: none; } }

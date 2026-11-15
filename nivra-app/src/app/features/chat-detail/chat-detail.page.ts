@@ -704,6 +704,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       deviceId: session.device.id, generation: this.composerGeneration } : null;
   }
 
+  pendingTextStatus(): string {
+    const conversation = this.conversation();
+    if (!conversation || this.privateChatLocked()) return '';
+    const entry = this.textOutbox.forConversation(conversation.id)[0];
+    return entry && !entry.blocked ? this.textOutbox.failureMessage(entry) : '';
+  }
+
   async retryFailedText(): Promise<void> {
     const attempt = this.failedTextAttempt();
     const conversation = this.conversation();

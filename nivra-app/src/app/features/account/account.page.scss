@@ -68,7 +68,20 @@
 @media (max-width: 640px) { .profile-hero { padding: 14px; gap: 14px; } .profile-hero .profile-photo { width: 72px; height: 72px; flex-basis: 72px; } .profile-hero .profile-photo-actions { flex-basis: calc(100% - 90px); } .profile-save-bar > div { width: 100%; justify-content: flex-end; } }
 
 :host .page {
+  --background: var(--nivra-bg);
   --padding-bottom: calc(var(--nivra-bottom-nav-height) + 32px + env(safe-area-inset-bottom));
+}
+
+@media (max-width: 768px) {
+  .surface::after {
+    content: '';
+    position: fixed;
+    inset: 0 0 auto;
+    z-index: 30;
+    height: calc(8px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)));
+    background: var(--nivra-bg);
+    pointer-events: none;
+  }
 }
 
 :host .surface {

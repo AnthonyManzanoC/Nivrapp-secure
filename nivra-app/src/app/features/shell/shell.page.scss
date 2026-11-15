@@ -95,6 +95,8 @@
   height: 38px;
 }
 
+.rail-toggle { display: none; }
+
 .nav-btn {
   position: relative;
   isolation: isolate;
@@ -152,10 +154,11 @@
 }
 
 .rail-connection { display: grid; justify-items: center; gap: 7px; margin-block: 12px; max-width: 100%; color: var(--nivra-muted); font-size: 9px; text-align: center; overflow-wrap: anywhere; }
-.rail-connection > span { width: 6px; height: 6px; border-radius: 50%; background: var(--nivra-amber); }
-.rail-connection.connected > span { background: var(--nivra-brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--nivra-brand) 10%, transparent); }
+.rail-connection > .connection-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--nivra-amber); }
+.rail-connection.connected > .connection-dot { background: var(--nivra-brand); box-shadow: 0 0 0 4px color-mix(in srgb, var(--nivra-brand) 10%, transparent); }
 
 @media (min-width: 769px) {
+  .workspace:not(.collapsible-rail) {
   .rail {
     min-height: 0;
     padding-inline: 7px;
@@ -170,13 +173,15 @@
   .rail .nav-btn.active { color: #093e31; background: #b7eed4; font-weight: 700; }
   .rail .nav-btn:focus-visible { outline-color: #a9ebcf; outline-offset: 1px; }
   .rail-connection { color: #bed2c7; }
-  .rail-connection.connected > span { background: #92e8bd; }
+  .rail-connection.connected > .connection-dot { background: #92e8bd; }
   .rail .nav-btn .nav-unread-badge { color: #123c30; background: #d0f6e1; border-color: #103b33; }
+  }
   .app-stage { isolation: isolate; }
 }
 
 @media (min-width: 1200px) {
-  .workspace { grid-template-columns: 188px minmax(0, 1fr); }
+  .workspace:not(.collapsible-rail) {
+  grid-template-columns: 188px minmax(0, 1fr);
   .rail { padding: 26px 12px 16px; align-items: stretch; }
   .rail-brand {
     display: flex;
@@ -204,6 +209,150 @@
   .nav-btn ion-icon, .nav-btn .nav-profile-avatar { width: 22px; height: 22px; flex: 0 0 22px; }
   .rail .nav-btn .nav-unread-badge { position: static; margin-inline-start: auto; border: 0; }
   .rail-connection { display: flex; align-items: center; gap: 10px; margin: 0 8px; padding: 20px 8px 8px; border-top: 1px solid #396054; font-size: 12px; }
+  }
+}
+
+@media (min-width: 769px) {
+  .workspace.collapsible-rail {
+    grid-template-columns: max-content minmax(0, 1fr);
+
+    .rail {
+      box-sizing: border-box;
+      width: 68px;
+      min-height: 0;
+      padding: max(18px, env(safe-area-inset-top)) 8px max(16px, env(safe-area-inset-bottom));
+      align-items: stretch;
+      gap: 6px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      background: #fff;
+      border-color: #e4ebe7;
+      color: #61736e;
+      transition: width 200ms ease, background-color 200ms ease, border-color 200ms ease, color 200ms ease;
+    }
+
+    .rail-brand {
+      display: flex;
+      align-items: center;
+      gap: 0;
+      width: 100%;
+      min-height: 40px;
+      margin: 0 0 4px;
+      padding-inline: 6px;
+      color: #0a4939;
+      font-size: 28px;
+      letter-spacing: -.065em;
+    }
+    .rail-logo { width: 38px; height: 38px; flex: 0 0 38px; }
+    .rail-brand > span,
+    .nav-btn > span:not(.nav-unread-badge),
+    .connection-label {
+      max-width: 0;
+      opacity: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      transition: max-width 200ms ease, opacity 200ms ease;
+    }
+    .rail-toggle {
+      display: grid;
+      place-items: center;
+      flex: 0 0 auto;
+      width: 32px;
+      height: 28px;
+      margin: 0 0 12px;
+      margin-inline-start: 9px;
+      padding: 0;
+      border: 1px solid #dce8e2;
+      border-radius: 9px;
+      background: #f3f7f5;
+      color: #43685a;
+      cursor: pointer;
+      transition: color 200ms ease, background-color 200ms ease, border-color 200ms ease;
+      ion-icon { font-size: 16px; }
+      &:hover { background: #e5f3ec; }
+      &:focus-visible { outline: 2px solid #0a735c; outline-offset: 2px; }
+    }
+    .rail .nav-btn {
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      flex: 0 0 auto;
+      width: 100%;
+      min-height: 48px;
+      padding-inline: 13px;
+      gap: 0;
+      overflow: hidden;
+      border-radius: 12px;
+      color: #61736e;
+      text-align: start;
+      font-family: inherit;
+      transition: color 200ms ease, background-color 200ms ease;
+      > span:not(.nav-unread-badge) { font-size: 14px; line-height: 1.25; }
+      ion-icon, .nav-profile-avatar { width: 22px; height: 22px; flex: 0 0 22px; }
+      .nav-profile-avatar { border-color: #fff; }
+      &:hover { color: #0a4939; background: #f1f7f4; }
+      &.active { color: #0a735c; background: #e1f7ee; border-color: transparent; }
+      &:focus-visible { outline-color: #0a735c; outline-offset: -2px; }
+      .nav-unread-badge {
+        inset-inline-end: 1px;
+        right: auto;
+        color: #fff;
+        background: #0a735c;
+        border-color: #fff;
+      }
+    }
+    .rail-connection {
+      display: flex;
+      align-items: center;
+      flex: 0 0 auto;
+      min-height: 48px;
+      gap: 0;
+      margin: 0;
+      padding: 16px 22px;
+      color: #61736e;
+      font-size: 12px;
+      text-align: start;
+      > .connection-dot { flex: 0 0 6px; background: #b7791f; }
+      &.connected > .connection-dot { background: #0a9f78; }
+    }
+
+    &.rail-expanded {
+      .rail { width: 188px; background: #0f382a; border-color: #214d3c; color: #bed2c7; }
+      .rail-brand { gap: 10px; color: #ebf7ef; }
+      .rail-brand > span,
+      .nav-btn > span:not(.nav-unread-badge),
+      .connection-label { max-width: 130px; opacity: 1; }
+      .rail-toggle { color: #c5dfd0; background: #1c4a38; border-color: #396054; }
+      .rail-toggle:hover { color: #fff; background: #295b46; }
+      .rail-toggle:focus-visible { outline-color: #a9ebcf; }
+      .rail .nav-btn {
+        gap: 10px;
+        color: #bed2c7;
+        &:hover { color: #fff; background: #214d3c; }
+        &.active { color: #093e31; background: #b7eed4; font-weight: 700; }
+        &:focus-visible { outline-color: #a9ebcf; }
+        .nav-profile-avatar { border-color: #0f382a; }
+        .nav-unread-badge { position: static; margin-inline-start: auto; flex: 0 0 auto; color: #123c30; background: #d0f6e1; border: 0; }
+      }
+      .rail-connection {
+        gap: 10px;
+        padding-inline: 14px;
+        border-top: 1px solid #396054;
+        color: #bed2c7;
+        &.connected > .connection-dot { background: #92e8bd; }
+      }
+    }
+  }
+  :host-context([dir='rtl']) .rail-toggle ion-icon { transform: scaleX(-1); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .workspace.collapsible-rail .rail,
+  .workspace.collapsible-rail .rail-brand > span,
+  .workspace.collapsible-rail .rail .nav-btn,
+  .workspace.collapsible-rail .nav-btn > span,
+  .workspace.collapsible-rail .connection-label,
+  .workspace.collapsible-rail .rail-toggle { transition: none; }
 }
 
 .app-stage {

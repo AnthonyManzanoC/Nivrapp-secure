@@ -3,6 +3,30 @@ import { AuthService } from './auth.service';
 import { CryptoService } from './crypto.service';
 
 describe('authenticated device identity recovery', () => {
+  it('preserves temporary HTTP failures and Retry-After for the automatic outbox recovery', async () => {
+    const headers = new Headers({ 'Retry-After': '120' });
+    const service = Object.assign(Object.create(AuthService.prototype), {
+      api: { fetch: async () => new Response('{}', { status: 429, headers }) },
+    });
+    const auth = { tokens: { accessToken: 'test' }, device: { id: 'test-device' } };
+    await expectAsync(service.deviceIdentityJson('/keys/batch', auth, {}, () => true))
+      .toBeRejectedWith(jasmine.objectContaining({ status: 429, retryable: true }));
+    service.api.fetch = async () => new Response('{}', { status: 403 });
+    await expectAsync(service.deviceIdentityJson('/keys/batch', auth, {}, () => true))
+      .toBeRejectedWith(jasmine.objectContaining({ status: 403, retryable: false }));
+  });
+
+  it('classifies a dropped key lookup as recoverable without adopting a different session', async () => {
+    const service = Object.assign(Object.create(AuthService.prototype), {
+      api: { fetch: async () => { throw new TypeError('Failed to fetch'); } },
+    });
+    const auth = { tokens: { accessToken: 'test' }, device: { id: 'test-device' } };
+    await expectAsync(service.deviceIdentityJson('/keys/batch', auth, {}, () => true))
+      .toBeRejectedWith(jasmine.objectContaining({ status: 0, retryable: true }));
+    await expectAsync(service.deviceIdentityJson('/keys/batch', auth, {}, () => false))
+      .toBeRejectedWithError(/sesión cambió/);
+  });
+
   function cryptography(secret?: () => string | null) {
     const records = new Map<string, any>();
     const db = { get: async (_store: string, id: string) => records.get(id),

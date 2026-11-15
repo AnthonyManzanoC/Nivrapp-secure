@@ -1,6 +1,6 @@
 <ion-content fullscreen class="chats-page" [class.search-active]="query.trim() || showRecentSearches" [attr.data-tab-swipe-lock]="query.trim() || showRecentSearches || selectionActive() ? 'true' : null" [class.three-line-list]="appSettings.settings().chatListDensity === 'three-line'">
   <section class="chat-layout">
-    <aside class="sidebar" [class.chat-selection-active]="selectionActive()" [class.has-story-strip]="storyHighlights().length && !query.trim() && !showRecentSearches">
+    <aside class="sidebar" [class.chat-selection-active]="selectionActive()" [class.mobile-header-collapsed]="mobileChatHeaderHidden()" [class.has-story-strip]="storyHighlights().length && !query.trim() && !showRecentSearches">
       @if(selectionActive()){
         <header class="chat-selection-toolbar" aria-label="Acciones para chats seleccionados" [attr.aria-busy]="bulkChatBusy">
           <button type="button" (click)="resetChatSelection()" [disabled]="bulkChatBusy" aria-label="Salir de la selección"><ion-icon name="arrow-back-outline" aria-hidden="true"></ion-icon></button>
@@ -14,6 +14,8 @@
           <p class="bulk-chat-error" role="alert" [appTransientNotice]="conversationActionError" [appNoticeDuration]="15000" (noticeExpired)="conversationActionError=''">{{conversationActionError}}</p>
         }
       }
+      <div class="chat-header-accordion" [class.is-collapsed]="mobileChatHeaderHidden()" [attr.inert]="mobileChatHeaderHidden() ? '' : null" [attr.aria-hidden]="mobileChatHeaderHidden() ? 'true' : null">
+      <div class="chat-header-content">
       <header class="side-head">
         <div class="side-heading">
           <h1>{{ 'CHATS.TITLE' | translate:'Chats' }}</h1>
@@ -144,6 +146,9 @@
         @if (searchError && !query.trim()) { <p [appTransientNotice]="searchError" [appNoticeDuration]="15000" class="search-hint search-error" role="alert">{{ searchError }}</p> }
       </div>
 
+      </div>
+      </div>
+
       @if (query.trim()) {
         <ion-list class="list search-results" lines="none">
           @if (searchScope !== 'people') {
@@ -223,12 +228,14 @@
         </div>
       } @else {
         <section class="chat-list-shell" [class.has-history-warning]="!!visibleStorageError()">
+          <div class="chat-filters-accordion" [class.is-collapsed]="mobileChatHeaderHidden()" [attr.inert]="mobileChatHeaderHidden() ? '' : null" [attr.aria-hidden]="mobileChatHeaderHidden() ? 'true' : null">
           <nav class="chat-folders" [attr.aria-label]="'CHATS.SEARCH_SCOPE' | translate:'Dónde buscar'">
             <button type="button" [class.selected]="selectedFolder === 'all'" [attr.aria-pressed]="selectedFolder === 'all'" (click)="setFolder('all')">{{ 'CHATS.ALL' | translate:'Todos' }}</button>
             <button type="button" [class.selected]="selectedFolder === 'pinned'" [attr.aria-pressed]="selectedFolder === 'pinned'" (click)="setFolder('pinned')">{{ 'CHATS.PINNED' | translate:'Fijados' }}</button>
             <button type="button" [class.selected]="selectedFolder === 'unread'" [attr.aria-pressed]="selectedFolder === 'unread'" (click)="setFolder('unread')">{{ 'CHATS.UNREAD' | translate:'No leidos' }}</button>
             <button type="button" [class.selected]="selectedFolder === 'archived'" [attr.aria-pressed]="selectedFolder === 'archived'" (click)="setFolder('archived')">{{ 'CHATS.ARCHIVED' | translate:'Archivados' }}</button>
           </nav>
+          </div>
 
           @if (showHistoryStatus()) {
             <div class="history-status-row">
@@ -368,6 +375,9 @@
         </section>
       }
       @if(!detailActive && !query.trim() && !showRecentSearches && !selectionActive()){
+        @if(mobileChatHeaderHidden()){
+          <button type="button" class="mobile-chat-menu-fab" (click)="openChatMenu($event)" [attr.aria-label]="'CHATS.MORE_ACTIONS' | translate:'Más opciones de chats'" aria-haspopup="menu" [attr.aria-expanded]="chatMenuOpen"><ion-icon name="ellipsis-vertical-outline" aria-hidden="true"></ion-icon></button>
+        }
         <button type="button" class="mobile-message-fab" [class.expanded]="contactsFabExpanded" (click)="startNewChat()" aria-label="Nuevo mensaje, abrir Contactos"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon><span>Nuevo mensaje</span></button>
       }
     </aside>

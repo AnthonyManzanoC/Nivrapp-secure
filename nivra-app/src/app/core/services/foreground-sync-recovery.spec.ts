@@ -25,6 +25,14 @@ describe('foreground connection recovery', () => {
     tick(120_000); expect(sync).toHaveBeenCalledTimes(1);
   }));
 
+  it('recovers retryable key-directory failures as well as HTTP errors', fakeAsync(() => {
+    const { recovery, sync } = harness();
+    recovery.failed(Object.assign(new Error('Temporary key lookup failure'), { retryable: true }));
+    tick(2500); flushMicrotasks();
+    expect(sync).toHaveBeenCalledTimes(1);
+    expect(recovery.pending).toBeFalse();
+  }));
+
   it('keeps retrying a premature online hint with spaced reads until the server responds', fakeAsync(() => {
     const { recovery, sync } = harness();
     let failures = 2;

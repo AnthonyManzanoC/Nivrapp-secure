@@ -33,6 +33,47 @@ describe('durable text outbox', () => {
   });
   afterEach(() => TestBed.resetTestingModule());
 
+  it('explains unavailable recipient keys and retries with the same message identity', async () => {
+    let now = Date.now(); spyOn(Date, 'now').and.callFake(() => now);
+    const service = open();
+    const send = jasmine.createSpy().and.rejectWith({ retryable: true, code: 'recipient_keys_unavailable' });
+    service.configure(send, () => true); await settle();
+    const entry = await service.enqueue({ id: 'chat' } as any, 'Conservar'); await settle();
+    expect(service.entries()[0].blocked).toBeFalse();
+    expect(service.failureMessage(entry)).toContain('llaves de tu contacto');
+    send.and.resolveTo({}); now += 3000; service.wake(); await settle();
+    expect(send.calls.mostRecent().args[0].clientMessageId).toBe(entry.clientMessageId);
+    expect(service.entries()).toEqual([]);
+  });
+
+  it('rechecks legacy unknown failures once while leaving denied sends blocked after restart', async () => {
+    let service = open(); const send = jasmine.createSpy().and.rejectWith(new Error('Old key lookup failure'));
+    service.configure(send, () => true); await settle();
+    const first = await service.enqueue({ id: 'chat' } as any, 'Anterior'); await settle();
+    send.and.rejectWith({ status: 403 });
+    const denied = await service.enqueue({ id: 'denied' } as any, 'Sin permiso'); await settle();
+    for (const row of disk.values()) delete row.lastFailure;
+    TestBed.resetTestingModule(); service = open(); await settle();
+    expect(service.entries().find(row => row.id === first.id)?.blocked).toBeFalse();
+    expect(service.entries().find(row => row.id === denied.id)?.blocked).toBeTrue();
+    send.and.rejectWith(new Error('Still invalid'));
+    service.configure(send, () => true); await settle();
+    expect(service.entries().find(row => row.id === first.id)?.blocked).toBeTrue();
+    TestBed.resetTestingModule(); service = open(); await settle();
+    expect(service.entries().find(row => row.id === first.id)?.blocked).toBeTrue();
+    expect(service.entries().find(row => row.id === first.id)?.clientMessageId).toBe(first.clientMessageId);
+  });
+
+  it('explains rate limiting and keeps the original server wait rather than waking on online hints', async () => {
+    const service = open();
+    const send = jasmine.createSpy().and.rejectWith({ status: 429, headers: { get: () => '120' } });
+    service.configure(send, () => true); await settle();
+    const entry = await service.enqueue({ id: 'chat' } as any, 'Esperar'); await settle();
+    expect(service.failureMessage(entry)).toContain('pidió esperar');
+    window.dispatchEvent(new Event('online')); await settle();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
   it('limits simultaneous chats and continues queued conversations as bandwidth becomes available', async () => {
     const service = open();
     const network = TestBed.inject(NetworkPolicyService);

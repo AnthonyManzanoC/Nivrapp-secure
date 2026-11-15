@@ -2160,6 +2160,7 @@ ion-modal.private-chat-modal::part(content) { max-height: 90dvh; overflow: auto;
   color:var(--nivra-muted); font-size:12px; line-height:1.45;
 }
 .identity-device-note button { border:0; border-radius:10px; min-height:36px; padding:6px 10px; color:var(--nivra-brand-2); background:var(--nivra-panel-2); font:inherit; font-weight:700; }
+.queued-text-status { margin:0; padding:10px 14px; border-top:1px solid var(--nivra-line); background:var(--nivra-panel-solid); color:var(--nivra-muted); font-size:12px; line-height:1.5; }
 .incognito-confirm { max-width:520px;margin:auto;padding:32px 24px;color:var(--nivra-text);background:var(--nivra-panel-solid);border-radius:24px; }
 .incognito-confirm > ion-icon { font-size:32px;color:var(--nivra-brand-2); }
 .incognito-confirm h2 { margin:14px 0;font-size:25px; }
