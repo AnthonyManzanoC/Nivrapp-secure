@@ -415,6 +415,15 @@ async function main() {
     await waitFor("document.querySelector('.chat-selection-count strong')?.textContent==='2'");
     await tap('.chat-selection-toolbar button[aria-label="Archivar chats seleccionados"]');
     await waitFor("!document.querySelector('[data-chat-id=sofia]') && !document.querySelector('[data-chat-id=family]')");
+    // The preceding upward row gesture can fold the mobile controls. Reveal
+    // them with a real downward gesture before choosing the archived folder.
+    if (await evaluate("!!document.querySelector('.sidebar.mobile-header-collapsed')")) {
+      const point = await evaluate("(() => { const r=document.querySelector('.conversation-list-stage .list').getBoundingClientRect(); return {x:r.x+r.width/2,y:r.y+Math.min(80,r.height/3)}; })()");
+      await call('Input.dispatchTouchEvent', {type:'touchStart',touchPoints:[point]});
+      await call('Input.dispatchTouchEvent', {type:'touchMove',touchPoints:[{x:point.x,y:point.y+70}]});
+      await call('Input.dispatchTouchEvent', {type:'touchEnd',touchPoints:[]});
+      await waitFor("!document.querySelector('.sidebar.mobile-header-collapsed')");
+    }
     await tap('.chat-folders button:last-child');
     await waitFor("!!document.querySelector('[data-chat-id=sofia]')");
     await holdChat('sofia');
@@ -475,7 +484,7 @@ async function main() {
       for (const theme of ['light','dark']) {
         await call('Page.navigate',{url:base+'/app/guide?theme='+theme});
         await waitFor("document.querySelectorAll('.guide .tasks article').length===5");
-        assert.equal(await evaluate("document.querySelectorAll('.guide .features details').length"),12,'all features are explained');
+        assert.equal(await evaluate("document.querySelectorAll('.guide .features details').length"),16,'all features are explained');
         await evaluate("document.querySelector('.preview-controls').style.display='none'");
         assert(await evaluate("document.documentElement.scrollWidth<=innerWidth"),'guide fits viewport');
         await capture('guide-'+width+'-'+theme);

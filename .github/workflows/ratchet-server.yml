@@ -2,7 +2,7 @@ name: Ratchet PostgreSQL pilot
 on:
   push:
     branches: [codex/ratchet-bridge]
-    paths: [Nivra.Api/**, Nivra.Desktop/**, checks/Nivra.RatchetChecks/**, crypto/ratchet-pilot/**, crypto/ratchet-wasm/**, nivra-app/src/**, nivra-app/angular.json, nivra-app/package-lock.json, android/ratchet-lab/**, android/settings.gradle, .github/workflows/ratchet-server.yml, .github/workflows/ratchet-wasm.yml]
+    paths: [global.json, Nivra.Api/**, Nivra.Desktop/**, checks/Nivra.RatchetChecks/**, crypto/ratchet-pilot/**, crypto/ratchet-wasm/**, nivra-app/src/**, nivra-app/angular.json, nivra-app/package-lock.json, android/ratchet-lab/**, android/settings.gradle, .github/workflows/ratchet-server.yml, .github/workflows/ratchet-wasm.yml]
   workflow_dispatch:
 permissions:
   contents: read

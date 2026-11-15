@@ -89,7 +89,8 @@ describe('Chats story creation entry', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
-  it('keeps stories compact until explicitly opened and does not expand them when returning to the list start', () => {
+  it('keeps desktop stories compact until explicitly opened and does not expand them on a programmatic return', () => {
+    spyOn(page, 'mobileChatHeaderEnabled').and.returnValue(false);
     const scroll = (scrollTop: number, scrollHeight: number, clientHeight: number) =>
       page.onChatListScroll({ target: { scrollTop, scrollHeight, clientHeight } } as unknown as Event);
     expect(page.storiesCollapsed).toBeTrue();

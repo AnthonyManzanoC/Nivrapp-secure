@@ -2,7 +2,7 @@ name: Authentication boundary verification
 on:
   push:
     branches: [main, 'codex/**']
-    paths: [Nivra.Api/**, checks/Nivra.AuthBoundaryChecks/**, .github/workflows/auth-boundary.yml]
+    paths: [global.json, Nivra.Api/**, checks/Nivra.AuthBoundaryChecks/**, .github/workflows/auth-boundary.yml]
   workflow_dispatch:
 permissions:
   contents: read
