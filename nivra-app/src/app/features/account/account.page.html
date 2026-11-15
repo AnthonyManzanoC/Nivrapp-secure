@@ -19,7 +19,7 @@
       </ion-button>
     </header>
 
-    <p><a routerLink="/app/guide">{{ 'GUIDE.HELP_LINK' | translate:'Guía de Nivra: aprende a usar cada función' }} →</a></p>
+    <p class="account-guide-link"><a routerLink="/app/guide">{{ 'GUIDE.HELP_LINK' | translate:'Guía de Nivra: aprende a usar cada función' }} <span aria-hidden="true">→</span></a></p>
     <app-account-navigation (openSection)="openAccountSectionById($event)" />
 
     <section class="grid">

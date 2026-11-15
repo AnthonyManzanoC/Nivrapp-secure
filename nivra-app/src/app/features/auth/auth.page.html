@@ -13,7 +13,7 @@
           <ion-icon name="globe-outline" aria-hidden="true"></ion-icon>
           <select name="loginLanguage" [attr.aria-label]="'LOGIN.LANGUAGE_LABEL' | translate:'Elegir idioma'" [ngModel]="currentLanguage()" (ngModelChange)="setLanguage($event)">
             @for (option of languageOptions; track option.value) {
-              <option [value]="option.value">{{ option.native }} · {{ option.labelKey | translate:option.label }}</option>
+              <option [value]="option.value">{{ option.native }}</option>
             }
           </select>
         </label>
@@ -27,7 +27,7 @@
         </div>
       }
       @if (auth.accountError()) { <p class="auth-feedback failure" role="alert">{{ auth.accountError() }}</p> }
-      <p class="auth-copy">{{ 'LOGIN.COPY' | translate:'Cifrado en cliente, llamadas en tiempo real y la misma cuenta en web, PC y movil.' }}</p>
+      <p class="auth-copy">{{ 'LOGIN.COPY' | translate:'Usa tu cuenta para conversar y llamar desde el móvil, la computadora o la web.' }}</p>
 
       <div class="auth-modes" role="group" [attr.aria-label]="'LOGIN.ACCESS_METHOD' | translate:'Forma de acceso'">
         <button type="button" [class.active]="mode === 'alias'" [attr.aria-pressed]="mode === 'alias'" [disabled]="submitting || auth.busy()" (click)="setMode('alias')">
@@ -93,7 +93,7 @@
             </label>
           }
           <label>
-            <span>{{ 'LOGIN.PASSWORD' | translate:'Password' }}</span>
+            <span>{{ 'LOGIN.PASSWORD' | translate:'Contraseña' }}</span>
             <ion-input mode="ios" fill="outline" name="password" [(ngModel)]="password" [type]="passwordVisible ? 'text' : 'password'" [autocomplete]="aliasMode !== 'login' ? 'new-password' : 'current-password'" [clearOnEdit]="false" autocapitalize="off" autocorrect="off" [spellcheck]="false" [disabled]="submitting || auth.busy()" [attr.aria-label]="'LOGIN.PASSWORD' | translate:'Contraseña'" [attr.aria-describedby]="aliasMode !== 'login' ? 'password-hint' : null" (keydown)="updateCapsLock($event)" (keyup)="updateCapsLock($event)" (ionBlur)="capsLockOn = false">
               <button class="password-toggle" slot="end" type="button" [attr.aria-label]="passwordVisible ? ('LOGIN.HIDE_PASSWORD' | translate:'Ocultar contraseña') : ('LOGIN.SHOW_PASSWORD' | translate:'Mostrar contraseña')" [attr.aria-pressed]="passwordVisible" (click)="passwordVisible = !passwordVisible">
                 <ion-icon [name]="passwordVisible ? 'eye-off-outline' : 'eye-outline'" aria-hidden="true"></ion-icon>

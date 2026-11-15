@@ -24,11 +24,10 @@ describe('API endpoint pool isolation and failover', () => {
   };
   afterEach(() => TestBed.resetTestingModule());
 
-  it('prefers the verified healthy Render API and retains both other nodes as backups', () => {
+  it('uses the two operational pinned Render APIs without probing the suspended member', () => {
     expect(productionEnvironment.apiBaseUrl).toBe('https://nivrapp-secure-eaqi.onrender.com');
     expect(productionEnvironment.apiEndpoints).toEqual([
       'https://nivrapp-secure-eaqi.onrender.com',
-      'https://nivrapp-secure.onrender.com',
       'https://nivra-webapp-secure.onrender.com',
     ]);
   });

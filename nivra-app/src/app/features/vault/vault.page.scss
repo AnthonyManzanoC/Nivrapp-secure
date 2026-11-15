@@ -50,7 +50,7 @@
 
 .vault-surface {
   --vault-green: var(--ion-color-primary);
-  --vault-cyan: var(--ion-color-primary-tint);
+  --vault-cyan: var(--nivra-brand-2);
   --vault-warn: var(--ion-color-primary);
   user-select: none;
   -webkit-user-select: none;
@@ -115,7 +115,7 @@
   border-radius: 8px;
   padding: 0 12px;
   color: var(--nivra-text);
-  background: rgba(255, 255, 255, .055);
+  background: var(--nivra-panel-2);
 }
 
 .vault-key-state {
@@ -130,8 +130,7 @@
   gap: 10px;
   border-color: rgba(var(--ion-color-primary-rgb), .28);
   background:
-    linear-gradient(135deg, rgba(var(--ion-color-primary-rgb), .13), rgba(var(--ion-color-primary-rgb), .045)),
-    rgba(13, 20, 22, .82);
+    linear-gradient(135deg, var(--nivra-selection), transparent), var(--nivra-panel-solid);
 }
 
 .pending-invite-panel > div {
@@ -216,7 +215,7 @@
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   padding: 0 10px;
-  background: rgba(255, 255, 255, .055);
+  background: var(--nivra-panel-2);
 }
 
 .search-box ion-icon {
@@ -243,7 +242,7 @@
   gap: 8px;
   padding: 7px 10px 7px 7px;
   color: var(--nivra-text);
-  background: rgba(255, 255, 255, .045);
+  background: var(--nivra-panel-2);
   white-space: nowrap;
 }
 
@@ -316,7 +315,7 @@
   display: grid;
   gap: 10px;
   padding: 12px;
-  background: rgba(255, 255, 255, .035);
+  background: var(--nivra-panel-2);
 }
 
 .room-card.active {
@@ -345,7 +344,7 @@
   width: 42px;
   height: 42px;
   border-radius: 8px;
-  color: #06100d;
+  color: var(--nivra-on-brand);
   background: linear-gradient(135deg, var(--vault-green), var(--vault-cyan));
   box-shadow: 0 10px 24px rgba(53, 214, 159, .16);
 }
@@ -381,14 +380,14 @@
 }
 
 .note-file-card {
-  border: 1px solid rgba(255, 255, 255, .08);
+  border: 1px solid var(--nivra-line);
   border-radius: 8px;
   padding: 8px;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  background: rgba(255, 255, 255, .035);
+  background: var(--nivra-panel-2);
 }
 
 .note-file-card img,
@@ -447,7 +446,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #ffb7b7;
+  color: var(--nivra-danger);
   background: rgba(255, 107, 107, .055);
   font-size: 12px;
   font-weight: 800;
@@ -498,7 +497,7 @@
 
 .member-dots span {
   margin-left: -7px;
-  border: 2px solid #0d1416;
+  border: 2px solid var(--nivra-panel-solid);
 }
 
 .waiting-list {
@@ -571,8 +570,7 @@
   gap: 10px;
   align-items: center;
   background:
-    linear-gradient(135deg, rgba(53, 214, 159, .16), rgba(102, 217, 239, .08)),
-    rgba(9, 15, 17, .92);
+    var(--nivra-panel-solid);
   box-shadow: 0 18px 42px rgba(0, 0, 0, .25), inset 0 1px 0 rgba(255, 255, 255, .08);
   backdrop-filter: blur(16px) saturate(135%);
 }
@@ -584,8 +582,7 @@
 .voice-widget.failed {
   border-color: rgba(255, 107, 107, .32);
   background:
-    linear-gradient(135deg, rgba(255, 107, 107, .12), rgba(255, 255, 255, .04)),
-    rgba(9, 15, 17, .92);
+    color-mix(in srgb, var(--nivra-danger) 7%, var(--nivra-panel-solid));
 }
 
 .voice-roster,
@@ -613,11 +610,11 @@
 .voice-avatar {
   width: 30px;
   height: 30px;
-  border: 2px solid rgba(8, 13, 15, .92);
+  border: 2px solid var(--nivra-panel-solid);
   border-radius: 999px;
   display: grid;
   place-items: center;
-  color: #06100d;
+  color: var(--nivra-on-brand);
   background: linear-gradient(135deg, var(--vault-green), var(--vault-cyan));
   font-weight: 950;
   margin-left: -8px;
@@ -633,8 +630,8 @@
 }
 
 .voice-controls ion-button {
-  width: 38px;
-  height: 38px;
+  width: 44px;
+  height: 44px;
   margin: 0;
   --border-radius: 999px;
   --background: rgba(255, 255, 255, .06);
@@ -650,13 +647,12 @@
   overflow: auto;
   padding: 14px;
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, .045), rgba(255, 255, 255, .018)),
-    rgba(5, 9, 11, .52);
+    var(--nivra-bg);
 }
 
 .vault-message {
   width: min(78%, 460px);
-  border: 1px solid rgba(255, 255, 255, .08);
+  border: 1px solid var(--nivra-line);
   border-radius: 8px;
   display: grid;
   gap: 5px;
@@ -711,7 +707,7 @@
   padding: 8px;
   border: 1px solid var(--nivra-line);
   border-radius: 8px;
-  background: rgba(255, 255, 255, .045);
+  background: var(--nivra-panel-2);
 }
 
 .composer ion-textarea {
@@ -926,3 +922,6 @@
 .incognito-view>.vault-hero,.incognito-view .grid>article:not(.room-workspace):not(.pending-invite-panel),.incognito-view .room-head,.incognito-view .owner-invite-panel,.incognito-view>.error{display:none}
 .incognito-view .grid{display:flex;flex-direction:column;gap:12px}.incognito-view .room-workspace{width:100%;height:calc(100dvh - 250px);min-height:380px;border-radius:24px;padding:14px;background:var(--nivra-panel-solid)}.incognito-view .vault-messages-area{display:flex;flex-direction:column;overflow:hidden}.incognito-view .vault-chat{flex:1;height:auto;min-height:0;border:0;border-radius:16px;background:var(--nivra-bg);padding:20px;gap:12px;overscroll-behavior:contain}.incognito-view .vault-message{border:1px solid var(--nivra-line);border-radius:20px 20px 20px 5px;background:var(--nivra-panel-solid);color:var(--nivra-text);padding:12px 16px;width:fit-content;max-width:82%}.incognito-view .vault-message.mine{border-color:var(--nivra-selection-line);background:var(--nivra-selection);border-radius:20px 20px 5px 20px}.incognito-view .vault-message small{color:var(--nivra-muted)}.incognito-view .vault-message p{font-size:15px;line-height:1.6;white-space:pre-wrap}.incognito-view .vault-input-area{border-radius:20px;margin-top:12px;background:var(--nivra-panel-2)}.incognito-view ion-textarea{--background:transparent;--color:var(--nivra-text);--padding-start:10px;max-height:140px;overflow:auto}.incognito-view .empty-copy{margin:auto;max-width:330px;text-align:center;color:var(--nivra-muted);line-height:1.7}.incognito-view .empty-copy ion-icon{font-size:32px;color:var(--nivra-brand-2)}.incognito-error{font-size:13px;color:var(--ion-color-danger);padding:0 12px}.incognito-header button:focus-visible{outline:3px solid var(--nivra-brand-2);outline-offset:3px}
 @media(max-width:680px){.incognito-view{padding:14px 10px;gap:10px}.incognito-view .room-workspace{padding:8px;border-radius:20px;height:calc(100dvh - 275px);min-height:330px}.incognito-header h1{font-size:20px}.incognito-view .vault-chat{padding:14px 10px}.incognito-view .vault-message{max-width:90%}.incognito-explainer{font-size:11px;padding:10px 12px}}
+
+.vault-surface:not(.is-fullscreen):not(.incognito-view) { max-width:1280px; margin-inline:auto; }.vault-surface .native-select { font:inherit; font-size:16px; }.room-main { min-height:48px; border-radius:12px; }.room-card.active { border-color:var(--nivra-selection-line); background:var(--nivra-selection); }.room-avatar { box-shadow:none; }.room-card .room-meta { gap:12px; flex-wrap:wrap; line-height:1.5; }.voice-widget { border-color:var(--nivra-line-strong); border-radius:18px; box-shadow:var(--nivra-shadow-tiny); }.vault-message { color:var(--nivra-text); border-radius:16px 16px 16px 4px; background:var(--nivra-panel-solid); }.vault-message.mine { border-color:var(--nivra-selection-line); background:var(--nivra-selection); border-radius:16px 16px 4px 16px; }.vault-message p { font-size:14px; line-height:1.6; }.vault-empty-stage { padding:28px; }.vault-empty-stage ion-icon { width:48px; height:48px; }.vault-surface :is(.room-main,.person-pill,.note-attachment-chip,.create-room-cta):focus-visible { outline:2px solid var(--nivra-brand); outline-offset:3px; }.person-pill { min-height:44px; cursor:pointer; }.room-create-close { width:44px; height:44px; }.vault-key-state strong { max-width:100%; width:fit-content; overflow-wrap:anywhere; }
+@media(prefers-reduced-motion:reduce) { .voice-avatar.speaking { animation:none; } }

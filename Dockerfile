@@ -13,7 +13,8 @@ WORKDIR "/src/Nivra.Api"
 RUN dotnet publish "Nivra.Api.csproj" -c Release -o /app/publish /p:UseAppHost=false
 
 # Etapa 2: Producción (Runtime ligero)
-FROM mcr.microsoft.com/dotnet/aspnet:9.0 AS final
+# Parche mínimo CVE-2026-114147; revisar este tag al aplicar futuras actualizaciones de seguridad.
+FROM mcr.microsoft.com/dotnet/aspnet:9.0.23 AS final
 WORKDIR /app
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080

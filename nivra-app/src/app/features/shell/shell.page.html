@@ -3,16 +3,17 @@
     <nav class="rail" aria-label="Nivra">
       <a class="rail-brand" routerLink="/app/chats" aria-label="Nivra">
         <img class="rail-logo" src="assets/brand/nivra-mark.svg" alt="">
-        <span>Nivra</span>
+        <span>nivra</span>
       </a>
       @for (item of nav; track item.path) {
-        <a class="nav-btn" [routerLink]="item.path" routerLinkActive="active" ariaCurrentWhenActive="page"
+        <a class="nav-btn" [routerLink]="item.path" [class.active]="currentTab() === item.path"
+          [attr.aria-current]="currentTab() === item.path ? 'location' : null"
           [attr.data-account-shortcut]="item.path === '/app/account' ? 'true' : null"
           [title]="(item.labelKey | translate:item.label) + (item.path === '/app/account' && accountShortcutAvailable() ? ' · ' + ('TABS.ACCOUNT_SWITCH_HINT' | translate:'Pulsa dos veces para cambiar de cuenta') : '')"
           [attr.aria-label]="(item.labelKey | translate:item.label) + (item.path === '/app/chats' && unread.unreadChats() ? ' · ' + unread.unreadChats() + ' ' + ('CHATS.UNREAD_CONVERSATIONS' | translate:'chats sin leer') : '') + (item.path === '/app/account' && accountShortcutAvailable() ? ' · ' + ('TABS.ACCOUNT_SWITCH_HINT' | translate:'Pulsa dos veces para cambiar de cuenta') : '')">
           @if (item.path === '/app/account' && auth.session()?.user?.profilePhotoDataUrl && failedAvatar() !== auth.session()?.user?.profilePhotoDataUrl) {
-<img class="nav-profile-avatar" [src]="auth.session()?.user?.profilePhotoDataUrl" alt="" (error)="failedAvatar.set(auth.session()?.user?.profilePhotoDataUrl ?? '')">
-} @else { <ion-icon [name]="item.icon" aria-hidden="true"></ion-icon> }
+            <img class="nav-profile-avatar" [src]="auth.session()?.user?.profilePhotoDataUrl" alt="" (error)="failedAvatar.set(auth.session()?.user?.profilePhotoDataUrl ?? '')">
+          } @else { <ion-icon [name]="item.icon" aria-hidden="true"></ion-icon> }
           <span>{{ item.labelKey | translate:item.label }}</span>
           @if (item.path === '/app/chats' && unread.unreadChats()) {
             <span class="nav-unread-badge" aria-hidden="true">{{ unread.unreadChats() > 99 ? '99+' : unread.unreadChats() }}</span>
@@ -70,7 +71,7 @@
       @if (calls.activeCall(); as call) {
         <section class="incoming-call-overlay" aria-live="assertive">
           <div class="incoming-call-card" [class.video-incoming]="call.type === 'Video'" [class.reply-open]="calls.quickRepliesOpen()">
-            <span class="incoming-brand">NIVRA · CONEXIÓN PRIVADA</span>
+            <span class="incoming-brand"><img src="assets/brand/nivra-mark.svg" width="26" height="26" alt="">nivra</span>
             <span class="incoming-kind">
               <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
               {{ call.type === 'Video' ? ('CALLS.INCOMING_VIDEO' | translate:'Videollamada entrante') : ('CALLS.INCOMING_AUDIO' | translate:'Llamada entrante') }}

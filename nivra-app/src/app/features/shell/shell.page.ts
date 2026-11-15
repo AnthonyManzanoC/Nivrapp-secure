@@ -1,6 +1,6 @@
 import { CommonModule } from '@angular/common';
 import { AfterViewInit, Component, computed, ElementRef, inject, NgZone, OnDestroy, signal } from '@angular/core';
-import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { NavigationEnd, Router, RouterLink, RouterOutlet } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { IonApp, IonIcon } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -31,7 +31,7 @@ import { CallResultComponent } from '../../shared/call-result.component';
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CallResultComponent, CallGameInvitationComponent, LocalizedDatePipe, CommonModule, RouterLink, RouterLinkActive, RouterOutlet, TranslatePipe, IonApp, IonIcon, TabSwipeDirective],
+  imports: [CallResultComponent, CallGameInvitationComponent, LocalizedDatePipe, CommonModule, RouterLink, RouterOutlet, TranslatePipe, IonApp, IonIcon, TabSwipeDirective],
   templateUrl: './shell.page.html',
   styleUrls: ['./shell.page.scss'],
 })
@@ -48,12 +48,13 @@ export class ShellPage implements AfterViewInit, OnDestroy {
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
   private readonly zone = inject(NgZone);
   readonly hideMobileNav = signal(this.isMobileImmersiveRoute(this.router.url));
+  readonly currentTab = signal(this.tabForRoute(this.router.url));
   readonly onCallsPage = signal(this.router.url.startsWith('/app/calls'));
 
   readonly nav = [
     { path: '/app/chats', icon: 'chatbubble-ellipses-outline', label: 'Chats', labelKey: 'TABS.CHATS' },
     { path: '/app/world', icon: 'globe-outline', label: 'Mundo', labelKey: 'TABS.WORLD' },
-    { path: '/app/vault', icon: 'lock-closed-outline', label: 'Boveda', labelKey: 'TABS.VAULT' },
+    { path: '/app/vault', icon: 'lock-closed-outline', label: 'Bóveda', labelKey: 'TABS.VAULT' },
     { path: '/app/calls', icon: 'call-outline', label: 'Llamadas', labelKey: 'TABS.CALLS' },
     { path: '/app/account', icon: 'person-circle-outline', label: 'Cuenta', labelKey: 'TABS.ACCOUNT' },
   ];
@@ -95,6 +96,7 @@ export class ShellPage implements AfterViewInit, OnDestroy {
       .pipe(takeUntilDestroyed())
       .subscribe((event) => {
         if (event instanceof NavigationEnd) {
+          this.currentTab.set(this.tabForRoute(event.urlAfterRedirects));
           this.hideMobileNav.set(this.isMobileImmersiveRoute(event.urlAfterRedirects));
           this.onCallsPage.set(event.urlAfterRedirects.startsWith('/app/calls'));
           if (event.urlAfterRedirects.split(/[?#]/, 1)[0] !== '/app/account') this.clearAccountTap();
@@ -189,6 +191,19 @@ export class ShellPage implements AfterViewInit, OnDestroy {
     }
     this.calls.releaseLocalResources();
     await this.auth.logout();
+  }
+
+  private tabForRoute(url: string): string {
+    const [path, query] = url.split('#', 1)[0].split('?');
+    const section = path.split('/')[2] ?? '';
+    switch (section) {
+      case 'communities': return new URLSearchParams(query).get('from') === 'chats' ? '/app/chats' : '/app/world';
+      case 'broadcasts':
+      case 'contacts':
+      case 'share': return '/app/chats';
+      case 'notification-check': return '/app/account';
+      default: return '/app/' + section;
+    }
   }
 
   private isMobileImmersiveRoute(url: string): boolean {

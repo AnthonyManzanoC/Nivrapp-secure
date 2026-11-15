@@ -16,7 +16,6 @@
   <main id="contenido" tabindex="-1">
     <section class="hero" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <span class="eyebrow"><span class="status-dot"></span> TU ESPACIO. TUS REGLAS.</span>
         <h1 id="hero-title">Tu mundo.<br>Tus palabras.<br><em>Tu privacidad.</em></h1>
         <p>Hay conversaciones que solo les pertenecen a ustedes. Dales su propio espacio con Nivra.</p>
         <div class="hero-actions">
@@ -57,12 +56,11 @@
           <div class="phone-camera"></div><div class="phone-status">9:41 <span>••• ▰</span></div>
           <div class="phone-top"><img src="assets/brand/nivra-mark.svg" alt=""><strong>nivra</strong><ion-icon name="shield-checkmark-outline" /></div>
           <div class="phone-art"><span class="avatar avatar-sage">V</span><span class="call-ripple"></span></div>
-          <strong class="caller-name">Valentina</strong><small class="caller-state">Un momento para conectar.</small>
+          <strong class="caller-name">Valentina</strong><small class="caller-state">Llamada de voz</small>
           <div class="phone-call-actions"><span><ion-icon name="mic-outline" /></span><span><ion-icon name="videocam-outline" /></span><span class="answer-call"><ion-icon name="call-outline" /></span></div>
           <div class="phone-home"></div>
         </div>
-        <div class="privacy-sticker"><span><ion-icon name="lock-closed-outline" /></span><div>Entre tú y los tuyos.<small>Así de personal.</small></div></div>
-        <span class="preview-caption">UN VISTAZO A TU PRÓXIMO ESPACIO · VISTA ILUSTRATIVA</span>
+        <span class="preview-caption">Vista ilustrativa</span>
       </div>
     </section>
 
@@ -74,8 +72,8 @@
     </div>
 
     <section class="privacy-section" id="privacidad" tabindex="-1" aria-labelledby="privacy-title">
-      <div class="privacy-illustration" aria-hidden="true"><div class="shield-orbit"></div><div class="shield-orbit inner"></div><img src="assets/brand/nivra-mark.svg" alt=""><span class="tiny-lock lock-one"><ion-icon name="key-outline" /></span><span class="tiny-lock lock-two"><ion-icon name="lock-closed-outline" /></span><span class="privacy-label">PRIVADO DESDE EL PRIMER HOLA.</span></div>
-      <div class="privacy-copy"><span class="eyebrow">MÁS CERCA. MÁS TUYO.</span><h2 id="privacy-title">Comparte tu día.<br>Conserva tu privacidad.</h2><p>Tu voz, tus ideas y esos pequeños momentos. Nivra reúne tus conversaciones, llamadas y archivos en un espacio pensado para ti.</p>
+      <div class="privacy-illustration" aria-hidden="true"><div class="shield-orbit"></div><div class="shield-orbit inner"></div><img src="assets/brand/nivra-mark.svg" alt=""><span class="tiny-lock lock-one"><ion-icon name="key-outline" /></span><span class="tiny-lock lock-two"><ion-icon name="lock-closed-outline" /></span></div>
+      <div class="privacy-copy"><h2 id="privacy-title">Comparte tu día.<br>Conserva tu privacidad.</h2><p>Tu voz, tus ideas y esos pequeños momentos. Nivra reúne tus conversaciones, llamadas y archivos en un espacio pensado para ti.</p>
         <div class="privacy-detail"><ion-icon name="lock-closed-outline" aria-hidden="true" /><div><h3>El cifrado empieza en tu dispositivo.</h3><p>Los mensajes se cifran antes de enviarse.</p></div></div>
         <div class="privacy-detail"><ion-icon name="key-outline" aria-hidden="true" /><div><h3>Tu identidad, a tu manera.</h3><p>Entra con tu ID Nivra o alias, sin necesitar un número de teléfono.</p></div></div>
         <a class="text-link" routerLink="/auth">Encuentra tu espacio <ion-icon name="arrow-forward-outline" aria-hidden="true" /></a>
@@ -83,7 +81,7 @@
     </section>
 
     <section class="start-section" id="empezar" tabindex="-1" aria-labelledby="start-title">
-      <div class="section-intro"><span class="eyebrow">LO BUENO EMPIEZA CON UN HOLA.</span><h2 id="start-title">Entra. Conecta. Sé tú.</h2><p>Tu próxima conversación está a unos pasos.</p></div>
+      <div class="section-intro"><h2 id="start-title">Entra. Conecta. Sé tú.</h2><p>Tu próxima conversación está a unos pasos.</p></div>
       <div class="steps">
         <article><span class="step-number">01</span><h3>Abre tu espacio</h3><p>Usa Nivra desde el navegador o descarga la app para tu dispositivo.</p></article>
         <article><span class="step-number">02</span><h3>Hazlo tuyo</h3><p>Crea una cuenta privada o entra con tu ID Nivra o alias y contraseña.</p></article>
@@ -93,7 +91,6 @@
 
     <section class="download-section" id="descargas" tabindex="-1" aria-labelledby="download-title">
       <div class="download-copy">
-        <span class="eyebrow">DONDE ESTÉS, CONTIGO.</span>
         <h2 id="download-title">Un espacio privado.<br>En tu pantalla favorita.</h2>
         <p>Descarga Nivra para tu teléfono o computadora. Tus conversaciones, siempre cerca.</p>
         <div class="download-actions"><a class="button primary" routerLink="/auth">Abrir Nivra Web <ion-icon name="arrow-forward-outline" aria-hidden="true" /></a></div>
@@ -105,7 +102,7 @@
           <span class="installer-version">v{{ version }}</span>
           <h3 id="android-download-title">Android</h3>
           <span class="installer-format">Aplicación · APK</span>
-          <p>Tu espacio privado, listo para llevar.</p>
+          <p>Para teléfonos y tabletas Android.</p>
           <a class="button installer-download" [href]="androidDownloadUrl" [attr.download]="'Nivra-' + version + '-debug.apk'" aria-label="Descargar Nivra para Android, archivo APK">Descargar APK <ion-icon name="arrow-down-outline" aria-hidden="true" /></a>
         </article>
         <article class="installer-card installer-windows" aria-labelledby="windows-download-title">
@@ -113,7 +110,7 @@
           <span class="installer-version">v{{ version }}</span>
           <h3 id="windows-download-title">Windows</h3>
           <span class="installer-format">Instalador · EXE</span>
-          <p>Más espacio para estar cerca de los tuyos.</p>
+          <p>Para equipos Windows de 64 bits.</p>
           <a class="button installer-download" [href]="windowsDownloadUrl" [attr.download]="'Nivra-' + version + '-Setup.exe'" aria-label="Descargar Nivra para Windows, instalador EXE">Descargar EXE <ion-icon name="arrow-down-outline" aria-hidden="true" /></a>
         </article>
       </div>
@@ -125,5 +122,5 @@
       <details><summary>¿Cómo entro si ya tengo una cuenta?<span>+</span></summary><p>Selecciona «Entrar» e inicia sesión con tu ID Nivra o alias. En la pantalla de acceso también encontrarás la opción de vinculación por QR.</p></details>
     </div></section>
   </main>
-  <footer class="site-footer"><a class="brand footer-brand" routerLink="/"><img src="assets/brand/nivra-mark.svg" width="34" height="34" alt=""><span>nivra<small>PRIVATE MESSENGER</small></span></a><span>Un espacio para lo que importa.</span><small>© 2026 Nivra</small><a href="#contenido" (click)="scrollTo('contenido', $event)">Volver arriba ↑</a></footer>
+  <footer class="site-footer"><a class="brand footer-brand" routerLink="/"><img src="assets/brand/nivra-mark.svg" width="34" height="34" alt=""><span>nivra<small>PRIVATE MESSENGER</small></span></a><small>© 2026 Nivra</small><a href="#contenido" (click)="scrollTo('contenido', $event)">Volver arriba ↑</a></footer>
 </div>

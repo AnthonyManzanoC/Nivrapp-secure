@@ -1,5 +1,5 @@
 param(
-    [string[]]$ApiBaseUrl = @('https://nivrapp-secure.onrender.com', 'https://nivra-webapp-secure.onrender.com', 'https://nivrapp-secure-eaqi.onrender.com'),
+    [string[]]$ApiBaseUrl = @('https://nivrapp-secure-eaqi.onrender.com', 'https://nivra-webapp-secure.onrender.com'),
     [ValidateRange(1,2147483647)][int]$ExpectedCallProtocol = 2,
     [ValidatePattern('(?-i)\A[0-9a-f]{64}\z')][string]$ExpectedClusterFingerprint
 )
@@ -33,14 +33,15 @@ $rows = foreach ($base in $ApiBaseUrl) {
             Storage = Test-ReadyFlag $health.sharedStorageReady; Redis = Test-ReadyFlag $health.realtimeSharedReady;
             DurableKey = Test-ReadyFlag $health.durableSigningKeyReady; PushProject = Test-ReadyFlag $health.pushProjectConfigured;
             Fcm = Test-ReadyFlag $health.pushFcmReady; WebPush = Test-ReadyFlag $health.pushWebReady;
+            Relay = Test-ReadyFlag $health.webrtcRelayConfigured;
             Protocol = $protocolReady; Pin = $health.clusterFingerprint -is [string] -and $health.clusterFingerprint -cmatch '\A[0-9a-f]{64}\z';
             ClusterFingerprint = $health.clusterFingerprint; Milliseconds = $timer.ElapsedMilliseconds
         }
     } catch {
-        [pscustomobject]@{ Api=$base; Version=$null; Database=$false; ApiFailover=$false; MultiInstance=$false; Storage=$false; Redis=$false; DurableKey=$false; PushProject=$false; Fcm=$false; WebPush=$false; Protocol=$false; Pin=$false; ClusterFingerprint=$null; Milliseconds=$timer.ElapsedMilliseconds }
+        [pscustomobject]@{ Api=$base; Version=$null; Database=$false; ApiFailover=$false; MultiInstance=$false; Storage=$false; Redis=$false; DurableKey=$false; PushProject=$false; Fcm=$false; WebPush=$false; Relay=$false; Protocol=$false; Pin=$false; ClusterFingerprint=$null; Milliseconds=$timer.ElapsedMilliseconds }
     }
 }
-$rows | Format-Table Api,Version,Database,ApiFailover,MultiInstance,Storage,Redis,DurableKey,Fcm,WebPush,Protocol,Pin,Milliseconds -AutoSize
+$rows | Format-Table Api,Version,Database,ApiFailover,MultiInstance,Storage,Redis,DurableKey,Fcm,WebPush,Relay,Protocol,Pin,Milliseconds -AutoSize
 $pins = @($rows | Where-Object { $_.Pin } | Select-Object -ExpandProperty ClusterFingerprint -Unique)
 $coreReadyRows = @($rows | Where-Object { Test-CoreReadiness $_ })
 if ($ExpectedClusterFingerprint) {
@@ -68,6 +69,9 @@ if ($ExpectedClusterFingerprint) {
     exit 2
 }
 foreach ($row in $acceptedRows) {
+    if (-not $row.Relay) {
+        Write-Warning ($row.Api + ': TURN relay is not configured. Direct calls can fail on restrictive networks; healthy API and push configuration do not prove call connectivity.')
+    }
     $missingPush = @()
     if (-not $row.PushProject) { $missingPush += 'FCM project' }
     if (-not $row.Fcm) { $missingPush += 'FCM' }

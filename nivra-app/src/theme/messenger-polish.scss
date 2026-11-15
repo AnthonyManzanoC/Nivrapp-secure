@@ -1,6 +1,6 @@
 /* Shared chrome follows the same spacing and type scale as the chat workspace. */
 body.nivra-light-theme .workspace { background: var(--nivra-bg); }
-body.nivra-light-theme :is(.rail, .sidebar) {
+body.nivra-light-theme .sidebar {
   background: var(--nivra-panel-solid);
   box-shadow: none;
 }

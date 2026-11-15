@@ -2,7 +2,7 @@
   <main class="surface world-surface">
     <header class="page-head">
       <div>
-        <span class="world-eyebrow">TUS MOMENTOS, TU GENTE</span><h1>{{ 'WORLD.TITLE' | translate:'Mundo' }}</h1>
+        <h1>{{ 'WORLD.TITLE' | translate:'Mundo' }}</h1>
         <p>{{ 'WORLD.STORIES_COPY' | translate:'Historias, novedades y grupos a tu manera.' }}</p>
         <a class="world-communities-shortcut" routerLink="/app/communities">
           Comunidades <ion-icon name="chevron-forward-outline" aria-hidden="true"></ion-icon>
@@ -28,7 +28,7 @@
         <small>{{ 'STORY_COMPOSER.PRIVACY_COPY' | translate:'Tú eliges quién puede verla antes de publicar.' }}</small>
       </article>
 
-      <article class="panel span-12 stories-feed">
+      <article class="panel span-12 stories-feed" [attr.aria-busy]="social.loading()">
         <div class="panel-headline">
           <div>
             <h2>{{ 'WORLD.MY_STORIES' | translate:'Mis historias' }}</h2>

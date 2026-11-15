@@ -1163,7 +1163,7 @@ ion-modal.story-stats-modal {
 }
 .world-contacts { position:relative; width:44px; height:44px; display:grid; place-items:center; color:var(--nivra-text); border-radius:50%; text-decoration:none; }
 .world-contacts ion-icon { font-size:25px; }
-.world-contacts>span { position:absolute; inset:-2px -2px auto auto; min-width:18px; height:18px; font-size:11px; display:grid; place-items:center; color:#05382b; background:var(--nivra-brand); border-radius:50%; }
+.world-contacts>span { position:absolute; inset:-2px -2px auto auto; min-width:18px; height:18px; font-size:11px; display:grid; place-items:center; color:var(--nivra-on-brand); background:var(--nivra-brand); border-radius:50%; }
 .world-search-row { display:flex; flex-wrap:wrap; gap:14px; align-items:center; margin-bottom:24px; }
 .world-search { flex:1 1 260px; min-width:0; display:flex; align-items:center; gap:12px; background:var(--nivra-panel-2); padding:4px 18px; border-radius:28px; }
 .world-search ion-input { --background:transparent; --highlight-color-focused:transparent; min-height:44px; }
@@ -1173,7 +1173,7 @@ ion-modal.story-stats-modal {
 .world-filters button[aria-pressed=true] { background:var(--nivra-accent-soft,#e6f9f3); color:var(--ion-color-primary); border-color:color-mix(in srgb,var(--nivra-brand) 30%,var(--nivra-line)); font-weight:700; }
 .world-grid { display:grid; grid-template-columns:1fr; gap:28px; }
 .world-grid>article,.world-group-hub { grid-column:1/-1; }
-.world-surface .story-launcher { display:grid; grid-template-columns:64px 1fr auto; gap:6px 20px; align-items:center; text-align:start; padding:24px; border-radius:24px; border:1px solid color-mix(in srgb,var(--nivra-brand) 20%,var(--nivra-line)); background:linear-gradient(120deg,color-mix(in srgb,var(--nivra-brand) 10%,var(--nivra-panel-solid)),var(--nivra-panel-solid)); box-shadow:none; }
+.world-surface .story-launcher { display:grid; grid-template-columns:64px 1fr auto; gap:6px 20px; align-items:center; text-align:start; padding:24px; border-radius:24px; border:1px solid color-mix(in srgb,var(--nivra-brand) 20%,var(--nivra-line)); background:var(--nivra-panel-solid); box-shadow:none; }
 .world-surface .story-launcher-icon { grid-column:1; grid-row:1/4; width:64px; height:64px; margin:0; border-radius:22px; }
 .world-surface .story-launcher h2 { grid-column:2; margin:0; font-size:22px; }
 .world-surface .story-launcher p { grid-column:2; margin:0; font-size:13px; max-width:520px; }
@@ -1183,7 +1183,7 @@ ion-modal.story-stats-modal {
 .world-surface .stories-feed > .panel-headline { padding: 2px 4px; }
 .world-surface .panel-headline h2 { font-size:18px; margin:0 0 6px; letter-spacing:-.4px; }
 .world-surface .card-sub { font-size:12px; }
-.world-surface .story-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,300px),1fr)); gap:12px; margin-top:18px; }
+.world-surface .story-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr)); gap:12px; margin-top:18px; }
 .world-surface .story-bucket-row { min-width:0; min-height:100px; border:1px solid var(--nivra-line); border-radius:22px; padding:14px; background:var(--nivra-panel-solid); box-shadow:none; }
 .world-surface .story-open { min-width:0; flex:1; gap:14px; padding:0; }
 .world-surface .story-open>span:last-child { min-width:0; }
@@ -1235,3 +1235,6 @@ ion-modal.story-stats-modal {
  .world-surface .story-open { gap:10px; }
  .world-surface .story-bucket-row .row-actions ion-button { min-width:40px; --padding-start:8px; --padding-end:8px; }
 }
+
+.world-surface .page-head>div { min-width:0; }.world-surface .page-head h1 { margin-top:0; }.world-filters button,.world-search>button { min-height:44px; cursor:pointer; }.world-search>button { min-width:44px; }.world-filters button:focus-visible,.world-contacts:focus-visible,.world-group-hub>summary:focus-visible { outline:2px solid var(--nivra-brand); outline-offset:3px; }.world-contacts { background:var(--nivra-panel-2); }.world-surface .story-launcher { border-inline-start:3px solid var(--nivra-brand); }.world-group-hub[open]>summary>ion-icon:last-child { transform:rotate(90deg); }.world-surface .story-open small,.world-surface .story-open em { font-size:12px; }.world-surface .story-bucket-row { border-radius:18px; }.world-surface .story-grid .empty-copy { border-style:solid; border-color:var(--nivra-line); background:var(--nivra-panel-2); }.world-surface .story-launcher>small { font-size:12px; }
+@media(max-width:768px) { .world-surface .story-bucket-row { border-radius:0; } }

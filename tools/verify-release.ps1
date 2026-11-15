@@ -169,6 +169,11 @@ function Assert-AndroidApkIdentity {
 }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+$compatibilityPath = Resolve-RequiredFile -Path (Join-Path $workspacePath 'Nivra.Api\Services\ClientCompatibility.cs')
+$apiVersions = [regex]::Matches((Get-Content -LiteralPath $compatibilityPath -Raw), '(?m)^\s*public const string Version\s*=\s*"([0-9]+\.[0-9]+\.[0-9]+)";\s*$')
+if ($apiVersions.Count -ne 1 -or $apiVersions[0].Groups[1].Value -cne $Version) {
+  throw "API compatibility metadata does not identify version $Version. Align it before verifying the release."
+}
 $artifactPath = Resolve-RequiredDirectory -Path $ArtifactDirectory -Label 'Artifacts'
 $desktopPath = Resolve-RequiredDirectory -Path $DesktopDirectory -Label 'Desktop'
 $webPath = Resolve-RequiredDirectory -Path (Join-Path $workspacePath 'nivra-app\dist\nivra-app\browser') -Label 'Built web'

@@ -1674,7 +1674,7 @@ public static partial class EndpointExtensions
             return Results.Ok(response);
         });
 
-        var sendMessage = async Task<IResult> (string conversationId, SendMessageRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
+        var sendMessage = async Task<IResult> (string conversationId, SendMessageRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, RealtimePresence presence, PushNotificationService pushNotifications, ILoggerFactory loggerFactory, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -1839,23 +1839,14 @@ public static partial class EndpointExtensions
             if (summaryTransaction is not null) await summaryTransaction.CommitAsync(cancellationToken);
             if (directBlockTransaction is not null) await directBlockTransaction.CommitAsync(cancellationToken);
 
-            foreach (var recipient in message.Recipients)
-            {
-                await hub.Clients.Group(GroupsFor.Device(recipient.DeviceId)).SendAsync(
+            await MessageDeliveryDispatch.NotifyAsync(message,
+                (recipient, token) => hub.Clients.Group(GroupsFor.Device(recipient.DeviceId)).SendAsync(
                     "message.received",
                     ToMessageResponseForDevice(message, recipient.UserId, recipient.DeviceId),
-                    cancellationToken);
-            }
-
-            var pushUserIds = message.Recipients
-                .Where(recipient => recipient.UserId != current.UserId)
-                .Select(recipient => recipient.UserId)
-                .Distinct(StringComparer.Ordinal)
-                .ToList();
-            foreach (var userId in pushUserIds)
-            {
-                await pushNotifications.SendMessageAsync(userId, conversation.Id, message.Id, current.UserId, cancellationToken);
-            }
+                    token),
+                (userId, token) => pushNotifications.SendMessageAsync(userId, conversation.Id, message.Id, current.UserId, token),
+                loggerFactory.CreateLogger(typeof(MessageDeliveryDispatch).FullName!),
+                cancellationToken);
 
             return Results.Created($"/messages/{message.Id}", ToMessageResponse(message));
         });

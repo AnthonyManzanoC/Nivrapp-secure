@@ -343,6 +343,7 @@
               mode="ios"
               class="call-search"
               [(ngModel)]="callQuery"
+              [attr.aria-label]="'CALLS.SEARCH_PLACEHOLDER' | translate:'Buscar contacto o número'"
               [placeholder]="'CALLS.SEARCH_PLACEHOLDER' | translate:'Buscar contacto o numero'"
               searchIcon="search-outline"
               animated="true"

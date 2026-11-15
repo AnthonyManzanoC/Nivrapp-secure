@@ -1,1 +1,55 @@
-:host{display:block;height:100%}ion-content{--background:var(--nivra-bg)}.guide{max-width:1040px;margin:auto;padding:28px 20px calc(40px + env(safe-area-inset-bottom));color:var(--nivra-text)}header{max-width:720px;padding:12px 0 28px}.eyebrow{letter-spacing:.12em;font-size:12px;color:var(--nivra-brand-2)}h1{font-size:clamp(26px,4vw,38px);line-height:1.15}h2{font-size:21px}h3{margin:0;font-size:17px}p{line-height:1.7;color:var(--nivra-muted);overflow-wrap:anywhere}a{color:var(--nivra-brand-2);font-weight:650;display:inline-block;padding:10px 0;min-height:44px;box-sizing:border-box}button{font:inherit;cursor:pointer;padding:13px 18px;min-height:46px;border-radius:14px;border:1px solid var(--nivra-line)}.primary{background:var(--nivra-brand);color:var(--nivra-on-brand);font-weight:700}.tasks{display:grid;gap:14px}article,aside,details{background:var(--nivra-panel-solid);border:1px solid var(--nivra-line);border-radius:18px;padding:20px}article{display:flex;gap:16px}.number{flex-shrink:0;display:grid;place-items:center;width:34px;height:34px;border-radius:50%;background:var(--nivra-selection);color:var(--nivra-brand-2);font-weight:700}label{display:flex;align-items:center;gap:10px;min-height:44px;font-size:14px}input{width:20px;height:20px;accent-color:var(--nivra-brand)}aside{margin:26px 0;background:var(--nivra-selection)}.features{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}summary{cursor:pointer;font-weight:650;min-height:24px;line-height:1.6}footer{padding-top:26px}:is(a,button,input,summary):focus-visible{outline:3px solid var(--nivra-brand-2);outline-offset:4px}@media(max-width:600px){.features{grid-template-columns:1fr}.guide{padding:20px 14px calc(30px + env(safe-area-inset-bottom))}article{padding:16px;gap:12px}}
+:host { display: block; height: 100%; }
+ion-content { --background: var(--nivra-bg); }
+.guide { max-width: 1040px; margin: auto; padding: 36px 24px calc(40px + env(safe-area-inset-bottom)); color: var(--nivra-text); }
+header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 0 36px; padding: 12px 0 36px; margin-bottom: 30px; border-bottom: 1px solid var(--nivra-line); }
+.guide-brand { grid-column: 1 / -1; display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+.guide-brand img { border-radius: 12px; }
+.eyebrow { margin: 0; letter-spacing: .12em; font-size: 11px; font-weight: 650; color: var(--nivra-brand-2); }
+h1 { max-width: 18ch; margin: 0; font-size: clamp(30px, 4vw, 46px); font-weight: 550; letter-spacing: -.045em; line-height: 1.1; }
+header > p { grid-column: 1; max-width: 55ch; margin: 16px 0 0; font-size: 14px; }
+header > button { grid-column: 2; grid-row: 2 / 4; }
+h2 { margin: 0 0 14px; font-size: 22px; letter-spacing: -.025em; }
+h3 { margin: 0; font-size: 17px; line-height: 1.4; }
+p { line-height: 1.7; color: var(--nivra-muted); overflow-wrap: anywhere; }
+a { color: var(--nivra-brand-2); font-weight: 650; display: inline-flex; align-items: center; padding: 10px 0; min-height: 44px; box-sizing: border-box; font-size: 13px; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+button { font: inherit; cursor: pointer; padding: 13px 18px; min-height: 48px; border-radius: 14px; border: 1px solid var(--nivra-line); }
+.primary { background: var(--nivra-brand); color: var(--nivra-on-brand); font-size: 14px; font-weight: 650; }
+.steps-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.steps-heading h2 { margin: 0; }
+.progress-count { font-size: 13px; color: var(--nivra-brand-2); font-variant-numeric: tabular-nums; }
+progress { display: block; appearance: none; width: 100%; height: 5px; margin-top: 20px; border: 0; border-radius: 8px; background: var(--nivra-line); overflow: hidden; }
+progress::-webkit-progress-bar { background: var(--nivra-line); }
+progress::-webkit-progress-value { background: var(--nivra-brand); border-radius: 8px; }
+progress::-moz-progress-bar { background: var(--nivra-brand); }
+.progress-copy { margin: 12px 0 22px; font-size: 12px; }
+.tasks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+article, aside, details { background: var(--nivra-panel-solid); border: 1px solid var(--nivra-line); border-radius: 18px; padding: 22px; }
+article { display: flex; align-items: flex-start; gap: 16px; }
+article > div { min-width: 0; }
+article p { margin: 8px 0 4px; font-size: 13px; }
+article.completed { border-color: var(--nivra-selection-line); }
+.number { flex-shrink: 0; display: grid; place-items: center; width: 34px; height: 34px; border: 1px solid var(--nivra-line); border-radius: 11px; color: var(--nivra-muted); font-weight: 650; font-size: 14px; }
+.completed .number { border-color: transparent; background: var(--nivra-selection); color: var(--nivra-brand-2); }
+label { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 12px; color: var(--nivra-muted); cursor: pointer; }
+input { flex-shrink: 0; width: 18px; height: 18px; margin: 0; accent-color: var(--nivra-brand); }
+aside { margin: 28px 0 36px; background: var(--nivra-selection); }
+aside p { max-width: 86ch; margin-block: 10px; font-size: 14px; }
+.features { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; align-items: start; }
+.features details { padding-block: 4px; }
+.features p { font-size: 13px; margin-top: 0; }
+summary { display: flex; align-items: center; cursor: pointer; font-size: 14px; font-weight: 600; min-height: 52px; line-height: 1.5; list-style: none; }
+summary::-webkit-details-marker { display: none; }
+summary::after { content: '+'; margin-inline-start: auto; padding-inline-start: 14px; color: var(--nivra-brand-2); font-size: 20px; font-weight: 400; }
+details[open] > summary::after { content: '−'; }
+footer { padding-top: 28px; }
+:is(a, button, input, summary):focus-visible { outline: 3px solid var(--nivra-brand-2); outline-offset: 4px; }
+@media (max-width: 680px) {
+  .guide { padding: 24px 18px calc(30px + env(safe-area-inset-bottom)); }
+  header { grid-template-columns: 1fr; padding-bottom: 26px; gap: 0; }
+  .guide-brand { margin-bottom: 26px; }
+  header > button { grid-column: 1; grid-row: auto; justify-self: start; margin-top: 22px; }
+  .tasks, .features { grid-template-columns: 1fr; }
+  article, aside, details { padding-inline: 18px; }
+  article { padding-block: 18px; gap: 12px; }
+  footer button { width: 100%; }
+}

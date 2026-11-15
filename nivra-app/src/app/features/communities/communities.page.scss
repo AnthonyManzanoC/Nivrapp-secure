@@ -3,13 +3,13 @@
 
 .community-page {
   display: grid;
-  grid-template-columns: minmax(255px, 325px) minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   align-items: start;
-  gap: 20px;
+  gap: 24px;
   min-height: 100%;
   max-width: 1320px;
   margin-inline: auto;
-  padding: 22px;
+  padding: clamp(20px, 3vw, 32px);
   color: var(--nivra-text);
 }
 
@@ -99,7 +99,7 @@ p { font-size: 13px; }
   padding-inline: 12px 4px;
   border: 1px solid var(--nivra-line);
   border-radius: 15px;
-  background: var(--nivra-bg-3);
+  background: var(--nivra-panel-2);
   color: var(--nivra-muted);
 }
 .directory-search:focus-within { border-color: var(--nivra-selection-line); box-shadow: 0 0 0 2px var(--nivra-ring); }
@@ -369,3 +369,6 @@ p { font-size: 13px; }
   .linked-group>:is(a,button:not(.unlink),.group-request-state){grid-column:2;grid-row:2;justify-self:start;max-width:100%}
   .linked-group>.unlink{grid-column:3;grid-row:1;align-self:start}
 }
+
+.community-item[aria-current="page"] { box-shadow:inset 3px 0 var(--nivra-brand); }.directory-head { align-items:center; }.welcome { padding:32px 12px; }.welcome h2 { max-width:18ch; }.community-detail { min-height:480px; }.feedback { line-height:1.6; }.directory-intro { margin-block:16px 20px; }
+@media(min-width:981px) { .community-directory { position:sticky; top:24px; } }

@@ -1,11 +1,24 @@
-:host { --access-ink: #20352f; --access-muted: #5c6e68; --access-line: #dae2db; --access-green: #176c56; --access-mint: #bee8d7; }
-.auth-page { --background: #f4f5ef; }
-.auth-shell { background: #f4f5ef; }
+:host { color-scheme: inherit; --access-ink: var(--nivra-text); --access-muted: var(--nivra-muted); --access-line: var(--nivra-line); --access-green: var(--nivra-brand-2); --access-mint: var(--nivra-brand); }
+.auth-page { --background: var(--nivra-bg); }
+.auth-shell { background: var(--nivra-bg); }
 .brand-row strong { font-weight: 600; letter-spacing: -1.3px; }
 .brand-row span { letter-spacing: .14em; text-transform: uppercase; font-size: 8px; }
 .auth-topline { margin-bottom: clamp(28px, 5vh, 60px); }
 h1 { font-weight: 500; letter-spacing: -.045em; }
-.auth-modes { border-radius: 16px; }
+.auth-modes { border-radius: 16px; background: var(--nivra-panel-2); }
+.language-picker, .language-picker option, .auth-modes button.active { background: var(--nivra-panel-solid); }
+.auth-modes button.active { border-color: var(--nivra-line-strong); box-shadow: none; }
+.auth-form label > span { color: var(--nivra-soft); font-size: 13px; }
+ion-input { --background: var(--nivra-panel-solid); border-color: var(--nivra-line-strong); }
+ion-button { --background: var(--nivra-brand); --background-hover: var(--nivra-brand); --background-activated: var(--nivra-brand); --color: var(--nivra-on-brand); --color-hover: var(--nivra-on-brand); --color-activated: var(--nivra-on-brand); --border-color: transparent; --border-radius: 14px; }
+ion-button[fill='clear'] { --background: transparent; --background-hover: var(--nivra-panel-2); --color: var(--nivra-brand-2); --color-hover: var(--nivra-brand-2); --color-activated: var(--nivra-brand-2); }
+.sms-preview, .qr-frame.expired { background: var(--nivra-panel-solid); }
+.qr-history-choice { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: 13px; color: var(--nivra-soft); cursor: pointer; }
+.qr-history-choice input { flex-shrink: 0; width: 18px; height: 18px; accent-color: var(--nivra-brand); }
+.password-toggle, .qr-frame ion-icon { color: var(--nivra-muted); }
+.password-toggle:hover { background: var(--nivra-panel-2); }
+.auth-feedback.failure { color: var(--nivra-danger); background: color-mix(in srgb, var(--nivra-danger) 7%, var(--nivra-panel-solid)); border-color: color-mix(in srgb, var(--nivra-danger) 30%, var(--nivra-line)); }
+.auth-feedback.success { color: var(--nivra-brand-2); background: var(--nivra-selection); }
 .language-picker:focus-within { outline: 2px solid var(--access-green); outline-offset: 3px; }
 .auth-modes button, .mini-tabs button { transition: color .16s, background .16s; }
 :host .auth-visual, :host-context(.ion-palette-dark) .auth-visual {
@@ -20,12 +33,12 @@ h1 { font-weight: 500; letter-spacing: -.045em; }
 .phone-head { font-size: 24px; margin-bottom: 32px; }
 .phone-head b { border: 1px solid #62d8b640; padding: 5px 9px; border-radius: 20px; background: #62d8b60c; color: #89e6cb; }
 .signal-strip { border-top: 1px solid #a0c0ae24; padding-top: 20px; margin-top: 24px; }
-:host-context(.ion-palette-dark) { --access-ink: #eff3f1; --access-muted: #a1b2b3; --access-line: #2d3b3c; --access-green: #89e6cb; --access-mint: #62d8b6; }
-:host-context(.ion-palette-dark) .auth-page { --background: #0c1114; }
-:host-context(.ion-palette-dark) .auth-shell { background: #0c1114; }
+:host-context(.ion-palette-dark) { --access-ink: var(--nivra-text); --access-muted: var(--nivra-muted); --access-line: var(--nivra-line); --access-green: var(--nivra-brand-2); --access-mint: var(--nivra-brand); }
+:host-context(.ion-palette-dark) .auth-page { --background: var(--nivra-bg); }
+:host-context(.ion-palette-dark) .auth-shell { background: var(--nivra-bg); }
 :host-context(.ion-palette-dark) .language-picker, :host-context(.ion-palette-dark) .language-picker option,
-:host-context(.ion-palette-dark) .auth-modes button.active { background: #202b2e; }
-:host-context(.ion-palette-dark) .auth-modes { background: #141d20; }
-:host-context(.ion-palette-dark) ion-input { --background: #141d20; }
+:host-context(.ion-palette-dark) .auth-modes button.active { background: var(--nivra-panel-solid); }
+:host-context(.ion-palette-dark) .auth-modes { background: var(--nivra-panel-2); }
+:host-context(.ion-palette-dark) ion-input { --background: var(--nivra-panel-solid); }
 @media (max-width: 768px) { .auth-panel { max-width: 520px; } }
 @media (prefers-reduced-motion: reduce) { .auth-modes button, .mini-tabs button { transition: none; } }

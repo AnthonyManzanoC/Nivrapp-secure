@@ -143,6 +143,10 @@ export class ShareTargetPage implements OnInit, OnDestroy {
     return Boolean(this.sharedFiles().length || this.sharedText());
   }
 
+  hasOutgoingContent(): boolean {
+    return Boolean(this.sharedFiles().length || this.note.trim());
+  }
+
   fileIcon(item: NativeShareFile): string {
     const mime = item.mimeType || '';
     if (mime.startsWith('image/')) {
@@ -186,7 +190,7 @@ export class ShareTargetPage implements OnInit, OnDestroy {
     }
     const share = this.share;
     const targets = this.selectedTargets();
-    if (!share || !this.hasShareContent()) {
+    if (!share || !this.hasOutgoingContent()) {
       this.error = this.tr('SHARE.NO_CONTENT', 'No hay contenido compartido para enviar.');
       return;
     }
@@ -201,7 +205,7 @@ export class ShareTargetPage implements OnInit, OnDestroy {
     let sentTargets = 0;
     try {
       const files = await this.prepareFiles();
-      const message = files.length ? this.note.trim() : this.firstText(this.note, this.sharedText());
+      const message = this.note.trim();
       for (const [targetIndex, target] of targets.entries()) {
         const conversation = await this.ensureConversation(target);
         if (this.chat.isConversationBlocked(conversation.id) || !this.chat.canSendToConversation(conversation)) {

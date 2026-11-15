@@ -15,13 +15,14 @@ if ($Fixture) {
             status = 'ok'; version = 'fixture'; failoverProtocol = 1; callProtocol = 2; minimumCallProtocol = 2
             apiFailoverReady = $true; multiInstanceReady = $true; sharedStorageReady = $true
             realtimeSharedReady = $true; durableSigningKeyReady = $true; pushProjectConfigured = $true
-            pushFcmReady = $true; pushWebReady = $true; clusterFingerprint = ('a' * 64)
+            pushFcmReady = $true; pushWebReady = $true; webrtcRelayConfigured = $true; clusterFingerprint = ('a' * 64)
         }
         if ($hostName -eq 'second.example.test') {
             switch ($Fixture) {
                 'no-fcm' { $health.pushFcmReady = $false; $health.multiInstanceReady = $false }
                 'no-web-push' { $health.pushWebReady = $false; $health.multiInstanceReady = $false }
                 'no-project' { $health.pushProjectConfigured = $false; $health.multiInstanceReady = $false }
+                'no-relay' { $health.webrtcRelayConfigured = $false }
                 'no-redis' { $health.realtimeSharedReady = $false }
                 'no-storage' { $health.sharedStorageReady = $false }
                 'no-signing-key' { $health.durableSigningKeyReady = $false }
@@ -61,6 +62,7 @@ $cases = @(
     @{ Name = 'no-fcm'; Exit = 0; Contains = 'notification configuration pending: FCM.' }
     @{ Name = 'no-web-push'; Exit = 0; Contains = 'notification configuration pending: Web Push.' }
     @{ Name = 'no-project'; Exit = 0; Contains = 'notification configuration pending: FCM project.' }
+    @{ Name = 'no-relay'; Exit = 0; Contains = 'TURN relay is not configured.' }
     @{ Name = 'legacy-readiness'; Exit = 0; Contains = 'Core cluster compatible:' }
     @{ Name = 'expected-baseline'; Pin = ('a' * 64); Exit = 0; Contains = 'Operational failover available: 2 configured API(s)' }
     @{ Name = 'operational-backup'; Pin = ('a' * 64); Exit = 0; Contains = 'Operational failover available: 1 configured API(s)' }

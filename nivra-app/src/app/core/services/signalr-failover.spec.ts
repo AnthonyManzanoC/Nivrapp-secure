@@ -16,7 +16,7 @@ describe('realtime failover and authenticated event scope', () => {
     selected = 'https://primary.test';
     session = signal<any>({ user: { id: 'alice' }, device: { id: 'phone' } }); handlers = new Map();
     pool = { prepareForRequest: jasmine.createSpy('prepare').and.resolveTo(), reportSuccess: jasmine.createSpy('success'), recover: jasmine.createSpy('recover').and.resolveTo(false), changes$: new Subject() };
-    auth = { session, accessToken: () => session() ? 'synthetic-token' : '', ensureFreshSession: async () => Boolean(session()), refreshToken: jasmine.createSpy('refresh').and.resolveTo(false) };
+    auth = { session, sessionGeneration: signal(0), accessToken: () => session() ? 'synthetic-token' : '', ensureFreshSession: async () => Boolean(session()), refreshToken: jasmine.createSpy('refresh').and.resolveTo(false) };
     connection = { state: HubConnectionState.Disconnected,
       on: (name: string, handler: (value: unknown) => void) => handlers.set(name, handler), off: (name: string) => handlers.delete(name),
       onreconnecting: jasmine.createSpy().and.callFake(handler => handlers.set('reconnecting', handler)), onreconnected: jasmine.createSpy(), onclose: jasmine.createSpy(),
@@ -148,6 +148,40 @@ describe('realtime failover and authenticated event scope', () => {
     finishAuth(true); await pending;
     expect(build).not.toHaveBeenCalled();
   });
+  it('cannot reopen a hub after an explicit disconnect while the previous stop is pending', fakeAsync(() => {
+    void service.connect(); flushMicrotasks();
+    connection.state = HubConnectionState.Disconnected;
+    let finishStop!: () => void;
+    connection.stop.and.returnValue(new Promise<void>(resolve => finishStop = resolve));
+    void service.connect(); flushMicrotasks();
+    expect(connection.stop).toHaveBeenCalledTimes(1);
+    void service.disconnect(); flushMicrotasks();
+    finishStop(); flushMicrotasks();
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(service.connectionState()).toBe(HubConnectionState.Disconnected);
+  }));
+  it('does not adopt another account when an old connection stop finishes late', fakeAsync(() => {
+    void service.connect(); flushMicrotasks();
+    connection.state = HubConnectionState.Disconnected;
+    let finishStop!: () => void;
+    connection.stop.and.returnValue(new Promise<void>(resolve => finishStop = resolve));
+    void service.connect(); flushMicrotasks();
+    session.set({ user: { id: 'bob' }, device: { id: 'other' } });
+    finishStop(); flushMicrotasks();
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(service.connectionState()).toBe(HubConnectionState.Disconnected);
+  }));
+  it('does not reuse an old connection attempt when the same account is activated again', fakeAsync(() => {
+    void service.connect(); flushMicrotasks();
+    connection.state = HubConnectionState.Disconnected;
+    let finishStop!: () => void;
+    connection.stop.and.returnValue(new Promise<void>(resolve => finishStop = resolve));
+    void service.connect(); flushMicrotasks();
+    auth.sessionGeneration.update((generation: number) => generation + 2);
+    finishStop(); flushMicrotasks();
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(service.connectionState()).toBe(HubConnectionState.Disconnected);
+  }));
   it('spaces repeated failures and ignores incidental connect calls during backoff', fakeAsync(() => {
     connection.start.and.rejectWith({ statusCode: 503 });
     void service.connect(); flushMicrotasks();

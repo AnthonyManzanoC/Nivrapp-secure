@@ -107,7 +107,7 @@ const DEFAULT_SETTINGS: NivraAppSettings = {
 };
 
 const ACCENTS: Record<string, AccentTheme> = {
-  nivra: { primary: '#18d6a2', secondary: '#72f0ca', contrast: '#087f62', rgb: '24, 214, 162' },
+  nivra: { primary: '#62d8b6', secondary: '#89e6cb', contrast: '#0a735c', rgb: '98, 216, 182' },
   blue: { primary: '#2f8cff', secondary: '#7cc7ff', contrast: '#1d4ed8', rgb: '47, 140, 255' },
   green: { primary: '#34c759', secondary: '#8ee99f', contrast: '#15803d', rgb: '52, 199, 89' },
   amber: { primary: '#f59f00', secondary: '#ffd166', contrast: '#b7791f', rgb: '245, 159, 0' },
@@ -379,6 +379,7 @@ export class AppSettingsService {
     document.body.dataset['nivraThemeMode'] = themeMode;
     root.dataset['nivraThemeMode'] = themeMode;
     root.style.colorScheme = light ? 'light' : 'dark';
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', light ? '#f1f5f2' : '#0d1719');
     document.body.dataset['nivraWallpaper'] = settings.chatWallpaper;
     document.body.dataset['nivraListDensity'] = settings.chatListDensity;
     document.body.dataset['nivraChatTone'] = this.chatBackgroundTone(settings);
@@ -387,10 +388,11 @@ export class AppSettingsService {
     root.dataset['nivraChatTone'] = this.chatBackgroundTone(settings);
     root.lang = settings.language;
     root.dir = settings.language === 'ar' ? 'rtl' : 'ltr';
-    const shade = this.mixColor(accent.primary, '#000000', light ? .18 : .28);
-    const tint = this.mixColor(accent.primary, '#ffffff', light ? .18 : .30);
-    const contrast = this.readableTextColor(accent.primary);
-    const primaryRgb = this.rgbString(accent.primary);
+    const primary = light ? accent.contrast : accent.primary;
+    const shade = this.mixColor(primary, '#000000', light ? .18 : .28);
+    const tint = this.mixColor(primary, '#ffffff', light ? .18 : .30);
+    const contrast = this.readableTextColor(primary);
+    const primaryRgb = this.rgbString(primary);
     const styleTargets = [root, document.body, document.querySelector('ion-app') as HTMLElement | null]
       .filter((target): target is HTMLElement => !!target);
     const setGlobalVar = (name: string, value: string) => {
@@ -398,7 +400,8 @@ export class AppSettingsService {
     };
     setGlobalVar('--nivra-message-font-size', `${settings.messageTextSize}px`);
     setGlobalVar('--nivra-message-radius', `${settings.messageCornerRadius}px`);
-    setGlobalVar('--nivra-brand', accent.primary);
+    setGlobalVar('--nivra-brand', primary);
+    setGlobalVar('--nivra-on-brand', contrast);
     setGlobalVar('--nivra-brand-2', light ? accent.contrast : accent.secondary);
     setGlobalVar('--nivra-brand-rgb', primaryRgb);
     setGlobalVar('--nivra-brand-shade', shade);
@@ -408,7 +411,7 @@ export class AppSettingsService {
     setGlobalVar('--nivra-chat-background-size', this.chatBackgroundSizeCss(settings));
     setGlobalVar('--nivra-chat-background-repeat', this.chatBackgroundRepeatCss(settings));
     setGlobalVar('--nivra-chat-on-background', this.chatBackgroundTone(settings) === 'light' ? '#111827' : '#f8fafc');
-    setGlobalVar('--ion-color-primary', accent.primary);
+    setGlobalVar('--ion-color-primary', primary);
     setGlobalVar('--ion-color-primary-rgb', primaryRgb);
     setGlobalVar('--ion-color-primary-contrast', contrast);
     setGlobalVar('--ion-color-primary-contrast-rgb', this.rgbString(contrast));
@@ -425,9 +428,13 @@ export class AppSettingsService {
   }
 
   private readableTextColor(hex: string): '#04100d' | '#ffffff' {
-    const [red, green, blue] = this.hexToRgb(hex);
-    const luminance = ((red * .299) + (green * .587) + (blue * .114)) / 255;
-    return luminance > .58 ? '#04100d' : '#ffffff';
+    const [red, green, blue] = this.hexToRgb(hex).map(channel => {
+      const value = channel / 255;
+      return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+    });
+    const luminance = red * .2126 + green * .7152 + blue * .0722;
+    // Compare both foregrounds against the actual accent in linear sRGB.
+    return (luminance + .05) / .0542 > 1.05 / (luminance + .05) ? '#04100d' : '#ffffff';
   }
 
   private rgbString(hex: string): string {

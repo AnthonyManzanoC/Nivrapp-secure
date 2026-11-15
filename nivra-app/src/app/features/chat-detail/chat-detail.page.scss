@@ -95,8 +95,8 @@ ion-toolbar {
 ion-popover.chat-options-popover,
 ion-popover.message-actions-popover,
 ion-popover.attachment-popover {
-  --background: rgba(8, 13, 15, .98);
-  --box-shadow: 0 22px 56px rgba(0, 0, 0, .42);
+  --background: var(--nivra-panel-solid);
+  --box-shadow: var(--nivra-shadow-soft);
   --backdrop-opacity: 0;
   --width: min(260px, calc(100vw - 22px));
   color: var(--nivra-text);
@@ -109,7 +109,7 @@ ion-popover.message-actions-popover {
 ion-popover.chat-options-popover::part(content),
 ion-popover.message-actions-popover::part(content),
 ion-popover.attachment-popover::part(content) {
-  border: 1px solid rgba(255, 255, 255, .12);
+  border: 1px solid var(--nivra-line);
   border-radius: 8px;
   overflow: hidden;
   backdrop-filter: var(--nivra-glass);
@@ -117,7 +117,7 @@ ion-popover.attachment-popover::part(content) {
 
 ion-popover.attachment-popover {
   --width: min(320px, calc(100vw - 18px));
-  --background: rgba(8, 13, 15, .96);
+  --background: var(--nivra-panel-solid);
 }
 
 ion-popover.attachment-popover::part(content) {
@@ -144,11 +144,11 @@ ion-popover.attachment-popover::part(content) {
 }
 
 .popover-menu button:hover {
-  background: rgba(255, 255, 255, .07);
+  background: var(--nivra-selection);
 }
 
 .popover-menu .danger {
-  color: #ffb4b4;
+  color: var(--nivra-danger);
 }
 
 .message-popover {
@@ -281,7 +281,7 @@ ion-popover.attachment-popover::part(content) {
 }
 
 .title-wrap:focus-visible {
-  outline: 2px solid rgba(114, 240, 202, .36);
+  outline: 2px solid var(--nivra-brand-2);
   outline-offset: 4px;
   border-radius: 8px;
 }
@@ -312,12 +312,10 @@ ion-popover.attachment-popover::part(content) {
   border-radius: 8px;
   display: grid;
   place-items: center;
-  color: var(--nivra-text);
-  font-weight: 850;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .16), rgba(255, 255, 255, .02)),
-    linear-gradient(135deg, rgba(24, 214, 162, .38), rgba(107, 168, 255, .22));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .15), 0 8px 20px rgba(0, 0, 0, .2);
+  color: var(--nivra-brand-2);
+  font-weight: 700;
+  background: var(--nivra-selection);
+  box-shadow: none;
 }
 
 .avatar-img {
@@ -364,10 +362,8 @@ ion-popover.attachment-popover::part(content) {
   border-radius: 16px 16px 16px 0;
   padding: 10px 12px 7px;
   color: var(--nivra-soft);
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, .1), rgba(255, 255, 255, .038)),
-    rgba(13, 20, 22, .92);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, .26), inset 0 1px 0 rgba(255, 255, 255, .06);
+  background: var(--nivra-panel-solid);
+  box-shadow: 0 1px 2px #00000008;
   animation: messageIn .18s ease both;
 }
 
@@ -426,10 +422,8 @@ ion-popover.attachment-popover::part(content) {
   border-radius: 16px 16px 0 16px;
   color: var(--nivra-text);
   border-color: rgba(114, 240, 202, .3);
-  background:
-    linear-gradient(135deg, rgba(24, 214, 162, .34), rgba(107, 168, 255, .18)),
-    rgba(13, 20, 22, .9);
-  box-shadow: 0 12px 30px rgba(0, 0, 0, .28), 0 0 0 1px rgba(114, 240, 202, .08), inset 0 1px 0 rgba(255, 255, 255, .08);
+  background: color-mix(in srgb, var(--nivra-brand) 14%, var(--nivra-panel-solid));
+  box-shadow: 0 1px 2px #00000008;
 }
 
 .message.decrypt-error {
@@ -1027,7 +1021,9 @@ ion-popover.attachment-popover::part(content) {
   margin: auto;
   display: grid;
   justify-items: center;
-  gap: 10px;
+  gap: 12px;
+  max-width: 380px;
+  padding: 32px 20px;
   color: var(--nivra-muted);
   text-align: center;
 }
@@ -1039,10 +1035,14 @@ ion-popover.attachment-popover::part(content) {
 
 .empty-thread h2 {
   color: var(--nivra-text);
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -.6px;
 }
+.empty-thread p { font-size: 13px; line-height: 1.65; }
 
 .composer-footer {
-  background: var(--nivra-bg) !important;
+  background: var(--nivra-panel-solid) !important;
   box-shadow: none;
 }
 

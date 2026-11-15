@@ -221,10 +221,17 @@ export class SignalrService implements OnDestroy {
   }
 
   private async openConnection(hasRefreshedToken: boolean): Promise<void> {
-    await this.disconnect({ clearReconnect: false });
     const session = this.auth.session();
-    const sameSession = () => this.auth.session()?.user.id === session?.user.id && this.auth.session()?.device.id === session?.device.id;
-    if (!session || !this.auth.accessToken()) return;
+    const sessionGeneration = this.auth.sessionGeneration?.();
+    const sameSession = () => this.auth.sessionGeneration?.() === sessionGeneration
+      && this.auth.session()?.user.id === session?.user.id && this.auth.session()?.device.id === session?.device.id;
+    const stopping = this.disconnect({ clearReconnect: false });
+    const generation = this.connectionGeneration;
+    await stopping;
+    // Stopping an older transport can finish after logout, another connection
+    // attempt or an account switch. Only the owner that requested this start
+    // may create its replacement transport.
+    if (generation !== this.connectionGeneration || !sameSession() || !session || !this.auth.accessToken()) return;
     const endpoint = this.api.url('/hubs/realtime');
     const connection = new HubConnectionBuilder()
       .withUrl(endpoint, {

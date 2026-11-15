@@ -9,15 +9,15 @@ ion-modal.call-exit-modal {
 }
 .call-exit-sheet { padding: 22px; color: var(--nivra-text); }
 .call-exit-sheet header { display: flex; justify-content: space-between; align-items: center; }
-.call-exit-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 16px; background: rgba(24, 214, 162, .12); color: #008f72; font-size: 25px; }
+.call-exit-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 16px; background: rgba(24, 214, 162, .12); color: var(--nivra-brand-2); font-size: 25px; }
 .call-exit-sheet h2 { margin: 18px 0 8px; font-size: 23px; }
 .call-exit-sheet p { margin: 0 0 20px; color: var(--nivra-muted); line-height: 1.5; }
 .call-exit-choice { display: flex; align-items: center; gap: 12px; width: 100%; padding: 16px 12px; margin-top: 10px; border: 1px solid var(--nivra-line); border-radius: 16px; background: var(--nivra-panel-solid); color: var(--nivra-text); text-align: start; }
 .call-exit-choice ion-icon { font-size: 24px; flex-shrink: 0; }
 .call-exit-choice span { display: grid; gap: 5px; }
 .call-exit-choice small { color: var(--nivra-muted); line-height: 1.4; }
-.call-exit-choice.end-everyone { color: #d94350; }
-.call-exit-choice:focus-visible { outline: 2px solid #008f72; outline-offset: 3px; }
+.call-exit-choice.end-everyone { color: var(--nivra-danger); }
+.call-exit-choice:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 3px; }
 .call-exit-choice:disabled { opacity: .55; }
 
 .call-game-area {
@@ -1340,7 +1340,7 @@ ion-modal.invite-modal {
 
 .error-copy {
   margin: 0;
-  color: #ffb4b4;
+  color: var(--nivra-danger);
   font-size: 13px;
 }
 
@@ -1811,8 +1811,8 @@ ion-modal.call-audio-modal {
 .call-audio-route ion-icon { font-size: 23px; flex-shrink: 0; }
 .call-audio-route span { flex: 1; overflow-wrap: anywhere; }
 .call-audio-route small { color: var(--nivra-muted); }
-.call-audio-route.selected { border-color: #0bbd93; background: rgba(11, 189, 147, .09); }
-.call-audio-route:focus-visible { outline: 2px solid #008f72; outline-offset: 3px; }
+.call-audio-route.selected { border-color: var(--nivra-selection-line); background: var(--nivra-selection); }
+.call-audio-route:focus-visible { outline: 2px solid var(--nivra-brand); outline-offset: 3px; }
 .call-audio-route:disabled { opacity: .6; }
 .call-audio-route.output-mute { margin-top: 14px; }
 .call-audio-sheet .call-audio-hint { margin-bottom: 0; font-size: 12px; }
@@ -1838,7 +1838,7 @@ ion-modal.call-audio-modal {
 .surface:not(.call-mode) .agenda-actions { grid-column: auto; justify-content: flex-end; }
 .surface:not(.call-mode) .agenda-actions ion-button { flex: none; }
 .resume-call-card { display:flex; align-items:center; gap:18px; padding:22px; margin-top:18px; border:1px solid color-mix(in srgb,var(--nivra-brand) 30%,var(--nivra-line)); border-radius:22px; background:color-mix(in srgb,var(--nivra-brand) 7%,var(--nivra-panel-solid)); }
-.resume-call-icon { flex:0 0 54px; width:54px; height:54px; display:grid; place-items:center; border-radius:18px; background:var(--nivra-accent-soft,#dff8ee); color:#007c61; font-size:26px; }
+.resume-call-icon { flex:0 0 54px; width:54px; height:54px; display:grid; place-items:center; border-radius:18px; background:var(--nivra-selection); color:var(--nivra-brand-2); font-size:26px; }
 .resume-call-card div { flex:1; min-width:0; }
 .resume-call-card small { color:var(--ion-color-primary); font-weight:700; font-size:10px; letter-spacing:1px; }
 .resume-call-card h3 { margin:6px 0; font-size:20px; }
@@ -1851,3 +1851,5 @@ ion-modal.call-audio-modal {
  .surface.call-mode .call-controls { border-radius:26px; gap:6px; }
  .surface.call-mode .call-avatar { width:128px; height:128px; }
 }
+
+.surface:not(.call-mode) { max-width:1280px; margin-inline:auto; }.surface:not(.call-mode) .panel-head { padding-bottom:18px; border-bottom:1px solid var(--nivra-line); }.surface:not(.call-mode) .agenda-hero { background:var(--nivra-panel-2); }.surface:not(.call-mode) :is(.contact-face,.history-avatar) { background:var(--nivra-selection); color:var(--nivra-brand-2); }.surface:not(.call-mode) .history-row.missed :is(.direction,.history-copy span) { color:var(--nivra-danger); }.surface:not(.call-mode) .history-row.incoming .direction { color:var(--nivra-blue); }.surface:not(.call-mode) .agenda-copy strong { font-size:14px; }.history-filters button { font-family:inherit; cursor:pointer; }.history-filters button:focus-visible { outline:2px solid var(--nivra-brand); outline-offset:2px; }.surface:not(.call-mode) .agenda-row:hover { background:var(--nivra-panel-2); }.call-audio-route { min-height:56px; }.call-audio-sheet p { line-height:1.6; }.call-exit-choice { cursor:pointer; }

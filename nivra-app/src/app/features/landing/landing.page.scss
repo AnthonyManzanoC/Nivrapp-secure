@@ -136,3 +136,32 @@ h2 { font-size: 43px; line-height: 1.12; font-weight: 450; letter-spacing: -1.6p
   .installer-download { min-height: 48px; font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { .button { transition: none; }.button:hover { transform: none; } }
+
+:host-context(.ion-palette-dark) {
+  --ink: #ecf3e9;
+  --green: #8bd9b7;
+  --muted: #b1c4ba;
+  background: #10201b;
+  color: var(--ink);
+  color-scheme: dark;
+
+  .hero-copy > p, .hero-note, .benefits-line, .download-section p,
+  .site-footer > span, .site-footer > small, .release-note, .installer-format {
+    color: var(--muted);
+  }
+  .step-number, .benefits-line ion-icon, .faq-list summary > span,
+  .release-details, .site-footer > a:last-child { color: var(--green); }
+  .benefits-line, .steps article, .faq-list details, .site-footer { border-color: #3c5549; }
+  .primary, .installer-download, .skip-link { color: #192d27; }
+  .skip-link { background: var(--mint); }
+  .header-cta:hover, .outline:hover { background: #264438; }
+  .hero-art { color: #192d27; }
+  .hero-art::before { background: #264539; }
+  .orbit { border-color: #416452; }
+  .preview-caption { color: var(--muted); }
+  .download-section { background: #1a342a; border-color: #375043; }
+  .installer-card { background: #142820; border-color: #3c5549; }
+  .installer-version { color: var(--muted); border-color: #4d6756; }
+  .download-actions .primary { background: var(--mint); color: #192d27; }
+  a:focus-visible, summary:focus-visible { outline-color: var(--green); }
+}

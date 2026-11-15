@@ -64,14 +64,36 @@ function writeDesktopSecureSecret(name, secret) {
   }
   fs.mkdirSync(secureVaultDir(), { recursive: true });
   const filePath = secureSecretPath(name);
+  const temporary = path.join(secureVaultDir(), `.${name}-${crypto.randomBytes(16).toString('hex')}.tmp`);
+  let descriptor = null;
+  let existingWinner = false;
   try {
-    fs.writeFileSync(filePath, safeStorage.encryptString(secret), { mode: 0o600, flag: 'wx' });
+    // Never expose a partial protector under its permanent name. A failed
+    // write must remain retryable without touching any committed secret.
+    descriptor = fs.openSync(temporary, 'wx', 0o600);
+    fs.writeFileSync(descriptor, safeStorage.encryptString(secret));
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    try {
+      // A same-directory hard link publishes the complete file atomically,
+      // unlike rename it cannot replace another initializer's winner.
+      fs.linkSync(temporary, filePath);
+    } catch (error) {
+      if (error && error.code === 'EEXIST') existingWinner = true;
+      else throw error;
+    }
   } catch (error) {
-    // Another process may have initialized this installation first. Never
-    // overwrite its secret; every caller must use the committed winner.
-    if (error && error.code === 'EEXIST') return readDesktopSecureSecret(name);
     throw new Error('NIVRA_SECURE_WRITE_FAILED');
+  } finally {
+    if (descriptor !== null) {
+      try { fs.closeSync(descriptor); } catch { /* Preserve the original write error. */ }
+    }
+    try { fs.unlinkSync(temporary); } catch { /* A private orphan never replaces a committed protector. */ }
   }
+  // Another process may have initialized this installation first. Never
+  // overwrite its secret; every caller must use the committed winner.
+  if (existingWinner) return readDesktopSecureSecret(name);
   try {
     fs.chmodSync(filePath, 0o600);
   } catch {
@@ -86,12 +108,25 @@ function createDesktopSecureSecret(name) {
 }
 
 function clearDesktopSecureSecret(name) {
-  const filePath = secureSecretPath(name);
+  let failed = false;
+  const remove = filePath => {
+    try { fs.rmSync(filePath, { force: true }); }
+    catch { failed = true; }
+  };
+  remove(secureSecretPath(name));
   try {
-    fs.rmSync(filePath, { force: true });
-  } catch {
-    // Best effort crypto-shredding: removing the wrapped secret makes local envelopes unusable.
+    // A crash or antivirus can leave the private staging link after publication.
+    // Erasure must remove those protectors as well as their permanent name.
+    const pattern = new RegExp(`^\\.${name}-[a-f0-9]{32}\\.tmp$`);
+    for (const entry of fs.readdirSync(secureVaultDir(), { withFileTypes: true })) {
+      if (pattern.test(entry.name) && (entry.isFile() || entry.isSymbolicLink())) {
+        remove(path.join(secureVaultDir(), entry.name));
+      }
+    }
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') failed = true;
   }
+  if (failed) throw new Error('NIVRA_SECURE_CLEAR_FAILED');
 }
 
 function installSecureVaultHandlers() {
@@ -110,7 +145,11 @@ function installSecureVaultHandlers() {
     assertTrustedRenderer(event);
     const name = normalizeSecretName(rawName);
     if (!name || name === "all") {
-      SECURE_SECRET_NAMES.forEach(clearDesktopSecureSecret);
+      let failed = false;
+      SECURE_SECRET_NAMES.forEach(secretName => {
+        try { clearDesktopSecureSecret(secretName); } catch { failed = true; }
+      });
+      if (failed) throw new Error('NIVRA_SECURE_CLEAR_FAILED');
       return { cleared: true };
     }
     assertAllowedSecretName(name);

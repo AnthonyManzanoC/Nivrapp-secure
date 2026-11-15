@@ -16,29 +16,28 @@
         <span class="spark spark-one">✧</span><span class="spark spark-two">✦</span>
       </div>
 
-      <p class="eyebrow">{{ 'WELCOME.EYEBROW' | translate:'Tu espacio. Tus reglas.' }}</p>
-      <h1 id="welcome-title">{{ 'WELCOME.TITLE' | translate:'Te damos la bienvenida a Nivra' }}</h1>
-      <p class="welcome-copy">{{ 'WELCOME.COPY' | translate:'Un espacio para conectar con los tuyos. Elige tu idioma y empieza a conversar.' }}</p>
+      <div class="welcome-details">
+        <h1 id="welcome-title">{{ 'WELCOME.TITLE' | translate:'Te damos la bienvenida a Nivra' }}</h1>
+        <p class="welcome-copy">{{ 'WELCOME.COPY' | translate:'Un espacio para conectar con los tuyos. Elige tu idioma y empieza a conversar.' }}</p>
 
-      <p class="welcome-copy">{{ 'GUIDE.WELCOME' | translate:'Después de crear tu cuenta tendrás una guía para agregar contactos, enviar mensajes, llamar y preparar tu recuperación. Puedes recorrerla a tu ritmo.' }}</p>
-      <div class="welcome-actions">
-        <label class="language-picker" for="welcome-language">
-          <ion-icon name="globe-outline" aria-hidden="true"></ion-icon>
-          <span class="language-label">{{ 'WELCOME.LANGUAGE' | translate:'Tu idioma' }}</span>
-          <select id="welcome-language" name="welcomeLanguage" [disabled]="continuing" [ngModel]="translate.currentLanguage()" (ngModelChange)="setLanguage($event)">
-            @for (option of languageOptions; track option.value) {
-              <option [value]="option.value">{{ option.native }} · {{ option.labelKey | translate:option.label }}</option>
-            }
-          </select>
-        </label>
-        <button type="button" class="next-button" [disabled]="continuing" [attr.aria-busy]="continuing" (click)="next()">
-          <span>{{ continuing ? ('WELCOME.CONTINUING' | translate:'Abriendo tu espacio…') : ('WELCOME.NEXT' | translate:'Siguiente') }}</span>
-          <ion-icon name="arrow-forward-outline" aria-hidden="true"></ion-icon>
-        </button>
-        @if (error) { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="welcome-error" role="alert">{{ error }}</p> }
+        <div class="welcome-actions">
+          <label class="language-picker" for="welcome-language">
+            <ion-icon name="globe-outline" aria-hidden="true"></ion-icon>
+            <span class="language-label">{{ 'WELCOME.LANGUAGE' | translate:'Tu idioma' }}</span>
+            <select id="welcome-language" name="welcomeLanguage" [disabled]="continuing" [ngModel]="translate.currentLanguage()" (ngModelChange)="setLanguage($event)">
+              @for (option of languageOptions; track option.value) {
+                <option [value]="option.value">{{ option.native }}</option>
+              }
+            </select>
+          </label>
+          <button type="button" class="next-button" [disabled]="continuing" [attr.aria-busy]="continuing" (click)="next()">
+            <span>{{ continuing ? ('WELCOME.CONTINUING' | translate:'Abriendo tu espacio…') : ('WELCOME.NEXT' | translate:'Siguiente') }}</span>
+            <ion-icon name="arrow-forward-outline" aria-hidden="true"></ion-icon>
+          </button>
+          @if (error) { <p [appTransientNotice]="error" [appNoticeDuration]="15000" class="welcome-error" role="alert">{{ error }}</p> }
+        </div>
+        <p class="welcome-guide">{{ 'GUIDE.WELCOME' | translate:'Después de crear tu cuenta tendrás una guía para agregar contactos, enviar mensajes, llamar y preparar tu recuperación. Puedes recorrerla a tu ritmo.' }}</p>
       </div>
     </section>
-
-    <p class="welcome-footer"><ion-icon name="lock-closed-outline" aria-hidden="true"></ion-icon>{{ 'WELCOME.FOOTER' | translate:'Tus conversaciones empiezan contigo.' }}</p>
   </main>
 </ion-content>

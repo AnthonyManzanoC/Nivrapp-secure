@@ -1,8 +1,10 @@
 # Nivra Private Messenger
 
-Código actual: **9.2.0**, Android **build 58**. Revisión: 6 de noviembre de 2026.
+Código actual: **9.3.0**, Android **build 59**. Revisión: 14 de noviembre de 2026.
 
 Nivra es un mensajero con chats privados y grupales, contactos, comunidades, historias, listas de difusión, bóveda y llamadas. Comparte una interfaz Angular/Ionic entre Web, Android (Capacitor) y Windows (Electron); la API .NET usa PostgreSQL y SignalR.
+
+La [revisión de estabilidad del 14 de noviembre](docs/reliability-review-2026-11-14.md) registra fallos reproducidos, correcciones locales, comprobaciones del servicio público y un recorrido de aceptación por función y dispositivo.
 
 ## Empezar a usar Nivra
 
@@ -14,7 +16,7 @@ La guía incluye doce áreas funcionales con accesos directos. Los enlaces de in
 
 ## Matriz del estado real
 
-Esta tabla describe el repositorio, no una certificación del despliegue público. Los resultados de la entrega se registran en [validación 9.2.0](docs/release-9.2.0.md).
+Esta tabla describe el repositorio, no una certificación del despliegue público. Los resultados de la entrega se registran en [validación 9.3.0](docs/release-9.3.0.md).
 
 | Área | Estado en código | Dependencias y límites |
 | --- | --- | --- |

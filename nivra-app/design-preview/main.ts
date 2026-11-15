@@ -63,6 +63,7 @@ const items = signal<any[]>([
 ].map((item, i) => ({ ...item, participants: [{ userId: user.id,role:"Owner" }, { userId: 'peer-' + i, alias: item.id, displayName: item.name }], updatedAt: `2026-10-31T14:${String(42 - i * 3).padStart(2, '0')}:00Z` })));
 const mutate = (item: any, key: string, value: boolean) => { items.update(all => all.map(row => row.id === item.id ? { ...row, [key]: value } : row)); return Promise.resolve(); };
 const chat: any = {
+  resumeSoftSync: async () => {},
   conversations: items, contacts: signal([]), messagesByConversation: signal({}), selectedConversationId: signal(null),
   loading: signal(false), listUpdating: signal(false), syncError: signal(''), localHistoryCheckState: signal('idle'),
   deviceHistory: { state: signal('idle'), recoveryStatus: signal('approval'), targetFingerprint: signal('fixture') },
@@ -208,6 +209,7 @@ bootstrapApplication(PreviewRoot, { providers: [
   provideIonicAngular(), provideRouter([{ path: 'app', component: ShellPage, children: [
     { path: 'chats', component: ChatsPage, children: [{ path: ':id', component: PreviewConversation }] },
     { path: 'guide', component: GuidePage },
+    { path: 'share', loadComponent: () => import('../src/app/features/share-target/share-target.page').then(m => m.ShareTargetPage) },
     { path: 'notification-check', component: NotificationCheckPage },
     { path: 'contacts', component: ContactsPage },
     { path: 'communities', component: CommunitiesPage },
@@ -216,8 +218,13 @@ bootstrapApplication(PreviewRoot, { providers: [
     { path: 'games', component: PreviewGames },
     { path: 'world', component: WorldPage },{ path: 'composer', component: PreviewComposer },{ path: 'viewer', component: PreviewViewer },{ path: 'invitation', component: PreviewInvitation },
     { path: '**', component: PreviewEmpty },
-  ] },{path:'preview/incognito-dialog',component:PreviewIncognitoDialog},{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls},{path:'preview/recovery',component:PreviewAccountRecovery}, { path: '**', redirectTo: 'app/chats' }]),
-  { provide: AuthService, useValue: { sessionGeneration:signal(1), session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {} } },
+  ] },
+    { path: '', pathMatch: 'full', loadComponent: () => import('../src/app/features/landing/landing.page').then(m => m.LandingPage) },
+    { path: 'welcome', loadComponent: () => import('../src/app/features/welcome/welcome.page').then(m => m.WelcomePage) },
+    { path: 'auth', loadComponent: () => import('../src/app/features/auth/auth.page').then(m => m.AuthPage) },
+    { path: 'recover', loadComponent: () => import('../src/app/features/auth/recovery.page').then(m => m.RecoveryPage) },
+    {path:'preview/incognito-dialog',component:PreviewIncognitoDialog},{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls},{path:'preview/recovery',component:PreviewAccountRecovery}, { path: '**', redirectTo: 'app/chats' }]),
+  { provide: AuthService, useValue: { sessionGeneration:signal(1), session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {}, busy: signal(false), accountError: signal(''), pendingPhoneAlias: signal(null), qrState: signal('idle'), qrError: signal(''), stopQrLogin: async () => {} } },
   { provide: ChatService, useValue: chat },
   { provide: CommunityService, useValue: v9.communities },
   { provide: VaultService, useValue: v9.vault },
@@ -236,7 +243,9 @@ bootstrapApplication(PreviewRoot, { providers: [
   { provide: NivraApiService, useValue: { baseUrl: '',post:()=>of({id:'synthetic-invite',code:'a'.repeat(43)}),get:()=>of([]) } },
   { provide: AppSettingsService, useValue: { settings: previewSettings } },
   { provide: LocalHistoryService, useValue: { storageError: signal(''), storageState: signal('ready'), storageBusy: signal(false) } },
-  { provide: NativeDeviceService, useValue: {} },
+  { provide: NativeDeviceService, useValue: { getPendingShareIntent: async () => ({
+    id: 'preview-share', text: 'Te comparto el plan para este fin de semana.', files: [],
+  }) } },
   { provide: PushService, useValue: { permission: signal('default'), registering: signal(false), tokenId: signal(null), registeredOnServer: signal(false), serverReady: signal(true), error: signal(''), refreshStatus: async () => true, requestPermissionAndRegister: async () => false } },
   { provide: TranslateService, useValue: { instant: (_key: string, fallback: string) => fallback, currentLanguage: signal('es') } },
 ] }).catch(error => console.error(error));

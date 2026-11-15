@@ -1,4 +1,4 @@
-// CI only. Synthetic preview build; no user account, API or local browser profile.
+// Isolated Chrome profile. Network traffic is limited to the supplied local build.
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
@@ -81,6 +81,12 @@ async function main() {
     const capture = async name => {
       await evaluate('document.fonts.ready');
       await new Promise(resolve=>setTimeout(resolve,300));
+      if (process.argv.includes('--public')) {
+        await evaluate(`Promise.allSettled(document.getAnimations()
+          .filter(animation => animation.playState === 'running' &&
+            Number.isFinite(animation.effect?.getComputedTiming().endTime))
+          .map(animation => animation.finished))`);
+      }
       const {data}=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
       await fs.writeFile(path.join(output,name+'.png'),Buffer.from(data,'base64'));
     };
@@ -111,6 +117,37 @@ async function main() {
       await new Promise(resolve => setTimeout(resolve, 620));
       await call('Input.dispatchTouchEvent', {type:'touchEnd',touchPoints:[]});
     };
+    if (process.argv.includes('--public')) {
+      for (const [width, height, mobile, theme] of [[390, 844, true, 'light'], [1440, 900, false, 'dark']]) {
+        await viewport(width, height, mobile);
+        await call('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: theme }] });
+        await call('Page.navigate', { url: base + '/' });
+        await waitFor("!!document.querySelector('#hero-title')");
+        await waitFor("document.documentElement.classList.contains(" + JSON.stringify(theme === 'dark' ? 'ion-palette-dark' : 'nivra-light-theme') + ")");
+        await capture('production-landing-' + width + '-' + theme);
+        await evaluate("document.querySelector('.hero-actions .primary').click()");
+        if (mobile) {
+          await waitFor("!!document.querySelector('#welcome-title')");
+          await capture('production-welcome-' + width + '-' + theme);
+          await evaluate("document.querySelector('.next-button').click()");
+        }
+        await waitFor("!!document.querySelector('#auth-title')");
+        await capture('production-auth-' + width + '-' + theme);
+        await evaluate("document.querySelector('.password-toggle').click()");
+        await waitFor("document.querySelector('ion-input[name=password]').type === 'text'");
+        await evaluate("document.querySelector('a[href$=\"/recover\"]').click()");
+        await waitFor("!!document.querySelector('.recovery-card input[name=identifier]')");
+        await evaluate("document.querySelector('.recovery-card summary').click()");
+        await waitFor("!!document.querySelector('.recovery-card details[open]')");
+        assert(await evaluate('document.documentElement.scrollWidth <= innerWidth'), 'production recovery fits the viewport');
+        await capture('production-recovery-' + width + '-' + theme);
+        await evaluate("document.querySelector('.back-link').click()");
+        await waitFor("!!document.querySelector('#auth-title')");
+      }
+      assert.deepEqual(errors, [], 'guest routes should not throw runtime errors');
+      console.log('PASS production web entry, welcome, sign-in controls and recovery in light and dark.');
+      return;
+    }
     await viewport(390,844,true);
     await call('Page.navigate',{url:base+'/app/chats?theme=light'});
     await waitFor("!!document.querySelector('.chats-page')");
@@ -185,6 +222,7 @@ async function main() {
     await call('Page.navigate',{url:base+'/app/contacts?theme=light'});
     await waitFor("!!document.querySelector('.contacts-page')");
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    assert(await evaluate("document.querySelector('.rail a.active[aria-current]')?.getAttribute('href') === '/app/chats'"), 'the navigation keeps Chats selected inside Contacts');
     await capture('desktop-contacts');
     await tap('.directory-tabs button:nth-child(2)');
     await waitFor("!!document.querySelector('app-friend-requests')");
@@ -460,6 +498,39 @@ async function main() {
         await evaluate("document.querySelector('.preview-controls').style.display='none'");
         assert(await evaluate("(()=>{const r=document.querySelector('.nivra-incognito-modal .incognito-confirm').getBoundingClientRect();return r.height<550 && r.left>=0 && r.right<=innerWidth;})()"),'confirmation has a compact readable layout');
         await capture('incognito-dialog-'+width+'-'+theme);
+        const launchScreens = [
+          ['landing', '/', '#hero-title', '.hero-actions .primary'],
+          ['welcome', '/welcome', '#welcome-title', '.next-button'],
+          ['auth', '/auth', '#auth-title', '.auth-panel ion-button[type=submit]'],
+          ['recover', '/recover', '.recovery-card h1', '.recovery-card ion-button'],
+          ['share', '/app/share', '.target-list button', '.send-bar .send'],
+        ];
+        for (const [name, route, ready, action] of launchScreens) {
+          await call('Page.navigate', { url: base + route + '?theme=' + theme });
+          await waitFor('!!document.querySelector(' + JSON.stringify(ready) + ')');
+          await evaluate("document.querySelector('.preview-controls').style.display='none'");
+          await waitFor('!!document.querySelector(' + JSON.stringify(action) + ')');
+          const fits = await evaluate(`(() => {
+            const rect = document.querySelector(${JSON.stringify(action)}).getBoundingClientRect();
+            return rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 1 &&
+              document.documentElement.scrollWidth <= innerWidth;
+          })()`);
+          assert(fits, name + ' primary action fits at ' + width + 'px in ' + theme);
+          if (name === 'share') {
+            assert(await evaluate("document.querySelector('.send-bar .send').disabled"), 'sharing needs a recipient');
+            await evaluate("document.querySelector('.target-list button').click()");
+            await waitFor("document.querySelector('.target-list button').getAttribute('aria-pressed') === 'true' && !document.querySelector('.send-bar .send').disabled");
+          }
+          await capture('launch-' + name + '-' + width + '-' + theme);
+          if (name === 'share') {
+            await evaluate(`(() => {
+              const note = document.querySelector('ion-textarea textarea');
+              note.value = '';
+              note.dispatchEvent(new Event('input', { bubbles: true }));
+            })()`);
+            await waitFor("document.querySelector('.send-bar .send').disabled");
+          }
+        }
       }
     }
     assert.deepEqual(errors,[],'preview must not throw runtime errors');

@@ -121,14 +121,8 @@ public final class NivraOngoingCallService extends Service {
             channel.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
             manager.createNotificationChannel(channel);
         }
-        Intent open = new Intent(this, MainActivity.class)
-            .setAction(NivraNativePlugin.ACTION_CALL_OPEN)
-            .setData(android.net.Uri.parse("nivra://active-call/" + android.net.Uri.encode(NivraPushScopePolicy.notificationTag(requestedUserId, requestedDeviceId)) + "/" + android.net.Uri.encode(requestedCallId)))
-            .putExtra("callId", requestedCallId)
-            .putExtra("recipientUserId", requestedUserId)
-            .putExtra("recipientDeviceId", requestedDeviceId)
-            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        PendingIntent content = PendingIntent.getActivity(this, NOTIFICATION_ID, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+        Intent open = openCallIntent(this, requestedCallId, requestedUserId, requestedDeviceId);
+        PendingIntent content = open == null ? null : PendingIntent.getActivity(this, NOTIFICATION_ID, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         return new NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.sym_action_call)
             .setContentTitle(getString(R.string.app_name))
@@ -140,6 +134,23 @@ public final class NivraOngoingCallService extends Service {
             .setOnlyAlertOnce(true)
             .setSilent(true)
             .build();
+    }
+
+    static Intent openCallIntent(Context context, String callId, String userId, String deviceId) {
+        Intent open = new Intent(context, MainActivity.class)
+            .setAction(NivraNativePlugin.ACTION_CALL_OPEN)
+            .setData(android.net.Uri.parse("nivra://active-call/" + android.net.Uri.encode(NivraPushScopePolicy.notificationTag(userId, deviceId)) + "/" + android.net.Uri.encode(callId)))
+            .putExtra("callId", callId)
+            .putExtra("recipientUserId", userId)
+            .putExtra("recipientDeviceId", deviceId)
+            // A live call outlasts the incoming ring. Use a separate command
+            // and capability so its tap cannot inherit the 75-second expiry.
+            .putExtra("type", "ongoing-call")
+            .putExtra("action", "open-ongoing-call")
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        // Keep the mandatory foreground notification even if the account's
+        // secure registry is briefly unavailable, without exposing an unsigned action.
+        return NivraNativePushRegistration.signCallIntent(context, open) ? open : null;
     }
 
     @Override

@@ -1,30 +1,36 @@
-.side-heading > .workspace-eyebrow { display: block; margin-bottom: 10px; color: var(--nivra-muted); font-size: 8px; font-weight: 600; letter-spacing: .17em; }
-.side-heading h1 { margin-bottom: 6px; font-size: 30px; font-weight: 650; letter-spacing: -1.2px; }
-.side-head { padding-top: calc(24px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px))); padding-bottom: 18px; }
+.side-heading h1 { margin: 0 0 8px; font-size: 32px; font-weight: 720; letter-spacing: -1.3px; }
+.side-head { padding-top: calc(24px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px))); padding-bottom: 20px; align-items: flex-start; }
 .side-actions { align-self: center; }
-.new-chat-button { color: var(--nivra-on-brand); background: var(--nivra-brand); border-radius: 14px; box-shadow: 0 4px 14px color-mix(in srgb, var(--nivra-brand) 14%, transparent); }
-.search-box { border: 1px solid var(--nivra-line); border-radius: 14px; background: var(--nivra-bg); }
-.search-box ion-input { min-height: 46px; font-size: 13px; }
-.chat-folders { margin-block: 4px 14px; gap: 4px; padding: 4px; border: 1px solid var(--nivra-line); border-radius: 14px; background: var(--nivra-bg); overflow-x: auto; }
-.chat-folders button { min-height: 38px; padding: 6px; border-radius: 10px; background: transparent; font-size: 11px; }
-.chat-folders button.selected { color: var(--nivra-text); background: var(--nivra-panel-solid); box-shadow: 0 2px 6px #00000010; }
-.list .conversation-item::part(native) { min-height: 80px; padding: 12px 10px; border: 1px solid transparent; border-radius: 14px; }
-.list .conversation-item.active::part(native) { border-radius: 14px; border-color: color-mix(in srgb, var(--nivra-brand) 18%, transparent); background: color-mix(in srgb, var(--nivra-brand) 9%, var(--nivra-panel-solid)); }
-.conversation-item .avatar { border: 1px solid var(--nivra-line); }
+.new-chat-button { width: 44px; height: 44px; color: var(--nivra-on-brand); background: var(--nivra-brand); border-radius: 14px; box-shadow: 0 4px 12px color-mix(in srgb, var(--nivra-brand) 15%, transparent); }
+.new-chat-button:hover { color: var(--nivra-on-brand); background: color-mix(in srgb, var(--nivra-brand) 88%, var(--nivra-text)); }
+.chat-more-button { width: 40px; min-height: 44px; --border-radius: 12px; }
+.search-panel { padding-inline: 18px; padding-bottom: 12px; }
+.search-box { border: 1px solid var(--nivra-line); border-radius: 14px; background: var(--nivra-bg-3); }
+.search-box ion-input { min-height: 48px; font-size: 14px; }
+.search-box:focus-within { border-color: var(--nivra-selection-line); box-shadow: 0 0 0 3px var(--nivra-ring); }
+.chat-folders { margin-block: 0 12px; gap: 5px; padding: 4px; border: 1px solid var(--nivra-line); border-radius: 14px; background: var(--nivra-bg-3); overflow-x: auto; }
+.chat-folders button { min-height: 44px; padding: 6px; border-radius: 10px; background: transparent; font-size: 11px; }
+.chat-folders button.selected { color: var(--nivra-brand-2); background: var(--nivra-panel-solid); box-shadow: 0 1px 4px #0000000a; }
+.list .conversation-item::part(native) { min-height: 84px; padding: 12px 10px; border: 1px solid transparent; border-radius: 14px; gap: 12px; }
+.list .conversation-item.active::part(native) { border-radius: 14px; border-color: var(--nivra-selection-line); background: var(--nivra-selection); box-shadow: inset 3px 0 0 var(--nivra-brand); }
+.conversation-item .avatar { border: 1px solid var(--nivra-line); background: var(--nivra-selection); color: var(--nivra-brand-2); font-size: 14px; font-weight: 700; }
 .conversation-title { letter-spacing: -.015em; }
-.conversation-item.unread .conversation-unread-dot { box-shadow: 0 0 0 4px color-mix(in srgb, var(--nivra-brand) 9%, transparent); }
-.conversation-tail { gap: 4px; }
-.conversation-more { height: 40px; }
+.conversation-item.unread .conversation-unread-dot { width: 9px; height: 9px; box-shadow: 0 0 0 4px var(--nivra-selection); }
+.conversation-item .item-copy { gap: 6px; }
+.conversation-tail { gap: 1px; }
+.conversation-tail ion-note { font-size: 11px; }
+.conversation-more { width: 44px; height: 44px; }
+.folder-empty { padding-block: 40px; gap: 12px; }
+.welcome-stage { background: var(--nivra-bg); }
 @media (hover: hover) and (pointer: fine) {
   .conversation-more { opacity: 0; transition: opacity .15s; }
   .conversation-item:hover .conversation-more, .conversation-item:focus-within .conversation-more, .conversation-more[aria-expanded='true'] { opacity: 1; }
 }
 @media (max-width: 768px) {
-  .side-head { padding-top: calc(18px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px))); padding-bottom: 14px; }
-  .side-heading > .workspace-eyebrow { font-size: 8px; margin-bottom: 5px; }
-  .side-heading h1 { font-size: 29px; }
+  .side-head { padding-top: calc(18px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px))); padding-bottom: 16px; }
+  .side-heading h1 { font-size: 30px; }
   .chat-folders button { min-height: 40px; }
-  .list .conversation-item::part(native) { min-height: 78px; }
+  .list .conversation-item::part(native) { min-height: 82px; }
 }
 .search-back { display:none; }
 .search-start { display:grid; justify-items:center; gap:12px; padding:48px 24px; text-align:center; color:var(--nivra-muted); }
@@ -57,9 +63,9 @@
 .story-strip-shell { flex:none; min-width:0; overflow:hidden; }
 .story-strip-shell.is-collapsed { display:none; }
 .story-strip-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:0 16px 8px; }
-.story-strip-heading strong { font-size:12px; color:var(--nivra-muted); font-weight:600; }
+.story-strip-heading strong { font-size:11px; color:var(--nivra-muted); font-weight:650; letter-spacing:.03em; }
 .story-strip-heading>div { display:flex; align-items:center; gap:4px; }
-.story-strip-heading .story-collapse,.story-strip-page { position:static; inset:auto; display:grid; place-items:center; width:34px; height:34px; flex:0 0 34px; min-height:34px; border:0; border-radius:50%; background:var(--nivra-panel-2); color:var(--nivra-muted); cursor:pointer; }
+.story-strip-heading .story-collapse,.story-strip-page { position:static; inset:auto; display:grid; place-items:center; width:40px; height:40px; flex:0 0 40px; min-height:40px; border:0; border-radius:12px; background:transparent; color:var(--nivra-muted); cursor:pointer; }
 .story-strip-page.previous ion-icon { transform:rotate(180deg); }
 .story-strip-page:disabled { opacity:.35; cursor:default; }
 .story-strip { scroll-padding-inline:14px; }
@@ -92,10 +98,10 @@
   gap: 6px;
   min-height: 36px;
   padding: 5px 9px;
-  border: 1px solid var(--nivra-line);
-  border-radius: 999px;
-  background: var(--nivra-panel-solid);
-  color: var(--nivra-text);
+  border: 1px solid var(--nivra-selection-line);
+  border-radius: 8px;
+  background: var(--nivra-selection);
+  color: var(--nivra-brand-2);
   font-size: 11px;
   font-weight: 650;
   cursor: pointer;

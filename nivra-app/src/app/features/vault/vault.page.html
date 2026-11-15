@@ -76,11 +76,11 @@
         <div class="form-grid">
           <label class="wide">
             <span>{{ 'VAULT.NOTE_TITLE' | translate:'Titulo' }}</span>
-            <ion-input mode="ios" fill="outline" [(ngModel)]="title"></ion-input>
+            <ion-input mode="ios" fill="outline" [(ngModel)]="title" [attr.aria-label]="'VAULT.NOTE_TITLE' | translate:'Título'"></ion-input>
           </label>
           <label class="wide">
             <span>{{ 'VAULT.CONTENT' | translate:'Contenido' }}</span>
-            <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="body"></ion-textarea>
+            <ion-textarea mode="ios" fill="outline" rows="5" [(ngModel)]="body" [attr.aria-label]="'VAULT.CONTENT' | translate:'Contenido'"></ion-textarea>
           </label>
         </div>
         <input #noteFiles hidden type="file" multiple accept="image/*,audio/*,video/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" (change)="noteFilesSelected($event)" />
@@ -146,10 +146,10 @@
                           <small>{{ vault.noteAttachmentSize(attachment) }} - {{ attachment.mime || ('VAULT.FILE' | translate:'archivo') }}</small>
                         </div>
                         <div class="note-file-actions">
-                          <ion-button mode="ios" fill="clear" (click)="previewNoteAttachment(item, attachment)" [disabled]="isBusy('note-preview:' + attachment.id)">
+                          <ion-button mode="ios" fill="clear" (click)="previewNoteAttachment(item, attachment)" [disabled]="isBusy('note-preview:' + attachment.id)" [attr.aria-label]="('VAULT.OPEN' | translate:'Abrir') + ' ' + attachment.name">
                             <ion-icon name="play-circle-outline"></ion-icon>
                           </ion-button>
-                          <ion-button mode="ios" fill="clear" (click)="downloadNoteAttachment(item, attachment)" [disabled]="isBusy('note-download:' + attachment.id)">
+                          <ion-button mode="ios" fill="clear" (click)="downloadNoteAttachment(item, attachment)" [disabled]="isBusy('note-download:' + attachment.id)" [attr.aria-label]="('COMMON.DOWNLOAD' | translate:'Descargar') + ' ' + attachment.name">
                             <ion-icon name="cloud-download-outline"></ion-icon>
                           </ion-button>
                         </div>
@@ -158,7 +158,7 @@
                   </div>
                 }
               </div>
-              <ion-button mode="ios" fill="clear" color="danger" (click)="deleteItem(item.id)" [disabled]="isBusy('item:' + item.id)">
+              <ion-button mode="ios" fill="clear" color="danger" (click)="deleteItem(item.id)" [disabled]="isBusy('item:' + item.id)" [attr.aria-label]="'COMMON.DELETE' | translate:'Eliminar'">
                 <ion-icon name="trash-outline"></ion-icon>
               </ion-button>
             </div>
@@ -178,7 +178,7 @@
         <div class="stack room-list">
           @for (room of vault.rooms(); track room.id) {
             <div class="room-card" [class.active]="vault.activeRoomId() === room.id" [class.invited-target]="invitedRoomId === room.id">
-              <button type="button" class="room-main" (click)="openRoom(room)">
+              <button type="button" class="room-main" [attr.aria-pressed]="vault.activeRoomId() === room.id" (click)="openRoom(room)">
                 <span class="room-avatar">{{ initials(room) }}</span>
                 <span>
                   <strong>{{ room.name }}</strong>
@@ -208,7 +208,7 @@
               } @else {
                 <div class="room-actions">
                   <ion-button mode="ios" fill="clear" (click)="openRoom(room)">{{ 'VAULT.OPEN' | translate:'Abrir' }}</ion-button>
-                  <ion-button mode="ios" fill="clear" color="danger" (click)="leaveRoom(room)" [disabled]="isBusy('leave:' + room.id)">
+                  <ion-button mode="ios" fill="clear" color="danger" (click)="leaveRoom(room)" [disabled]="isBusy('leave:' + room.id)" [attr.aria-label]="'VAULT.LEAVE_ROOM' | translate:'Salir de la sala'">
                     <ion-icon name="log-out-outline"></ion-icon>
                   </ion-button>
                 </div>

@@ -4,10 +4,9 @@ export const environment = {
   ratchetLaboratory: false,
   ratchetEnabled: true,
   apiBaseUrl: 'https://nivrapp-secure-eaqi.onrender.com',
-  // Prefer the healthy shared cluster; the other same-cluster APIs remain failover candidates.
+  // Only operational members of the pinned cluster participate in failover.
   apiEndpoints: [
     'https://nivrapp-secure-eaqi.onrender.com',
-    'https://nivrapp-secure.onrender.com',
     'https://nivra-webapp-secure.onrender.com',
   ],
   apiClusterFingerprint: 'c761492c31e3e9346640c94da63c476eea907d2aad8a26b6d830c60cd5d7fc64',

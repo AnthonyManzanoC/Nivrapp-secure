@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Nivra.Api.Contracts;
+using Nivra.Api.Domain;
 using Nivra.Api.Infrastructure;
 using Nivra.Api.Services;
 using Nivra.Api.Security;
@@ -118,6 +119,53 @@ Check(owned.ReadByte() == 1 && !owned.CanWrite, "fallback download reads the sou
 await owned.DisposeAsync(); owned.Dispose();
 Check(owner.Count == 1 && !source.CanRead, "fallback download releases its S3 response exactly once");
 var clock = new TestClock();
+var committedMessage = new MessageEnvelope
+{
+    Id = "persisted-message", ConversationId = "group", ClientMessageId = "client-message",
+    SenderUserId = "sender", SenderDeviceId = "sender-phone",
+    Recipients = [
+        new() { UserId = "sender", DeviceId = "sender-phone", Ciphertext = "encrypted" },
+        new() { UserId = "bob", DeviceId = "bob-phone", Ciphertext = "encrypted" },
+        new() { UserId = "bob", DeviceId = "bob-desktop", Ciphertext = "encrypted" },
+        new() { UserId = "carol", DeviceId = "carol-phone", Ciphertext = "encrypted" }
+    ]
+};
+var notifiedDevices = new List<string>();
+var notifiedUsers = new List<string>();
+await MessageDeliveryDispatch.NotifyAsync(committedMessage,
+    (recipient, _) =>
+    {
+        notifiedDevices.Add(recipient.DeviceId);
+        return recipient.DeviceId == "sender-phone" ? Task.FromException(new IOException("realtime disconnected")) : Task.CompletedTask;
+    },
+    (userId, _) => { notifiedUsers.Add(userId); return Task.CompletedTask; },
+    NullLogger.Instance, CancellationToken.None);
+Check(notifiedDevices.SequenceEqual(committedMessage.Recipients.Select(recipient => recipient.DeviceId)), "a failed realtime notification does not suppress other devices after message commit");
+Check(notifiedUsers.SequenceEqual(new[] { "bob", "carol" }), "realtime failure still attempts push once per receiving user and excludes the sender");
+notifiedUsers.Clear();
+await MessageDeliveryDispatch.NotifyAsync(committedMessage,
+    (_, _) => Task.FromException(new IOException("realtime unavailable")),
+    (userId, _) =>
+    {
+        notifiedUsers.Add(userId);
+        return userId == "bob" ? Task.FromException(new HttpRequestException("push unavailable")) : Task.CompletedTask;
+    },
+    NullLogger.Instance, CancellationToken.None);
+Check(notifiedUsers.SequenceEqual(new[] { "bob", "carol" }), "failed push and realtime transports cannot turn a committed message into a false failure or suppress later recipients");
+using (var deliveryCancellation = new CancellationTokenSource())
+{
+    var cancellationObserved = false;
+    notifiedDevices.Clear(); notifiedUsers.Clear();
+    try
+    {
+        await MessageDeliveryDispatch.NotifyAsync(committedMessage,
+            (recipient, token) => { notifiedDevices.Add(recipient.DeviceId); deliveryCancellation.Cancel(); token.ThrowIfCancellationRequested(); return Task.CompletedTask; },
+            (userId, _) => { notifiedUsers.Add(userId); return Task.CompletedTask; },
+            NullLogger.Instance, deliveryCancellation.Token);
+    }
+    catch (OperationCanceledException) { cancellationObserved = true; }
+    Check(cancellationObserved && notifiedDevices.Count == 1 && notifiedUsers.Count == 0, "request cancellation stops notification work without being mistaken for a transport outage");
+}
 var shared = new TestState(clock);
 var first = new QrLoginService(clock, shared);
 var second = new QrLoginService(clock, shared);

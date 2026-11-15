@@ -7,7 +7,7 @@ const path = require('node:path');
 const os = require('node:os');
 const vm = require('node:vm');
 
-function fixture(t) {
+function fixture(t, overrides = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'nivra-vault-test-'));
   t.after(() => {
     assert.equal(path.dirname(path.resolve(root)), path.resolve(os.tmpdir()));
@@ -36,11 +36,13 @@ function fixture(t) {
         ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
       };
       if (name === './renderer-security') return { isTrustedIpc: event => event && event.trusted === true };
+      if (name === 'fs') return { ...fs, ...overrides };
       return require(name);
     },
   });
   return { root, file: name => path.join(root, 'secure-vault', `${name}.bin`),
     invoke: (name, options, event = { trusted: true }) => handlers.get('nivra-secure-vault:get-or-create')(event, name, options),
+    clear: name => handlers.get('nivra-secure-vault:clear')({ trusted: true }, name),
     available: value => { available = value; } };
 }
 
@@ -60,6 +62,90 @@ test('read-only lookup retains exactly the existing protector and creation keeps
   assert.equal(f.invoke('device-keys', { create: false }).secret, first.secret);
   assert.equal(f.invoke('device-keys').secret, first.secret);
   assert.deepEqual(fs.readFileSync(f.file('device-keys')), wrapped);
+});
+
+test('a partial disk write never commits a broken protector and a later attempt can succeed', t => {
+  let failing = true;
+  const f = fixture(t, {
+    writeFileSync(file, bytes, options) {
+      if (failing) {
+        fs.writeFileSync(file, bytes.subarray(0, 5), options);
+        throw Object.assign(new Error('private disk diagnostics'), { code: 'ENOSPC' });
+      }
+      fs.writeFileSync(file, bytes, options);
+    },
+  });
+  assert.throws(() => f.invoke('local-db'), /^Error: NIVRA_SECURE_WRITE_FAILED$/);
+  assert.equal(fs.existsSync(f.file('local-db')), false);
+  assert.deepEqual(fs.readdirSync(path.dirname(f.file('local-db'))), []);
+  failing = false;
+  const result = f.invoke('local-db');
+  assert.equal(f.invoke('local-db', { create: false }).secret, result.secret);
+});
+
+test('a failed disk sync cannot publish a protector that was never made durable', t => {
+  const f = fixture(t, {
+    fsyncSync() { throw new Error('private sync diagnostics'); },
+  });
+  assert.throws(() => f.invoke('auth-session'), /^Error: NIVRA_SECURE_WRITE_FAILED$/);
+  assert.equal(fs.existsSync(f.file('auth-session')), false);
+  assert.deepEqual(fs.readdirSync(path.dirname(f.file('auth-session'))), []);
+});
+
+test('atomic publication retains a concurrent initializer and returns its exact secret', t => {
+  const winner = 'the-concurrent-committed-protector';
+  const f = fixture(t, {
+    linkSync(temporary, destination) {
+      fs.writeFileSync(destination, Buffer.from(`wrapped:${winner}`), { flag: 'wx' });
+      fs.linkSync(temporary, destination);
+    },
+  });
+  assert.equal(f.invoke('device-keys').secret, winner);
+  assert.equal(f.invoke('device-keys', { create: false }).secret, winner);
+  assert.deepEqual(fs.readdirSync(path.dirname(f.file('device-keys'))), ['device-keys.bin']);
+});
+
+test('clearing a protector also removes its staging link left by an interrupted cleanup', t => {
+  const f = fixture(t, {
+    unlinkSync() { throw Object.assign(new Error('private sharing violation'), { code: 'EPERM' }); },
+  });
+  f.invoke('local-db');
+  const directory = path.dirname(f.file('local-db'));
+  const staged = fs.readdirSync(directory).filter(name => name.endsWith('.tmp'));
+  assert.equal(staged.length, 1);
+  assert.equal(fs.readFileSync(path.join(directory, staged[0])).toString(), fs.readFileSync(f.file('local-db')).toString());
+  const unrelated = ['keep.tmp', '.local-db-not-a-generated-id.tmp', '.auth-session-' + 'a'.repeat(32) + '.tmp'];
+  unrelated.forEach(name => fs.writeFileSync(path.join(directory, name), 'unrelated'));
+  assert.equal(f.clear('local-db').cleared, true);
+  assert.deepEqual(fs.readdirSync(directory).sort(), unrelated.sort());
+});
+
+test('a locked staging protector cannot be reported as successfully cleared', t => {
+  const f = fixture(t, {
+    unlinkSync() { throw Object.assign(new Error('private sharing violation'), { code: 'EPERM' }); },
+    rmSync(file, options) {
+      if (file.endsWith('.tmp')) throw Object.assign(new Error('private removal failure'), { code: 'EPERM' });
+      fs.rmSync(file, options);
+    },
+  });
+  f.invoke('auth-session');
+  assert.throws(() => f.clear('auth-session'), /^Error: NIVRA_SECURE_CLEAR_FAILED$/);
+  assert.equal(fs.existsSync(f.file('auth-session')), false);
+  assert.equal(fs.readdirSync(path.dirname(f.file('auth-session'))).length, 1);
+});
+
+test('clear all attempts every protector even if a locked file makes complete erasure fail', t => {
+  const f = fixture(t, {
+    rmSync(file, options) {
+      if (file.endsWith('device-keys.bin')) throw Object.assign(new Error('private removal failure'), { code: 'EPERM' });
+      fs.rmSync(file, options);
+    },
+  });
+  for (const name of ['device-keys', 'local-db', 'auth-session']) f.invoke(name);
+  assert.throws(() => f.clear('all'), /^Error: NIVRA_SECURE_CLEAR_FAILED$/);
+  assert.equal(fs.existsSync(f.file('device-keys')), true);
+  assert.equal(fs.existsSync(f.file('local-db')), false);
+  assert.equal(fs.existsSync(f.file('auth-session')), false);
 });
 
 for (const bytes of [Buffer.from('corrupt-existing-wrapper'), Buffer.alloc(0), Buffer.from('wrapped:')]) {

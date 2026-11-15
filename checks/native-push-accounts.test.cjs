@@ -88,6 +88,16 @@ test('both native FCM and foreground call UI suppress caller-account echoes with
   assert.match(read('NivraNativePlugin'), /NivraNotificationIntentPolicy\.callerEcho\(data\.get\("recipientUserId"\)/);
 });
 
+test('ongoing call notification opens through its own signed account-scoped capability', () => {
+  const service = read('NivraOngoingCallService');
+  assert.match(service, /Intent open = openCallIntent\(this, requestedCallId, requestedUserId, requestedDeviceId\)/);
+  assert.match(service, /open == null \? null : PendingIntent\.getActivity/);
+  const factory = service.slice(service.indexOf('static Intent openCallIntent'), service.indexOf('public void onDestroy'));
+  assert.match(factory, /\.putExtra\("type", "ongoing-call"\)/);
+  assert.match(factory, /\.putExtra\("action", "open-ongoing-call"\)/);
+  assert.match(factory, /NivraNativePushRegistration\.signCallIntent\(context, open\) \? open : null/);
+});
+
 test('native protected chat metadata stays local and redacts ringing UI before building intents',()=>{
   const registry=read('NivraNativePushRegistration');
   const sameCredentials=registry.slice(registry.indexOf('if (prior != null && api.equals'),registry.indexOf('JSONObject value = new JSONObject().put("apiBaseUrl"'));

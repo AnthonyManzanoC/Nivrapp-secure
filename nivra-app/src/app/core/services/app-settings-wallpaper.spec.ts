@@ -69,6 +69,25 @@ describe('chat wallpaper preferences and preview', () => {
     }
   });
 
+  it('applies the theme accent and a readable button label when the account changes appearance', () => {
+    const settings = TestBed.inject(AppSettingsService);
+    TestBed.flushEffects();
+    const style = document.documentElement.style;
+    for (const [themeMode, accent, label] of [
+      ['light', '#0a735c', '#ffffff'],
+      ['dark', '#62d8b6', '#04100d'],
+    ] as const) {
+      settings.set('themeMode', themeMode);
+      TestBed.flushEffects();
+      expect(style.getPropertyValue('--nivra-brand')).toBe(accent);
+      expect(style.getPropertyValue('--nivra-on-brand')).toBe(label);
+      expect(style.getPropertyValue('--ion-color-primary-contrast')).toBe(label);
+    }
+    settings.update({ themeMode: 'light', accentColor: 'blue' });
+    TestBed.flushEffects();
+    expect(style.getPropertyValue('--nivra-brand')).toBe('#1d4ed8');
+  });
+
   it('preserves saved wallpaper choices when switching between accounts', () => {
     localStorage.setItem(firstKey, JSON.stringify({ chatWallpaper: 'paper', themeMode: 'light' }));
     localStorage.setItem(secondKey, JSON.stringify({ chatWallpaper: 'silk', themeMode: 'dark' }));

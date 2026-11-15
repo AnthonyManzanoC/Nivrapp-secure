@@ -1,13 +1,13 @@
 <ion-content fullscreen class="page">
   <main class="invite-stage">
-    <section class="invite-panel">
+    <section class="invite-panel" [attr.aria-busy]="!error" aria-live="polite">
       <ion-icon name="lock-closed-outline"></ion-icon>
       @if (!error) {
         <h1>{{ 'VAULT_INVITE.OPENING' | translate:'Abriendo Vault' }}</h1>
         <ion-spinner name="crescent"></ion-spinner>
       } @else {
         <h1>{{ 'VAULT_INVITE.UNAVAILABLE' | translate:'Invitacion no disponible' }}</h1>
-        <p [appTransientNotice]="error" [appNoticeDuration]="15000">{{ error }}</p>
+        <p role="alert" [appTransientNotice]="error" [appNoticeDuration]="15000">{{ error }}</p>
         <ion-button mode="ios" (click)="goHome()">{{ 'COMMON.CONTINUE' | translate:'Continuar' }}</ion-button>
       }
     </section>
