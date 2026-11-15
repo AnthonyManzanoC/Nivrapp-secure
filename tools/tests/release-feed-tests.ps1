@@ -19,7 +19,8 @@ $testSetup = Join-Path $fixtureArtifacts 'Nivra-4.1.0-Setup.exe'
 $testZip = Join-Path $fixtureArtifacts 'Nivra-4.1.0-win32-x64.zip'
 $testManifestPath = Join-Path $fixtureArtifacts 'Nivra-4.1.0-update-manifest.json'
 $utf8 = [Text.UTF8Encoding]::new($false)
-$testState = [pscustomobject]@{ checks=0; credentialCalls=0; networkCalls=0; published=$false; wrongFeedDigest=$false; uploads=@() }
+$testState = [pscustomobject]@{ checks=0; credentialCalls=0; networkCalls=0; published=$false; wrongFeedDigest=$false; uploads=@(); existingDraft=$true; createdBody=$null }
+$testNotes = 'Offline fixture: b' + [char]0x00f3 + 'veda.'
 $testState.credentialCalls = 0
 $testState.networkCalls = 0
 $testState.published = $false
@@ -47,8 +48,9 @@ function Reset-Fixture {
   Write-TestJson -Path $testManifestPath -Value $manifest
   $lines = foreach ($binary in @($testApk, $testSetup, $testZip)) { (Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant() + '  ' + [IO.Path]::GetFileName($binary) }
   [IO.File]::WriteAllText((Join-Path $fixtureArtifacts 'Nivra-4.1.0-SHA256.txt'), ($lines -join "`n"), $utf8)
-  [IO.File]::WriteAllText((Join-Path $fixtureArtifacts 'Nivra-4.1.0-release-notes.md'), 'Offline fixture release.', $utf8)
+  [IO.File]::WriteAllText((Join-Path $fixtureArtifacts 'Nivra-4.1.0-release-notes.md'), $testNotes, $utf8)
   $testState.credentialCalls = 0; $testState.networkCalls = 0; $testState.published = $false; $testState.wrongFeedDigest = $false; $testState.uploads = @()
+  $testState.existingDraft=$true; $testState.createdBody=$null
   return $manifest
 }
 
@@ -59,7 +61,16 @@ function Invoke-RestMethod {
   param([string]$Uri, [string]$Method='Get', $Headers, [string]$ContentType, $Body, [string]$InFile, [int]$TimeoutSec)
   $testState.networkCalls++
   if ($Uri -match '/commits/') { return [pscustomobject]@{ sha=$testCommit } }
-  if ($Uri -match '/releases\?per_page=100$') { return ,@([pscustomobject]@{ tag_name='v4.1.0'; id=123; draft=$true; target_commitish=$testCommit; upload_url='https://offline.invalid/upload{?name,label}' }) }
+  if ($Uri -match '/releases\?per_page=100$') {
+    if ($testState.existingDraft) { return ,@([pscustomobject]@{ tag_name='v4.1.0'; id=123; draft=$true; target_commitish=$testCommit; upload_url='https://offline.invalid/upload{?name,label}' }) }
+    Write-Output -NoEnumerate ([object[]]@()); return
+  }
+  if ($Method -eq 'Post' -and $Uri.EndsWith('/releases')) {
+    $request = [Text.Encoding]::UTF8.GetString([byte[]]$Body) | ConvertFrom-Json
+    if ($request.body -isnot [string] -or $request.body -cne $testNotes) { throw 'Release notes must be a plain string with intact UTF-8 accents.' }
+    $testState.createdBody=$request.body
+    return [pscustomobject]@{ tag_name='v4.1.0'; id=123; draft=$true; target_commitish=$testCommit; upload_url='https://offline.invalid/upload{?name,label}' }
+  }
   # Match Invoke-RestMethod's non-enumerated JSON-array output, including [].
   if ($Uri.EndsWith('/assets')) { Write-Output -NoEnumerate ([object[]]@()); return }
   if ($Method -eq 'Post' -and $Uri.StartsWith('https://offline.invalid/upload?name=')) {
@@ -116,6 +127,12 @@ try {
   $publication = Get-Content -LiteralPath (Join-Path $fixtureArtifacts 'release-4.1.0-publication.json') -Raw | ConvertFrom-Json
   $feedAsset = $publication.assets | Where-Object { $_.name -eq 'latest.json' }
   if (-not $feedAsset -or $feedAsset.digest -ne ('sha256:' + (Get-FileHash -LiteralPath $testManifestPath -Algorithm SHA256).Hash.ToLowerInvariant())) { throw 'The publication record does not pin the feed digest.' }
+  $testState.checks++
+
+  $null = Reset-Fixture
+  $testState.existingDraft=$false
+  & $fixturePublisher -Version $testVersion -Commit $testCommit | Out-Null
+  if (-not $testState.published -or $testState.createdBody -cne $testNotes) { throw 'Creating a new release lost the notes text or serialized provider metadata.' }
   $testState.checks++
 
   $null = Reset-Fixture

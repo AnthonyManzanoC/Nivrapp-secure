@@ -23,7 +23,9 @@ $updateManifestPath = Join-Path $artifactDirectory "Nivra-$Version-update-manife
 if ($metadata.version -ne $Version -or $metadata.url -ne "https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v$Version/$apkName") { throw 'Release metadata does not match the requested version.' }
 $apk = Get-Item -LiteralPath $apkPath
 if ($apk.Length -ne $metadata.size -or (Get-FileHash -LiteralPath $apkPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $metadata.sha256) { throw 'Release APK differs from the verified metadata.' }
-$notes = Get-Content -LiteralPath (Join-Path $artifactDirectory "Nivra-$Version-release-notes.md") -Raw
+# Windows PowerShell 5.1 can serialize Get-Content's provider metadata as an
+# object and decode BOM-less UTF-8 as ANSI. GitHub requires a plain UTF-8 string.
+$notes = [IO.File]::ReadAllText((Join-Path $artifactDirectory "Nivra-$Version-release-notes.md"), [Text.Encoding]::UTF8)
 $assetPaths = @($apkPath, $setupPath, (Join-Path $artifactDirectory "Nivra-$Version-win32-x64.zip"), (Join-Path $artifactDirectory "Nivra-$Version-SHA256.txt"), $metadataPath, $updateManifestPath)
 foreach ($asset in $assetPaths) { if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) { throw 'A required release artifact is missing.' } }
 $checksumLines = @(Get-Content -LiteralPath (Join-Path $artifactDirectory "Nivra-$Version-SHA256.txt"))

@@ -13,10 +13,12 @@
 
 ## Validación
 
-El código funcional pasó 289 pruebas Angular de navegación, Chats, verificación, cola durable, preparación de envíos y recuperación de sincronización. La preparación de publicación añadió 20 controles offline del feed, 12 pruebas Node del feed y de las descargas, y 18 controles de autenticación. Las compilaciones Web de producción 9.3.1 y API Release terminaron correctamente; Web mantiene avisos de tamaño y deprecaciones ya presentes. Se verificaron visualmente ambos estados de la barra y el acordeón móvil con datos ficticios; las capturas están en `artifacts/navigation-improvements/`.
+El código funcional pasó 289 pruebas Angular de navegación, Chats, verificación, cola durable, preparación de envíos y recuperación de sincronización. La preparación de publicación añadió 21 controles offline del feed, 12 pruebas Node del feed y de las descargas, y 18 controles de autenticación. Las compilaciones Web de producción 9.3.1 y API Release terminaron correctamente; Web mantiene avisos de tamaño y deprecaciones ya presentes. Se verificaron visualmente ambos estados de la barra y el acordeón móvil con datos ficticios; las capturas están en `artifacts/navigation-improvements/`.
 
 Durante el diagnóstico, las dos API operativas respondieron HTTP 200 en `/health/ready`. Esto no demuestra disponibilidad de cuota de Supabase ni identifica la causa de un mensaje concreto. No se enviaron mensajes reales a otros usuarios para esta comprobación. La validación en teléfonos físicos permanece pendiente.
 
 La evidencia de empaquetado, firma, hashes y publicación de esta versión se guarda en `artifacts/release-9.3.1/`. `tools/verify-release.ps1` comprobó 1.452 recursos Web en Windows y ZIP y 1.451 en APK (Android omite `.well-known/assetlinks.json`), con igualdad exacta respecto de la compilación Web 9.3.1. También verificó el certificado fijado del APK, build 60, la ausencia de depuración y las versiones del EXE y del instalador.
 
 Los entregables verificados son `Nivra-9.3.1-debug.apk` (nombre histórico; es un APK release firmado), `Nivra-9.3.1-Setup.exe` y `Nivra-9.3.1-win32-x64.zip`. El pipeline generó los hashes SHA256 y el manifiesto de actualización después de comprobarlos. El instalador Windows conserva la limitación de no contar con firma Authenticode.
+
+El publicador se corrigió para leer las notas como texto UTF-8 plano también en Windows PowerShell 5.1; una prueba de creación de release comprueba que no se envíen metadatos del proveedor ni se alteren los acentos. Este ajuste de herramientas no modifica los instaladores verificados.
