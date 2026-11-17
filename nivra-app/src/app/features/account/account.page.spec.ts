@@ -12,12 +12,14 @@ import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { AccountPage } from './account.page';
+import { DeviceAuthorityService } from '../../core/services/device-authority.service';
 
 describe('Account recovery email profile binding', () => {
   let page: AccountPage;
 
   beforeEach(() => {
     TestBed.configureTestingModule({ providers: [
+      { provide: DeviceAuthorityService, useValue: { authority: signal(null) } },
       { provide: AuthService, useValue: { session: signal({ user: { email: 'perfil@nivra.test' } }) } },
       { provide: AccountService, useValue: { loading: signal(false), privacy: signal(null) } },
       { provide: AppLockService, useValue: {} },

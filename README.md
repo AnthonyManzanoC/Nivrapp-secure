@@ -1,6 +1,6 @@
 # Nivra Private Messenger
 
-Código actual: **9.3.1**, Android **build 60**. Revisión: 15 de noviembre de 2026.
+Código actual: **10.0.0**, Android **build 61**. Revisión: 16 de noviembre de 2026.
 
 Nivra es un mensajero con chats privados y grupales, contactos, comunidades, historias, listas de difusión, bóveda y llamadas. Comparte una interfaz Angular/Ionic entre Web, Android (Capacitor) y Windows (Electron); la API .NET usa PostgreSQL y SignalR.
 
@@ -8,15 +8,15 @@ La [revisión de estabilidad del 14 de noviembre](docs/reliability-review-2026-1
 
 ## Empezar a usar Nivra
 
-La primera entrada a Chats en una cuenta sin guía completada abre **Guía de Nivra**. Explica cinco tareas: revisar el perfil, agregar un contacto, enviar un mensaje, llamar y preparar la recuperación. Permite explorar por cuenta propia y volver desde **Cuenta → Guía de Nivra**. El progreso es una lista de prácticas marcada por el usuario, guardada por cuenta en ese dispositivo; no certifica que la recuperación esté configurada.
+La primera entrada a Chats en una cuenta que aún no vio la guía abre **Guía de Nivra**. Presenta de una en una cinco tareas: revisar el perfil, agregar un contacto, enviar un mensaje, llamar y preparar la recuperación. Permite entrar directamente a Chats y volver desde **Cuenta → Guía de Nivra**. El progreso es una lista de prácticas marcada por el usuario, guardada por cuenta en ese dispositivo; no certifica que la recuperación esté configurada.
 
 La guía incluye dieciséis áreas funcionales con accesos directos, buscador y explicaciones de los estados de mensajes y la recuperación automática. Los enlaces de invitación, chats específicos y acciones de llamadas mantienen su destino. Cuenta también incorpora **Notificaciones → Comprueba tus notificaciones**, disponible directamente en /app/notification-check.
 
-**Recuperación:** recuperar el acceso permite entrar de nuevo. El correo verificado ayuda a restablecer la contraseña y la frase protege la identidad de cuenta. Sincronizar el historial necesita contenido y llaves disponibles en un equipo autorizado. Perder todas las copias puede impedir recuperar mensajes antiguos.
+**Recuperación:** recuperar el acceso permite entrar de nuevo. El correo verificado ayuda a restablecer la contraseña y la frase protege la identidad de cuenta. Con esa identidad y la API actualizada, las copias cifradas disponibles del historial se recuperan en segundo plano en los equipos nuevos. Perder todas las copias o sus llaves impide reconstruir mensajes antiguos.
 
 ## Matriz del estado real
 
-Esta tabla describe el repositorio, no una certificación del despliegue público. Los resultados de la entrega se registran en [validación 9.3.1](docs/release-9.3.1.md).
+Esta tabla describe el repositorio, no una certificación del despliegue público. Los cambios, validación y límites de esta entrega se registran en [validación 10.0.0](docs/release-10.0.0.md).
 
 | Área | Estado en código | Dependencias y límites |
 | --- | --- | --- |
@@ -28,12 +28,12 @@ Esta tabla describe el repositorio, no una certificación del despliegue públic
 | Diagnóstico de avisos | Permiso, conexión, servicio y registro por dispositivo | En Android consulta permiso nativo. Windows explica sus avisos del sistema. No simula una prueba de entrega FCM. |
 | Acceso y dispositivos | Alias/ID, QR, sesiones, revocación | La autenticación Firebase por teléfono se conserva; su activación sigue pendiente por decisión del propietario. |
 | Contactos | Solicitudes, invitaciones y bloqueo | Las cuentas privadas requieren identificación exacta o pase. |
-| Chats y grupos | Mensajes, adjuntos, edición, reacciones, recibos y cola de textos | Los reintentos requieren cliente abierto y desbloqueado; dependen de red y compatibilidad de dispositivos. |
+| Chats y grupos | Mensajes, adjuntos, edición, reacciones, recibos y cola cifrada con programación de textos | Los envíos programados y reintentos requieren la cuenta abierta, desbloqueada y con conexión; se retoman al volver. |
 | Notas propias y difusión | Implementadas | Las difusiones se entregan por conversaciones privadas. |
 | Comunidades | Agrupación de grupos, miembros e invitaciones | Permisos por rol; límites de código no equivalen a capacidad de carga comprobada. |
 | Historias/Mundo | Texto y multimedia, audiencia y respuestas | Revisar audiencia antes de publicar. Formato criptográfico propio. |
 | Chat incógnito | Vista temporal con estado del contacto, salida al chat y diseño claro/oscuro | Ambos deben entrar antes de enviar. Una salida o desconexión cierra la sala; los participantes pueden conservar capturas. |
-| Bóveda y salas | Elementos, acceso e invitaciones | Revisar duración y condiciones de cada sala. Voz requiere LiveKit. |
+| Bóveda y salas | Contenido oculto al bloquear, acceso e invitaciones cifradas | Cerrar la vista de una sala persistente permite volver. El borrado al salir y la caducidad siguen aplicándose. Voz requiere LiveKit. |
 | Mensajes cifrados | Double Ratchet con vodozemac, saludo híbrido X25519/ML-KEM-768 | Composición propia de Nivra; auditoría independiente pendiente. No es el formato de Signal. |
 | Identidad recuperable | Certificados de dispositivos y copias cifradas | Recuperar identidad no restaura automáticamente el historial. |
 | Historial multidispositivo | Transferencia aprobada y reanudable | Necesita un origen autorizado que conserve datos/llaves; no recupera mensajes eliminados o vencidos. |

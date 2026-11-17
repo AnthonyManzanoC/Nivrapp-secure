@@ -767,6 +767,7 @@ ion-popover.attachment-popover::part(content) {
 }
 
 .message footer {
+  flex-wrap: wrap;
   display: flex;
   justify-content: flex-end;
   align-items: center;
@@ -775,6 +776,8 @@ ion-popover.attachment-popover::part(content) {
   color: var(--nivra-muted);
   font-size: 11px;
 }
+
+.message footer app-message-privacy-badge { flex-basis: 100%; margin-right: auto; }
 
 .message.mine footer {
   color: rgba(244, 251, 247, .72);

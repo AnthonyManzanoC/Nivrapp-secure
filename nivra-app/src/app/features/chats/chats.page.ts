@@ -54,6 +54,7 @@ import { PushService } from '../../core/services/push.service';
 import { Capacitor } from '@capacitor/core';
 import { HistoryStatusSnoozeService } from '../../core/services/history-status-snooze.service';
 import { rankConversationTitles } from './conversation-search';
+import { NotificationPermissionPromptComponent } from '../../shared/notification-permission-prompt.component';
 
 type ChatSearchScope = 'all' | 'chats' | 'people';
 type ChatMenuAction = 'new-chat' | 'new-group' | 'new-community' | 'new-story' | 'share-pass' | 'refresh' | 'settings' | 'enable-alerts' | 'broadcasts';
@@ -64,6 +65,7 @@ type BulkChatAction = 'pin' | 'archive' | 'delete';
   selector: 'app-chats',
   standalone: true,
   imports: [TransientNoticeDirective,
+    NotificationPermissionPromptComponent,
     LocalizedDatePipe,
     CommonModule,
     FormsModule,
@@ -191,7 +193,8 @@ export class ChatsPage implements OnDestroy {
   recentSearches = this.loadRecent();
   showRecentSearches = false;
   recentCollapsed = true;
-  detailActive = false;
+  detailActive = /^\/app\/chats\/[^/?#]+/.test(this.router.getCurrentNavigation?.()?.finalUrl?.toString() ?? this.router.url);
+  private detailTransition = 0;
   groupModalOpen = false;
   groupName = '';
   groupAvatar: string | null = null;
@@ -848,6 +851,10 @@ export class ChatsPage implements OnDestroy {
     this.enablingCallAlerts = true;
     this.callAlertsNotice = '';
     try {
+      if (this.push.permission() === 'denied' || this.push.settingsBlocked?.()) {
+        await this.nativeDevice.openNotificationSettings('app');
+        return;
+      }
       const ready = await this.push.requestPermissionAndRegister();
       if (this.isCurrentScope(scope)) {
         this.callAlertsNotice = ready
@@ -1046,6 +1053,14 @@ export class ChatsPage implements OnDestroy {
       // Keep long lists compact while reading rows away from their beginning.
       this.storiesCollapsed = true;
     }
+  }
+
+  @HostListener('nivra-tab-scroll-top')
+  onTabScrollTop(): void {
+    if (!this.mobileChatHeaderEnabled() || this.detailActive) return;
+    this.resetNativeStoryGesture();
+    this.setMobileChatHeaderCollapsed(false);
+    this.expandStories();
   }
 
   androidStoryGesturesEnabled(): boolean { return this.nativeAndroid; }
@@ -1541,9 +1556,20 @@ export class ChatsPage implements OnDestroy {
     return !this.isMine(story) && !story.viewOnce && story.allowReposts !== false && story.owner.allowStoryReposts !== false;
   }
 
+  onDetailActivate(): void {
+    const transition = ++this.detailTransition;
+    // RouterOutlet can emit while its parent's template is being checked.
+    // Apply the layout update before the next paint without changing an earlier binding in that check.
+    queueMicrotask(() => { if (this.alive && transition === this.detailTransition) this.detailActive = true; });
+  }
+
   onDetailDeactivate(): void {
-    this.detailActive = false;
-    this.syncSelectedConversationFromUrl(this.router.url);
+    const transition = ++this.detailTransition;
+    queueMicrotask(() => {
+      if (!this.alive || transition !== this.detailTransition) return;
+      this.detailActive = false;
+      this.syncSelectedConversationFromUrl(this.router.url);
+    });
   }
 
   conversationsForFolder(): Conversation[] {

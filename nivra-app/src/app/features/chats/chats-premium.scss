@@ -111,15 +111,17 @@
   gap: 6px;
   min-height: 36px;
   padding: 5px 9px;
-  border: 1px solid var(--nivra-selection-line);
+  border: 1px solid var(--nivra-line);
   border-radius: 8px;
-  background: var(--nivra-selection);
-  color: var(--nivra-brand-2);
+  background: transparent;
+  color: var(--nivra-muted);
   font-size: 11px;
   font-weight: 650;
   cursor: pointer;
+  box-shadow: none;
+  transition: background-color 150ms ease, color 150ms ease;
 }
-.chat-communities-shortcut:is(:hover, :focus-visible) { border-color: var(--nivra-selection-line); background: var(--nivra-selection); }
+.chat-communities-shortcut:is(:hover, :focus-visible) { border-color: var(--nivra-line); background: var(--nivra-bg-3); color: var(--nivra-text); }
 .chat-communities-shortcut ion-icon { font-size: 15px; }
 .chat-communities-shortcut ion-icon, .community-preview-label { color: var(--nivra-brand-2); }
 .community-conversation .avatar { border-radius: 13px; }

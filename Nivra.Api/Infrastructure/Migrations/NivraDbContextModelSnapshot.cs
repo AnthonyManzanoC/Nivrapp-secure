@@ -74,6 +74,49 @@ namespace Nivra.Api.Infrastructure.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.AccountHistorySyncItem", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("EnvelopeJson")
+                        .IsRequired()
+                        .HasMaxLength(1410000)
+                        .HasColumnType("character varying(1410000)");
+
+                    b.Property<string>("MessageId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("RootKey")
+                        .IsRequired()
+                        .HasMaxLength(87)
+                        .HasColumnType("character varying(87)");
+
+                    b.Property<string>("UserId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MessageId");
+
+                    b.HasIndex("UserId", "Id");
+
+                    b.HasIndex("UserId", "MessageId")
+                        .IsUnique();
+
+                    b.ToTable("account_history_sync", "public");
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.AccountIdentityRecord", b =>
                 {
                     b.Property<string>("UserId")
@@ -663,6 +706,13 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .HasMaxLength(160)
                         .HasColumnType("character varying(160)");
 
+                    b.Property<string>("Platform")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.Property<DateTimeOffset?>("PlatformVerifiedAt")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<DateTimeOffset?>("RevokedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1007,6 +1057,55 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .IsUnique();
 
                     b.ToTable("messages", "public");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.MessagePushOutboxItem", b =>
+                {
+                    b.Property<string>("MessageId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<string>("RecipientUserId")
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Attempts")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTimeOffset?>("CompletedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CompletedPushTokenIdsJson")
+                        .IsRequired()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("text")
+                        .HasDefaultValue("[]");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("LeaseId")
+                        .HasMaxLength(32)
+                        .HasColumnType("character varying(32)");
+
+                    b.Property<DateTimeOffset?>("LeaseUntil")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTimeOffset>("NextAttemptAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("MessageId", "RecipientUserId");
+
+                    b.HasIndex("ExpiresAt");
+
+                    b.HasIndex("RecipientUserId");
+
+                    b.HasIndex("CompletedAt", "NextAttemptAt", "LeaseUntil");
+
+                    b.ToTable("message_push_outbox", "public");
                 });
 
             modelBuilder.Entity("Nivra.Api.Domain.PlanEntitlements", b =>
@@ -1782,6 +1881,21 @@ namespace Nivra.Api.Infrastructure.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Nivra.Api.Domain.AccountHistorySyncItem", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.MessageEnvelope", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Nivra.Api.Domain.AccountIdentityRecord", b =>
                 {
                     b.HasOne("Nivra.Api.Domain.UserAccount", null)
@@ -2292,6 +2406,21 @@ namespace Nivra.Api.Infrastructure.Migrations
                     b.Navigation("Receipts");
 
                     b.Navigation("Recipients");
+                });
+
+            modelBuilder.Entity("Nivra.Api.Domain.MessagePushOutboxItem", b =>
+                {
+                    b.HasOne("Nivra.Api.Domain.MessageEnvelope", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Nivra.Api.Domain.UserAccount", null)
+                        .WithMany()
+                        .HasForeignKey("RecipientUserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Nivra.Api.Domain.PushTokenRecord", b =>

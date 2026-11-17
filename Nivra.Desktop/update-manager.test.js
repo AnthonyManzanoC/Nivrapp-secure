@@ -47,6 +47,8 @@ async function fixture(t, overrides = {}) {
 
 test('stable semver compares numeric components and rejects ambiguous or unsafe versions', () => {
   assert.equal(compareVersions('4.10.0', '4.9.99'), 1);
+  assert.equal(compareVersions('10.0.0', '9.3.1'), 1);
+  assert.equal(compareVersions('9.3.1', '10.0.0'), -1);
   assert.equal(compareVersions('4.1.0', '4.1.0'), 0);
   assert.equal(compareVersions('4.0.9', '4.1.0'), -1);
   for (const value of ['v4.1.0', '4.01.0', '4.1', '4.1.0-beta', '4.1.0+meta', '4.1.0/../bad', '99999999999999999999.0.0', '65536.1.0']) {

@@ -148,6 +148,7 @@ async function main() {
       console.log('PASS production web entry, welcome, sign-in controls and recovery in light and dark.');
       return;
     }
+    if (!process.argv.includes('--v10-only')) {
     await viewport(390,844,true);
     await call('Page.navigate',{url:base+'/app/chats?theme=light'});
     await waitFor("!!document.querySelector('.chats-page')");
@@ -219,6 +220,21 @@ async function main() {
     assert(await backgroundUses('.search-panel','--nivra-panel-solid'),'expanded dark Chats header uses the panel surface');
     assert(await backgroundUses('.search-box','--nivra-bg-3'),'expanded dark Chats input uses the dark control surface');
     await viewport(1440,900,false);
+    await evaluate("localStorage.removeItem('nivra.navigation.rail-expanded')");
+    await call('Page.navigate',{url:base+'/app/chats?theme=light'});
+    await waitFor("!!document.querySelector('.collapsible-rail .rail-toggle')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    assert(await evaluate("(()=>{const r=document.querySelector('.rail'),labels=[...r.querySelectorAll('.nav-btn>span:not(.nav-unread-badge),.rail-brand>span,.connection-label')];return r.getBoundingClientRect().width>=66&&r.getBoundingClientRect().width<=70&&labels.length===8&&labels.every(s=>getComputedStyle(s).fontSize==='10px'&&s.getBoundingClientRect().height>0)&&getComputedStyle(r.querySelector('.nav-btn')).flexDirection==='column';})()"),'compact desktop rail preserves 68px and visible 10px micro labels');
+    await capture('desktop-rail-compact');
+    await tap('.rail-toggle');
+    await waitFor("document.querySelector('.rail-toggle').getAttribute('aria-expanded')==='true'&&document.querySelector('.rail').getBoundingClientRect().width>180");
+    assert(await evaluate("getComputedStyle(document.querySelector('.rail .nav-btn')).flexDirection==='row'"),'expanded labels appear beside their icons');
+    await capture('desktop-rail-expanded');
+    await call('Page.navigate',{url:base+'/app/chats?theme=light'});
+    await waitFor("document.querySelector('.rail-toggle')?.getAttribute('aria-expanded')==='true'");
+    await tap('.rail-toggle');
+    await call('Page.navigate',{url:base+'/app/chats?theme=light'});
+    await waitFor("document.querySelector('.rail-toggle')?.getAttribute('aria-expanded')==='false'");
     await call('Page.navigate',{url:base+'/app/contacts?theme=light'});
     await waitFor("!!document.querySelector('.contacts-page')");
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
@@ -254,6 +270,31 @@ async function main() {
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
     assert.equal(await evaluate("document.querySelectorAll('.radar-panel, #friend-requests').length"),0,'Mundo focuses on stories while phone tools stay paused');
     await capture('mobile-world');
+    // Warm only the two pages actually visited. An inert same-session preview
+    // then forms a real two-page corridor while the finger is still down.
+    await tap('nav.rail a.nav-btn[href="/app/chats"]');
+    await waitFor("!!document.querySelector('.chats-page')");
+    await tap('nav.rail a.nav-btn[href="/app/world"]');
+    await waitFor("!!document.querySelector('.world-surface')");
+    const tabGestureY = await evaluate("(()=>{const r=document.querySelector('.world-surface .page-head h1').getBoundingClientRect();return r.top+r.height/2})()");
+    await call('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:90,y:tabGestureY}]});
+    await new Promise(resolve=>setTimeout(resolve,100));
+    await call('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:150,y:tabGestureY}]});
+    await new Promise(resolve=>setTimeout(resolve,100));
+    await call('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:210,y:tabGestureY}]});
+    assert(await evaluate("(()=>{const p=document.querySelector('[data-tab-preview=\"/app/chats\"]'),live=document.querySelector('.route-stage router-outlet').nextElementSibling;return !!p&&p.inert&&p.getAttribute('aria-hidden')==='true'&&!p.querySelector('[data-tab-preview-loading]')&&Math.abs(new DOMMatrix(getComputedStyle(live).transform).m41-120)<2&&Math.abs(p.getBoundingClientRect().width-innerWidth)<2&&location.pathname==='/app/world'})()"),'slow swipe follows the finger 1:1 and reveals a cached full-width adjacent tab before navigation');
+    await capture('mobile-tabs-live-corridor');
+    await call('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    await waitFor("location.pathname==='/app/chats'&&!document.querySelector('[data-tab-preview]')");
+    const chatGestureY = await evaluate("(()=>{const r=document.querySelector('.side-heading h1').getBoundingClientRect();return r.top+r.height/2})()");
+    await call('Input.dispatchTouchEvent',{type:'touchStart',touchPoints:[{x:300,y:chatGestureY}]});
+    await new Promise(resolve=>setTimeout(resolve,120));
+    await call('Input.dispatchTouchEvent',{type:'touchMove',touchPoints:[{x:265,y:chatGestureY}]});
+    assert(await evaluate("!!document.querySelector('[data-tab-preview=\"/app/world\"]')"),'a short drag still reveals the adjacent page while held');
+    await call('Input.dispatchTouchEvent',{type:'touchEnd',touchPoints:[]});
+    await waitFor("!document.querySelector('[data-tab-preview]')&&location.pathname==='/app/chats'");
+    await tap('nav.rail a.nav-btn[href="/app/world"]');
+    await waitFor("!!document.querySelector('.world-surface')");
     assert.equal(await evaluate("getComputedStyle(document.querySelector('.stories-feed')).overflow"),'visible','rounded panel cannot clip the first letter in Mis historias');
     assert(await evaluate("[...document.querySelectorAll('.story-open .story-avatar')].every(image=>{const a=image.getBoundingClientRect(),b=image.parentElement.getBoundingClientRect();return Math.abs(a.width-a.height)<1 && a.left-4>=b.left && a.right+4<=b.right;})"),'story avatar and its ring fit inside the open button');
     await call('Page.navigate',{url:base+'/app/world?theme=dark'});
@@ -346,10 +387,10 @@ async function main() {
     assert.equal(await evaluate("!!document.querySelector('.call-chrome-hidden')"),false,'keyboard focus keeps video controls visible');
     await tap('.minimize-call');
     await waitFor("location.pathname==='/app/chats'");
-    assert(await evaluate("!!document.querySelector('.active-call-banner') || document.body.textContent.includes('Volver a la llamada')"),'minimize keeps the active call available');
-    await waitFor("!!document.querySelector('.ongoing-call') && !!document.querySelector('.mobile-message-fab')");
+    await waitFor("!!document.querySelector('app-call-return-bar .return-action') && !!document.querySelector('.mobile-message-fab')");
+    assert(await evaluate("document.querySelector('.call-return-bar').getAttribute('aria-label').includes('Volver')"),'minimize keeps the active call available');
     assert(await evaluate("(()=>{const fab=document.querySelector('.mobile-message-fab'), sample=document.createElement('span'); sample.style.color='var(--nivra-brand)'; fab.appendChild(sample); const themed=getComputedStyle(fab).backgroundColor===getComputedStyle(sample).color; sample.remove(); return themed;})()"),'Contacts action uses the app theme color');
-    assert(await evaluate("(()=>{const a=document.querySelector('.ongoing-call').getBoundingClientRect(),b=document.querySelector('.mobile-message-fab').getBoundingClientRect();return a.bottom<=b.top||a.right<=b.left||a.left>=b.right;})()"),'active call navigation must not cover Contacts');
+    assert(await evaluate("(()=>{const a=document.querySelector('.call-return-bar').getBoundingClientRect(),b=document.querySelector('.mobile-message-fab').getBoundingClientRect();return a.bottom<=b.top||a.right<=b.left||a.left>=b.right;})()"),'active call navigation must not cover Contacts');
     await evaluate("document.querySelector('.list').scrollTop=document.querySelector('.list').scrollHeight");
     await capture('mobile-call-and-contacts');
     assert(await evaluate("(()=>{const row=[...document.querySelectorAll('.conversation-item')].at(-1).getBoundingClientRect(),fab=document.querySelector('.mobile-message-fab').getBoundingClientRect();return row.bottom<=fab.top;})()"),'last chat remains fully accessible above Contacts when scrolled to the end');
@@ -455,6 +496,15 @@ async function main() {
     assert(await evaluate("(()=>{const a=document.querySelector('.room-list-panel').getBoundingClientRect(),b=document.querySelector('.room-workspace').getBoundingClientRect();return a.right<=b.left&&Math.abs(a.top-b.top)<2;})()"),'Vault rooms and chat share one desktop row');
     await evaluate("document.querySelector('.preview-controls').style.display='none';document.querySelector('.room-workspace').scrollIntoView()");
     await capture('desktop-vault-room');
+    await call('Page.navigate',{url:base+'/app/vault?theme=light&vaultNotes=1'});
+    await waitFor("document.querySelectorAll('.notes-panel .vault-row').length===2");
+    await evaluate("document.querySelector('.preview-controls').style.display='none';document.querySelector('.notes-panel').scrollIntoView({block:'center'})");
+    assert(await evaluate("(()=>{const notes=document.querySelector('.notes-panel').getBoundingClientRect(),grid=document.querySelector('.vault-surface>.grid').getBoundingClientRect(),cards=[...document.querySelectorAll('.notes-panel .vault-row')].map(e=>e.getBoundingClientRect());return Math.abs(notes.width-grid.width)<2&&Math.abs(cards[0].top-cards[1].top)<2&&cards[0].right<=cards[1].left;})()"),'unlocked Vault notes fill the desktop grid with both columns');
+    await capture('desktop-vault-notes');
+    await evaluate("document.querySelector('.vault-key-state ion-button').click()");
+    await waitFor("!document.querySelector('.notes-panel')&&!document.querySelector('.note-composer-panel')");
+    assert(await evaluate("!document.body.textContent.includes('Ideas para mañana')&&!document.body.textContent.includes('Lista de tareas')"),'locking removes note contents and metadata from the DOM');
+    await capture('desktop-vault-locked');
     await evaluate("document.querySelector('.create-room-cta').scrollIntoView()");
     await tap('.create-room-cta');
     await waitFor("!!document.querySelector('.room-create-dialog')");
@@ -484,7 +534,18 @@ async function main() {
       for (const theme of ['light','dark']) {
         await call('Page.navigate',{url:base+'/app/guide?theme='+theme});
         await waitFor("document.querySelectorAll('.guide .tasks article').length===5");
+        await evaluate("document.querySelector('.preview-controls').style.display='none'");
         assert.equal(await evaluate("document.querySelectorAll('.guide .features details').length"),16,'all features are explained');
+        assert.equal(await evaluate("document.querySelectorAll('.guide .tasks article:not([hidden])').length"),1,'guide begins with one manageable step');
+        await evaluate("document.querySelector('.next-step').scrollIntoView({block:'center'})");
+        await tap('.next-step');
+        await waitFor("document.querySelector('.step-dots button:nth-child(2)')?.getAttribute('aria-current')==='step'");
+        await tap('.guide-tabs button:nth-child(2)');
+        await waitFor("!document.querySelector('#guide-features').hidden&&document.querySelector('#guide-start').hidden");
+        await tap('.guide-tabs button:nth-child(3)');
+        await waitFor("!document.querySelector('#guide-delivery').hidden&&document.querySelector('#guide-features').hidden");
+        await capture('guide-help-'+width+'-'+theme);
+        await tap('.guide-tabs button:first-child');
         await evaluate("document.querySelector('.preview-controls').style.display='none'");
         assert(await evaluate("document.documentElement.scrollWidth<=innerWidth"),'guide fits viewport');
         await capture('guide-'+width+'-'+theme);
@@ -542,8 +603,44 @@ async function main() {
         }
       }
     }
+    }
+    for(const [width,height,mobile] of [[390,844,true],[1440,900,false]]){
+      await viewport(width,height,mobile);
+      for(const theme of ['light','dark']){
+        await call('Page.navigate',{url:base+'/app/chats?theme='+theme+'&active-call=1'});
+        await waitFor("!!document.querySelector('app-call-return-bar .call-return-bar')");
+        await evaluate("document.querySelector('.preview-controls').style.display='none'");
+        assert.equal(await evaluate("document.querySelectorAll('app-call-return-bar').length"),1,'one call return bar is rendered');
+        assert(await evaluate("(()=>{const a=document.querySelector('.call-return-bar').getBoundingClientRect(),h=document.querySelector('.side-head').getBoundingClientRect();return a.left>=0&&a.right<=innerWidth+1&&a.bottom<=h.top+1;})()"),'call return bar occupies its own row above Chats without covering the header');
+        assert(await evaluate("getComputedStyle(document.querySelector('.chat-communities-shortcut')).boxShadow==='none'"),'Communities has a neutral button without a green shadow');
+        await capture('call-return-'+width+'-'+theme);
+        await call('Page.navigate',{url:base+'/app/chats/sofia?theme='+theme+'&privacy=1'});
+        await waitFor("!!document.querySelector('.privacy-marker.expiry time[datetime]')&&!!document.querySelector('.privacy-marker.once')");
+        await evaluate("document.querySelector('.preview-controls').style.display='none'");
+        assert(await evaluate("[...document.querySelectorAll('.privacy-marker')].every(marker=>{const r=marker.getBoundingClientRect();return r.width>0&&r.left>=0&&r.right<=innerWidth+1;})"),'expiry and one-view markers fit the chat');
+        await capture('message-privacy-'+width+'-'+theme);
+        await call('Page.navigate',{url:base+'/preview/schedule?theme='+theme});
+        await waitFor("!!document.querySelector('.schedule-open')");
+        await evaluate("document.querySelector('.preview-controls').style.display='none'");
+        await tap('.schedule-open');
+        await waitFor("!!document.querySelector('app-scheduled-text-control dialog[open]')");
+        assert(await evaluate("(()=>{const d=document.querySelector('app-scheduled-text-control dialog').getBoundingClientRect();return d.left>=0&&d.right<=innerWidth+1&&d.top>=0&&d.bottom<=innerHeight;})()"),'scheduling dialog fits the viewport');
+        assert(await evaluate("document.querySelector('.explanation').textContent.includes('desbloqueada')"),'scheduling explains its local unlocked-session requirement');
+        await capture('schedule-dialog-'+width+'-'+theme);
+        await tap('.presets button:first-child');
+        await tap('app-scheduled-text-control .confirm');
+        await waitFor("!!document.querySelector('.scheduled-list')&&!document.querySelector('dialog[open]')");
+        await tap('.scheduled-list summary');
+        assert(await evaluate("!!document.querySelector('.scheduled-list time[datetime]')"),'scheduled text keeps a visible absolute delivery time');
+        await capture('schedule-saved-'+width+'-'+theme);
+        await tap('.scheduled-list article button');
+        await waitFor("!document.querySelector('.scheduled-list')");
+      }
+    }
     assert.deepEqual(errors,[],'preview must not throw runtime errors');
-    console.log('PASS mobile search, Contacts, self notes entry and desktop layout; screenshots saved.');
+    console.log(process.argv.includes('--v10-only')
+      ? 'PASS v10 call return, privacy markers and local scheduling; screenshots saved.'
+      : 'PASS isolated mobile/desktop design, tab gestures, call return, message privacy and local scheduling; screenshots saved.');
   } finally { socket?.close(); chrome.kill(); server.close(); }
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

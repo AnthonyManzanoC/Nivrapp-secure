@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Nivra.Api.Domain;
+using Nivra.Api.Services;
 
 namespace Nivra.Api.Infrastructure;
 
@@ -236,6 +237,7 @@ public sealed class PgSqlNivraStore(NivraDbContext db) : INivraStore
     public async Task AddMessageAsync(MessageEnvelope message, CancellationToken cancellationToken = default)
     {
         db.Messages.Add(message);
+        MessagePushOutbox.Enqueue(db, message);
         await db.SaveChangesAsync(cancellationToken);
     }
 

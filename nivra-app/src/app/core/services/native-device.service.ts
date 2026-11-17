@@ -76,6 +76,9 @@ interface NativeDiagnostics {
   lowMemory?: boolean;
   powerSaveMode?: boolean;
   thermalStatus?: number;
+  notificationsEnabled?: boolean;
+  messageChannelEnabled?: boolean;
+  incomingCallChannelEnabled?: boolean;
 }
 
 interface SaveSessionResponse {
@@ -110,6 +113,7 @@ interface BatteryOptimizationResponse {
 }
 
 export interface NivraNativePlugin {
+  setNavigationBar(options: { color: string; darkIcons: boolean }): Promise<void>;
   syncPushRegistration(options: NativePushRegistration): Promise<{ registered?: boolean; ready?: boolean }>;
   syncPushRegistrations(options: { accounts: NativePushRegistration[]; activeUserId?: string; activeDeviceId?: string }): Promise<{ registered?: boolean }>;
   clearPushRegistration(options?: { userId?: string; deviceId?: string }): Promise<void>;
@@ -233,6 +237,11 @@ export class NativeDeviceService {
       return;
     }
     await NivraNative.setSecureScreen({ enabled: !allowed }).catch(() => undefined);
+  }
+
+  async configureNavigationBar(color: string, darkIcons: boolean): Promise<void> {
+    if (!this.native) return;
+    await NivraNative.setNavigationBar({ color, darkIcons }).catch(() => undefined);
   }
 
   async setAudioFocus(active: boolean, mode: AudioFocusMode): Promise<void> {
@@ -416,6 +425,12 @@ export class NativeDeviceService {
       nativeDiagnostics,
       createdAt: new Date().toISOString(),
     };
+  }
+
+  async notificationStatus(): Promise<{ notificationsEnabled?: boolean; messageChannelEnabled?: boolean }> {
+    if (Capacitor.getPlatform() !== 'android') return {};
+    const status = await NivraNative.diagnostics().catch(() => ({} as NativeDiagnostics));
+    return { notificationsEnabled: status.notificationsEnabled, messageChannelEnabled: status.messageChannelEnabled };
   }
 
   async firebaseSigningDiagnostics(): Promise<FirebaseSigningDiagnostics | null> {

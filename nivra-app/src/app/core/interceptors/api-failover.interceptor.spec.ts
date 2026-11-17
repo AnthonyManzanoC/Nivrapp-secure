@@ -39,6 +39,26 @@ describe('transport failover request semantics', () => {
     await expectAsync(run(request('POST', '/messages'), next)).toBeRejectedWith(error);
     expect(recover).toHaveBeenCalledTimes(1); expect(next).toHaveBeenCalledTimes(1);
   });
+  it('replays an identified encrypted message once on the verified backup using the identical body', async () => {
+    const body={clientMessageId:'stable-message',recipients:[{ciphertext:'persisted-ciphertext'}]};
+    for(const status of [0,500,503]){
+      selected=primary;recover.calls.reset();
+      const next=jasmine.createSpy('next').and.callFake((req:HttpRequest<unknown>)=>req.url.startsWith(primary)
+        ?throwError(()=>new HttpErrorResponse({status})):of(new HttpResponse({body:{id:'one-server-message'}})));
+      const result=await run(new HttpRequest('POST',primary+'/conversations/chat/messages/ratchet',body),next);
+      expect(result).toBeInstanceOf(HttpResponse);expect(next).toHaveBeenCalledTimes(2);
+      expect(next.calls.allArgs().every(args=>args[0].body===body)).toBeTrue();
+      expect(next.calls.mostRecent().args[0].url).toBe(backup+'/conversations/chat/messages/ratchet');
+      expect(recover).toHaveBeenCalledTimes(1);
+    }
+  });
+  it('does not replay an identified message when recovery crosses an account transition', async () => {
+    recover.and.callFake(async()=>{generation++;selected=backup;return true;});
+    const body={clientMessageId:'stable-message',recipients:[]};
+    const next=jasmine.createSpy('next').and.returnValue(throwError(()=>new HttpErrorResponse({status:503})));
+    await expectAsync(run(new HttpRequest('POST',primary+'/conversations/chat/messages/ratchet',body),next)).toBeRejected();
+    expect(next).toHaveBeenCalledTimes(1);
+  });
   it('keeps auth errors and user throttles on the same server', async () => {
     for (const status of [401, 403, 429]) await expectAsync(run(request(), () => throwError(() => new HttpErrorResponse({ status })))).toBeRejected();
     expect(recover).not.toHaveBeenCalled();

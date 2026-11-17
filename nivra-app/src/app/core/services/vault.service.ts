@@ -57,6 +57,8 @@ export class VaultService {
   private readonly destroyRef = inject(DestroyRef);
   private readonly directories = new Map<string, PublicKeyDirectory>();
   private key: CryptoKey | null = null;
+  // Correct owner PINs stay only in this account's live memory, never in URLs or storage.
+  private readonly verifiedInvitePins = new Map<string, string>();
   private voiceRoom: Room | null = null;
   private readonly stateScope = signal(this.sessionScope());
   private readonly resetters: Array<() => void> = [];
@@ -167,6 +169,7 @@ export class VaultService {
   }
 
   private resetScopeState(): void {
+    this.verifiedInvitePins.clear();
     this.roomRevisions.clear();
     this.scopeEpoch++;
     this.pendingRoomLeaves.clear();
@@ -268,6 +271,7 @@ export class VaultService {
     this.scopeEpoch++;
     this.loadRevision++;
     this.key = null;
+    this.verifiedInvitePins.clear();
     this.unlocked.set(false);
     this.items.update((items) => items.map(({ decoded: _decoded, decodeError: _decodeError, ...item }) => ({ ...item })));
     this.messagesByRoom.set({});
@@ -333,13 +337,16 @@ export class VaultService {
       ttlSeconds: options.retentionMode === 'ExpiresAfterTtl' ? options.ttlSeconds ?? 3600 : null,
     }).pipe(timeout(15000)));
     this.checkContext(context);
+    if (this.isRoomOwner(room) && this.roomRequiresPin(room) && options.pin) this.verifiedInvitePins.set(room.id, options.pin);
     this.syncRoom(room);
+    // The room is committed. Persist invitations before an optional realtime join
+    // so a sleeping/replaced hub cannot suppress the owner's encrypted access message.
+    if (options.notifyInChat !== false) await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, options.invitedUserIds ?? []), options.pin || null, context);
+    this.checkContext(context);
     if (this.currentMember(room)?.status === 'Active') {
       await this.selectRoom(room.id);
       this.checkContext(context);
     }
-    if (options.notifyInChat !== false) await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, options.invitedUserIds ?? []), options.pin || null, context);
-    this.checkContext(context);
     return room;
   }
 
@@ -352,6 +359,7 @@ export class VaultService {
       pin: pin || null,
     }));
     this.checkContext(context);
+    if (this.isRoomOwner(joined) && this.roomRequiresPin(joined) && pin) this.verifiedInvitePins.set(joined.id, pin);
     this.syncRoom(joined);
     if (this.currentMember(joined)?.status === 'Active') {
       await this.selectRoom(joined.id);
@@ -363,7 +371,7 @@ export class VaultService {
   async selectRoom(roomId: string): Promise<void> {
     const context = this.captureContext();
     const room = this.rooms().find((candidate) => candidate.id === roomId);
-    if (!room || room.closedAt || this.currentMember(room)?.status !== 'Active') {
+    if (!room || !this.roomAvailable(room) || this.currentMember(room)?.status !== 'Active') {
       throw new Error('Debes entrar a la sala primero.');
     }
     const previous = this.activeRoom();
@@ -379,8 +387,24 @@ export class VaultService {
     this.messagesByRoom.update((state) => ({ ...state, [roomId]: state[roomId] ?? [] }));
   }
 
+  /** Close this view without revoking membership or closing a persistent room for everyone. */
+  async closeRoomView(roomId: string): Promise<void> {
+    const context = this.captureContext();
+    const room = this.rooms().find(candidate => candidate.id === roomId);
+    if (!room || this.activeRoomId() !== roomId) return;
+    if (room.retentionMode === 'BurnOnExit') { await this.leaveRoom(roomId); return; }
+    this.setActiveRoom(null);
+    this.joinedRoomId.set(null);
+    if (!this.roomAvailable(room)) this.clearRoomMessages(roomId);
+    if (this.voiceRoomId() === roomId) this.leaveVoiceChat();
+    // The local view is already closed. A stalled reconnect must not trap navigation.
+    void (this.realtime.closeVaultRoomView?.(roomId) ?? Promise.resolve()).catch(() => undefined);
+    this.checkContext(context);
+  }
+
   async leaveRoom(roomId: string): Promise<void> {
     const context = this.captureContext();
+    this.verifiedInvitePins.delete(roomId);
     const ephemeral = this.rooms().find(room => room.id === roomId)?.retentionMode === 'BurnOnExit';
     if (ephemeral) {
       this.pendingRoomLeaves.add(roomId);
@@ -406,11 +430,23 @@ export class VaultService {
     this.rooms.update((rooms) => rooms.filter((room) => room.id !== roomId));
   }
 
-  async inviteUsers(roomId: string, userIds: string[]): Promise<VaultRoom> {
+  async inviteUsers(roomId: string, userIds: string[], pin?: string | null): Promise<VaultRoom> {
     const context = this.captureContext();
     const currentRoom = this.rooms().find((candidate) => candidate.id === roomId) ?? this.activeRoom();
     if (!this.canInviteGuests(currentRoom)) {
       throw new Error('Solo el dueno de la sala puede agregar invitados.');
+    }
+    if (!currentRoom || !this.roomAvailable(currentRoom)) throw new Error('Esta sala ya terminó.');
+    let verifiedPin = this.verifiedInvitePins.get(roomId) ?? null;
+    if (this.roomRequiresPin(currentRoom) && !verifiedPin) {
+      if (!pin) throw new Error('Confirma el PIN de esta sala para incluirlo en la invitación cifrada.');
+      // Existing join validation also checks the owner's PIN, without creating a new permission path.
+      const verified = await firstValueFrom(this.api.post<VaultRoom>(`/vault/rooms/${encodeURIComponent(roomId)}/join`, { pin }).pipe(timeout(15000)));
+      this.checkContext(context);
+      if (!this.isRoomOwner(verified) || !this.roomAvailable(verified)) throw new Error('No se pudo comprobar la sala.');
+      this.syncRoom(verified);
+      verifiedPin = pin;
+      this.verifiedInvitePins.set(roomId, pin);
     }
     const existing = new Set((currentRoom?.members ?? [])
       .filter((member) => member.status !== 'Left' && member.status !== 'Rejected')
@@ -424,7 +460,7 @@ export class VaultService {
     }));
     this.checkContext(context);
     this.syncRoom(room);
-    await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, ids), null, context);
+    await this.notifyVaultInvites(room, this.invitedUserIdsFromRoom(room, ids), verifiedPin, context);
     this.checkContext(context);
     return room;
   }
@@ -780,11 +816,11 @@ export class VaultService {
   }
 
   canInviteGuests(room: VaultRoom | null | undefined): boolean {
-    return this.isRoomOwner(room);
+    return !!room && this.roomAvailable(room) && this.isRoomOwner(room);
   }
 
   canAttemptJoin(room: VaultRoom | null | undefined): boolean {
-    if (!room) {
+    if (!room || !this.roomAvailable(room)) {
       return false;
     }
     if (this.isRoomOwner(room)) {
@@ -800,6 +836,10 @@ export class VaultService {
     const member = this.currentMember(room);
     return member?.status === 'Invited' || member?.status === 'Active';
   }
+
+  roomAvailable(room: VaultRoom): boolean { return !room.closedAt && (!room.expiresAt || Date.parse(room.expiresAt) > Date.now()); }
+  private roomRequiresPin(room: VaultRoom): boolean { return room.requiresPin ?? room.accessMode !== 'InviteOnly'; }
+  needsInvitePin(room: VaultRoom): boolean { return this.roomRequiresPin(room) && !this.verifiedInvitePins.has(room.id); }
 
   memberLabel(member: VaultRoomMember): string {
     return member.displayName || member.alias || member.userId.slice(0, 6);
@@ -883,9 +923,10 @@ export class VaultService {
   }
 
   roomStatusLabel(room: VaultRoom): string {
+    if (!this.roomAvailable(room)) return 'Finalizada';
     const status = this.currentMember(room)?.status;
     return {
-      Active: 'Abierta',
+      Active: this.activeRoomId() === room.id ? 'Abierta aquí' : 'Disponible',
       Invited: 'Invitado',
       Waiting: 'En espera',
       Left: 'Saliste',
@@ -1122,6 +1163,7 @@ export class VaultService {
       this.setActiveRoom(null);
     }
     if (value.closedAt) {
+      this.verifiedInvitePins.delete(roomId);
       this.clearRoomMessages(roomId);
       if (this.voiceRoomId() === roomId) {
         this.leaveVoiceChat();
@@ -1270,7 +1312,7 @@ export class VaultService {
 
     const text = [
       `Nivra Vault: Te he invitado a mi Sala Privada "${room.name}".`,
-      (room.requiresPin ?? room.accessMode !== 'InviteOnly') ? 'Usa el PIN acordado para entrar. Nivra comprueba tu invitación antes de desbloquear el contenido.' : 'Abre la invitación con tu cuenta para entrar.',
+      this.roomRequiresPin(room) ? (pin ? `PIN de la sala: ${pin}\nNivra comprueba tu invitación antes de desbloquear el contenido.` : 'Pide al dueño el PIN de la sala. Nivra comprueba tu invitación antes de desbloquear el contenido.') : 'Abre la invitación con tu cuenta para entrar.',
       'Los mensajes siguen las reglas de retencion de la sala.',
       `https://nivrapp-secure.vercel.app/app/vault?room=${encodeURIComponent(room.id)}`,
     ].join('\n');

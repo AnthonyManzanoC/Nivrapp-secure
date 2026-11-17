@@ -13,10 +13,13 @@ export function apiFailoverInterceptor(req: HttpRequest<unknown>, next: HttpHand
   const session = auth.session();
   const generation = auth.sessionGeneration?.();
   const hybridWrite = req.method === 'POST' && new URL(req.url).pathname.endsWith('/messages/ratchet');
+  const messageBody = req.body && typeof req.body === 'object' ? req.body as { clientMessageId?: unknown } : null;
+  const idempotentMessage = req.method === 'POST' && /^\/conversations\/[^/]+\/messages(?:\/ratchet)?$/.test(new URL(req.url).pathname)
+    && typeof messageBody?.clientMessageId === 'string' && messageBody.clientMessageId.length > 0 && messageBody.clientMessageId.length <= 128;
   const sameSession = () => auth.sessionGeneration?.() === generation
     && auth.session()?.user.id === session?.user.id && auth.session()?.device.id === session?.device.id;
   const safe = req.method === 'GET' || req.method === 'HEAD'
-    || (req.method === 'POST' && new URL(req.url).pathname === '/keys/batch');
+    || (req.method === 'POST' && new URL(req.url).pathname === '/keys/batch') || idempotentMessage;
   // Downloads and uploads keep their own progress/limits; small read requests cannot hang forever.
   let smallBody = req.body == null;
   if (!smallBody && !(req.body instanceof Blob || req.body instanceof ArrayBuffer || req.body instanceof FormData)) {
@@ -39,7 +42,8 @@ export function apiFailoverInterceptor(req: HttpRequest<unknown>, next: HttpHand
     return send(target).pipe(catchError(error => {
       if (error instanceof TimeoutError) network.recordTimeout();
       const oldHybridNode = hybridWrite && error instanceof HttpErrorResponse && error.status === 404 && !error.error?.code;
-      if (!sameSession() || !(oldHybridNode || error instanceof TimeoutError || (error instanceof HttpErrorResponse && [0, 502, 503, 504].includes(error.status)))) {
+      if (!sameSession() || !(oldHybridNode || error instanceof TimeoutError || (error instanceof HttpErrorResponse
+        && ([0, 502, 503, 504].includes(error.status) || idempotentMessage && error.status === 500)))) {
         return throwError(() => error);
       }
       return from(pool.recover(target)).pipe(switchMap(changed =>

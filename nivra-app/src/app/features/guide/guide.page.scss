@@ -23,6 +23,23 @@ progress::-webkit-progress-value { background: var(--nivra-brand); border-radius
 progress::-moz-progress-bar { background: var(--nivra-brand); }
 .progress-copy { margin: 12px 0 22px; font-size: 12px; }
 .tasks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.guide [hidden] { display: none !important; }
+.guide-tabs { position: sticky; top: 0; z-index: 3; display: flex; gap: 4px; max-width: 560px; padding: 5px; margin: 0 0 28px; border: 1px solid var(--nivra-line); border-radius: 16px; background: var(--nivra-panel-solid); }
+.guide-tabs button { flex: 1; min-width: 0; padding: 10px 8px; border-color: transparent; background: transparent; color: var(--nivra-muted); font-size: 12px; font-weight: 600; }
+.guide-tabs button.selected { border-color: var(--nivra-selection-line); background: var(--nivra-selection); color: var(--nivra-brand-2); }
+#guide-start .tasks { grid-template-columns: minmax(0, 1fr); }
+.step-dots { display: flex; gap: 8px; margin: 0 0 16px; }
+.step-dots button { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; background: transparent; color: var(--nivra-muted); font-size: 13px; }
+.step-dots button.current { border-color: var(--nivra-brand); background: var(--nivra-selection); color: var(--nivra-brand-2); font-weight: 700; }
+.step-dots button.done:not(.current) { border-color: var(--nivra-selection-line); color: var(--nivra-brand-2); }
+.step-actions { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; }
+.step-actions button { font-size: 13px; background: transparent; color: var(--nivra-muted); }
+.step-actions .next-step { color: var(--nivra-brand-2); border-color: var(--nivra-selection-line); }
+.step-actions button:disabled { opacity: .4; cursor: default; }
+#guide-automatic { padding-block: 0; }
+#guide-automatic > summary { min-height: 60px; }
+#guide-automatic[open] { padding-bottom: 20px; }
+#guide-automatic + .guide-section { margin-top: 24px; }
 article, aside, details { background: var(--nivra-panel-solid); border: 1px solid var(--nivra-line); border-radius: 18px; padding: 22px; }
 article { display: flex; align-items: flex-start; gap: 16px; }
 article > div { min-width: 0; }
@@ -65,10 +82,14 @@ details[open] > summary::after { content: '−'; }
 footer { padding-top: 28px; }
 :is(a, button, input, summary):focus-visible { outline: 3px solid var(--nivra-brand-2); outline-offset: 4px; }
 @media (max-width: 680px) {
-  .guide { padding: 24px 18px calc(30px + env(safe-area-inset-bottom)); }
-  header { grid-template-columns: 1fr; padding-bottom: 26px; gap: 0; }
-  .guide-brand { margin-bottom: 26px; }
-  header > button { grid-column: 1; grid-row: auto; justify-self: start; margin-top: 22px; }
+  .guide { padding: 18px 18px calc(30px + env(safe-area-inset-bottom)); }
+  header { grid-template-columns: 1fr; padding: 0 0 18px; margin-bottom: 18px; gap: 0; }
+  .guide-brand { margin-bottom: 16px; }
+  .guide-brand img { width: 36px; height: 36px; }
+  h1 { font-size: 27px; }
+  header > p { margin-top: 10px; line-height: 1.5; }
+  header > button { grid-column: 1; grid-row: auto; justify-self: start; margin-top: 12px; }
+  .guide-tabs { margin-bottom: 20px; }
   .tasks, .features, .automatic-grid { grid-template-columns: 1fr; }
   .delivery-states { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   article, aside, details { padding-inline: 18px; }

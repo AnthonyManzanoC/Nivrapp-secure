@@ -9,6 +9,7 @@ import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { Story, StoryPayload } from '../../core/models/nivra.models';
 import { SocialService } from '../../core/services/social.service';
 import { storyTextTheme } from '../../core/utils/story-theme';
+import { SystemUiService } from '../../core/services/system-ui.service';
 export interface StoryPointerUpEvent { event: PointerEvent; side: 'left' | 'right'; }
 
 /** One playback clock shared by all entry points. Actual media time is authoritative. */
@@ -20,6 +21,7 @@ export interface StoryPointerUpEvent { event: PointerEvent; side: 'left' | 'righ
 export class StoryViewerComponent implements OnChanges, OnDestroy {
   readonly social = inject(SocialService);
   private readonly zone = inject(NgZone);
+  private readonly releaseSystemUi = inject(SystemUiService).acquireDarkOverlay();
   readonly heartEmoji = '❤️';
   textTheme() { return storyTextTheme(this.payload?.textTheme); }
   readonly defaultReactionOptions = ['❤️', '😂', '😮', '😢', '👏', '🔥'];
@@ -91,6 +93,7 @@ export class StoryViewerComponent implements OnChanges, OnDestroy {
     this.syncPlayback();
   }
   ngOnDestroy(): void {
+    this.releaseSystemUi();
     this.destroyed = true;
     this.playRevision += 1;
     if (this.timer !== null) window.clearInterval(this.timer);

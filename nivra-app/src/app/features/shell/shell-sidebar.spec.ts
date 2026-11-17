@@ -3,6 +3,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter } from '@angular/router';
 import { Capacitor } from '@capacitor/core';
 import { ShellPage } from './shell.page';
+import { DeviceAuthorityService } from '../../core/services/device-authority.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
@@ -24,7 +25,8 @@ describe('collapsible desktop navigation', () => {
     native = spyOn(Capacitor, 'isNativePlatform').and.returnValue(false);
     await TestBed.configureTestingModule({ imports: [ShellPage], providers: [
       provideRouter([]),
-      { provide: AuthService, useValue: { session: signal(null), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false) } },
+      { provide: DeviceAuthorityService, useValue: { authority: signal(null) } },
+      { provide: AuthService, useValue: { session: signal(null), sessionGeneration: signal(0), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false) } },
       { provide: CallsService, useValue: { activeCall: signal(null), resumableCall: signal(null), phase: signal('idle') } },
       { provide: SignalrService, useValue: { connected: signal(true) } },
       { provide: UnreadTabService, useValue: { unreadChats: signal(2) } },

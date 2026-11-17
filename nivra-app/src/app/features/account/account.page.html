@@ -646,12 +646,18 @@
         <summary>{{ 'ACCOUNT.DEVICES' | translate:'Dispositivos' }}</summary>
         <div class="account-section-body">
         <p class="device-access-copy">{{ 'ACCOUNT.DEVICES_HELP' | translate:'Reconoce tus equipos. Revoca el acceso de los que ya no uses.' }}</p>
+        <app-device-authority />
         <div class="device-list">
           @for (device of accountDevices(); track device.id) {
             <div class="device-row" [class.current-device]="isCurrentDevice(device)">
               <span class="device-access-icon" aria-hidden="true"><ion-icon name="phone-portrait-outline"></ion-icon></span>
               <div class="device-access-info">
                 <strong>{{ device.name }}</strong>
+                @if (deviceAuthority.authority()?.primaryDeviceId === device.id) {
+                  <small>{{ 'ACCOUNT.PRIMARY_DEVICE' | translate:'Principal para sincronizar' }}</small>
+                } @else if (deviceAuthority.authority()?.devices?.length) {
+                  <small>{{ 'ACCOUNT.MIRROR_DEVICE' | translate:'Dispositivo vinculado' }}</small>
+                }
                 <span>{{ 'ACCOUNT.LAST_ACTIVE' | translate:'Última actividad' }} · {{ (device.lastSeenAt || device.createdAt) | localizedDate:'short' }}</span>
               </div>
               @if (!isCurrentDevice(device)) {

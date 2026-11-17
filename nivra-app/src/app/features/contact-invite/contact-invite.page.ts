@@ -41,13 +41,19 @@ export class ContactInvitePage implements OnInit {
       return;
     }
 
-    if (!this.auth.isAuthenticated()) {
-      localStorage.setItem(PENDING_CONTACT_ALIAS_KEY, this.alias);
-      await this.router.navigateByUrl('/auth');
-      return;
+    try {
+      // App links can arrive before the encrypted session has finished restoring.
+      // Keep the invitation through Welcome, login and account creation.
+      await this.auth.ensureSessionRestored();
+      if (!this.auth.isAuthenticated()) {
+        localStorage.setItem(PENDING_CONTACT_ALIAS_KEY, this.alias);
+        await this.router.navigateByUrl('/auth');
+        return;
+      }
+      await this.openContact();
+    } catch {
+      this.fail(this.tr('CONTACT_INVITE.OPEN_ERROR', 'No se pudo abrir este contacto.'));
     }
-
-    await this.openContact();
   }
 
   async retry(): Promise<void> {
@@ -61,6 +67,8 @@ export class ContactInvitePage implements OnInit {
   }
 
   private async openContact(): Promise<void> {
+    const generation = this.auth.sessionGeneration(), userId = this.auth.session()?.user.id;
+    const current = () => !!userId && this.auth.sessionGeneration() === generation && this.auth.session()?.user.id === userId;
     try {
       if (this.auth.session()?.user?.alias?.toLowerCase() === this.alias.toLowerCase()) {
         this.fail(this.tr('CONTACT_INVITE.OWN_ACCOUNT', 'Este QR pertenece a tu propia cuenta.'));
@@ -68,6 +76,7 @@ export class ContactInvitePage implements OnInit {
       }
 
       const people = await this.chat.searchPeople(this.alias);
+      if (!current()) return;
       const person = people.find((item) => item.alias.toLowerCase() === this.alias.toLowerCase());
       if (!person) {
         this.fail(`${this.tr('CONTACT_INVITE.NOT_FOUND', 'No encontre')} @${this.alias}.`);
@@ -75,6 +84,7 @@ export class ContactInvitePage implements OnInit {
       }
 
       const conversation = await this.chat.createDirectConversation(person);
+      if (!current()) return;
       await this.router.navigate(['/app/chats', conversation.id]);
     } catch (error) {
       this.fail(error instanceof Error ? error.message : this.tr('CONTACT_INVITE.OPEN_ERROR', 'No se pudo abrir este contacto.'));

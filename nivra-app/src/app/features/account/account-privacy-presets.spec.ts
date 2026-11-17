@@ -19,6 +19,7 @@ import { PushService } from '../../core/services/push.service';
 import { SignalrService } from '../../core/services/signalr.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { AccountPage } from './account.page';
+import { DeviceAuthorityService } from '../../core/services/device-authority.service';
 
 describe('Account privacy preset persistence', () => {
   let page: AccountPage;
@@ -41,6 +42,7 @@ describe('Account privacy preset persistence', () => {
       return of({ ...persisted });
     }) };
     TestBed.configureTestingModule({ providers: [AccountService,
+      { provide: DeviceAuthorityService, useValue: { authority: signal(null) } },
       { provide: AuthService, useValue: { session, isAuthenticated: () => !!session(),
         updateUser: (user: any) => session.update(current => ({ ...current, user })) } },
       { provide: NivraApiService, useValue: api }, { provide: CryptoService, useValue: {} },

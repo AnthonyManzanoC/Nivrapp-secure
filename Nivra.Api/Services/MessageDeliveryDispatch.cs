@@ -5,6 +5,19 @@ namespace Nivra.Api.Services;
 /// <summary>Notifies recipients after persistence without letting one transport suppress the others.</summary>
 public static class MessageDeliveryDispatch
 {
+    public static async Task NotifyCommittedRealtimeAsync(MessageEnvelope message,
+        Func<RecipientCiphertext, CancellationToken, Task> sendRealtime, ILogger logger, TimeSpan? sendBudget = null)
+    {
+        using var deadline = new CancellationTokenSource(sendBudget ?? TimeSpan.FromSeconds(2));
+        // Persistence and durable push already succeeded. Closing the sending client must not
+        // cancel delivery to the other party or turn that commit into a retryable HTTP error.
+        try { await NotifyAsync(message, sendRealtime, (_, _) => Task.CompletedTask, logger, deadline.Token).WaitAsync(deadline.Token); }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            logger.LogWarning("Realtime notification budget elapsed for persisted message {MessageId}; durable push and pending-message recovery remain available.", message.Id);
+        }
+    }
+
     public static async Task NotifyAsync(
         MessageEnvelope message,
         Func<RecipientCiphertext, CancellationToken, Task> sendRealtime,

@@ -48,6 +48,15 @@
 .room-workspace .room-head :is(.invite-link-action, .voice-start) :is(ion-icon, ion-spinner) { margin-inline-end: 6px; }
 .room-workspace .composer { border-radius: 20px; background: var(--nivra-panel-solid); border: 1px solid var(--nivra-line); padding: 8px; }
 .room-workspace .owner-invite-panel { border-radius: 18px; }
+.notes-panel { min-width: 0; }
+.notes-panel .note-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); align-items: start; gap: 14px; }
+.notes-panel .vault-row { min-width: 0; padding: 16px; border: 1px solid var(--nivra-line); border-radius: 16px; background: var(--nivra-panel-2); align-items: start; }
+.notes-panel .vault-row > div { overflow-wrap: anywhere; }
+.notes-panel .empty-copy { grid-column: 1 / -1; }
+.close-room-view { display: grid; place-items: center; flex: none; width: 40px; height: 40px; border: 1px solid var(--nivra-line); border-radius: 50%; background: var(--nivra-panel-solid); color: var(--nivra-muted); font-size: 21px; cursor: pointer; }
+.close-room-view:hover { background: var(--nivra-panel-2); color: var(--nivra-text); }
+.invite-pin-field { display: grid; gap: 6px; margin-top: 12px; min-width: 0; font-size: 12px; color: var(--nivra-text); }
+.invite-pin-field small { color: var(--nivra-muted); line-height: 1.5; }
 @media(min-width: 980px) {
   .vault-surface:not(.is-fullscreen) .room-list-panel { grid-column: 1 / span 4; align-self: start; }
   .vault-surface:not(.is-fullscreen) .room-workspace { grid-column: 5 / -1; align-self: start; }

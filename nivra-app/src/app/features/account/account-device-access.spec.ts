@@ -14,6 +14,7 @@ import { PushService } from '../../core/services/push.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { NivraDevice } from '../../core/models/nivra.models';
 import { AccountPage } from './account.page';
+import { DeviceAuthorityService } from '../../core/services/device-authority.service';
 
 describe('Account device access controls', () => {
   let page: AccountPage;
@@ -29,6 +30,7 @@ describe('Account device access controls', () => {
     devices = signal([device('other'), device('current', { hardwareId: 'local' })]);
     revokeDevice = jasmine.createSpy().and.resolveTo();
     TestBed.configureTestingModule({ providers: [
+      { provide: DeviceAuthorityService, useValue: { authority: signal(null) } },
       { provide: AuthService, useValue: { session } },
       { provide: AccountService, useValue: { devices, revokeDevice } },
       { provide: AppLockService, useValue: {} }, { provide: AppSettingsService, useValue: {} },

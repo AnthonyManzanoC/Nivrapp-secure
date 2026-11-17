@@ -45,6 +45,7 @@ import { ForegroundSyncRecovery } from './foreground-sync-recovery';
 import { uniqueCallSummaries, validatedCallSummary } from './call-summary.helpers';
 import { identityDisplayName, isNivraIdAccount } from '../utils/nivra-identity';
 import { TextOutboxService } from './text-outbox.service';
+import { ViewOnceOpenOutboxService, ViewOnceOpenRecord } from './view-once-open-outbox.service';
 import { RatchetMessagingService, RatchetTarget } from './ratchet-messaging.service';
 import { ratchetTransport } from './ratchet-runtime';
 
@@ -84,6 +85,7 @@ interface SendPayloadOptions {
   suppressLocalMessage?: boolean;
   encryptedPolicy?: string | null;
   expiresAt?: string | null;
+  prepareScheduledExpiry?: () => Promise<string | null>;
   deleteAfterRead?: boolean;
   internalCallSummary?: symbol;
 }
@@ -145,6 +147,7 @@ export class ChatService implements OnDestroy {
   private readonly crypto = inject(CryptoService);
   private readonly ratchet = inject(RatchetMessagingService);
   private readonly history = inject(LocalHistoryService);
+  private readonly onceOpens = inject(ViewOnceOpenOutboxService);
   private readonly launchCache = inject(ChatLaunchCacheService);
   private readonly mediaOptimizer = inject(MediaOptimizerService);
   private readonly signalr = inject(SignalrService);
@@ -250,6 +253,11 @@ export class ChatService implements OnDestroy {
     || Boolean(this.messageLoadCounts()[this.selectedConversationId() ?? '']));
 
   constructor() {
+    this.onceOpens.acknowledged$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(event => {
+      const current=this.auth.session();
+      if(current?.user.id===event.userId&&current.device.id===event.deviceId&&this.auth.sessionGeneration?.()===event.generation)
+        this.mergeMessageReceipts(event.message.id,event.message.receipts??[]);
+    });
     this.textOutbox.configure(entry => {
       const conversation = this.conversations().find(row => row.id === entry.conversationId);
       if (!conversation) throw new Error('La conversación no está disponible.');
@@ -257,6 +265,7 @@ export class ChatService implements OnDestroy {
       return this.sendPayload(conversation, payload, 'Text', null, {
         clientMessageId: entry.clientMessageId, deleteAfterRead: entry.deleteAfterRead,
         expiresAt: entry.expiresAt, queueManaged: true,
+        ...(entry.scheduledFor ? { prepareScheduledExpiry: () => this.textOutbox.startScheduledDelivery(entry.id) } : {}),
       });
     }, entry => {
       const current = this.auth.session();
@@ -267,7 +276,7 @@ export class ChatService implements OnDestroy {
     }, entry => {
       const conversation = this.conversations().find(row => row.id === entry.conversationId);
       if (conversation) entry.payload = this.normalizeOutgoingPayload(conversation, entry.payload);
-    });
+    },entry=>this.ratchet.discardPending(entry.conversationId,entry.clientMessageId!));
     this.deviceHistory.recovered$.pipe(takeUntilDestroyed(this.destroyRef)).subscribe(() => {
       void this.retryRecoveredHistory();
     });
@@ -1320,6 +1329,8 @@ export class ChatService implements OnDestroy {
     if (!recipients.length) {
       throw new Error('No hay llaves publicas disponibles para enviar.');
     }
+    const expiresAt = options.prepareScheduledExpiry ? await options.prepareScheduledExpiry() : options.expiresAt ?? null;
+    this.assertSendContext(context); requireAccess();
     const request = {
       clientMessageId,
       // El tipo funcional vive dentro del payload E2EE; el transporte usa una
@@ -1327,7 +1338,7 @@ export class ChatService implements OnDestroy {
       kind: options.clientMessageId?.startsWith('call-summary:') ? 'System' : 'Text',
       ...ratchetTransport(recipients),
       encryptedPolicy: options.encryptedPolicy ?? null,
-      expiresAt: options.expiresAt ?? null,
+      expiresAt,
       deleteAfterRead: options.deleteAfterRead ?? false,
     };
     const hybrid = recipients.some(recipient => this.ratchet?.isEnvelope(recipient.header));
@@ -1343,7 +1354,7 @@ export class ChatService implements OnDestroy {
     } catch (error) {
       this.assertSendContext(context);
       requireAccess();
-      if (hybrid && (error as HttpErrorResponse).status === 404 && !(error as HttpErrorResponse).error?.code) throw Object.assign(new Error('Este servidor necesita completar la actualización del cifrado. El mensaje sigue pendiente.'), { status: 503, retryable: true });
+      if (hybrid && (error as HttpErrorResponse).status === 404 && !(error as HttpErrorResponse).error?.code) throw Object.assign(new Error('Este servidor necesita completar la actualización del cifrado. El mensaje sigue pendiente.'), { retryable: true, code: 'ratchet_protocol_unavailable' });
       if (options.queueManaged || !this.isTransientMessageSendError(error)) {
         throw error;
       }
@@ -2232,6 +2243,11 @@ export class ChatService implements OnDestroy {
       deleteAfterRead: message.deleteAfterRead,
       decryptError,
     };
+    if(vm.deleteAfterRead&&!vm.mine&&this.onceOpens){
+      const consumed=await this.onceOpens.consumed(vm.id,vm.conversationId);
+      if(!this.isSendContextCurrent(ingestContext))return false;
+      if(consumed)vm=this.viewOnceTombstone(vm,consumed.openedAt,{deletedByUserId:current.user.id,deviceId:current.device.id});
+    }
     if (vm.mine) {
       vm = this.withLocalReadReceipt(vm, current.user.id, current.device.id, message.serverReceivedAt);
       this.readReceiptSentIds.add(vm.id);
@@ -2789,28 +2805,25 @@ export class ChatService implements OnDestroy {
     if (!current) {
       return;
     }
-    const generation = this.auth.sessionGeneration?.();
-    const stillOpen = () => this.auth.session()?.user.id === current.user.id && this.auth.session()?.device.id === current.device.id
-      && generation === this.auth.sessionGeneration?.() && !this.privateChats?.isLocked(message.conversationId);
-    const openedAt = new Date().toISOString();
-    this.readReceiptSentIds.add(message.id);
-    try {
-      await this.sendReceipt(message.id, 'Read', { opened: true });
-      if (!stillOpen()) return;
-      await this.signalr.syncReadReceipts(message.conversationId, [message.id], {
-        openedMessageIds: [message.id],
-      }).catch(() => undefined);
-      if (!stillOpen()) return;
-      this.applyViewOnceTombstones(message.conversationId, [message.id], openedAt, {
-        includeMine: true,
-        deletedByUserId: current.user.id,
-        deviceId: current.device.id,
-      });
-    } catch (error) {
-      this.readReceiptSentIds.delete(message.id);
-      throw error;
-    }
+    await this.claimViewOnceOpen(message);
   }
+
+  /** A durable claim is written before a viewer receives its first, in-memory lease. */
+  async claimViewOnceOpen(message: ChatMessageVm,preservePreview=false): Promise<(ViewOnceOpenRecord & { userId:string; deviceId:string })|null> {
+    if(!message.deleteAfterRead||message.mine||this.privateChats?.isLocked(message.conversationId)||this.isViewOnceOpened(message))return null;
+    const current=this.auth.session();if(!current)return null;
+    const generation=this.auth.sessionGeneration?.();
+    const same=()=>this.auth.session()?.user.id===current.user.id&&this.auth.session()?.device.id===current.device.id&&this.auth.sessionGeneration?.()===generation&&!this.privateChats?.isLocked(message.conversationId);
+    const result=await this.onceOpens.claim(message);if(!same())return null;
+    const tombstone=this.viewOnceTombstone(message,result.record.openedAt,{deletedByUserId:current.user.id,deviceId:current.device.id,preservePreview:preservePreview&&result.first});
+    await this.history.putMessages(current.user.id,[tombstone],same);if(!same())return null;
+    this.readReceiptSentIds.add(message.id);
+    this.applyViewOnceTombstones(message.conversationId,[message.id],result.record.openedAt,{includeMine:true,deletedByUserId:current.user.id,deviceId:current.device.id,preservePreview:preservePreview&&result.first});
+    void this.onceOpens.flush();
+    return result.first?{...result.record,userId:current.user.id,deviceId:current.device.id}:null;
+  }
+
+  releaseViewOncePreview(message:ChatMessageVm):void { this.releaseMediaPreview(this.fileId(this.asFile(message.payload))); }
 
   private touchConversationFromMessage(message: ChatMessageVm): void {
     const messageAt = Date.parse(message.at || '');
@@ -3114,9 +3127,15 @@ export class ChatService implements OnDestroy {
       }).catch(() => [])));
     if (!this.isSendContextCurrent(context) || historyGeneration !== this.historyGeneration(conversationId)) return [];
     const now = Date.now();
-    const messages = this.uniqueMessages(groups.flat())
+    let messages = this.uniqueMessages(groups.flat())
       .filter((message) => !this.isExpiredMessage(message, now) && !this.removedHistoryMessageIds?.has(message.id))
       .slice(-limit);
+    if(this.onceOpens)messages=await Promise.all(messages.map(async message=>{
+      if(!message.deleteAfterRead||message.mine)return message;
+      const consumed=await this.onceOpens.consumed(message.id,message.conversationId);
+      return consumed?this.viewOnceTombstone(message,consumed.openedAt,{deletedByUserId:context?.userId,deviceId:context?.deviceId}):message;
+    }));
+    if(!this.isSendContextCurrent(context)||historyGeneration!==this.historyGeneration(conversationId))return [];
     for (const message of messages) {
       this.upsertMessage(message, { persist: false });
     }
@@ -3192,6 +3211,7 @@ export class ChatService implements OnDestroy {
       return next;
     });
     for (const message of expired) {
+      this.releaseMediaPreview(this.fileId(this.asFile(message.payload)));
       this.forgetHistoryMessage(message.id);
       this.clearMessageExpiryTimer(message.conversationId, message.id);
       this.removeLocalMessage(message.conversationId, message.id);
@@ -3226,6 +3246,8 @@ export class ChatService implements OnDestroy {
     if (!conversationId || !messageId) {
       return;
     }
+    const expired = (this.messagesByConversation()[conversationId] ?? []).find(message => message.id === messageId);
+    if (expired) this.releaseMediaPreview(this.fileId(this.asFile(expired.payload)));
     this.forgetHistoryMessage(messageId);
     this.clearMessageExpiryTimer(conversationId, messageId);
     this.messagesByConversation.update((state) => ({
@@ -3264,9 +3286,6 @@ export class ChatService implements OnDestroy {
     if (existing !== undefined) {
       window.clearTimeout(existing);
       this.expiryTimers.delete(timerKey);
-    }
-    if (message.deleteAfterRead) {
-      return;
     }
     const expiresAtMs = message.expiresAt ? Date.parse(message.expiresAt) : NaN;
     if (!Number.isFinite(expiresAtMs)) {
@@ -3720,7 +3739,7 @@ export class ChatService implements OnDestroy {
     conversationId: string | null | undefined,
     messageIds: string[],
     at: string,
-    options: { includeMine?: boolean; deletedByUserId?: string; deviceId?: string } = {},
+    options: { includeMine?: boolean; deletedByUserId?: string; deviceId?: string; preservePreview?:boolean } = {},
   ): void {
     const ids = new Set(messageIds.filter(Boolean));
     if (!ids.size) {
@@ -3752,10 +3771,10 @@ export class ChatService implements OnDestroy {
   private viewOnceTombstone(
     message: ChatMessageVm,
     at: string,
-    options: { deletedByUserId?: string; deviceId?: string } = {},
+    options: { deletedByUserId?: string; deviceId?: string; preservePreview?:boolean } = {},
   ): ChatMessageVm {
     const file = this.asFile(message.payload);
-    this.releaseMediaPreview(this.fileId(file));
+    if(!options.preservePreview)this.releaseMediaPreview(this.fileId(file));
     const accountKey = this.localAccountKey();
     if (accountKey) void this.history.removeMessage(accountKey, `ratchet-receipt:${message.conversationId}`, message.id).catch(() => undefined);
     return {

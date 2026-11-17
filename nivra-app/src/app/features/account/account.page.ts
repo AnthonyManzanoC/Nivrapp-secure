@@ -44,6 +44,8 @@ import { AccountSwitcherComponent } from '../../shared/account-switcher.componen
 import { NIVRA_UPDATE_URL } from '../../core/release';
 import { AccountNavigationComponent, type AccountSectionId } from './account-navigation.component';
 import { AccountIdentityRecoveryComponent } from './account-identity-recovery.component';
+import { DeviceAuthorityComponent } from './device-authority.component';
+import { DeviceAuthorityService } from '../../core/services/device-authority.service';
 
 const ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 const PIN_LENGTH = 4;
@@ -57,7 +59,7 @@ interface ProfileDraft {
 @Component({
   selector: 'app-account',
   standalone: true,
-  imports: [NotificationCheckComponent, RouterLink, TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent, AccountNavigationComponent, LiveDeviceLinkComponent,AccountIdentityRecoveryComponent],
+  imports: [NotificationCheckComponent, RouterLink, TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonInput, IonModal, IonSpinner, IonTextarea, IonToggle, ImageCropperComponent, RecoveryEmailComponent, LauncherAppearanceComponent, AccountSwitcherComponent, AccountNavigationComponent, LiveDeviceLinkComponent,AccountIdentityRecoveryComponent, DeviceAuthorityComponent],
   templateUrl: './account.page.html',
   styleUrls: ['./account.page.scss', './account-security.scss'],
 })
@@ -65,6 +67,7 @@ export class AccountPage implements OnInit, AfterViewInit, OnDestroy {
   @ViewChild('accountSurface') private accountSurface?: ElementRef<HTMLElement>;
   readonly auth = inject(AuthService);
   readonly account = inject(AccountService);
+  readonly deviceAuthority = inject(DeviceAuthorityService);
   readonly appLock = inject(AppLockService);
   readonly appSettings = inject(AppSettingsService);
   readonly calls = inject(CallsService);

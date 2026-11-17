@@ -2,6 +2,7 @@ import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideRouter, Router } from '@angular/router';
 import { ShellPage } from './shell.page';
+import { DeviceAuthorityService } from '../../core/services/device-authority.service';
 import { AuthService } from '../../core/services/auth.service';
 import { CallsService } from '../../core/services/calls.service';
 import { SignalrService } from '../../core/services/signalr.service';
@@ -20,7 +21,7 @@ describe('saved-account navigation shortcut', () => {
   let router: Router;
   let auth: any;
   let calls: { activeCall: ReturnType<typeof signal<any>>; resumableCall: ReturnType<typeof signal<any>>;
-    phase: ReturnType<typeof signal<string>>; audioOutput: { playbackBlocked: ReturnType<typeof signal<boolean>> }; callTitle: () => string };
+    phase: ReturnType<typeof signal<string>>; audioOutput: { playbackBlocked: ReturnType<typeof signal<boolean>> }; callTitle: () => string; callStatusLabel: () => string };
   let locked: ReturnType<typeof signal<boolean>>;
   let now: number;
   let visibility: jasmine.Spy;
@@ -35,9 +36,10 @@ describe('saved-account navigation shortcut', () => {
     auth = { session: signal(session('alice')), sessionGeneration: signal(1), savedAccounts: signal([alice, bob]),
       accountsBusy: signal(false), addingAccount: signal(false), accountError: signal(''), switchAccount: jasmine.createSpy('switchAccount') };
     calls = { activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'),
-      audioOutput: { playbackBlocked: signal(false) }, callTitle: () => 'Fixture call' };
+      audioOutput: { playbackBlocked: signal(false) }, callTitle: () => 'Fixture call', callStatusLabel: () => 'En llamada' };
     locked = signal(false);
     await TestBed.configureTestingModule({ imports: [ShellPage], providers: [
+      { provide: DeviceAuthorityService, useValue: { authority: signal(null) } },
       provideRouter(['chats', 'world', 'vault', 'calls', 'account'].map(tab => ({ path: `app/${tab}`, component: ShortcutTab }))),
       { provide: AuthService, useValue: auth }, { provide: CallsService, useValue: calls },
       { provide: SignalrService, useValue: { connected: signal(true) } }, { provide: UnreadTabService, useValue: { unreadChats: signal(0) } },

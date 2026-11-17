@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Security.Cryptography;
+using System.Text.Json;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging.Abstractions;
 using Nivra.Api.Contracts;
@@ -23,6 +24,18 @@ Check(transactionPool.MaxAutoPrepare == 0, "transaction-mode poolers disable ses
 var exhaustedPool = new PostgresException("(EMAXCONNSESSION) max clients reached in session mode", "FATAL", "FATAL", "XX000");
 Check(PostgresAvailability.IsUnavailable(new InvalidOperationException("request failed", exhaustedPool)), "pool exhaustion is a temporary dependency outage instead of a generic HTTP 500");
 Check(!PostgresAvailability.IsUnavailable(new PostgresException("invalid syntax", "ERROR", "ERROR", "42601")), "database programming errors cannot masquerade as recoverable capacity failures");
+var bindingSourceKey = JsonSerializer.Serialize(new { kty = "EC", crv = "P-256", x = new string('A',43), y = new string('B',43) });
+var bindingSource = RatchetDirectoryService.Coordinates(bindingSourceKey)!;
+var bindingTarget = new string('C',43) + ":" + new string('D',43);
+var continuityBinding = new RatchetDeviceBinding { SourceDeviceId="source", TargetDeviceId="target", TargetIdentity=bindingTarget,
+    Header=JsonSerializer.Serialize(new { v=1, alg="ECDH-P256-A256GCM", senderPublicKey=JsonSerializer.Deserialize<JsonElement>(bindingSourceKey) }), Ciphertext="opaque encrypted proof" };
+Check(RatchetDirectoryService.BindingMatchesCurrentIdentities(continuityBinding,bindingTarget,bindingSource), "current encrypted continuity proofs remain available to their intended device");
+Check(!RatchetDirectoryService.BindingMatchesCurrentIdentities(continuityBinding,new string('E',43)+":"+new string('F',43),bindingSource), "repairing the recipient key suppresses the old undecryptable binding");
+Check(!RatchetDirectoryService.BindingMatchesCurrentIdentities(continuityBinding,bindingTarget,new string('E',43)+":"+new string('F',43)), "repairing the source key suppresses a binding signed by its previous legacy identity");
+Check(!RatchetDirectoryService.BindingMatchesCurrentIdentities(continuityBinding,bindingTarget,null)
+    && !RatchetDirectoryService.BindingMatchesCurrentIdentities(continuityBinding,null,bindingSource), "a missing public identity cannot authenticate a continuity proof");
+continuityBinding.Header="{malformed";
+Check(!RatchetDirectoryService.BindingMatchesCurrentIdentities(continuityBinding,bindingTarget,bindingSource), "a malformed stored proof is omitted without taking down the device directory");
 var settings = new Dictionary<string, string?>
 {
     ["MultiInstance:Enabled"] = "true", ["Security:TokenSigningKey"] = new string('x', 48),
@@ -166,6 +179,37 @@ using (var deliveryCancellation = new CancellationTokenSource())
     catch (OperationCanceledException) { cancellationObserved = true; }
     Check(cancellationObserved && notifiedDevices.Count == 1 && notifiedUsers.Count == 0, "request cancellation stops notification work without being mistaken for a transport outage");
 }
+var pushNow = DateTimeOffset.UtcNow;
+var pushMessage = new MessageEnvelope { Id="push-policy", ConversationId="chat", ClientMessageId="push-client", SenderUserId="sender", SenderDeviceId="sender-phone", ServerReceivedAt=pushNow,
+    Recipients=[new() { UserId="recipient", DeviceId="phone", Ciphertext="opaque" }] };
+var pushJob = new MessagePushOutboxItem { MessageId=pushMessage.Id, RecipientUserId="recipient", CreatedAt=pushNow, ExpiresAt=pushNow.AddHours(1), NextAttemptAt=pushNow };
+var providerCalls = 0;
+Task<bool> SendPush(CancellationToken _) { providerCalls++; return Task.FromResult(true); }
+Check(await MessagePushOutbox.DispatchAsync(pushMessage,pushJob,pushNow,SendPush,CancellationToken.None)==MessagePushDelivery.Sent && providerCalls==1,
+    "durable notification delivery accepts a live encrypted message without accessing plaintext");
+pushMessage.Receipts.Add(new() { UserId="recipient",DeviceId="other-phone",ReadAt=pushNow });
+Check(await MessagePushOutbox.DispatchAsync(pushMessage,pushJob,pushNow,SendPush,CancellationToken.None)==MessagePushDelivery.Discard && providerCalls==1,
+    "a read acknowledgement on another device suppresses stale message notifications");
+pushMessage.Receipts.Clear(); pushMessage.ExpiresAt=pushNow;
+Check(await MessagePushOutbox.DispatchAsync(pushMessage,pushJob,pushNow,SendPush,CancellationToken.None)==MessagePushDelivery.Discard && providerCalls==1,
+    "expired message privacy policy prevents durable notification retries");
+pushMessage.ExpiresAt=null; pushJob.CompletedAt=pushNow;
+Check(await MessagePushOutbox.DispatchAsync(pushMessage,pushJob,pushNow,SendPush,CancellationToken.None)==MessagePushDelivery.Discard && providerCalls==1,
+    "a completed notification job cannot dispatch again");
+pushJob.CompletedAt=null;
+Check(await MessagePushOutbox.DispatchAsync(pushMessage,pushJob,pushNow,async token=>{await Task.Delay(Timeout.Infinite,token);return true;},CancellationToken.None,TimeSpan.FromMilliseconds(20))==MessagePushDelivery.Retry,
+    "a stalled notification transport releases its bounded lease for a later durable retry");
+using(var shutdown = new CancellationTokenSource())
+{
+    shutdown.Cancel(); var propagated=false;
+    try { await MessagePushOutbox.DispatchAsync(pushMessage,pushJob,pushNow,token=>Task.FromCanceled<bool>(token),shutdown.Token); }
+    catch(OperationCanceledException) { propagated=true; }
+    Check(propagated,"worker shutdown cancellation is preserved rather than acknowledged as a successful notification");
+}
+pushJob.CompletedPushTokenIdsJson="[\"token-1\",\"token-1\",null,\"\"]";
+Check(MessagePushOutbox.CompletedDestinations(pushJob).SetEquals(["token-1"]),"durable push progress contains only bounded opaque destination ids");
+pushJob.CompletedPushTokenIdsJson="{broken";
+Check(MessagePushOutbox.CompletedDestinations(pushJob).Count==0,"malformed progress cannot silently acknowledge undelivered notifications");
 var shared = new TestState(clock);
 var first = new QrLoginService(clock, shared);
 var second = new QrLoginService(clock, shared);

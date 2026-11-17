@@ -36,6 +36,7 @@ describe('Vault local note editor lock boundary', () => {
     vault = {
       unlocked: signal(false), loading: signal(false), items: signal([]), rooms: signal([]), people: signal([]),
       activeRoom: signal(null), activeRoomId: signal(null),
+      noteAttachmentSummary: () => '', noteAttachments: () => [],
       load: jasmine.createSpy('load').and.resolveTo(),
       enablePrivacyShield: jasmine.createSpy('enablePrivacyShield').and.resolveTo(),
       disablePrivacyShield: jasmine.createSpy('disablePrivacyShield').and.resolveTo(),
@@ -91,6 +92,19 @@ describe('Vault local note editor lock boundary', () => {
     expect(fixture.nativeElement.querySelector('.error').textContent).toContain('PIN incorrecto');
     expect(vault.unlocked()).toBeFalse();
     expect(vault.createNote).not.toHaveBeenCalled();
+  });
+
+  it('conceals the complete notes list, file metadata and count whenever the vault is locked', async () => {
+    vault.items.set([{ id: 'private-note', kind: 'Note', updatedAt: '2026-11-16T00:00:00Z', decoded: { title: 'PRIVATE TITLE', body: 'PRIVATE FILE METADATA' } }]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.notes-panel')).toBeNull();
+    expect(fixture.nativeElement.textContent).not.toContain('PRIVATE TITLE');
+    expect(fixture.nativeElement.textContent).not.toContain('Notas y archivos');
+    await enterPin('fixture-valid-pin');
+    expect(fixture.nativeElement.querySelector('.notes-panel')?.textContent).toContain('PRIVATE TITLE');
+    vault.lock(); fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.notes-panel')).toBeNull();
+    expect(fixture.nativeElement.textContent).not.toContain('PRIVATE FILE METADATA');
   });
 
   it('hides the editor for the whole asynchronous unlock instead of exposing it at button press', async () => {

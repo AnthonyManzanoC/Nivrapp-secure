@@ -5,6 +5,9 @@ import { CryptoService } from './crypto.service';
 import { HistoryDeviceSyncService, HistoryRecoveryEvidence } from './history-device-sync.service';
 import { IdentityTrustService } from './identity-trust.service';
 import { PublicKeyDirectory } from '../models/nivra.models';
+import { accountDeviceStatement, createAccountIdentity, signAccountIdentity } from '../utils/account-identity';
+import { historyRootApprovalStatement } from '../utils/account-history-sync';
+import { continuityIdentity } from '../utils/device-continuity';
 
 function cryptoHarness(protector?: () => string | null): { service: any; records: Map<string, any> } {
   const records = new Map<string, any>();
@@ -81,6 +84,91 @@ describe('approved encrypted history recovery', () => {
   const registeredDevice = (id: string, name: string, overrides: Record<string, unknown> = {}) => ({
     id, userId: 'alice', name, isTrusted: true, revokedAt: null,
     createdAt: '2025-01-01T00:00:00Z', lastSeenAt: new Date().toISOString(), ...overrides,
+  });
+
+  async function rootArchiveTransfer(){
+    const root=await createAccountIdentity('alice'),source=cryptoHarness(),target=cryptoHarness();
+    const sourceKey=await source.service.createDeviceKeys(),targetKey=await target.service.createDeviceKeys();
+    await source.service.saveDeviceKeys('alice','source',sourceKey,{userId:'alice'});await target.service.saveDeviceKeys('alice','target',targetKey,{userId:'alice'});
+    const sourceSync=syncHarness(source.service),targetSync=syncHarness(target.service,'target');
+    const hybrids=[{userId:'alice',deviceId:'source',identityKey:btoa('s'.repeat(64))},{userId:'alice',deviceId:'target',identityKey:btoa('t'.repeat(64))}];
+    const devices:any[]=[];
+    for(const [deviceId,key] of [['source',sourceKey],['target',targetKey]] as const){
+      const certificate={v:1 as const,rootKey:root.rootKey,deviceId,legacyKey:continuityIdentity(key.publicJwk),hybridKey:hybrids.find(row=>row.deviceId===deviceId)!.identityKey,signature:''};
+      certificate.signature=await signAccountIdentity(root,accountDeviceStatement('alice',certificate));
+      devices.push({deviceId,keyBundle:{identityKey:JSON.stringify(key.publicJwk)},accountCertificate:certificate});
+    }
+    const directory:any={userId:'alice',alias:'alice',accountIdentity:{rootKey:root.rootKey},devices};
+    sourceSync.service.accountIdentity={historyRoot:async()=>root.rootKey,approveHistoryArchive:jasmine.createSpy().and.callFake(async(context:any,sourceHybrid:string,targetHybrid:string)=>{
+      const approval={rootKey:root.rootKey,sourceHybrid,targetHybrid,signature:''};approval.signature=await signAccountIdentity(root,historyRootApprovalStatement(context,approval));return approval;
+    })};
+    targetSync.service.accountIdentity={historyRoot:async()=>root.rootKey};
+    sourceSync.service.archive={beginSend:jasmine.createSpy().and.resolveTo(true)};
+    targetSync.service.archive={beginReceive:jasmine.createSpy().and.resolveTo()};
+    const exported=spyOn(source.service,'exportDeviceKeyMaterialsForUser').and.callThrough(),imported=spyOn(target.service,'importHistoricalDeviceKeys').and.callThrough();
+    const transfer=request(targetKey.publicJwk);let response:any;
+    const post=(path:string,body:any)=>{
+      if(path==='/keys/batch')return of([directory]);if(path==='/ratchet/olm/directory')return of(hybrids.filter(row=>body.deviceIds.includes(row.deviceId)));
+      response={...body,sourceDeviceId:'source',sourceIdentityKey:JSON.stringify(sourceKey.publicJwk)};return of({});
+    };
+    sourceSync.api.post.and.callFake(post);targetSync.api.post.and.callFake(post);
+    sourceSync.api.get.and.returnValue(of([transfer]));targetSync.api.get.and.returnValue(of([]));
+    targetSync.service.requestId=transfer.id;targetSync.service.requested=true;targetSync.service.requestExpiresAt=Date.parse(transfer.expiresAt);
+    return{root,source,target,sourceKey,targetKey,sourceSync,targetSync,transfer,directory,hybrids,exported,imported,response:()=>response};
+  }
+
+  it('automatically shares only an archive between current same-root certified devices without exporting private ratchet keys or claiming readable history',async()=>{
+    const setup=await rootArchiveTransfer();
+    await setup.sourceSync.service.refreshPendingRequests(setup.sourceSync.service.scope());
+    expect(setup.sourceSync.service.pendingRequests()).toEqual([]);expect(setup.sourceSync.service.archive.beginSend).toHaveBeenCalled();
+    expect(setup.exported).not.toHaveBeenCalled();expect(setup.sourceSync.service.identityTrust.exportForLinkedDevice).not.toHaveBeenCalled();
+    const response=setup.response();expect(response).toBeTruthy();
+    const plain=await setup.target.service.decryptEnvelope(setup.targetKey,response.header,response.ciphertext);
+    expect(plain.purpose).toBe('history-archive-only');expect(plain.keys).toBeUndefined();
+    await setup.targetSync.service.importResponse({...setup.transfer,responses:[response]},response,setup.targetSync.service.scope());
+    expect(setup.targetSync.service.archive.beginReceive).toHaveBeenCalled();expect(setup.imported).not.toHaveBeenCalled();
+    expect(setup.targetSync.service.recovered$.next).not.toHaveBeenCalled();expect(setup.targetSync.service.state()).toBe('syncing');
+  });
+
+  it('keeps forged self-roots and stale hybrid certificates on the manual approval path',async()=>{
+    for(const change of ['root','hybrid']){
+      const setup=await rootArchiveTransfer();
+      if(change==='root')setup.directory.accountIdentity.rootKey=(await createAccountIdentity('alice')).rootKey;
+      else setup.directory.devices[1].accountCertificate.hybridKey=btoa('x'.repeat(64));
+      await setup.sourceSync.service.refreshPendingRequests(setup.sourceSync.service.scope());
+      expect(setup.sourceSync.service.pendingRequests().length).toBe(1);expect(setup.sourceSync.service.archive.beginSend).not.toHaveBeenCalled();expect(setup.exported).not.toHaveBeenCalled();
+    }
+  });
+
+  it('rejects a forged automatic root approval and a source removed from the current certified device directory',async()=>{
+    const setup=await rootArchiveTransfer();await setup.sourceSync.service.refreshPendingRequests(setup.sourceSync.service.scope());
+    const response=setup.response(),payload=await setup.target.service.decryptEnvelope(setup.targetKey,response.header,response.ciphertext);
+    payload.rootApproval.signature=btoa('x'.repeat(64));
+    const forged={...await setup.source.service.encryptForPublicKey(setup.sourceKey,setup.targetKey.publicJwk,payload),sourceDeviceId:'source',sourceIdentityKey:response.sourceIdentityKey};
+    await expectAsync(setup.targetSync.service.importResponse({...setup.transfer,responses:[forged]},forged,setup.targetSync.service.scope())).toBeRejected();
+    setup.directory.devices=setup.directory.devices.filter((value:any)=>value.deviceId!=='source');
+    await expectAsync(setup.targetSync.service.importResponse({...setup.transfer,responses:[response]},response,setup.targetSync.service.scope())).toBeRejected();
+    expect(setup.imported).not.toHaveBeenCalled();expect(setup.targetSync.service.archive.beginReceive).not.toHaveBeenCalled();
+  });
+
+  it('allows a second APK to request a same-root archive for unreadable hybrid history while preserving each ratchet identity',async()=>{
+    const setup=await rootArchiveTransfer();setup.targetSync.service.nativeAndroid=true;const begin=spyOn(setup.targetSync.service,'beginRequest');
+    setup.targetSync.service.requested=false;
+    const proof:HistoryRecoveryEvidence={userId:'alice',deviceId:'target',reason:'undecryptable-ciphertext',message:{id:'msg_old',conversationId:'chat',recipients:[{userId:'alice',deviceId:'old',
+      header:JSON.stringify({v:4,alg:'NIVRA-HYBRID-RATCHET-MESSAGE-1',recipientDeviceId:'old'}),ciphertext:JSON.stringify({v:3,suite:'NIVRA-PQXDH-MLKEM768-A256GCM-1',context:{conversationId:'chat'}})}]}};
+    await setup.targetSync.service.requestHistory(proof);
+    expect(begin).toHaveBeenCalledOnceWith(false);expect(setup.targetSync.service.usesLocalRecovery()).toBeFalse();expect(setup.exported).not.toHaveBeenCalled();
+  });
+
+  it('never downgrades a rooted automatic request to a server-selected legacy keyring even if its transport key is valid',async()=>{
+    const setup=await rootArchiveTransfer();
+    const payload={v:1,purpose:'history-keyring',requestId:setup.transfer.id,userId:'alice',targetDeviceId:'target',sourceDeviceId:'source',targetPublicJwk:setup.targetKey.publicJwk,expiresAt:setup.transfer.expiresAt,
+      keys:[setup.sourceKey],identityTrust:{v:1,purpose:'identity-continuity',userId:'alice',sourceDeviceId:'source',entries:[]}};
+    const response={...await setup.source.service.encryptForPublicKey(setup.sourceKey,setup.targetKey.publicJwk,payload),sourceDeviceId:'source',sourceIdentityKey:JSON.stringify(setup.sourceKey.publicJwk)};
+    await expectAsync(setup.targetSync.service.importResponse({...setup.transfer,responses:[response]},response,setup.targetSync.service.scope())).toBeRejected();
+    setup.targetSync.service.accountIdentity.historyRoot=async()=>null;setup.targetSync.service.rootArchiveOnly=true;
+    await expectAsync(setup.targetSync.service.importResponse({...setup.transfer,responses:[response]},response,setup.targetSync.service.scope())).toBeRejected();
+    expect(setup.imported).not.toHaveBeenCalled();expect(setup.targetSync.service.identityTrust.importFromLinkedDevice).not.toHaveBeenCalled();
   });
 
   it('keeps APK recovery local while still receiving requests from another device', async () => {
@@ -311,6 +399,15 @@ describe('approved encrypted history recovery', () => {
     expect(service.preferredSource()).toEqual({ deviceId: 'old-device', deviceName: 'Android Nivra Mobile', kind: 'android', basis: 'message-recipient' });
     expect(service.sourceCapability()).toBe('unknown');
     expect(api.post).not.toHaveBeenCalled();
+  });
+  it('prefers the current certified primary as a history source without granting key possession',async()=>{
+    const {service,api}=syncHarness(cryptoHarness().service,'target');
+    service.requested=true;service.requestEvidence=evidence({},'target');
+    service.deviceAuthority={authority:()=>({primaryDeviceId:'verified-apk',devices:[{deviceId:'verified-apk',platform:'android',role:'primary'}]})};
+    api.get.and.returnValue(of([registeredDevice('old-device','Web'),registeredDevice('verified-apk','Mi teléfono')]));
+    await service.refreshSourcePreference(service.scope());
+    expect(service.preferredSource()?.deviceId).toBe('verified-apk');expect(service.preferredSource()?.kind).toBe('android');
+    expect(service.sourceCapability()).toBe('unknown');expect(api.post).not.toHaveBeenCalled();
   });
 
   it('keeps Web as the first source when a newly registered APK was never addressed by the old message', async () => {

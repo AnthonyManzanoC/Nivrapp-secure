@@ -7,6 +7,7 @@ import { GuidePage } from './guide.page';
 
 describe('Nivra guide feature search', () => {
   let fixture: ComponentFixture<GuidePage>;
+  const owner = 'guide-search-fixture';
   const language = signal('es');
   const english: Record<string, string> = {
     'GUIDE.FEATURE_5_TITLE': 'Vault and rooms',
@@ -14,12 +15,13 @@ describe('Nivra guide feature search', () => {
   };
 
   beforeEach(async () => {
+    localStorage.removeItem(`nivra.guide.v1.${owner}`);
     language.set('es');
     await TestBed.configureTestingModule({
       imports: [GuidePage],
       providers: [
         provideRouter([]),
-        { provide: AuthService, useValue: { session: signal(null) } },
+        { provide: AuthService, useValue: { session: signal({ user: { id: owner } }) } },
         { provide: TranslateService, useValue: {
           currentLanguage: language,
           instant: (key: string, fallback: string) => language() === 'en' ? english[key] || fallback : fallback,
@@ -30,7 +32,29 @@ describe('Nivra guide feature search', () => {
     fixture.detectChanges();
   });
 
-  afterEach(() => { fixture.destroy(); TestBed.resetTestingModule(); });
+  afterEach(() => { fixture.destroy(); TestBed.resetTestingModule(); localStorage.removeItem(`nivra.guide.v1.${owner}`); });
+
+  it('shows one useful step and dismisses the introduction without claiming any task was completed', () => {
+    expect(fixture.componentInstance.guide.progress(owner)).toEqual({ introduced: true, completed: [] });
+    expect(fixture.nativeElement.querySelectorAll('.tasks article:not([hidden])').length).toBe(1);
+    fixture.nativeElement.querySelector('.next-step').click();
+    fixture.detectChanges();
+    expect(fixture.componentInstance.activeStep()).toBe(1);
+    expect(fixture.nativeElement.querySelector('.tasks article:not([hidden]) h3').textContent).toContain('primera persona');
+    expect(fixture.componentInstance.guide.progress(owner).completed).toEqual([]);
+  });
+
+  it('keeps reference and troubleshooting out of the first view and makes both easy to open', () => {
+    expect(fixture.nativeElement.querySelector('#guide-features').hidden).toBeTrue();
+    fixture.nativeElement.querySelector('.guide-tabs button:nth-child(2)').click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('#guide-features').hidden).toBeFalse();
+    expect(fixture.nativeElement.querySelector('#guide-start').hidden).toBeTrue();
+    fixture.nativeElement.querySelector('.guide-tabs button:nth-child(3)').click();
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('#guide-delivery').hidden).toBeFalse();
+    expect(fixture.nativeElement.querySelector('.pending-help')).not.toBeNull();
+  });
 
   it('finds accented names and keeps the original translation key after filtering', () => {
     fixture.componentInstance.featureQuery.set('  BOVEDA  ');

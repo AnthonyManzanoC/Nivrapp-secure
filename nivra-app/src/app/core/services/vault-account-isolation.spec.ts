@@ -24,7 +24,7 @@ describe('vault account and activation isolation', () => {
   let api: { get: jasmine.Spy; post: jasmine.Spy; delete: jasmine.Spy; putRaw: jasmine.Spy };
   let cryptography: Record<string, jasmine.Spy>;
   let ratchet: { encrypt: jasmine.Spy; discardEphemeral: jasmine.Spy; forgetConversation: jasmine.Spy };
-  let realtime: { events$: Subject<any>; joinVaultRoom: jasmine.Spy; leaveVaultRoom: jasmine.Spy; sendVaultRoomMessage: jasmine.Spy };
+  let realtime: { events$: Subject<any>; joinVaultRoom: jasmine.Spy; leaveVaultRoom: jasmine.Spy; closeVaultRoomView: jasmine.Spy; sendVaultRoomMessage: jasmine.Spy };
   let chat: { createDirectConversation: jasmine.Spy; sendText: jasmine.Spy; enqueueText: jasmine.Spy };
   let downloads: { file: jasmine.Spy };
   let privacy: { enable: jasmine.Spy; disable: jasmine.Spy };
@@ -59,6 +59,81 @@ describe('vault account and activation isolation', () => {
     expect(realtime.sendVaultRoomMessage).not.toHaveBeenCalled(); expect(ratchet.encrypt).not.toHaveBeenCalled();
   });
 
+  it('closes a persistent view without leaving membership, losing retained messages or closing it for everyone', async () => {
+    prime(); vault.rooms.set([{ ...roomA, retentionMode: 'Persistent' }]);
+    await vault.closeRoomView('room-A');
+    expect(vault.activeRoomId()).toBeNull();
+    expect(vault.rooms().length).toBe(1);
+    expect(vault.messagesByRoom()['room-A'].length).toBe(1);
+    expect(api.post).not.toHaveBeenCalled();
+    expect(realtime.closeVaultRoomView).toHaveBeenCalledWith('room-A');
+    expect(realtime.leaveVaultRoom).not.toHaveBeenCalled();
+    expect(ratchet.forgetConversation).not.toHaveBeenCalled();
+    await vault.selectRoom('room-A');
+    expect(vault.activeRoomId()).toBe('room-A');
+    expect(vault.activeMessages().length).toBe(1);
+    expect(realtime.joinVaultRoom).toHaveBeenCalledWith('room-A');
+  });
+
+  it('releases decrypted notes, room messages and verified invite PINs on a vault lock', () => {
+    prime(); (vault as any).verifiedInvitePins.set('room-A', 'memory-only-pin');
+    vault.lock();
+    expect(vault.items().every(item => !item.decoded && !item.decodeError)).toBeTrue();
+    expect(JSON.stringify(vault.items())).not.toContain('PRIVATE A');
+    expect(vault.messagesByRoom()).toEqual({});
+    expect((vault as any).verifiedInvitePins.size).toBe(0);
+  });
+
+  it('never reopens closed or expired rooms, and closing a burn-on-exit room keeps its destructive rule', async () => {
+    prime();
+    const expired: any = { ...roomA, expiresAt: new Date(Date.now() - 1).toISOString() };
+    vault.rooms.set([expired]);
+    expect(vault.canAttemptJoin(expired)).toBeFalse();
+    await expectAsync(vault.selectRoom('room-A')).toBeRejectedWithError(/entrar/);
+    vault.rooms.set([{ ...roomA, closedAt: new Date().toISOString() }]);
+    await expectAsync(vault.selectRoom('room-A')).toBeRejectedWithError(/entrar/);
+    vault.rooms.set([{ ...roomA, retentionMode: 'BurnOnExit' }]);
+    await vault.closeRoomView('room-A');
+    expect(api.post).toHaveBeenCalledWith('/vault/rooms/room-A/leave', {});
+    expect(vault.rooms()).toEqual([]);
+    expect(vault.activeMessages()).toEqual([]);
+    await expectAsync(vault.selectRoom('room-A')).toBeRejected();
+  });
+
+  it('verifies an owner-entered PIN before inviting, then shares it only through the encrypted outbox', async () => {
+    const room: any = { ...roomA, accessMode: 'PinOnly', requiresPin: true, retentionMode: 'Persistent' };
+    vault.rooms.set([room]);
+    const added = { ...room, members: [...room.members, { userId: 'new-peer', alias: 'peer2', status: 'Invited' }] };
+    api.post.and.callFake((path: string) => of(path.endsWith('/join') ? room : added));
+    await vault.inviteUsers(room.id, ['new-peer'], 'verified-pin');
+    expect(api.post.calls.argsFor(0)).toEqual(['/vault/rooms/room-A/join', { pin: 'verified-pin' }]);
+    expect(api.post.calls.argsFor(1)).toEqual(['/vault/rooms/room-A/invite', { userIds: ['new-peer'] }]);
+    expect(chat.enqueueText.calls.first().args[1]).toContain('PIN de la sala: verified-pin');
+    expect(vault.needsInvitePin(room)).toBeFalse();
+    vault.lock();
+    expect(vault.needsInvitePin(room)).toBeTrue();
+    expect(localStorage.getItem(activeKey(a)) || '').not.toContain('verified-pin');
+  });
+
+  it('does not invite or send a guessed PIN when PIN validation fails', async () => {
+    vault.rooms.set([{ ...roomA, accessMode: 'PinOnly', requiresPin: true }]);
+    api.post.and.returnValue(throwError(() => new Error('PIN inválido')));
+    await expectAsync(vault.inviteUsers('room-A', ['new-peer'], 'wrong-pin')).toBeRejectedWithError('PIN inválido');
+    expect(api.post.calls.count()).toBe(1);
+    expect(chat.enqueueText).not.toHaveBeenCalled();
+    expect(vault.needsInvitePin(vault.rooms()[0])).toBeTrue();
+  });
+
+  it('persists the initial PIN invitation before a stalled realtime room join can fail', async () => {
+    const room: any = { ...roomA, accessMode: 'PinOnly', requiresPin: true, retentionMode: 'Persistent' };
+    api.post.and.returnValue(of(room));
+    realtime.joinVaultRoom.and.rejectWith(new Error('Hub unavailable'));
+    await expectAsync(vault.createRoom({ name: room.name, pin: 'owner-selected-pin', retentionMode: 'Persistent', invitedUserIds: ['peer'] })).toBeRejectedWithError('Hub unavailable');
+    expect(chat.enqueueText).toHaveBeenCalledTimes(1);
+    expect(chat.enqueueText.calls.first().args[1]).toContain('PIN de la sala: owner-selected-pin');
+    expect(vault.rooms()[0].id).toBe(room.id);
+  });
+
   beforeEach(async () => {
     for (const account of [a, b]) { localStorage.removeItem(`nivra.vault.${account.user.id}`); localStorage.removeItem(activeKey(account)); }
     session = signal<any>(a); generation = signal(1);
@@ -76,7 +151,7 @@ describe('vault account and activation isolation', () => {
       encryptForPublicKey: jasmine.createSpy().and.resolveTo({ ciphertext: 'sealed', header: 'header' }),
       parsePublicJwk: jasmine.createSpy().and.returnValue({ kty: 'EC' }),
     };
-    realtime = { events$: new Subject(), joinVaultRoom: jasmine.createSpy().and.resolveTo(), leaveVaultRoom: jasmine.createSpy().and.resolveTo(), sendVaultRoomMessage: jasmine.createSpy().and.resolveTo() };
+    realtime = { events$: new Subject(), joinVaultRoom: jasmine.createSpy().and.resolveTo(), leaveVaultRoom: jasmine.createSpy().and.resolveTo(), closeVaultRoomView: jasmine.createSpy().and.resolveTo(), sendVaultRoomMessage: jasmine.createSpy().and.resolveTo() };
     ratchet = { encrypt: jasmine.createSpy().and.resolveTo([]), discardEphemeral: jasmine.createSpy().and.resolveTo(), forgetConversation:jasmine.createSpy().and.resolveTo() };
     chat = { createDirectConversation: jasmine.createSpy().and.resolveTo({ id: 'conversation-A' }), sendText: jasmine.createSpy().and.resolveTo(), enqueueText: jasmine.createSpy().and.resolveTo() };
     downloads = { file: jasmine.createSpy().and.resolveTo(new ArrayBuffer(1)) };
@@ -229,12 +304,14 @@ describe('vault account and activation isolation', () => {
     finish({ id: 'A-conversation' }); await pending; expect(chat.sendText).not.toHaveBeenCalled(); expect(chat.enqueueText).not.toHaveBeenCalled();
   });
 
-  it('persists the invitation in the encrypted outbox with a room link and no PIN', async () => {
+  it('includes the owner-authorized PIN only inside the encrypted invitation, never in its URL', async () => {
     const room={...roomA,accessMode:'PinOnly',expiresAt:new Date(Date.now()+3600_000).toISOString()};
     await (vault as any).notifyVaultInvites(room,['peer'],'secret-fixture-pin',(vault as any).captureContext());
     expect(chat.enqueueText).toHaveBeenCalledTimes(1);expect(chat.sendText).not.toHaveBeenCalled();
     const [conversation,text,policy]=chat.enqueueText.calls.first().args;
-    expect(conversation.id).toBe('conversation-A');expect(text).toContain('/app/vault?room=room-A');expect(text).not.toContain('secret-fixture-pin');
+    expect(conversation.id).toBe('conversation-A');expect(text).toContain('/app/vault?room=room-A');expect(text).toContain('PIN de la sala: secret-fixture-pin');
+    expect(text.split('\n').find((line: string) => line.startsWith('https:'))).not.toContain('secret-fixture-pin');
+    expect(api.post).not.toHaveBeenCalled();
     expect(policy.ttlSeconds).toBeGreaterThan(3500);expect(policy.ttlSeconds).toBeLessThanOrEqual(3600);
   });
 

@@ -6,6 +6,7 @@
   @if (current(); as info) {
     <div class="info-scroll">
       <div class="sent-card"><ion-icon [name]="info.status === 'sending' ? 'time-outline' : 'checkmark-outline'" aria-hidden="true"></ion-icon><div><span>{{ (info.status === 'sending' ? 'CHAT.SENDING' : 'CHAT.SENT') | translate:(info.status === 'sending' ? 'Enviando…' : 'Enviado') }}</span>@if (info.status !== 'sending') { <strong>{{ info.at | localizedDate:'medium' }}</strong> }</div></div>
+      <app-message-privacy-badge [message]="info" />
       <div class="receipt-totals" aria-live="polite" aria-atomic="true">
         <div class="total-read"><ion-icon name="checkmark-done-outline" aria-hidden="true"></ion-icon><strong>{{ readCount() }}<span> / {{ rows().length }}</span></strong><small>{{ 'CHAT.READ' | translate:'Leído' }}</small></div>
         <div><ion-icon name="checkmark-done-outline" aria-hidden="true"></ion-icon><strong>{{ deliveredCount() }}<span> / {{ rows().length }}</span></strong><small>{{ 'CHAT.DELIVERED' | translate:'Entregado' }}</small></div>

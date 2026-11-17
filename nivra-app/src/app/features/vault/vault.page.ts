@@ -76,6 +76,7 @@ export class VaultPage implements OnInit, OnDestroy {
   pendingInviteCode = '';
   pendingInvitePin = '';
   roomPinById: Record<string, string> = {};
+  roomInvitePinById: Record<string, string> = {};
   selectedInviteIds = new Set<string>();
   isFullscreen = false;
   roomComposerOpen = false;
@@ -299,6 +300,8 @@ export class VaultPage implements OnInit, OnDestroy {
   }
 
   async leaveRoom(room: VaultRoom): Promise<void> {
+    const closesForEveryone = room.retentionMode === 'BurnOnExit' || room.owner?.id === this.auth.session()?.user.id;
+    if (closesForEveryone && !window.confirm('Esta acción cierra la sala para todos y no permite volver a abrirla. Para apartarla sin terminarla, usa Cerrar vista. ¿Quieres continuar?')) return;
     await this.run(`leave:${room.id}`, async isCurrent => {
       if (this.isFullscreen && this.vault.activeRoomId() === room.id) {
         await this.exitVaultFullscreen();
@@ -307,6 +310,15 @@ export class VaultPage implements OnInit, OnDestroy {
       await this.vault.leaveRoom(room.id);
       if (!isCurrent()) return;
       this.notice = this.tr('VAULT.NOTICE_LEFT_ROOM', 'Saliste de la sala.');
+    });
+  }
+
+  async closeRoomView(room: VaultRoom): Promise<void> {
+    if (room.retentionMode === 'BurnOnExit' && !window.confirm('Al salir se cierra y limpia esta sala temporal para todos. ¿Quieres continuar?')) return;
+    await this.run(`room:close:${room.id}`, async isCurrent => {
+      if (this.isFullscreen) { await this.exitVaultFullscreen(); if (!isCurrent()) return; }
+      await this.vault.closeRoomView(room.id);
+      if (isCurrent()) this.notice = room.retentionMode === 'BurnOnExit' ? 'La sala temporal terminó.' : 'Vista cerrada. Puedes volver a abrir la sala desde su tarjeta.';
     });
   }
 
@@ -330,8 +342,9 @@ export class VaultPage implements OnInit, OnDestroy {
       return;
     }
     await this.run(`invite:${room.id}`, async isCurrent => {
-      await this.vault.inviteUsers(room.id, [...this.selectedInviteIds]);
+      await this.vault.inviteUsers(room.id, [...this.selectedInviteIds], this.roomInvitePinById[room.id] || null);
       if (!isCurrent()) return;
+      this.roomInvitePinById[room.id] = '';
       this.selectedInviteIds.clear();
       this.inviteQuery = '';
       this.vault.people.set([]);
@@ -487,7 +500,7 @@ export class VaultPage implements OnInit, OnDestroy {
     this.body = '';
     this.noteAttachments = [];
     this.roomName = ''; this.roomPin = ''; this.inviteQuery = ''; this.roomMessage = '';
-    this.selectedInviteIds.clear(); this.roomPinById = {}; this.roomComposerOpen = false; this.invitedRoomId = '';
+    this.selectedInviteIds.clear(); this.roomPinById = {}; this.roomInvitePinById = {}; this.roomComposerOpen = false; this.invitedRoomId = '';
   }
 
   private ownsMountedScope(): boolean {
@@ -542,7 +555,9 @@ export class VaultPage implements OnInit, OnDestroy {
     return this.vault.rooms().find(room => room.id === this.invitedRoomId && this.vault.canAttemptJoin(room)
       && this.vault.currentMember(room)?.status !== 'Active') ?? null;
   }
-  requiresRoomPin(room: VaultRoom): boolean { return room.requiresPin !== false; }
+  requiresRoomPin(room: VaultRoom): boolean { return room.requiresPin ?? room.accessMode !== 'InviteOnly'; }
+  roomAvailable(room: VaultRoom): boolean { return !room.closedAt && (!room.expiresAt || Date.parse(room.expiresAt) > Date.now()); }
+  invitePinRequired(room: VaultRoom): boolean { return this.vault.needsInvitePin?.(room) ?? this.requiresRoomPin(room); }
 
   incognitoRoom(): VaultRoom | null {
     const active = this.vault.activeRoom();

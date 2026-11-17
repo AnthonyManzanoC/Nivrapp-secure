@@ -12,6 +12,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     public DbSet<GroupInviteLink> GroupInviteLinks => Set<GroupInviteLink>();
     public DbSet<AccountIdentityRecord> AccountIdentities => Set<AccountIdentityRecord>();
+    public DbSet<AccountHistorySyncItem> AccountHistorySync => Set<AccountHistorySyncItem>();
     public DbSet<CommunityRecord> Communities => Set<CommunityRecord>();
     public DbSet<CommunityGroupRecord> CommunityGroups => Set<CommunityGroupRecord>();
     public DbSet<CommunityGroupRequestRecord> CommunityGroupRequests => Set<CommunityGroupRequestRecord>();
@@ -60,6 +61,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     public DbSet<CallSession> Calls => Set<CallSession>();
     public DbSet<CallSignalRecord> CallSignals => Set<CallSignalRecord>();
     public DbSet<CallPushOutboxItem> CallPushOutbox => Set<CallPushOutboxItem>();
+    public DbSet<MessagePushOutboxItem> MessagePushOutbox => Set<MessagePushOutboxItem>();
     public DbSet<PushTokenRecord> PushTokens => Set<PushTokenRecord>();
     public DbSet<AdCampaign> AdCampaigns => Set<AdCampaign>();
     public DbSet<AdImpressionAggregate> AdImpressions => Set<AdImpressionAggregate>();
@@ -69,6 +71,19 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("public");
+        modelBuilder.Entity<AccountHistorySyncItem>(entity =>
+        {
+            entity.ToTable("account_history_sync"); entity.HasKey(row=>row.Id);
+            entity.Property(row=>row.Id).ValueGeneratedOnAdd();
+            entity.Property(row=>row.UserId).HasMaxLength(64);
+            entity.Property(row=>row.MessageId).HasMaxLength(64);
+            entity.Property(row=>row.RootKey).HasMaxLength(87);
+            entity.Property(row=>row.EnvelopeJson).HasMaxLength(1410000);
+            entity.HasIndex(row=>new{row.UserId,row.MessageId}).IsUnique();
+            entity.HasIndex(row=>new{row.UserId,row.Id});
+            entity.HasOne<UserAccount>().WithMany().HasForeignKey(row=>row.UserId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<MessageEnvelope>().WithMany().HasForeignKey(row=>row.MessageId).OnDelete(DeleteBehavior.Cascade);
+        });
         modelBuilder.Entity<AccountIdentityRecord>(entity =>
         {
             entity.ToTable("account_identities"); entity.HasKey(x => x.UserId);
@@ -328,6 +343,7 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.Property(device => device.UserId).HasMaxLength(64).IsRequired();
             entity.Property(device => device.Name).HasMaxLength(160).IsRequired();
             entity.Property(device => device.HardwareId).HasMaxLength(128);
+            entity.Property(device => device.Platform).HasMaxLength(16);
             entity.Property(device => device.ContinuitySourceDeviceId).HasMaxLength(64);
             entity.Property(device => device.ContinuitySignature).HasMaxLength(88);
             entity.HasIndex(device => new { device.UserId, device.RevokedAt });
@@ -695,6 +711,20 @@ public sealed class NivraDbContext(DbContextOptions<NivraDbContext> options) : D
             entity.HasIndex(item => new { item.CompletedAt, item.NextAttemptAt, item.LeaseUntil });
             entity.HasIndex(item => item.ExpiresAt);
             entity.HasOne<CallSession>().WithMany().HasForeignKey(item => item.CallId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne<UserAccount>().WithMany().HasForeignKey(item => item.RecipientUserId).OnDelete(DeleteBehavior.Cascade);
+        });
+
+        modelBuilder.Entity<MessagePushOutboxItem>(entity =>
+        {
+            entity.ToTable("message_push_outbox");
+            entity.HasKey(item => new { item.MessageId, item.RecipientUserId });
+            entity.Property(item => item.MessageId).HasMaxLength(64);
+            entity.Property(item => item.RecipientUserId).HasMaxLength(64);
+            entity.Property(item => item.LeaseId).HasMaxLength(32);
+            entity.Property(item => item.CompletedPushTokenIdsJson).HasDefaultValue("[]").IsRequired();
+            entity.HasIndex(item => new { item.CompletedAt, item.NextAttemptAt, item.LeaseUntil });
+            entity.HasIndex(item => item.ExpiresAt);
+            entity.HasOne<MessageEnvelope>().WithMany().HasForeignKey(item => item.MessageId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne<UserAccount>().WithMany().HasForeignKey(item => item.RecipientUserId).OnDelete(DeleteBehavior.Cascade);
         });
 

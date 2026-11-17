@@ -103,6 +103,7 @@ builder.Services.AddSingleton<PushNotificationService>();
 builder.Services.AddSingleton<LiveKitTokenService>();
 builder.Services.AddHostedService<SessionCleanupService>();
 builder.Services.AddHostedService<CallPushOutboxWorker>();
+builder.Services.AddHostedService<MessagePushOutboxWorker>();
 builder.Services.AddSignalR(options =>
 {
     options.MaximumReceiveMessageSize = 512 * 1024;
@@ -277,6 +278,7 @@ app.UseCallCompatibility();
 app.MapNivraApi();
 app.MapGroupInviteEndpoints();
 app.MapAccountIdentityEndpoints();
+app.MapAccountHistorySyncEndpoints();
 app.MapGet("/client/compatibility", () => Results.Ok(ClientCompatibility.Description()));
 app.MapGet("/client/android-release", (HttpContext context) =>
 {

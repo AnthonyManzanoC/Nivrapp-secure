@@ -5,8 +5,42 @@ import { TestBed } from '@angular/core/testing';
 
 import { AppComponent } from './app.component';
 import { WEB_LAUNCH_RUNTIME } from './core/services/web-launch.service';
+import { Style } from '@capacitor/status-bar';
 
 describe('AppComponent', () => {
+  it('keeps Android navigation icons contrasted with both story and page surfaces', async () => {
+    const navigation = jasmine.createSpy('navigation').and.resolveTo();
+    const app: any = Object.assign(Object.create(AppComponent.prototype), {
+      systemBarUpdate: Promise.resolve(), systemBarEpoch: 0,
+      nativeSystemBars: { setOverlaysWebView: async () => {}, setStyle: async () => {}, setBackgroundColor: async () => {} },
+      nativeDevice: { configureNavigationBar: navigation },
+    });
+    await app.configureNativeSystemBars({ color: '#070b0d', style: Style.Dark });
+    expect(navigation).toHaveBeenCalledWith('#070b0d', false);
+    await app.configureNativeSystemBars({ color: '#f8fafc', style: Style.Light });
+    expect(navigation).toHaveBeenCalledWith('#f8fafc', true);
+  });
+  it('matches Welcome system icons and background to the resolved theme', () => {
+    const app = Object.create(AppComponent.prototype) as any;
+    expect(app.nativeStatusBarSurface(false, '/welcome', false)).toEqual({ color: '#0d1815', style: Style.Dark });
+    expect(app.nativeStatusBarSurface(true, '/welcome?language=es', false)).toEqual({ color: '#f7f8f2', style: Style.Light });
+  });
+
+  it('serializes native system bar changes so an older dark update cannot win after switching to light', async () => {
+    let finish!: () => void;
+    const overlay = jasmine.createSpy('setOverlaysWebView').and.returnValues(new Promise<void>(resolve => finish = resolve), Promise.resolve());
+    const style = jasmine.createSpy('setStyle').and.resolveTo();
+    const background = jasmine.createSpy('setBackgroundColor').and.resolveTo();
+    const app = Object.assign(Object.create(AppComponent.prototype), { systemBarUpdate: Promise.resolve(), systemBarEpoch: 0,
+      nativeSystemBars: { setOverlaysWebView: overlay, setStyle: style, setBackgroundColor: background } }) as any;
+    const dark = app.configureNativeSystemBars({ color: '#0d1815', style: Style.Dark });
+    await Promise.resolve(); await Promise.resolve();
+    const light = app.configureNativeSystemBars({ color: '#f7f8f2', style: Style.Light });
+    finish(); await Promise.all([dark, light]);
+    expect(overlay).toHaveBeenCalledTimes(2);
+    expect(style).toHaveBeenCalledOnceWith({ style: Style.Light });
+    expect(background).toHaveBeenCalledOnceWith({ color: '#f7f8f2' });
+  });
 
   it('defers a web version reload while an unfocused chat draft or modal is open', () => {
     const app: any = Object.assign(Object.create(AppComponent.prototype), {

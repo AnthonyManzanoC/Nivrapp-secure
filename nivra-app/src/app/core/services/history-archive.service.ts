@@ -189,7 +189,8 @@ export class HistoryArchiveService implements OnDestroy {
     const response = await firstValueFrom(this.api.post<{ leaseExpiresAt?: string }>(this.path(progress) + 'ack', { sequence }).pipe(timeout(15000)));
     if (response?.leaseExpiresAt && Date.parse(response.leaseExpiresAt) > Date.now()) progress.leaseExpiresAt = response.leaseExpiresAt;
   }
-  private async importMessages(values: unknown): Promise<void> {
+  /** Every source, including root-backed recovery, must pass current server permissions and local deletion fences. */
+  async importMessages(values: unknown): Promise<void> {
     const owner = this.owner();
     if (!Array.isArray(values) || values.length > 8) throw Error('Historial recibido inválido.');
     const candidates = values as ChatMessageVm[];

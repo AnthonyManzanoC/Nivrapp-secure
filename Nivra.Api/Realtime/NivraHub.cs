@@ -462,9 +462,10 @@ public sealed class NivraHub(
 
     public async Task JoinVaultRoom(string roomId)
     {
-        if (!TryGetCurrentUser(out var currentUser))
+        if (!TryGetCurrentUser(out var currentUser) ||
+            !await store.IsSessionActiveAsync(currentUser.SessionId, currentUser.UserId, currentUser.DeviceId, timeProvider.GetUtcNow(), Context.ConnectionAborted))
         {
-            return;
+            throw new HubException("La sesión ya no está autorizada.");
         }
 
         var now = timeProvider.GetUtcNow();
@@ -491,6 +492,21 @@ public sealed class NivraHub(
             memberRecord.LastSeenAt = now;
             await db.SaveChangesAsync(Context.ConnectionAborted);
         }
+    }
+
+    // Detach this connection without taking the destructive membership/owner-close path.
+    public async Task CloseVaultRoomView(string roomId)
+    {
+        if (!TryGetCurrentUser(out var current) ||
+            !await store.IsSessionActiveAsync(current.SessionId, current.UserId, current.DeviceId, timeProvider.GetUtcNow(), Context.ConnectionAborted))
+            throw new HubException("La sesión ya no está autorizada.");
+        var now = timeProvider.GetUtcNow();
+        var canCloseView = await db.VaultRooms.AsNoTracking().AnyAsync(room => room.Id == roomId && room.ClosedAt == null &&
+            room.RetentionMode != VaultRetentionMode.BurnOnExit && (room.ExpiresAt == null || room.ExpiresAt > now) &&
+            db.VaultRoomMembers.Any(member => member.VaultRoomId == room.Id && member.UserId == current.UserId && member.Status == VaultMemberStatus.Active), Context.ConnectionAborted);
+        if (!canCloseView) throw new HubException("La vista no está disponible. Las salas temporales deben salir y limpiarse.");
+        await Groups.RemoveFromGroupAsync(Context.ConnectionId, GroupsFor.VaultRoom(roomId), Context.ConnectionAborted);
+        if (Context.Items.TryGetValue("vault_rooms", out var tracked) && tracked is HashSet<string> rooms) rooms.Remove(roomId);
     }
 
     public Task LeaveVaultRoom(string roomId) => CallCoordination.RunAsync(db, async () =>

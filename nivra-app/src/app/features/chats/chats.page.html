@@ -113,6 +113,7 @@
       }
       @if (storyPublishNotice) { <p [appTransientNotice]="storyPublishNotice" (noticeExpired)="storyPublishNotice=''" class="story-publish-notice" role="status">{{ storyPublishNotice }}</p> }
 
+      @if (!query.trim() && !showRecentSearches && !selectionActive()) { <app-notification-permission-prompt /> }
       <div class="search-panel">
         <div class="search-line">
           <div class="search-box" [class.has-value]="query">
@@ -270,6 +271,7 @@
                   [detail]="false"
                   class="list-item conversation-item"
                   [attr.data-chat-id]="conversation.id"
+                  [attr.data-snapshot-private]="privateChats.isProtected(conversation.id) ? '' : null"
                   [class.active]="chat.selectedConversationId() === conversation.id"
                   [class.pinned]="chat.isConversationPinned(conversation.id)"
                   [class.muted]="chat.isConversationMuted(conversation.id)"
@@ -364,7 +366,7 @@
                 </div>
               } @else {
                 @if (firstConversation()) {
-                  <app-chat-welcome [compact]="true" [showCallAlertsSetup]="showCallAlertsSetup()" [enablingCallAlerts]="callAlertsBusy()" [callAlertsNotice]="callAlertsNotice" (enableCallAlerts)="enableCallAlerts()" (newChat)="startNewChat()" (sharePass)="openShareAccount()" (newGroup)="openGroupModal()" (newStory)="openStoryComposer()" />
+                  <app-chat-welcome [compact]="true" (newChat)="startNewChat()" (sharePass)="openShareAccount()" (newGroup)="openGroupModal()" (newStory)="openStoryComposer()" />
                 } @else {
                   <div class="empty folder-empty"><ion-icon name="chatbubble-ellipses-outline" aria-hidden="true"></ion-icon><strong>{{ 'CHATS.EMPTY_FOLDER' | translate:'Todo despejado por aquí' }}</strong><span>{{ 'CHATS.EMPTY_FOLDER_COPY' | translate:'Este filtro no tiene conversaciones.' }}</span><button type="button" (click)="setFolder('all')">{{ 'CHATS.SHOW_ALL' | translate:'Ver todos los chats' }}</button></div>
                 }
@@ -383,10 +385,10 @@
     </aside>
 
     <section class="detail-stage" [class.detail-active]="detailActive">
-      <router-outlet (activate)="detailActive = true" (deactivate)="onDetailDeactivate()"></router-outlet>
+      <router-outlet (activate)="onDetailActivate()" (deactivate)="onDetailDeactivate()"></router-outlet>
       @if (!detailActive) {
         <div class="welcome-stage">
-          <app-chat-welcome [firstConversation]="firstConversation() && !conversationIndexLoading() && !localHistory.storageError()" [showCallAlertsSetup]="showCallAlertsSetup()" [enablingCallAlerts]="callAlertsBusy()" [callAlertsNotice]="callAlertsNotice" (enableCallAlerts)="enableCallAlerts()" (newChat)="startNewChat()" (sharePass)="openShareAccount()" (newGroup)="openGroupModal()" (newStory)="openStoryComposer()" />
+          <app-chat-welcome [firstConversation]="firstConversation() && !conversationIndexLoading() && !localHistory.storageError()" (newChat)="startNewChat()" (sharePass)="openShareAccount()" (newGroup)="openGroupModal()" (newStory)="openStoryComposer()" />
         </div>
       }
     </section>

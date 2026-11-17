@@ -17,14 +17,38 @@ public sealed class RatchetDirectoryService(NivraDbContext db, TimeProvider cloc
     }
     public async Task<List<RatchetDirectoryEntry>> DirectoryAsync(string userId, string deviceId, List<string>? deviceIds, CancellationToken ct, int addressMode = 1)
     {
-        await OwnDevice(userId, deviceId, ct);
+        var own = await OwnDevice(userId, deviceId, ct);
         var ids = Ids(deviceIds);
         var active = await db.Devices.AsNoTracking().Where(row => ids.Contains(row.Id) && row.IsTrusted && row.RevokedAt == null &&
-            db.Users.Any(user => user.Id == row.UserId && user.DisabledAt == null)).Select(row => row.Id).ToListAsync(ct);
-        var registrations = await db.Set<RatchetPilotDevice>().AsNoTracking().Where(row => active.Contains(row.DeviceId) && row.AddressMode == addressMode).ToListAsync(ct);
-        var bindings = await db.Set<RatchetDeviceBinding>().AsNoTracking().Where(row => active.Contains(row.SourceDeviceId) && row.TargetDeviceId == deviceId).ToDictionaryAsync(row => row.SourceDeviceId, ct);
-        return registrations.Select(row => new RatchetDirectoryEntry(row.UserId, row.DeviceId, row.SignalDeviceNumber, row.RegistrationId, row.IdentityKey,
-            bindings.GetValueOrDefault(row.DeviceId)?.Header, bindings.GetValueOrDefault(row.DeviceId)?.Ciphertext)).ToList();
+            db.Users.Any(user => user.Id == row.UserId && user.DisabledAt == null))
+            .Select(row => new { row.Id, row.KeyBundle.IdentityKey }).ToDictionaryAsync(row => row.Id, row => row.IdentityKey, ct);
+        var activeIds = active.Keys.ToArray();
+        var registrations = await db.Set<RatchetPilotDevice>().AsNoTracking().Where(row => activeIds.Contains(row.DeviceId) && row.AddressMode == addressMode).ToListAsync(ct);
+        var bindings = await db.Set<RatchetDeviceBinding>().AsNoTracking().Where(row => activeIds.Contains(row.SourceDeviceId) && row.TargetDeviceId == deviceId).ToDictionaryAsync(row => row.SourceDeviceId, ct);
+        var ownIdentity = Coordinates(own.KeyBundle.IdentityKey);
+        return registrations.Select(row =>
+        {
+            var binding = bindings.GetValueOrDefault(row.DeviceId);
+            // A repaired legacy key cannot decrypt a binding sealed for its
+            // previous key. Omit that stale proof so the client requests a new
+            // one instead of repeatedly receiving an unusable header.
+            if (!BindingMatchesCurrentIdentities(binding, ownIdentity, Coordinates(active[row.DeviceId]))) binding = null;
+            return new RatchetDirectoryEntry(row.UserId, row.DeviceId, row.SignalDeviceNumber, row.RegistrationId, row.IdentityKey,
+                binding?.Header, binding?.Ciphertext);
+        }).ToList();
+    }
+
+    public static bool BindingMatchesCurrentIdentities(RatchetDeviceBinding? binding, string? targetIdentity, string? sourceIdentity)
+    {
+        if (binding is null || targetIdentity is null || sourceIdentity is null || binding.TargetIdentity != targetIdentity) return false;
+        try
+        {
+            using var document = JsonDocument.Parse(binding.Header);
+            var header = document.RootElement;
+            return header.GetProperty("v").GetInt32() == 1 && header.GetProperty("alg").GetString() == "ECDH-P256-A256GCM"
+                && Coordinates(header.GetProperty("senderPublicKey").GetRawText()) == sourceIdentity;
+        }
+        catch (Exception error) when (error is JsonException or KeyNotFoundException or InvalidOperationException or FormatException or ArgumentException) { return false; }
     }
 
     public async Task PublishBindingsAsync(string userId, string deviceId, List<RatchetBindingUpload>? uploads, CancellationToken ct)

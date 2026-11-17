@@ -30,11 +30,13 @@ builder.Logging.ClearProviders(); builder.WebHost.UseUrls("http://127.0.0.1:0");
 builder.Services.AddDbContext<NivraDbContext>(options => options.UseNpgsql(connection.ConnectionString, provider => provider.EnableRetryOnFailure(3)));
 builder.Services.AddScoped<INivraStore, PgSqlNivraStore>(); builder.Services.AddScoped<RatchetPreKeyStore>();
 builder.Services.AddScoped<RatchetDirectoryService>(); builder.Services.AddSignalR();
+builder.Services.AddSingleton(new RealtimePresence());
 builder.Services.AddSingleton(TimeProvider.System); builder.Services.AddSingleton<TokenService>();
 builder.Services.AddHttpClient(); builder.Services.Configure<NivraPushOptions>(_=>{});
 builder.Services.AddSingleton<Microsoft.AspNetCore.DataProtection.IDataProtectionProvider>(new Microsoft.AspNetCore.DataProtection.EphemeralDataProtectionProvider());
 builder.Services.AddSingleton<PushNotificationService>();
 builder.Services.AddSingleton<PasswordHasher>(); builder.Services.AddSingleton<LiveKitTokenService>();
+builder.Services.AddSingleton<QrLoginService>(); builder.Services.AddSingleton<PhoneOtpService>();
 builder.Services.AddSingleton<Microsoft.Extensions.Options.IOptions<NivraStorageOptions>>(
     Microsoft.Extensions.Options.Options.Create(new NivraStorageOptions { LocalPath = Path.Combine(Path.GetTempPath(), "nivra-ci-vault-" + Guid.NewGuid().ToString("N")) }));
 builder.Services.AddSingleton<EncryptedFileStorage>();
@@ -50,6 +52,12 @@ app.UseExceptionHandler(handler => handler.Run(context =>
 }));
 app.UseNivraSecurityHeaders(); app.UseNivraAuth(); app.UseRateLimiter(); app.MapCommunityEndpoints(); app.MapGroupInviteEndpoints(); app.MapAccountIdentityEndpoints(); app.MapRatchetPreKeyPilotEndpoints(); app.MapRatchetClientEndpoints(); app.MapRatchetHybridEndpoints(); app.MapHistoryArchiveEndpoints();
 app.MapDeviceContinuityEndpoints();
+VaultViewCloseChecks.MapFixture(app);
+typeof(EndpointExtensions).GetMethod("MapAuthEndpoints",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,[app]);
+typeof(EndpointExtensions).GetMethod("MapDeviceAndKeyEndpoints",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,[app]);
+app.MapAccountHistorySyncEndpoints();
+app.MapDeviceAuthorityEndpoints();
+typeof(EndpointExtensions).GetMethod("MapConversationAndMessageEndpoints",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,[app]);
 typeof(EndpointExtensions).GetMethod("MapVaultRoomEndpoints",System.Reflection.BindingFlags.NonPublic|System.Reflection.BindingFlags.Static)!.Invoke(null,[app]);
 app.MapPost("/fixture/message-policy", async (SendMessageRequest request, HttpContext http, NivraDbContext db, CancellationToken ct) => {
     if (http.GetCurrentUser() is not { } user) return Results.Unauthorized();
@@ -210,6 +218,18 @@ using (var forAlice = await Post("alice-client", "/ratchet/directory", new Ratch
     Check((await forAlice.Content.ReadFromJsonAsync<List<RatchetDirectoryEntry>>(json))!.Single().BindingCiphertext == binding.Ciphertext, "binding is delivered only to intended requester");
 using (var forOther = await Post("alice-client-two", "/ratchet/directory", new RatchetDeviceIdsRequest(["dev-lab-bob-client"])))
     Check((await forOther.Content.ReadFromJsonAsync<List<RatchetDirectoryEntry>>(json))!.Single().BindingCiphertext is null, "another same-account device cannot obtain target proof");
+var repairedLegacy = JsonSerializer.Serialize(new { kty="EC", crv="P-256", x=new string('E',43), y=new string('F',43) });
+await Mutate(async db => (await db.Devices.SingleAsync(row => row.Id=="dev-lab-alice-client")).KeyBundle.IdentityKey=repairedLegacy);
+using (var afterTargetRepair = await Post("alice-client", "/ratchet/directory", new RatchetDeviceIdsRequest(["dev-lab-bob-client"])))
+{
+    var entry=(await afterTargetRepair.Content.ReadFromJsonAsync<List<RatchetDirectoryEntry>>(json))!.Single();
+    Check(entry.BindingHeader is null && entry.BindingCiphertext is null, "directory lets a repaired recipient request a fresh proof instead of returning its stale encrypted binding");
+}
+await Mutate(async db => (await db.Devices.SingleAsync(row => row.Id=="dev-lab-alice-client")).KeyBundle.IdentityKey=aliceLegacy);
+await Mutate(async db => (await db.Devices.SingleAsync(row => row.Id=="dev-lab-bob-client")).KeyBundle.IdentityKey=repairedLegacy);
+using (var afterSourceRepair = await Post("alice-client", "/ratchet/directory", new RatchetDeviceIdsRequest(["dev-lab-bob-client"])))
+    Check((await afterSourceRepair.Content.ReadFromJsonAsync<List<RatchetDirectoryEntry>>(json))!.Single().BindingHeader is null, "directory does not advertise a stale proof after its source legacy key changed");
+await Mutate(async db => (await db.Devices.SingleAsync(row => row.Id=="dev-lab-bob-client")).KeyBundle.IdentityKey=bobLegacy);
 await Status("bob-client", "/ratchet/bindings", new RatchetBindingUploadRequest([binding with { TargetIdentity = "changed" }]), HttpStatusCode.Conflict, "binding cannot target replaced legacy identity");
 await Status("bob-client", "/ratchet/bindings", new RatchetBindingUploadRequest([binding with { Header = sealedHeader.Replace(bobLegacy, aliceLegacy) }]), HttpStatusCode.BadRequest, "binding header must match producer identity");
 Console.WriteLine($"PASS {checks} PostgreSQL and HTTP ratchet checks");
@@ -276,11 +296,17 @@ Console.WriteLine($"PASS {checks} PostgreSQL and HTTP hybrid ratchet checks");
 await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab", Guid.NewGuid()), HttpStatusCode.OK, "active vault peers reserve hybrid prekeys without a normal chat");
 await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab-expired", Guid.NewGuid()), HttpStatusCode.Forbidden, "expired vault cannot reserve a session");
 await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab-other", Guid.NewGuid()), HttpStatusCode.Forbidden, "vault membership is required on both sides");
+await MessagePushChecks.Run(app.Services);
+await MessageDeliveryChecks.Run(app,tokens);
 await CommunityChecks.Run(app,tokens);
 await DeviceEnrollmentChecks.Run(app);
 await AccountIdentityChecks.Run(app,tokens);
+await AccountHistorySyncChecks.Run(app,tokens);
+await DeviceAuthorityChecks.Run(app,tokens);
+await MultiDeviceLoginChecks.Run(app,tokens);
 await CallAnswerChecks.Run(app.Services);
 await VaultAccessChecks.Run(app,tokens);
+await VaultViewCloseChecks.Run(app);
 const string liveTarget="dev-lab-alice-live";
 var liveIdentity=JsonSerializer.Serialize(new {kty="EC",crv="P-256",x=new string('A',43),y=new string('B',43)});
 var liveProof=new DeviceContinuityRequest(DeviceContinuityPolicy.Coordinates(liveIdentity)!,Public(64));

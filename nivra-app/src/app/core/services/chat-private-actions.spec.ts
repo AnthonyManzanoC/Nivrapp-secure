@@ -97,8 +97,8 @@ describe('protected chats guard central message actions', () => {
     const h = harness(); const once = { ...h.message, deleteAfterRead: true };
     await h.service.markMessageOpened(once);
     expect(h.service.sendReceipt).not.toHaveBeenCalled(); expect(h.service.applyViewOnceTombstones).not.toHaveBeenCalled();
-    h.grant.set('private'); const receipt = deferred(); h.service.sendReceipt.and.returnValue(receipt.promise);
-    const pending = h.service.markMessageOpened(once); h.grant.set(null); receipt.resolve(); await pending;
+    h.grant.set('private'); const claim = deferred<any>(); h.service.onceOpens={claim:()=>claim.promise};
+    const pending = h.service.markMessageOpened(once); h.grant.set(null); claim.resolve({first:true,record:{openedAt:new Date().toISOString()}}); await pending;
     expect(h.service.signalr.syncReadReceipts).not.toHaveBeenCalled(); expect(h.service.applyViewOnceTombstones).not.toHaveBeenCalled();
   });
 
@@ -120,6 +120,32 @@ describe('protected chats guard central message actions', () => {
     const pending = h.service.sendPayload(h.conversation, h.message.payload);
     const rejected = expectAsync(pending).toBeRejectedWithError(/Desbloquea el chat protegido/);
     await started.promise; h.grant.set(null); sealed.resolve([{ ciphertext: 'sealed' }]); await rejected;
+    expect(h.service.api.post).not.toHaveBeenCalled();
+  });
+
+  it('anchors a scheduled expiry only after recipient encryption is ready and before its HTTP request', async () => {
+    const h = harness(); h.grant.set('private');
+    const sealed = deferred<any[]>(), started = deferred();
+    h.service.encryptedRecipients.and.callFake(() => { started.resolve(); return sealed.promise; });
+    const expiry = new Date(Date.now() + 3600000).toISOString();
+    const prepare = jasmine.createSpy().and.resolveTo(expiry);
+    const pending = h.service.sendPayload(h.conversation, h.message.payload, 'Text', null,
+      { queueManaged: true, clientMessageId: 'scheduled-stable', prepareScheduledExpiry: prepare });
+    await started.promise;
+    expect(prepare).not.toHaveBeenCalled(); expect(h.service.api.post).not.toHaveBeenCalled();
+    sealed.resolve([{ ciphertext: 'sealed' }]); await pending;
+    expect(prepare).toHaveBeenCalledTimes(1);
+    expect(h.service.api.post.calls.mostRecent().args[1].expiresAt).toBe(expiry);
+    expect(h.service.api.post.calls.mostRecent().args[1].clientMessageId).toBe('scheduled-stable');
+  });
+
+  it('does not transmit a scheduled message if the chat relocks while its deadline is being persisted', async () => {
+    const h = harness(); h.grant.set('private');
+    const expiry = deferred<string>(), started = deferred();
+    const pending = h.service.sendPayload(h.conversation, h.message.payload, 'Text', null,
+      { queueManaged: true, prepareScheduledExpiry: () => { started.resolve(); return expiry.promise; } });
+    const rejected = expectAsync(pending).toBeRejectedWithError(/Desbloquea el chat protegido/);
+    await started.promise; h.grant.set(null); expiry.resolve(new Date(Date.now() + 3600000).toISOString()); await rejected;
     expect(h.service.api.post).not.toHaveBeenCalled();
   });
 

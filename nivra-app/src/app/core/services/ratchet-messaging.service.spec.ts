@@ -64,6 +64,79 @@ describe('actual application Double Ratchet delivery', () => {
   const response = (sender: any, recipients: any[], clientMessageId = 'msg-one'): MessageResponse => ({ id: 'server-' + clientMessageId, conversationId: 'chat-test', clientMessageId,
     senderUserId: sender.target.userId, senderDeviceId: sender.target.deviceId, kind: 'Text', recipients, serverReceivedAt: new Date().toISOString(), deleteAfterRead: false, receipts: [] });
 
+  it('recovers a full 200-message encrypted outbox after cancellation without resetting identity or another chat',async()=>{
+    const alice=await client('alice');await alice.service.pump();
+    const payload={type:'text',text:'Pendiente'};
+    for(let index=0;index<200;index++)await alice.service.encrypt('cancelled-chat','cancel-'+index,payload,[alice.target],null);
+    const identity=JSON.stringify(alice.service.runtime.publicIdentity);
+    await expectAsync(alice.service.encrypt('next-chat','after-cancel',payload,[alice.target],null)).toBeRejectedWith(jasmine.objectContaining({code:'ratchet_queue_full'}));
+    const before=await alice.service.history.readRatchetState(alice.owner.user.id,alice.owner.device.id);
+    await expectAsync(alice.service.discardPending('wrong-chat','cancel-0')).toBeRejected();
+    const untouched=await alice.service.history.readRatchetState(alice.owner.user.id,alice.owner.device.id);
+    expect(untouched.state).toEqual(before.state);
+    for(let index=0;index<200;index++)await alice.service.discardPending('cancelled-chat','cancel-'+index);
+    const packets=await alice.service.encrypt('next-chat','after-cancel',payload,[alice.target],null);
+    expect(JSON.stringify(alice.service.runtime.publicIdentity)).toBe(identity);
+    expect(await alice.service.decrypt({...response(alice,packets,'after-cancel'),conversationId:'next-chat'},packets[0])).toEqual(payload);
+    const engine=alice.service.runtime,state=await engine.applicationState();
+    expect(Object.keys(state.outgoing)).toEqual(['after-cancel']);
+    await alice.service.discardPending('cancelled-chat','cancel-0');
+    expect(Object.keys((await engine.applicationState()).outgoing)).toEqual(['after-cancel']);
+  },60000);
+
+  it('delivers to a ready phone while another browser of that person has never prepared its hybrid keys', async () => {
+    const alice=await client('alice'),bob=await client('bob'),oldBrowser=await client('bob-old','bob');
+    await alice.service.pump();await bob.service.pump();
+    const targets=[alice.target,bob.target,oldBrowser.target],payload={type:'text',text:'A ready phone can receive this'},id='phone-ready';
+    await expectAsync(alice.service.encrypt('chat-test',id,payload,targets,null)).toBeRejectedWith(jasmine.objectContaining({code:'ratchet_preparing'}));
+    await bob.service.pump();
+    const packets=await alice.service.encrypt('chat-test',id,payload,targets,null);
+    expect(packets.map((packet:any)=>packet.deviceId)).toEqual([alice.target.deviceId,bob.target.deviceId]);
+    expect(await bob.service.decrypt(response(alice,packets,id),packets[1])).toEqual(payload);
+    await alice.service.runtime.close();alice.service.runtime=null;
+    expect(await alice.service.encrypt('chat-test',id,payload,targets,null)).toEqual(packets);
+  },30000);
+
+  it('requests preparation for an additional browser without blocking its already authenticated phone', async () => {
+    const alice=await client('alice'),bob=await client('bob');await alice.service.pump();await bob.service.pump();
+    await alice.service.encrypt('chat-test','prime-phone',{type:'text',text:'prime'},[alice.target,bob.target],null).catch(()=>undefined);
+    await bob.service.pump();
+    const prime=await alice.service.encrypt('chat-test','prime-phone',{type:'text',text:'prime'},[alice.target,bob.target],null);
+    await bob.service.decrypt(response(alice,prime,'prime-phone'),prime[1]);
+    const browser=await client('bob-browser','bob');await browser.service.pump();
+    const payload={type:'text',text:'Send while the browser wakes'},id='extra-browser';
+    const packets=await alice.service.encrypt('chat-test',id,payload,[alice.target,bob.target,browser.target],null);
+    expect(packets.map((packet:any)=>packet.deviceId)).toEqual([alice.target.deviceId,bob.target.deviceId]);
+    expect(requests.get(browser.target.deviceId)?.has(alice.target.deviceId)).toBeTrue();
+    expect(await bob.service.decrypt(response(alice,packets,id),packets[1])).toEqual(payload);
+  },30000);
+
+  it('never omits a whole participant when the group has another person whose device is not prepared', async () => {
+    const alice=await client('alice'),bob=await client('bob'),carol=await client('carol');
+    await alice.service.pump();await bob.service.pump();
+    await expectAsync(alice.service.encrypt('chat-test','every-person',{type:'text',text:'Everyone must be covered'},[alice.target,bob.target,carol.target],null))
+      .toBeRejectedWith(jasmine.objectContaining({code:'recipient_keys_unavailable',retryable:true}));
+    expect(proofs.size).toBe(0);
+  },30000);
+
+  it('refreshes an old proof encrypted to a repaired local key before accepting the peer', async () => {
+    const alice=await client('alice'),bob=await client('bob');await alice.service.pump();await bob.service.pump();
+    const payload={type:'text',text:'Recover a stale handshake'},id='stale-proof';
+    await alice.service.encrypt('chat-test',id,payload,[alice.target,bob.target],null).catch(()=>undefined);await bob.service.pump();
+    const oldProof=proofs.get(`${bob.target.deviceId}:${alice.target.deviceId}`);
+    const replacement=await crypto.subtle.generateKey({name:'ECDH',namedCurve:'P-256'},true,['deriveKey']);
+    alice.keys.publicJwk=await crypto.subtle.exportKey('jwk',replacement.publicKey);
+    alice.keys.privateJwk=await crypto.subtle.exportKey('jwk',replacement.privateKey);
+    alice.target.publicJwk=alice.keys.publicJwk;
+    await expectAsync(alice.service.encrypt('chat-test',id,payload,[alice.target,bob.target],null))
+      .toBeRejectedWith(jasmine.objectContaining({code:'ratchet_preparing',retryable:true}));
+    expect(requests.get(bob.target.deviceId)?.has(alice.target.deviceId)).toBeTrue();
+    expect(proofs.get(`${bob.target.deviceId}:${alice.target.deviceId}`)).toBe(oldProof);
+    await bob.service.pump();
+    const packets=await alice.service.encrypt('chat-test',id,payload,[alice.target,bob.target],null);
+    expect(await bob.service.decrypt(response(alice,packets,id),packets[1])).toEqual(payload);
+  },30000);
+
   it('exchanges real hybrid-ratchet messages with a recovered signed subdevice without importing history or contacting a retired device',async()=>{
     const alice=await client('alice'),bob=await client('bob'),root=await createAccountIdentity('usr-bob');
     await alice.service.pump();await bob.service.pump();
@@ -136,12 +209,24 @@ describe('actual application Double Ratchet delivery', () => {
     const alice=await client('alice'),linked=await client('alice-linked','alice');
     await alice.service.pump();await linked.service.pump();
     const targets=[alice.target,linked.target],payload={type:'text',text:'Synced private note'},id='self-linked';
-    await alice.service.encrypt('chat-test',id,payload,targets,null).catch(()=>undefined);await linked.service.pump();
+    // Finish the linked-device proof before preparing this message. Once a
+    // packet is durable, retries keep its exact recipient/ciphertext bytes.
+    await new Promise(resolve=>alice.service.api.post('/ratchet/olm/bindings/request',{deviceIds:[linked.target.deviceId]}).subscribe(resolve));
+    await linked.service.pump();
     const recipients=await alice.service.encrypt('chat-test',id,payload,targets,null);
     expect(recipients[1].ciphertext).not.toBe('local-history-v1');
     const message=response(alice,recipients,id);expect(await linked.service.decrypt(message,recipients[1])).toEqual(payload);
     await linked.service.runtime.close();linked.service.runtime=null;
     expect(await linked.service.decrypt(message,recipients[1])).toEqual(payload);
+  },30000);
+
+  it('keeps a private note available locally when an old browser of the same account has no hybrid registration', async () => {
+    const alice=await client('alice'),retired=await client('alice-retired','alice');await alice.service.pump();
+    const payload={type:'text',text:'Do not block my own note'},id='own-note-ready';
+    const packets=await alice.service.encrypt('chat-test',id,payload,[alice.target,retired.target],null);
+    expect(packets.map((packet:any)=>packet.deviceId)).toEqual([alice.target.deviceId]);
+    const message=response(alice,packets,id);await alice.service.confirmSent(message,payload);
+    expect(await alice.service.decrypt(message,packets[0])).toEqual(payload);
   },30000);
 
   it('authenticates migration, sends, retries identical bytes, restarts and reads both sides without a static-key self copy', async () => {
@@ -183,7 +268,7 @@ describe('actual application Double Ratchet delivery', () => {
     const alice = await client('alice'), peers = await Promise.all(Array.from({ length: 8 }, (_, index) => client('peer' + index))), legacy = await client('legacy');
     await alice.service.pump(); for (const peer of peers) await peer.service.pump();
     const targets = [alice.target, ...peers.map(peer => peer.target)], payload = { type: 'text', text: 'group message '.repeat(4500) };
-    await expectAsync(alice.service.encrypt('chat-test', 'group-message', payload, [...targets, legacy.target], null)).toBeRejectedWithError(/actualizar/);
+    await expectAsync(alice.service.encrypt('chat-test', 'group-message', payload, [...targets, legacy.target], null)).toBeRejectedWith(jasmine.objectContaining({code:'recipient_keys_unavailable'}));
     await expectAsync(alice.service.encrypt('chat-test', 'group-message', payload, targets, null)).toBeRejected();
     for (const peer of peers) await peer.service.pump();
     const packets = await alice.service.encrypt('chat-test', 'group-message', payload, targets, null);

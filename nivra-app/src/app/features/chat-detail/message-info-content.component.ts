@@ -9,10 +9,11 @@ import { TranslateService } from '../../core/services/translate.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
 import { LocalizedDatePipe } from '../../core/pipes/localized-date.pipe';
 import { recipientReceipts, ReceiptState } from './message-receipts';
+import { MessagePrivacyBadgeComponent } from './message-privacy-badge.component';
 
 @Component({
   selector: 'app-message-info-content', standalone: true,
-  imports: [IonIcon, TranslatePipe, LocalizedDatePipe],
+  imports: [IonIcon, TranslatePipe, LocalizedDatePipe, MessagePrivacyBadgeComponent],
   templateUrl: './message-info-content.component.html', styleUrls: ['./message-info-content.component.scss'],
 })
 export class MessageInfoContentComponent {

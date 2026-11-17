@@ -4,6 +4,9 @@ import { AuthService } from './auth.service';
 import { AppLockService } from './app-lock.service';
 import { LocalHistoryService } from './local-history.service';
 import { NivraApiService } from './nivra-api.service';
+import { ChatMessageVm } from '../models/nivra.models';
+import { AccountHistoryEnvelope, HistoryRootApproval, HistoryRootApprovalContext, historyRootApprovalStatement, openAccountHistory, sealAccountHistory } from '../utils/account-history-sync';
+import { continuityCoordinates } from '../utils/device-continuity';
 import { AccountDeviceCertificate, AccountIdentityBackup, AccountIdentitySecret, accountBackupStatement, accountDeviceStatement, accountRecoveryPhrase, accountRootStatement, createAccountIdentity, identityBytes, openAccountBackup, sealAccountBackup, signAccountIdentity, verifyAccountIdentity } from '../utils/account-identity';
 
 export interface AccountIdentityContext { hybridIdentity: string; legacyIdentity: string; endorse: (bytes: Uint8Array<ArrayBuffer>) => Promise<string>; }
@@ -85,6 +88,24 @@ export class AccountIdentityService {
     await firstValueFrom(this.api.post('/account/identity/device',certificate).pipe(timeout(15000)));owner.check();this.certified=mark;
   }
   async phrase():Promise<string>{const local=await this.local();if(!local)throw Error('Activa primero la recuperación de identidad.');return accountRecoveryPhrase(local.secret);}
+  async historyRoot():Promise<string|null>{const owner=this.owner(),local=await this.local();owner.check();return local?.secret.rootKey??null;}
+  async approveHistoryArchive(context:HistoryRootApprovalContext,sourceHybrid:string,targetHybrid:string):Promise<HistoryRootApproval>{
+    const owner=this.owner(),local=await this.local();owner.check();
+    if(!local||context.userId!==owner.userId||context.sourceDeviceId!==owner.deviceId||context.sourceDeviceId===context.targetDeviceId||
+      ![context.requestId,context.userId,context.sourceDeviceId,context.targetDeviceId].every(value=>/^[a-zA-Z0-9_-]{1,128}$/.test(value))||
+      !continuityCoordinates.test(context.sourceLegacy)||!continuityCoordinates.test(context.targetLegacy)||!Number.isFinite(Date.parse(context.expiresAt))||Date.parse(context.expiresAt)<=Date.now()||Date.parse(context.expiresAt)>Date.now()+86400000||
+      sourceHybrid.length!==88||targetHybrid.length!==88)throw Error('Autorización de historial inválida.');
+    const approval:HistoryRootApproval={rootKey:local.secret.rootKey,sourceHybrid,targetHybrid,signature:''};
+    approval.signature=await signAccountIdentity(local.secret,historyRootApprovalStatement(context,approval));owner.check();return approval;
+  }
+  async sealHistory(message:ChatMessageVm):Promise<AccountHistoryEnvelope>{
+    const owner=this.owner(),local=await this.local();owner.check();if(!local)throw Error('Recupera primero la identidad de esta cuenta.');
+    const row=await sealAccountHistory(local.secret,message);owner.check();return row;
+  }
+  async openHistory(row:AccountHistoryEnvelope):Promise<ChatMessageVm>{
+    const owner=this.owner(),local=await this.local();owner.check();if(!local)throw Error('Recupera primero la identidad de esta cuenta.');
+    const message=await openAccountHistory(local.secret,row);owner.check();return message;
+  }
   async exportForDevice():Promise<AccountIdentityTransfer|undefined>{const local=await this.local();return local?{v:1,secret:local.secret,backup:local.backup}:undefined;}
   async importForDevice(transfer:AccountIdentityTransfer):Promise<void>{
     const owner=this.owner();if(transfer?.v!==1||JSON.stringify(transfer).length>40000||transfer.secret?.userId!==owner.userId)throw Error('La identidad transferida no corresponde a esta cuenta.');

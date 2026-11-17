@@ -5,11 +5,16 @@ import { AuthService } from './auth.service';
 import { CryptoService, HistoricalDeviceKeyMaterial } from './crypto.service';
 import { NivraApiService } from './nivra-api.service';
 import { SignalrService } from './signalr.service';
-import { MessageResponse, NivraDevice, StoredDeviceKeys } from '../models/nivra.models';
+import { MessageResponse, NivraDevice, PublicKeyDirectory, StoredDeviceKeys } from '../models/nivra.models';
 import { NetworkPolicyService } from './network-policy.service';
 import { IdentityTrustService, IdentityTrustTransfer } from './identity-trust.service';
 import { Capacitor } from '@capacitor/core';
 import { HistoryArchiveService } from './history-archive.service';
+import { AccountIdentityService } from './account-identity.service';
+import { DeviceAuthorityService } from './device-authority.service';
+import { accountDeviceStatement, verifyAccountIdentity } from '../utils/account-identity';
+import { continuityIdentity } from '../utils/device-continuity';
+import { HistoryRootApproval, HistoryRootApprovalContext, historyRootApprovalStatement } from '../utils/account-history-sync';
 
 interface TransferRequest { id: string; userId: string; targetDeviceId: string; targetIdentityKey: string; targetDeviceName?: string; expiresAt: string; }
 export interface PendingHistoryApproval extends TransferRequest { fingerprint: string; }
@@ -22,7 +27,9 @@ export interface PreferredHistorySource {
 interface TransferResponse { sourceDeviceId: string; sourceIdentityKey: string; header: string; ciphertext: string; }
 interface TransferStatus extends TransferRequest { responses: TransferResponse[]; }
 interface KeyringPayload { v: 1; purpose: 'history-keyring'; requestId: string; userId: string; targetDeviceId: string; sourceDeviceId: string; targetPublicJwk: JsonWebKey; expiresAt: string; keys: HistoricalDeviceKeyMaterial[]; identityTrust?: IdentityTrustTransfer; archiveProtocol?: 1; }
-interface SessionScope { userId: string; deviceId: string; alias: string; epoch: number; }
+interface ArchiveOnlyPayload {v:1;purpose:'history-archive-only';requestId:string;userId:string;targetDeviceId:string;sourceDeviceId:string;targetPublicJwk:JsonWebKey;expiresAt:string;archiveProtocol:1;rootApproval:HistoryRootApproval;keys?:never;}
+interface CertifiedHistoryDevice {legacy:JsonWebKey;hybrid:string;}
+interface SessionScope { userId: string; deviceId: string; alias: string; epoch: number; generation?:number; }
 export interface HistoryRecoveryEvidence {
   userId: string;
   deviceId: string;
@@ -44,6 +51,8 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private readonly realtime = inject(SignalrService);
   private readonly identityTrust = inject(IdentityTrustService);
   private readonly archive = inject(HistoryArchiveService);
+  private readonly deviceAuthority = inject(DeviceAuthorityService);
+  private readonly accountIdentity=inject(AccountIdentityService);
   private readonly destroyRef = inject(DestroyRef);
   private epoch = 0;
   private scopeId = '';
@@ -56,6 +65,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private recoveryRetryAt = 0;
   private recoveryRetryAttempts = 0;
   private requested = false;
+  private rootArchiveOnly=false;
   private requestRevision = 0;
   private requestEvidence: HistoryRecoveryEvidence | null = null;
   private evidenceCheck: { epoch: number; promise: Promise<void>; evidence: HistoryRecoveryEvidence } | null = null;
@@ -63,6 +73,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
   private requestExpiresAt = 0;
   private requestedAt = 0;
   private readonly importedResponses = new Set<string>();
+  private archiveResponses=new Set<string>();
   private readonly dismissedRequests = new Set<string>();
   private sourceDirectory: { epoch: number; expiresAt: number; devices: NivraDevice[] } | null = null;
   private sourceDirectoryCheck: { epoch: number; promise: Promise<void> } | null = null;
@@ -148,7 +159,13 @@ export class HistoryDeviceSyncService implements OnDestroy {
       if (!own || own.userId !== scope.userId || own.deviceId !== scope.deviceId || !this.validEvidence(candidate, scope)) return;
       const recipient = candidate.message.recipients.find(item => item.userId === scope.userId && this.evidenceSenderKey(item.header, item.ciphertext));
       const sender = recipient ? this.evidenceSenderKey(recipient.header, recipient.ciphertext) : null;
-      if (!sender) return;
+      if (!sender) {
+        const certified=await this.certifiedHistoryDevices(scope);this.assertCurrent(scope);
+        const current=certified?.devices.get(scope.deviceId);
+        if(!current||certified!.devices.size<2||!this.crypto.samePublicKey(current.legacy,own.publicJwk))return;
+        if(revision!==this.requestRevision||!this.validEvidence(candidate,scope))return;
+        this.requestEvidence=candidate;this.rootArchiveOnly=true;this.otherDeviceRecovery.set(true);this.beginRequest(false);return;
+      }
       await crypto.subtle.importKey('jwk', sender, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
       this.assertCurrent(scope);
       if (revision !== this.requestRevision) return;
@@ -260,6 +277,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.approvalEpoch.set(this.epoch);
     this.scopeId = scopeId;
     this.requested = false;
+    this.rootArchiveOnly=false;
     this.requestRevision = (this.requestRevision ?? 0) + 1;
     this.requestEvidence = null; this.evidenceCheck = null;
     this.pumpAgain = this.replayRequested = this.recoveryIncomplete = false;
@@ -267,6 +285,7 @@ export class HistoryDeviceSyncService implements OnDestroy {
     this.requestExpiresAt = this.requestedAt = 0;
     this.recoveryRetryAt = this.recoveryRetryAttempts = 0;
     this.importedResponses.clear();
+    this.archiveResponses?.clear();
     this.dismissedRequests.clear();
     this.sourceDirectory = this.sourceDirectoryCheck = null;
     this.sourceDirectoryRevision = (this.sourceDirectoryRevision ?? 0) + 1;
@@ -283,11 +302,11 @@ export class HistoryDeviceSyncService implements OnDestroy {
 
   private scope(): SessionScope | null {
     const session = this.auth.session();
-    return session?.device.isTrusted && !session.device.revokedAt ? { userId: session.user.id, deviceId: session.device.id, alias: session.user.alias, epoch: this.epoch } : null;
+    return session?.device.isTrusted && !session.device.revokedAt ? { userId: session.user.id, deviceId: session.device.id, alias: session.user.alias, epoch: this.epoch,generation:this.auth.sessionGeneration?.() } : null;
   }
   private isCurrent(scope: SessionScope): boolean {
     const now = this.scope();
-    return now?.userId === scope.userId && now.deviceId === scope.deviceId && now.epoch === scope.epoch;
+    return now?.userId === scope.userId && now.deviceId === scope.deviceId && now.epoch === scope.epoch&&now.generation===scope.generation;
   }
   private assertCurrent(scope: SessionScope): void { if (!this.isCurrent(scope)) throw new Error('La sesión cambió durante la recuperación del historial.'); }
 
@@ -371,6 +390,13 @@ export class HistoryDeviceSyncService implements OnDestroy {
     // Fetch our approved package independently. A stalled request list for
     // other devices must not hold up an approval that has already arrived.
     const approvals = this.refreshPendingRequests(scope);
+    // A second APK with the same recovered root may request an archive automatically.
+    // An alias, password login or device name alone never enables this path.
+    if(this.requested&&this.usesLocalRecovery()){
+      const certified=await this.certifiedHistoryDevices(scope);
+      if(!this.isCurrent(scope))return;
+      if(certified?.devices.has(scope.deviceId)&&certified.devices.size>1){this.rootArchiveOnly=true;this.otherDeviceRecovery.set(true);}
+    }
     // Existing approvals remain independent from the directory. Before a new
     // request, allow a short lookup to rule out an impossible self-approval.
     const sourceCheck = this.requested && this.requestEvidence && !this.usesLocalRecovery() ? this.refreshSourcePreference(scope) : null;
@@ -420,14 +446,14 @@ export class HistoryDeviceSyncService implements OnDestroy {
           try {
             const previous = this.importedResponses.size;
             await this.importResponse(status, response, scope, false);
-            imported ||= this.importedResponses.size > previous;
+            imported ||= this.importedResponses.size > previous&&!this.archiveResponses?.has(`${status.id}:${response.sourceDeviceId}`);
           } catch { this.assertCurrent(scope); failed = true; }
         }
         // Import the complete available batch before starting a message refresh.
         // Several approved sources can contribute different historical keys.
         if (imported) this.recovered$.next();
         if (this.replayRequested && this.requested) {
-          const hasApprovedKeys = (status.responses ?? []).some(response => this.importedResponses.has(`${status.id}:${response.sourceDeviceId}`));
+          const hasApprovedKeys = (status.responses ?? []).some(response => this.importedResponses.has(`${status.id}:${response.sourceDeviceId}`)&&!this.archiveResponses?.has(`${status.id}:${response.sourceDeviceId}`));
           if (imported || hasApprovedKeys) {
             this.replayRequested = false;
             // An explicit retry may follow a failed message refresh after key import.
@@ -494,10 +520,17 @@ export class HistoryDeviceSyncService implements OnDestroy {
         }
       }
       const approvals: PendingHistoryApproval[] = [];
+      const certified=pending?.length?await this.certifiedHistoryDevices(scope,pending.map(request=>request.targetDeviceId)):null;
+      this.assertCurrent(scope);
       for (const request of pending ?? []) {
         if (this.dismissedRequests.has(request.id) || request.userId !== scope.userId || request.targetDeviceId === scope.deviceId || !Number.isFinite(Date.parse(request.expiresAt)) || Date.parse(request.expiresAt) <= Date.now()) continue;
         const key = this.crypto.parsePublicJwk(request.targetIdentityKey);
         if (!key) continue;
+        const ownCertificate=certified?.devices.get(scope.deviceId),targetCertificate=certified?.devices.get(request.targetDeviceId);
+        if(ownCertificate&&targetCertificate&&this.crypto.samePublicKey(targetCertificate.legacy,key)){
+          try{await this.respondArchiveOnly(request,scope,ownCertificate,targetCertificate);this.assertCurrent(scope);continue;}
+          catch{this.assertCurrent(scope);/* A failed automatic archive remains eligible for manual recovery. */}
+        }
         approvals.push({ ...request, fingerprint: await this.publicFingerprint(key) });
         this.assertCurrent(scope);
       }
@@ -549,10 +582,12 @@ export class HistoryDeviceSyncService implements OnDestroy {
       : trusted.some(device => device.id === scope.deviceId) ? 'local-only' : 'unknown');
     const candidates = this.sourceDirectory.devices.filter(device => device.userId === scope.userId && device.id !== scope.deviceId
       && device.isTrusted && !device.revokedAt && typeof device.name === 'string' && device.name.trim());
-    const android = (device: NivraDevice) => /^Android\s+Nivra Mobile$/i.test(device.name.trim());
+    const authority = this.deviceAuthority?.authority();
+    const android = (device: NivraDevice) => authority?.devices.find(node => node.deviceId === device.id)?.platform === 'android'
+      || /^Android\s+Nivra Mobile$/i.test(device.name.trim());
     const recent = (device: NivraDevice) => Number.isFinite(Date.parse(device.lastSeenAt || ''))
       && Date.parse(device.lastSeenAt!) > Date.now() - 7 * 24 * 60 * 60_000;
-    const rank = (device: NivraDevice) => addressed.has(device.id) ? (android(device) ? 0 : 1)
+    const rank = (device: NivraDevice) => device.id === authority?.primaryDeviceId ? -1 : addressed.has(device.id) ? (android(device) ? 0 : 1)
       : recent(device) ? (android(device) ? 2 : 3) : (android(device) ? 4 : 5);
     candidates.sort((left, right) => rank(left) - rank(right)
       || (Date.parse(right.lastSeenAt || '') || 0) - (Date.parse(left.lastSeenAt || '') || 0)
@@ -569,6 +604,8 @@ export class HistoryDeviceSyncService implements OnDestroy {
       if (revision !== this.requestRevision) throw new Error('La recuperación ya terminó.');
       if (!this.requestId || this.requestExpiresAt <= Date.now()) {
         if (!this.requested || this.usesLocalRecovery()) throw new Error('No se solicitó recuperación desde otro equipo.');
+        if(await this.accountIdentity?.historyRoot())this.rootArchiveOnly=true;
+        this.assertCurrent(scope);
         const request = await firstValueFrom(this.api.post<TransferRequest>('/devices/history-transfer/', {}).pipe(timeout(this.transferTimeoutMs())));
         this.assertCurrent(scope);
         if (revision !== this.requestRevision) throw new Error('La recuperación ya terminó.');
@@ -586,6 +623,39 @@ export class HistoryDeviceSyncService implements OnDestroy {
       }
     }
     throw new Error('La solicitud de historial ya no está disponible.');
+  }
+
+  private async certifiedHistoryDevices(scope:SessionScope,requiredIds:string[]=[]):Promise<{root:string;devices:Map<string,CertifiedHistoryDevice>}|null>{
+    try{
+      const root=await this.accountIdentity?.historyRoot();this.assertCurrent(scope);if(!root)return null;
+      const directories=await firstValueFrom(this.api.post<PublicKeyDirectory[]>('/keys/batch',{userIds:[scope.userId],aliases:[]}).pipe(timeout(this.transferTimeoutMs())));this.assertCurrent(scope);
+      const directory=directories.find(value=>value.userId===scope.userId);if(directory?.accountIdentity?.rootKey!==root||!Array.isArray(directory.devices))return null;
+      const ids=[...new Set([scope.deviceId,...requiredIds,...directory.devices.map(device=>device.deviceId)])].slice(0,128);
+      if(requiredIds.some(id=>!ids.includes(id)))return null;
+      const hybrids=await firstValueFrom(this.api.post<{userId:string;deviceId:string;identityKey:string}[]>('/ratchet/olm/directory',{deviceIds:ids}).pipe(timeout(this.transferTimeoutMs())));this.assertCurrent(scope);
+      const devices=new Map<string,CertifiedHistoryDevice>();
+      for(const device of directory.devices){
+        const certificate=device.accountCertificate,hybrid=hybrids.find(value=>value.deviceId===device.deviceId&&value.userId===scope.userId),legacy=this.crypto.parsePublicJwk(device.keyBundle?.identityKey);
+        if(!certificate||!legacy||!hybrid||certificate.v!==1||certificate.rootKey!==root||certificate.deviceId!==device.deviceId||certificate.legacyKey!==continuityIdentity(legacy)||certificate.hybridKey!==hybrid.identityKey||
+          !await verifyAccountIdentity(root,accountDeviceStatement(scope.userId,certificate),certificate.signature))continue;
+        this.assertCurrent(scope);devices.set(device.deviceId,{legacy,hybrid:hybrid.identityKey});
+      }
+      this.assertCurrent(scope);return{root,devices};
+    }catch{return null;}
+  }
+
+  private approvalContext(request:TransferRequest,scope:SessionScope,sourceDeviceId:string,source:JsonWebKey,target:JsonWebKey):HistoryRootApprovalContext{
+    return{requestId:request.id,userId:scope.userId,sourceDeviceId,targetDeviceId:request.targetDeviceId,sourceLegacy:continuityIdentity(source),targetLegacy:continuityIdentity(target),expiresAt:request.expiresAt};
+  }
+
+  private async respondArchiveOnly(request:TransferRequest,scope:SessionScope,source:CertifiedHistoryDevice,target:CertifiedHistoryDevice):Promise<void>{
+    const own=await this.persistedIdentity(scope);this.assertCurrent(scope);
+    if(!this.crypto.samePublicKey(own.publicJwk,source.legacy)||!this.crypto.samePublicKey(this.crypto.parsePublicJwk(request.targetIdentityKey),target.legacy))throw Error('El certificado ya no corresponde a la solicitud.');
+    const rootApproval=await this.accountIdentity.approveHistoryArchive(this.approvalContext(request,scope,scope.deviceId,own.publicJwk,target.legacy),source.hybrid,target.hybrid);this.assertCurrent(scope);
+    if(!await this.archive.beginSend(request))throw Error('El archivo seguro no está disponible.');this.assertCurrent(scope);
+    const payload:ArchiveOnlyPayload={v:1,purpose:'history-archive-only',requestId:request.id,userId:scope.userId,targetDeviceId:request.targetDeviceId,sourceDeviceId:scope.deviceId,targetPublicJwk:target.legacy,expiresAt:request.expiresAt,archiveProtocol:1,rootApproval};
+    const sealed=await this.crypto.encryptForPublicKey(own,target.legacy,payload);this.assertCurrent(scope);
+    await firstValueFrom(this.api.post(`/devices/history-transfer/${encodeURIComponent(request.id)}/response`,sealed).pipe(timeout(this.transferTimeoutMs())));this.assertCurrent(scope);
   }
 
   private async respond(request: TransferRequest, scope: SessionScope): Promise<void> {
@@ -625,8 +695,25 @@ export class HistoryDeviceSyncService implements OnDestroy {
     if (header.v !== 1 || header.alg !== 'ECDH-P256-A256GCM' || source?.d || target?.d
       || !this.crypto.parsePublicJwk(header.senderPublicKey) || !this.crypto.samePublicKey(own.publicJwk, target)
       || !this.crypto.samePublicKey(source, header.senderPublicKey)) throw new Error('No se pudo comprobar el dispositivo de origen del historial.');
-    const payload = await this.crypto.decryptEnvelope<KeyringPayload>(own, response.header, response.ciphertext);
+    const payload = await this.crypto.decryptEnvelope<KeyringPayload|ArchiveOnlyPayload>(own, response.header, response.ciphertext);
     this.assertCurrent(scope);
+    if(payload.purpose==='history-archive-only'){
+      if(payload.v!==1||payload.requestId!==request.id||payload.userId!==scope.userId||payload.targetDeviceId!==scope.deviceId||payload.sourceDeviceId!==response.sourceDeviceId||payload.expiresAt!==request.expiresAt||
+        !this.crypto.samePublicKey(payload.targetPublicJwk,own.publicJwk)||payload.archiveProtocol!==1||payload.keys!==undefined||!payload.rootApproval)throw Error('El archivo no corresponde a esta solicitud.');
+      const certified=await this.certifiedHistoryDevices(scope,[response.sourceDeviceId]);this.assertCurrent(scope);
+      const sourceCertificate=certified?.devices.get(response.sourceDeviceId),targetCertificate=certified?.devices.get(scope.deviceId),approval=payload.rootApproval;
+      if(!certified||!sourceCertificate||!targetCertificate||approval.rootKey!==certified.root||approval.sourceHybrid!==sourceCertificate.hybrid||approval.targetHybrid!==targetCertificate.hybrid||
+        !this.crypto.samePublicKey(sourceCertificate.legacy,source)||!this.crypto.samePublicKey(targetCertificate.legacy,own.publicJwk)||
+        !await verifyAccountIdentity(certified.root,historyRootApprovalStatement(this.approvalContext(request,scope,response.sourceDeviceId,sourceCertificate.legacy,own.publicJwk),approval),approval.signature))throw Error('El dispositivo no conserva la misma identidad raíz.');
+      this.assertCurrent(scope);await this.archive.beginReceive(request,response.sourceDeviceId,response.sourceIdentityKey);this.assertCurrent(scope);
+      this.state.set('syncing');(this.archiveResponses??=new Set()).add(responseId);this.importedResponses.add(responseId);
+      // Only a verified plaintext import emits recovered$. Merely accepting a stream does not clear pending history.
+      return;
+    }
+    // Once a recoverable root exists, a server-selected legacy source cannot downgrade
+    // an automatic archive request into private-key or contact-trust import.
+    const establishedRoot=await this.accountIdentity?.historyRoot();this.assertCurrent(scope);
+    if(this.rootArchiveOnly||establishedRoot)throw Error('Este equipo requiere un archivo autorizado por la identidad raíz.');
     if (payload.v !== 1 || payload.purpose !== 'history-keyring' || payload.requestId !== request.id || payload.userId !== scope.userId || payload.targetDeviceId !== scope.deviceId || payload.sourceDeviceId !== response.sourceDeviceId || payload.expiresAt !== request.expiresAt || !this.crypto.samePublicKey(payload.targetPublicJwk, own.publicJwk) || !Array.isArray(payload.keys) || !payload.keys.length) throw new Error('El historial cifrado no corresponde a esta solicitud.');
     await this.crypto.importHistoricalDeviceKeys(scope.userId, scope.alias, payload.keys, () => this.isCurrent(scope));
     this.assertCurrent(scope);

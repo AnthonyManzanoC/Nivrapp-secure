@@ -1,4 +1,5 @@
 import { CommonModule } from '@angular/common';
+import { CallReturnBarComponent, globalCallReturnVisible } from './shared/call-return-bar.component';
 import { Component, DestroyRef, NgZone, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { App } from '@capacitor/app';
@@ -6,6 +7,7 @@ import { Capacitor } from '@capacitor/core';
 import { Platform } from '@ionic/angular';
 import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard';
 import { StatusBar, Style } from '@capacitor/status-bar';
+import { SystemUiService } from './core/services/system-ui.service';
 import { NavigationEnd, Router } from '@angular/router';
 import { IonApp, IonIcon, IonRouterOutlet } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
@@ -36,6 +38,7 @@ import { DesktopUpdateService } from './core/services/desktop-update.service';
 import { DesktopUpdateDialogComponent } from './shared/desktop-update-dialog.component';
 import { LauncherAppearanceService } from './core/services/launcher-appearance.service';
 import { AccountViewBoundaryService } from './core/services/account-view-boundary.service';
+import { AccountHistorySyncService } from './core/services/account-history-sync.service';
 
 const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 interface NativeStatusBarSurface {
@@ -48,13 +51,18 @@ interface NativeStatusBarSurface {
   templateUrl: 'app.component.html',
   styleUrls: ['app.component.scss'],
   standalone: true,
-  imports: [CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent, HistoryApprovalDialogComponent, AndroidUpdateDialogComponent, DesktopUpdateDialogComponent],
+  imports: [CallReturnBarComponent, CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent, HistoryApprovalDialogComponent, AndroidUpdateDialogComponent, DesktopUpdateDialogComponent],
 })
 export class AppComponent {
   readonly accountView = inject(AccountViewBoundaryService);
+  private readonly accountHistorySync = inject(AccountHistorySyncService);
   private readonly zone = inject(NgZone);
-  private lastPushResume = 0;
   private resumePromise: Promise<void> | null = null;
+  private systemBarUpdate: Promise<void> = Promise.resolve();
+  private systemBarEpoch = 0;
+  private lastSystemBarSurface?: NativeStatusBarSurface;
+  private readonly nativeSystemBars = StatusBar;
+  private readonly systemUi = inject(SystemUiService);
   private readonly auth = inject(AuthService);
   readonly appLock = inject(AppLockService);
   private readonly appSettings = inject(AppSettingsService);
@@ -77,30 +85,15 @@ export class AppComponent {
   private readonly androidUpdates = inject(AndroidUpdateService);
   private readonly desktopUpdates = inject(DesktopUpdateService);
   private readonly launcherAppearance = inject(LauncherAppearanceService);
-  private readonly now = signal(Date.now());
   private readonly currentUrl = signal(this.router.url);
   private readonly foreground = signal(document.visibilityState !== 'hidden');
-  private readonly onCallsRoute = signal(this.router.url.startsWith('/app/calls'));
   private startServicesPromise: Promise<void> | null = null;
   private lastPushRouteKey = '';
   private lastNativeShareId = '';
   private initialAppRouteHandled = false;
   readonly showCallBanner = computed(() => {
-    const phase = this.calls.phase();
-    return this.auth.isAuthenticated()
-      && !this.appLock.isContentLocked()
-      && Boolean(this.calls.activeCall())
-      && phase !== 'idle'
-      && phase !== 'ringing'
-      && !this.onCallsRoute();
-  });
-  readonly callElapsed = computed(() => {
-    const call = this.calls.activeCall();
-    const started = Date.parse(call?.startedAt || '');
-    if (!call || !Number.isFinite(started)) {
-      return '00:00';
-    }
-    return this.formatDuration(Math.max(0, this.now() - started));
+    return globalCallReturnVisible({ url: this.currentUrl(), authenticated: this.auth.isAuthenticated(),
+      locked: this.appLock.isContentLocked(), active: Boolean(this.calls.activeCall()), phase: this.calls.phase() });
   });
 
   constructor() {
@@ -137,8 +130,6 @@ export class AppComponent {
     addIcons({ callOutline, chevronDownOutline, chevronUpOutline, shieldCheckmarkOutline, videocamOutline });
     void this.configureNativeKeyboard();
 
-    const timer = window.setInterval(() => this.now.set(Date.now()), 1000);
-    this.destroyRef.onDestroy(() => window.clearInterval(timer));
     const updateTimer = window.setInterval(() => {
       if (document.visibilityState !== 'hidden') void this.webLaunch.checkForUpdate(() => this.canApplyWebUpdate());
     }, 60_000);
@@ -152,7 +143,6 @@ export class AppComponent {
           void this.webLaunch.checkForUpdate(() => this.canApplyWebUpdate());
           const url = event.urlAfterRedirects || event.url;
           this.currentUrl.set(url);
-          this.onCallsRoute.set(url.startsWith('/app/calls'));
           const path = this.safeAppRoute(url);
           if (path) {
             if (!this.initialAppRouteHandled) {
@@ -184,7 +174,7 @@ export class AppComponent {
       const light = this.appSettings.resolvedLightTheme();
       const url = this.currentUrl();
       const activeCall = Boolean(this.calls.activeCall());
-      const surface = this.nativeStatusBarSurface(light, url, activeCall);
+      const surface = this.systemUi.darkOverlay() ? { color: '#070b0d', style: Style.Dark } : this.nativeStatusBarSurface(light, url, activeCall);
       untracked(() => void this.configureNativeSystemBars(surface));
     });
 
@@ -269,13 +259,23 @@ export class AppComponent {
   }
 
   private async configureNativeSystemBars(surface: NativeStatusBarSurface): Promise<void> {
-    try {
-      await StatusBar.setOverlaysWebView({ overlay: false });
-      await StatusBar.setStyle({ style: surface.style });
-      await StatusBar.setBackgroundColor({ color: surface.color });
-    } catch {
-      // Web, desktop, and some Android shells do not expose the native status bar bridge.
-    }
+    this.lastSystemBarSurface = surface;
+    const epoch = ++this.systemBarEpoch;
+    this.systemBarUpdate = this.systemBarUpdate.catch(() => undefined).then(async () => {
+      try {
+        if (epoch !== this.systemBarEpoch) return;
+        await this.nativeSystemBars.setOverlaysWebView({ overlay: false });
+        if (epoch !== this.systemBarEpoch) return;
+        await this.nativeSystemBars.setStyle({ style: surface.style });
+        if (epoch !== this.systemBarEpoch) return;
+        await this.nativeSystemBars.setBackgroundColor({ color: surface.color });
+        if (epoch !== this.systemBarEpoch) return;
+        await this.nativeDevice?.configureNavigationBar?.(surface.color, surface.style === Style.Light);
+      } catch {
+        // Web, desktop, and some Android shells do not expose the native status bar bridge.
+      }
+    });
+    await this.systemBarUpdate;
   }
 
   private nativeStatusBarSurface(light: boolean, url: string, activeCall: boolean): NativeStatusBarSurface {
@@ -284,7 +284,7 @@ export class AppComponent {
     const lightSurface = (color = '#f8fafc'): NativeStatusBarSurface => ({ color, style: Style.Light });
 
     if (path.startsWith('/welcome')) {
-      return lightSurface('#f7f8f2');
+      return light ? lightSurface('#f7f8f2') : darkSurface('#0d1815');
     }
 
     if (activeCall && path.startsWith('/app/calls')) {
@@ -383,6 +383,7 @@ export class AppComponent {
   }
 
   private handleAppResume(): Promise<void> {
+    if (this.lastSystemBarSurface) void this.configureNativeSystemBars(this.lastSystemBarSurface);
     void this.webLaunch.checkForUpdate(() => this.canApplyWebUpdate());
     this.dailyLaunch.requestPresentation();
     this.resumePromise ??= this.resumeExistingSession().finally(() => { this.resumePromise = null; });
@@ -398,10 +399,7 @@ export class AppComponent {
       return;
     }
     this.localHistory.retryNativeStorage();
-    if (Capacitor.isNativePlatform() && Date.now() - this.lastPushResume > 300000) {
-      this.lastPushResume = Date.now();
-      void this.push.initialize().catch(() => undefined);
-    }
+    if (Capacitor.isNativePlatform()) void this.push.resumeNativeRegistration().catch(() => undefined);
     void this.realtime.connect().catch(() => undefined);
     await this.chat.resumeSoftSync().catch(() => undefined);
   }
@@ -536,14 +534,4 @@ export class AppComponent {
     return this.startServicesPromise;
   }
 
-  private formatDuration(durationMs: number): string {
-    const totalSeconds = Math.floor(durationMs / 1000);
-    const hours = Math.floor(totalSeconds / 3600);
-    const minutes = Math.floor((totalSeconds % 3600) / 60);
-    const seconds = totalSeconds % 60;
-    if (hours > 0) {
-      return `${hours}:${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-    }
-    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`;
-  }
 }

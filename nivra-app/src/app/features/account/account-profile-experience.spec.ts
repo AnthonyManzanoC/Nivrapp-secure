@@ -13,6 +13,7 @@ import { PanicPinService } from '../../core/services/panic-pin.service';
 import { PushService } from '../../core/services/push.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { AccountPage } from './account.page';
+import { DeviceAuthorityService } from '../../core/services/device-authority.service';
 
 describe('Account profile editing experience', () => {
   let page: AccountPage;
@@ -24,6 +25,7 @@ describe('Account profile editing experience', () => {
     session = signal<any>(owner());
     account = { load: jasmine.createSpy('load').and.resolveTo(), updateProfile: jasmine.createSpy('updateProfile').and.resolveTo(), checkAliasAvailable: jasmine.createSpy('checkAliasAvailable').and.resolveTo(true), privacy: signal(null), loading: signal(false) };
     TestBed.configureTestingModule({ providers: [
+      { provide: DeviceAuthorityService, useValue: { authority: signal(null) } },
       { provide: AuthService, useValue: { session } }, { provide: AccountService, useValue: account },
       { provide: AppLockService, useValue: {} }, { provide: AppSettingsService, useValue: { set: jasmine.createSpy('set') } },
       { provide: CallsService, useValue: {} }, { provide: TranslateService, useValue: { instant: (_key: string, fallback: string) => fallback } },

@@ -4,6 +4,8 @@ using Nivra.Api.Infrastructure;
 using Nivra.Api.Security;
 using Nivra.Api.Services;
 using System.Text.Json;
+using Microsoft.AspNetCore.SignalR;
+using Nivra.Api.Realtime;
 
 namespace Nivra.Api.Endpoints;
 public static partial class EndpointExtensions
@@ -43,7 +45,7 @@ public static partial class EndpointExtensions
                 await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);http.Response.Headers.CacheControl="no-store";return Results.Ok(backup with {Revision=record.Revision});
             });
         });
-        routes.MapPost("/device",async Task<IResult>(AccountDeviceCertificate certificate,HttpContext http,NivraDbContext db,CancellationToken ct)=>{
+        routes.MapPost("/device",async Task<IResult>(AccountDeviceCertificate certificate,HttpContext http,NivraDbContext db,IHubContext<NivraHub> hub,ILoggerFactory logs,CancellationToken ct)=>{
             var user=http.GetCurrentUser();if(user is null)return Results.Unauthorized();
             if(certificate.V!=1||certificate.DeviceId!=user.DeviceId)return Results.BadRequest();
             return await CallCoordination.RunAsync(db,async()=>{
@@ -53,7 +55,20 @@ public static partial class EndpointExtensions
                 var hybrid=await db.Set<RatchetPilotDevice>().AsNoTracking().SingleOrDefaultAsync(x=>x.DeviceId==user.DeviceId&&x.UserId==user.UserId&&x.AddressMode==2,ct);
                 if(root is null||device is null||hybrid is null||root.RootKey!=certificate.RootKey||hybrid.IdentityKey!=certificate.HybridKey||DeviceContinuityPolicy.Coordinates(device.KeyBundle.IdentityKey)!=certificate.LegacyKey
                     ||!AccountIdentityPolicy.Verify(root.RootKey,AccountIdentityPolicy.DeviceStatement(user.UserId,certificate),certificate.Signature))return Results.BadRequest();
-                device.AccountCertificateJson=JsonSerializer.Serialize(certificate,AccountIdentityPolicy.Json);await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);return Results.NoContent();
+                var encoded=JsonSerializer.Serialize(certificate,AccountIdentityPolicy.Json);
+                var changed=device.AccountCertificateJson!=encoded;
+                device.AccountCertificateJson=encoded;await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);
+                if(changed){
+                    // The directory remains authoritative: this hint only invalidates caches.
+                    // Contacts still verify the certificate against their already pinned root.
+                    try{
+                        using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                        var conversations=await db.Conversations.AsNoTracking().Where(x=>x.Participants.Any(p=>p.UserId==user.UserId&&p.RemovedAt==null)).ToListAsync(deadline.Token);
+                        var audience=conversations.SelectMany(x=>x.Participants).Where(p=>p.RemovedAt==null).Select(p=>p.UserId).Append(user.UserId).Distinct().Select(GroupsFor.User).ToList();
+                        await hub.Clients.Groups(audience).SendAsync("device.listChanged",new {userId=user.UserId,deviceId=user.DeviceId,identityCertified=true},deadline.Token);
+                    }catch(Exception error){logs.CreateLogger("AccountDeviceCertificate").LogWarning(error,"Device directory hint failed after certificate commit; reconnect and directory refresh remain available.");}
+                }
+                return Results.NoContent();
             });
         });
     }

@@ -188,6 +188,11 @@ export class SignalrService implements OnDestroy {
     await this.connection?.invoke('LeaveVaultRoom', roomId);
   }
 
+  async closeVaultRoomView(roomId: string): Promise<void> {
+    // Do not reconnect just to close a panel, or invoke destructive LeaveVaultRoom.
+    if (this.connection) await this.connection.invoke('CloseVaultRoomView', roomId);
+  }
+
   async sendVaultRoomMessage(
     roomId: string,
     payload: {

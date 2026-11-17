@@ -1,4 +1,5 @@
 import { CommonModule } from '@angular/common';
+import { CallReturnBarComponent } from '../../shared/call-return-bar.component';
 import { AfterViewInit, Component, computed, ElementRef, inject, NgZone, OnDestroy, signal } from '@angular/core';
 import { NavigationEnd, Router, RouterLink, RouterOutlet } from '@angular/router';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
@@ -27,6 +28,8 @@ import { ClientCompatibilityService } from '../../core/services/client-compatibi
 import { NivraApiService } from '../../core/services/nivra-api.service';
 import { UnreadTabService } from '../../core/services/unread-tab.service';
 import { AppLockService } from '../../core/services/app-lock.service';
+import { DeviceAuthorityService } from '../../core/services/device-authority.service';
+import type {} from '../../core/services/desktop-update.service';
 import { TabSwipeDirective } from '../../shared/tab-swipe.directive';
 import { CallGameInvitationComponent } from '../../shared/call-game-invitation.component';
 import { CallResultComponent } from '../../shared/call-result.component';
@@ -36,7 +39,7 @@ const RAIL_EXPANDED_KEY = 'nivra.navigation.rail-expanded';
 @Component({
   selector: 'app-shell',
   standalone: true,
-  imports: [CallResultComponent, CallGameInvitationComponent, LocalizedDatePipe, CommonModule, RouterLink, RouterOutlet, TranslatePipe, IonApp, IonIcon, TabSwipeDirective],
+  imports: [CallReturnBarComponent, CallResultComponent, CallGameInvitationComponent, LocalizedDatePipe, CommonModule, RouterLink, RouterOutlet, TranslatePipe, IonApp, IonIcon, TabSwipeDirective],
   templateUrl: './shell.page.html',
   styleUrls: ['./shell.page.scss'],
 })
@@ -50,6 +53,7 @@ export class ShellPage implements AfterViewInit, OnDestroy {
   readonly unread = inject(UnreadTabService);
   readonly compatibility = inject(ClientCompatibilityService);
   readonly appLock = inject(AppLockService);
+  private readonly deviceAuthority = inject(DeviceAuthorityService);
   private readonly api = inject(NivraApiService);
   private readonly router = inject(Router);
   private readonly element = inject<ElementRef<HTMLElement>>(ElementRef);
@@ -79,11 +83,13 @@ export class ShellPage implements AfterViewInit, OnDestroy {
     && !this.auth.accountsBusy() && !this.auth.addingAccount()
     && !this.appLock.isContentLocked() && !this.calls.activeCall() && !this.calls.resumableCall());
   private accountTap: { at: number; scope: string; targetId: string } | null = null;
+  private scrollTap: { at: number; scope: string; path: string } | null = null;
   private accountShortcutInFlight = false;
   private accountShortcutSuppressedUntil = 0;
   private destroyed = false;
   private readonly onNavigationClick = (event: MouseEvent): void => this.handleNavigationClick(event);
   private readonly clearAccountTap = (): void => { this.accountTap = null; };
+  private readonly clearNavigationTaps = (): void => { this.accountTap = null; this.scrollTap = null; };
 
   constructor() {
     void this.compatibility.check(this.api.baseUrl);
@@ -105,6 +111,7 @@ export class ShellPage implements AfterViewInit, OnDestroy {
       .pipe(takeUntilDestroyed())
       .subscribe((event) => {
         if (event instanceof NavigationEnd) {
+          if (event.urlAfterRedirects.split(/[?#]/, 1)[0] !== this.scrollTap?.path) this.scrollTap = null;
           this.currentTab.set(this.tabForRoute(event.urlAfterRedirects));
           this.hideMobileNav.set(this.isMobileImmersiveRoute(event.urlAfterRedirects));
           this.onCallsPage.set(event.urlAfterRedirects.startsWith('/app/calls'));
@@ -118,17 +125,17 @@ export class ShellPage implements AfterViewInit, OnDestroy {
     // after AuthService has completed the account switch to Chats.
     this.zone.runOutsideAngular(() => {
       this.element.nativeElement.addEventListener('click', this.onNavigationClick, true);
-      window.addEventListener('blur', this.clearAccountTap);
-      document.addEventListener('visibilitychange', this.clearAccountTap);
+      window.addEventListener('blur', this.clearNavigationTaps);
+      document.addEventListener('visibilitychange', this.clearNavigationTaps);
     });
   }
 
   ngOnDestroy(): void {
     this.destroyed = true;
-    this.clearAccountTap();
+    this.clearNavigationTaps();
     this.element.nativeElement.removeEventListener('click', this.onNavigationClick, true);
-    window.removeEventListener('blur', this.clearAccountTap);
-    document.removeEventListener('visibilitychange', this.clearAccountTap);
+    window.removeEventListener('blur', this.clearNavigationTaps);
+    document.removeEventListener('visibilitychange', this.clearNavigationTaps);
   }
 
   toggleRail(): void {
@@ -145,6 +152,7 @@ export class ShellPage implements AfterViewInit, OnDestroy {
   }
 
   private handleNavigationClick(event: MouseEvent): void {
+    if (this.handleMobileScrollTap(event)) return;
     const link = event.target instanceof Element
       ? event.target.closest('nav.rail > a.nav-btn[data-account-shortcut="true"]') : null;
     if (!link || !this.element.nativeElement.contains(link)) { this.clearAccountTap(); return; }
@@ -168,6 +176,38 @@ export class ShellPage implements AfterViewInit, OnDestroy {
     this.consumeAccountTap(event);
     this.accountShortcutInFlight = true;
     this.zone.run(() => { void this.switchByAccountShortcut(target.id, scope); });
+  }
+
+  private handleMobileScrollTap(event: MouseEvent): boolean {
+    const link = event.target instanceof Element ? event.target.closest<HTMLAnchorElement>('nav.rail > a.nav-btn[data-tab-path]') : null;
+    const path = link?.getAttribute('data-tab-path');
+    if (!link || !path || path === '/app/account' || !this.element.nativeElement.contains(link)
+      || !window.matchMedia('(max-width: 768px)').matches || this.destroyed || this.hideMobileNav()
+      || !!window.nivraDesktopUpdates || new URLSearchParams(window.location.search).has('electron')
+      || this.appLock.isContentLocked() || this.auth.accountsBusy() || this.auth.addingAccount()
+      || this.router.url.split(/[?#]/, 1)[0] !== path || document.visibilityState === 'hidden'
+      || event.detail === 0 || event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) {
+      this.scrollTap = null; return false;
+    }
+    const session = this.auth.session();
+    if (!session) { this.scrollTap = null; return false; }
+    const scope = JSON.stringify([session.user.id, session.device.id, this.auth.sessionGeneration()]);
+    const now = performance.now(), previous = this.scrollTap;
+    this.scrollTap = { at: now, scope, path };
+    this.accountTap = null;
+    if (!previous || previous.scope !== scope || previous.path !== path || now - previous.at > 350) return true;
+    this.scrollTap = null;
+    this.consumeAccountTap(event);
+    const duration = window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 240;
+    const content = this.element.nativeElement.querySelector<HTMLElement & { scrollToTop?: (duration?: number) => Promise<void> }>('.route-stage ion-content');
+    if (!content) return true;
+    const nested = content.querySelector<HTMLElement>('.ion-content-scroll-host');
+    // Chats owns a nested list; the other three tabs use Ionic's scroll host.
+    if (nested) nested.scrollTo({ top: 0, behavior: duration ? 'smooth' : 'instant' });
+    else if (typeof content.scrollToTop === 'function') void content.scrollToTop(duration).catch(() => undefined);
+    else content.scrollTo({ top: 0, behavior: duration ? 'smooth' : 'instant' });
+    this.zone.run(() => content.dispatchEvent(new CustomEvent('nivra-tab-scroll-top', { bubbles: true })));
+    return true;
   }
 
   private consumeAccountTap(event: MouseEvent): void {

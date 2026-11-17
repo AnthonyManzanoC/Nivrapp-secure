@@ -2,6 +2,10 @@
 // Renders the actual shell/chats components with synthetic, network-free services.
 import { GuidePage } from '../src/app/features/guide/guide.page';
 import { NotificationCheckPage } from '../src/app/features/guide/notification-check.page';
+import { MessagePrivacyBadgeComponent } from '../src/app/features/chat-detail/message-privacy-badge.component';
+import { ScheduledTextControlComponent } from '../src/app/shared/scheduled-text-control.component';
+import type { QueuedText } from '../src/app/core/services/text-outbox.service';
+import type { ChatMessageVm } from '../src/app/core/models/nivra.models';
 import { Component, inject, signal } from '@angular/core';
 import { of } from 'rxjs';
 import { bootstrapApplication } from '@angular/platform-browser';
@@ -25,6 +29,7 @@ import { ChatService } from '../src/app/core/services/chat.service';
 import { SocialService } from '../src/app/core/services/social.service';
 import { CallsService } from '../src/app/core/services/calls.service';
 import { AccountIdentityService } from '../src/app/core/services/account-identity.service';
+import { DeviceAuthorityService } from '../src/app/core/services/device-authority.service';
 import { AccountIdentityRecoveryComponent } from '../src/app/features/account/account-identity-recovery.component';
 import { CallsPage } from '../src/app/features/calls/calls.page';
 import { CallTranslationService } from '../src/app/core/services/call-translation.service';
@@ -156,16 +161,34 @@ class PreviewInvitation {notice='Resultado de prueba temporal';}
 class PreviewProfile { avatar=previewAvatar; }
 @Component({
   selector: 'app-chat-detail', standalone: true,
-  imports: [RouterLink, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent],
+  imports: [MessagePrivacyBadgeComponent, RouterLink, IonHeader, IonToolbar, IonButtons, IonButton, IonIcon, IonContent],
   styleUrls: ['../src/app/features/chat-detail/chat-detail.page.scss'],
   template: `<section class="chat-detail ion-page"><ion-header class="chat-header"><ion-toolbar>
     <ion-buttons slot="start" class="chat-back-controls"><ion-button class="mobile-back" fill="clear" routerLink="/app/chats" aria-label="Volver"><ion-icon name="arrow-back-outline" /></ion-button></ion-buttons>
     <button type="button" class="title-wrap"><span class="avatar">S</span><div><h1>Sofía · Datos ficticios</h1><p>online</p></div></button>
     <ion-buttons slot="end"><ion-button aria-label="Llamar"><ion-icon name="call-outline" /></ion-button><ion-button aria-label="Video"><ion-icon name="videocam-outline" /></ion-button></ion-buttons>
-    </ion-toolbar></ion-header><ion-content class="messages-content"><div class="messages"><p class="system-message">Vista de diseño: ningún mensaje real</p></div></ion-content></section>`,
+    </ion-toolbar></ion-header><ion-content class="messages-content"><div class="messages"><p class="system-message">Vista de diseño: ningún mensaje real</p>
+      @if (privacyPreview) {<article class="message mine"><p>Este mensaje tiene caducidad.</p><app-message-privacy-badge [message]="expiring" /></article><article class="message"><p>Contenido protegido</p><app-message-privacy-badge [message]="once" /></article>}
+    </div></ion-content></section>`,
 })
 class PreviewConversation {
+  readonly privacyPreview = new URLSearchParams(location.search).has('privacy');
+  readonly expiring: ChatMessageVm = {id:'synthetic-expiry',conversationId:'sofia',senderUserId:'alex',mine:true,at:new Date().toISOString(),expiresAt:new Date(Date.now()+7200000).toISOString(),payload:{type:'text',text:'Este mensaje tiene caducidad.'}};
+  readonly once: ChatMessageVm = {...this.expiring,id:'synthetic-once',mine:false,expiresAt:undefined,deleteAfterRead:true,payload:{type:'text',text:'Contenido protegido'}};
   constructor() { addIcons({ arrowBackOutline, callOutline, videocamOutline }); }
+}
+
+@Component({selector:'preview-schedule',standalone:true,imports:[ScheduledTextControlComponent],
+  template:`<main style="padding:24px;max-width:650px;margin:auto;color:var(--nivra-text)"><h1>Programar mensaje</h1><p>Datos ficticios: este ejemplo no envía mensajes.</p><app-scheduled-text-control [canSchedule]="draftReady" [entries]="entries" context="synthetic-schedule" (schedule)="save($event)" (cancelScheduled)="cancel($event)" /></main>`})
+class PreviewSchedule {
+  draftReady=true;
+  entries:QueuedText[]=[];
+  save(at:number):void{
+    this.entries=[{id:'local-synthetic-schedule',clientMessageId:'synthetic-schedule',conversationId:'synthetic-chat',senderUserId:'preview-owner',senderDeviceId:'preview-device',mine:true,
+      at:new Date().toISOString(),status:'sending',attempts:0,retryAt:0,blocked:false,queueOrder:1,scheduledFor:new Date(at).toISOString(),scheduledTtlSeconds:3600,
+      payload:{type:'text',text:'Mensaje de prueba para más tarde.'}}];this.draftReady=false;
+  }
+  cancel(id:string):void{this.entries=this.entries.filter(entry=>entry.id!==id);}
 }
 
 @Component({ selector: 'preview-empty', standalone: true, template: '<section style="padding:40px;color:var(--nivra-text)"><h1>Vista de prueba</h1><p>Esta vista usa datos ficticios y no envía mensajes.</p><a href="/app/chats">Volver a Chats</a></section>' })
@@ -196,6 +219,7 @@ class PreviewRoot {
     this.applyTheme();
     const incoming=new URLSearchParams(location.search).get('incoming');
     if(incoming){previewCalls.activeCall.set({id:'synthetic-incoming',initiatorUserId:'peer-1',participantUserIds:[user.id,'peer-1'],type:incoming==='video'?'Video':'Voice',startedAt:new Date().toISOString()});previewCalls.phase.set('ringing');}
+    else if(new URLSearchParams(location.search).has('active-call')){previewCalls.activeCall.set({id:'synthetic-active',type:'Voice',startedAt:new Date(Date.now()-65000).toISOString()});previewCalls.phase.set('connected');}
   }
   toggleTheme() { this.light = !this.light; this.applyTheme(); }
   toggleDensity() { previewSettings.update(value => ({ chatListDensity: value.chatListDensity === 'three-line' ? 'two-line' : 'three-line' })); }
@@ -223,7 +247,7 @@ bootstrapApplication(PreviewRoot, { providers: [
     { path: 'welcome', loadComponent: () => import('../src/app/features/welcome/welcome.page').then(m => m.WelcomePage) },
     { path: 'auth', loadComponent: () => import('../src/app/features/auth/auth.page').then(m => m.AuthPage) },
     { path: 'recover', loadComponent: () => import('../src/app/features/auth/recovery.page').then(m => m.RecoveryPage) },
-    {path:'preview/incognito-dialog',component:PreviewIncognitoDialog},{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls},{path:'preview/recovery',component:PreviewAccountRecovery}, { path: '**', redirectTo: 'app/chats' }]),
+    {path:'preview/schedule',component:PreviewSchedule},{path:'preview/incognito-dialog',component:PreviewIncognitoDialog},{path:'preview/profile',component:PreviewProfile},{path:'preview/viewer',component:PreviewViewer},{path:'preview/calls',component:PreviewCalls},{path:'preview/recovery',component:PreviewAccountRecovery}, { path: '**', redirectTo: 'app/chats' }]),
   { provide: AuthService, useValue: { sessionGeneration:signal(1), session: signal({ user, device: { id: 'preview-device', isTrusted: true } }), savedAccounts: signal([]), accountsBusy: signal(false), addingAccount: signal(false), deviceIdentityError: signal(''), deviceIdentityNeedsRelink: signal(false), isAuthenticated: () => true, logout: async () => {}, busy: signal(false), accountError: signal(''), pendingPhoneAlias: signal(null), qrState: signal('idle'), qrError: signal(''), stopQrLogin: async () => {} } },
   { provide: ChatService, useValue: chat },
   { provide: CommunityService, useValue: v9.communities },
@@ -234,6 +258,7 @@ bootstrapApplication(PreviewRoot, { providers: [
   { provide: ContactSyncService,useValue:{syncCachedContactsInBackground:async()=>{},radarHasNewContact:()=>false,lastDeviceContactCount:()=>0,syncing:()=>false}},
   { provide: CallsService, useValue: previewCalls },
   { provide: AccountIdentityService, useValue: {state:signal('ready'),error:signal(''),phrase:async()=>''} },
+  { provide: DeviceAuthorityService, useValue: { authority: signal(null) } },
   { provide: CallTranslationService, useValue: { enabled: signal(false), active: signal(false) } },
   { provide: SignalrService, useValue: { connected: signal(true) } },
   { provide: UnreadTabService, useValue: { unreadChats: signal(2) } },

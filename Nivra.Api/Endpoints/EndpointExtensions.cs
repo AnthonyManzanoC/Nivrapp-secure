@@ -65,6 +65,7 @@ public static partial class EndpointExtensions
         app.MapProfileEndpoints();
         app.MapDeviceAndKeyEndpoints();
         app.MapDeviceContinuityEndpoints();
+        app.MapDeviceAuthorityEndpoints();
         app.MapRatchetPreKeyPilotEndpoints();
         app.MapRatchetClientEndpoints();
         app.MapRatchetHybridEndpoints();
@@ -1836,17 +1837,15 @@ public static partial class EndpointExtensions
                 throw;
             }
 
-            if (summaryTransaction is not null) await summaryTransaction.CommitAsync(cancellationToken);
-            if (directBlockTransaction is not null) await directBlockTransaction.CommitAsync(cancellationToken);
+            if (summaryTransaction is not null) { await summaryTransaction.CommitAsync(cancellationToken); await summaryTransaction.DisposeAsync(); }
+            if (directBlockTransaction is not null) { await directBlockTransaction.CommitAsync(cancellationToken); await directBlockTransaction.DisposeAsync(); }
 
-            await MessageDeliveryDispatch.NotifyAsync(message,
+            await MessageDeliveryDispatch.NotifyCommittedRealtimeAsync(message,
                 (recipient, token) => hub.Clients.Group(GroupsFor.Device(recipient.DeviceId)).SendAsync(
                     "message.received",
                     ToMessageResponseForDevice(message, recipient.UserId, recipient.DeviceId),
                     token),
-                (userId, token) => pushNotifications.SendMessageAsync(userId, conversation.Id, message.Id, current.UserId, token),
-                loggerFactory.CreateLogger(typeof(MessageDeliveryDispatch).FullName!),
-                cancellationToken);
+                loggerFactory.CreateLogger(typeof(MessageDeliveryDispatch).FullName!));
 
             return Results.Created($"/messages/{message.Id}", ToMessageResponse(message));
         });

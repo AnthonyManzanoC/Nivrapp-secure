@@ -78,12 +78,15 @@
     </section>
   }
   @if (directCallInProgress(); as ongoing) {
+    @if (calls.activeCall()?.id !== ongoing.id && calls.resumableCall()?.id !== ongoing.id) {
     <div class="group-call-banner direct-call-banner" role="status">
       <div><ion-icon [name]="ongoing.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon><span>{{ ongoing.type === 'Video' ? 'Videollamada en curso' : 'Llamada en curso' }}</span><small>Puedes seguir conversando y volver cuando quieras.</small></div>
       <ion-button mode="ios" size="small" [disabled]="busyAction !== ''" (click)="returnToDirectCall()">{{ calls.activeCall()?.id === ongoing.id ? 'Volver' : 'Unirme' }}</ion-button>
     </div>
   }
+    }
   @if (calls.activeGroupRoomForConversation(conversation()?.id); as room) {
+    @if (calls.activeCall()?.id !== room.call.id && calls.resumableCall()?.id !== room.call.id) {
     <div class="group-call-banner">
       <div>
         <ion-icon [name]="room.call.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
@@ -94,6 +97,7 @@
     </div>
   }
 
+    }
   <ion-content
     class="messages-content"
     [scrollEvents]="true"
@@ -415,6 +419,7 @@
               </button>
             }
             <footer>
+              <app-message-privacy-badge [message]="message" />
               <time>{{ message.at | localizedDate:'shortTime' }}</time>
               @if (message.status === 'editado') {
                 <span>{{ 'CHAT.EDITED' | translate:'editado' }}</span>
@@ -615,6 +620,8 @@
       <span>{{ 'CHAT.MESSAGE_PRIVACY' | translate:'Privacidad del mensaje' }}@if (deleteAfterRead) { · {{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }} }@if (ttlSeconds !== -1) { · {{ 'CHAT.EXPIRATION' | translate:'Expiración' }} }</span>
       <ion-icon [name]="policyPanelOpen ? 'chevron-up-outline' : 'chevron-down-outline'" aria-hidden="true"></ion-icon>
     </button>
+    <app-scheduled-text-control [canSchedule]="canScheduleText()" [entries]="scheduledTexts()" [context]="scheduledTextContext()"
+      (schedule)="scheduleText($event)" (cancelScheduled)="cancelScheduledText($event)" />
     @if (chat.uploading()) {
       <div class="composer-busy">
         <ion-spinner name="crescent"></ion-spinner>

@@ -98,7 +98,7 @@ describe('mobile tab swipe navigation', () => {
     const event = new TouchEvent(type, { bubbles: true, cancelable: true, touches, targetTouches: touches, changedTouches: changed });
     element.dispatchEvent(event); return event;
   }
-  async function settle(): Promise<void> { await fixture.whenStable(); await Promise.resolve(); fixture.detectChanges(); await fixture.whenStable(); }
+  async function settle(): Promise<void> { await fixture.whenStable(); await Promise.resolve(); if (!reducedMotion) await new Promise(resolve => setTimeout(resolve, 230)); fixture.detectChanges(); await fixture.whenStable(); }
   async function go(url: string): Promise<void> { await router.navigateByUrl(url); fixture.detectChanges(); navigation.calls.reset(); }
   async function swipe(start: number, end: number, element = target, dy = 0): Promise<TouchEvent> {
     touch('touchstart', start, 200, element); touch('touchmove', end, 200 + dy, element);
@@ -166,21 +166,71 @@ describe('mobile tab swipe navigation', () => {
     expect(navigation.calls.allArgs()).toEqual([['/app/world', { replaceUrl: true }], ['/app/vault', { replaceUrl: true }]]);
   });
 
-  it('honors OS reduced motion and animates only an otherwise enabled transition, releasing the finished animation', async () => {
+  it('honors OS reduced motion and settles a dragged page without a separate opacity entry animation', async () => {
     document.documentElement.classList.remove('nivra-animations-off'); document.body.classList.remove('nivra-animations-off');
-    let finish!: (animation: Animation) => void;
-    const finished = new Promise<Animation>(resolve => finish = resolve);
-    const cancel = jasmine.createSpy('cancel');
-    const animation = { finished, cancel } as unknown as Animation;
-    const animate = spyOn(HTMLElement.prototype, 'animate').and.returnValue(animation);
+    const animate = spyOn(HTMLElement.prototype, 'animate');
     reducedMotion = true; await swipe(320, 50);
     expect(router.url).toBe('/app/world'); expect(animate).not.toHaveBeenCalled();
     reducedMotion = false; await swipe(320, 50);
-    expect(router.url).toBe('/app/vault'); expect(animate).toHaveBeenCalledTimes(1);
-    expect(animate.calls.mostRecent().object as unknown).toBe(host.querySelector('router-outlet')!.nextElementSibling);
-    finish(animation); await Promise.resolve(); await Promise.resolve();
-    fixture.destroy();
-    expect(cancel).not.toHaveBeenCalled();
+    expect(router.url).toBe('/app/vault'); expect(animate).not.toHaveBeenCalled();
+    expect(host.querySelector('[data-tab-preview]')).toBeNull();
+    expect((host.querySelector('router-outlet')!.nextElementSibling as HTMLElement).style.transform).toBe('');
+  });
+
+  it('follows a slow finger one-to-one, revealing the adjacent full-width page before release', async () => {
+    const now = spyOn(performance, 'now').and.returnValue(1000);
+    touch('touchstart', 300); now.and.returnValue(2400); touch('touchmove', 180);
+    const source = host.querySelector('router-outlet')!.nextElementSibling as HTMLElement;
+    const preview = host.querySelector<HTMLElement>('[data-tab-preview="/app/world"]')!;
+    expect(source.style.transform).toBe('translate3d(-120px, 0px, 0px)');
+    expect(preview.style.transform).toBe('translate3d(270px, 0px, 0px)');
+    expect(Math.round(preview.getBoundingClientRect().width)).toBe(390);
+    expect(preview.inert).toBeTrue(); expect(preview.getAttribute('aria-hidden')).toBe('true');
+    expect(preview.querySelector('[data-tab-preview-loading]')).not.toBeNull();
+    expect(router.url).toBe('/app/chats'); expect(navigation).not.toHaveBeenCalled();
+    now.and.returnValue(3100); touch('touchend', 180); await settle();
+    expect(router.url).toBe('/app/world'); expect(host.querySelector('[data-tab-preview]')).toBeNull();
+  });
+
+  it('uses an inert cached adjacent page after visiting it and cancels a short drag back to rest', async () => {
+    await go('/app/world');
+    const world = host.querySelector('router-outlet')!.nextElementSibling as HTMLElement;
+    // Match the visible page to the mocked viewport; offscreen content is intentionally redacted.
+    Object.assign(world.style, { position: 'fixed', top: '0', left: '0', width: '390px', height: '640px' });
+    world.textContent = 'Cached world fixture';
+    await go('/app/chats'); touch('touchstart', 300); touch('touchmove', 265);
+    const preview = host.querySelector<HTMLElement>('[data-tab-preview="/app/world"]')!;
+    expect(preview.textContent).toContain('Cached world fixture'); expect(preview.querySelector('[data-tab-preview-loading]')).toBeNull();
+    touch('touchend', 265); await settle();
+    expect(navigation).not.toHaveBeenCalled(); expect(host.querySelector('[data-tab-preview]')).toBeNull();
+    expect((host.querySelector('router-outlet')!.nextElementSibling as HTMLElement).style.transform).toBe('');
+  });
+  it('does not flash an adjacent snapshot with the previous theme after appearance changes',async()=>{
+    await go('/app/world');(host.querySelector('router-outlet')!.nextElementSibling as HTMLElement).textContent='Old theme world';
+    await go('/app/chats');host.style.setProperty('--nivra-text','rgb(8, 19, 12)');
+    touch('touchstart',300);touch('touchmove',265);
+    const preview=host.querySelector<HTMLElement>('[data-tab-preview="/app/world"]')!;
+    expect(preview.textContent).not.toContain('Old theme world');
+    expect(preview.querySelector('[data-tab-preview-loading]')).not.toBeNull();
+    touch('touchcancel',265);await settle();expect(navigation).not.toHaveBeenCalled();
+  });
+
+  it('accepts a short fast flick and discards private preview surfaces on lock, scope or viewport changes', async () => {
+    const now = spyOn(performance, 'now').and.returnValue(1000);
+    touch('touchstart', 300); now.and.returnValue(1040); touch('touchmove', 245); now.and.returnValue(1050); touch('touchend', 245); await settle();
+    expect(router.url).toBe('/app/world');
+    for (const invalidate of [
+      () => { fixture.componentInstance.enabled = false; fixture.detectChanges(); },
+      () => { fixture.componentInstance.scope = 'other-session'; fixture.detectChanges(); },
+      () => window.dispatchEvent(new Event('orientationchange')),
+      () => window.dispatchEvent(new Event('resize')),
+    ]) {
+      fixture.componentInstance.enabled = true; fixture.detectChanges();
+      touch('touchstart', 300); now.and.returnValue(performance.now() + 40); touch('touchmove', 180);
+      expect(host.querySelector('[data-tab-preview]')).not.toBeNull(); invalidate();
+      expect(host.querySelector('[data-tab-preview]')).toBeNull(); touch('touchend', 90); await settle();
+      expect(router.url).toBe('/app/world');
+    }
   });
 
   it('never changes tabs from a chat detail, a nested settings route, or login', async () => {

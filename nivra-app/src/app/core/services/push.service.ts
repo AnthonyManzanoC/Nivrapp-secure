@@ -76,6 +76,16 @@ export class PushService {
   private readonly browserNotifications = new Set<Notification>();
   private pushClickQueue: Promise<void> = Promise.resolve();
   private readonly pushClicks = new Map<string, { at: number; promise: Promise<void> }>();
+  private observedPushScope = '';
+  private nativeResumePromise: Promise<boolean> | null = null;
+  private nativeRepairTimer: number | null = null;
+  private nativeRepairAttempt = 0;
+  private lastNativeAttemptAt = 0;
+  private lastNativeSuccessAt = 0;
+  private readonly nativePermissions = {
+    check: () => FirebaseMessaging.checkPermissions(),
+    request: () => FirebaseMessaging.requestPermissions(),
+  };
 
   readonly supported = signal(false);
   readonly permission = signal<NotificationPermission | 'unsupported'>('default');
@@ -85,11 +95,26 @@ export class PushService {
   readonly lastMessage = signal<MessagePayload | null>(null);
   readonly error = signal('');
   readonly registering = signal(false);
-  readonly nativeBackgroundReady = computed(() => this.permission() === 'granted' && this.serverReady() && Boolean(this.tokenId()));
+  readonly settingsBlocked = signal<'app' | 'messages' | null>(null);
+  readonly nativeBackgroundReady = computed(() => this.permission() === 'granted' && !this.settingsBlocked()
+    && this.serverReady() && this.registeredOnServer() === true && Boolean(this.tokenId()));
 
   constructor() {
+    const foregroundRepair = () => {
+      if (Capacitor.isNativePlatform() && document.visibilityState !== 'hidden') {
+        void this.resumeNativeRegistration().catch(() => undefined);
+      }
+    };
+    window.addEventListener('online', foregroundRepair);
+    window.addEventListener('focus', foregroundRepair);
+    document.addEventListener('visibilitychange', foregroundRepair);
     const desktopEvents = this.desktop.events$.subscribe(data => void this.handlePushData(data, 'desktop-inactive').catch(() => undefined));
-    this.destroyRef.onDestroy(() => { desktopEvents.unsubscribe(); for (const notification of this.browserNotifications) notification.close(); });
+    this.destroyRef.onDestroy(() => {
+      desktopEvents.unsubscribe(); this.cancelNativeRepair();
+      window.removeEventListener('online', foregroundRepair); window.removeEventListener('focus', foregroundRepair);
+      document.removeEventListener('visibilitychange', foregroundRepair);
+      for (const notification of this.browserNotifications) notification.close();
+    });
     void this.deviceWipe.processPendingAccountWipes().catch(() => undefined);
     void this.consumePendingPushIntent().catch(() => undefined);
     void this.nativeDevice.addPushIntentListener(event => {
@@ -99,6 +124,13 @@ export class PushService {
     }).catch(() => undefined);
     effect(() => {
       const session = this.auth.session();
+      const pushScope = this.pushScope();
+      if (pushScope !== this.observedPushScope) {
+        this.observedPushScope = pushScope;
+        this.tokenId.set(null); this.registeredOnServer.set(null); this.serverReady.set(false);
+        this.lastNativeSuccessAt = 0; this.lastNativeAttemptAt = 0; this.nativeRepairAttempt = 0;
+        this.cancelNativeRepair();
+      }
       const saved = this.auth.savedAccounts();
       // Observe local protection changes synchronously, including the inactive account.
       for (const account of saved) this.privateChats.protectedIdsForUser(account.id);
@@ -124,6 +156,7 @@ export class PushService {
       return false;
     }
     this.initializing = true;
+    if (Capacitor.isNativePlatform()) this.lastNativeAttemptAt = Date.now();
     this.registering.set(true);
     this.error.set('');
     try {
@@ -189,11 +222,83 @@ export class PushService {
     } finally {
       this.initializing = false;
       this.registering.set(false);
+      if (Capacitor.isNativePlatform()) {
+        if (this.nativeBackgroundReady()) {
+          this.lastNativeSuccessAt = Date.now(); this.nativeRepairAttempt = 0; this.cancelNativeRepair();
+        } else this.scheduleNativeRepair();
+      }
     }
   }
 
   async requestPermissionAndRegister(): Promise<boolean> {
+    if (Capacitor.isNativePlatform()) {
+      // The system permission is independent from API availability. A slow or
+      // temporarily offline server must not swallow a deliberate permission tap.
+      if (!this.auth.isAuthenticated()) return false;
+      const scope = this.pushScope();
+      let permission = (await this.nativePermissions.check()).receive;
+      if (permission !== 'granted') permission = (await this.nativePermissions.request()).receive;
+      if (scope !== this.pushScope()) return false;
+      this.permission.set(this.mapNativePermission(permission));
+      if (permission !== 'granted') return false;
+      return this.initialize();
+    }
     return this.initialize({ requestPermission: true });
+  }
+
+  async refreshPermission(): Promise<NotificationPermission | 'unsupported'> {
+    const scope = this.pushScope();
+    if (Capacitor.isNativePlatform()) {
+      const result = await this.nativePermissions.check().catch(() => null);
+      const settings: { notificationsEnabled?: boolean; messageChannelEnabled?: boolean } | undefined =
+        await this.nativeDevice.notificationStatus?.().catch(() => ({}));
+      if (scope !== this.pushScope()) return this.permission();
+      const permission = result ? this.mapNativePermission(result.receive) : this.permission();
+      // Android 13 reports notifications disabled before the first runtime
+      // permission too. That is an opportunity to ask, not a settings denial.
+      const appBlocked = settings?.notificationsEnabled === false && permission !== 'default';
+      this.settingsBlocked.set(appBlocked ? 'app'
+        : settings?.messageChannelEnabled === false ? 'messages' : null);
+      if (result) this.permission.set(appBlocked ? 'denied' : permission);
+    } else this.permission.set('Notification' in window ? Notification.permission : 'unsupported');
+    return this.permission();
+  }
+
+  resumeNativeRegistration(): Promise<boolean> {
+    if (this.destroyRef.destroyed || !Capacitor.isNativePlatform() || !this.auth.isAuthenticated() || document.visibilityState === 'hidden') return Promise.resolve(false);
+    this.nativeResumePromise ??= this.repairNativeRegistration().finally(() => { this.nativeResumePromise = null; });
+    return this.nativeResumePromise;
+  }
+
+  private async repairNativeRegistration(): Promise<boolean> {
+    const scope = this.pushScope(), previous = this.permission();
+    await this.refreshPermission();
+    if (scope !== this.pushScope() || this.permission() !== 'granted' || this.settingsBlocked()) return false;
+    const now = Date.now();
+    if (this.nativeBackgroundReady() && now - this.lastNativeSuccessAt < 300_000) return true;
+    if (previous === 'granted' && this.lastNativeAttemptAt > 0 && now - this.lastNativeAttemptAt < 15_000) return false;
+    return this.initialize();
+  }
+
+  private pushScope(): string {
+    const session = this.auth.session();
+    return session ? JSON.stringify([session.user.id, session.device.id, this.auth.sessionGeneration?.() ?? 0]) : '';
+  }
+
+  private cancelNativeRepair(): void {
+    if (this.nativeRepairTimer !== null) window.clearTimeout(this.nativeRepairTimer);
+    this.nativeRepairTimer = null;
+  }
+
+  private scheduleNativeRepair(): void {
+    if (this.destroyRef.destroyed || this.nativeRepairTimer !== null || this.permission() !== 'granted' || this.settingsBlocked()
+      || !this.auth.isAuthenticated() || document.visibilityState === 'hidden' || navigator.onLine === false) return;
+    const scope = this.pushScope();
+    const delay = Math.min(300_000, 15_000 * 2 ** Math.min(this.nativeRepairAttempt++, 5));
+    this.nativeRepairTimer = window.setTimeout(() => {
+      this.nativeRepairTimer = null;
+      if (scope === this.pushScope()) void this.resumeNativeRegistration().catch(() => undefined);
+    }, delay);
   }
 
   async refreshStatus(): Promise<boolean> {
@@ -207,9 +312,8 @@ export class PushService {
     if (!this.auth.isAuthenticated() || !await this.auth.ensureFreshSession() || !current()) return false;
     // Android permission is native. WebView's Notification.permission is unrelated.
     if (Capacitor.isNativePlatform()) {
-      const permission = await FirebaseMessaging.checkPermissions().catch(() => null);
+      await this.refreshPermission();
       if (!current()) return false;
-      if (permission) this.permission.set(this.mapNativePermission(permission.receive));
     } else if ('Notification' in window) this.permission.set(Notification.permission);
     else this.permission.set('unsupported');
     const status = await firstValueFrom(this.api.get<PushStatusResponse>('/push-tokens/status').pipe(timeout(12_000))).catch(() => null);
@@ -290,9 +394,9 @@ export class PushService {
       return false;
     }
 
-    let permission = (await FirebaseMessaging.checkPermissions()).receive;
+    let permission = (await this.nativePermissions.check()).receive;
     if (options.requestPermission && permission !== 'granted') {
-      permission = (await FirebaseMessaging.requestPermissions()).receive;
+      permission = (await this.nativePermissions.request()).receive;
     }
     this.permission.set(this.mapNativePermission(permission));
     if (permission !== 'granted') {
@@ -309,7 +413,7 @@ export class PushService {
     }
     await this.registerServerToken(token);
     if (!this.serverReady()) this.error.set('El servidor todavía no tiene avisos FCM activos para este teléfono.');
-    return true;
+    return this.nativeBackgroundReady();
   }
 
   private async syncNativeRegistration(): Promise<void> {
@@ -699,7 +803,7 @@ export class PushService {
       return;
     }
     await FirebaseMessaging.addListener('tokenReceived', (event) => {
-      void this.registerServerToken(event.token).catch(() => undefined);
+      void this.registerServerToken(event.token).catch(() => this.scheduleNativeRepair());
     });
     await FirebaseMessaging.addListener('notificationReceived', (event) => {
       void this.handleNativeNotification(event.notification).catch(() => undefined);
@@ -722,7 +826,7 @@ export class PushService {
     const response = await firstValueFrom(this.api.post<PushTokenResponse>('/push-tokens', {
       provider,
       token,
-    }));
+    }).pipe(timeout(20_000)));
     if (!sameAccount()) return;
     this.tokenId.set(response.id);
     this.registeredOnServer.set(true);

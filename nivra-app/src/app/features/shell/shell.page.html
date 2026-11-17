@@ -2,7 +2,7 @@
   <main class="workspace" [class.mobile-nav-hidden]="hideMobileNav()"
     [class.collapsible-rail]="collapsibleRail" [class.rail-expanded]="railExpanded()">
     <nav class="rail" aria-label="Nivra">
-      <a class="rail-brand" routerLink="/app/chats" aria-label="Nivra">
+      <a class="rail-brand" routerLink="/app/chats" aria-label="Nivra" title="Nivra">
         <img class="rail-logo" src="assets/brand/nivra-mark.svg" alt="">
         <span>nivra</span>
       </a>
@@ -18,6 +18,7 @@
         <a class="nav-btn" [routerLink]="item.path" [class.active]="currentTab() === item.path"
           [attr.aria-current]="currentTab() === item.path ? 'location' : null"
           [attr.data-account-shortcut]="item.path === '/app/account' ? 'true' : null"
+          [attr.data-tab-path]="item.path"
           [title]="(item.labelKey | translate:item.label) + (item.path === '/app/account' && accountShortcutAvailable() ? ' · ' + ('TABS.ACCOUNT_SWITCH_HINT' | translate:'Pulsa dos veces para cambiar de cuenta') : '')"
           [attr.aria-label]="(item.labelKey | translate:item.label) + (item.path === '/app/chats' && unread.unreadChats() ? ' · ' + unread.unreadChats() + ' ' + ('CHATS.UNREAD_CONVERSATIONS' | translate:'chats sin leer') : '') + (item.path === '/app/account' && accountShortcutAvailable() ? ' · ' + ('TABS.ACCOUNT_SWITCH_HINT' | translate:'Pulsa dos veces para cambiar de cuenta') : '')">
           @if (item.path === '/app/account' && auth.session()?.user?.profilePhotoDataUrl && failedAvatar() !== auth.session()?.user?.profilePhotoDataUrl) {
@@ -45,7 +46,7 @@
 
     <section class="app-stage" [appTabSwipe]="tabPaths"
       [tabSwipeEnabled]="!hideMobileNav() && !auth.accountsBusy() && !auth.addingAccount() && !appLock.isContentLocked() && !calls.activeCall() && !calls.resumableCall()"
-      [tabSwipeScope]="(auth.session()?.user?.id || '') + ':' + (auth.session()?.device?.id || '')">
+      [tabSwipeScope]="(auth.session()?.user?.id || '') + ':' + (auth.session()?.device?.id || '') + ':' + (auth.session() ? auth.sessionGeneration() : 0)">
       @if (compatibility.updateRequired()) {
         <div class="update-banner" role="alert">
           <span>{{ compatibility.message() }}</span>
@@ -54,21 +55,11 @@
       }
       <div class="call-navigation-slot">
     @if (calls.activeCall() && calls.phase() !== 'ringing' && !onCallsPage()) {
-        <aside class="ongoing-call" aria-label="Llamada en curso">
-          @if (!onCallsPage()) {
-            <button type="button" (click)="openCalls()" class="ongoing-call-return">
-              <ion-icon [name]="calls.activeCall()?.type === 'Video' ? 'videocam-outline' : 'call-outline'"></ion-icon>
-              <span><strong>{{ calls.callTitle(calls.activeCall()) }}</strong><small>Volver a la llamada</small></span>
-            </button>
-          }
-          @if (calls.audioOutput.playbackBlocked()) {
-            <button type="button" class="resume-audio" (click)="calls.audioOutput.resume()">Activar audio</button>
-          }
-        </aside>
+        <app-call-return-bar />
     }
 
     @if (!calls.activeCall() && calls.resumableCall() && !onCallsPage()) {
-      <aside class="ongoing-call" aria-label="Llamada todavía activa"><button type="button" class="ongoing-call-return" (click)="openCalls()"><ion-icon name="call-outline"></ion-icon><span><strong>Tu llamada sigue activa</strong><small>Volver a unirme</small></span></button></aside>
+      <app-call-return-bar />
     }
       </div>
       <div class="route-stage"><router-outlet></router-outlet></div>

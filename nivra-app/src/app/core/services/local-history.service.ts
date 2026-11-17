@@ -3,6 +3,7 @@ import { Capacitor } from '@capacitor/core';
 import type { SQLiteConnection, SQLiteDBConnection } from '@capacitor-community/sqlite';
 import { openDB } from 'idb';
 import type { IDBPDatabase } from 'idb';
+import { Subject } from 'rxjs';
 import type { CallSession, ChatMessageVm, ChatPayload, Contact, Conversation, LocalProfile, Story } from '../models/nivra.models';
 import { NativeSecureVaultService } from './native-secure-vault.service';
 
@@ -140,6 +141,8 @@ interface ConversationMessagesPageOptions {
 
 @Injectable({ providedIn: 'root' })
 export class LocalHistoryService {
+  /** Emitted only after the encrypted local write commits; no additional plaintext is persisted. */
+  readonly messagesStored$ = new Subject<{ accountKey: string; messages: ChatMessageVm[] }>();
   readonly storageError = signal('');
   readonly storageState = signal<LocalHistoryStorageState>('idle');
   readonly storageDiagnostic = signal<LocalHistoryStorageDiagnostic | null>(null);
@@ -465,6 +468,7 @@ export class LocalHistoryService {
         if (!isCurrent()) throw new Error('El historial cambió durante la escritura.');
         await this.sqlitePutMessage(sqlite, accountKey, message, isCurrent, preserveLive);
       }
+      if (isCurrent()) this.messagesStored$.next({ accountKey, messages });
       return;
     }
     const db = await this.open();
@@ -491,6 +495,7 @@ export class LocalHistoryService {
       if (!existing || existing.decryptError === true) await store.put(record);
     }));
     await transaction.done;
+    if (isCurrent()) this.messagesStored$.next({ accountKey, messages });
   }
 
   async conversations(accountKey: string): Promise<Conversation[]> {

@@ -65,7 +65,7 @@
       </article>
 
       @if (vault.unlocked() && localNoteScopeIsCurrent()) {
-      <article class="panel span-8 note-composer-panel">
+      <article class="panel span-8 note-composer-panel" data-snapshot-private>
         <div class="panel-title">
           <div>
             <h2>{{ 'VAULT.NEW_NOTE' | translate:'Nueva nota' }}</h2>
@@ -112,7 +112,8 @@
       </article>
       }
 
-      <article class="panel span-5">
+      @if (vault.unlocked() && localNoteScopeIsCurrent()) {
+      <article class="panel span-12 notes-panel" data-snapshot-private>
         <div class="panel-title">
           <div>
             <h2>{{ 'VAULT.NOTES_FILES' | translate:'Notas y archivos' }}</h2>
@@ -167,6 +168,7 @@
           }
         </div>
       </article>
+      }
 
       <article class="panel span-5 room-list-panel" id="vault-room-directory">
         <div class="panel-title">
@@ -207,8 +209,8 @@
                 }
               } @else {
                 <div class="room-actions">
-                  <ion-button mode="ios" fill="clear" (click)="openRoom(room)">{{ 'VAULT.OPEN' | translate:'Abrir' }}</ion-button>
-                  <ion-button mode="ios" fill="clear" color="danger" (click)="leaveRoom(room)" [disabled]="isBusy('leave:' + room.id)" [attr.aria-label]="'VAULT.LEAVE_ROOM' | translate:'Salir de la sala'">
+                  <ion-button mode="ios" fill="clear" (click)="vault.activeRoomId() === room.id ? closeRoomView(room) : openRoom(room)" [disabled]="!!busyId || !roomAvailable(room)">{{ vault.activeRoomId() === room.id ? (room.retentionMode === 'BurnOnExit' ? 'Salir y limpiar' : 'Cerrar vista') : ('VAULT.OPEN' | translate:'Abrir') }}</ion-button>
+                  <ion-button mode="ios" fill="clear" color="danger" (click)="leaveRoom(room)" [disabled]="isBusy('leave:' + room.id)" [attr.aria-label]="vault.canInviteGuests(room) ? 'Cerrar sala para todos' : ('VAULT.LEAVE_ROOM' | translate:'Salir de la sala')" [title]="vault.canInviteGuests(room) ? 'Cerrar sala para todos' : ('VAULT.LEAVE_ROOM' | translate:'Salir de la sala')">
                     <ion-icon name="log-out-outline"></ion-icon>
                   </ion-button>
                 </div>
@@ -251,6 +253,7 @@
                 <ion-icon [name]="isFullscreen ? 'contract-outline' : 'expand-outline'"></ion-icon>
                 <span>{{ fullscreenLabel() }}</span>
               </ion-button>
+              <button type="button" class="close-room-view" (click)="closeRoomView(room)" [disabled]="!!busyId" [attr.aria-label]="room.retentionMode === 'BurnOnExit' ? 'Salir y limpiar esta sala temporal' : 'Cerrar vista de la sala'"><ion-icon name="close-outline" aria-hidden="true"></ion-icon></button>
             </header>
 
             <div class="vault-messages-area">
@@ -288,6 +291,9 @@
                       {{ 'VAULT.INVITE' | translate:'Invitar' }}
                     </ion-button>
                   </div>
+                  @if (invitePinRequired(room)) {
+                    <label class="invite-pin-field" data-snapshot-private><span>PIN para los invitados</span><ion-input mode="ios" type="password" [(ngModel)]="roomInvitePinById[room.id]" autocomplete="off" placeholder="Confirma el PIN de esta sala" aria-label="PIN que recibirán los invitados"></ion-input><small>Se comprueba antes de invitar y se comparte solo en su mensaje cifrado.</small></label>
+                  }
                   @if (availableInvitePeople(room).length) {
                     <div class="people-strip compact">
                       @for (person of availableInvitePeople(room); track person.id) {
@@ -332,7 +338,7 @@
                 </div>
               }
 
-              <div #roomTimeline class="vault-chat" (scroll)="timelineScrolled()" role="log" aria-label="Mensajes de la sala" aria-relevant="additions text">
+              <div #roomTimeline class="vault-chat" data-snapshot-private (scroll)="timelineScrolled()" role="log" aria-label="Mensajes de la sala" aria-relevant="additions text">
                 @for (message of vault.activeMessages(); track message.id) {
                   <div class="vault-message" [class.mine]="message.mine" [class.system]="message.payload.type === 'system'">
                     <small>{{ vault.messageSender(message) }} - {{ message.at | localizedDate:'shortTime' }}</small>
@@ -448,7 +454,7 @@
           </div>
         }
 
-        <p class="room-invite-summary">{{selectedInviteIds.size}} personas seleccionadas. Recibirán una notificación y un acceso por chat cifrado. Comparte el PIN por un medio acordado.</p><ion-button class="room-create-submit" mode="ios" (click)="createRoom()" [disabled]="isBusy('room:create') || ((roomAccessMode === 'PinOnly' || roomAccessMode === 'WaitingRoom') && !roomPin.trim())">
+          <p class="room-invite-summary">{{selectedInviteIds.size}} personas seleccionadas. Recibirán una notificación y el acceso por chat cifrado. Cuando la sala requiera PIN, irá dentro de ese mensaje cifrado.</p><ion-button class="room-create-submit" mode="ios" (click)="createRoom()" [disabled]="isBusy('room:create') || ((roomAccessMode === 'PinOnly' || roomAccessMode === 'WaitingRoom') && !roomPin.trim())">
           @if (isBusy('room:create')) { <ion-spinner name="crescent"></ion-spinner> } @else { <ion-icon name="add-circle-outline"></ion-icon> }
           {{ 'VAULT.CREATE_ROOM' | translate:'Crear sala' }}
         </ion-button>

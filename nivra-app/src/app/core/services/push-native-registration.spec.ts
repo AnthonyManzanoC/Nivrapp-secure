@@ -22,6 +22,7 @@ describe('saved account push registration and routing', () => {
   let api: { baseUrl: string; get: jasmine.Spy; post: jasmine.Spy };
   let calls: { activeCall: jasmine.Spy; resumableCall: jasmine.Spy; handleNotificationCallAction: jasmine.Spy };
   let protectedChats: ReturnType<typeof signal<Record<string, readonly string[]>>>;
+  let nativePermissions: { check: jasmine.Spy; request: jasmine.Spy };
   const account = (id = 'alice', refreshToken = 'refresh-a') => ({
     user: { id, alias: id }, device: { id: `phone-${id}` }, tokens: { accessToken: 'access', refreshToken },
   });
@@ -32,11 +33,12 @@ describe('saved account push registration and routing', () => {
     session = signal<any>(null); credentials = signal<any[]>([]); generation = signal(0);
     protectedChats = signal<Record<string, readonly string[]>>({});
     native = jasmine.createSpyObj<NativeDeviceService>('NativeDeviceService', [
-      'syncPushRegistrations', 'clearPushRegistration', 'pendingPushIntent', 'clearPendingPushIntent', 'addPushIntentListener', 'clearIncomingCall',
+      'syncPushRegistrations', 'clearPushRegistration', 'pendingPushIntent', 'clearPendingPushIntent', 'addPushIntentListener', 'clearIncomingCall', 'notificationStatus',
     ]);
     native.syncPushRegistrations.and.resolveTo(); native.clearPushRegistration.and.resolveTo();
     native.pendingPushIntent.and.resolveTo(null); native.clearPendingPushIntent.and.resolveTo(); native.addPushIntentListener.and.resolveTo(null);
     native.clearIncomingCall.and.resolveTo();
+    native.notificationStatus.and.resolveTo({});
     api = { baseUrl: 'https://api.example.test', get: jasmine.createSpy().and.returnValue(of({ serverReady: true, fcmReady: false })), post: jasmine.createSpy() };
     switchAccount = jasmine.createSpy('switchToStoredAccount').and.callFake(async (userId, deviceId) => {
       const saved = credentials().find(item => item.user.id === userId && item.device.id === deviceId);
@@ -58,6 +60,9 @@ describe('saved account push registration and routing', () => {
       { provide: SignalrService, useValue: { connected: () => true } }, { provide: ToastController, useValue: {} },
     ] });
     service = TestBed.inject(PushService);
+    nativePermissions = { check: jasmine.createSpy('checkPermissions').and.resolveTo({ receive: 'prompt' }),
+      request: jasmine.createSpy('requestPermissions').and.resolveTo({ receive: 'granted' }) };
+    Object.assign(service, { nativePermissions });
   });
   afterEach(() => TestBed.resetTestingModule());
 
@@ -131,6 +136,55 @@ describe('saved account push registration and routing', () => {
 
   it('does not mistake web push readiness for Android FCM readiness', async () => {
     session.set(account()); await service.refreshStatus(); expect(service.serverReady()).toBeFalse();
+  });
+
+  it('keeps the first Android runtime request available when the system reports notifications disabled before authorization', async () => {
+    session.set(account()); await flush();
+    nativePermissions.check.and.resolveTo({ receive: 'prompt' });
+    native.notificationStatus.and.resolveTo({ notificationsEnabled: false, messageChannelEnabled: true });
+    expect(await service.refreshPermission()).toBe('default');
+    expect(service.settingsBlocked()).toBeNull();
+  });
+
+  it('opens the system authorization independently of a temporarily unavailable push API', async () => {
+    session.set(account()); await flush();
+    nativePermissions.check.and.resolveTo({ receive: 'prompt' });
+    const permission = nativePermissions.request.and.resolveTo({ receive: 'granted' });
+    spyOn(service, 'refreshStatus').and.resolveTo(false);
+    expect(await service.requestPermissionAndRegister()).toBeFalse();
+    expect(permission).toHaveBeenCalledTimes(1);
+    expect(service.permission()).toBe('granted');
+    expect(service.nativeBackgroundReady()).toBeFalse();
+  });
+
+  it('detects app-level and message-channel settings without confusing them with FCM registration', async () => {
+    session.set(account()); await flush();
+    nativePermissions.check.and.resolveTo({ receive: 'granted' });
+    native.notificationStatus.and.resolveTo({ notificationsEnabled: false, messageChannelEnabled: true });
+    expect(await service.refreshPermission()).toBe('denied');
+    expect(service.settingsBlocked()).toBe('app');
+    native.notificationStatus.and.resolveTo({ notificationsEnabled: true, messageChannelEnabled: false });
+    expect(await service.refreshPermission()).toBe('granted');
+    service.serverReady.set(true); service.registeredOnServer.set(true); service.tokenId.set('current-token');
+    expect(service.settingsBlocked()).toBe('messages');
+    expect(service.nativeBackgroundReady()).toBeFalse();
+  });
+
+  it('coalesces foreground repair hints and rechecks the permission after returning from settings', async () => {
+    session.set(account()); await flush();
+    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('visible');
+    spyOn(service, 'refreshPermission').and.callFake(async () => { service.permission.set('granted'); return 'granted'; });
+    let finish!: (value: boolean) => void;
+    const initialize = spyOn(service, 'initialize').and.returnValue(new Promise<boolean>(resolve => finish = resolve));
+    const first = service.resumeNativeRegistration();
+    const second = service.resumeNativeRegistration();
+    expect(first).toBe(second);
+    await Promise.resolve(); await Promise.resolve();
+    expect(initialize).toHaveBeenCalledTimes(1);
+    finish(false); await first;
+    service.permission.set('denied');
+    await service.resumeNativeRegistration();
+    expect(service.refreshPermission).toHaveBeenCalledTimes(2);
   });
 
   it('discards a late token response after A to B to A even if the same tuple is active again', async () => {

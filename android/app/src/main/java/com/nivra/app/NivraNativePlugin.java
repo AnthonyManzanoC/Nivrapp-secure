@@ -40,6 +40,9 @@ import android.hardware.SensorManager;
 import android.util.Base64;
 import android.view.Window;
 import android.view.WindowManager;
+import android.graphics.Color;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsCompat;
 import android.webkit.MimeTypeMap;
 
 import com.getcapacitor.JSObject;
@@ -345,6 +348,24 @@ public class NivraNativePlugin extends Plugin {
     }
 
     @PluginMethod
+    public void setNavigationBar(PluginCall call) {
+        String color = call.getString("color", "#070b0d");
+        if (!color.matches("^#[0-9a-fA-F]{6}$")) { call.reject("Invalid navigation bar color"); return; }
+        Activity activity = getActivity();
+        if (activity == null) { call.resolve(); return; }
+        boolean darkIcons = call.getBoolean("darkIcons", false);
+        activity.runOnUiThread(() -> {
+            Window window = activity.getWindow();
+            window.setNavigationBarColor(Color.parseColor(color));
+            if (Build.VERSION.SDK_INT >= 29) window.setNavigationBarContrastEnforced(true);
+            var controller = WindowCompat.getInsetsController(window, window.getDecorView());
+            controller.setAppearanceLightNavigationBars(darkIcons);
+            controller.show(WindowInsetsCompat.Type.navigationBars());
+            call.resolve();
+        });
+    }
+
+    @PluginMethod
     public void setSecureScreen(PluginCall call) {
         boolean enabled = call.getBoolean("enabled", false);
         Activity activity = getActivity();
@@ -496,6 +517,8 @@ public class NivraNativePlugin extends Plugin {
         result.put("fullScreenIntentAllowed", Build.VERSION.SDK_INT < 34 ||
             (notificationManager != null && notificationManager.canUseFullScreenIntent()));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notificationManager != null) {
+            NotificationChannel messages = notificationManager.getNotificationChannel("nivra_messages");
+            result.put("messageChannelEnabled", messages == null || messages.getImportance() != NotificationManager.IMPORTANCE_NONE);
             NotificationChannel channel = notificationManager.getNotificationChannel(CHANNEL_CALLS);
             result.put("incomingCallChannelEnabled", channel == null || channel.getImportance() != NotificationManager.IMPORTANCE_NONE);
             result.put("incomingCallChannelAudible", channel == null || channel.getSound() != null);

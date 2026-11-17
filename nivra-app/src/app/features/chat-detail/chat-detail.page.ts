@@ -76,7 +76,9 @@ import {
 import { Subscription } from 'rxjs';
 import { CallSession, ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
+import { MessagePrivacyBadgeComponent } from './message-privacy-badge.component';
 import { TextOutboxService } from '../../core/services/text-outbox.service';
+import { ScheduledTextControlComponent } from '../../shared/scheduled-text-control.component';
 import { VaultService } from '../../core/services/vault.service';
 import { AppSettingsService } from '../../core/services/app-settings.service';
 import { AuthService } from '../../core/services/auth.service';
@@ -155,6 +157,7 @@ interface MessageTextPart {
   selector: 'app-chat-detail',
   standalone: true,
   imports: [TransientNoticeDirective,
+    ScheduledTextControlComponent,
     LocalizedDatePipe,
     CommonModule,
     FormsModule,
@@ -188,6 +191,7 @@ interface MessageTextPart {
     ChatLoadingComponent,
     ChatIdentityChangeNoticeComponent,
     PrivateChatLockComponent,
+    MessagePrivacyBadgeComponent,
   ],
   templateUrl: './chat-detail.page.html',
   styleUrls: ['./chat-detail.page.scss', './chat-thread.scss', './chat-profile.scss'],
@@ -429,6 +433,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   private readonly quotedReplyCache = new Map<string, QuotedReplyVm>();
   private readonly quotedReplyLoads = new Set<string>();
   private groupRoomRefreshTimer: number | null = null;
+  private viewerRequestEpoch = 0;
+  private viewerScope = '';
+  private viewerOnceLease: { messageId:string; openedAt:string; userId:string; deviceId:string; scope:string }|null = null;
+  private viewerOnceMessage:ChatMessageVm|null = null;
+  private viewerWasListed = false;
+  private viewerExpiryTimer: number | null = null;
 
   constructor() {
     effect(() => {
@@ -503,6 +513,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       const conversationId = this.conversation()?.id ?? '';
       const messages = this.messages();
       untracked(() => this.refreshQuotedReplies(conversationId, messages));
+    });
+    effect(() => {
+      this.auth.session(); this.auth.sessionGeneration?.(); this.conversation();
+      this.privateChatLocked();
+      this.privateChats?.appLock?.isContentLocked?.();
+      const messages = this.messages();
+      untracked(() => this.reconcileMessageViewers(messages));
     });
   }
 
@@ -593,6 +610,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ionViewWillLeave(): void {
+    void this.closeViewOnceText(); void this.closeAudioPreview(); void this.closeMediaViewer();
+    this.discardMessageViewers();
     this.privateChats.relock();
     this.stopGroupRoomRefresh();
     ++this.composerGeneration;
@@ -630,6 +649,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    void this.closeViewOnceText(); void this.closeAudioPreview(); void this.closeMediaViewer();
+    this.discardMessageViewers();
     void this.closeChatMenu();
     this.stopGroupRoomRefresh();
     this.destroyed = true;
@@ -657,8 +678,26 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     document.documentElement.style.setProperty('--keyboard-bottom', '0px');
   }
 
-  async send(): Promise<void> {
+  canScheduleText(): boolean {
+    return !this.editingMessage && !this.voiceComposerActive() && !this.textSaving && !this.sending
+      && !!this.draft.trim() && !this.isBlocked() && !this.privateChatLocked() && this.canSendMessages();
+  }
+  scheduledTextContext(): string {
+    const session = this.auth.session();
+    return JSON.stringify([session?.user.id, session?.device.id, this.auth.sessionGeneration?.(), this.conversation()?.id, this.composerGeneration]);
+  }
+  scheduledTexts() { return this.textOutbox.forConversation(this.conversation()?.id ?? '').filter(entry => entry.scheduledFor && !entry.scheduleStartedAt); }
+  async scheduleText(at: number): Promise<void> { if (this.canScheduleText()) await this.send(at); }
+  async cancelScheduledText(id: string): Promise<void> {
+    if (this.privateChatLocked() || !this.scheduledTexts().some(entry => entry.id === id)) return;
+    const context = this.scheduledTextContext();
+    try { await this.textOutbox.discard(id); }
+    catch (error) { if (context === this.scheduledTextContext()) this.textQueueError = error instanceof Error ? error.message : 'No se pudo cancelar el mensaje programado.'; }
+  }
+
+  async send(scheduleAt?: number): Promise<void> {
     const conversation = this.conversation();
+    if (scheduleAt !== undefined && !this.canScheduleText()) return;
     if (this.editingMessage) {
       await this.submitEdit();
       return;
@@ -678,12 +717,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const reply = this.replyingMessage;
     this.textSaving = true;
     try {
-      await this.textOutbox.enqueue(conversation, text, policy);
+      await this.textOutbox.enqueue(conversation, text, policy, scheduleAt);
       if (!this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation)) return;
       if (this.draft === text) this.draft = '';
       if (this.replyingMessage === reply) this.replyingMessage = null;
       this.textQueueError = '';
       this.emojiPanelOpen = false;
+      if (scheduleAt !== undefined) this.notice = this.tr('SCHEDULE.SAVED', 'Mensaje programado en este dispositivo.');
       this.scrollBottom();
       void this.chat.sendTyping(conversation.id, 'stopped', { force: true }).catch(() => undefined);
     } catch (error) {
@@ -707,7 +747,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   pendingTextStatus(): string {
     const conversation = this.conversation();
     if (!conversation || this.privateChatLocked()) return '';
-    const entry = this.textOutbox.forConversation(conversation.id)[0];
+    const entry = this.textOutbox.forConversation(conversation.id).find(row => !row.scheduledFor || row.scheduleStartedAt);
     return entry && !entry.blocked ? this.textOutbox.failureMessage(entry) : '';
   }
 
@@ -732,7 +772,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const queued = this.textOutbox.forConversation(conversation.id);
     if (!queued.length) return confirmed;
     const confirmedIds = new Set(this.chat.selectedMessages().filter(message => message.mine).map(message => message.clientMessageId));
-    const pending = queued.filter(row => row.senderUserId === session.user.id
+    const pending = queued.filter(row => (!row.scheduledFor || row.scheduleStartedAt) && row.senderUserId === session.user.id
       && row.senderDeviceId === session.device.id && !confirmedIds.has(row.clientMessageId));
     return pending.length ? [...confirmed, ...pending] : confirmed;
   }
@@ -1015,6 +1055,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async openMediaItem(message: ChatMessageVm): Promise<void> {
+    if (!this.canOpenMessageViewer(message)) return;
     const file = this.chat.asFile(message.payload);
     if (!file) {
       return;
@@ -1024,59 +1065,79 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     if (!this.chat.isImage(file) && !this.chat.isVideo(file)) {
+      if (this.isPendingViewOnce(message)) {
+        // A generic file has no safe in-app single-view renderer. Do not recurse
+        // through preview -> openViewOnce, or export it to another application.
+        this.attachmentError = this.tr('CHAT.VIEW_ONCE_UNSUPPORTED_FILE', 'Este archivo no tiene un visor de una sola visualización. Usa texto, fotos, videos o audio.');
+        return;
+      }
       await this.preview(message);
       return;
     }
     if (this.downloadingId) {
       return;
     }
+    const request = this.beginMessageViewerRequest(message);
+    if (!request) return;
 
     this.downloadingId = message.id;
     this.attachmentError = '';
     try {
       const preview = await this.chat.ensureMediaPreview(message.payload);
-      if (preview) {
+      if (preview && request.current()) {
+        if (!await this.claimMessageViewer(message, request)) return;
         this.activeMediaPreview = preview;
         this.activeMediaFile = file;
         this.activeMediaMessage = message;
+        this.scheduleViewerExpiry(message);
       }
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_ATTACHMENT', 'No se pudo abrir el adjunto.');
+      if (request.current()) this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_OPEN_ATTACHMENT', 'No se pudo abrir el adjunto.');
     } finally {
-      this.downloadingId = null;
+      request.finish();
+      if(message.deleteAfterRead&&this.activeMediaMessage?.id!==message.id&&request.contextCurrent())this.chat.releaseViewOncePreview?.(message);
+      if(request.contextCurrent())this.clearMessageViewerTracking();
     }
   }
 
   async openAudioPreview(message: ChatMessageVm): Promise<void> {
+    if (!this.canOpenMessageViewer(message)) return;
     const file = this.chat.asFile(message.payload);
     if (!file || this.downloadingId) {
       return;
     }
+    const request = this.beginMessageViewerRequest(message);
+    if (!request) return;
 
     this.downloadingId = message.id;
     this.attachmentError = '';
     try {
       const preview = await this.chat.ensureMediaPreview(message.payload);
-      if (preview) {
+      if (preview && request.current()) {
+        if (!await this.claimMessageViewer(message, request)) return;
         this.activeAudioPreview = preview;
         this.activeAudioName = file.voiceNote ? this.tr('CHAT.VOICE_NOTE', 'Nota de voz') : this.chat.fileName(file);
         this.activeAudioMessage = message;
         this.activeAudioStarted = false;
+        this.scheduleViewerExpiry(message);
       }
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_PLAY_AUDIO', 'No se pudo reproducir el audio.');
+      if (request.current()) this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_PLAY_AUDIO', 'No se pudo reproducir el audio.');
     } finally {
-      this.downloadingId = null;
+      request.finish();
+      if(message.deleteAfterRead&&this.activeAudioMessage?.id!==message.id&&request.contextCurrent())this.chat.releaseViewOncePreview?.(message);
+      if(request.contextCurrent())this.clearMessageViewerTracking();
     }
   }
 
   async closeAudioPreview(): Promise<void> {
     const message = this.activeAudioMessage;
-    const shouldMark = Boolean(message && this.shouldMarkViewOnceOpened(message));
+    const shouldMark = Boolean(message && !this.ownsMessageViewerLease(message) && this.viewerScope === this.messageViewerScope() && this.canOpenMessageViewer(message) && this.shouldMarkViewOnceOpened(message));
     this.activeAudioPreview = null;
     this.activeAudioName = '';
     this.activeAudioMessage = null;
     this.activeAudioStarted = false;
+    this.clearMessageViewerTracking();
     if (message && shouldMark) {
       await this.chat.markMessageOpened(message).catch(() => undefined);
     }
@@ -1084,11 +1145,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   async closeMediaViewer(): Promise<void> {
     const message = this.activeMediaMessage;
-    const shouldMark = Boolean(message && this.shouldMarkViewOnceOpened(message));
+    const shouldMark = Boolean(message && !this.ownsMessageViewerLease(message) && this.viewerScope === this.messageViewerScope() && this.canOpenMessageViewer(message) && this.shouldMarkViewOnceOpened(message));
     this.activeMediaPreview = null;
     this.activeMediaFile = null;
     this.activeMediaMessage = null;
     this.activeMediaZoom = 1;
+    this.clearMessageViewerTracking();
     if (message && shouldMark) {
       await this.chat.markMessageOpened(message).catch(() => undefined);
     }
@@ -3183,6 +3245,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   async openViewOnce(message: ChatMessageVm): Promise<void> {
+    if (!this.canOpenMessageViewer(message)) return;
     if (this.chat.asFile(message.payload)) {
       await this.openMediaItem(message);
       return;
@@ -3190,13 +3253,21 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (!this.isPendingViewOnce(message)) {
       return;
     }
-    this.activeViewOnceTextMessage = message;
+    const request=this.beginMessageViewerRequest(message);if(!request)return;
+    try{
+      if(!await this.claimMessageViewer(message,request)||!request.current())return;
+      this.activeViewOnceTextMessage = message;
+      this.scheduleViewerExpiry(message);
+    }catch(error){if(request.current())this.attachmentError=error instanceof Error?error.message:this.tr('CHAT.ERROR_OPEN_ATTACHMENT','No se pudo abrir el mensaje.');}
+    finally{request.finish();if(request.contextCurrent())this.clearMessageViewerTracking();}
   }
 
   async closeViewOnceText(): Promise<void> {
     const message = this.activeViewOnceTextMessage;
+    const shouldMark = Boolean(message && !this.ownsMessageViewerLease(message) && this.viewerScope === this.messageViewerScope() && this.canOpenMessageViewer(message) && this.shouldMarkViewOnceOpened(message));
     this.activeViewOnceTextMessage = null;
-    if (message && this.shouldMarkViewOnceOpened(message)) {
+    this.clearMessageViewerTracking();
+    if (message && shouldMark) {
       await this.chat.markMessageOpened(message).catch(() => {
         this.notice = this.tr('CHAT.ERROR_MARK_VIEW_ONCE', 'No se pudo confirmar la apertura. Intenta nuevamente.');
       });
@@ -3205,6 +3276,94 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   isPendingViewOnce(message: ChatMessageVm | null | undefined): boolean {
     return Boolean(message?.deleteAfterRead && !this.chat.isViewOnceOpened(message));
+  }
+
+  private messageViewerScope(): string {
+    const session = this.auth.session();
+    const conversationId = this.conversation()?.id;
+    if (this.destroyed || !session || !conversationId || this.privateChatLocked() || this.privateChats?.appLock?.isContentLocked?.()) return '';
+    return JSON.stringify([session.user.id, session.device?.id, this.auth.sessionGeneration?.(), conversationId]);
+  }
+
+  private canOpenMessageViewer(message: ChatMessageVm): boolean {
+    const expiry = message.expiresAt ? Date.parse(message.expiresAt) : null;
+    return !!this.messageViewerScope() && message.conversationId === this.conversation()?.id
+      && !message.decryptError && !this.chat.isViewOnceOpened(message)
+      && (expiry === null || Number.isFinite(expiry) && expiry > Date.now());
+  }
+
+  private beginMessageViewerRequest(message: ChatMessageVm): { current: () => boolean; contextCurrent:()=>boolean; finish: () => void } | null {
+    if (!this.canOpenMessageViewer(message)) return null;
+    const epoch = ++this.viewerRequestEpoch, scope = this.messageViewerScope();
+    this.viewerScope = scope;
+    this.viewerWasListed = this.messages().some(item => item.id === message.id);
+    const contextCurrent=()=>epoch === this.viewerRequestEpoch && scope === this.messageViewerScope()&&this.canOpenMessageViewer(message);
+    const current = () => contextCurrent() && this.viewerMessageStillCurrent(message,this.messages().find(item => item.id === message.id));
+    return { current, contextCurrent, finish: () => { if (epoch === this.viewerRequestEpoch) this.downloadingId = null; } };
+  }
+
+  private reconcileMessageViewers(messages: ChatMessageVm[]): void {
+    if (!this.messageViewerScope() || this.viewerScope && this.viewerScope !== this.messageViewerScope()) {
+      this.discardMessageViewers(); return;
+    }
+    const active = this.activeViewOnceTextMessage ?? this.activeMediaMessage ?? this.activeAudioMessage;
+    if (!active) return;
+    const current = messages.find(message => message.id === active.id);
+    if (!this.canOpenMessageViewer(active) || !this.viewerMessageStillCurrent(active,current) || !current && this.viewerWasListed) this.discardMessageViewers();
+  }
+
+  private ownsMessageViewerLease(message:ChatMessageVm):boolean {
+    return this.viewerOnceLease?.messageId===message.id&&this.viewerOnceLease.scope===this.messageViewerScope();
+  }
+  private viewerMessageStillCurrent(message:ChatMessageVm,current:ChatMessageVm|undefined):boolean {
+    if(!this.chat.isViewOnceOpened(current))return true;
+    const lease=this.viewerOnceLease;
+    // The first reader may retain only its own in-memory view. A different
+    // device's consumption or any other tombstone still closes it immediately.
+    return !!lease&&this.ownsMessageViewerLease(message)&&current?.payload['deviceId']===lease.deviceId&&current.payload['at']===lease.openedAt
+      &&!(current.receipts??[]).some(receipt=>receipt.userId===lease.userId&&receipt.deviceId!==lease.deviceId&&!!receipt.deletedAt);
+  }
+  private async claimMessageViewer(message:ChatMessageVm,request:{current:()=>boolean;contextCurrent:()=>boolean}):Promise<boolean>{
+    if(!message.deleteAfterRead||message.mine)return request.current();
+    const claim=this.chat.claimViewOnceOpen;
+    if(!claim)return request.current(); // Old isolated component fixtures do not own a message store.
+    const scope=this.messageViewerScope();
+    const lease=await claim.call(this.chat,message,true);
+    if(!lease||!scope||scope!==this.messageViewerScope()||!request.contextCurrent())return false;
+    this.viewerOnceLease={messageId:message.id,openedAt:lease.openedAt,userId:lease.userId,deviceId:lease.deviceId,scope};
+    this.viewerOnceMessage=message;
+    return request.current();
+  }
+
+  private scheduleViewerExpiry(message: ChatMessageVm): void {
+    if (this.viewerExpiryTimer !== null) window.clearTimeout(this.viewerExpiryTimer);
+    this.viewerExpiryTimer = null;
+    const at = Date.parse(message.expiresAt ?? '');
+    if (!Number.isFinite(at)) return;
+    this.viewerExpiryTimer = window.setTimeout(() => {
+      this.viewerExpiryTimer = null;
+      if (!this.canOpenMessageViewer(message)) this.discardMessageViewers();
+      else this.scheduleViewerExpiry(message);
+    }, Math.min(Math.max(0, at - Date.now()), 2_147_483_647));
+  }
+
+  private clearMessageViewerTracking(): void {
+    if (this.activeViewOnceTextMessage || this.activeMediaMessage || this.activeAudioMessage) return;
+    this.viewerOnceLease=null;
+    const consumed=this.viewerOnceMessage;this.viewerOnceMessage=null;
+    if(consumed)this.chat.releaseViewOncePreview?.(consumed);
+    ++this.viewerRequestEpoch; this.viewerScope = ''; this.viewerWasListed = false;
+    if (this.viewerExpiryTimer !== null) window.clearTimeout(this.viewerExpiryTimer);
+    this.viewerExpiryTimer = null;
+  }
+
+  private discardMessageViewers(): void {
+    for(const message of [this.activeMediaMessage,this.activeAudioMessage])if(message?.deleteAfterRead)this.chat.releaseViewOncePreview?.(message);
+    this.activeViewOnceTextMessage = null;
+    this.activeMediaMessage = null; this.activeMediaPreview = null; this.activeMediaFile = null; this.activeMediaZoom = 1;
+    this.activeAudioMessage = null; this.activeAudioPreview = null; this.activeAudioName = ''; this.activeAudioStarted = false;
+    this.downloadingId = null;
+    this.clearMessageViewerTracking();
   }
 
   viewOnceMediaIcon(file: FileChatPayload): string {

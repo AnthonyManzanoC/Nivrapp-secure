@@ -9,7 +9,11 @@ export interface AccountBackup { v: 1; method: 'password' | 'recovery'; salt: st
 export interface AccountIdentityBackup { identity: AccountRootPublic; passwordBackup: string; recoveryBackup: string; revision: number; }
 const encoder = new TextEncoder();
 export const identityBytes = (value: unknown): Uint8Array<ArrayBuffer> => encoder.encode(JSON.stringify(value));
-export function identityB64(bytes: Uint8Array): string { return btoa(String.fromCharCode(...bytes)); }
+export function identityB64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 32768) binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+  return btoa(binary);
+}
 export function identityBinary(text: string, limit = 16384): Uint8Array<ArrayBuffer> {
   if (typeof text !== 'string' || text.length > limit || !/^[A-Za-z0-9+/]*={0,2}$/.test(text)) throw Error('Formato de identidad inválido.');
   const bytes = Uint8Array.from(atob(text), value => value.charCodeAt(0));

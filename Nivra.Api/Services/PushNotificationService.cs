@@ -146,14 +146,17 @@ public sealed class PushNotificationService(
         return _durableTokenCipher?.Protect(token) ?? _tokenProtector.Protect(token);
     }
 
-    public async Task SendMessageAsync(
+    public Task SendMessageAsync(
         string userId,
         string conversationId,
         string messageId,
         string senderUserId,
         CancellationToken cancellationToken)
-    {
-        await SendToUserAsync(
+        => DispatchMessageAsync(userId, conversationId, messageId, senderUserId, cancellationToken);
+
+    public Task<bool> DispatchMessageAsync(string userId, string conversationId, string messageId,
+        string senderUserId, CancellationToken cancellationToken, IReadOnlySet<string>? completedPushTokenIds = null,
+        Func<string, Task>? completePushToken = null, int destinationOffset = 0, DateTimeOffset? expiresAt = null) => SendToUserAsync(
             userId,
             "Nivra",
             "Nuevo mensaje privado",
@@ -163,10 +166,11 @@ public sealed class PushNotificationService(
                 ["conversationId"] = conversationId,
                 ["messageId"] = messageId,
                 ["senderUserId"] = senderUserId,
+                ["expiresAt"] = (expiresAt ?? DateTimeOffset.UtcNow.AddDays(1)).ToUnixTimeMilliseconds().ToString(System.Globalization.CultureInfo.InvariantCulture),
                 ["tag"] = $"nivra-message-{conversationId}"
             },
-            cancellationToken);
-    }
+            cancellationToken, parallelDelivery: true, completedPushTokenIds: completedPushTokenIds, completePushToken: completePushToken,
+            destinationOffset: destinationOffset);
 
     public async Task SendIncomingCallAsync(
         string userId,
@@ -343,7 +347,10 @@ public sealed class PushNotificationService(
         bool silentDataOnly = false,
         string? targetDeviceId = null,
         bool parallelDelivery = false,
-        string? excludeDeviceId = null)
+        string? excludeDeviceId = null,
+        IReadOnlySet<string>? completedPushTokenIds = null,
+        Func<string, Task>? completePushToken = null,
+        int destinationOffset = 0)
     {
         var pushOptions = options.CurrentValue;
         FcmRuntimeConfig? fcmConfig = null;
@@ -371,6 +378,18 @@ public sealed class PushNotificationService(
         if (tokens.Count == 0)
         {
             return excludeDeviceId != null; // No other linked device needs to stop ringing.
+        }
+        // Only the durable message dispatcher supplies progress. Keep a bounded
+        // four-way send batch, resuming later batches after a budget or restart.
+        if (completedPushTokenIds is not null) tokens.RemoveAll(token => completedPushTokenIds.Contains(token.Id));
+        if (tokens.Count == 0) return true;
+        // Advance the starting batch on durable retries too: permanently slow
+        // early destinations must not keep a later, healthy device unattempted.
+        if (completedPushTokenIds is not null || destinationOffset > 0)
+        {
+            tokens = tokens.OrderBy(token => token.Id, StringComparer.Ordinal).ToList();
+            var offset = Math.Max(0, destinationOffset) % tokens.Count;
+            tokens = tokens.Skip(offset).Concat(tokens.Take(offset)).ToList();
         }
 
         var changed = false;
@@ -436,6 +455,8 @@ public sealed class PushNotificationService(
                 changed = true;
             }
             else if (!result.Sent) Interlocked.Increment(ref transientCount);
+            if ((result.Sent || result.InvalidToken) && completePushToken is not null)
+                await completePushToken(token.Id);
         }
 
         if (parallelDelivery)
