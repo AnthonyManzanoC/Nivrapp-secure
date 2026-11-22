@@ -29,6 +29,7 @@ builder.Services.AddSingleton<IHubContext<NivraHub>>(capture); builder.Services.
 builder.Services.AddSingleton<RealtimePresence>(); builder.Services.AddSingleton<LiveKitTokenService>();
 builder.Services.AddHttpClient(); builder.Services.AddDataProtection(); builder.Services.Configure<NivraPushOptions>(_ => { });
 builder.Services.AddSingleton<PushNotificationService>();
+builder.Services.AddSingleton(new CallNotificationDispatch(NullLogger<CallNotificationDispatch>.Instance));
 await using var app = builder.Build();
 app.Use(async (http, next) => { if (http.Request.Headers.TryGetValue("X-Fixture-Account", out var account)) http.Items["__nivra_current_user"] = new CurrentUser(account.ToString(), "fixture-device", "fixture-session"); await next(http); });
 app.MapContactBlockEndpoints();
