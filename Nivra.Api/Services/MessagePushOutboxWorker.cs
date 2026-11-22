@@ -37,7 +37,16 @@ public sealed class MessagePushOutboxWorker(IServiceScopeFactory scopes, TimePro
             }
         }
         await Parallel.ForEachAsync(jobs, new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = ct },
-            async (job, token) => await DispatchAsync(job, token));
+            async (job, token) =>
+            {
+                try { await DispatchAsync(job, token); }
+                catch (Exception error) when (!token.IsCancellationRequested)
+                {
+                    // Keep the lease for a bounded retry and continue with other
+                    // recipients if this job lost its connection during delivery.
+                    logger.LogWarning(error, "Message notification job {MessageId} could not finish and will be retried.", job.MessageId);
+                }
+            });
     }
 
     private async Task DispatchAsync(MessagePushOutboxItem job, CancellationToken ct)
@@ -46,8 +55,10 @@ public sealed class MessagePushOutboxWorker(IServiceScopeFactory scopes, TimePro
         var db = scope.ServiceProvider.GetRequiredService<NivraDbContext>();
         var lease = Guid.NewGuid().ToString("N");
         if (await MessagePushOutbox.TryLeaseAsync(db, job.MessageId, job.RecipientUserId, lease, clock.GetUtcNow(), ct) != 1) return;
-        job = await db.MessagePushOutbox.AsNoTracking().SingleAsync(row => row.MessageId == job.MessageId &&
+        var leased = await db.MessagePushOutbox.AsNoTracking().SingleOrDefaultAsync(row => row.MessageId == job.MessageId &&
             row.RecipientUserId == job.RecipientUserId && row.LeaseId == lease, ct);
+        if (leased is null) return;
+        job = leased;
         var message = await db.Messages.AsNoTracking().FirstOrDefaultAsync(row => row.Id == job.MessageId, ct);
         var currentMember = message is not null && await db.Conversations.AnyAsync(conversation => conversation.Id == message.ConversationId &&
             conversation.Participants.Any(participant => participant.UserId == job.RecipientUserId && participant.RemovedAt == null), ct);

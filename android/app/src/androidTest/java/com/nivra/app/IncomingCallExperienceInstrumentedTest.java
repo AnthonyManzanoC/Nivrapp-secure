@@ -1,9 +1,14 @@
 package com.nivra.app;
 
+import android.Manifest;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.ApplicationInfo;
 import android.graphics.Bitmap;
+import android.os.Build;
+import android.os.Bundle;
+import android.os.SystemClock;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowManager;
@@ -11,6 +16,7 @@ import android.widget.TextView;
 import androidx.test.core.app.ActivityScenario;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import com.google.firebase.messaging.RemoteMessage;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import org.junit.Before;
@@ -38,6 +44,7 @@ public class IncomingCallExperienceInstrumentedTest {
     private Intent incoming(String type, boolean hidden) throws Exception {
         JSONObject account = new JSONObject().put("userId", user).put("deviceId", device)
             .put("epoch", "synthetic-epoch").put("notificationEpoch", "synthetic-epoch")
+            .put("registeredAt", System.currentTimeMillis() - 4 * 86_400_000L)
             .put("hideNotificationContent", hidden).put("protectedConversationIds", new JSONArray());
         JSONObject root = new JSONObject().put("version", 2).put("accounts", new JSONArray().put(account))
             .put("activeUserId", user).put("activeDeviceId", device).put("pendingWipes", new JSONArray());
@@ -98,6 +105,45 @@ public class IncomingCallExperienceInstrumentedTest {
                 assertTrue(contains(root,"Responder con mensaje"));
             });
             screenshot("native-incoming-voice");
+        }
+    }
+
+    @Test public void postsFreshIncomingCallForAnOlderSavedAccountWithoutAVisibleMainActivity() throws Exception {
+        Intent fixture = incoming("Voice", false);
+        assertFalse(NivraNativePlugin.isActivityVisible());
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            InstrumentationRegistry.getInstrumentation().getUiAutomation().grantRuntimePermission(
+                context.getPackageName(), Manifest.permission.POST_NOTIFICATIONS);
+        }
+        String callId = fixture.getStringExtra("callId");
+        Bundle data = new Bundle();
+        data.putLong("google.sent_time", System.currentTimeMillis());
+        data.putString("type", "incoming_call");
+        data.putString("callId", callId);
+        data.putString("callType", "Voice");
+        data.putString("callerName", "Contacto de prueba");
+        data.putString("recipientUserId", user);
+        data.putString("recipientDeviceId", device);
+        data.putString("expiresAt", fixture.getStringExtra("expiresAt"));
+
+        class AttachedMessagingService extends NivraMessagingService {
+            void attach(Context application) { attachBaseContext(application); }
+        }
+        AttachedMessagingService receiver = new AttachedMessagingService();
+        receiver.attach(context);
+        receiver.onMessageReceived(new RemoteMessage(data));
+        try {
+            NotificationManager notifications = context.getSystemService(NotificationManager.class);
+            String tag = NivraPushScopePolicy.notificationTag(user, device);
+            long deadline = SystemClock.elapsedRealtime() + 8000;
+            do {
+                if (java.util.Arrays.stream(notifications.getActiveNotifications()).anyMatch(item ->
+                    tag.equals(item.getTag()) && "call".equals(item.getNotification().category))) return;
+                SystemClock.sleep(100);
+            } while (SystemClock.elapsedRealtime() < deadline);
+            fail("The system did not post the incoming call notification for the saved account");
+        } finally {
+            NivraNativePlugin.clearIncomingCallNotification(context, callId, user, device);
         }
     }
 

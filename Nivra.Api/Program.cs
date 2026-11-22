@@ -103,6 +103,7 @@ builder.Services.AddSingleton<PushNotificationService>();
 builder.Services.AddSingleton<LiveKitTokenService>();
 builder.Services.AddHostedService<SessionCleanupService>();
 builder.Services.AddHostedService<CallPushOutboxWorker>();
+builder.Services.AddSingleton(provider => new CallNotificationDispatch(provider.GetRequiredService<ILogger<CallNotificationDispatch>>()));
 builder.Services.AddHostedService<MessagePushOutboxWorker>();
 builder.Services.AddSignalR(options =>
 {

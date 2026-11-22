@@ -77,7 +77,7 @@ export class PushService {
   private pushClickQueue: Promise<void> = Promise.resolve();
   private readonly pushClicks = new Map<string, { at: number; promise: Promise<void> }>();
   private observedPushScope = '';
-  private nativeResumePromise: Promise<boolean> | null = null;
+  private nativeResume: { scope: string; promise: Promise<boolean> } | null = null;
   private nativeRepairTimer: number | null = null;
   private nativeRepairAttempt = 0;
   private lastNativeAttemptAt = 0;
@@ -156,20 +156,26 @@ export class PushService {
       return false;
     }
     this.initializing = true;
+    const scope = this.pushScope();
+    const current = () => !this.destroyRef.destroyed && scope === this.pushScope();
     if (Capacitor.isNativePlatform()) this.lastNativeAttemptAt = Date.now();
     this.registering.set(true);
     this.error.set('');
     try {
       if (!await this.auth.ensureFreshSession()) {
-        this.error.set('Tu sesion vencio. Vuelve a entrar para activar avisos.');
+        if (current()) this.error.set('No se pudo comprobar la sesión para activar avisos. Revisa la conexión e inténtalo de nuevo.');
         return false;
       }
-      if (!await this.refreshStatus()) {
-        this.error.set('Tu sesion Nivra no esta autorizada para registrar avisos.');
+      if (!current()) return false;
+      const reachable = await this.refreshStatus();
+      if (!current()) return false;
+      if (!reachable) {
+        this.error.set('No se pudo comprobar el servicio de avisos. Vuelve a intentar cuando tengas conexión.');
         return false;
       }
       this.bindServiceWorkerMessages();
       await this.consumePendingWebPushIntent();
+      if (!current()) return false;
       if (this.isElectronRuntime()) return this.initializeDesktopNotifications(options);
       if (Capacitor.isNativePlatform()) {
         return await this.initializeNativeFirebase(options);
@@ -210,6 +216,7 @@ export class PushService {
       this.clearFirebaseRegistrationBackoff();
       return true;
     } catch (error) {
+      if (!current()) return false;
       if (this.isElectronRuntime()) {
         return this.initializeDesktopNotifications(options);
       }
@@ -266,8 +273,13 @@ export class PushService {
 
   resumeNativeRegistration(): Promise<boolean> {
     if (this.destroyRef.destroyed || !Capacitor.isNativePlatform() || !this.auth.isAuthenticated() || document.visibilityState === 'hidden') return Promise.resolve(false);
-    this.nativeResumePromise ??= this.repairNativeRegistration().finally(() => { this.nativeResumePromise = null; });
-    return this.nativeResumePromise;
+    const scope = this.pushScope();
+    if (this.nativeResume?.scope === scope) return this.nativeResume.promise;
+    const promise = this.repairNativeRegistration().finally(() => {
+      if (this.nativeResume?.promise === promise) this.nativeResume = null;
+    });
+    this.nativeResume = { scope, promise };
+    return promise;
   }
 
   private async repairNativeRegistration(): Promise<boolean> {
@@ -1079,7 +1091,9 @@ export class PushService {
       this.browserCallNotifications.set(callKey, notification);
     }
     notification.onclick = () => {
-      window.focus();
+      const desktopWindow = (window as Window & { nivraDesktopWindow?: { show(): Promise<void> } }).nivraDesktopWindow;
+      if (desktopWindow) void desktopWindow.show().catch(() => undefined);
+      else window.focus();
       notification.close();
       this.openFromPush(data);
     };

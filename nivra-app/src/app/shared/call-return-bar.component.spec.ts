@@ -17,7 +17,8 @@ describe('Unified call return bar',()=>{
   let calls:any;
   beforeEach(async()=>{
     calls={activeCall:signal<any>({id:'call',type:'Voice',startedAt:new Date().toISOString()}),resumableCall:signal(null),
-      callTitle:()=> 'Ana',callStatusLabel:()=> 'Conectado',audioOutput:{playbackBlocked:signal(false),resume:jasmine.createSpy('resume')}};
+      phase:signal('connected'),reconnecting:signal(false),callTitle:()=> 'Ana',callStatusLabel:()=> 'Conectado',
+      audioOutput:{playbackBlocked:signal(false),resume:jasmine.createSpy('resume')}};
     await TestBed.configureTestingModule({imports:[CallReturnBarComponent],providers:[provideRouter([]),
       {provide:CallsService,useValue:calls},{provide:TranslateService,useValue:{instant:(_:string,fallback:string)=>fallback,currentLanguage:signal('es')}},
     ]}).compileComponents();
@@ -27,6 +28,8 @@ describe('Unified call return bar',()=>{
     const page:HTMLElement=fixture.nativeElement;
     expect(page.querySelectorAll('.call-return-bar').length).toBe(1);
     expect(page.textContent).toContain('Ana');expect(page.textContent).toContain('Conectado');
+    calls.phase.set('connecting');calls.reconnecting.set(true);fixture.detectChanges();
+    expect(page.textContent).toContain('Reconectando');
     const navigate=spyOn(TestBed.inject(Router),'navigate').and.resolveTo(true);
     (page.querySelector('.return-action') as HTMLButtonElement).click();
     expect(navigate).toHaveBeenCalledWith(['/app/calls']);

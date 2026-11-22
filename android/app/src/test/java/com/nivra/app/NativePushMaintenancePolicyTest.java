@@ -27,4 +27,19 @@ public class NativePushMaintenancePolicyTest {
         assertFalse(NivraNativePushRegistration.registrationFresh("", "", NOW - 1000, NOW, true));
         assertFalse(NivraNativePushRegistration.registrationFresh(null, "routing-a", NOW - 1000, NOW, true));
     }
+
+    @Test public void missingRenewalRouteCanUseAnotherVerifiedNodeButRevokedCredentialsCannot() {
+        assertEquals(NivraPushRegistrationWorker.Renewal.ALTERNATE, NivraPushRegistrationWorker.rejected(404));
+        assertEquals(NivraPushRegistrationWorker.Renewal.ALTERNATE, NivraPushRegistrationWorker.rejected(503));
+        assertEquals(NivraPushRegistrationWorker.Renewal.COMPLETE, NivraPushRegistrationWorker.rejected(401));
+        assertEquals(NivraPushRegistrationWorker.Renewal.COMPLETE, NivraPushRegistrationWorker.rejected(403));
+        assertEquals(NivraPushRegistrationWorker.Renewal.RETRY_LATER, NivraPushRegistrationWorker.rejected(429));
+    }
+
+    @Test public void onlyAcknowledgedRegistrationWithAnAvailableProviderFinishesRenewal() {
+        assertEquals(NivraPushRegistrationWorker.Renewal.COMPLETE, NivraPushRegistrationWorker.acknowledgement(true, true));
+        assertEquals(NivraPushRegistrationWorker.Renewal.RETRY_LATER, NivraPushRegistrationWorker.acknowledgement(true, false));
+        assertEquals(NivraPushRegistrationWorker.Renewal.ALTERNATE, NivraPushRegistrationWorker.acknowledgement(null, true));
+        assertEquals(NivraPushRegistrationWorker.Renewal.ALTERNATE, NivraPushRegistrationWorker.acknowledgement(true, "true"));
+    }
 }

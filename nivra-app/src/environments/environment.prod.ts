@@ -3,11 +3,11 @@ export const environment = {
   // Keep the current application license. The AGPL prototype is test-only.
   ratchetLaboratory: false,
   ratchetEnabled: true,
-  apiBaseUrl: 'https://nivrapp-secure-eaqi.onrender.com',
-  // Only operational members of the pinned cluster participate in failover.
+  apiBaseUrl: 'https://nivra-webapp-secure.onrender.com',
+  // The standby is eligible only after it verifies the same pinned cluster.
   apiEndpoints: [
-    'https://nivrapp-secure-eaqi.onrender.com',
     'https://nivra-webapp-secure.onrender.com',
+    'https://nivrapp-secure-eaqi.onrender.com',
   ],
   apiClusterFingerprint: 'c761492c31e3e9346640c94da63c476eea907d2aad8a26b6d830c60cd5d7fc64',
   firebase: {

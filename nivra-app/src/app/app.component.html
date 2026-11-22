@@ -7,6 +7,12 @@
   <app-history-approval-dialog />
   <app-android-update-dialog />
   <app-desktop-update-dialog />
+  <ion-toast
+    [isOpen]="showWebUpdate()"
+    [message]="'UPDATE.WEB_READY' | translate:'Hay una actualización de Nivra disponible.'"
+    [buttons]="webUpdateButtons()" [duration]="10000" position="top"
+    (didDismiss)="dismissWebUpdate($event.detail.role)">
+  </ion-toast>
   @if (dailyLaunch.visible()) {
     <div class="daily-launch" role="status" aria-live="polite" aria-atomic="true">
       <div class="daily-launch-brand">

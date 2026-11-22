@@ -1,13 +1,17 @@
 using System.Text.Json;
 using System.Net;
+using System.Reflection;
+using Microsoft.AspNetCore.SignalR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Logging.Abstractions;
 using Nivra.Api.Domain;
 using Nivra.Api.Contracts;
 using Nivra.Api.Infrastructure;
+using Nivra.Api.Realtime;
 using Nivra.Api.Services;
 
 var checks = 0;
@@ -268,7 +272,52 @@ Check(!new WebRtcOptions { IceServers = [new() { Urls = ["turn:relay.example.tes
 Check(!new WebRtcOptions { IceServers = Enumerable.Range(0,8).Select(i=>new WebRtcIceServerOptions { Urls=["stun:stun"+i+".example.test:3478"] }).Append(new() { Urls=["turn:relay.example.test:3478"],Username="user",Credential="secret" }).ToList() }.HasConfiguredRelay, "relay health follows the actual bounded ICE response");
 Check(!new WebRtcOptions().HasConfiguredRelay, "STUN-only configuration cannot advertise a configured relay");
 Check(new WebRtcOptions { IceServers = [new() { Urls = ["turns:relay.example.test:443?transport=tcp"], Username = "fixture", Credential = "fixture" }] }.HasConfiguredRelay, "relay readiness exposes only whether authenticated TURN is configured");
+
+var notificationDispatch = new CallNotificationDispatch(NullLogger<CallNotificationDispatch>.Instance);
+var notifications = new List<(string Group, string Event, object? Payload)>();
+var clients = DispatchProxy.Create<IHubClients<IClientProxy>, CallClientsFixture>();
+((CallClientsFixture)(object)clients).ClientFor = group => new CallClientFixture((method, values, _) =>
+{
+    notifications.Add((group, method, values.Single()));
+    return group == GroupsFor.User("bob")
+        ? Task.FromException(new InvalidOperationException("Synthetic unavailable realtime transport"))
+        : Task.CompletedTask;
+});
+var committedCall = new { Id = "committed-call" };
+await notificationDispatch.SendToUsersAsync(clients, ["bob", "carol", "bob"], committedCall.Id, "call.started", committedCall, CancellationToken.None);
+Check(notifications.SequenceEqual(new[]
+{
+    (GroupsFor.User("bob"), "call.started", (object?)committedCall),
+    (GroupsFor.User("carol"), "call.started", (object?)committedCall)
+}), "a realtime failure neither fails a committed call nor prevents another participant from receiving it");
+using (var stopped = new CancellationTokenSource())
+{
+    stopped.Cancel();
+    var cancelled = false;
+    try
+    {
+        await notificationDispatch.SendToUsersAsync(clients, ["carol"], committedCall.Id, "call.started", committedCall, stopped.Token);
+    }
+    catch (OperationCanceledException) when (stopped.IsCancellationRequested) { cancelled = true; }
+    Check(cancelled && notifications.Count == 2, "a cancelled request does not send additional realtime notifications");
+}
 Console.WriteLine($"{checks} regression checks passed. Physical devices require separate validation.");
+
+public class CallClientsFixture : DispatchProxy
+{
+    public Func<string, IClientProxy> ClientFor { get; set; } = null!;
+
+    protected override object? Invoke(MethodInfo? method, object?[]? args) =>
+        method?.Name == nameof(IHubClients<IClientProxy>.Group) && args?.SingleOrDefault() is string group
+            ? ClientFor(group)
+            : throw new InvalidOperationException("Unexpected call fixture audience.");
+}
+
+sealed class CallClientFixture(Func<string, object?[], CancellationToken, Task> send) : IClientProxy
+{
+    public Task SendCoreAsync(string method, object?[] args, CancellationToken cancellationToken = default) =>
+        send(method, args, cancellationToken);
+}
 
 sealed class ManualClock : TimeProvider
 {

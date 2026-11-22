@@ -1,6 +1,7 @@
+const DEFAULT_API_ORIGIN = 'https://nivra-webapp-secure.onrender.com';
 const PINNED_API_ORIGINS = Object.freeze([
   'https://nivrapp-secure.onrender.com',
-  'https://nivra-webapp-secure.onrender.com',
+  DEFAULT_API_ORIGIN,
   'https://nivrapp-secure-eaqi.onrender.com'
 ]);
 
@@ -14,4 +15,4 @@ function allowedApiOrigin(value, development = false) {
     return null;
   } catch { return null; }
 }
-module.exports = { PINNED_API_ORIGINS, allowedApiOrigin };
+module.exports = { DEFAULT_API_ORIGIN, PINNED_API_ORIGINS, allowedApiOrigin };

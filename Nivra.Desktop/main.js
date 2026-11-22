@@ -1,10 +1,10 @@
-const { app, BrowserWindow, Menu, shell, session, ipcMain, safeStorage, net, protocol } = require("electron");
+const { app, BrowserWindow, Menu, Tray, shell, session, ipcMain, safeStorage, net, protocol } = require("electron");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require('node:child_process');
 const { pathToFileURL } = require('url');
-const { PINNED_API_ORIGINS, allowedApiOrigin } = require('./api-origins');
+const { DEFAULT_API_ORIGIN, PINNED_API_ORIGINS, allowedApiOrigin } = require('./api-origins');
 const { installWindowPrivacy } = require('./window-privacy');
 const { isBundledEntry, isTrustedIpc } = require('./renderer-security');
 const { createElectronRequest, createUpdateManager, updateErrorCode } = require('./update-manager');
@@ -17,6 +17,7 @@ let isQuitting = false;
 let trustedEntryUrl = '';
 let launcherAppearance = null;
 let windowPrivacy = null;
+let notificationTray = null;
 
 function assertTrustedRenderer(event) {
   if (!isTrustedIpc(event, mainWindow, trustedEntryUrl)) throw new Error('Untrusted IPC sender.');
@@ -241,8 +242,32 @@ function resolveWindowIcon() {
 }
 
 function resolveApiBaseUrl(webRoot) {
-  return allowedApiOrigin(process.env.NIVRA_API_BASE_URL || readBundledApiBaseUrl(webRoot) || PINNED_API_ORIGINS[0], !app.isPackaged)
-    || PINNED_API_ORIGINS[0];
+  return allowedApiOrigin(process.env.NIVRA_API_BASE_URL || readBundledApiBaseUrl(webRoot), !app.isPackaged)
+    || DEFAULT_API_ORIGIN;
+}
+
+function showMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+function installNotificationTray() {
+  if (process.platform !== 'win32' || !app.isPackaged) return;
+  try {
+    notificationTray = new Tray(resolveWindowIcon());
+    notificationTray.setToolTip('Nivra · Avisos en segundo plano');
+    notificationTray.setContextMenu(Menu.buildFromTemplate([
+      { label: 'Abrir Nivra', click: showMainWindow },
+      { type: 'separator' },
+      { label: 'Salir de Nivra', role: 'quit' },
+    ]));
+    notificationTray.on('click', showMainWindow);
+  } catch {
+    notificationTray?.destroy();
+    notificationTray = null;
+  }
 }
 
 function createWindow(webRoot, apiBaseUrl) {
@@ -292,8 +317,12 @@ function createWindow(webRoot, apiBaseUrl) {
     mainWindow = null;
   });
 
-  mainWindow.on("close", () => {
-    if (!isQuitting) {
+  mainWindow.on("query-session-end", () => { isQuitting = true; });
+  mainWindow.on("close", (event) => {
+    if (!isQuitting && notificationTray) {
+      event.preventDefault();
+      mainWindow.hide();
+    } else if (!isQuitting) {
       isQuitting = true;
       app.quit();
     }
@@ -326,11 +355,7 @@ const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) {
   app.quit();
 } else {
-  app.on("second-instance", () => {
-    if (!mainWindow) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  });
+  app.on("second-instance", showMainWindow);
 
   app.whenReady().then(() => {
     Menu.setApplicationMenu(null);
@@ -341,6 +366,10 @@ if (!hasSingleInstanceLock) {
     installSecureVaultHandlers();
     installContentProtectionHandlers();
     installDesktopUpdateHandlers();
+    ipcMain.handle('nivra-window:show', event => {
+      assertTrustedRenderer(event);
+      showMainWindow();
+    });
     launcherAppearance = createLauncherAppearanceManager({
       platform: process.platform,
       isPackaged: app.isPackaged,
@@ -366,9 +395,11 @@ if (!hasSingleInstanceLock) {
     });
 
     createWindow(webRoot, apiBaseUrl);
+    installNotificationTray();
 
     app.on("activate", () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow(webRoot, apiBaseUrl);
+      else showMainWindow();
     });
   });
 }
@@ -380,4 +411,6 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  notificationTray?.destroy();
+  notificationTray = null;
 });

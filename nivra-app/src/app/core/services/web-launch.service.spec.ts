@@ -110,23 +110,27 @@ describe('WebLaunchService', () => {
     expect(reload).not.toHaveBeenCalled();
   });
 
-  it('finds a newer build in an already open app on the same day', async () => {
+  it('offers a newer build to the open app without reloading it', async () => {
     const service = TestBed.inject(WebLaunchService);
     await service.start();
     fetchVersion.and.resolveTo({ version: newer });
     await service.checkForUpdate();
-    expect(reload).toHaveBeenCalledTimes(1);
+    expect(service.availableVersion()).toBe(newer);
+    expect(reload).not.toHaveBeenCalled();
     expect(service.checking()).toBeFalse();
   });
 
-  it('waits for drafts or calls to finish and applies the remembered build without another fetch', async () => {
+  it('preserves drafts and calls and applies the remembered build only after an explicit safe request', async () => {
     const service = TestBed.inject(WebLaunchService);
     fetchVersion.and.resolveTo({ version: newer });
-    await service.checkForUpdate(() => false);
+    await service.checkForUpdate();
+    expect(service.applyAvailableUpdate(() => false)).toBeFalse();
     expect(reload).not.toHaveBeenCalled();
-    await service.checkForUpdate(() => true);
+    expect(service.availableVersion()).toBe(newer);
+    expect(service.applyAvailableUpdate(() => true)).toBeTrue();
     expect(fetchVersion).toHaveBeenCalledTimes(1);
     expect(reload).toHaveBeenCalledTimes(1);
+    expect(service.availableVersion()).toBeNull();
   });
 
   it('throttles background traffic but checks again after five minutes', async () => {
@@ -138,13 +142,17 @@ describe('WebLaunchService', () => {
     fetchVersion.and.resolveTo({ version: newer });
     await service.checkForUpdate();
     expect(fetchVersion).toHaveBeenCalledTimes(2);
-    expect(reload).toHaveBeenCalledTimes(1);
+    expect(reload).not.toHaveBeenCalled();
   });
 
   it('does not loop when an old HTML document is served again after a background upgrade', async () => {
     fetchVersion.and.resolveTo({ version: newer });
-    await TestBed.inject(WebLaunchService).checkForUpdate();
-    await TestBed.runInInjectionContext(() => new WebLaunchService()).checkForUpdate();
+    const service = TestBed.inject(WebLaunchService);
+    await service.checkForUpdate();
+    expect(service.applyAvailableUpdate(() => true)).toBeTrue();
+    const reopened = TestBed.runInInjectionContext(() => new WebLaunchService());
+    await reopened.checkForUpdate();
+    expect(reopened.availableVersion()).toBeNull();
     expect(reload).toHaveBeenCalledTimes(1);
   });
 });

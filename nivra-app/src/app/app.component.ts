@@ -9,7 +9,7 @@ import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { SystemUiService } from './core/services/system-ui.service';
 import { NavigationEnd, Router } from '@angular/router';
-import { IonApp, IonIcon, IonRouterOutlet } from '@ionic/angular/standalone';
+import { IonApp, IonIcon, IonRouterOutlet, IonToast } from '@ionic/angular/standalone';
 import { addIcons } from 'ionicons';
 import { callOutline, chevronDownOutline, chevronUpOutline, shieldCheckmarkOutline, videocamOutline } from 'ionicons/icons';
 import { AuthService } from './core/services/auth.service';
@@ -51,13 +51,13 @@ interface NativeStatusBarSurface {
   templateUrl: 'app.component.html',
   styleUrls: ['app.component.scss'],
   standalone: true,
-  imports: [CallReturnBarComponent, CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, AppLockScreenComponent, HistoryApprovalDialogComponent, AndroidUpdateDialogComponent, DesktopUpdateDialogComponent],
+  imports: [CallReturnBarComponent, CommonModule, TranslatePipe, IonApp, IonIcon, IonRouterOutlet, IonToast, AppLockScreenComponent, HistoryApprovalDialogComponent, AndroidUpdateDialogComponent, DesktopUpdateDialogComponent],
 })
 export class AppComponent {
   readonly accountView = inject(AccountViewBoundaryService);
   private readonly accountHistorySync = inject(AccountHistorySyncService);
   private readonly zone = inject(NgZone);
-  private resumePromise: Promise<void> | null = null;
+  private resumeOperation: { generation: number; promise: Promise<void> } | null = null;
   private systemBarUpdate: Promise<void> = Promise.resolve();
   private systemBarEpoch = 0;
   private lastSystemBarSurface?: NativeStatusBarSurface;
@@ -87,6 +87,17 @@ export class AppComponent {
   private readonly launcherAppearance = inject(LauncherAppearanceService);
   private readonly currentUrl = signal(this.router.url);
   private readonly foreground = signal(document.visibilityState !== 'hidden');
+  private readonly dismissedWebVersion = signal<string | null>(null);
+  readonly showWebUpdate = computed(() => {
+    const version = this.webLaunch.availableVersion();
+    return !!version && this.dismissedWebVersion() !== version && this.foreground()
+      && this.accountView.ready() && !this.appLock.isContentLocked() && !this.dailyLaunch.visible()
+      && this.canPresentDailyLaunch(this.currentUrl()) && this.canApplyWebUpdate();
+  });
+  readonly webUpdateButtons = computed(() => [
+    { text: this.translate.instant('UPDATE.LATER', 'Más tarde'), role: 'cancel' },
+    { text: this.translate.instant('UPDATE.WEB_RELOAD', 'Actualizar'), handler: () => this.webLaunch.applyAvailableUpdate(() => this.canApplyWebUpdate()) },
+  ]);
   private startServicesPromise: Promise<void> | null = null;
   private lastPushRouteKey = '';
   private lastNativeShareId = '';
@@ -131,7 +142,7 @@ export class AppComponent {
     void this.configureNativeKeyboard();
 
     const updateTimer = window.setInterval(() => {
-      if (document.visibilityState !== 'hidden') void this.webLaunch.checkForUpdate(() => this.canApplyWebUpdate());
+      if (document.visibilityState !== 'hidden') void this.webLaunch.checkForUpdate();
     }, 60_000);
     this.destroyRef.onDestroy(() => window.clearInterval(updateTimer));
 
@@ -140,7 +151,7 @@ export class AppComponent {
       .subscribe((event) => {
         if (event instanceof NavigationEnd) {
           void this.webLaunch.start(() => this.canApplyWebUpdate());
-          void this.webLaunch.checkForUpdate(() => this.canApplyWebUpdate());
+          void this.webLaunch.checkForUpdate();
           const url = event.urlAfterRedirects || event.url;
           this.currentUrl.set(url);
           const path = this.safeAppRoute(url);
@@ -242,6 +253,10 @@ export class AppComponent {
       && !this.calls.activeCall() && !this.calls.resumableCall()
       && !this.chat.uploading() && !history.approvingRequestId()
       && history.state() !== 'syncing' && history.pendingRequests().length === 0 && !hasDraft && !hasOverlay;
+  }
+
+  dismissWebUpdate(role?: string): void {
+    if (role === 'cancel' || role === 'timeout') this.dismissedWebVersion.set(this.webLaunch.availableVersion());
   }
 
   private canPresentDailyLaunch(url: string): boolean {
@@ -360,45 +375,55 @@ export class AppComponent {
   }
 
   private bindAppLifecycleLock(): void {
-    const foreground = () => {
-      this.foreground.set(document.visibilityState !== 'hidden');
-      if (document.visibilityState === 'hidden') this.appLock.lock();
-      else if (document.visibilityState === 'visible') this.dailyLaunch.requestPresentation();
+    let nativeActive = true;
+    const synchronizeForeground = () => {
+      const active = nativeActive && document.visibilityState !== 'hidden';
+      const wasActive = this.foreground();
+      this.foreground.set(active);
+      if (!active) this.appLock.lock();
+      else if (!wasActive) void this.handleAppResume();
     };
-    document.addEventListener('visibilitychange', foreground);
-    this.destroyRef.onDestroy(() => document.removeEventListener('visibilitychange', foreground));
-    void App.addListener('appStateChange', (state) => {
-      this.foreground.set(state.isActive);
-      if (!state.isActive) {
-        this.appLock.lock();
-        return;
-      }
-      void this.handleAppResume();
-    })
-      .then((handle) => this.destroyRef.onDestroy(() => void handle.remove()))
-      .catch(() => undefined);
-    void App.getState().then((state) => {
-      if (state.isActive) void this.handleAppResume();
-    }).catch(() => undefined);
+    const restorePage = (event: PageTransitionEvent) => {
+      if (event.persisted && this.foreground() && document.visibilityState !== 'hidden') void this.handleAppResume();
+    };
+    document.addEventListener('visibilitychange', synchronizeForeground);
+    window.addEventListener('pageshow', restorePage);
+    this.destroyRef.onDestroy(() => {
+      document.removeEventListener('visibilitychange', synchronizeForeground);
+      window.removeEventListener('pageshow', restorePage);
+    });
+    if (Capacitor.isNativePlatform()) {
+      void App.addListener('appStateChange', ({ isActive }) => {
+        nativeActive = isActive;
+        synchronizeForeground();
+      }).then(async (handle) => {
+        if (this.destroyRef.destroyed) await handle.remove();
+        else this.destroyRef.onDestroy(() => void handle.remove());
+      }).catch(() => undefined);
+    }
   }
 
   private handleAppResume(): Promise<void> {
+    const generation = this.auth.sessionGeneration();
+    if (this.resumeOperation?.generation === generation) return this.resumeOperation.promise;
     if (this.lastSystemBarSurface) void this.configureNativeSystemBars(this.lastSystemBarSurface);
-    void this.webLaunch.checkForUpdate(() => this.canApplyWebUpdate());
-    this.dailyLaunch.requestPresentation();
-    this.resumePromise ??= this.resumeExistingSession().finally(() => { this.resumePromise = null; });
-    return this.resumePromise;
+    void this.webLaunch.checkForUpdate();
+    void this.appLock.refreshBiometryAvailability().catch(() => undefined);
+    const promise = this.resumeExistingSession().catch(() => undefined).finally(() => {
+      if (this.resumeOperation?.promise === promise) this.resumeOperation = null;
+    });
+    this.resumeOperation = { generation, promise };
+    return promise;
   }
 
   private async resumeExistingSession(): Promise<void> {
-    await this.appLock.refreshBiometryAvailability();
     if (!this.auth.isAuthenticated()) {
       await this.auth.ensureSessionRestored();
     }
-    if (!this.auth.isAuthenticated()) {
+    if (this.destroyRef.destroyed || !this.foreground() || !this.auth.isAuthenticated()) {
       return;
     }
-    this.localHistory.retryNativeStorage();
+    void this.localHistory.retryNativeStorage().catch(() => undefined);
     if (Capacitor.isNativePlatform()) void this.push.resumeNativeRegistration().catch(() => undefined);
     void this.realtime.connect().catch(() => undefined);
     await this.chat.resumeSoftSync().catch(() => undefined);

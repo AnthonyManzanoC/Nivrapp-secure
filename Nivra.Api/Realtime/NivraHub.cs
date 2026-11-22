@@ -428,7 +428,7 @@ public sealed class NivraHub(
         await store.AddCallAsync(call, Context.ConnectionAborted);
         await transaction.CommitAsync(Context.ConnectionAborted);
         var response = ToCallResponse(call);
-        await NotifyUsersAsync(participants, "call.started", response);
+        await new CallNotificationDispatch(logger).SendToUsersAsync(Clients, participants, call.Id, "call.started", response, Context.ConnectionAborted);
         return response;
     });
 

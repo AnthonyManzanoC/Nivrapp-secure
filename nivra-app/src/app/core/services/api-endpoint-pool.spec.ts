@@ -9,6 +9,16 @@ describe('API endpoint pool isolation and failover', () => {
   const ready = (overrides = {}) => ({ status: 'ok', failoverProtocol: 1, callProtocol: 2, minimumCallProtocol: 2,
     sharedStorageReady: true, realtimeSharedReady: true, durableSigningKeyReady: true,
     multiInstanceReady: true, clusterFingerprint: pin, push: { fcm: true, webPush: true }, ...overrides });
+  const mockStandbyResponse = () => {
+    const payload = new TextEncoder().encode(JSON.stringify(ready()));
+    const reader = {
+      read: jasmine.createSpy('read').and.returnValues(
+        Promise.resolve({ done: false, value: payload }), Promise.resolve({ done: true })),
+      cancel: async () => undefined,
+      releaseLock: () => undefined,
+    };
+    return { ok: true, headers: new Headers(), body: { getReader: () => reader } };
+  };
   let pool: ApiEndpointPool;
   let fetcher: jasmine.Spy;
   let runtime: ApiPoolRuntime;
@@ -24,13 +34,48 @@ describe('API endpoint pool isolation and failover', () => {
   };
   afterEach(() => TestBed.resetTestingModule());
 
-  it('uses the two operational pinned Render APIs without probing the suspended member', () => {
-    expect(productionEnvironment.apiBaseUrl).toBe('https://nivrapp-secure-eaqi.onrender.com');
+  it('prefers the available production API and retains the pinned standby', () => {
+    expect(productionEnvironment.apiBaseUrl).toBe('https://nivra-webapp-secure.onrender.com');
     expect(productionEnvironment.apiEndpoints).toEqual([
-      'https://nivrapp-secure-eaqi.onrender.com',
       'https://nivra-webapp-secure.onrender.com',
+      'https://nivrapp-secure-eaqi.onrender.com',
     ]);
   });
+
+  it('waits for a slow verified standby before sending a first mutation after a detected outage', fakeAsync(() => {
+    build('', pin);
+    fetcher.and.callFake(async (url: string) => {
+      if (url === primary + '/health/ready') return new Response('', { status: 503 });
+      if (url === backup + '/health/ready') {
+        await new Promise(resolve => setTimeout(resolve, 7000));
+        return mockStandbyResponse();
+      }
+      return new Response();
+    });
+    void pool.fetch('/calls/start', { method: 'POST' });
+    tick(1500);
+    expect(fetcher.calls.allArgs().filter(([url]) => String(url).endsWith('/calls/start'))).toEqual([]);
+    tick(5500);
+    expect(fetcher.calls.allArgs().filter(([url]) => String(url).endsWith('/calls/start')).map(([url]) => url))
+      .toEqual([backup + '/calls/start']);
+  }));
+
+  it('shares active recovery with new requests even when readiness was recently cached', fakeAsync(() => {
+    build('', pin);
+    fetcher.and.callFake(async () => mockStandbyResponse());
+    void pool.prepare();
+    flushMicrotasks();
+    fetcher.and.callFake(async (url: string) => {
+      if (url === backup + '/health/ready') await new Promise(resolve => setTimeout(resolve, 6000));
+      return mockStandbyResponse();
+    });
+    void pool.recover(primary + '/me');
+    void pool.fetch('/calls/start', { method: 'POST' });
+    tick(1500);
+    expect(fetcher).not.toHaveBeenCalledWith(primary + '/calls/start', jasmine.anything());
+    tick(4500);
+    expect(fetcher).toHaveBeenCalledWith(backup + '/calls/start', jasmine.objectContaining({ method: 'POST' }));
+  }));
 
   it('rejects unpinned origin, userinfo, insecure remote transport and origin-prefix tricks', () => {
     build();

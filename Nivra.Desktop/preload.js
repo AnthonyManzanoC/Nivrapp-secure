@@ -2,6 +2,10 @@ const { contextBridge, ipcRenderer } = require("electron");
 
 const allowedSecretNames = new Set(["device-keys", "local-db", "auth-session", "all"]);
 
+contextBridge.exposeInMainWorld('nivraDesktopWindow', {
+  show: () => ipcRenderer.invoke('nivra-window:show'),
+});
+
 function normalizeName(name) {
   return String(name || "").trim().toLowerCase();
 }

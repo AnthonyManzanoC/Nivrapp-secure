@@ -373,6 +373,29 @@ async function main() {
     await tap('.history-filters button:nth-child(2)');
     await waitFor("document.querySelectorAll('.history-row').length===2");
     assert.equal(await evaluate("document.querySelectorAll('.history-rejoin').length"),0,'missed calls cannot show rejoin');
+    await call('Page.navigate', { url: base + '/app/calls?theme=light&mode=video' });
+    await waitFor("!!document.querySelector('.direct-video')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('desktop-active-video');
+    await viewport(320, 568, true);
+    await call('Page.navigate', { url: base + '/app/calls?theme=light&mode=reconnecting' });
+    await waitFor("!!document.querySelector('.direct-video') && document.querySelector('.connection-state').textContent.includes('Reconectando')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    assert(await evaluate(`(() => {
+      const buttons = [...document.querySelectorAll('.call-controls .call-action')];
+      const boxes = buttons.map(button => button.getBoundingClientRect());
+      const rail = document.querySelector('.workspace .rail');
+      return getComputedStyle(rail).display === 'none' && boxes.length === 5 &&
+        boxes.every(box => box.top === boxes[0].top && box.left >= 0 && box.right <= innerWidth &&
+          box.bottom <= innerHeight && box.width >= 44);
+    })()`), 'all five call actions fit a small screen in one row during reconnection');
+    await capture('mobile-reconnecting-video');
+    await call('Page.navigate', { url: base + '/app/calls?theme=dark&mode=failed' });
+    await waitFor("!!document.querySelector('.connection-error ion-button')");
+    await evaluate("document.querySelector('.preview-controls').style.display='none'");
+    await capture('mobile-call-retry');
+    await tap('.connection-error ion-button');
+    await waitFor("!!document.querySelector('.direct-video') && !document.querySelector('.connection-error')");
     await viewport(390,844,true);
     await call('Page.navigate',{url:base+'/preview/calls?theme=dark&mode=voice'});
     await waitFor("!!document.querySelector('.voice-connected')");
@@ -382,6 +405,25 @@ async function main() {
     await waitFor("!!document.querySelector('.direct-video')");
     await evaluate("document.querySelector('.preview-controls').style.display='none'");
     await capture('mobile-active-video');
+    await tap('.call-mic');
+    await waitFor("document.querySelector('.call-mic').getAttribute('aria-pressed') === 'true'");
+    await tap('.call-mic');
+    await tap('.call-output');
+    await waitFor("!!document.querySelector('.call-audio-modal [aria-labelledby=call-audio-title]')");
+    await tap('.call-audio-routes button:nth-child(2)');
+    await waitFor("document.querySelector('.call-output').getAttribute('aria-label').includes('Auriculares')");
+    await capture('mobile-call-audio');
+    await tap('.call-audio-sheet header ion-button');
+    await waitFor("!document.querySelector('.call-audio-modal [aria-labelledby=call-audio-title]')");
+    await tap('.call-more');
+    await waitFor("!!document.querySelector('ion-modal ion-icon[name=person-add-outline]')");
+    await capture('mobile-call-actions');
+    await tap('ion-modal .call-audio-sheet header ion-button');
+    await waitFor("!document.querySelector('ion-modal ion-icon[name=person-add-outline]')");
+    await evaluate("document.activeElement.blur()");
+    await new Promise(resolve=>setTimeout(resolve,5500));
+    assert(await evaluate("getComputedStyle(document.querySelector('.call-controls')).pointerEvents !== 'none'"),
+      'video controls stay reachable after inactivity');
     await evaluate("document.querySelector('.minimize-call').focus()");
     await new Promise(resolve=>setTimeout(resolve,5500));
     assert.equal(await evaluate("!!document.querySelector('.call-chrome-hidden')"),false,'keyboard focus keeps video controls visible');

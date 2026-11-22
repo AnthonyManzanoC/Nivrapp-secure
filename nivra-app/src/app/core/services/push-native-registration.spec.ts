@@ -138,6 +138,26 @@ describe('saved account push registration and routing', () => {
     session.set(account()); await service.refreshStatus(); expect(service.serverReady()).toBeFalse();
   });
 
+  it('repairs the active account while a previous account is still checking permission', async () => {
+    spyOnProperty(document, 'visibilityState').and.returnValue('visible');
+    session.set(account());
+    let finishPermission!: () => void;
+    const refresh = spyOn(service, 'refreshPermission').and.returnValues(
+      new Promise(resolve => { finishPermission = () => resolve('granted'); }),
+      Promise.resolve('granted'),
+    );
+    service.permission.set('granted');
+    const initialize = spyOn(service, 'initialize').and.resolveTo(true);
+    const old = service.resumeNativeRegistration();
+    session.set(account('bob'));
+    generation.update(value => value + 1);
+    expect(await service.resumeNativeRegistration()).toBeTrue();
+    finishPermission();
+    expect(await old).toBeFalse();
+    expect(refresh).toHaveBeenCalledTimes(2);
+    expect(initialize).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the first Android runtime request available when the system reports notifications disabled before authorization', async () => {
     session.set(account()); await flush();
     nativePermissions.check.and.resolveTo({ receive: 'prompt' });

@@ -1,5 +1,5 @@
 <ion-app>
-  <main class="workspace" [class.mobile-nav-hidden]="hideMobileNav()"
+  <main class="workspace" [class.mobile-nav-hidden]="hideMobileNav() || (onCallsPage() && !!calls.activeCall())"
     [class.collapsible-rail]="collapsibleRail" [class.rail-expanded]="railExpanded()">
     <nav class="rail" aria-label="Nivra">
       <a class="rail-brand" routerLink="/app/chats" aria-label="Nivra" title="Nivra">

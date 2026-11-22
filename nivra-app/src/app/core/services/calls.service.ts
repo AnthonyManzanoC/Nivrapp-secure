@@ -31,6 +31,7 @@ interface PeerState {
   connection: RTCPeerConnection;
   pendingIce: RTCIceCandidate[];
   iceRestartAttempts: number;
+  iceRestartInFlight?: boolean;
   disconnectTimer: number | null;
   makingOffer: boolean;
   ignoreOffer: boolean;
@@ -211,6 +212,8 @@ export class CallsService implements OnDestroy {
 
   readonly activeCall = signal<CallSession | null>(null);
   readonly phase = signal<CallPhase>('idle');
+  private readonly reconnectingState = signal(false);
+  readonly reconnecting = this.reconnectingState.asReadonly();
   readonly localStream = signal<MediaStream | null>(null);
   readonly remoteStreams = signal<Record<string, MediaStream>>({});
   readonly remoteStates = signal<Record<string, Record<string, unknown>>>({});
@@ -301,8 +304,9 @@ export class CallsService implements OnDestroy {
     });
     effect(() => {
       const phase = this.phase();
+      const reconnecting = this.reconnecting();
       untracked(() => {
-        if (['calling', 'ringing', 'connecting'].includes(phase)) this.startRingingTone(phase);
+        if (!reconnecting && ['calling', 'ringing', 'connecting'].includes(phase)) this.startRingingTone(phase);
         else this.stopRingingTone();
       });
     });
@@ -981,7 +985,7 @@ export class CallsService implements OnDestroy {
     }
   }
 
-  async retryConnection(): Promise<void> {
+  async retryConnection(resetDeadline = true): Promise<void> {
     const call = this.activeCall();
     if (!call || this.phase() === 'ringing' || this.networkRecoveryInFlight) {
       return;
@@ -990,7 +994,7 @@ export class CallsService implements OnDestroy {
     const isCurrent = this.currentCallGuard(call);
     if (this.isGroupCall(call)) {
       this.networkRecoveryInFlight = true;
-      this.setConnectingPhase();
+      this.setConnectingPhase(true);
       this.error.set('');
       try {
         await this.connectLiveKitRoom(call, true);
@@ -1004,7 +1008,7 @@ export class CallsService implements OnDestroy {
 
     this.networkRecoveryInFlight = true;
     this.error.set('');
-    this.setConnectingPhase();
+    this.setConnectingPhase(true);
     try {
       await this.loadIceConfiguration(true);
       if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
@@ -1012,17 +1016,19 @@ export class CallsService implements OnDestroy {
         await this.prepareMedia(call.type === 'Video');
       }
       if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
-      this.clearConnectionWatchdog();
+      if (resetDeadline) this.clearConnectionWatchdog();
       this.setConnectingPhase();
       await Promise.all(this.otherParticipantIds(call).map((userId) =>
         this.sendCallSignal(call, userId, 'accepted', { accepted: true, recovery: true }).catch(() => undefined)));
       if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
-      await this.establishCallPeers();
+      // Do not create an ordinary offer ahead of the ICE restart. It would
+      // leave the offer owner waiting for an answer over the failed path.
+      await this.establishCallPeers(null, false);
       if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
       for (const [userId, peer] of this.peers.entries()) {
         if (!isCurrent()) return;
         if (this.peerConnectionLooksConnected(peer.connection)) continue;
-        peer.iceRestartAttempts = 0;
+        if (resetDeadline) peer.iceRestartAttempts = 0;
         peer.connection.setConfiguration({
           // setConfiguration replaces the configuration; omitted values use
           // defaults. Keep the negotiated pool, certificates and transport
@@ -1353,26 +1359,27 @@ export class CallsService implements OnDestroy {
 
   private async connectLiveKitRoom(call: CallSession, preserveMediaIntent = false): Promise<void> {
     if (this.activeCall()?.id === call.id) call = this.activeCall()!;
+    const isCurrent = this.currentCallGuard(call);
     const credentials = await this.liveKitCredentialsForCall(call).catch((error) => {
-      this.error.set(error instanceof Error ? error.message : 'No se pudo obtener el token LiveKit.');
+      if (isCurrent()) this.setConnectionError(error instanceof Error ? error.message : 'No se pudo obtener el acceso a la sala.');
       return null;
     });
+    if (!isCurrent()) return;
     if (!credentials?.serverUrl || !credentials.token) {
       this.phase.set('failed');
       this.rememberGroupRoom(call);
       return;
     }
-    if (this.activeCall()?.id !== call.id) { return; }
     await this.disconnectLiveKitRoomForReconnect();
-    if (this.activeCall()?.id !== call.id) return;
+    if (!isCurrent()) return;
     this.livekit = await loadLiveKit();
-    if (this.activeCall()?.id !== call.id) return;
+    if (!isCurrent()) return;
     const encryptionContext = await this.groupCrypto.prepare(call, this.currentUserId() ?? '', async (target, type, payload) => {
       const current = this.activeCall();
-      if (current?.id !== call.id) throw new Error('La llamada ya se cerró.');
+      if (!isCurrent() || !current) throw new Error('La llamada ya se cerró.');
       return this.sendCallSignal(current, target, type, payload);
     });
-    if (this.activeCall()?.id !== call.id) { encryptionContext.dispose(); return; }
+    if (!isCurrent()) { encryptionContext.dispose(); return; }
     this.groupEncryptionContext = encryptionContext;
     const room = new this.livekit!.Room({
       encryption: encryptionContext.encryption,
@@ -1381,70 +1388,68 @@ export class CallsService implements OnDestroy {
       dynacast: true,
     });
     this.liveKitRoom = room;
+    const isCurrentRoom = () => isCurrent() && this.liveKitRoom === room;
     this.games.configure(this.activeCall() ?? call, this.currentUserId() ?? '');
     room.on(this.livekit!.RoomEvent.TrackSubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
+      if (!isCurrentRoom()) return;
       this.addLiveKitRemoteTrack(participant?.identity || crypto.randomUUID(), track, publication);
     });
     room.on(this.livekit!.RoomEvent.TrackUnsubscribed, (track: unknown, publication: unknown, participant: { identity?: string }) => {
+      if (!isCurrentRoom()) return;
       this.removeLiveKitRemoteTrack(participant?.identity || '', track, publication);
     });
     room.on(this.livekit!.RoomEvent.ParticipantConnected, () => {
+      if (!isCurrentRoom()) return;
       this.refreshLiveKitRemoteStreams();
     });
     room.on(this.livekit!.RoomEvent.ParticipantDisconnected, (participant: { identity?: string }) => {
-      if (participant?.identity) {
+      if (isCurrentRoom() && participant?.identity) {
         this.removeRemoteStream(participant.identity);
       }
     });
-    room.on(this.livekit!.RoomEvent.LocalTrackPublished, () => this.syncLiveKitLocalTracks());
-    room.on(this.livekit!.RoomEvent.LocalTrackUnpublished, () => this.syncLiveKitLocalTracks());
+    const reconcileLocalPublication = () => { if (isCurrentRoom()) this.syncLiveKitLocalTracks(); };
+    room.on(this.livekit!.RoomEvent.LocalTrackPublished, reconcileLocalPublication);
+    room.on(this.livekit!.RoomEvent.LocalTrackUnpublished, reconcileLocalPublication);
     const reconcilePublication = () => {
-      if (this.liveKitRoom !== room || this.activeCall()?.id !== call.id) return;
+      if (!isCurrentRoom()) return;
       this.syncLiveKitLocalTracks();
       this.refreshLiveKitRemoteStreams();
     };
     room.on(this.livekit!.RoomEvent.TrackMuted, reconcilePublication);
     room.on(this.livekit!.RoomEvent.TrackUnmuted, reconcilePublication);
-    room.on(this.livekit!.RoomEvent.SignalReconnecting, () => {
-      if (this.activeCall()?.id === call.id) {
-        this.setConnectingPhase();
-      }
-    });
-    room.on(this.livekit!.RoomEvent.Reconnecting, () => {
-      if (this.activeCall()?.id === call.id) {
-        this.setConnectingPhase();
-      }
-    });
+    const onReconnecting = () => { if (isCurrentRoom()) this.setConnectingPhase(true); };
+    room.on(this.livekit!.RoomEvent.SignalReconnecting, onReconnecting);
+    room.on(this.livekit!.RoomEvent.Reconnecting, onReconnecting);
     room.on(this.livekit!.RoomEvent.Reconnected, () => {
-      if (this.activeCall()?.id === call.id) {
+      if (isCurrentRoom()) {
         this.refreshLiveKitRemoteStreams();
         this.syncLiveKitLocalTracks();
         this.setConnectedPhase();
-        this.error.set('');
       }
     });
     room.on(this.livekit!.RoomEvent.Disconnected, () => {
-      if (this.activeCall()?.id === call.id) {
+      if (isCurrentRoom()) {
         this.clearConnectionWatchdog();
         this.phase.set('failed');
-        this.error.set('La sala perdio la conexion. Puedes intentar unirte de nuevo.');
+        this.setConnectionError('La sala perdió la conexión. Puedes intentar unirte de nuevo.');
       }
     });
     await room.setE2EEEnabled(true);
+    if (!isCurrentRoom()) { await room.disconnect(); return; }
     await this.withTimeout(
       room.connect(credentials.serverUrl, credentials.token),
       20_000,
       'La sala esta tardando demasiado en conectar.',
     );
-    if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
+    if (!isCurrentRoom()) {
       await room.disconnect();
       return;
     }
     await encryptionContext.enable(room);
-    if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) { await room.disconnect(); return; }
+    if (!isCurrentRoom()) { await room.disconnect(); return; }
     this.games.transport.attachRoom(room);
     await this.publishLiveKitLocalMedia(room, call, preserveMediaIntent);
-    if (this.activeCall()?.id !== call.id || this.liveKitRoom !== room) {
+    if (!isCurrentRoom()) {
       await room.disconnect();
       return;
     }
@@ -2526,7 +2531,9 @@ export class CallsService implements OnDestroy {
     if (signalType === 'ice-restart-request') {
       if (this.phase() !== 'ringing' && this.shouldCreateOfferTo(signal.fromUserId)) {
         await this.loadIceConfiguration();
-        await this.restartIceForPeer(signal.fromUserId, true);
+        if (isCurrent() && this.activeCall()?.id === call.id) {
+          await this.restartIceForPeer(signal.fromUserId, true);
+        }
       }
       return;
     }
@@ -2585,29 +2592,37 @@ export class CallsService implements OnDestroy {
 
     if (signalType === 'muted' || signalType === 'camera' || signalType === 'screen') {
       const decoded = await this.decodeCallSignalPayload(signal);
-      this.updateRemoteCallState(signal.fromUserId, signalType, decoded?.payload);
+      if (isCurrent() && this.activeCall()?.id === call.id && decoded) {
+        this.updateRemoteCallState(signal.fromUserId, signalType, decoded.payload);
+      }
     }
   }
 
-  private async establishCallPeers(onlyUserId: string | null = null): Promise<void> {
+  private async establishCallPeers(onlyUserId: string | null = null, createOffers = true): Promise<void> {
     const call = this.activeCall();
     if (!call || !this.localStream()) {
       return;
     }
+    const isCurrent = this.currentCallGuard(call);
     for (const userId of this.otherParticipantIds(call).filter((id) => !onlyUserId || id === onlyUserId)) {
+      if (!isCurrent() || this.isGroupCall(this.activeCall())) return;
       this.ensurePeerConnection(userId);
-      if (this.shouldCreateOfferTo(userId)) {
+      if (createOffers && this.shouldCreateOfferTo(userId)) {
         await this.createAndSendOffer(userId);
       }
     }
   }
 
   private async establishAcceptedCallPeer(userId: string): Promise<void> {
+    const call = this.activeCall();
+    if (!call) return;
+    const isCurrent = this.currentCallGuard(call);
     const peer = this.peers.get(userId);
     if (this.shouldCreateOfferTo(userId) && peer?.connection && !peer.acceptanceHandled && !peer.connection.remoteDescription) {
       this.closePeerConnectionForUser(userId);
     }
     await this.establishCallPeers(userId);
+    if (!isCurrent() || this.isGroupCall(this.activeCall())) return;
     const accepted = this.peers.get(userId);
     if (accepted) accepted.acceptanceHandled = true;
   }
@@ -2760,7 +2775,8 @@ export class CallsService implements OnDestroy {
     const call = this.activeCall();
     const connection = this.ensurePeerConnection(userId);
     const peer = this.peers.get(userId);
-    if (!call || !connection || !peer || connection.signalingState !== 'stable' || peer.makingOffer) {
+    if (!call || !connection || !peer || connection.signalingState !== 'stable' || peer.makingOffer ||
+        (peer.iceRestartInFlight && !iceRestart)) {
       return;
     }
     const callCurrent = this.currentCallGuard(call);
@@ -2808,7 +2824,7 @@ export class CallsService implements OnDestroy {
           ) {
             return;
           }
-          if (connection.signalingState !== 'stable' || currentPeer.makingOffer) {
+          if (connection.signalingState !== 'stable' || currentPeer.makingOffer || currentPeer.iceRestartInFlight) {
             return;
           }
           currentPeer.negotiationPending = false;
@@ -2818,12 +2834,15 @@ export class CallsService implements OnDestroy {
             await this.sendCallSignal(call, userId, 'renegotiate-request', {});
           }
         } catch {
-          this.error.set('No se pudo actualizar el video de la llamada. Intenta activar la cámara nuevamente.');
+          if (this.peers.get(userId)?.connection === connection) {
+            this.error.set('No se pudo actualizar el video de la llamada. Intenta activar la cámara nuevamente.');
+          }
         } finally {
           const currentPeer = this.peers.get(userId);
           if (currentPeer?.connection === connection) {
             currentPeer.negotiationQueued = false;
-            if (currentPeer.negotiationPending && connection.signalingState === 'stable' && !currentPeer.makingOffer && this.activeCall() && this.phase() !== 'ringing' && !this.isGroupCall(this.activeCall())) {
+            if (currentPeer.negotiationPending && connection.signalingState === 'stable' && !currentPeer.makingOffer &&
+                !currentPeer.iceRestartInFlight && this.activeCall() && this.phase() !== 'ringing' && !this.isGroupCall(this.activeCall())) {
               this.queuePeerNegotiation(userId, connection);
             }
           }
@@ -2840,7 +2859,7 @@ export class CallsService implements OnDestroy {
     for (const userId of this.otherParticipantIds(call)) {
       const peer = this.peers.get(userId);
       if (!peer || peer.connection.connectionState === 'closed') { continue; }
-      if (peer.negotiationQueued || peer.connection.signalingState !== 'stable') {
+      if (peer.negotiationQueued || peer.iceRestartInFlight || peer.connection.signalingState !== 'stable') {
         this.queuePeerNegotiation(userId, peer.connection);
         continue;
       }
@@ -2895,32 +2914,56 @@ export class CallsService implements OnDestroy {
   private async restartIceForPeer(userId: string, forceOffer = false): Promise<void> {
     const call = this.activeCall();
     const peer = this.peers.get(userId);
-    if (!call || !peer || peer.connection.connectionState === 'closed') {
+    if (!call || this.isGroupCall(call) || !peer || peer.iceRestartInFlight ||
+        peer.connection.connectionState === 'closed' || this.phase() === 'ringing') {
       return;
     }
-    if (this.peerConnectionLooksConnected(peer.connection)) {
+    const connection = peer.connection;
+    if (this.peerConnectionLooksConnected(connection)) {
       this.reconcileHealthyConnection(call);
       return;
     }
     this.clearPeerDisconnectTimer(peer);
+    this.setConnectingPhase(true);
+    const createsOffer = forceOffer || this.shouldCreateOfferTo(userId);
+    if (createsOffer && (peer.makingOffer || peer.isSettingRemoteAnswerPending ||
+        !['stable', 'have-local-offer'].includes(connection.signalingState))) {
+      // Allow the pending negotiation to finish. The call watchdog can retry
+      // it without replacing an answer already being applied by the browser.
+      return;
+    }
     if (peer.iceRestartAttempts >= MAX_ICE_RESTART_ATTEMPTS) {
-      this.removeRemoteStream(userId);
+      this.clearConnectionWatchdog();
+      this.phase.set('failed');
+      this.stopRingingTone();
       this.setConnectionError('No se pudo recuperar la conexión de la llamada. Revisa tu red y toca Reintentar.');
       return;
     }
+    const callCurrent = this.currentCallGuard(call);
+    const isCurrent = () => callCurrent() && !this.isGroupCall(this.activeCall()) && this.peers.get(userId) === peer;
     peer.iceRestartAttempts += 1;
-    if (this.phase() === 'connected' && this.remoteEntries().length <= 1) {
-      this.phase.set('connecting');
-      this.scheduleConnectionWatchdog(call.id);
+    peer.iceRestartInFlight = true;
+    try {
+      if (createsOffer) {
+        // A lost or unanswered offer cannot be answered on the recovered path.
+        // Discard its pending description before generating fresh ICE candidates.
+        if (connection.signalingState === 'have-local-offer') {
+          await connection.setLocalDescription({ type: 'rollback' });
+          if (!isCurrent() || this.reconcileHealthyConnection(call)) return;
+        }
+        await this.createAndSendOffer(userId, true);
+      } else {
+        await this.sendCallSignal(call, userId, 'ice-restart-request', { attempt: peer.iceRestartAttempts });
+      }
+    } catch {
+      // A short outage can also interrupt signaling. The watchdog and the
+      // network-change handler can retry without discarding local media.
+    } finally {
+      peer.iceRestartInFlight = false;
+      if (isCurrent() && peer.negotiationPending && connection.signalingState === 'stable') {
+        this.queuePeerNegotiation(userId, connection);
+      }
     }
-
-    if ((forceOffer || this.shouldCreateOfferTo(userId)) && peer.connection.signalingState === 'stable') {
-      await this.createAndSendOffer(userId, true).catch(() => undefined);
-      return;
-    }
-    await this.sendCallSignal(call, userId, 'ice-restart-request', {
-      attempt: peer.iceRestartAttempts,
-    }).catch(() => undefined);
   }
 
   private resetPeerRecovery(userId: string): void {
@@ -3482,7 +3525,7 @@ export class CallsService implements OnDestroy {
       }
       return;
     }
-    await this.retryConnection();
+    await this.retryConnection(false);
   }
 
   private publishRemoteStreamIfConnected(userId: string, connection: RTCPeerConnection): void {
@@ -3510,10 +3553,14 @@ export class CallsService implements OnDestroy {
     });
   }
 
-  private setConnectingPhase(): void {
-    if (this.phase() === 'connected') return;
+  private setConnectingPhase(recovering = false): void {
+    if (this.phase() === 'connected') {
+      if (!recovering) return;
+      this.reconnectingState.set(true);
+    }
     this.phase.set('connecting');
-    this.startRingingTone('connecting');
+    if (this.reconnecting()) this.stopRingingTone();
+    else this.startRingingTone('connecting');
     this.scheduleConnectionWatchdog(this.activeCall()?.id);
   }
 
@@ -3524,6 +3571,7 @@ export class CallsService implements OnDestroy {
     if (this.phase() !== 'connected') {
       this.phase.set('connected');
     }
+    this.reconnectingState.set(false);
     this.clearConnectedUiReconcileTimers();
     this.clearConnectionWatchdog();
     this.clearRingTimeout();
@@ -3563,7 +3611,7 @@ export class CallsService implements OnDestroy {
       if (isCurrent() && this.phase() === 'connecting' && !this.callActionInFlight
           && !this.mediaPreparation && !this.acceptedPeerInFlight.size) {
         if (this.reconcileHealthyConnection(call)) return;
-        void this.retryConnection();
+        if (navigator.onLine !== false && this.liveKitRoom?.state !== 'reconnecting') void this.retryConnection(false);
       }
     }, CONNECTION_RECOVERY_DELAY_MS);
     this.connectionFailureTimer = window.setTimeout(() => {
@@ -3571,7 +3619,8 @@ export class CallsService implements OnDestroy {
       this.connectionFailureTimer = null;
       if (isCurrent() && this.phase() === 'connecting') {
         if (this.reconcileHealthyConnection(call)) return;
-        if (this.callActionInFlight || this.mediaPreparation || this.networkRecoveryInFlight || this.acceptedPeerInFlight.size) {
+        if (this.callActionInFlight || this.mediaPreparation || this.networkRecoveryInFlight ||
+            this.acceptedPeerInFlight.size || this.liveKitRoom?.state === 'reconnecting') {
           this.clearConnectionWatchdog();
           this.scheduleConnectionWatchdog(callId);
           return;
@@ -3743,6 +3792,7 @@ export class CallsService implements OnDestroy {
     this.processedSignalIds.clear();
     this.activeCall.set(null);
     this.phase.set('idle');
+    this.reconnectingState.set(false);
     this.remoteStates.set({});
     this.muted.set(false);
     this.cameraOff.set(false);

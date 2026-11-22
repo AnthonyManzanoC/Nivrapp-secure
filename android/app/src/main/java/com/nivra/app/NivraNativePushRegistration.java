@@ -56,12 +56,13 @@ final class NivraNativePushRegistration {
         if (next == null) return; // A pending revocation cannot be revived by a stale WebView.
         int existing = indexOf(accounts, next.optString("userId"), next.optString("deviceId"));
         if (existing < 0 && accounts.length() >= 2) throw new IllegalArgumentException("Only two saved accounts are supported.");
+        boolean registrationChanged = hasNewEpoch(next, accounts.optJSONObject(existing));
         if (existing >= 0) accounts.put(existing, next); else accounts.put(next);
         root.put("activeUserId", next.optString("userId")).put("activeDeviceId", next.optString("deviceId"));
         write(context, root);
         clearNewlyProtectedNotifications(context, root, previousPrivacy);
         if (isScopeChange(previousUser, previousDevice, next.optString("userId"), next.optString("deviceId"))) clearCallNotifications(context, previousUser, previousDevice);
-        schedule(context);
+        schedule(context, registrationChanged);
     }
 
     static synchronized void syncAll(Context context, JSObject options) throws Exception {
@@ -72,6 +73,7 @@ final class NivraNativePushRegistration {
         String previousUser = root.optString("activeUserId"), previousDevice = root.optString("activeDeviceId");
         JSONArray previous = root.optJSONArray("accounts");
         JSONArray next = new JSONArray();
+        boolean registrationChanged = false;
         for (int i = 0; i < requested.length(); i++) {
             JSONObject account = requested.optJSONObject(i);
             if (account == null) throw new IllegalArgumentException("An authenticated device session is required.");
@@ -81,6 +83,7 @@ final class NivraNativePushRegistration {
                 if (value.optString("userId").equals(next.getJSONObject(j).optString("userId")))
                     throw new IllegalArgumentException("Saved accounts must have distinct users.");
             }
+            registrationChanged |= hasNewEpoch(value, find(previous, value.optString("userId"), value.optString("deviceId")));
             next.put(value);
         }
         String activeUser = options.optString("activeUserId", "");
@@ -95,7 +98,11 @@ final class NivraNativePushRegistration {
             if (indexOf(next, prior.optString("userId"), prior.optString("deviceId")) < 0)
                 clearNotifications(context, prior.optString("userId"), prior.optString("deviceId"));
         }
-        if (next.length() == 0) cancelWork(context); else schedule(context);
+        if (next.length() == 0) cancelWork(context); else schedule(context, registrationChanged);
+    }
+
+    private static boolean hasNewEpoch(JSONObject next, JSONObject previous) {
+        return previous == null || !next.optString("epoch").equals(previous.optString("epoch"));
     }
 
     private static JSONObject registration(JSONObject options, JSONObject root) throws Exception {
@@ -436,12 +443,14 @@ final class NivraNativePushRegistration {
         return token != null && !token.isEmpty() && token.equals(registeredToken) && fcmReady && registeredAt > 0 && now >= registeredAt && now - registeredAt < REGISTRATION_FRESH_MS;
     }
 
-    private static void schedule(Context context) {
-        // Replace a worker holding an older account epoch even when the physical
-        // FCM token did not change. KEEP could otherwise strand the newly added
-        // account until the next periodic maintenance window.
+    private static void schedule(Context context, boolean registrationChanged) {
+        // A new epoch needs a worker with the new scope or credentials.
+        // Repeated resume/privacy syncs should preserve an existing retry's backoff.
         for (JSONObject account : readAll(context)) {
-            if (!account.optString("pendingToken").isEmpty()) { enqueueRegistration(context, ExistingWorkPolicy.REPLACE); break; }
+            if (account.optString("pendingToken").isEmpty()) continue;
+            if (registrationChanged) enqueueRegistration(context, ExistingWorkPolicy.REPLACE);
+            else enqueueRegistration(context, ExistingWorkPolicy.KEEP);
+            break;
         }
         PeriodicWorkRequest maintenance = new PeriodicWorkRequest.Builder(NivraPushMaintenanceWorker.class, 12, TimeUnit.HOURS, 1, TimeUnit.HOURS)
             .setConstraints(new Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
@@ -477,7 +486,8 @@ final class NivraNativePushRegistration {
         JSONObject root = registry(context);
         JSONObject value = find(root.optJSONArray("accounts"), snapshot.optString("userId"), snapshot.optString("deviceId"));
         if (value == null || !NivraPushScopePolicy.currentSnapshot(value.optString("epoch"), snapshot.optString("epoch"), value.optString("pendingToken"), token)) return;
-        value.put("registeredAt", System.currentTimeMillis()).put("registeredToken", token).put("fcmReady", fcmReady).remove("pendingToken");
+        value.put("registeredAt", System.currentTimeMillis()).put("registeredToken", token).put("fcmReady", fcmReady);
+        if (fcmReady) value.remove("pendingToken");
         write(context, root);
     }
     static synchronized boolean accepts(Context context, Map<String, String> data) {

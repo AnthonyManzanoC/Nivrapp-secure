@@ -17,7 +17,11 @@ export function globalCallReturnVisible(context: { url: string; authenticated: b
       <button type="button" class="return-action" (click)="open()">
         <span class="call-symbol"><ion-icon [name]="calls.activeCall()?.type === 'Video' ? 'videocam-outline' : 'call-outline'" aria-hidden="true" /></span>
         <span class="copy"><strong>{{ calls.callTitle(calls.activeCall() || calls.resumableCall()) }}</strong>
-          @if (calls.activeCall(); as call) {<small>{{ calls.callStatusLabel(call) }} · {{ elapsed() }}</small>}
+          @if (calls.activeCall(); as call) {
+            <small>{{ calls.phase() === 'connecting' && calls.reconnecting?.()
+              ? ('CALLS.RECONNECTING' | translate:'Reconectando…')
+              : calls.callStatusLabel(call) }} · {{ elapsed() }}</small>
+          }
           @else {<small>{{ 'CALLS.RETURN_TO_CALL' | translate:'Volver a la llamada' }}</small>}
         </span>
         <span class="return-label">{{ 'COMMON.BACK' | translate:'Volver' }} <span aria-hidden="true">→</span></span>

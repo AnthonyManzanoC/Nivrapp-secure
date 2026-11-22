@@ -100,19 +100,26 @@ const previewCalls: any = {
   quickReplies:[{id:'busy',text:'Estoy ocupado, te llamo más tarde.'},{id:'soon',text:'Ahora no puedo hablar. Te llamo en cuanto pueda.'},{id:'message',text:'No puedo atender. Escríbeme por aquí.'}],
   callPhoto:()=>previewAvatar,callInitials:()=> 'SM',
   decline:async()=>{ const call=previewCalls.activeCall();previewCalls.activeCall.set(null);previewCalls.phase.set('idle');previewCalls.lastResult.set({call,kind:'rejected',incoming:true,replied:true}); },
-  activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'),
+  activeCall: signal(null), resumableCall: signal(null), phase: signal('idle'), reconnecting: signal(false),
   localStream: signal(null), remoteEntries: signal([]), activeScreenShareStreamId: signal(null),
   cameraOff: signal(false), remoteStates: signal({}), screenSharing: signal(false),
   mediaUpgradeRequested: signal(false), mediaUpgradeAwaitingPeer: signal(false), mediaUpgradeNotice: signal(''),
   mediaUpgradeInFlight: signal(false), muted: signal(false), speaker: signal(true), error: signal(''),
   screenShareNotice: signal(''), audioPlaybackBlocked: signal(false),
+  retryConnection: async () => { previewCalls.phase.set('connected'); previewCalls.reconnecting.set(false); },
   isGroupCall: () => false, canEndGroupForEveryone: () => false, clearInactiveCallUi: () => {},
   canOfferScreenShare: () => false, canShareScreen: () => false, callStatusLabel: () => 'En llamada',
   callTitle: () => 'Sofía Martínez', end: async () => { previewCalls.activeCall.set(null); previewCalls.phase.set('idle'); },
   toggleMute: () => previewCalls.muted.update((value: boolean) => !value),
   toggleCamera: async () => previewCalls.cameraOff.update((value: boolean) => !value),
   games: { panelOpen: signal(false), invitationVisible: signal(false), state: signal(null) },
-  audioOutput: { playbackBlocked: signal(false), routeError: signal(''), routeBusy:signal(false), availableRoutes: signal([]), selectedRouteId: signal('default'), selectedRouteLabel: () => 'Altavoz', toggleSpeakerRoute:async()=>false },
+  audioOutput: {
+    playbackBlocked: signal(false), routeError: signal(''), routeBusy: signal(false),
+    availableRoutes: signal([{ id: 'default', label: 'Altavoz', kind: 'speaker' }, { id: 'headset', label: 'Auriculares', kind: 'wired' }]),
+    selectedRouteId: signal('default'), selectedRouteLabel: () => previewCalls.audioOutput.selectedRouteId() === 'default' ? 'Altavoz' : 'Auriculares',
+    routingSupported: () => true, bluetoothPermission: () => true, refreshRoutes: async () => {},
+    selectRoute: async (id: string) => { previewCalls.audioOutput.selectedRouteId.set(id); },
+  },
   dismissCallResult:()=>previewCalls.lastResult.set(null), messageLastCaller:async()=>{}, redialLast:async()=>{},
   history: signal(items().slice(0, 6).map((item, index) => ({ id: 'history-' + index, conversationId: item.id, initiatorUserId: index % 2 ? 'peer-1' : user.id, participantUserIds: ['peer-1', user.id], type: index % 2 ? 'Voice' : 'Video', status: index === 1 || index === 4 ? 'Missed' : 'Ended', startedAt: item.updatedAt, endedAt: item.updatedAt }))),
 };
@@ -126,9 +133,10 @@ class PreviewCalls {
       previewCalls.activeCall.set(null);previewCalls.phase.set('idle');
       previewCalls.lastResult.set({call:{id:'synthetic-missed',conversationId:'sofia',type:mode === 'missed-video'?'Video':'Voice',participantUserIds:[user.id,'peer-1'],initiatorUserId:user.id,startedAt:new Date().toISOString()},kind:'missed',incoming:false});
     }
-    if (mode === 'voice' || mode === 'video') {
-      previewCalls.activeCall.set({ id: 'synthetic-active', conversationId: 'sofia', type: mode === 'video' ? 'Video' : 'Voice', status: 'Active', initiatorUserId: user.id, participantUserIds: ['peer-1'], startedAt: new Date().toISOString() });
-      previewCalls.phase.set('connected');
+    if (mode === 'voice' || mode === 'video' || mode === 'reconnecting' || mode === 'failed') {
+      previewCalls.activeCall.set({ id: 'synthetic-active', conversationId: 'sofia', type: mode === 'voice' ? 'Voice' : 'Video', status: 'Active', initiatorUserId: user.id, participantUserIds: ['peer-1'], startedAt: new Date().toISOString() });
+      previewCalls.reconnecting.set(mode === 'reconnecting');
+      previewCalls.phase.set(mode === 'reconnecting' ? 'connecting' : mode === 'failed' ? 'failed' : 'connected');
       previewCalls.remoteEntries.set([['peer-1', new MediaStream()]]);
       previewCalls.localStream.set(new MediaStream());
     }

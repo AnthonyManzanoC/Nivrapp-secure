@@ -19,23 +19,27 @@
             <a class="minimize-call" routerLink="/app/chats" [attr.aria-label]="'CALLS.MINIMIZE' | translate:'Volver a chats sin colgar'" (focus)="onControlsFocus(true)" (blur)="onControlsFocus(false)">
               <ion-icon name="chevron-down-outline" aria-hidden="true"></ion-icon>
             </a>
-            <div class="active-call-heading"><h2>{{ activeCallTitle(currentCall) }}</h2><small>{{ currentCall.type === 'Video' ? ('CALLS.VIDEO_CALL' | translate:'Videollamada') : ('CALLS.CALL' | translate:'Llamada') }}</small></div>
+            <div class="active-call-heading">
+              <h2>{{ activeCallTitle(currentCall) }}</h2>
+              <small>{{ currentCall.type === 'Video' ? ('CALLS.VIDEO_CALL' | translate:'Videollamada') : ('CALLS.CALL' | translate:'Llamada') }}</small>
+            </div>
           } @else {
             <h2>{{ 'CALLS.AGENDA' | translate:'Agenda' }}</h2>
           }
-          <span class="connection-state" [class.connected]="calls.phase() === 'connected'" [class.reconnecting]="calls.phase() === 'connecting'" role="status" aria-live="polite">{{ uiPhase() }}</span>
+          <span class="connection-state" [class.connected]="calls.phase() === 'connected'" [class.reconnecting]="isReconnecting()" role="status" aria-live="polite">{{ uiPhase() }}</span>
         </div>
 
         @if (calls.activeCall(); as call) {
           <div class="call-active" [class.video]="call.type === 'Video'" [class.incoming]="calls.phase() === 'ringing'">
-            <div class="call-stage" [class.has-local-video]="call.type === 'Video' && videoParticipantHasVideo(calls.localStream(), gameUserId()) && calls.phase() !== 'connected'">
-              @if (call.type === 'Video' && calls.phase() !== 'connected' && videoParticipantHasVideo(calls.localStream(), gameUserId())) {
+            @let hasCallMedia = showCallMedia(call);
+            <div class="call-stage" [class.has-local-video]="call.type === 'Video' && !hasCallMedia && videoParticipantHasVideo(calls.localStream(), gameUserId())">
+              @if (call.type === 'Video' && !hasCallMedia && videoParticipantHasVideo(calls.localStream(), gameUserId())) {
                 @if (calls.localStream(); as local) {
                   <video id="localVideo" class="local-preview-main" [appMediaStream]="local" muted autoplay playsinline></video>
                 }
               }
 
-              @if (calls.phase() === 'connected' && (calls.remoteEntries().length || (call.type === 'Video' && calls.localStream()))) {
+              @if (hasCallMedia) {
                 @if (call.type === 'Video') {
                   @if (!calls.isGroupCall(call) && !pinnedVideoTile()) {
                     <div class="video-composition direct-video">
@@ -148,14 +152,16 @@
                           }
                         </div>
                         <strong>{{ videoParticipantLabel(entry[0]) }}</strong>
-                        <span>{{ 'CALLS.IN_CALL' | translate:'En llamada' }} - {{ call.startedAt | localizedDate:'shortTime' }}</span>
+                        @if (!calls.isGroupCall(call)) {
+                          <span>{{ 'CALLS.ENCRYPTED_CALL' | translate:'Llamada cifrada' }}</span>
+                        }
                       </article>
                     }
                   </section>
                 }
               } @else {
-                <div class="waiting-tile" [class.over-video]="call.type === 'Video' && videoParticipantHasVideo(calls.localStream(), gameUserId()) && calls.phase() !== 'connected'">
-                  <div class="call-avatar" [class.ringing]="calls.phase() === 'calling' || calls.phase() === 'ringing'">
+                <div class="waiting-tile" [class.over-video]="call.type === 'Video' && videoParticipantHasVideo(calls.localStream(), gameUserId())">
+                  <div class="call-avatar" [class.ringing]="!isReconnecting() && (calls.phase() === 'calling' || calls.phase() === 'ringing')">
                     @if (activeCallPhoto(call)) {
                       <img [src]="activeCallPhoto(call)" alt="">
                     } @else {
@@ -163,7 +169,7 @@
                     }
                   </div>
                   <strong>{{ activeCallTitle(call) }}</strong>
-                  <span>{{ calls.callStatusLabel(call) }} - {{ call.startedAt | localizedDate:'shortTime' }}</span>
+                  <span>{{ uiPhase() }}</span>
                   <small>{{ call.type === 'Video' ? ('CALLS.ENCRYPTED_VIDEO_CALL' | translate:'Videollamada cifrada') : ('CALLS.ENCRYPTED_CALL' | translate:'Llamada cifrada') }}</small>
                   @if (calls.isGroupCall(call)) {
                     <div class="group-call-faces" [attr.aria-label]="'CALLS.PARTICIPANTS' | translate:'Participantes'">
@@ -181,7 +187,7 @@
 
             </div>
 
-            @if (calls.mediaUpgradeRequested() || calls.mediaUpgradeAwaitingPeer() || calls.mediaUpgradeNotice() || calls.audioPlaybackBlocked() || calls.error()) {
+            @if (calls.mediaUpgradeRequested() || calls.mediaUpgradeAwaitingPeer() || calls.mediaUpgradeNotice() || calls.audioPlaybackBlocked() || calls.error() || calls.phase() === 'failed') {
               <div class="call-notices">
                 @if (calls.mediaUpgradeRequested()) {
                   <section class="video-upgrade-prompt" role="group" [attr.aria-label]="'CALLS.VIDEO_REQUEST' | translate:'Invitación a video'">
@@ -220,7 +226,15 @@
                     </ion-button>
                   </div>
                 }
-                @if (calls.error()) {
+                @if (calls.phase() === 'failed') {
+                  <div class="call-inline-error connection-error">
+                    <p role="alert">{{ callErrorText() || ('CALLS.CONNECTION_LOST' | translate:'Se perdió la conexión con la llamada.') }}</p>
+                    <ion-button mode="ios" fill="outline" (click)="calls.retryConnection()">
+                      <ion-icon name="refresh-outline" slot="start" aria-hidden="true"></ion-icon>
+                      {{ 'COMMON.RETRY' | translate:'Reintentar' }}
+                    </ion-button>
+                  </div>
+                } @else if (calls.error()) {
                   <div class="call-inline-error">
                     <p role="alert">{{ callErrorText() }}</p>
                     @if (canRetryCamera()) {
@@ -245,87 +259,99 @@
                 (pointerdown)="$event.stopPropagation()" (click)="$event.stopPropagation()">
               </app-call-game-panel> }
             }
-            <div class="call-controls" (focusin)="onControlsFocus(true)" (focusout)="onControlsFocus(false)">
+            <app-call-translation-panel #translationPanel [showTrigger]="false" />
+            <div class="call-controls"
+              role="group" [attr.aria-label]="'CALLS.CONTROLS' | translate:'Controles de llamada'"
+              (focusin)="onControlsFocus(true)" (focusout)="onControlsFocus(false)">
               @if (calls.phase() === 'ringing') {
-                <ion-button mode="ios" class="accept" (click)="accept()">
-                  <ion-icon name="call-outline" slot="start"></ion-icon>
-                  {{ 'COMMON.ACCEPT' | translate:'Aceptar' }}
-                </ion-button>
-                <ion-button mode="ios" color="danger" (click)="decline()">
-                  <ion-icon name="close-outline" slot="start"></ion-icon>
-                  {{ 'COMMON.REJECT' | translate:'Rechazar' }}
-                </ion-button>
+                <button type="button" class="call-action call-end" (click)="decline()">
+                  <ion-icon name="close-outline" aria-hidden="true" />
+                  <span>{{ 'COMMON.REJECT' | translate:'Rechazar' }}</span>
+                </button>
+                <button type="button" class="call-action call-accept" (click)="accept()">
+                  <ion-icon [name]="call.type === 'Video' ? 'videocam-outline' : 'call-outline'" aria-hidden="true" />
+                  <span>{{ 'COMMON.ACCEPT' | translate:'Aceptar' }}</span>
+                </button>
               } @else {
-                <ion-button mode="ios" fill="clear" [class.control-off]="calls.muted()" [disabled]="!canControlLocalMedia()" (click)="calls.toggleMute()" [attr.aria-pressed]="calls.muted()" [attr.aria-label]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'" [title]="calls.muted() ? 'Activar micrófono' : 'Silenciar micrófono'">
-                  <ion-icon [name]="calls.muted() ? 'mic-off-outline' : 'mic-outline'"></ion-icon>
-                </ion-button>
-                <app-call-translation-panel />
+                <button type="button" class="call-action call-mic" [class.control-off]="calls.muted()"
+                  [disabled]="!canControlLocalMedia()" (click)="calls.toggleMute()" [attr.aria-pressed]="calls.muted()">
+                  <ion-icon [name]="calls.muted() ? 'mic-off-outline' : 'mic-outline'" aria-hidden="true" />
+                  <span>{{ 'CALLS.MIC_SHORT' | translate:'Micrófono' }}</span>
+                </button>
                 @if (call.type === 'Video') {
-                  <ion-button
-                    mode="ios"
-                    fill="clear"
-                    [class.control-off]="calls.cameraOff()"
-                    [attr.aria-pressed]="!calls.cameraOff()"
-                    [disabled]="!canControlLocalMedia() || calls.mediaUpgradeInFlight()"
-                    (click)="calls.toggleCamera()"
-                    [attr.aria-label]="calls.cameraOff() ? ('CALLS.ENABLE_CAMERA' | translate:'Activar camara') : ('CALLS.DISABLE_CAMERA' | translate:'Desactivar camara')">
-                    <ion-icon [name]="calls.cameraOff() ? 'videocam-off-outline' : 'videocam-outline'"></ion-icon>
-                  </ion-button>
-                  @if (calls.canOfferScreenShare()) {
-                    <ion-button
-                      mode="ios"
-                      fill="clear"
-                      class="screen-share-button"
-                      [class.active]="calls.screenSharing()"
-                      [attr.aria-pressed]="calls.screenSharing()"
-                      [disabled]="!calls.canShareScreen()"
-                      (click)="toggleScreenShare()"
-                      [attr.aria-label]="'CALLS.SHARE_SCREEN' | translate:'Compartir pantalla'">
-                      <ion-icon name="desktop-outline"></ion-icon>
-                    </ion-button>
-                  }
+                  <button type="button" class="call-action call-camera" [class.control-off]="calls.cameraOff()"
+                    [attr.aria-pressed]="!calls.cameraOff()" [disabled]="!canControlLocalMedia() || calls.mediaUpgradeInFlight()"
+                    (click)="calls.toggleCamera()">
+                    <ion-icon [name]="calls.cameraOff() ? 'videocam-off-outline' : 'videocam-outline'" aria-hidden="true" />
+                    <span>{{ 'CALLS.CAMERA_SHORT' | translate:'Cámara' }}</span>
+                  </button>
                 } @else {
-                  <ion-button
-                    mode="ios"
-                    fill="clear"
-                    class="upgrade-video-button"
-                    [class.active]="calls.mediaUpgradeInFlight()"
-                    [disabled]="calls.phase() !== 'connected' || calls.mediaUpgradeInFlight()"
-                    (click)="enableVideo()"
+                  <button type="button" class="call-action call-camera"
+                    [disabled]="calls.phase() !== 'connected' || calls.mediaUpgradeInFlight()" (click)="enableVideo()"
                     [attr.aria-label]="'CALLS.SWITCH_TO_VIDEO' | translate:'Activar videollamada'">
-                    <ion-icon name="videocam-outline"></ion-icon>
-                  </ion-button>
+                    <ion-icon name="videocam-outline" aria-hidden="true" />
+                    <span>{{ 'CALLS.VIDEO_FILTER' | translate:'Vídeo' }}</span>
+                  </button>
                 }
-                <ion-button mode="ios" fill="clear" (click)="toggleSpeakerRoute()" [class.active]="isSpeakerOutput()" [disabled]="calls.audioOutput.routeBusy()" [attr.aria-label]="'Altavoz y salida de audio: ' + calls.audioOutput.selectedRouteLabel()" [title]="calls.audioOutput.selectedRouteLabel()">
-                  <ion-icon [name]="audioRouteIcon()"></ion-icon>
-                </ion-button>
-                <ion-button mode="ios" fill="clear" (click)="openAudioRoutes()" aria-label="Elegir auricular o Bluetooth" [attr.aria-expanded]="audioRoutesOpen"><ion-icon name="chevron-down-outline"></ion-icon></ion-button>
-                <ion-button mode="ios" fill="clear" class="games-button"
-                  [class.active]="calls.games.panelOpen()" [class.has-game]="calls.games.state()"
-                  [disabled]="calls.phase() !== 'connected'" (click)="toggleGames()"
-                  aria-label="Juegos en la llamada" [attr.aria-expanded]="calls.games.panelOpen()">
-                  <ion-icon name="game-controller-outline"></ion-icon>
-                </ion-button>
-                @if (calls.phase() === 'failed') {
-                  <ion-button mode="ios" fill="clear" class="retry-call-button" (click)="calls.retryConnection()" [attr.aria-label]="'COMMON.RETRY' | translate:'Reintentar'">
-                    <ion-icon name="refresh-outline" slot="start"></ion-icon>
-                    {{ 'COMMON.RETRY' | translate:'Reintentar' }}
-                  </ion-button>
-                }
-                <ion-button
-                  mode="ios"
-                  fill="clear"
-                  [disabled]="calls.phase() !== 'connected' || callBusyId !== ''"
-                  (click)="openInviteModal()"
-                  [attr.aria-label]="'CALLS.ADD_PARTICIPANT' | translate:'Anadir participante'">
-                  <ion-icon name="person-add-outline"></ion-icon>
-                </ion-button>
-                <ion-button mode="ios" color="danger" [disabled]="callExitBusy" (click)="endActive()" [attr.aria-label]="(calls.isGroupCall(calls.activeCall()) ? 'CALLS.LEAVE_ROOM' : 'CALLS.HANG_UP') | translate:(calls.isGroupCall(calls.activeCall()) ? 'Salir de la sala' : 'Colgar')">
-                  <ion-icon name="close-outline" slot="start"></ion-icon>
-                  {{ (calls.isGroupCall(calls.activeCall()) ? 'CALLS.LEAVE_ROOM' : 'CALLS.HANG_UP') | translate:(calls.isGroupCall(calls.activeCall()) ? 'Salir de la sala' : 'Colgar') }}
-                </ion-button>
+                <button type="button" class="call-action call-output" (click)="openAudioRoutes()"
+                  [attr.aria-expanded]="audioRoutesOpen"
+                  [attr.aria-label]="('CALLS.AUDIO_OUTPUT' | translate:'Salida de audio') + ' · ' + calls.audioOutput.selectedRouteLabel()">
+                  <ion-icon [name]="calls.speaker() ? audioRouteIcon() : 'volume-mute-outline'" aria-hidden="true" />
+                  <span>{{ 'CALLS.AUDIO_SHORT' | translate:'Audio' }}</span>
+                </button>
+                <button type="button" class="call-action call-more" (click)="openCallActions()"
+                  [attr.aria-expanded]="callActionsOpen" [attr.aria-label]="'CALLS.MORE_ACTIONS' | translate:'Más opciones de llamada'">
+                  <ion-icon name="ellipsis-horizontal-outline" aria-hidden="true" />
+                  <span>{{ 'CALLS.MORE_SHORT' | translate:'Más' }}</span>
+                </button>
+                <button type="button" class="call-action call-end" [disabled]="callExitBusy" (click)="endActive()">
+                  <ion-icon name="call-outline" aria-hidden="true" />
+                  <span>{{ (calls.isGroupCall(call) ? 'CALLS.LEAVE_ROOM' : 'CALLS.HANG_UP') | translate:(calls.isGroupCall(call) ? 'Salir de la sala' : 'Colgar') }}</span>
+                </button>
               }
             </div>
+
+            <ion-modal class="call-audio-modal" [isOpen]="callActionsOpen"
+              [attr.aria-label]="'CALLS.MORE_ACTIONS' | translate:'Más opciones de llamada'" (didDismiss)="onCallActionsDismiss()">
+              <ng-template>
+                <section class="call-audio-sheet">
+                  <header>
+                    <h2>{{ 'CALLS.MORE_ACTIONS' | translate:'Más opciones de llamada' }}</h2>
+                    <ion-button fill="clear" (click)="closeCallActions()" [attr.aria-label]="'COMMON.CLOSE' | translate:'Cerrar'">
+                      <ion-icon name="close-outline" aria-hidden="true" />
+                    </ion-button>
+                  </header>
+                  <div class="call-audio-routes">
+                    @if (call.type === 'Video' && calls.canOfferScreenShare()) {
+                      <button type="button" class="call-audio-route" [class.selected]="calls.screenSharing()"
+                        [attr.aria-pressed]="calls.screenSharing()" [disabled]="!calls.canShareScreen()"
+                        (click)="closeCallActions(); toggleScreenShare()">
+                        <ion-icon name="desktop-outline" aria-hidden="true" />
+                        <span>{{ (calls.screenSharing() ? 'CALLS.STOP_SHARING' : 'CALLS.SHARE_SCREEN') | translate:(calls.screenSharing() ? 'Dejar de compartir' : 'Compartir pantalla') }}</span>
+                      </button>
+                    }
+                    <button type="button" class="call-audio-route" [disabled]="calls.phase() !== 'connected' || callBusyId !== ''"
+                      (click)="showInviteFromActions()">
+                      <ion-icon name="person-add-outline" aria-hidden="true" />
+                      <span>{{ 'CALLS.ADD_PARTICIPANT' | translate:'Añadir participante' }}</span>
+                    </button>
+                    <button type="button" class="call-audio-route" [class.selected]="calls.games.panelOpen()"
+                      [attr.aria-pressed]="calls.games.panelOpen()" [disabled]="calls.phase() !== 'connected'"
+                      (click)="closeCallActions(); toggleGames()">
+                      <ion-icon name="game-controller-outline" aria-hidden="true" />
+                      <span>{{ 'CALLS.GAMES_IN_CALL' | translate:'Juegos en la llamada' }}</span>
+                    </button>
+                    @if (translationPanel.translation.enabled()) {
+                      <button type="button" class="call-audio-route" [class.selected]="translationPanel.translation.active()"
+                        (click)="showTranslationFromActions(translationPanel)">
+                        <span aria-hidden="true" class="translation-symbol">文A</span>
+                        <span>{{ 'CALL_TRANSLATION.TITLE' | translate:'Traducir llamada' }}</span>
+                      </button>
+                    }
+                  </div>
+                </section>
+              </ng-template>
+            </ion-modal>
           </div>
         } @else {
           <div class="agenda-panel">
@@ -459,13 +485,13 @@
     <ng-template>
       <section class="call-audio-sheet" aria-labelledby="call-audio-title">
         <header>
-          <h2 id="call-audio-title">Salida de audio</h2>
+          <h2 id="call-audio-title">{{ 'CALLS.AUDIO_OUTPUT' | translate:'Salida de audio' }}</h2>
           <ion-button fill="clear" (click)="closeAudioRoutes()" aria-label="Cerrar"><ion-icon name="close-outline"></ion-icon></ion-button>
         </header>
         @if (calls.audioOutput.routingSupported()) {
           <div class="call-audio-routes" role="group" aria-label="Dispositivos de salida">
             @for (route of calls.audioOutput.availableRoutes(); track route.id) {
-              <button type="button" class="call-audio-route" [class.selected]="route.id === calls.audioOutput.selectedRouteId()" [attr.aria-pressed]="route.id === calls.audioOutput.selectedRouteId()" [disabled]="calls.audioOutput.routeBusy()" (click)="selectAudioRoute(route.id)">
+              <button type="button" class="call-audio-route" [class.selected]="route.id === calls.audioOutput.selectedRouteId()" [attr.aria-pressed]="route.id === calls.audioOutput.selectedRouteId()" (click)="selectAudioRoute(route.id)">
                 <ion-icon [name]="audioRouteIcon(route.kind)" aria-hidden="true"></ion-icon>
                 <span>{{ route.label }}</span>
                 @if (route.id === calls.audioOutput.selectedRouteId()) { <small>En uso</small> }

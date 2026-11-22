@@ -36,6 +36,8 @@ interface Readiness {
   multiInstanceReady: boolean; clusterFingerprint: string; push?: { fcm?: boolean; webPush?: boolean };
 }
 const fingerprintPattern = /^[a-f0-9]{64}$/;
+// A verified standby may need time to wake on the first request.
+const standbyProbeTimeoutMs = 22_000;
 export function apiOrigin(value: string): string | null {
   try {
     const url = new URL(value);
@@ -96,9 +98,17 @@ export class ApiEndpointPool {
 
   /** Readiness can continue in the background without blocking useful API traffic. */
   prepareForRequest(): Promise<void> {
-    const preparation = this.prepare();
+    const preparation = this.recovery ?? this.prepare();
     return new Promise(resolve => {
-      const timer = globalThis.setTimeout(resolve, this.network.preparationBudgetMs());
+      let timer = globalThis.setTimeout(() => {
+        // Once readiness has identified an outage, allow the shared standby probe
+        // to finish before sending an operation that may not be safe to replay.
+        if (!this.recovery || (this.failedUntil.get(this.current()) ?? 0) <= this.runtime.now()) {
+          resolve();
+          return;
+        }
+        timer = globalThis.setTimeout(resolve, standbyProbeTimeoutMs);
+      }, this.network.preparationBudgetMs());
       void preparation.then(() => { globalThis.clearTimeout(timer); resolve(); }, () => { globalThis.clearTimeout(timer); resolve(); });
     });
   }
@@ -161,7 +171,7 @@ export class ApiEndpointPool {
       if (origin === failed || (this.failedUntil.get(origin) || 0) > this.runtime.now()) continue;
       if (probes++ >= 3) break;
       this.candidateCursor = candidates.length ? (candidates.indexOf(origin) + 1) % candidates.length : 0;
-      const health = await this.probe(origin);
+      const health = await this.probe(origin, standbyProbeTimeoutMs);
       if (origin === this.primary && health) this.rememberPrimary(health);
       if (this.compatible(health)) { this.activate(origin); return true; }
       this.failedUntil.set(origin, this.runtime.now() + 60000);

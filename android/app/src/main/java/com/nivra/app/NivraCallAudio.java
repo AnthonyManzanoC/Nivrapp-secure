@@ -21,11 +21,16 @@ import android.os.Looper;
 import com.getcapacitor.JSObject;
 import org.json.JSONArray;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /** Owns communication routing only. It never changes microphone mute or volume. */
 final class NivraCallAudio {
+    private static final String LEGACY_BLUETOOTH = "legacy-bluetooth";
+    private static final long ROUTE_TIMEOUT_MS = 30_000;
+
     private final Context context;
     private final AudioManager audio;
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -34,7 +39,7 @@ final class NivraCallAudio {
     private boolean video;
     private String choice = "";
     private String pending = "";
-    private String failedRoute = "";
+    private final Set<String> unavailableRoutes = new HashSet<>();
     private String errorCode = "";
     private boolean previousSpeaker;
     private boolean previousSco;
@@ -49,8 +54,8 @@ final class NivraCallAudio {
         try {
             if (pending.equals(currentRoute())) { pending = ""; publish(); return; }
         } catch (RuntimeException ignored) { }
-        failedRoute = pending;
-        pending = "";
+        unavailableRoutes.add(pending);
+        clearPending();
         choice = "";
         errorCode = "CALL_AUDIO_ROUTE_TIMEOUT";
         stopOwnedSco();
@@ -65,24 +70,26 @@ final class NivraCallAudio {
         @Override public void onReceive(Context ignored, Intent intent) {
             if (callId.isEmpty()) return;
             try {
-            if (AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED.equals(intent.getAction())) {
-                int state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, AudioManager.SCO_AUDIO_STATE_DISCONNECTED);
-                if (state == AudioManager.SCO_AUDIO_STATE_CONNECTED && "legacy-bluetooth".equals(pending)) {
-                    audio.setBluetoothScoOn(true);
-                    pending = "";
-                    handler.removeCallbacks(routeTimeout);
-                } else if (state == AudioManager.SCO_AUDIO_STATE_DISCONNECTED && startedSco && pending.isEmpty()) {
-                    startedSco = false;
-                    choice = "";
-                    failedRoute = "legacy-bluetooth";
+                if (AudioManager.ACTION_SCO_AUDIO_STATE_UPDATED.equals(intent.getAction())) {
+                    int state = intent.getIntExtra(AudioManager.EXTRA_SCO_AUDIO_STATE, AudioManager.SCO_AUDIO_STATE_DISCONNECTED);
+                    if (state == AudioManager.SCO_AUDIO_STATE_CONNECTED && LEGACY_BLUETOOTH.equals(pending)) {
+                        audio.setSpeakerphoneOn(false);
+                        audio.setBluetoothScoOn(true);
+                        clearPending();
+                    } else if (state == AudioManager.SCO_AUDIO_STATE_DISCONNECTED && startedSco && pending.isEmpty()) {
+                        stopOwnedSco();
+                        choice = "";
+                        unavailableRoutes.add(LEGACY_BLUETOOTH);
+                    }
                     applyAutomatic();
+                    publish();
+                    return;
                 }
-                applyAutomatic();
+                deviceSetChanged();
+            } catch (RuntimeException failure) {
+                errorCode = "CALL_AUDIO_UNAVAILABLE";
                 publish();
-                return;
             }
-            deviceSetChanged();
-            } catch (RuntimeException failure) { errorCode = "CALL_AUDIO_UNAVAILABLE"; publish(); }
         }
     };
 
@@ -117,13 +124,13 @@ final class NivraCallAudio {
 
     JSObject select(String id, String routeId) {
         if (callId.isEmpty() || !callId.equals(id)) throw new IllegalStateException("CALL_AUDIO_SESSION_CHANGED");
-        List<CallAudioRoutePolicy.Route> routes = routes();
-        boolean exists = false;
-        for (CallAudioRoutePolicy.Route route : routes) if (route.id.equals(routeId)) exists = true;
-        if (!exists) throw new IllegalArgumentException("CALL_AUDIO_ROUTE_GONE");
-        failedRoute = "";
+        if (!CallAudioRoutePolicy.includes(routes(), routeId)) throw new IllegalArgumentException("CALL_AUDIO_ROUTE_GONE");
+        if (!routeId.equals(pending) && (!pending.isEmpty() || !routeId.equals(currentRoute())) && !apply(routeId)) {
+            unavailableRoutes.add(routeId);
+            throw new IllegalStateException("CALL_AUDIO_ROUTE_REJECTED");
+        }
+        unavailableRoutes.remove(routeId);
         errorCode = "";
-        if (!apply(routeId)) throw new IllegalStateException("CALL_AUDIO_ROUTE_REJECTED");
         choice = routeId;
         return snapshot();
     }
@@ -157,7 +164,8 @@ final class NivraCallAudio {
             else audio.abandonAudioFocus(focusListener);
         } catch (RuntimeException ignored) { }
         focus = null;
-        choice = pending = failedRoute = errorCode = "";
+        choice = pending = errorCode = "";
+        unavailableRoutes.clear();
     }
 
     private void requestFocus() {
@@ -178,8 +186,7 @@ final class NivraCallAudio {
             communicationListener = device -> {
                 if (callId.isEmpty()) return;
                 if (device != null && deviceId(device).equals(pending)) {
-                    pending = "";
-                    handler.removeCallbacks(routeTimeout);
+                    clearPending();
                 }
                 publish();
             };
@@ -206,11 +213,9 @@ final class NivraCallAudio {
     private void deviceSetChanged() {
         if (callId.isEmpty()) return;
         try {
-            failedRoute = "";
             applyAutomatic();
         } catch (RuntimeException failure) {
-            pending = "";
-            handler.removeCallbacks(routeTimeout);
+            clearPending();
             errorCode = "CALL_AUDIO_UNAVAILABLE";
         }
         publish();
@@ -218,63 +223,71 @@ final class NivraCallAudio {
 
     private void applyAutomatic() {
         List<CallAudioRoutePolicy.Route> routes = routes();
-        if (!pending.isEmpty()) {
-            boolean connectingDevicePresent = false;
-            for (CallAudioRoutePolicy.Route route : routes) if (route.id.equals(pending)) connectingDevicePresent = true;
-            if (!connectingDevicePresent) {
-                pending = "";
-                handler.removeCallbacks(routeTimeout);
-                // Drop only the disconnected request we own. Keep the current
-                // usable route and let the normal fallback below choose safely.
-                stopOwnedSco();
-            }
+        // Retry a failed device when it has actually disappeared and reappeared,
+        // or when the user selects it directly. Other device events should not
+        // keep interrupting the usable fallback.
+        unavailableRoutes.removeIf(route -> !CallAudioRoutePolicy.includes(routes, route));
+        if (!pending.isEmpty() && !CallAudioRoutePolicy.includes(routes, pending)) {
+            clearPending();
+            stopOwnedSco();
         }
-        String next = CallAudioRoutePolicy.choose(routes, video, choice, failedRoute);
-        boolean retained = false;
-        for (CallAudioRoutePolicy.Route route : routes) if (route.id.equals(choice)) retained = true;
-        if (!retained) choice = "";
-        if (!next.isEmpty() && !next.equals(pending) && !next.equals(currentRoute()) && !apply(next)) {
-            failedRoute = next;
-            choice = "";
+        if (!CallAudioRoutePolicy.includes(routes, choice)) choice = "";
+
+        String current = currentRoute();
+        while (true) {
+            String next = CallAudioRoutePolicy.choose(routes, video, choice, unavailableRoutes);
+            if (next.isEmpty() || next.equals(pending) || (pending.isEmpty() && next.equals(current))) return;
+            if (apply(next)) return;
+            unavailableRoutes.add(next);
+            if (next.equals(choice)) choice = "";
             errorCode = "CALL_AUDIO_ROUTE_REJECTED";
-            String fallback = CallAudioRoutePolicy.choose(routes, video, "", failedRoute);
-            if (!fallback.isEmpty() && !fallback.equals(currentRoute())) apply(fallback);
         }
     }
 
     private boolean apply(String route) {
-        handler.removeCallbacks(routeTimeout);
-        pending = "";
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             for (AudioDeviceInfo device : audio.getAvailableCommunicationDevices()) {
                 if (!deviceId(device).equals(route)) continue;
                 if (!audio.setCommunicationDevice(device)) return false;
-                if (!route.equals(currentRoute())) pending = route;
-                if (!pending.isEmpty()) handler.postDelayed(routeTimeout, 30_000);
+                clearPending();
+                if (!route.equals(currentRoute())) waitForRoute(route);
                 return true;
             }
             return false;
         }
-        if ("legacy-bluetooth".equals(route)) {
-            audio.setSpeakerphoneOn(false);
+        if (LEGACY_BLUETOOTH.equals(route)) {
             if (!audio.isBluetoothScoOn()) {
-                pending = route;
-                startedSco = true;
+                // Keep the last usable route until SCO connects. Android can
+                // take several seconds or fail to establish this connection.
                 audio.startBluetoothSco();
-                handler.postDelayed(routeTimeout, 30_000);
+                startedSco = true;
+                waitForRoute(route);
             }
         } else {
             stopOwnedSco();
             audio.setBluetoothScoOn(false);
             audio.setSpeakerphoneOn("legacy-speaker".equals(route));
+            clearPending();
         }
         return true;
+    }
+
+    private void waitForRoute(String route) {
+        clearPending();
+        pending = route;
+        handler.postDelayed(routeTimeout, ROUTE_TIMEOUT_MS);
+    }
+
+    private void clearPending() {
+        pending = "";
+        handler.removeCallbacks(routeTimeout);
     }
 
     private void stopOwnedSco() {
         if (!startedSco) return;
         startedSco = false;
-        try { audio.setBluetoothScoOn(false); audio.stopBluetoothSco(); } catch (RuntimeException ignored) { }
+        try { audio.setBluetoothScoOn(false); } catch (RuntimeException ignored) { }
+        try { audio.stopBluetoothSco(); } catch (RuntimeException ignored) { }
     }
 
     private String currentRoute() {
@@ -283,7 +296,7 @@ final class NivraCallAudio {
             AudioDeviceInfo device = audio.getCommunicationDevice();
             return device == null ? "" : deviceId(device);
         }
-        if (audio.isBluetoothScoOn()) return "legacy-bluetooth";
+        if (audio.isBluetoothScoOn()) return LEGACY_BLUETOOTH;
         if (audio.isSpeakerphoneOn()) return "legacy-speaker";
         for (CallAudioRoutePolicy.Route route : routes()) if ("wired".equals(route.kind) || "usb".equals(route.kind)) return route.id;
         return "legacy-earpiece";
@@ -315,7 +328,7 @@ final class NivraCallAudio {
         // Legacy routing cannot bypass an inserted cable to force the handset.
         if (earpiece && !wired) routes.add(new CallAudioRoutePolicy.Route("legacy-earpiece", "earpiece", "Auricular del teléfono"));
         if (speaker) routes.add(new CallAudioRoutePolicy.Route("legacy-speaker", "speaker", "Altavoz"));
-        if (bluetoothConnected()) routes.add(new CallAudioRoutePolicy.Route("legacy-bluetooth", "bluetooth", "Bluetooth"));
+        if (bluetoothConnected()) routes.add(new CallAudioRoutePolicy.Route(LEGACY_BLUETOOTH, "bluetooth", "Bluetooth"));
         return routes;
     }
 

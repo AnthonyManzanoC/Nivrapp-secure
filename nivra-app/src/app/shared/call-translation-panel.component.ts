@@ -1,4 +1,4 @@
-import { Component, effect, inject } from '@angular/core';
+import { Component, effect, inject, input } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { IonModal } from '@ionic/angular/standalone';
 import { CallTranslationService, CALL_TRANSLATION_LANGUAGES } from '../core/services/call-translation.service';
@@ -9,7 +9,7 @@ import { TranslatePipe } from '../core/pipes/translate.pipe';
 @Component({
   selector: 'app-call-translation-panel', standalone: true, imports: [FormsModule, IonModal, TranslatePipe],
   template: `
-    @if (translation.enabled()) {
+    @if (showTrigger() && translation.enabled()) {
     <button class="translation-button" type="button" (click)="open = true" [class.active]="translation.active()"
       [attr.aria-label]="'CALL_TRANSLATION.TITLE' | translate:'Traducir llamada'" [attr.aria-expanded]="open">
       <span aria-hidden="true">文A</span>
@@ -100,6 +100,7 @@ import { TranslatePipe } from '../core/pipes/translate.pipe';
   `],
 })
 export class CallTranslationPanelComponent {
+  readonly showTrigger = input(true);
   readonly translation = inject(CallTranslationService);
   readonly calls = inject(CallsService);
   readonly chat = inject(ChatService);

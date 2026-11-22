@@ -15,6 +15,7 @@ import {
   closeCircleOutline,
   closeOutline,
   desktopOutline,
+  ellipsisHorizontalOutline,
   enterOutline,
   gameControllerOutline,
   micOffOutline,
@@ -64,7 +65,7 @@ interface VideoTile {
   standalone: true,
   imports: [RouterLink, TransientNoticeDirective, LocalizedDatePipe, CommonModule, FormsModule, TranslatePipe, IonButton, IonContent, IonIcon, IonModal, IonSearchbar, IonToast, MediaStreamDirective, CallGamePanelComponent, CallTranslationPanelComponent],
   templateUrl: './calls.page.html',
-  styleUrls: ['./calls.page.scss'],
+  styleUrls: ['./calls.page.scss', './call-controls.scss'],
 })
 export class CallsPage {
   readonly calls = inject(CallsService);
@@ -107,6 +108,8 @@ export class CallsPage {
   inviteModalOpen = false;
   exitModalOpen = false;
   audioRoutesOpen = false;
+  callActionsOpen = false;
+  private actionAfterDismiss: { account: string; callId: string; run: () => void } | null = null;
   private audioRouteCallId: string | null = null;
   callExitBusy = false;
   private exitCallId: string | null = null;
@@ -130,6 +133,7 @@ export class CallsPage {
       closeCircleOutline,
       closeOutline,
       desktopOutline,
+      ellipsisHorizontalOutline,
       enterOutline,
       gameControllerOutline,
       micOffOutline,
@@ -206,6 +210,8 @@ export class CallsPage {
         this.actionRevision++;
         this.callBusyId = '';
         this.closeInviteModal();
+        this.closeCallActions();
+        this.actionAfterDismiss = null;
         this.videoSwapped = false;
         this.pinnedParticipantId = this.calls.activeCall()?.type === 'Video' ? this.calls.activeScreenShareStreamId() : null;
         this.callQuery = '';
@@ -237,6 +243,8 @@ export class CallsPage {
     this.callBusyId = '';
     this.controlsFocused = false;
     this.closeInviteModal();
+    this.closeCallActions();
+    this.actionAfterDismiss = null;
     this.calls.clearInactiveCallUi();
     this.clearControlsAutoHide();
     this.closeAudioRoutes();
@@ -266,6 +274,39 @@ export class CallsPage {
   closeAudioRoutes(): void {
     this.audioRoutesOpen = false;
     this.audioRouteCallId = null;
+  }
+
+  openCallActions(): void {
+    if (!this.calls.activeCall()) return;
+    this.callActionsOpen = true;
+    this.revealCallChrome();
+  }
+
+  closeCallActions(): void {
+    this.callActionsOpen = false;
+  }
+
+  showTranslationFromActions(panel: CallTranslationPanelComponent): void {
+    this.queueCallAction(() => { panel.open = true; });
+  }
+
+  showInviteFromActions(): void {
+    this.queueCallAction(() => this.openInviteModal());
+  }
+
+  private queueCallAction(run: () => void): void {
+    const callId = this.calls.activeCall()?.id;
+    if (!this.callActionsOpen || !callId) return;
+    this.actionAfterDismiss = { account: this.accountScope(), callId, run };
+    this.closeCallActions();
+  }
+
+  onCallActionsDismiss(): void {
+    this.closeCallActions();
+    const pending = this.actionAfterDismiss;
+    this.actionAfterDismiss = null;
+    if (pending && this.pageActive && pending.account === this.accountScope()
+      && pending.callId === this.calls.activeCall()?.id) pending.run();
   }
 
   async selectAudioRoute(routeId: string): Promise<void> {
@@ -492,9 +533,20 @@ export class CallsPage {
 
   uiPhase(): string {
     if (!this.calls.activeCall()) return this.tr('CALLS.READY', 'Lista para llamar');
+    if (this.isReconnecting()) return this.tr('CALLS.RECONNECTING', 'Reconectando…');
     if (this.calls.mediaUpgradeRequested()) return this.tr('CALLS.VIDEO_REQUEST', 'Invitación a video');
     if (this.calls.mediaUpgradeAwaitingPeer()) return this.tr('CALLS.VIDEO_WAITING', 'Esperando video');
     return this.calls.callStatusLabel(this.calls.activeCall());
+  }
+
+  isReconnecting(): boolean {
+    return this.calls.phase() === 'connecting' && Boolean(this.calls.reconnecting?.());
+  }
+
+  showCallMedia(call: CallSession): boolean {
+    return this.calls.phase() === 'connected'
+      ? Boolean(this.calls.remoteEntries().length || (call.type === 'Video' && this.calls.localStream()))
+      : this.isReconnecting() && this.calls.remoteEntries().length > 0;
   }
 
   isCallMode(): boolean {
@@ -845,7 +897,7 @@ export class CallsPage {
 
   private canHideControls(): boolean {
     return this.pageActive && this.calls.activeCall()?.type === 'Video' && this.calls.phase() === 'connected' &&
-      !this.controlsFocused && !this.inviteModalOpen && !this.audioRoutesOpen && !this.exitModalOpen &&
+      !this.controlsFocused && !this.inviteModalOpen && !this.audioRoutesOpen && !this.exitModalOpen && !this.callActionsOpen &&
       !this.calls.games.panelOpen() && !this.calls.mediaUpgradeRequested() && !this.calls.error();
   }
 

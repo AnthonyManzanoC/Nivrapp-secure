@@ -507,6 +507,72 @@ describe('call session isolation', () => {
     expect(service.phase()).toBe('connected'); expect(service.error()).toBe('');
   });
 
+  it('replaces an unanswered local offer with a fresh ICE offer when retrying the same call', async () => {
+    const connection = new RTCPeerConnection();
+    connection.addTransceiver('audio');
+    await connection.setLocalDescription(await connection.createOffer());
+    const before = connection.localDescription?.sdp;
+    const createOffer = spyOn(connection, 'createOffer').and.callThrough() as jasmine.Spy;
+    const setLocalDescription = spyOn(connection, 'setLocalDescription').and.callThrough() as jasmine.Spy;
+    const sendSignal = spyOn<any>(service, 'sendCallSignal').and.resolveTo();
+    spyOn<any>(service, 'loadIceConfiguration').and.resolveTo();
+    spyOn<any>(service, 'pollPersistedSignals').and.resolveTo();
+    service.activeCall.set({ ...invitation, status: 'Active' });
+    service.phase.set('connected');
+    service.localStream.set(new MediaStream());
+    (service as any).peers.set('peer', { ...peer('disconnected'), connection });
+
+    await service.retryConnection();
+
+    expect(setLocalDescription).toHaveBeenCalledWith({ type: 'rollback' });
+    expect(createOffer).toHaveBeenCalledOnceWith({ iceRestart: true });
+    expect(connection.localDescription?.type).toBe('offer');
+    expect(connection.localDescription?.sdp).not.toBe(before);
+    expect(sendSignal).toHaveBeenCalledWith(jasmine.objectContaining({ id: invitation.id }), 'peer', 'offer',
+      jasmine.objectContaining({ description: jasmine.objectContaining({ type: 'offer' }) }));
+    expect(sendSignal.calls.allArgs().some(args => args[2] === 'ice-restart-request')).toBeFalse();
+    expect(service.reconnecting()).toBeTrue();
+    expect(service.phase()).toBe('connecting');
+  });
+
+  it('coalesces concurrent ICE alarms and returns to connected without playing ringback', async () => {
+    const active = peer('failed');
+    (service as any).peers.set('peer', active);
+    service.activeCall.set({ ...invitation, status: 'Active' });
+    service.phase.set('connected');
+    let finish!: () => void;
+    const offer = spyOn<any>(service, 'createAndSendOffer').and.returnValue(new Promise<void>(resolve => finish = resolve));
+    const first = (service as any).restartIceForPeer('peer');
+    await (service as any).restartIceForPeer('peer');
+    expect(offer).toHaveBeenCalledOnceWith('peer', true);
+    expect(active.iceRestartAttempts).toBe(1);
+    expect(service.reconnecting()).toBeTrue();
+    expect((service as any).startRingingTone).not.toHaveBeenCalled();
+    active.connection.connectionState = 'connected';
+    active.connection.iceConnectionState = 'connected';
+    (service as any).handlePeerIceState('peer', active.connection);
+    finish();
+    await first;
+    expect(service.reconnecting()).toBeFalse();
+    expect(service.phase()).toBe('connected');
+  });
+
+  it('does not restart the replacement peer when an old recovery signal finishes loading ICE configuration', async () => {
+    service.activeCall.set({ ...invitation, status: 'Active' });
+    service.phase.set('connected');
+    let finish!: () => void;
+    spyOn<any>(service, 'loadIceConfiguration').and.returnValue(new Promise<void>(resolve => finish = resolve));
+    const restart = spyOn<any>(service, 'restartIceForPeer').and.resolveTo();
+    const delayed = (service as any).handleCallSignal({ callId: invitation.id, fromUserId: 'peer', signalType: 'ice-restart-request' });
+    service.releaseLocalResources();
+    service.activeCall.set({ ...invitation, id: 'new-call', status: 'Active' });
+    service.phase.set('connected');
+    finish();
+    await delayed;
+    expect(restart).not.toHaveBeenCalled();
+    expect(service.phase()).toBe('connected');
+  });
+
   it('does not apply an old retry failure or clear the next call recovery flag', async () => {
     service.activeCall.set(invitation); service.phase.set('connecting'); service.localStream.set(new MediaStream());
     let fail!: (reason: unknown) => void;

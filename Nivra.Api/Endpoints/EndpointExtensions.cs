@@ -3731,7 +3731,7 @@ public static partial class EndpointExtensions
             return Results.Ok(new LiveKitRoomTokenResponse(token.ServerUrl, token.Token));
         });
 
-        group.MapPost("/start", async Task<IResult> (StartCallRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
+        group.MapPost("/start", async Task<IResult> (StartCallRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CallNotificationDispatch notifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -3817,12 +3817,12 @@ public static partial class EndpointExtensions
             await store.AddCallAsync(call, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             var response = ToCallResponse(call);
-            await NotifyUsers(hub, participants, "call.started", response);
+            await notifications.SendToUsersAsync(hub.Clients, participants, call.Id, "call.started", response, cancellationToken);
 
             return Results.Created($"/calls/{call.Id}", response);
         }));
 
-        static Task<IResult> ClaimOrResume(string callId, CallSessionRequest request, HttpContext http, INivraStore store, NivraDbContext db, IHubContext<NivraHub> hub, TimeProvider timeProvider, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
+        static Task<IResult> ClaimOrResume(string callId, CallSessionRequest request, HttpContext http, INivraStore store, NivraDbContext db, IHubContext<NivraHub> hub, CallNotificationDispatch notifications, TimeProvider timeProvider, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null) return Results.Unauthorized();
@@ -3856,7 +3856,7 @@ public static partial class EndpointExtensions
             await store.SaveChangesAsync(cancellationToken);
             await CallPushOutbox.AcknowledgeAsync(db, call.Id, current.UserId, current.DeviceId, timeProvider.GetUtcNow(), cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("call_answered_elsewhere", new
+            await notifications.SendToUsersAsync(hub.Clients, [current.UserId], callId, "call_answered_elsewhere", new
             {
                 callId,
                 answeredByUserId = current.UserId,
@@ -3865,7 +3865,7 @@ public static partial class EndpointExtensions
                 at = timeProvider.GetUtcNow()
             }, cancellationToken);
             var response = ToCallResponse(call);
-            await NotifyUsers(hub, call.ParticipantUserIds, "call.updated", response);
+            await notifications.SendToUsersAsync(hub.Clients, call.ParticipantUserIds, callId, "call.updated", response, cancellationToken);
             return Results.Ok(response);
         });
         group.MapPost("/{callId}/claim", ClaimOrResume);
@@ -3968,7 +3968,7 @@ public static partial class EndpointExtensions
             return Results.Ok(signals);
         });
 
-        group.MapPost("/{callId}/signal", async Task<IResult> (string callId, CallSignalRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
+        group.MapPost("/{callId}/signal", async Task<IResult> (string callId, CallSignalRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CallNotificationDispatch notifications, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -4056,7 +4056,7 @@ public static partial class EndpointExtensions
                 await CallPushOutbox.AcknowledgeAsync(db, call.Id, current.UserId, current.DeviceId, now, cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             var recipientGroup = targetSession is null ? GroupsFor.User(request.TargetUserId) : GroupsFor.Device(targetSession.DeviceId);
-            await hub.Clients.Group(recipientGroup).SendAsync("call.signal", new
+            await notifications.SendAsync(callId, "call.signal", token => hub.Clients.Group(recipientGroup).SendAsync("call.signal", new
             {
                 signalId = signal.Id,
                 callId,
@@ -4068,10 +4068,10 @@ public static partial class EndpointExtensions
                 signalType = signal.SignalType,
                 payloadCiphertext = signal.PayloadCiphertext,
                 createdAt = signal.CreatedAt
-            }, cancellationToken);
+            }, token), cancellationToken);
             if (signalType == "accepted")
             {
-                await hub.Clients.Group(GroupsFor.User(current.UserId)).SendAsync("call_answered_elsewhere", new
+                await notifications.SendToUsersAsync(hub.Clients, [current.UserId], callId, "call_answered_elsewhere", new
                 {
                     callId,
                     answeredByUserId = current.UserId,
@@ -4084,7 +4084,7 @@ public static partial class EndpointExtensions
             return Results.Accepted(value: new { signalId = signal.Id, createdAt = signal.CreatedAt });
         }));
 
-        group.MapPatch("/{callId}/type", async Task<IResult> (string callId, UpdateCallTypeRequest request, HttpContext http, INivraStore store, NivraDbContext db, IHubContext<NivraHub> hub, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
+        group.MapPatch("/{callId}/type", async Task<IResult> (string callId, UpdateCallTypeRequest request, HttpContext http, INivraStore store, NivraDbContext db, IHubContext<NivraHub> hub, CallNotificationDispatch notifications, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -4118,11 +4118,11 @@ public static partial class EndpointExtensions
 
             await transaction.CommitAsync(cancellationToken);
             var response = ToCallResponse(call);
-            await NotifyUsers(hub, call.ParticipantUserIds, "call.updated", response);
+            await notifications.SendToUsersAsync(hub.Clients, call.ParticipantUserIds, callId, "call.updated", response, cancellationToken);
             return Results.Ok(response);
         }));
 
-        group.MapPost("/{callId}/invite", async Task<IResult> (string callId, InviteCallParticipantRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
+        group.MapPost("/{callId}/invite", async Task<IResult> (string callId, InviteCallParticipantRequest request, HttpContext http, INivraStore store, NivraDbContext db, IHubContext<NivraHub> hub, CallNotificationDispatch notifications, PushNotificationService pushNotifications, LiveKitTokenService liveKit, CancellationToken cancellationToken) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -4173,15 +4173,18 @@ public static partial class EndpointExtensions
 
             await transaction.CommitAsync(cancellationToken);
             var response = ToCallResponse(call);
-            var callerName = await GetCallerNameAsync(store, current.UserId, cancellationToken);
-            await hub.Clients.Group(GroupsFor.User(targetUserId)).SendAsync("call.started", response, cancellationToken);
-            await hub.Clients.Group(GroupsFor.User(targetUserId)).SendAsync("incomingCall", response, cancellationToken);
-            await NotifyUsers(hub, call.ParticipantUserIds.Distinct(StringComparer.Ordinal).Where(userId => userId != targetUserId), "group.call.started", response);
-            await pushNotifications.SendIncomingCallAsync(targetUserId, call.ConversationId, call.Id, current.UserId, callerName, call.Type, cancellationToken);
+            await notifications.SendToUsersAsync(hub.Clients, [targetUserId], callId, "call.started", response, cancellationToken);
+            await notifications.SendToUsersAsync(hub.Clients, [targetUserId], callId, "incomingCall", response, cancellationToken);
+            await notifications.SendToUsersAsync(hub.Clients, call.ParticipantUserIds.Where(userId => userId != targetUserId), callId, "group.call.started", response, cancellationToken);
+            await notifications.SendAsync(callId, "incoming_call push", async token =>
+            {
+                var callerName = await GetCallerNameAsync(store, current.UserId, token);
+                await pushNotifications.SendIncomingCallAsync(targetUserId, call.ConversationId, callId, current.UserId, callerName, call.Type, token);
+            }, cancellationToken);
             return Results.Ok(response);
         }));
 
-        static Task<IResult> EndOrLeave(string callId, CallSessionRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, PushNotificationService pushNotifications, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
+        static Task<IResult> EndOrLeave(string callId, CallSessionRequest request, HttpContext http, INivraStore store, NivraDbContext db, TimeProvider timeProvider, IHubContext<NivraHub> hub, CallNotificationDispatch notifications, PushNotificationService pushNotifications, CancellationToken cancellationToken) => CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var current = http.GetCurrentUser();
             if (current is null)
@@ -4217,10 +4220,11 @@ public static partial class EndpointExtensions
             await store.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
             var response = ToCallResponse(call);
-            await NotifyUsers(hub, call.ParticipantUserIds, ended ? "call.ended" : "call.updated", response);
+            await notifications.SendToUsersAsync(hub.Clients, call.ParticipantUserIds, callId, ended ? "call.ended" : "call.updated", response, cancellationToken);
             foreach (var userId in ended ? call.ParticipantUserIds.Distinct(StringComparer.Ordinal) : Enumerable.Empty<string>())
             {
-                await pushNotifications.SendCallEndedAsync(userId, call.ConversationId, call.Id, current.UserId, call.Type, cancellationToken);
+                await notifications.SendAsync(callId, "end_call push", token =>
+                    pushNotifications.SendCallEndedAsync(userId, call.ConversationId, callId, current.UserId, call.Type, token), cancellationToken);
             }
 
             return Results.Ok(response);

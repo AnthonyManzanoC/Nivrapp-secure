@@ -164,7 +164,7 @@ describe('add-account production flow integration', () => {
     let finishNavigation!: (value: boolean) => void;
     authNavigationGate = new Promise(resolve => finishNavigation = resolve);
     const updater = TestBed.inject(WebLaunchService);
-    const checking = updater.checkForUpdate(canReload);
+    const checking = updater.checkForUpdate();
     expect(canReload()).toBeTrue();
 
     const adding = auth.beginAddAccount();
@@ -186,7 +186,8 @@ describe('add-account production flow integration', () => {
     await auth.cancelAddAccount();
     expect(auth.session()?.user.id).toBe('alice');
     expect(canReload()).toBeTrue();
-    await updater.checkForUpdate(canReload);
+    expect(reload).not.toHaveBeenCalled();
+    expect(updater.applyAvailableUpdate(canReload)).toBeTrue();
     expect(reload).toHaveBeenCalledTimes(1);
   });
 

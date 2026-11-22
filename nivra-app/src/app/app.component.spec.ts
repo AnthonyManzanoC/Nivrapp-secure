@@ -1,4 +1,4 @@
-import { CUSTOM_ELEMENTS_SCHEMA } from '@angular/core';
+import { CUSTOM_ELEMENTS_SCHEMA, signal } from '@angular/core';
 import { provideHttpClient } from '@angular/common/http';
 import { Router, provideRouter } from '@angular/router';
 import { TestBed } from '@angular/core/testing';
@@ -61,16 +61,19 @@ describe('AppComponent', () => {
     } finally { draft.remove(); modal.remove(); }
   });
 
-  it('resumes HTTP chat updates even when the realtime handshake never finishes', async () => {
+  it('resumes HTTP chat updates without waiting for the biometric bridge or realtime handshake', async () => {
     const sync = jasmine.createSpy('sync').and.resolveTo();
+    const biometry = jasmine.createSpy('biometry').and.returnValue(new Promise(() => undefined));
     const app: any = Object.assign(Object.create(AppComponent.prototype), {
-      appLock: { refreshBiometryAvailability: async () => undefined },
-      auth: { isAuthenticated: () => true },
+      appLock: { refreshBiometryAvailability: biometry },
+      auth: { isAuthenticated: () => true, sessionGeneration: () => 1 },
+      destroyRef: { destroyed: false }, foreground: () => true,
       localHistory: { retryNativeStorage: jasmine.createSpy('open').and.resolveTo(true) },
       realtime: { connect: jasmine.createSpy('connect').and.returnValue(new Promise(() => undefined)) },
-      chat: { resumeSoftSync: sync }, lastPushResume: Date.now(),
+      chat: { resumeSoftSync: sync }, webLaunch: { checkForUpdate: jasmine.createSpy('update').and.resolveTo() },
     });
-    await app.resumeExistingSession();
+    await app.handleAppResume();
+    expect(biometry).toHaveBeenCalledTimes(1);
     expect(sync).toHaveBeenCalledTimes(1);
   });
 
@@ -116,6 +119,28 @@ describe('AppComponent', () => {
     expect(resume).toHaveBeenCalledTimes(2);
   });
 
+  it('lets a new account resume while a sync for the previous account is still pending', async () => {
+    const sessionGeneration = signal(1);
+    const app = Object.assign(Object.create(AppComponent.prototype), {
+      auth: { sessionGeneration },
+      appLock: { refreshBiometryAvailability: async () => undefined },
+      webLaunch: { checkForUpdate: async () => undefined },
+    }) as AppComponent;
+    let finishOld!: () => void;
+    let finishCurrent!: () => void;
+    spyOn<any>(app, 'resumeExistingSession').and.returnValues(
+      new Promise<void>(resolve => finishOld = resolve),
+      new Promise<void>(resolve => finishCurrent = resolve),
+    );
+    const previous = (app as any).handleAppResume();
+    sessionGeneration.set(2);
+    const current = (app as any).handleAppResume();
+    expect(previous).not.toBe(current);
+    finishOld(); await previous;
+    expect((app as any).handleAppResume()).toBe(current);
+    finishCurrent(); await current;
+  });
+
   it('should create the app', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const app = fixture.componentInstance;
@@ -156,20 +181,35 @@ describe('AppComponent', () => {
     expect(fixture.nativeElement.querySelector('ion-router-outlet').hasAttribute('inert')).toBeFalse();
   });
 
-  it('locks a configured web or desktop session when hidden and requests daily presentation on return', () => {
+  it('locks a configured session when hidden and resumes it without a launch presentation', () => {
     const fixture = TestBed.createComponent(AppComponent);
     const lock = spyOn(fixture.componentInstance.appLock, 'lock');
     const request = spyOn(fixture.componentInstance.dailyLaunch, 'requestPresentation');
+    const resume = spyOn<any>(fixture.componentInstance, 'handleAppResume').and.resolveTo();
     const visibility = spyOnProperty(document, 'visibilityState', 'get').and.returnValue('hidden');
     document.dispatchEvent(new Event('visibilitychange'));
     expect(lock).toHaveBeenCalledTimes(1);
     expect(request).not.toHaveBeenCalled();
     visibility.and.returnValue('visible');
     document.dispatchEvent(new Event('visibilitychange'));
-    expect(request).toHaveBeenCalledTimes(1);
+    document.dispatchEvent(new Event('visibilitychange'));
+    expect(resume).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
     fixture.destroy();
     document.dispatchEvent(new Event('visibilitychange'));
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes a browser page restored from history without treating the original load as a resume', () => {
+    const fixture = TestBed.createComponent(AppComponent);
+    const resume = spyOn<any>(fixture.componentInstance, 'handleAppResume').and.resolveTo();
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: false }));
+    expect(resume).not.toHaveBeenCalled();
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    expect(resume).toHaveBeenCalledTimes(1);
+    fixture.destroy();
+    window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    expect(resume).toHaveBeenCalledTimes(1);
   });
 
 });

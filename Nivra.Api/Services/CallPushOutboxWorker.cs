@@ -109,10 +109,11 @@ public sealed class CallPushOutboxWorker(IServiceScopeFactory scopes, TimeProvid
             });
             if (ended is null) continue;
             var hub = scope.ServiceProvider.GetRequiredService<IHubContext<NivraHub>>();
+            var notifications = scope.ServiceProvider.GetRequiredService<CallNotificationDispatch>();
             var response = new CallResponse(ended.Id, ended.ConversationId, ended.InitiatorUserId, ended.Type, ended.Status,
                 ended.ParticipantUserIds.ToList(), ended.StartedAt, ended.EndedAt, ended.InitiatorDeviceId, ended.InitiatorSessionId,
                 new(ended.ParticipantSessions, StringComparer.Ordinal), ended.MediaEncryption);
-            await hub.Clients.Groups(ended.ParticipantUserIds.Select(GroupsFor.User).ToList()).SendAsync("call.ended", response, ct);
+            await notifications.SendToUsersAsync(hub.Clients, ended.ParticipantUserIds, ended.Id, "call.ended", response, ct);
         }
     }
 }

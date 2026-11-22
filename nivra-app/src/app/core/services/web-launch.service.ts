@@ -55,15 +55,15 @@ export class WebLaunchService {
   private inFlight: Promise<void> | null = null;
   private attempted = false;
   private lastBackgroundCheckAt: number | null = null;
-  private pendingVersion: string | null = null;
+  private readonly pendingVersion = signal<string | null>(null);
+  readonly availableVersion = this.pendingVersion.asReadonly();
   readonly checking = signal(false);
 
-  /** Check an already open web app without covering the conversation with a splash. */
-  checkForUpdate(canReload: () => boolean = () => true): Promise<void> {
+  /** An already open application can offer the release without restarting. */
+  checkForUpdate(): Promise<void> {
     if (!this.runtime.isWeb || this.runtime.sensitiveRoute()) return Promise.resolve();
     if (this.inFlight) return this.inFlight;
     const operation = (async () => {
-      if (this.applyPendingVersion(canReload)) return;
       const now = this.runtime.now().getTime();
       if (this.lastBackgroundCheckAt !== null && now - this.lastBackgroundCheckAt < BACKGROUND_CHECK_INTERVAL_MS) return;
       this.lastBackgroundCheckAt = now;
@@ -75,9 +75,7 @@ export class WebLaunchService {
           new Promise<null>(resolve => { timeoutId = window.setTimeout(() => resolve(null), 5_000); }),
         ]);
         const version = result && typeof result === 'object' ? (result as { version?: unknown }).version : null;
-        if (!isNewerWebVersion(version)) return;
-        this.pendingVersion = version;
-        this.applyPendingVersion(canReload);
+        if (isNewerWebVersion(version)) this.offerVersion(version);
       } catch {
         // Offline checks leave the current application and unsent content intact.
       } finally {
@@ -89,15 +87,23 @@ export class WebLaunchService {
     return operation;
   }
 
-  private applyPendingVersion(canReload: () => boolean): boolean {
-    if (!this.pendingVersion || this.runtime.sensitiveRoute() || !canReload()) return false;
+  applyAvailableUpdate(canReload: () => boolean): boolean {
+    const version = this.pendingVersion();
+    if (!version || this.runtime.sensitiveRoute() || !canReload()) return false;
     try {
-      if (!this.runtime.storage || this.runtime.storage.getItem(APPLIED_VERSION_KEY) === this.pendingVersion) return false;
-      this.runtime.storage.setItem(APPLIED_VERSION_KEY, this.pendingVersion);
-      if (this.runtime.storage.getItem(APPLIED_VERSION_KEY) !== this.pendingVersion) return false;
+      this.runtime.storage?.setItem(APPLIED_VERSION_KEY, version);
+    } catch { /* An explicit update can proceed even without storage. */ }
+    try {
       this.runtime.reload();
+      this.pendingVersion.set(null);
       return true;
     } catch { return false; }
+  }
+
+  private offerVersion(version: string): void {
+    try { if (this.runtime.storage?.getItem(APPLIED_VERSION_KEY) === version) return; }
+    catch { /* The offer only lives in this application instance. */ }
+    this.pendingVersion.set(version);
   }
 
   start(canReload: () => boolean = () => true): Promise<void> {
@@ -129,10 +135,12 @@ export class WebLaunchService {
         new Promise<null>((resolve) => { timeoutId = window.setTimeout(() => resolve(null), WEB_LAUNCH_TIMEOUT_MS); }),
       ]);
       const version = result && typeof result === 'object' ? (result as { version?: unknown }).version : null;
-      if (!isNewerWebVersion(version) || !claimed || this.runtime.sensitiveRoute() || !canReload()) return;
+      if (!isNewerWebVersion(version)) return;
+      this.offerVersion(version);
+      if (!claimed || this.runtime.sensitiveRoute() || !canReload()) return;
       // Require the persisted daily claim before reload, so stale HTML cannot loop.
       if (this.runtime.storage?.getItem(DAILY_CHECK_KEY) !== day) return;
-      this.runtime.reload();
+      this.applyAvailableUpdate(canReload);
     } catch {
       // Offline or a partial deployment must leave the existing application usable.
     } finally {
