@@ -57,6 +57,22 @@ describe('protected chats guard central message actions', () => {
     expect(h.service.conversationSubtitle(h.conversation)).toBe('Chat protegido');
   });
 
+  it('never includes a once-only body, file caption or expired message in the chat list', () => {
+    const h = harness();
+    const message = { ...h.message, conversationId: h.publicChat.id };
+    for (const mine of [true, false]) {
+      h.service.messagesByConversation.set({ public: [{ ...message, mine, deleteAfterRead: true }] });
+      expect(h.service.conversationSubtitle(h.publicChat)).toBe('Mensaje de una sola vista');
+    }
+    h.service.messagesByConversation.set({ public: [{ ...message, deleteAfterRead: true,
+      payload: { type: 'file', fileId: 'private', fileName: 'private.png', text: 'Private caption' } }] });
+    expect(h.service.conversationSubtitle(h.publicChat)).toBe('Mensaje de una sola vista');
+    h.service.messagesByConversation.set({ public: [{ ...message, expiresAt: new Date(0).toISOString() }] });
+    expect(h.service.conversationSubtitle(h.publicChat)).toBe('Mensaje caducado');
+    h.service.messagesByConversation.set({ public: [message] });
+    expect(h.service.conversationSubtitle(h.publicChat)).toBe('Private text');
+  });
+
   it('does not optimistically mark a locked chat as read or send any read synchronization or receipt', async () => {
     const h = harness();
     await h.service.markConversationRead('private');

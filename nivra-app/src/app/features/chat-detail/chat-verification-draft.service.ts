@@ -1,42 +1,51 @@
 import { Injectable, effect, inject } from '@angular/core';
 import { AuthService } from '../../core/services/auth.service';
 
-/** A one-use handoff in memory. Message drafts never enter browser history or storage. */
+interface ChatDraft {
+  text: string;
+  deleteAfterRead?: boolean;
+  ttlSeconds?: number;
+}
+
+/** In-memory handoff. Message drafts never enter browser history or storage. */
 @Injectable({ providedIn: 'root' })
 export class ChatVerificationDraftService {
   private readonly auth = inject(AuthService);
-  private saved: { scope: string; conversationId: string; text: string } | null = null;
+  private savedScope: string | null = null;
+  private readonly drafts = new Map<string, ChatDraft>();
 
   constructor() {
     effect(() => {
-      const scope = this.scope();
-      if (this.saved && this.saved.scope !== scope) this.saved = null;
+      this.syncScope();
     });
   }
 
-  save(conversationId: string, text: string): void {
-    const scope = this.scope();
-    this.saved = scope && conversationId && text ? { scope, conversationId, text } : null;
+  save(conversationId: string, text: string, policy?: Pick<ChatDraft, 'deleteAfterRead' | 'ttlSeconds'>): void {
+    if (!this.syncScope() || !conversationId) return;
+    if (text) this.drafts.set(conversationId, { text, ...policy });
+    else this.drafts.delete(conversationId);
   }
 
-  take(conversationId: string): string | null {
-    const scope = this.scope();
-    if (!this.saved || this.saved.scope !== scope) {
-      this.saved = null;
-      return null;
-    }
-    if (this.saved.conversationId !== conversationId) return null;
-    const text = this.saved.text;
-    this.saved = null;
-    return text;
+  take(conversationId: string): ChatDraft | null {
+    if (!this.syncScope()) return null;
+    const draft = this.drafts.get(conversationId) ?? null;
+    this.drafts.delete(conversationId);
+    return draft;
   }
 
   discard(conversationId: string): void {
-    if (this.saved?.scope === this.scope() && this.saved.conversationId === conversationId) this.saved = null;
+    if (this.syncScope()) this.drafts.delete(conversationId);
   }
 
-  private scope(): string | null {
+  private syncScope(): string | null {
     const current = this.auth.session();
-    return current?.user.id && current.device.id ? JSON.stringify([current.user.id, current.device.id]) : null;
+    const scope = current?.user.id && current.device.id
+      ? JSON.stringify([current.user.id, current.device.id, this.auth.sessionGeneration?.()])
+      : null;
+    if (scope !== this.savedScope) {
+      this.drafts.clear();
+      this.savedScope = scope;
+    }
+    return scope;
   }
 }

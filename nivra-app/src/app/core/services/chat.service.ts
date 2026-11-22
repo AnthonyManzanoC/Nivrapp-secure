@@ -1193,6 +1193,9 @@ export class ChatService implements OnDestroy {
     file: File,
     options: { forwardedFrom?: unknown; voiceNote?: boolean; sticker?: boolean; policy?: MessagePolicyOptions; mode?: EncryptedUploadMode; caption?: string } = {},
   ): Promise<MessageResponse | null> {
+    if (options.policy?.deleteAfterRead && !/^(image|audio|video)\//i.test(file.type)) {
+      throw new Error('«Ver una vez» admite fotos, video y audio. Quita este archivo o cambia la privacidad antes de enviarlo.');
+    }
     this.assertPrivateChatUnlocked(conversation.id);
     const requestedUserId = this.auth.session()?.user.id;
     const identity = await this.auth.ensureDeviceIdentity();
@@ -1769,7 +1772,14 @@ export class ChatService implements OnDestroy {
       const fallback = this.isGroupConversation(conversation) ? 'Grupo cifrado listo' : 'Cifrado extremo a extremo';
       return state ? `${state} - ${fallback}` : fallback;
     }
-    const preview = this.preview(last.payload);
+    let preview: string;
+    if (last.expiresAt && Date.parse(last.expiresAt) <= Date.now()) {
+      preview = 'Mensaje caducado';
+    } else if (last.deleteAfterRead && !this.isViewOnceOpened(last)) {
+      preview = 'Mensaje de una sola vista';
+    } else {
+      preview = this.preview(last.payload);
+    }
     return state ? `${state} - ${preview}` : preview;
   }
 

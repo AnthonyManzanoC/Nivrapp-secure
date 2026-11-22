@@ -510,17 +510,20 @@
         </ion-button>
       </div>
     }
-    @if (policyPanelOpen) {
-    <div class="policy-row">
+    @if (policyPanelOpen && !editingMessage) {
+    <div class="policy-row" id="message-privacy-options">
       <label class="policy-toggle">
-        <ion-toggle mode="ios" [(ngModel)]="deleteAfterRead" [disabled]="sending" name="deleteAfterRead"></ion-toggle>
         <span>{{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }}</span>
+        <ion-toggle mode="ios" [(ngModel)]="deleteAfterRead" [disabled]="sending || textSaving" name="deleteAfterRead" [attr.aria-label]="'CHAT.VIEW_ONCE' | translate:'Ver una vez'"></ion-toggle>
       </label>
-      <ion-select mode="ios" interface="popover" [(ngModel)]="ttlSeconds" [disabled]="sending" name="ttlSeconds" [attr.aria-label]="'CHAT.EXPIRATION' | translate:'Expiracion'">
-        @for (option of ttlOptions; track option.label) {
-          <ion-select-option [value]="option.value">{{ option.labelKey | translate:option.label }}</ion-select-option>
-        }
-      </ion-select>
+      <label class="policy-duration">
+        <span>{{ 'CHAT.EXPIRATION' | translate:'Caducidad' }}</span>
+        <select [(ngModel)]="ttlSeconds" [disabled]="sending || textSaving" name="ttlSeconds">
+          @for (option of ttlOptions; track option.value) {
+            <option [ngValue]="option.value">{{ option.labelKey | translate:option.label }}@if (option.value === -1) { · {{ messageDurationLabel(defaultMessageTtl()) }} }</option>
+          }
+        </select>
+      </label>
     </div>
     }
     @if (emojiPanelOpen) {
@@ -610,16 +613,18 @@
         </ion-button>
       }
       @if (!voiceComposerActive()) {
-        <ion-button type="submit" mode="ios" class="send" [disabled]="(editingMessage ? sending : textSaving) || isBlocked() || !canSendMessages() || !draft.trim()" [attr.aria-label]="'COMMON.SEND' | translate:'Enviar'">
+        <ion-button type="submit" mode="ios" class="send" [disabled]="(sending && (!!editingMessage || hasMessagePrivacyOverride())) || textSaving || isBlocked() || !canSendMessages() || !draft.trim()" [attr.aria-label]="'COMMON.SEND' | translate:'Enviar'">
           <ion-icon [name]="editingMessage ? 'checkmark-outline' : 'send-outline'"></ion-icon>
         </ion-button>
       }
     </form>
-    <button type="button" class="privacy-summary" [class.custom-policy]="deleteAfterRead || ttlSeconds !== -1" (click)="policyPanelOpen = !policyPanelOpen" [attr.aria-expanded]="policyPanelOpen" [attr.aria-label]="'CHAT.MESSAGE_PRIVACY_HINT' | translate:'Configura una visualización y duración'">
+    @if (!editingMessage && !voiceComposerActive()) {
+    <button type="button" class="privacy-summary" [class.custom-policy]="deleteAfterRead || ttlSeconds !== -1 || defaultMessageTtl() > 0" (click)="policyPanelOpen = !policyPanelOpen" [attr.aria-expanded]="policyPanelOpen" [attr.aria-controls]="policyPanelOpen ? 'message-privacy-options' : null">
       <ion-icon name="shield-checkmark-outline" aria-hidden="true"></ion-icon>
-      <span>{{ 'CHAT.MESSAGE_PRIVACY' | translate:'Privacidad del mensaje' }}@if (deleteAfterRead) { · {{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }} }@if (ttlSeconds !== -1) { · {{ 'CHAT.EXPIRATION' | translate:'Expiración' }} }</span>
+      <span>{{ 'CHAT.MESSAGE_PRIVACY' | translate:'Privacidad del mensaje' }}@if (deleteAfterRead) { · {{ 'CHAT.VIEW_ONCE' | translate:'Ver una vez' }} }@if (ttlSeconds !== -1 || defaultMessageTtl() > 0) { · {{ messageDurationLabel(ttlSeconds === -1 ? defaultMessageTtl() : ttlSeconds) }} }</span>
       <ion-icon [name]="policyPanelOpen ? 'chevron-up-outline' : 'chevron-down-outline'" aria-hidden="true"></ion-icon>
     </button>
+    }
     <app-scheduled-text-control [canSchedule]="canScheduleText()" [entries]="scheduledTexts()" [context]="scheduledTextContext()"
       (schedule)="scheduleText($event)" (cancelScheduled)="cancelScheduledText($event)" />
     @if (chat.uploading()) {

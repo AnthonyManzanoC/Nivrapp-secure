@@ -46,12 +46,9 @@
 .composer > ion-button { width: 52px !important; min-width: 52px !important; flex-basis: 52px !important; min-height: 52px; height: 52px; --border-radius: 16px; --background: var(--nivra-brand); --color: var(--nivra-on-brand); --box-shadow: none; }
 .composer:not(.has-draft) > .send, .composer.has-draft:not(.voice-active) > .mic { display: none !important; }
 .composer .send { --background: var(--nivra-brand); --color: var(--nivra-on-brand); --box-shadow: none; }
-.privacy-summary { min-height: 28px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 5px; padding: 2px 12px 5px; border: 0; background: var(--nivra-panel-solid); color: var(--nivra-muted); font-size: 10px; }
-.privacy-summary ion-icon { font-size: 13px; }
-.privacy-summary.custom-policy { color: var(--nivra-brand-2); }
-.policy-row { padding: 8px 12px; background: var(--nivra-panel-solid); gap: 8px; }
-.policy-toggle { min-height: 34px; font-weight: 600; border-color: var(--nivra-line); }
-.policy-row ion-select { min-height: 34px; font-weight: 500; }
+.privacy-summary { min-height: 36px; width: 100%; display: flex; align-items: center; justify-content: center; gap: 7px; padding: 5px 12px; border: 0; background: var(--nivra-panel-solid); color: var(--nivra-muted); font-size: 12px; }
+.privacy-summary ion-icon { flex: 0 0 auto; font-size: 15px; }
+.privacy-summary.custom-policy { color: var(--nivra-brand-2); font-weight: 600; }
 ion-popover.attachment-popover { --width: min(340px, calc(100vw - 24px)); --background: var(--nivra-panel-solid); }
 ion-popover.attachment-popover::part(content) { border-radius: 22px; }
 .attachment-menu { grid-template-columns: repeat(3, minmax(0, 1fr)); padding: 12px 9px; gap: 6px; }

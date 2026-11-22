@@ -27,6 +27,7 @@ export class AccountService {
   readonly loading = signal(false);
   private loadInFlight: { scope: string; promise: Promise<void> } | null = null;
   private scopeRevision = 0;
+  private privacyRevision = 0;
   private observedScope = this.currentScope();
 
   constructor() {
@@ -36,6 +37,7 @@ export class AccountService {
     this.realtime.events$
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((event) => {
+        if (event.type === 'reconnected') void this.refreshPrivacy().catch(() => undefined);
         if (event.type === 'device.listChanged' && this.auth.isAuthenticated()) {
           void this.load().catch(() => undefined);
         }
@@ -64,6 +66,7 @@ export class AccountService {
   }
 
   private async loadForScope(scope: string, revision: number): Promise<void> {
+    const privacyRevision = this.privacyRevision;
     this.loading.set(true);
     try {
       const [me, devices, privacy, entitlements] = await Promise.all([
@@ -72,10 +75,12 @@ export class AccountService {
         firstValueFrom(this.api.get<PrivacySettings>('/privacy')),
         firstValueFrom(this.api.get<Entitlements>('/monetization/entitlements')).catch(() => null),
       ]);
-      if (!this.isCurrent(scope, revision) || me.id !== this.auth.session()?.user.id) return;
-      this.auth.updateUser(me);
+      const current = this.auth.session();
+      if (!this.isCurrent(scope, revision) || !current || me.id !== current.user.id) return;
+      const privacyCurrent = privacyRevision === this.privacyRevision;
+      this.auth.updateUser(privacyCurrent ? me : { ...me, privacySettings: current.user.privacySettings });
       this.devices.set(devices ?? []);
-      this.privacy.set(privacy);
+      if (privacyCurrent) this.privacy.set(privacy);
       this.entitlements.set(entitlements);
     } finally {
       if (this.isCurrent(scope, revision)) this.loading.set(false);
@@ -130,12 +135,27 @@ export class AccountService {
     this.requireCurrent(scope, revision);
     const privacy = await firstValueFrom(this.api.patch<PrivacySettings>('/privacy', patch));
     this.requireCurrent(scope, revision);
+    ++this.privacyRevision;
     this.privacy.set(privacy);
     const current = this.auth.session();
     if (current) {
       this.auth.updateUser({ ...current.user, privacySettings: privacy });
     }
     return privacy;
+  }
+
+  async refreshPrivacy(): Promise<void> {
+    const scope = this.currentScope();
+    this.observeScope(scope);
+    if (!scope || !this.auth.isAuthenticated()) return;
+    const revision = this.scopeRevision;
+    const privacyRevision = this.privacyRevision;
+    const privacy = await firstValueFrom(this.api.get<PrivacySettings>('/privacy'));
+    const current = this.auth.session();
+    if (!current || !this.isCurrent(scope, revision) || privacyRevision !== this.privacyRevision) return;
+    this.auth.updateUser({ ...current.user, privacySettings: privacy });
+    // The account screen owns its editable form; refreshing the effective
+    // policy must not discard a draft on that screen.
   }
 
   async revokeDevice(deviceId: string): Promise<void> {

@@ -19,14 +19,14 @@ describe('verification draft memory handoff', () => {
   it('returns a draft once and only to the conversation that opened verification', () => {
     drafts.save('direct', 'Mensaje que todavía no envié');
     expect(drafts.take('another-chat')).toBeNull();
-    expect(drafts.take('direct')).toBe('Mensaje que todavía no envié');
+    expect(drafts.take('direct')).toEqual({ text: 'Mensaje que todavía no envié' });
     expect(drafts.take('direct')).toBeNull();
   });
 
   it('never writes message text into browser storage', () => {
     const persist = spyOn(Storage.prototype, 'setItem');
     drafts.save('direct', 'Borrador privado');
-    expect(drafts.take('direct')).toBe('Borrador privado');
+    expect(drafts.take('direct')).toEqual({ text: 'Borrador privado' });
     expect(persist).not.toHaveBeenCalled();
   });
 
@@ -50,7 +50,7 @@ describe('verification draft memory handoff', () => {
   it('discards only the matching failed navigation and never saves without a session', () => {
     drafts.save('direct', 'Reintentar');
     drafts.discard('other');
-    expect(drafts.take('direct')).toBe('Reintentar');
+    expect(drafts.take('direct')).toEqual({ text: 'Reintentar' });
     drafts.save('direct', 'Otra vez'); drafts.discard('direct');
     expect(drafts.take('direct')).toBeNull();
     session.set(null); drafts.save('direct', 'No debe guardarse');

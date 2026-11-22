@@ -477,7 +477,7 @@
         @if (account.privacy(); as privacy) {
           <div class="privacy-preset-grid">
             <label>
-              <span>{{ 'ACCOUNT.PRESET' | translate:'Preset' }}</span>
+              <span>{{ 'ACCOUNT.PRESET' | translate:'Perfil de privacidad' }}</span>
               <select class="native-select" [value]="privacy.privacyPreset || 'balanced'" (change)="applyPrivacyPreset($any($event.target).value)">
                 <option value="private">{{ 'ACCOUNT.PRIVATE' | translate:'Privado' }}</option>
                 <option value="balanced">{{ 'ACCOUNT.BALANCED' | translate:'Equilibrado' }}</option>
@@ -485,7 +485,7 @@
               </select>
             </label>
             <label>
-              <span>{{ 'ACCOUNT.AUTO_DELETE_NEW' | translate:'Autoeliminar mensajes nuevos' }}</span>
+              <span>{{ 'ACCOUNT.AUTO_DELETE_NEW' | translate:'Caducidad de mensajes nuevos' }}</span>
               <select class="native-select" [value]="privacy.defaultMessageTtlSeconds ?? 0" (change)="patchPrivacyTtl($any($event.target).value)">
                 @for (option of defaultTtlOptions; track option.value) {
                   <option [value]="option.value">{{ option.labelKey | translate:option.label }}</option>

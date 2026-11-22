@@ -39,6 +39,30 @@ describe('Nonblocking durable text composer', () => {
     await h.page.send(); expect(h.page.draft).toBe(' Hola '); expect(h.page.sending).toBeFalse();
     expect(h.page.textQueueError).toBe('Storage unavailable');
   });
+  it('applies a one-message override and returns to the saved account duration after enqueue', async () => {
+    const h = harness();
+    delete h.page.currentPolicy;
+    h.session.update(session => ({ ...session, user: { ...session.user, privacySettings: { defaultMessageTtlSeconds: 86400 } } }));
+    h.page.ttlSeconds = 0;
+    h.page.deleteAfterRead = true;
+    h.page.policyPanelOpen = true;
+    h.enqueue.and.rejectWith(new Error('Storage unavailable'));
+    await h.page.send();
+    expect(h.page.deleteAfterRead).toBeTrue();
+    expect(h.page.ttlSeconds).toBe(0);
+    h.enqueue.and.resolveTo(undefined);
+    await h.page.send();
+    expect(h.enqueue.calls.mostRecent().args.at(2)).toEqual(jasmine.objectContaining({ ttlSeconds: null, deleteAfterRead: true }));
+    expect(h.page.policyPanelOpen).toBeFalse();
+    h.page.draft = 'Siguiente';
+    await h.page.send();
+    expect(h.enqueue.calls.mostRecent().args.at(2)).toEqual(jasmine.objectContaining({ ttlSeconds: 86400, deleteAfterRead: false }));
+  });
+  it('rejects a single-view document before uploading it or opening an identity session', async () => {
+    const service = Object.create(ChatService.prototype) as ChatService;
+    await expectAsync(service.sendFile({ id: 'chat' } as any, new File(['doc'], 'notes.pdf', { type: 'application/pdf' }),
+      { policy: { deleteAfterRead: true } })).toBeRejectedWithError(/Ver una vez/);
+  });
   it('does not overwrite a newly typed draft when local storage finishes', async () => {
     const h = harness(); let done!: () => void;
     h.enqueue.and.returnValue(new Promise<void>(resolve => done = resolve));

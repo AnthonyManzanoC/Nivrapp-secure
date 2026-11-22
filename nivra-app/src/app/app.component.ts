@@ -13,6 +13,7 @@ import { IonApp, IonIcon, IonRouterOutlet, IonToast } from '@ionic/angular/stand
 import { addIcons } from 'ionicons';
 import { callOutline, chevronDownOutline, chevronUpOutline, shieldCheckmarkOutline, videocamOutline } from 'ionicons/icons';
 import { AuthService } from './core/services/auth.service';
+import { AccountService } from './core/services/account.service';
 import { AppLockService } from './core/services/app-lock.service';
 import { AppSettingsService } from './core/services/app-settings.service';
 import { CallsService } from './core/services/calls.service';
@@ -64,6 +65,7 @@ export class AppComponent {
   private readonly nativeSystemBars = StatusBar;
   private readonly systemUi = inject(SystemUiService);
   private readonly auth = inject(AuthService);
+  private readonly account = inject(AccountService);
   readonly appLock = inject(AppLockService);
   private readonly appSettings = inject(AppSettingsService);
   private readonly chat = inject(ChatService);
@@ -549,6 +551,7 @@ export class AppComponent {
       if (!await this.auth.ensureFreshSession()) {
         return;
       }
+      void this.account.refreshPrivacy().catch(() => undefined);
       void this.realtime.connect().catch(() => undefined);
       await this.push.initialize();
       void this.nativeDevice.ensureBatteryOptimizationExemption();

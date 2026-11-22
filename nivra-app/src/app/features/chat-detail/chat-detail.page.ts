@@ -243,7 +243,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     if (this.destroyed || !conversation || !current || this.isGroupConversation()) return;
     const userId = conversation.participants.find(p => !p.removedAt && p.userId !== current.user.id)?.userId;
     if (!userId) return;
-    this.verificationDraft.save(conversation.id, this.draft);
+    this.saveComposerDraft(conversation.id);
     try {
       const opened = await this.router.navigate(['/app/identity', userId], { state: { identityReturnUrl: this.router.url } });
       if (!opened) this.verificationDraft.discard(conversation.id);
@@ -257,8 +257,19 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private restoreVerificationDraft(conversationId: string): void {
-    const text = this.verificationDraft.take(conversationId);
-    if (text !== null && !this.draft) this.draft = text;
+    const saved = this.verificationDraft.take(conversationId);
+    if (!saved || this.draft) return;
+    this.draft = saved.text;
+    this.deleteAfterRead = saved.deleteAfterRead ?? false;
+    this.ttlSeconds = saved.ttlSeconds ?? -1;
+  }
+
+  private saveComposerDraft(conversationId: string): void {
+    if (this.hasMessagePrivacyOverride()) {
+      this.verificationDraft.save(conversationId, this.draft, { deleteAfterRead: this.deleteAfterRead, ttlSeconds: this.ttlSeconds });
+    } else {
+      this.verificationDraft.save(conversationId, this.draft);
+    }
   }
   @ViewChild(IonContent) private content?: IonContent;
   @ViewChild('incognitoModal') private incognitoModal?: IonModal;
@@ -389,6 +400,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   notice = '';
   deleteAfterRead = false;
   ttlSeconds = -1;
+  private composerConversationId: string | null = null;
   recordingVoice = false;
   voiceStarting = false;
   voiceMode: VoiceComposerMode = 'idle';
@@ -401,7 +413,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     { label: 'Sin expirar', labelKey: 'CHAT.TTL_NONE', value: 0 },
     { label: '1 h', labelKey: 'COMMON.1_HOUR_SHORT', value: 3600 },
     { label: '24 h', labelKey: 'COMMON.24_HOURS_SHORT', value: 86400 },
-    { label: '7 dias', labelKey: 'COMMON.7_DAYS', value: 604800 },
+    { label: '7 días', labelKey: 'COMMON.7_DAYS', value: 604800 },
   ];
   readonly conversation = computed(() => this.chat.selectedConversation());
   readonly threadHistory = computed(() => threadHistoryForDevice(this.chat.selectedMessages(), this.auth.session()?.device.createdAt, this.conversation()?.lastMessageAt));
@@ -527,6 +539,11 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     this.routeSub = this.route.paramMap.subscribe((params) => {
       const id = params.get('conversationId');
       if (id) {
+        if (this.composerConversationId && this.composerConversationId !== id) {
+          if (!this.editingMessage && !this.textSaving) this.saveComposerDraft(this.composerConversationId);
+          this.draft = '';
+        }
+        this.composerConversationId = id;
         this.clearInitialScrollTimers(); this.openingLatest = true;
         this.cancelSelection();
         void this.cancelVoiceNote();
@@ -538,7 +555,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         this.replyingMessage = null;
         this.editingMessage = null;
         this.closeSearch();
-        this.policyPanelOpen = false;
+        this.resetMessagePolicy();
         this.emojiPanelOpen = false;
         this.restoreVerificationDraft(id);
         const requestId = ++this.initialScrollRequestId;
@@ -702,7 +719,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       await this.submitEdit();
       return;
     }
-    if (!conversation || !this.draft.trim() || this.textSaving || this.isBlocked() || this.privateChatLocked()) {
+    if (!conversation || !this.draft.trim() || (this.sending && this.hasMessagePrivacyOverride()) || this.textSaving || this.isBlocked() || this.privateChatLocked()) {
       return;
     }
     if (!this.canSendMessages()) {
@@ -721,6 +738,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       if (!this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation)) return;
       if (this.draft === text) this.draft = '';
       if (this.replyingMessage === reply) this.replyingMessage = null;
+      this.resetMessagePolicy();
       this.textQueueError = '';
       this.emojiPanelOpen = false;
       if (scheduleAt !== undefined) this.notice = this.tr('SCHEDULE.SAVED', 'Mensaje programado en este dispositivo.');
@@ -891,7 +909,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     const session = this.auth.session();
     const generation = this.composerGeneration;
     const items = [...this.pendingAttachmentFiles];
-    if (!conversation || !session || !items.length || this.sending || this.chat.uploading() || this.isBlocked()) {
+    if (!conversation || !session || !items.length || this.sending || this.textSaving || this.chat.uploading() || this.isBlocked()) {
       return;
     }
     if (!this.canSendMessages()) {
@@ -935,7 +953,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
           this.draft = '';
           await this.chat.sendTyping(conversation.id, 'stopped', { force: true });
         }
-        if (!this.pendingAttachmentFiles.length) this.clearPendingAttachments(false);
+        if (!this.pendingAttachmentFiles.length) {
+          this.clearPendingAttachments(false);
+          this.resetMessagePolicy();
+        }
         else if (caption) this.pendingAttachmentCaption = '';
         this.scrollBottom();
       }
@@ -1617,13 +1638,16 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   private async sendCameraCapture(file: File): Promise<void> {
     const conversation = this.conversation();
-    if (!conversation || this.sending) {
+    const session = this.auth.session();
+    const generation = this.composerGeneration;
+    if (!conversation || !session || this.sending) {
       return;
     }
     if (!this.canSendMessages()) {
       this.attachmentError = this.tr('CHAT.ADMINS_ONLY_FILES', 'Solo los admins pueden enviar archivos en este grupo.');
       return;
     }
+    const current = () => this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation);
     this.attachmentError = '';
     this.sending = true;
     try {
@@ -1631,11 +1655,14 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
         policy: this.currentPolicy(),
         mode: 'media',
       });
-      this.scrollBottom();
+      if (current()) {
+        this.resetMessagePolicy();
+        this.scrollBottom();
+      }
     } catch (error) {
-      this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_CAPTURE', 'No se pudo enviar la captura.');
+      if (current()) this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_CAPTURE', 'No se pudo enviar la captura.');
     } finally {
-      this.sending = false;
+      if (current()) this.sending = false;
     }
   }
 
@@ -1703,7 +1730,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     try {
       await this.dismissContactInfoForStory();
       if (this.destroyed || this.conversation()?.id !== conversationId || this.auth.session()?.user.id !== session.user.id || this.auth.session()?.device.id !== session.device.id) return;
-      this.verificationDraft.save(conversationId, this.draft);
+      this.saveComposerDraft(conversationId);
       const opened = await this.router.navigate(['/app/identity', userId], { state: { identityReturnUrl: returnUrl } });
       if (!opened) this.verificationDraft.discard(conversationId);
     } catch {
@@ -2295,7 +2322,10 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       const file = await this.stopVoiceCapture(true);
       if (!file || !current() || this.isBlocked() || !this.canSendMessages()) return;
       await this.chat.sendFile(conversation, file, { voiceNote: true, policy: this.currentPolicy(), mode: 'document' });
-      if (current()) this.scrollBottom();
+      if (current()) {
+        this.resetMessagePolicy();
+        this.scrollBottom();
+      }
     } catch (error) {
       if (current()) this.attachmentError = error instanceof Error ? error.message : this.tr('CHAT.ERROR_SEND_VOICE', 'No se pudo enviar la nota de voz.');
     } finally {
@@ -2397,6 +2427,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       if (this.composerContextCurrent(conversation.id, session.user.id, session.device.id, generation)) {
         this.replyingMessage = null;
         this.emojiPanelOpen = false;
+        this.resetMessagePolicy();
         this.scrollBottom();
       }
     } catch (error) {
@@ -2824,7 +2855,9 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   canSendMessages(): boolean {
-    return this.chat.canSendToConversation(this.conversation());
+    const conversation = this.conversation();
+    return (!this.composerConversationId || this.composerConversationId === conversation?.id)
+      && this.chat.canSendToConversation(conversation);
   }
 
   canAddGroupMembers(): boolean {
@@ -3911,10 +3944,28 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
     await toast.present();
   }
 
+  defaultMessageTtl(): number {
+    const value = Number(this.auth.session()?.user.privacySettings?.defaultMessageTtlSeconds ?? 0);
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  }
+
+  messageDurationLabel(seconds: number): string {
+    const option = this.ttlOptions.find(item => item.value === seconds);
+    return option ? this.tr(option.labelKey, option.label) : seconds + ' s';
+  }
+
+  hasMessagePrivacyOverride(): boolean {
+    return this.deleteAfterRead === true || this.ttlSeconds >= 0;
+  }
+
+  private resetMessagePolicy(): void {
+    this.deleteAfterRead = false;
+    this.ttlSeconds = -1;
+    this.policyPanelOpen = false;
+  }
+
   private currentPolicy(): MessagePolicyOptions {
-    const selectedTtl = Number(this.ttlSeconds);
-    const defaultTtl = Number(this.auth.session()?.user.privacySettings?.defaultMessageTtlSeconds || 0);
-    const ttlSeconds = selectedTtl < 0 ? defaultTtl : selectedTtl;
+    const ttlSeconds = this.ttlSeconds < 0 ? this.defaultMessageTtl() : this.ttlSeconds;
     return {
       deleteAfterRead: this.deleteAfterRead,
       ttlSeconds: ttlSeconds > 0 ? ttlSeconds : null,

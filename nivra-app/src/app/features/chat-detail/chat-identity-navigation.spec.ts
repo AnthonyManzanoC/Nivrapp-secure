@@ -47,6 +47,20 @@ describe('chat identity verification draft navigation', () => {
     expect(drafts.take('direct')).toBeNull();
   });
 
+  it('restores privacy with its own draft after verifying the contact', async () => {
+    const { instance } = page('Contenido protegido');
+    instance.deleteAfterRead = true;
+    instance.ttlSeconds = 3600;
+    await instance.verifyIdentity();
+    drafts.save('other', 'Otro borrador');
+    const recreated = page().instance;
+    restore(recreated);
+    expect(recreated.draft).toBe('Contenido protegido');
+    expect(recreated.deleteAfterRead).toBeTrue();
+    expect(recreated.ttlSeconds).toBe(3600);
+    expect(drafts.take('other')).toEqual({ text: 'Otro borrador' });
+  });
+
   it('drops the handoff if navigation is cancelled or fails while preserving the current draft', async () => {
     const { instance, navigate } = page('Reintentar aquí');
     navigate.and.resolveTo(false); await instance.verifyIdentity();

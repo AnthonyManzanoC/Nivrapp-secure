@@ -17,6 +17,7 @@ export class PrivacyEnforcementService {
     if (!conversation) {
       return true;
     }
+    if (this.auth.session()?.user.privacySettings?.allowScreenshots === false) return false;
     return !this.remoteParticipantBlocksScreenshots(conversation);
   });
 

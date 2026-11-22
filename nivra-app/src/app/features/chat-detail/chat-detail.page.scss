@@ -510,7 +510,7 @@ ion-popover.attachment-popover::part(content) {
 .view-once-gate {
   width: min(68vw, 260px);
   min-height: 62px;
-  border: 1px solid rgba(14, 165, 143, .22);
+  border: 1px solid color-mix(in srgb, var(--nivra-brand) 28%, var(--nivra-line));
   border-radius: 12px;
   padding: 10px 12px;
   display: grid;
@@ -519,14 +519,16 @@ ion-popover.attachment-popover::part(content) {
   gap: 10px;
   text-align: left;
   color: var(--nivra-text);
-  background: rgba(255, 255, 255, .92);
-  box-shadow: 0 10px 24px rgba(12, 20, 28, .08);
+  background: var(--nivra-panel-solid);
 }
 
 .message.mine .view-once-gate {
-  color: #fff;
-  border-color: rgba(255, 255, 255, .2);
-  background: linear-gradient(135deg, rgba(12, 184, 165, .96), rgba(12, 159, 188, .94));
+  background: color-mix(in srgb, var(--nivra-brand) 8%, var(--nivra-panel-solid));
+}
+
+.view-once-gate:focus-visible {
+  outline: 2px solid var(--nivra-brand);
+  outline-offset: 2px;
 }
 
 .view-once-gate ion-icon,
@@ -537,14 +539,8 @@ ion-popover.attachment-popover::part(content) {
   display: grid;
   place-items: center;
   padding: 10px;
-  color: #06766c;
-  background: rgba(14, 165, 143, .14);
-}
-
-.message.mine .view-once-gate ion-icon,
-.message.mine .view-once-gate ion-spinner {
-  color: #fff;
-  background: rgba(255, 255, 255, .16);
+  color: var(--nivra-brand-2);
+  background: color-mix(in srgb, var(--nivra-brand) 14%, transparent);
 }
 
 .view-once-gate span,
@@ -564,10 +560,6 @@ ion-popover.attachment-popover::part(content) {
   color: var(--nivra-muted);
   font-size: 12px;
   font-weight: 750;
-}
-
-.message.mine .view-once-gate small {
-  color: rgba(255, 255, 255, .76);
 }
 
 .view-once-gate.text-gate {
@@ -1050,56 +1042,55 @@ ion-popover.attachment-popover::part(content) {
 }
 
 .policy-row {
-  min-height: 30px;
   display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-wrap: nowrap;
-  gap: 7px;
-  padding: 4px max(12px, env(safe-area-inset-right)) 3px max(12px, env(safe-area-inset-left));
-  color: var(--nivra-muted);
-  background: rgba(8, 13, 15, .84);
+  align-items: stretch;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px max(12px, env(safe-area-inset-right)) 6px max(12px, env(safe-area-inset-left));
+  background: var(--nivra-panel-solid);
 }
 
-.policy-row ion-toggle {
-  --track-background: rgba(255, 255, 255, .11);
-  --track-background-checked: rgba(24, 214, 162, .36);
-  --handle-background: var(--nivra-soft);
-  --handle-background-checked: var(--nivra-brand-2);
-  transform: scale(.78);
-  transform-origin: right center;
+.policy-toggle,
+.policy-duration {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 12px;
+  border: 1px solid var(--nivra-line);
+  border-radius: 12px;
+  background: var(--nivra-bg-3);
+  color: var(--nivra-text);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .policy-toggle {
-  flex: 0 0 auto;
-  min-height: 26px;
-  border: 1px solid rgba(255, 255, 255, .08);
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 8px 0 2px;
-  background: rgba(255, 255, 255, .045);
-  color: var(--nivra-muted);
-  font-size: 11px;
-  font-weight: 800;
+  justify-content: space-between;
 }
 
-.policy-toggle span {
-  white-space: nowrap;
+.policy-toggle ion-toggle {
+  --track-background-checked: var(--nivra-brand);
 }
 
-.policy-row ion-select {
-  flex: 1 1 150px;
+.policy-duration select {
   min-width: 0;
-  min-height: 26px;
-  border: 1px solid var(--nivra-line);
-  border-radius: 999px;
-  padding: 0 8px;
-  color: var(--nivra-soft);
-  background: rgba(255, 255, 255, .055);
-  font-size: 11px;
-  font-weight: 800;
+  min-height: 34px;
+  padding: 0 4px;
+  border: 0;
+  background: var(--nivra-bg-3);
+  color: inherit;
+  font: inherit;
+}
+
+.policy-duration select:focus-visible {
+  outline: 2px solid var(--nivra-brand);
+  border-radius: 5px;
+}
+
+@media (max-width: 420px) {
+  .policy-toggle, .policy-duration { flex: 1 1 auto; }
+  .policy-duration { justify-content: space-between; }
 }
 
 .composer {
@@ -1903,7 +1894,6 @@ ion-modal.forward-modal {
 }
 
 :host-context(.nivra-light-theme) .edit-bar,
-:host-context(.nivra-light-theme) .policy-row,
 :host-context(.nivra-light-theme) .emoji-panel {
   color: #111827;
   border-top-color: rgba(60, 60, 67, .12);
@@ -1911,24 +1901,14 @@ ion-modal.forward-modal {
   backdrop-filter: blur(18px) saturate(160%);
 }
 
-:host-context(.nivra-light-theme) .edit-bar span,
-:host-context(.nivra-light-theme) .policy-row {
+:host-context(.nivra-light-theme) .edit-bar span {
   color: #555;
 }
 
-:host-context(.nivra-light-theme) .policy-toggle,
-:host-context(.nivra-light-theme) .policy-row ion-select,
 :host-context(.nivra-light-theme) .emoji-panel button {
   color: #111827;
   border-color: rgba(60, 60, 67, .1);
   background: #f5f5f7;
-}
-
-:host-context(.nivra-light-theme) .policy-row ion-toggle {
-  --track-background: rgba(60, 60, 67, .18);
-  --track-background-checked: rgba(0, 230, 118, .38);
-  --handle-background: #fff;
-  --handle-background-checked: #00e676;
 }
 
 :host-context(.nivra-light-theme) .composer {
@@ -2048,12 +2028,6 @@ ion-modal.forward-modal {
 
   .message-more {
     opacity: 1;
-  }
-
-  .policy-row {
-    justify-content: flex-end;
-    min-height: 28px;
-    padding-block: 3px;
   }
 
   .quick-reaction-row {
