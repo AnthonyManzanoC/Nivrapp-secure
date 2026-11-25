@@ -64,6 +64,7 @@ import {
   logOutOutline,
   personCircleOutline,
   personAddOutline,
+  personRemoveOutline,
   playCircleOutline,
   returnDownBackOutline,
   sendOutline,
@@ -77,6 +78,7 @@ import { Subscription } from 'rxjs';
 import { CallSession, ChatMessageVm, Contact, Conversation, FileChatPayload, GroupSettings, MediaPreview, MessageReaction, Participant, Story } from '../../core/models/nivra.models';
 import { ChatService, MessagePolicyOptions } from '../../core/services/chat.service';
 import { MessagePrivacyBadgeComponent } from './message-privacy-badge.component';
+import { DarkViewerBarsDirective } from '../../shared/dark-viewer-bars.directive';
 import { TextOutboxService } from '../../core/services/text-outbox.service';
 import { ScheduledTextControlComponent } from '../../shared/scheduled-text-control.component';
 import { VaultService } from '../../core/services/vault.service';
@@ -192,6 +194,7 @@ interface MessageTextPart {
     ChatIdentityChangeNoticeComponent,
     PrivateChatLockComponent,
     MessagePrivacyBadgeComponent,
+    DarkViewerBarsDirective,
   ],
   templateUrl: './chat-detail.page.html',
   styleUrls: ['./chat-detail.page.scss', './chat-thread.scss', './chat-profile.scss'],
@@ -376,6 +379,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   groupInfoError = '';
   groupAddOpen = false;
   selectedGroupAddIds = new Set<string>();
+  shareRecentGroupHistory = false;
   storyViewerQueue: Story[] = [];
   storyViewerIndex = 0;
   storyViewerProgress = 0;
@@ -502,6 +506,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       logOutOutline,
       personCircleOutline,
       personAddOutline,
+      personRemoveOutline,
       playCircleOutline,
       returnDownBackOutline,
       sendOutline,
@@ -1894,7 +1899,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   canEdit(message: ChatMessageVm): boolean {
-    return message.status !== 'sending' && message.mine && !this.chat.asFile(message.payload) && message.payload.type !== 'system';
+    return message.status !== 'sending' && message.mine && !this.chat.asFile(message.payload) && message.payload.type !== 'system' && !message.payload.groupHistorySummary;
   }
 
   canForward(message: ChatMessageVm | null | undefined): boolean {
@@ -2117,6 +2122,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   async clearChat(scope: 'me' | 'everyone'): Promise<void> {
     const conversation = this.conversation();
+    if (scope === 'everyone' && !this.canClearChatForEveryone()) return;
     if (!conversation || !window.confirm(scope === 'everyone' ? this.tr('CHAT.CONFIRM_CLEAR_EVERYONE', 'Vaciar este chat para todos?') : this.tr('CHAT.CONFIRM_CLEAR_ME', 'Vaciar este chat solo para ti?'))) {
       return;
     }
@@ -2129,7 +2135,13 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
 
   async deleteChat(scope: 'me' | 'everyone'): Promise<void> {
     const conversation = this.conversation();
-    if (!conversation || !window.confirm(scope === 'everyone' ? this.tr('CHAT.CONFIRM_DELETE_CHAT_EVERYONE', 'Eliminar este chat para todos?') : this.tr('CHAT.CONFIRM_DELETE_CHAT_ME', 'Eliminar este chat solo para ti?'))) {
+    if (!conversation || !this.canDeleteChat(scope)) return;
+    const confirmation = scope === 'everyone'
+      ? this.tr('CHAT.CONFIRM_DELETE_CHAT_EVERYONE', '¿Eliminar este chat para todos?')
+      : this.chat.isGroup(conversation)
+        ? this.tr('CHAT.CONFIRM_LEAVE_AND_DELETE_GROUP', '¿Salir del grupo y eliminar tu copia del chat?')
+        : this.tr('CHAT.CONFIRM_DELETE_CHAT_ME', '¿Eliminar este chat solo para ti?');
+    if (!window.confirm(confirmation)) {
       return;
     }
     await this.runAction(`delete-chat:${scope}`, async () => {
@@ -2137,6 +2149,27 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       this.closeChatMenu();
       await this.router.navigateByUrl('/app/chats');
     });
+  }
+
+  canClearChatForEveryone(): boolean {
+    return !this.isGroupConversation() || this.isCurrentUserGroupAdmin();
+  }
+
+  canDeleteChat(scope: 'me' | 'everyone'): boolean {
+    const conversation = this.conversation();
+    if (!conversation) return false;
+    if (!this.chat.isGroup(conversation)) return true;
+    const communities = this.injector?.get(CommunityService)?.items() ?? [];
+    if (communities.some(community => community.id === conversation.id)) return false;
+    return scope === 'me' || this.groupParticipants().some(member => this.isCurrentParticipant(member) && this.isGroupOwner(member))
+      && !communities.some(community => community.groups.some(group => group.id === conversation.id));
+  }
+
+  blockActionLabel(): string {
+    if (this.isGroupConversation()) return this.isBlocked()
+      ? this.tr('CHAT.UNBLOCK_GROUP_DEVICE', 'Desbloquear en este dispositivo')
+      : this.tr('CHAT.BLOCK_GROUP_DEVICE', 'Bloquear en este dispositivo');
+    return this.isBlocked() ? this.tr('CHAT.UNBLOCK', 'Desbloquear') : this.tr('CHAT.BLOCK_CONTACT', 'Bloquear contacto');
   }
 
   async toggleArchive(): Promise<void> {
@@ -2886,6 +2919,26 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       !this.isCurrentParticipant(participant);
   }
 
+  canRemoveParticipant(participant: Participant): boolean {
+    return this.chat.supportsGroupManagement(this.conversation()) && this.canToggleParticipantAdmin(participant) && (!this.isGroupAdmin(participant.userId)
+      || this.groupParticipants().some(member => this.isCurrentParticipant(member) && this.isGroupOwner(member)));
+  }
+
+  canShareRecentGroupHistory(): boolean {
+    return this.selectedGroupAddIds.size === 1 && this.isCurrentUserGroupAdmin() && this.chat.supportsGroupManagement(this.conversation());
+  }
+
+  async removeGroupParticipant(participant: Participant): Promise<void> {
+    const conversation = this.conversation();
+    if (!conversation || !this.canRemoveParticipant(participant)) return;
+    const confirmation = this.tr('CHAT.CONFIRM_REMOVE_GROUP_PARTICIPANT', '¿Quitar a esta persona del grupo?');
+    if (!window.confirm(`${confirmation}\n\n${this.participantLabel(participant)}`)) return;
+    await this.runGroupInfoAction(async () => {
+      await this.chat.removeGroupParticipant(conversation, participant.userId);
+      this.notice = this.tr('CHAT.GROUP_PARTICIPANT_REMOVED', 'Participante eliminado del grupo.');
+    });
+  }
+
   groupParticipants(): Participant[] {
     return (this.conversation()?.participants ?? []).filter((participant) => !participant.removedAt);
   }
@@ -2963,10 +3016,12 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       ...this.groupSettingsDraft,
       [key]: value,
     };
-    this.groupSettingsDraft = next;
     await this.runGroupInfoAction(async () => {
-      await this.chat.updateGroupSettings(conversation, next);
-      this.prepareGroupInfoDraft(this.conversation() ?? conversation);
+      try {
+        await this.chat.updateGroupSettings(conversation, next);
+      } finally {
+        this.prepareGroupInfoDraft(this.conversation() ?? conversation);
+      }
     });
   }
 
@@ -3221,6 +3276,8 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   toggleGroupAddContact(contact: Contact): void {
+    if (this.groupInfoBusy) return;
+    this.shareRecentGroupHistory = false;
     if (this.selectedGroupAddIds.has(contact.userId)) {
       this.selectedGroupAddIds.delete(contact.userId);
     } else {
@@ -3234,10 +3291,15 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
       return;
     }
     await this.runGroupInfoAction(async () => {
-      await this.chat.addGroupParticipants(conversation, [...this.selectedGroupAddIds]);
+      const includeHistory = this.shareRecentGroupHistory && this.canShareRecentGroupHistory();
+      const result = await this.chat.addGroupParticipants(conversation, [...this.selectedGroupAddIds], includeHistory);
       this.selectedGroupAddIds.clear();
       this.groupAddOpen = false;
-      this.notice = this.tr('CHAT.PARTICIPANTS_ADDED', 'Participantes agregados.');
+      this.notice = result === 'shared'
+        ? this.tr('CHAT.PARTICIPANT_ADDED_WITH_HISTORY', 'Participante agregado y resumen cifrado enviado.')
+        : result === 'history-unavailable'
+          ? this.tr('CHAT.PARTICIPANT_ADDED_HISTORY_UNAVAILABLE', 'Participante agregado. El envío del resumen no se confirmó.')
+          : this.tr('CHAT.PARTICIPANTS_ADDED', 'Participantes agregados.');
       this.prepareGroupInfoDraft(this.conversation() ?? conversation);
     });
   }
@@ -4003,6 +4065,7 @@ export class ChatDetailPage implements OnInit, AfterViewInit, OnDestroy {
   }
 
   private prepareGroupInfoDraft(conversation: Conversation): void {
+    this.shareRecentGroupHistory = false;
     if (!this.chat.isGroup(conversation)) {
       this.groupInfoError = '';
       this.selectedGroupAddIds.clear();

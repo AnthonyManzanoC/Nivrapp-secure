@@ -17,12 +17,22 @@
         <ion-icon [name]="continuity === 'changed' ? 'warning-outline' : 'shield-checkmark-outline'" aria-hidden="true"></ion-icon>
         <div>
           @switch (continuity) {
-            @case ('verified') { <strong>{{ 'IDENTITY.STATE_VERIFIED' | translate:'Identidad comparada' }}</strong><p>@if (continuitySource === 'linked-device') { {{ 'IDENTITY.STATE_LINKED_COPY' | translate:'Las llaves coinciden con la comparación que conservaba tu dispositivo vinculado. No necesitas repetirla.' }} } @else { {{ 'IDENTITY.STATE_VERIFIED_COPY' | translate:'Las llaves de tu contacto coinciden con las que ya comparaste en este dispositivo.' }} }</p> }
-            @case ('unchanged') { <strong>{{ 'IDENTITY.STATE_UNCHANGED' | translate:'Llaves sin cambios' }}</strong><p>{{ 'IDENTITY.STATE_UNCHANGED_COPY' | translate:'Las llaves de tu contacto coinciden con las guardadas. Puedes comparar el QR para confirmar su identidad.' }}</p> }
-            @case ('pending-device') { <strong>Un dispositivo nuevo está pendiente</strong><p>Puedes seguir escribiendo a los equipos con llaves conocidas. Para incluir el nuevo, compara el código de seguridad con tu contacto.</p> }
+            @case ('verified') {
+              <strong>{{ 'IDENTITY.STATE_VERIFIED' | translate:'Identidad comparada' }}</strong>
+              @if (!authorizedDevice) { <p>@if (continuitySource === 'linked-device') { {{ 'IDENTITY.STATE_LINKED_COPY' | translate:'Las llaves coinciden con la comparación que conservaba tu dispositivo vinculado. No necesitas repetirla.' }} } @else { {{ 'IDENTITY.STATE_VERIFIED_COPY' | translate:'Las llaves de tu contacto coinciden con las que ya comparaste en este dispositivo.' }} }</p> }
+            }
+            @case ('unchanged') {
+              @if (authorizedDevice) { <strong>{{ 'IDENTITY.STATE_AUTHORIZED' | translate:'Dispositivo autorizado' }}</strong> }
+              @else { <strong>{{ 'IDENTITY.STATE_UNCHANGED' | translate:'Llaves sin cambios' }}</strong><p>{{ 'IDENTITY.STATE_UNCHANGED_COPY' | translate:'Las llaves de tu contacto coinciden con las guardadas. Puedes comparar el QR para confirmar su identidad.' }}</p> }
+            }
+            @case ('pending-device') {
+              <strong>{{ 'IDENTITY.STATE_DEVICE_PENDING' | translate:'Hay dispositivos pendientes' }}</strong>
+              <p>{{ 'IDENTITY.STATE_DEVICE_PENDING_COPY' | translate:'Puedes seguir escribiendo a los equipos con llaves conocidas. Compara el código con tu contacto para incluir los dispositivos pendientes.' }}</p>
+            }
             @case ('changed') { <strong>{{ 'IDENTITY.STATE_CHANGED' | translate:'El código de seguridad cambió' }}</strong><p>{{ 'IDENTITY.STATE_CHANGED_COPY' | translate:'Compara el QR con tu contacto antes de continuar. Puede cambiar al vincular dispositivos o reinstalar.' }}</p> }
             @default { <strong>{{ 'IDENTITY.STATE_UNKNOWN' | translate:'Listo para comparar' }}</strong><p>{{ 'IDENTITY.STATE_UNKNOWN_COPY' | translate:'Es la primera comprobación en este dispositivo. Comparar el QR es opcional y permite confirmar la identidad por otro canal.' }}</p> }
           }
+          @if (authorizedDevice) { <p>{{ 'IDENTITY.STATE_AUTHORIZED_COPY' | translate:'La nueva llave viene autorizada por las llaves que ya conocías de tu contacto.' }}</p> }
           @if (checkedAt) { <small>{{ 'IDENTITY.CHECKED_NOW' | translate:'Llaves comprobadas' }} · {{ checkedAt | localizedDate:'shortTime' }}</small> }
           @if (verifiedAt && continuity === 'verified') { <small>{{ 'IDENTITY.LAST_COMPARED' | translate:'Código comparado' }} · {{ verifiedAt | localizedDate:'mediumDate' }}</small> }
         </div>

@@ -46,23 +46,32 @@ public static partial class EndpointExtensions
             // Serialize writers per account so concurrent phones cannot replace or duplicate an archive entry.
             return await CallCoordination.RunAsync(db,async()=>{
                 await using var tx=await CallCoordination.LockAsync(db,"account-history:"+current.UserId,ct);
-                var permitted=await MessageHistoryRecoveryQuery(db.Messages.AsNoTracking(),db.Conversations.AsNoTracking(),current.UserId,ids).ToListAsync(ct);
-                var now=clock.GetUtcNow();var accepted=new List<string>();
-                var budget=Math.Clamp(configuration.GetValue<long?>("HistorySync:MaxBytesPerAccount")??134217728,1048576,1073741824);
-                var used=await db.Set<AccountHistorySyncItem>().Where(item=>item.UserId==current.UserId).SumAsync(item=>(long?)item.EnvelopeJson.Length,ct)??0;
+                var now=clock.GetUtcNow();
+                var permitted=await ArchivableHistory(db,current.UserId,ids,now)
+                    .Select(message=>new {message.Id,message.ConversationId,message.SenderUserId,message.SenderDeviceId,message.ClientMessageId,message.ServerReceivedAt})
+                    .ToDictionaryAsync(message=>message.Id,StringComparer.Ordinal,ct);
+                var accepted=new List<string>();
+                var alreadyArchived=await db.AccountHistorySync.AsNoTracking()
+                    .Where(item=>item.UserId==current.UserId&&ids.Contains(item.MessageId))
+                    .Select(item=>item.MessageId).ToHashSetAsync(StringComparer.Ordinal,ct);
+                var additions=new List<AccountHistorySyncItem>();
                 foreach(var row in request.Messages){
-                    var message=permitted.Find(message=>message.Id==row.MessageId);
-                    if(message is null||!HistoryMayBeArchived(message,current.UserId,now)||message.ConversationId!=row.ConversationId||message.SenderUserId!=row.SenderUserId||message.SenderDeviceId!=row.SenderDeviceId||
+                    if(!permitted.TryGetValue(row.MessageId,out var message)||message.ConversationId!=row.ConversationId||message.SenderUserId!=row.SenderUserId||message.SenderDeviceId!=row.SenderDeviceId||
                         message.ClientMessageId!=row.ClientMessageId||message.ServerReceivedAt.ToUnixTimeMilliseconds()!=DateTimeOffset.Parse(row.At,CultureInfo.InvariantCulture).ToUnixTimeMilliseconds())continue;
-                    if(!await db.Set<AccountHistorySyncItem>().AnyAsync(item=>item.UserId==current.UserId&&item.MessageId==row.MessageId,ct)){
+                    if(!alreadyArchived.Contains(row.MessageId)){
                         var envelope=JsonSerializer.Serialize(row,AccountIdentityPolicy.Json);
-                        if(used+envelope.Length>budget)return Results.Json(new{code="history_archive_storage_limit"},statusCode:507);
-                        used+=envelope.Length;
-                        db.Set<AccountHistorySyncItem>().Add(new AccountHistorySyncItem{UserId=current.UserId,MessageId=row.MessageId,RootKey=root.RootKey,EnvelopeJson=envelope,CreatedAt=now});
+                        additions.Add(new AccountHistorySyncItem{UserId=current.UserId,MessageId=row.MessageId,RootKey=root.RootKey,EnvelopeJson=envelope,CreatedAt=now});
                     }
                     accepted.Add(row.MessageId);
                 }
-                await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);return Results.Ok(new{accepted});
+                if(additions.Count>0){
+                    var budget=Math.Clamp(configuration.GetValue<long?>("HistorySync:MaxBytesPerAccount")??134217728,1048576,1073741824);
+                    var used=await db.AccountHistorySync.Where(item=>item.UserId==current.UserId).SumAsync(item=>(long?)item.EnvelopeJson.Length,ct)??0;
+                    if(used+additions.Sum(item=>(long)item.EnvelopeJson.Length)>budget)return Results.Json(new{code="history_archive_storage_limit"},statusCode:507);
+                    db.AccountHistorySync.AddRange(additions);
+                    await db.SaveChangesAsync(ct);
+                }
+                await tx.CommitAsync(ct);return Results.Ok(new{accepted});
             });
         });
         routes.MapGet("/",async Task<IResult>(string? after,HttpContext http,NivraDbContext db,TimeProvider clock,CancellationToken ct)=>{
@@ -73,8 +82,8 @@ public static partial class EndpointExtensions
             if(root is null)return Results.Conflict(new{code="account_identity_required"});
             var rows=await db.Set<AccountHistorySyncItem>().AsNoTracking().Where(row=>row.UserId==current.UserId&&row.RootKey==root.RootKey&&row.Id>cursor).OrderBy(row=>row.Id).Take(9).ToListAsync(ct);
             var page=rows.Take(8).ToList();var ids=page.Select(row=>row.MessageId).ToList();
-            var allowed=await MessageHistoryRecoveryQuery(db.Messages.AsNoTracking(),db.Conversations.AsNoTracking(),current.UserId,ids).ToListAsync(ct);
-            var now=clock.GetUtcNow();var permitted=allowed.Where(row=>HistoryMayBeArchived(row,current.UserId,now)).Select(row=>row.Id).ToHashSet(StringComparer.Ordinal);
+            var now=clock.GetUtcNow();
+            var permitted=await ArchivableHistory(db,current.UserId,ids,now).Select(row=>row.Id).ToHashSetAsync(StringComparer.Ordinal,ct);
             // Bounded pruning of expired/deleted content, including rows already behind this device's cursor.
             var stale=await db.Set<AccountHistorySyncItem>().Where(row=>row.UserId==current.UserId&&db.Messages.Any(message=>message.Id==row.MessageId&&
                 (message.DeleteAfterRead||message.ExpiresAt!=null&&message.ExpiresAt<=now||message.Receipts.Any(receipt=>receipt.UserId==current.UserId&&receipt.DeletedAt!=null))))
@@ -84,6 +93,8 @@ public static partial class EndpointExtensions
                 next=page.Count==0?cursor.ToString(CultureInfo.InvariantCulture):page[^1].Id.ToString(CultureInfo.InvariantCulture),hasMore=rows.Count>8});
         });
     }
-    private static bool HistoryMayBeArchived(MessageEnvelope message,string userId,DateTimeOffset now)=>!message.DeleteAfterRead&&
-        (message.ExpiresAt is null||message.ExpiresAt>now)&&!message.Receipts.Any(receipt=>receipt.UserId==userId&&receipt.DeletedAt is not null);
+    private static IQueryable<MessageEnvelope> ArchivableHistory(NivraDbContext db,string userId,List<string> ids,DateTimeOffset now)
+        => MessageHistoryRecoveryQuery(db.Messages.AsNoTracking(),db.Conversations.AsNoTracking(),userId,ids)
+            .Where(message=>!message.DeleteAfterRead&&(message.ExpiresAt==null||message.ExpiresAt>now)
+                &&!message.Receipts.Any(receipt=>receipt.UserId==userId&&receipt.DeletedAt!=null));
 }

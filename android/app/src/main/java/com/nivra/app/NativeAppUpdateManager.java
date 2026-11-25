@@ -13,18 +13,25 @@ import androidx.core.content.FileProvider;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PluginCall;
 import org.json.JSONObject;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
-/** Downloads a versioned Nivra release through our public site. Android remains the installer. */
+/** Reads the pinned GitHub release and verifies the signed APK before handing it to Android. */
 final class NativeAppUpdateManager {
+    private static final String RELEASES = "https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/";
+    private static final String FEED_URL = RELEASES + "latest/download/latest.json";
+    private static final String FEED_VERSION_PART = "(?:0|[1-9][0-9]{0,4})";
+    private static final int MAX_FEED_BYTES = 32 * 1024;
     interface UpdateListener { void onState(JSONObject state); }
     private final Activity activity;
     private final Context context;
@@ -33,6 +40,8 @@ final class NativeAppUpdateManager {
     private volatile boolean cancelled;
     private volatile boolean destroyed;
     private volatile HttpURLConnection connection;
+    private volatile HttpURLConnection feedConnection;
+    private boolean feedPending;
     private volatile JSObject state = state("idle", 0, "");
     private volatile File readyFile;
     private volatile int targetBuild;
@@ -54,6 +63,86 @@ final class NativeAppUpdateManager {
     synchronized void setAllowed(boolean value) {
         allowed = value;
         if (!value) installGeneration++;
+    }
+
+    synchronized void fetchFeed(PluginCall call) {
+        if (destroyed || feedPending || installing || "downloading".equals(state.optString("phase"))) {
+            call.reject("UPDATE_BUSY");
+            return;
+        }
+        feedPending = true;
+        worker.execute(() -> {
+            try {
+                JSObject manifest = readFeed();
+                if (destroyed) call.reject("UPDATE_CANCELLED");
+                else call.resolve(manifest);
+            } catch (Exception error) {
+                call.reject(safeError(error));
+            } finally {
+                synchronized (this) { feedPending = false; }
+            }
+        });
+    }
+
+    private JSObject readFeed() throws Exception {
+        URL next = new URL(FEED_URL);
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(15);
+        for (int redirects = 0; redirects < 5; redirects++) {
+            if (!validFeedUrl(next)) throw new Exception("UPDATE_INVALID");
+            if (destroyed) throw new Exception("UPDATE_CANCELLED");
+            HttpURLConnection request = (HttpURLConnection) next.openConnection();
+            feedConnection = request;
+            try {
+                request.setInstanceFollowRedirects(false);
+                request.setUseCaches(false);
+                request.setConnectTimeout(feedTimeout(deadline));
+                request.setReadTimeout(feedTimeout(deadline));
+                request.setRequestProperty("Accept", "application/json, application/octet-stream");
+                request.setRequestProperty("Accept-Encoding", "identity");
+                request.setRequestProperty("Cache-Control", "no-cache");
+                request.setRequestProperty("User-Agent", "Nivra-Android-Updater");
+                int status = request.getResponseCode();
+                if (status == HttpURLConnection.HTTP_OK) {
+                    if (request.getContentLengthLong() > MAX_FEED_BYTES) throw new Exception("UPDATE_INVALID");
+                    try (InputStream input = request.getInputStream(); ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                        byte[] buffer = new byte[4096];
+                        int count;
+                        while ((count = input.read(buffer)) != -1) {
+                            feedTimeout(deadline);
+                            if (destroyed) throw new Exception("UPDATE_CANCELLED");
+                            if (output.size() + count > MAX_FEED_BYTES) throw new Exception("UPDATE_INVALID");
+                            output.write(buffer, 0, count);
+                        }
+                        return new JSObject(new String(output.toByteArray(), StandardCharsets.UTF_8));
+                    }
+                }
+                String location = request.getHeaderField("Location");
+                if ((status != 301 && status != 302 && status != 303 && status != 307 && status != 308)
+                    || location == null) throw new Exception("UPDATE_NETWORK");
+                next = new URL(next, location);
+            } finally {
+                feedConnection = null;
+                request.disconnect();
+            }
+        }
+        throw new Exception("UPDATE_NETWORK");
+    }
+
+    private static int feedTimeout(long deadline) throws Exception {
+        long remaining = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+        if (remaining <= 0) throw new Exception("UPDATE_NETWORK");
+        return (int) Math.min(remaining, 6000);
+    }
+
+    static boolean validFeedUrl(URL next) {
+        if (!trustedHttps(next)) return false;
+        if (next.getHost().equals("github.com")) {
+            return next.toExternalForm().equals(FEED_URL) || next.toExternalForm().matches(
+                java.util.regex.Pattern.quote(RELEASES) + "download/v" + FEED_VERSION_PART + "\\."
+                    + FEED_VERSION_PART + "\\." + FEED_VERSION_PART + "/latest\\.json");
+        }
+        return next.getHost().equals("release-assets.githubusercontent.com")
+            && next.getPath().matches("(?i)/github-production-release-asset(?:-[a-z0-9]+)?/[^/]+/[^/]+");
     }
 
     synchronized void startDownload(JSObject descriptor, PluginCall call) {
@@ -79,8 +168,11 @@ final class NativeAppUpdateManager {
         if (version == null || hash == null || url == null
             || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+") || build <= 0 || !hash.matches("[a-f0-9]{64}")
             || size <= 0 || size > 256L * 1024 * 1024) return false;
-        return url.equals("https://nivrapp-secure.vercel.app/downloads/Nivra-" + version + "-debug.apk");
+        return url.equals(githubApkUrl(version)) || url.equals(webApkUrl(version));
     }
+
+    private static String githubApkUrl(String version) { return RELEASES + "download/v" + version + "/Nivra-" + version + "-debug.apk"; }
+    private static String webApkUrl(String version) { return "https://nivrapp-secure.vercel.app/downloads/Nivra-" + version + "-debug.apk"; }
 
     private void download(String url, String version, int build, String hash, long size) {
         File part = null;
@@ -128,19 +220,21 @@ final class NativeAppUpdateManager {
     }
 
     static boolean validDownloadUrl(URL next, String version) {
-        if (next == null || version == null || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+")
-            || !"https".equals(next.getProtocol()) || next.getUserInfo() != null || next.getRef() != null
-            || (next.getPort() != -1 && next.getPort() != 443)) return false;
+        if (!trustedHttps(next) || version == null || !version.matches("[0-9]+\\.[0-9]+\\.[0-9]+")) return false;
         String host = next.getHost();
-        if (host.equals("nivrapp-secure.vercel.app")) {
-            return next.toExternalForm().equals("https://nivrapp-secure.vercel.app/downloads/Nivra-" + version + "-debug.apk");
-        }
-        if (host.equals("github.com")) {
-            return next.toExternalForm().equals("https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v" + version
-                + "/Nivra-" + version + "-debug.apk");
-        }
+        if (host.equals("nivrapp-secure.vercel.app")) return next.toExternalForm().equals(webApkUrl(version));
+        if (host.equals("github.com")) return next.toExternalForm().equals(githubApkUrl(version));
         // GitHub issues expiring signed URLs on these exact asset hosts. Final
         // bytes still need the declared digest and the installed app's signer.
+        return releaseAssetHost(host);
+    }
+
+    private static boolean trustedHttps(URL url) {
+        return url != null && "https".equals(url.getProtocol()) && url.getUserInfo() == null && url.getRef() == null
+            && (url.getPort() == -1 || url.getPort() == 443);
+    }
+
+    private static boolean releaseAssetHost(String host) {
         return host.equals("release-assets.githubusercontent.com") || host.equals("objects.githubusercontent.com");
     }
 
@@ -260,5 +354,12 @@ final class NativeAppUpdateManager {
         }
         call.resolve(state);
     }
-    synchronized void destroy() { destroyed = true; cancelled = true; allowed = false; installGeneration++; HttpURLConnection current = connection; if (current != null) current.disconnect(); worker.shutdownNow(); }
+    synchronized void destroy() {
+        destroyed = true; cancelled = true; allowed = false; installGeneration++;
+        HttpURLConnection current = connection;
+        if (current != null) current.disconnect();
+        HttpURLConnection feed = feedConnection;
+        if (feed != null) feed.disconnect();
+        worker.shutdownNow();
+    }
 }

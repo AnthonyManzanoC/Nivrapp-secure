@@ -5,9 +5,13 @@ import static org.junit.Assert.*;
 
 public class NativeAppUpdatePolicyTest {
     private final String url = "https://nivrapp-secure.vercel.app/downloads/Nivra-4.1.0-debug.apk";
+    private final String githubBase = "https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/";
     private final String hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     @Test public void acceptsOnlyOurVersionedAssetAndBoundedMetadata() {
         assertTrue(NativeAppUpdateManager.validDescriptor("4.1.0", 28, hash, 80000000, url));
+        assertTrue(NativeAppUpdateManager.validDescriptor("4.1.0", 28, hash, 80000000, githubBase + "download/v4.1.0/Nivra-4.1.0-debug.apk"));
+        assertFalse(NativeAppUpdateManager.validDescriptor("4.1.0", 28, hash, 80000000, githubBase + "download/v4.1.1/Nivra-4.1.0-debug.apk"));
+        assertFalse(NativeAppUpdateManager.validDescriptor("4.1.0", 28, hash, 80000000, "https://release-assets.githubusercontent.com/asset?signature=signed"));
         assertFalse(NativeAppUpdateManager.validDescriptor("4.1.0", 28, hash, 80000000, url + "?redirect=bad"));
         assertFalse(NativeAppUpdateManager.validDescriptor("4.1.0", 28, hash, 80000000, "http://localhost/app.apk"));
         assertFalse(NativeAppUpdateManager.validDescriptor("4.1.0", 28, hash, 300000000, url));
@@ -37,6 +41,21 @@ public class NativeAppUpdatePolicyTest {
             "https://release-assets.githubusercontent.com.evil.test/asset", "https://user:pass@objects.githubusercontent.com/asset",
             "https://objects.githubusercontent.com:8443/asset"
         }) assertFalse(unsafe, NativeAppUpdateManager.validDownloadUrl(new URL(unsafe), "4.1.0"));
+    }
+    @Test public void onlyFollowsTheReleaseManifestOfThePinnedRepositoryOrItsAssetHosts() throws Exception {
+        assertTrue(NativeAppUpdateManager.validFeedUrl(new URL(githubBase + "latest/download/latest.json")));
+        assertTrue(NativeAppUpdateManager.validFeedUrl(new URL(githubBase + "download/v10.1.1/latest.json")));
+        assertTrue(NativeAppUpdateManager.validFeedUrl(new URL("https://release-assets.githubusercontent.com/github-production-release-asset/123/asset-id?signature=signed")));
+        for (String unsafe : new String[] {
+            githubBase + "download/v10.1.1/other.json", githubBase + "download/v10.1.1/latest.json?redirect=x",
+            githubBase + "download/v010.1.1/latest.json", "https://release-assets.githubusercontent.com/asset?signature=signed",
+            "https://objects.githubusercontent.com/github-production-release-asset/123/asset-id?signature=signed",
+            "https://release-assets.githubusercontent.com/github-production-release-asset/123/asset-id/extra?signature=signed",
+            githubBase + "latest/download/latest.json#fragment", githubBase.replace("github.com", "github.com.evil.test") + "latest/download/latest.json",
+            githubBase.replace("Nivrapp-secure", "other-repository") + "download/v10.1.1/latest.json",
+            "https://nivrapp-secure.vercel.app/updates/latest.json", "http://release-assets.githubusercontent.com/asset",
+            "https://user:pass@release-assets.githubusercontent.com/asset", "https://objects.githubusercontent.com:8443/asset"
+        }) assertFalse(unsafe, NativeAppUpdateManager.validFeedUrl(new URL(unsafe)));
     }
     @Test public void requiresTheInstalledPackageAndTheAdvertisedNewVersionBeforeInstallation() {
         assertTrue(NativeAppUpdateManager.validArchiveMetadata("com.nivra.app", "4.1.0", 28, "com.nivra.app", "4.1.0", 28, 27));

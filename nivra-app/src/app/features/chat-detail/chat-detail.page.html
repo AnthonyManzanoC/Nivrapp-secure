@@ -396,6 +396,11 @@
                 }
               }
             } @else {
+              @if (message.payload['groupHistorySummary']) {
+                <div class="group-history-summary-label"><ion-icon name="time-outline" aria-hidden="true"></ion-icon>
+                  {{ 'CHAT.GROUP_HISTORY_SUMMARY' | translate:'Resumen de mensajes compartido' }}
+                </div>
+              }
               <p class="message-text">
                 @for (part of richTextParts(message.payload.text || chat.preview(message.payload)); track $index) {
                   @if (part.href) {
@@ -406,11 +411,13 @@
                 }
               </p>
             }
+            @if (!message.payload.groupHistorySummary) {
             <div class="quick-reaction-row">
               @for (emoji of chat.quickReactions; track emoji) {
                 <button type="button" (click)="react(message, emoji)" [attr.aria-label]="('CHAT.REACT' | translate:'Reaccionar') + ' ' + emoji">{{ emoji }}</button>
               }
             </div>
+            }
             @if (reactions(message).length) {
               <button type="button" class="reactions" [title]="chat.reactionSummary(message)" (click)="openReactionViewer(message, $event)" [attr.aria-label]="'CHAT.VIEW_REACTIONS' | translate:'Ver reacciones'">
                 @for (group of chat.reactionGroups(message); track group.emoji) {
@@ -737,25 +744,31 @@
         @if (!chat.isSelfConversation(conversation())) {
         <button type="button" (click)="toggleBlock()">
           <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'"></ion-icon>
-          {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : (chat.isGroup(conversation()) ? ('CHAT.BLOCK' | translate:'Bloquear') : ('CHAT.BLOCK_CONTACT' | translate:'Bloquear contacto')) }}
+          {{ blockActionLabel() }}
         </button>
         }
         <button type="button" (click)="clearChat('me')">
           <ion-icon name="trash-outline"></ion-icon>
           {{ 'CHAT.CLEAR_FOR_ME' | translate:'Vaciar para mi' }}
         </button>
+        @if (canClearChatForEveryone()) {
         <button type="button" (click)="clearChat('everyone')">
           <ion-icon name="trash-outline"></ion-icon>
           {{ 'CHAT.CLEAR_FOR_EVERYONE' | translate:'Vaciar para todos' }}
         </button>
+        }
+        @if (canDeleteChat('me')) {
         <button type="button" class="danger" (click)="deleteChat('me')">
           <ion-icon name="trash-outline"></ion-icon>
-          {{ 'CHAT.DELETE_FOR_ME' | translate:'Eliminar para mi' }}
+          {{ isGroupConversation() ? ('CHAT.LEAVE_AND_DELETE_GROUP' | translate:'Salir y eliminar para mí') : ('CHAT.DELETE_FOR_ME' | translate:'Eliminar para mí') }}
         </button>
+        }
+        @if (canDeleteChat('everyone')) {
         <button type="button" class="danger" (click)="deleteChat('everyone')">
           <ion-icon name="trash-outline"></ion-icon>
           {{ 'CHAT.DELETE_FOR_EVERYONE' | translate:'Eliminar para todos' }}
         </button>
+        }
       </div>
     </ng-template>
   </ion-popover>
@@ -771,11 +784,13 @@
     <ng-template>
       @if (actionMessage) {
         <div class="message-popover">
+          @if (!actionMessage.payload.groupHistorySummary) {
           <div class="popover-reactions">
             @for (emoji of chat.quickReactions; track emoji) {
               <button type="button" (click)="react(actionMessage, emoji)" [attr.aria-label]="('CHAT.REACT' | translate:'Reaccionar') + ' ' + emoji">{{ emoji }}</button>
             }
           </div>
+          }
           <div class="popover-menu compact">
             @if (canSelectMessage(actionMessage)) { <button type="button" (click)="beginSelection(actionMessage)"><ion-icon name="checkmark-outline"></ion-icon>{{ 'CHAT.SELECT_MESSAGES' | translate:'Seleccionar mensajes' }}</button> }
             @if (canReply(actionMessage)) {
@@ -1262,6 +1277,7 @@
                       <strong>{{ participantLabel(participant) }}</strong>
                       <small>{{ participantSubtitle(participant) }}</small>
                     </div>
+                    <div class="profile-member-actions">
                     @if (canToggleParticipantAdmin(participant)) {
                       <button
                         type="button"
@@ -1279,6 +1295,14 @@
                     @else if (isGroupAdmin(participant.userId)) {
                       <em>{{ isCurrentParticipant(participant) ? ('CHAT.YOU_ARE_ADMIN' | translate:'Tu eres admin') : ('CHAT.ADMIN' | translate:'Admin') }}</em>
                     }
+                    @if (canRemoveParticipant(participant)) {
+                      <button type="button" class="profile-admin profile-remove-member" [disabled]="groupInfoBusy"
+                        (click)="removeGroupParticipant(participant)">
+                        <ion-icon name="person-remove-outline" aria-hidden="true"></ion-icon>
+                        {{ 'CHAT.REMOVE_GROUP_PARTICIPANT' | translate:'Quitar del grupo' }}
+                      </button>
+                    }
+                    </div>
                   </div>
                 }
                 @empty {
@@ -1295,7 +1319,7 @@
                 <button
                   type="button"
                   class="profile-view-all"
-                  (click)="groupAddOpen = !groupAddOpen"
+                  (click)="groupAddOpen = !groupAddOpen; shareRecentGroupHistory = false"
                   [attr.aria-expanded]="groupAddOpen">
                   <ion-icon name="person-add-outline"></ion-icon>
                   {{ groupAddOpen ? ('CHAT.HIDE_CONTACTS' | translate:'Ocultar contactos') : ('CHAT.CHOOSE_CONTACTS' | translate:'Elegir contactos') }}
@@ -1325,6 +1349,15 @@
                     }
                     @empty {
                       <div class="profile-empty compact">{{ 'CHAT.NO_CONTACTS_TO_ADD' | translate:'No hay contactos disponibles para agregar.' }}</div>
+                    }
+                    @if (canShareRecentGroupHistory()) {
+                      <label class="profile-history-option">
+                        <input type="checkbox" [(ngModel)]="shareRecentGroupHistory" [disabled]="groupInfoBusy">
+                        <span>
+                          <strong>{{ 'CHAT.GROUP_HISTORY_SHARE_OPTION' | translate:'Compartir un resumen reciente' }}</strong>
+                          <small>{{ 'CHAT.GROUP_HISTORY_SHARE_DETAIL' | translate:'Envía hasta 10 mensajes de texto tuyos de los últimos 7 días, cifrados para esta persona.' }}</small>
+                        </span>
+                      </label>
                     }
                     <ion-button
                       class="profile-add-submit"
@@ -1364,7 +1397,7 @@
               (click)="toggleBlock()"
               [disabled]="!!busyAction">
               <ion-icon [name]="isBlocked() ? 'lock-open-outline' : 'ban-outline'" aria-hidden="true"></ion-icon>
-              {{ isBlocked() ? ('CHAT.UNBLOCK' | translate:'Desbloquear') : (chat.isGroup(conversation()) ? ('CHAT.BLOCK' | translate:'Bloquear') : ('CHAT.BLOCK_CONTACT' | translate:'Bloquear contacto')) }}
+              {{ blockActionLabel() }}
             </button>
           }
         </div>
@@ -1396,7 +1429,7 @@
     </ng-template>
   </ion-modal>
 
-  <ion-modal class="media-audio-modal" [isOpen]="!!activeAudioPreview" (didDismiss)="closeAudioPreview()">
+  <ion-modal class="media-audio-modal" [nivraDarkViewer]="activeAudioMessage?.deleteAfterRead === true" [isOpen]="!!activeAudioPreview" (didDismiss)="closeAudioPreview()">
     <ng-template>
       @if (activeAudioPreview) {
         <section class="audio-player-sheet">
@@ -1426,6 +1459,7 @@
 
   <ion-modal
     class="view-once-text-modal"
+    nivraDarkViewer
     [isOpen]="!!activeViewOnceTextMessage"
     (didDismiss)="closeViewOnceText()">
     <ng-template>
@@ -1446,16 +1480,18 @@
               <p>{{ viewOnceMessage.payload.text || chat.preview(viewOnceMessage.payload) }}</p>
             </article>
           </div>
-          <footer>
-            <ion-icon name="lock-closed-outline"></ion-icon>
-            <span>{{ 'CHAT.VIEW_ONCE_CLOSE_NOTICE' | translate:'Al cerrar, este mensaje se marcará como abierto y dejará de estar disponible.' }}</span>
-          </footer>
+          @if (!viewOnceMessage.mine) {
+            <footer>
+              <ion-icon name="lock-closed-outline"></ion-icon>
+              <span>{{ 'CHAT.VIEW_ONCE_CLOSE_NOTICE' | translate:'Al cerrar el visor, este mensaje dejará de estar disponible para ti.' }}</span>
+            </footer>
+          }
         </section>
       }
     </ng-template>
   </ion-modal>
 
-  <ion-modal class="chat-media-viewer-modal" [isOpen]="!!activeMediaPreview" (didDismiss)="closeMediaViewer()">
+  <ion-modal class="chat-media-viewer-modal" nivraDarkViewer [isOpen]="!!activeMediaPreview" (didDismiss)="closeMediaViewer()">
     <ng-template>
       @if (activeMediaPreview && activeMediaFile) {
         <section class="chat-media-viewer">

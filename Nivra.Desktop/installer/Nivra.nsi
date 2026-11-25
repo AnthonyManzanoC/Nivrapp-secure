@@ -2,14 +2,18 @@
 Unicode true
 RequestExecutionLevel user
 ManifestDPIAware true
-; Per-file compression keeps the compiler's temporary data block small on
-; constrained build machines. Both modes install the same verified files.
-!ifdef LOW_DISK_USAGE
-  SetCompressor lzma
+; Use zlib when build speed matters more than installer size.
+!ifdef FAST_COMPRESSION
+  SetCompressor zlib
 !else
-  SetCompressor /SOLID lzma
+  ; Per-file LZMA keeps the temporary data block small on constrained machines.
+  !ifdef LOW_DISK_USAGE
+    SetCompressor lzma
+  !else
+    SetCompressor /SOLID lzma
+  !endif
+  SetCompressorDictSize 32
 !endif
-SetCompressorDictSize 32
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"

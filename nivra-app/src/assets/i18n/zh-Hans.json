@@ -841,7 +841,7 @@
   "CHAT.TAP_TO_OPEN_STORIES": "点击即可按顺序查看它们。",
   "CHAT.UNREAD_MESSAGES": "未读",
   "CHAT.VIEW_GROUP_PHOTO": "查看集体照",
-  "CHAT.VIEW_ONCE_CLOSE_NOTICE": "当您关闭时，此消息将被标记为打开并且将不再可用。",
+  "CHAT.VIEW_ONCE_CLOSE_NOTICE": "关闭此页面后，你将无法再次查看这条消息。",
   "CHAT.VIEW_ONCE_HINT": "见一次",
   "CHAT.VIEW_ONCE_OPENED": "一旦打开消息",
   "CHAT.VIEW_ONCE_TEXT": "留言",

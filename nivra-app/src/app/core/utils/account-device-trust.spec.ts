@@ -28,9 +28,23 @@ describe('account root and signed subdevices',()=>{
     const f=await fixture(),trust=new IdentityTrustService(),scope=crypto.randomUUID();
     await trust.confirm(scope,{...f.directory,accountIdentity:null,devices:[f.phone]});
     const proofs=await checkedAccountDevices(f.directory,{},async()=>false);
+    expect((await trust.continuity(scope,f.directory,proofs)).state).toBe('pending-device');
     expect((await trust.forDelivery(scope,f.directory,()=>true,proofs)).devices.map(d=>d.deviceId)).toEqual(['phone']);
     const onlyBrowser={...f.directory,devices:[f.browser]};
     await expectAsync(trust.forDelivery(scope,onlyBrowser,()=>true,proofs)).toBeRejected();
+  });
+  it('reconciles a newly certified device from verification without resetting the comparison date',async()=>{
+    const f=await fixture(),trust=new IdentityTrustService(),scope=crypto.randomUUID();
+    const before={...f.directory,accountIdentity:null,devices:[f.phone]};
+    await trust.confirm(scope,before);
+    const prior=await trust.continuity(scope,before);
+    const unauthenticated=await checkedAccountDevices(f.directory,{},async()=>false);
+    await expectAsync(trust.check(scope,f.directory,()=>true,unauthenticated)).toBeRejected();
+    expect((await trust.continuity(scope,f.directory)).state).toBe('pending-device');
+    const endorsed=await checkedAccountDevices(f.directory,f.peers,async()=>true);
+    expect(await trust.continuity(scope,f.directory,endorsed)).toEqual(jasmine.objectContaining({state:'verified',authorizedDevice:true,verifiedAt:prior.verifiedAt}));
+    await trust.check(scope,f.directory,()=>true,endorsed);
+    expect(await trust.continuity(scope,f.directory)).toEqual(jasmine.objectContaining({state:'verified',verifiedAt:prior.verifiedAt}));
   });
   it('rejects modified certificates and root replacements while preserving fresh-address rules',async()=>{
     const f=await fixture();

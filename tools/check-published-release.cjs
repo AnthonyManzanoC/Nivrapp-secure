@@ -6,16 +6,18 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
-const { validatedManifest } = require('../nivra-app/update-feed-policy.cjs');
+const { loadLatestManifest, validatedManifest } = require('../nivra-app/update-feed-policy.cjs');
 
 const origin = 'https://nivrapp-secure.vercel.app';
 const repository = 'AnthonyManzanoC/Nivrapp-secure';
 const version = process.argv[2];
 const commit = process.argv[3];
+const githubDirect = process.argv.includes('--github-direct');
+const artifactOption = process.argv.indexOf('--artifacts');
 if (!/^\d+\.\d+\.\d+$/.test(version || '') || !/^[a-f0-9]{40}$/.test(commit || '')) {
-  throw new Error('Usage: node tools/check-published-release.cjs VERSION FULL_SOURCE_COMMIT');
+  throw new Error('Usage: node tools/check-published-release.cjs VERSION FULL_SOURCE_COMMIT [--github-direct] [--artifacts DIRECTORY]');
 }
-const artifacts = path.resolve(__dirname, '../artifacts');
+const artifacts = artifactOption === -1 ? path.resolve(__dirname, '../artifacts') : path.resolve(process.argv[artifactOption + 1]);
 const expected = validatedManifest(JSON.parse(fs.readFileSync(path.join(artifacts, `Nivra-${version}-update-manifest.json`), 'utf8')));
 assert.equal(expected.version, version);
 
@@ -42,13 +44,13 @@ function trustedDownload(url, filename) {
 }
 
 async function verifyDownload(item, filename) {
-  let url = item.url;
+  let url = githubDirect ? `https://github.com/${repository}/releases/download/v${version}/${filename}` : item.url;
   const deadline = AbortSignal.timeout(300000);
   for (let hop = 0; hop < 6; hop++) {
     assert.ok(trustedDownload(url, filename), `Untrusted download route for ${filename}`);
     const response = await fetch(url, { redirect: 'manual', credentials: 'omit', cache: 'no-store',
       headers: { 'Accept-Encoding': 'identity', 'User-Agent': 'Nivra-Public-Release-Check' }, signal: deadline });
-    if (filename.endsWith('-Setup.exe')) {
+    if (!githubDirect && filename.endsWith('-Setup.exe')) {
       assert.equal(response.status, 200, 'Windows download must remain on the first-party route for installed updater compatibility');
       assert.equal(response.headers.get('x-nivra-download-proxy'), 'streamed', 'Windows download route is not streaming');
     }
@@ -78,9 +80,13 @@ async function main() {
   const { value: release } = await publicJson(`https://api.github.com/repos/${repository}/releases/latest`, 256 * 1024);
   assert.equal(release.tag_name, `v${version}`, 'GitHub latest still points to another release');
   assert.equal(release.target_commitish, commit, 'Published release targets another source commit');
-  const { value, response } = await publicJson(`${origin}/updates/latest.json`, 32768);
-  assert.equal(response.headers.get('access-control-allow-origin'), '*', 'The feed must support native WebView origins');
-  assert.deepEqual(validatedManifest(value), expected, 'Public app update feed differs from the verified release');
+  if (githubDirect) {
+    assert.deepEqual(await loadLatestManifest(), expected, 'Public GitHub update feed differs from the verified release');
+  } else {
+    const { value, response } = await publicJson(`${origin}/updates/latest.json`, 32768);
+    assert.equal(response.headers.get('access-control-allow-origin'), '*', 'The feed must support native WebView origins');
+    assert.deepEqual(validatedManifest(value), expected, 'Public app update feed differs from the verified release');
+  }
   console.log(`Verified public update feed: ${version}, Android build ${expected.android.versionCode}.`);
   const binaries = [];
   for (const [platform, filename] of [['android', `Nivra-${version}-debug.apk`], ['windows', `Nivra-${version}-Setup.exe`]]) {
@@ -92,7 +98,7 @@ async function main() {
     binaries.push(await verifyDownload(item, filename));
   }
   fs.writeFileSync(path.join(artifacts, `Nivra-${version}-public-verification.json`), JSON.stringify({
-    version, commit, checkedAt: new Date().toISOString(), releaseUrl: release.html_url, binaries,
+    version, commit, checkedAt: new Date().toISOString(), releaseUrl: release.html_url, githubDirect, binaries,
   }, null, 2) + '\n');
 }
 main().catch(error => { console.error(error.message); process.exitCode = 1; });

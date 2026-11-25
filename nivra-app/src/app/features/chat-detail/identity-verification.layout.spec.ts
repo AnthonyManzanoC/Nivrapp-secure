@@ -1,6 +1,7 @@
 import { ApplicationInitStatus, signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { Location } from '@angular/common';
+import { Subject } from 'rxjs';
 import { ActivatedRoute, provideRouter } from '@angular/router';
 import { provideIonicAngular } from '@ionic/angular/standalone';
 import { AuthService } from '../../core/services/auth.service';
@@ -8,6 +9,8 @@ import { AppLockService } from '../../core/services/app-lock.service';
 import { CryptoService } from '../../core/services/crypto.service';
 import { IdentityTrustService } from '../../core/services/identity-trust.service';
 import { NivraApiService } from '../../core/services/nivra-api.service';
+import { RatchetMessagingService } from '../../core/services/ratchet-messaging.service';
+import { SignalrService } from '../../core/services/signalr.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { IdentityVerificationPage } from './identity-verification.page';
 
@@ -16,9 +19,11 @@ describe('Contact security presentation', () => {
     TestBed.configureTestingModule({ imports: [IdentityVerificationPage], providers: [
       provideIonicAngular({ mode: 'ios' }), provideRouter([]),
       { provide: AuthService, useValue: { session: signal({ user: { id: 'owner' }, device: { id: 'phone' } }) } },
-      { provide: AppLockService, useValue: { isLocked: signal(false) } },
+      { provide: AppLockService, useValue: { isContentLocked: signal(false) } },
       { provide: CryptoService, useValue: {} }, { provide: IdentityTrustService, useValue: {} },
       { provide: NivraApiService, useValue: {} },
+      { provide: RatchetMessagingService, useValue: { deviceContinuities: async () => [] } },
+      { provide: SignalrService, useValue: { events$: new Subject() } },
       { provide: Location, useValue: { getState: () => ({}) } },
       { provide: ActivatedRoute, useValue: { snapshot: { paramMap: { get: () => 'peer' } } } },
       { provide: TranslateService, useValue: { currentLanguage: signal('es'), instant: (_key: string, fallback: string) => fallback } },

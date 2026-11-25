@@ -12,14 +12,15 @@ export function apiFailoverInterceptor(req: HttpRequest<unknown>, next: HttpHand
   const network = inject(NetworkPolicyService);
   const session = auth.session();
   const generation = auth.sessionGeneration?.();
-  const hybridWrite = req.method === 'POST' && new URL(req.url).pathname.endsWith('/messages/ratchet');
+  const path = new URL(req.url).pathname;
+  const hybridWrite = req.method === 'POST' && (path.endsWith('/messages/ratchet') || path.endsWith('/messages/group-history/ratchet'));
   const messageBody = req.body && typeof req.body === 'object' ? req.body as { clientMessageId?: unknown } : null;
-  const idempotentMessage = req.method === 'POST' && /^\/conversations\/[^/]+\/messages(?:\/ratchet)?$/.test(new URL(req.url).pathname)
+  const idempotentMessage = req.method === 'POST' && /^\/conversations\/[^/]+\/messages(?:\/(?:group-history\/)?ratchet)?$/.test(path)
     && typeof messageBody?.clientMessageId === 'string' && messageBody.clientMessageId.length > 0 && messageBody.clientMessageId.length <= 128;
   const sameSession = () => auth.sessionGeneration?.() === generation
     && auth.session()?.user.id === session?.user.id && auth.session()?.device.id === session?.device.id;
   const safe = req.method === 'GET' || req.method === 'HEAD'
-    || (req.method === 'POST' && new URL(req.url).pathname === '/keys/batch') || idempotentMessage;
+    || (req.method === 'POST' && path === '/keys/batch') || idempotentMessage;
   // Downloads and uploads keep their own progress/limits; small read requests cannot hang forever.
   let smallBody = req.body == null;
   if (!smallBody && !(req.body instanceof Blob || req.body instanceof ArrayBuffer || req.body instanceof FormData)) {

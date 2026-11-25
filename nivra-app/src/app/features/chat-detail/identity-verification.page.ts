@@ -17,6 +17,8 @@ import { CryptoService } from '../../core/services/crypto.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { deriveUnverifiedSafetyNumber } from '../../core/utils/identity-fingerprint';
 import { NetworkPolicyService } from '../../core/services/network-policy.service';
+import { RatchetMessagingService } from '../../core/services/ratchet-messaging.service';
+import { SignalrService } from '../../core/services/signalr.service';
 
 type IdentityQrScanner = Pick<import('html5-qrcode').Html5Qrcode, 'start' | 'stop' | 'clear' | 'scanFile'>;
 export const IDENTITY_QR_SCANNER_LOADER = new InjectionToken<() => Promise<(elementId: string) => IdentityQrScanner>>('IDENTITY_QR_SCANNER_LOADER', {
@@ -44,6 +46,8 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   private readonly lock = inject(AppLockService);
   private readonly api = inject(NivraApiService);
   private readonly trust = inject(IdentityTrustService);
+  private readonly ratchet = inject(RatchetMessagingService);
+  private readonly realtime = inject(SignalrService);
   private readonly route = inject(ActivatedRoute);
   private readonly router = inject(Router);
   private readonly location = inject(Location);
@@ -62,18 +66,27 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   private cameraScanner: IdentityQrScanner | null = null;
   private cameraHandling = false;
   private routeSub?: Subscription;
+  private readonly deviceSub = this.realtime.events$.subscribe(event => {
+    const info = event.payload as { userId?: string; identityCertified?: boolean } | undefined;
+    if (event.type !== 'device.listChanged' || !info?.identityCertified || info.userId !== this.target) return;
+    this.lastAutomaticCheck = 0;
+    this.refreshWhenAvailable();
+  });
   private boundScope = this.sessionScope();
-  private wasLocked = this.lock.isLocked();
+  private wasLocked = this.lock.isContentLocked();
   private lastAutomaticCheck = 0;
   private readonly scopeEffect = effect(() => {
     const scope = this.sessionScope();
-    const locked = this.lock.isLocked();
-    if (scope !== this.boundScope || (locked && !this.wasLocked)) {
+    const locked = this.lock.isContentLocked();
+    const changed = scope !== this.boundScope;
+    const unlocked = !locked && this.wasLocked;
+    if (changed || (locked && !this.wasLocked)) {
       this.boundScope = scope;
       this.comparisonRequest++;
       this.clearComparison();
       void this.stopCamera();
-    } else if (!locked && this.wasLocked && this.target) {
+    }
+    if (!locked && (changed || unlocked) && this.auth.session() && this.target) {
       untracked(() => void this.loadIdentity());
     }
     this.wasLocked = locked;
@@ -93,6 +106,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   verified = false;
   continuity: IdentityContinuity['state'] | 'idle' = 'idle';
   continuitySource: IdentityContinuity['source'];
+  authorizedDevice = false;
   comparisonExpanded = false;
   verifiedAt = '';
   checkedAt = '';
@@ -131,6 +145,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
     this.comparisonRequest++;
     this.scopeEffect.destroy();
     this.routeSub?.unsubscribe();
+    this.deviceSub.unsubscribe();
     document.removeEventListener('visibilitychange', this.onVisibilityChange);
     window.removeEventListener('online', this.onConnectionAvailable);
     window.removeEventListener('focus', this.onConnectionAvailable);
@@ -138,7 +153,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   }
 
   async loadIdentity(): Promise<void> {
-    if (this.destroyed || this.lock.isLocked()) return;
+    if (this.destroyed || this.lock.isContentLocked()) return;
     const scope = this.auth.session();
     const target = this.target;
     const request = ++this.comparisonRequest;
@@ -149,6 +164,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
     this.verified = false;
     this.continuity = 'idle';
     this.continuitySource = undefined;
+    this.authorizedDevice = false;
     this.code = '';
     this.qr = '';
     this.comparison = '';
@@ -158,12 +174,15 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
       const pair = await this.load();
       const code = (await deriveUnverifiedSafetyNumber(pair[0], pair[1])).display;
       if (!active()) return;
-      const continuity = await this.trust.continuity(JSON.stringify([scope!.user.id, scope!.device.id]), pair[1]);
+      const proofs = await this.ratchet.deviceContinuities(pair[1]);
+      if (!active()) return;
+      const trustScope = JSON.stringify([scope!.user.id, scope!.device.id]);
+      const continuity = await this.trust.continuity(trustScope, pair[1], proofs);
       if (!active()) return;
       if (continuity.state === 'verified' || continuity.state === 'unchanged') {
         // Reconcile a safe match atomically so a restored/known key also clears
         // a stale chat warning. Unknown or changed keys never enter this path.
-        await this.trust.check(JSON.stringify([scope!.user.id, scope!.device.id]), pair[1], active);
+        await this.trust.check(trustScope, pair[1], active, proofs);
         if (!active()) return;
       }
       const qr = await this.qrForComparison(code);
@@ -173,6 +192,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
         this.contactAlias = pair[1].alias;
         this.continuity = continuity.state;
         this.continuitySource = continuity.source;
+        this.authorizedDevice = continuity.authorizedDevice === true;
         this.comparisonExpanded = continuity.state === 'changed' || continuity.state === 'pending-device';
         this.verified = continuity.state === 'verified';
         this.verifiedAt = continuity.verifiedAt ?? '';
@@ -186,7 +206,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   }
 
   private refreshWhenAvailable(): void {
-    if (!this.target || this.destroyed || this.lock.isLocked() || this.loading || this.busy || this.scanning
+    if (!this.target || this.destroyed || this.lock.isContentLocked() || this.loading || this.busy || this.scanning
       || this.cameraOpen || this.cameraCapturePending || this.comparison.trim()
       || document.visibilityState === 'hidden' || navigator.onLine === false) return;
     // Resume checks must not erase a code being entered or repeatedly restart
@@ -202,19 +222,20 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
 
   private sessionScope(): string {
     const session = this.auth.session();
-    return JSON.stringify([session?.user.id ?? '', session?.device.id ?? '']);
+    return JSON.stringify([session?.user.id ?? '', session?.device.id ?? '', this.auth.sessionGeneration?.(), this.lock.lockCycle?.()]);
   }
 
   private active(request: number, userId: string | undefined, deviceId: string | undefined, target: string): boolean {
     const current = this.auth.session();
-    return !this.destroyed && !this.lock.isLocked() && request === this.comparisonRequest && Boolean(userId && deviceId)
+    return !this.destroyed && !this.lock.isContentLocked() && this.boundScope === this.sessionScope()
+      && request === this.comparisonRequest && Boolean(userId && deviceId)
       && current?.user.id === userId && current?.device.id === deviceId && this.target === target;
   }
 
   private clearComparison(): void {
     this.code = ''; this.qr = ''; this.comparison = ''; this.message = ''; this.contactAlias = '';
     this.verified = false; this.verifiedAt = ''; this.checkedAt = ''; this.continuity = 'idle';
-    this.continuitySource = undefined; this.comparisonExpanded = false;
+    this.continuitySource = undefined; this.authorizedDevice = false; this.comparisonExpanded = false;
     this.loading = false; this.busy = false; this.scanning = false;
   }
 
@@ -230,12 +251,12 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
     const published = this.crypto.parsePublicJwk(own.devices.find(x => x.deviceId === current.device.id)?.keyBundle?.identityKey);
     if (!published || published.x !== local.publicJwk.x || published.y !== local.publicJwk.y) throw new Error('Published key mismatch');
     const active = this.auth.session();
-    if (this.destroyed || this.lock.isLocked() || target !== this.target || active?.user.id !== current.user.id || active.device.id !== current.device.id) throw new Error('Comparison changed');
+    if (this.destroyed || this.lock.isContentLocked() || target !== this.target || active?.user.id !== current.user.id || active.device.id !== current.device.id) throw new Error('Comparison changed');
     return [own, other];
   }
 
   async confirm(): Promise<void> {
-    if (this.busy || this.destroyed || this.lock.isLocked()) return;
+    if (this.busy || this.destroyed || this.lock.isContentLocked()) return;
     const scope = this.auth.session();
     const target = this.target;
     const request = this.comparisonRequest;
@@ -265,6 +286,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
         this.verified = true;
         this.continuity = 'verified';
         this.continuitySource = 'this-device';
+        this.authorizedDevice = false;
         this.verifiedAt = new Date().toISOString();
         this.message = this.t('IDENTITY.SAVED', 'Código comparado y verificación guardada en este dispositivo.');
       }
@@ -276,7 +298,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   }
 
   async startCamera(): Promise<void> {
-    if (this.cameraCapturePending || this.cameraStarting || this.cameraOpen || this.busy || this.scanning || !this.code || this.lock.isLocked()) return;
+    if (this.cameraCapturePending || this.cameraStarting || this.cameraOpen || this.busy || this.scanning || !this.code || this.lock.isContentLocked()) return;
     const scope = this.auth.session();
     const target = this.target;
     const request = this.comparisonRequest;
@@ -357,7 +379,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
     const input = event.target as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (!file || this.busy || this.scanning || this.destroyed || this.lock.isLocked()) return;
+    if (!file || this.busy || this.scanning || this.destroyed || this.lock.isContentLocked()) return;
     const scope = this.auth.session();
     const target = this.target;
     const request = this.comparisonRequest;
@@ -380,7 +402,7 @@ export class IdentityVerificationPage implements OnInit, OnDestroy {
   }
 
   async pasteCode(): Promise<void> {
-    if (this.busy || this.scanning || this.destroyed || this.lock.isLocked()) return;
+    if (this.busy || this.scanning || this.destroyed || this.lock.isContentLocked()) return;
     const scope = this.auth.session();
     const request = this.comparisonRequest;
     const target = this.target;

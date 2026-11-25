@@ -841,7 +841,7 @@
   "CHAT.TAP_TO_OPEN_STORIES": "タップすると順番に表示されます。",
   "CHAT.UNREAD_MESSAGES": "未読",
   "CHAT.VIEW_GROUP_PHOTO": "集合写真を見る",
-  "CHAT.VIEW_ONCE_CLOSE_NOTICE": "閉じると、このメッセージはオープンとしてマークされ、使用できなくなります。",
+  "CHAT.VIEW_ONCE_CLOSE_NOTICE": "この画面を閉じると、メッセージをもう一度表示することはできません。",
   "CHAT.VIEW_ONCE_HINT": "一度見てください",
   "CHAT.VIEW_ONCE_OPENED": "開封後のメッセージ",
   "CHAT.VIEW_ONCE_TEXT": "メッセージ",

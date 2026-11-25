@@ -52,6 +52,8 @@ public static class CommunityChecks
         using(var r=await Request("stranger",HttpMethod.Get,"/communities/"+id))Check(r.StatusCode==HttpStatusCode.NotFound,"other account cannot read group metadata");
         using(var r=await Request("stranger",HttpMethod.Get,"/communities"))Check((await r.Content.ReadFromJsonAsync<CommunityView[]>())!.All(c=>c.Id!=id),"list does not disclose private communities");
         using(var r=await Request("bob",HttpMethod.Patch,"/communities/"+id,new UpdateCommunityRequest("Stolen",null,null)))Check(r.StatusCode==HttpStatusCode.NotFound,"member cannot edit community");
+        using(var r=await Request("alice",HttpMethod.Patch,"/conversations/"+id,new {settings=new GroupSettings{SendMessages="admins",AddMembers="all"}}))
+            Check(r.StatusCode==HttpStatusCode.BadRequest,"announcement chat cannot grant community admission to all members");
         using(var r=await Request("alice",HttpMethod.Patch,"/communities/"+id,new UpdateCommunityRequest("Nombre nuevo","Descripción nueva",null)))Check((await Read(r)).Name=="Nombre nuevo","admin metadata stays synchronized with announcement chat");
         var childDraft=new CreateCommunityGroupRequest("Conversación por temas",[],Guid.NewGuid());
         var children=await Task.WhenAll(Enumerable.Range(0,5).Select(async _=>{using var r=await Request("alice",HttpMethod.Post,$"/communities/{id}/groups/create",childDraft);return await Read(r);}));

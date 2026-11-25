@@ -1190,8 +1190,6 @@ ion-popover.attachment-popover::part(content) {
   background: rgba(8, 13, 15, .74);
 }
 
-ion-modal.chat-media-viewer-modal,
-ion-modal.view-once-text-modal,
 ion-modal.profile-photo-viewer-modal {
   --width: 100vw;
   --height: 100dvh;
@@ -1200,8 +1198,6 @@ ion-modal.profile-photo-viewer-modal {
   color: #fff;
 }
 
-ion-modal.chat-media-viewer-modal::part(content),
-ion-modal.view-once-text-modal::part(content),
 ion-modal.profile-photo-viewer-modal::part(content) {
   width: 100vw;
   height: 100dvh;
@@ -1212,6 +1208,7 @@ ion-modal.profile-photo-viewer-modal::part(content) {
   position: relative;
   width: 100%;
   height: 100%;
+  min-width: 0;
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
@@ -1229,9 +1226,9 @@ ion-modal.profile-photo-viewer-modal::part(content) {
   border-bottom: 1px solid rgba(255, 255, 255, .09);
   padding:
     calc(12px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
-    max(16px, env(safe-area-inset-right))
+    max(16px, var(--ion-safe-area-right, env(safe-area-inset-right, 0px)))
     12px
-    max(16px, env(safe-area-inset-left));
+    max(16px, var(--ion-safe-area-left, env(safe-area-inset-left, 0px)));
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1247,7 +1244,7 @@ ion-modal.profile-photo-viewer-modal::part(content) {
 }
 
 .view-once-text-viewer header small {
-  color: var(--nivra-brand-2, #72f0ca);
+  color: #86efd3;
   font-size: 10px;
   font-weight: 900;
   letter-spacing: .1em;
@@ -1274,15 +1271,27 @@ ion-modal.profile-photo-viewer-modal::part(content) {
 
 .view-once-text-body {
   min-height: 0;
-  padding: clamp(18px, 5vw, 54px);
+  min-width: 0;
+  --viewer-gutter: clamp(16px, 5vw, 54px);
+  padding: var(--viewer-gutter)
+    max(var(--viewer-gutter), var(--ion-safe-area-right, 0px))
+    var(--viewer-gutter)
+    max(var(--viewer-gutter), var(--ion-safe-area-left, 0px));
   display: grid;
-  place-items: center;
+  grid-template-columns: minmax(0, 1fr);
+  place-items: safe center;
   overflow: auto;
   overscroll-behavior: contain;
 }
 
+.view-once-text-body:last-child {
+  padding-bottom: max(var(--viewer-gutter), var(--ion-safe-area-bottom, 0px));
+}
+
 .view-once-text-body article {
+  box-sizing: border-box;
   width: min(100%, 720px);
+  min-width: 0;
   min-height: min(42dvh, 280px);
   border: 1px solid rgba(114, 240, 202, .2);
   border-radius: 24px;
@@ -1302,7 +1311,7 @@ ion-modal.profile-photo-viewer-modal::part(content) {
   height: 58px;
   border-radius: 999px;
   padding: 14px;
-  color: var(--nivra-brand-2, #72f0ca);
+  color: #86efd3;
   background: rgba(24, 214, 162, .12);
   box-shadow: 0 0 0 8px rgba(24, 214, 162, .035);
 }
@@ -1323,9 +1332,9 @@ ion-modal.profile-photo-viewer-modal::part(content) {
   border-top: 1px solid rgba(255, 255, 255, .08);
   padding:
     12px
-    max(16px, env(safe-area-inset-right))
-    max(12px, env(safe-area-inset-bottom))
-    max(16px, env(safe-area-inset-left));
+    max(16px, var(--ion-safe-area-right, env(safe-area-inset-right, 0px)))
+    max(12px, var(--ion-safe-area-bottom, env(safe-area-inset-bottom, 0px)))
+    max(16px, var(--ion-safe-area-left, env(safe-area-inset-left, 0px)));
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1338,7 +1347,7 @@ ion-modal.profile-photo-viewer-modal::part(content) {
 
 .view-once-text-viewer > footer ion-icon {
   flex: 0 0 auto;
-  color: var(--nivra-brand-2, #72f0ca);
+  color: #86efd3;
 }
 
 .chat-media-viewer,
@@ -1374,9 +1383,9 @@ ion-modal.profile-photo-viewer-modal::part(content) {
   gap: 10px;
   padding:
     calc(12px + var(--ion-safe-area-top, env(safe-area-inset-top, 0px)))
-    max(14px, env(safe-area-inset-right))
+    max(14px, var(--ion-safe-area-right, env(safe-area-inset-right, 0px)))
     12px
-    max(14px, env(safe-area-inset-left));
+    max(14px, var(--ion-safe-area-left, env(safe-area-inset-left, 0px)));
   color: #fff;
   background: linear-gradient(180deg, rgba(0, 0, 0, .88), rgba(0, 0, 0, .18));
   text-shadow: 0 2px 12px rgba(0, 0, 0, .72);
@@ -1408,8 +1417,8 @@ ion-modal.profile-photo-viewer-modal::part(content) {
   --background-hover: rgba(255, 255, 255, .22);
   --color: #fff;
   --box-shadow: 0 12px 30px rgba(0, 0, 0, .36);
-  width: 42px;
-  min-height: 42px;
+  width: 44px;
+  min-height: 44px;
 }
 
 .chat-media-viewer-body,
@@ -1426,13 +1435,27 @@ ion-modal.profile-photo-viewer-modal::part(content) {
   touch-action: pan-x pan-y pinch-zoom;
 }
 
+.chat-media-viewer-body {
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  padding: 14px max(14px, var(--ion-safe-area-right, 0px))
+    max(14px, var(--ion-safe-area-bottom, 0px)) max(14px, var(--ion-safe-area-left, 0px));
+}
+
 .profile-photo-stage {
   border: 0;
   background: transparent;
 }
 
 .chat-media-viewer-body img,
-.chat-media-viewer-body video,
+.chat-media-viewer-body video {
+  width: auto;
+  height: auto;
+  display: block;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+}
+
 .profile-photo-stage img {
   width: auto;
   height: auto;
@@ -2089,6 +2112,39 @@ ion-modal.forward-modal {
   }
 
 }
+.group-history-summary-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.45rem;
+  font-size: 0.78rem;
+  font-weight: 650;
+}
+
+.profile-history-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  padding: 0.8rem;
+  border: 1px solid var(--ion-color-step-150, #d6dfdc);
+  border-radius: 0.85rem;
+  cursor: pointer;
+
+  input {
+    flex: 0 0 auto;
+    width: 1.18rem;
+    height: 1.18rem;
+    margin: 0;
+    accent-color: var(--ion-color-primary);
+  }
+
+  small {
+    display: block;
+    margin-top: 0.22rem;
+    line-height: 1.35;
+  }
+}
+
 .message-text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

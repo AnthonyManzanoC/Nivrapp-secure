@@ -123,6 +123,7 @@ export interface NivraNativePlugin {
   clearPendingPushIntent(options?: { intentId?: string }): Promise<void>;
   openNotificationSettings(options: { section: 'app' | 'calls' | 'full-screen' }): Promise<void>;
   getAppUpdateState(): Promise<NativeAppUpdateState>;
+  fetchAppUpdateFeed(): Promise<unknown>;
   downloadAppUpdate(options: AndroidRelease): Promise<NativeAppUpdateState>;
   installAppUpdate(): Promise<NativeAppUpdateState>;
   cancelAppUpdate(): Promise<NativeAppUpdateState>;
@@ -198,6 +199,7 @@ export class NativeDeviceService {
     if (Capacitor.getPlatform() === 'android') await NivraNative.openNotificationSettings({ section });
   }
   async getAppUpdateState(): Promise<NativeAppUpdateState> { return NivraNative.getAppUpdateState(); }
+  async fetchAppUpdateFeed(): Promise<unknown> { return NivraNative.fetchAppUpdateFeed(); }
   async downloadAppUpdate(release: AndroidRelease): Promise<NativeAppUpdateState> { return NivraNative.downloadAppUpdate(release); }
   async installAppUpdate(): Promise<NativeAppUpdateState> { return NivraNative.installAppUpdate(); }
   async cancelAppUpdate(): Promise<NativeAppUpdateState> { return NivraNative.cancelAppUpdate(); }

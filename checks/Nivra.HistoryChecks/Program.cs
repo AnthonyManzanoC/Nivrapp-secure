@@ -87,35 +87,19 @@ var transferModel = db.Model.FindEntityType(typeof(HistoryKeyTransfer))!;
 Check(transferModel.GetProperties().All(x => !x.Name.Contains("Private", StringComparison.OrdinalIgnoreCase)), "database request schema contains no private key material");
 Check(db.Model.FindEntityType(typeof(HistoryKeyTransferResponse))!.GetForeignKeys().Single().DeleteBehavior == DeleteBehavior.Cascade, "expired requests cascade their sealed responses");
 
-var boundaryMethod = typeof(EndpointExtensions).GetMethod("MessageSyncBoundaryPage", BindingFlags.NonPublic | BindingFlags.Static)!;
-List<MessageEnvelope> Boundary(IEnumerable<MessageEnvelope> rows, string? cursor, int take) =>
-    (List<MessageEnvelope>)boundaryMethod.Invoke(null, [rows, cursor, take])!;
+var syncPageMethod = typeof(EndpointExtensions).GetMethod("MessageSyncPage", BindingFlags.NonPublic | BindingFlags.Static)!;
+string SyncPageSql(DateTimeOffset? since, string? cursor, bool composite) =>
+    ((IQueryable<MessageEnvelope>)syncPageMethod.Invoke(null, [db.Messages.AsNoTracking(), since, cursor, 21, composite])!).ToQueryString();
+var compositeSql = SyncPageSql(now, "msg_bound", true);
+Check(compositeSql.Contains("COLLATE \"C\"") && compositeSql.Contains("LIMIT", StringComparison.Ordinal), "Npgsql applies the ordinal sync cursor and lookahead limit in SQL");
+Check(!SyncPageSql(now, "msg_bound", false).Contains("COLLATE", StringComparison.Ordinal), "legacy chat synchronization retains the timestamp-only cursor");
+Check(SyncPageSql(null, null, true).Contains("DESC", StringComparison.Ordinal), "an initial composite page reads the newest messages");
 MessageEnvelope HistoryMessage(string id, string recipient = "alice", string conversationId = "conversation") => new()
 {
     Id = id, ConversationId = conversationId, ClientMessageId = $"client-{id}",
     SenderUserId = "sender", SenderDeviceId = "sender-device", ServerReceivedAt = now,
     Recipients = [new RecipientCiphertext { UserId = recipient, DeviceId = "phone", Ciphertext = "opaque-phone-ciphertext" }]
 };
-var tiedRows = new[] { "msg_e", "msg_c", "msg_a", "msg_d", "msg_b" }.Select(id => HistoryMessage(id)).ToList();
-Check(Boundary(tiedRows, null, 2).Select(message => message.Id).SequenceEqual(["msg_a", "msg_b"]), "sync cursor orders an equal-timestamp boundary before applying its limit");
-Check(Boundary(tiedRows, "msg_b", 2).Select(message => message.Id).SequenceEqual(["msg_c", "msg_d"]), "sync cursor excludes the last returned id while retaining later equal-timestamp messages");
-Check(Boundary(tiedRows, "msg_z", 2).Count == 0 && Boundary(tiedRows, null, 0).Count == 0, "sync cursor respects exhausted boundaries and an empty limit");
-Check(Boundary([HistoryMessage("msg_A"), HistoryMessage("msg_a"), HistoryMessage("msg_B")], "msg_A", 3)
-    .Select(message => message.Id).SequenceEqual(["msg_B", "msg_a"]), "sync boundary comparisons and sorting both use ordinal id ordering");
-Check(Boundary(tiedRows.Where(message => message.Id != "msg_b"), "msg_b", 2).Select(message => message.Id)
-    .SequenceEqual(["msg_c", "msg_d"]), "a deleted cursor envelope does not skip the remaining equal-timestamp messages");
-var scanned = new List<string>();
-string? scanCursor = null;
-for (var pageNumber = 0; pageNumber < 4; pageNumber++)
-{
-    var candidates = Boundary(tiedRows, scanCursor, 3);
-    var page = candidates.Take(2).ToList();
-    scanned.AddRange(page.Select(message => message.Id));
-    if (page.Count > 0) scanCursor = page[^1].Id;
-    if (candidates.Count <= 2) break;
-}
-Check(scanned.SequenceEqual(["msg_a", "msg_b", "msg_c", "msg_d", "msg_e"]), "lookahead pagination consumes an entire timestamp tie without skipping or duplicating messages");
-
 var normalizeHistoryIds = typeof(EndpointExtensions).GetMethod("TryNormalizeMessageHistoryRecoveryIds", BindingFlags.NonPublic | BindingFlags.Static)!;
 bool NormalizeHistoryIds(List<string>? requested, out List<string> normalized)
 {

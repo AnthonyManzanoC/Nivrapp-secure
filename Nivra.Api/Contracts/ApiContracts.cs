@@ -208,7 +208,7 @@ public sealed record PatchConversationRequest(
 
 public sealed record AddConversationParticipantsRequest(List<string>? ParticipantUserIds);
 
-public sealed record UpdateConversationRolesRequest(List<string>? AdminUserIds);
+public sealed record UpdateConversationRolesRequest(List<string>? AdminUserIds, string? ParticipantUserId = null, bool? Admin = null);
 
 public sealed record ConversationResponse(
     string Id,
@@ -221,7 +221,8 @@ public sealed record ConversationResponse(
     List<ParticipantResponse> Participants,
     DateTimeOffset CreatedAt,
     DateTimeOffset UpdatedAt,
-    DateTimeOffset? LastMessageAt);
+    DateTimeOffset? LastMessageAt,
+    int GroupManagementVersion = 0);
 
 public sealed record ParticipantResponse(
     string UserId,
@@ -245,7 +246,10 @@ public sealed record SendMessageRequest(
     DateTimeOffset? ExpiresAt,
     bool DeleteAfterRead,
     string? SharedPayloadIv = null,
-    string? SharedPayloadCiphertext = null);
+    string? SharedPayloadCiphertext = null,
+    GroupHistoryShareRequest? GroupHistory = null);
+
+public sealed record GroupHistoryShareRequest(string? RecipientUserId, List<string>? SourceMessageIds);
 
 public sealed record RecipientCipherRequest(
     string UserId,

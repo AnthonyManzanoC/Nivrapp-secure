@@ -42,7 +42,8 @@ export class HistoryArchiveService implements OnDestroy {
     if (!session || this.lock.isContentLocked()) throw Error('Desbloquea Nivra para transferir el historial.');
     const userId = session.user.id, deviceId = session.device.id;
     const generation = this.auth.sessionGeneration?.();
-    return { userId, deviceId, assert: () => { const now = this.auth.session(); if (generation !== this.auth.sessionGeneration?.() || this.lock.isContentLocked() || now?.user.id !== userId || now.device.id !== deviceId) throw Error('La cuenta o el dispositivo cambió.'); } };
+    const lockCycle = this.lock.lockCycle?.();
+    return { userId, deviceId, assert: () => { const now = this.auth.session(); if (generation !== this.auth.sessionGeneration?.() || lockCycle !== this.lock.lockCycle?.() || this.lock.isContentLocked() || now?.user.id !== userId || now.device.id !== deviceId) throw Error('La cuenta o el dispositivo cambió.'); } };
   }
   private conversation(deviceId: string): string { return `history-archive-progress:${deviceId}`; }
   private id(progress: Progress): string { return `${progress.transfer.id}:${progress.sourceDeviceId}:${progress.direction}`; }

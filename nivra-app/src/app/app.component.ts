@@ -3,7 +3,7 @@ import { CallReturnBarComponent, globalCallReturnVisible } from './shared/call-r
 import { Component, DestroyRef, NgZone, computed, effect, inject, signal, untracked } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { App } from '@capacitor/app';
-import { Capacitor } from '@capacitor/core';
+import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core';
 import { Platform } from '@ionic/angular';
 import { Keyboard, KeyboardResize, KeyboardStyle } from '@capacitor/keyboard';
 import { StatusBar, Style } from '@capacitor/status-bar';
@@ -45,6 +45,7 @@ const CONTACT_ALIAS_PATTERN = /^[a-zA-Z0-9_.-]{3,32}$/;
 interface NativeStatusBarSurface {
   color: string;
   style: Style;
+  ensureVisible?: boolean;
 }
 
 @Component({
@@ -63,6 +64,7 @@ export class AppComponent {
   private systemBarEpoch = 0;
   private lastSystemBarSurface?: NativeStatusBarSurface;
   private readonly nativeSystemBars = StatusBar;
+  private readonly nativeEdgeBars = SystemBars;
   private readonly systemUi = inject(SystemUiService);
   private readonly auth = inject(AuthService);
   private readonly account = inject(AccountService);
@@ -187,7 +189,9 @@ export class AppComponent {
       const light = this.appSettings.resolvedLightTheme();
       const url = this.currentUrl();
       const activeCall = Boolean(this.calls.activeCall());
-      const surface = this.systemUi.darkOverlay() ? { color: '#070b0d', style: Style.Dark } : this.nativeStatusBarSurface(light, url, activeCall);
+      const surface = this.systemUi.darkOverlay()
+        ? { color: '#070b0d', style: Style.Dark, ensureVisible: true }
+        : this.nativeStatusBarSurface(light, url, activeCall);
       untracked(() => void this.configureNativeSystemBars(surface));
     });
 
@@ -281,13 +285,21 @@ export class AppComponent {
     this.systemBarUpdate = this.systemBarUpdate.catch(() => undefined).then(async () => {
       try {
         if (epoch !== this.systemBarEpoch) return;
-        await this.nativeSystemBars.setOverlaysWebView({ overlay: false });
+        await this.nativeSystemBars.setOverlaysWebView({ overlay: false }).catch(() => undefined);
         if (epoch !== this.systemBarEpoch) return;
-        await this.nativeSystemBars.setStyle({ style: surface.style });
+        await this.nativeSystemBars.setStyle({ style: surface.style }).catch(() => undefined);
         if (epoch !== this.systemBarEpoch) return;
-        await this.nativeSystemBars.setBackgroundColor({ color: surface.color });
+        await this.nativeSystemBars.setBackgroundColor({ color: surface.color }).catch(() => undefined);
         if (epoch !== this.systemBarEpoch) return;
+        if (Capacitor.getPlatform() === 'android') {
+          // Capacitor reapplies its own edge-to-edge icon style when Android rotates.
+          await this.nativeEdgeBars.setStyle({
+            style: surface.style === Style.Light ? SystemBarsStyle.Light : SystemBarsStyle.Dark,
+          }).catch(() => undefined);
+          if (epoch !== this.systemBarEpoch) return;
+        }
         await this.nativeDevice?.configureNavigationBar?.(surface.color, surface.style === Style.Light);
+        if (surface.ensureVisible && epoch === this.systemBarEpoch) await this.nativeSystemBars.show();
       } catch {
         // Web, desktop, and some Android shells do not expose the native status bar bridge.
       }

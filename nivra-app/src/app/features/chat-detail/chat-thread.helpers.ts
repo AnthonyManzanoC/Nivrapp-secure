@@ -10,7 +10,7 @@ export function threadHistoryForDevice(messages: ChatMessageVm[], deviceCreatedA
 }
 
 export function canQuoteMessage(message: ChatMessageVm | null, now = Date.now()): boolean {
-  return Boolean(message && !message.decryptError && !message.deleteAfterRead && !message.payload['viewOnceOpened']
+  return Boolean(message && !message.decryptError && !message.deleteAfterRead && !message.payload['viewOnceOpened'] && !message.payload.groupHistorySummary
     && (!message.expiresAt || Date.parse(message.expiresAt) > now));
 }
 

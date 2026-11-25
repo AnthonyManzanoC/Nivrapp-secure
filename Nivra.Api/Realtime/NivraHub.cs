@@ -434,22 +434,22 @@ public sealed class NivraHub(
 
     public async Task Typing(string conversationId, string encryptedState)
     {
-        if (!TryGetCurrentUser(out var currentUser) || !await store.IsActiveParticipantAsync(conversationId, currentUser.UserId, Context.ConnectionAborted))
-        {
-            return;
-        }
-        if (string.IsNullOrWhiteSpace(encryptedState) || encryptedState.Length > 262_144)
+        if (!TryGetCurrentUser(out var currentUser) || string.IsNullOrWhiteSpace(encryptedState) || encryptedState.Length > 262_144)
         {
             return;
         }
 
-        await Clients.Group(GroupsFor.Conversation(conversationId)).SendAsync("conversation.typing", new
+        var participants = await db.Conversations.Where(conversation => conversation.Id == conversationId)
+            .SelectMany(conversation => conversation.Participants.Where(member => member.RemovedAt == null).Select(member => member.UserId))
+            .ToListAsync(Context.ConnectionAborted);
+        if (!participants.Contains(currentUser.UserId, StringComparer.Ordinal)) return;
+        await Clients.Groups(participants.Where(userId => userId != currentUser.UserId).Select(GroupsFor.User).ToArray()).SendAsync("conversation.typing", new
         {
             conversationId,
             senderUserId = currentUser.UserId,
             senderDeviceId = currentUser.DeviceId,
             encryptedState
-        });
+        }, Context.ConnectionAborted);
     }
 
     public async Task JoinConversation(string conversationId)

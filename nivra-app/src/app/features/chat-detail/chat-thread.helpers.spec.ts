@@ -61,6 +61,7 @@ describe('Chat thread interactions', () => {
   });
   it('never quotes a view-once message or one that expired after selecting reply', () => {
     expect(canQuoteMessage(vm('once', 'secreto', { deleteAfterRead: true }))).toBeFalse();
+    expect(canQuoteMessage(vm('summary', '', { payload: { type: 'text', text: 'resumen', groupHistorySummary: true } }))).toBeFalse();
     expect(canQuoteMessage(vm('bad', 'secreto', { decryptError: true }))).toBeFalse();
     expect(canQuoteMessage(vm('old', 'secreto', { expiresAt: '2026-10-06T00:00:00Z' }), Date.parse('2026-10-07T00:00:00Z'))).toBeFalse();
     expect(canQuoteMessage(vm('good', 'hola'))).toBeTrue();

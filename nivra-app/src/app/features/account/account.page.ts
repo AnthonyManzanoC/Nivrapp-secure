@@ -41,7 +41,7 @@ import { identityDisplayName, isLegacyPrivateAlias, isNivraIdAccount, suggestNiv
 import { RecoveryEmailComponent, RecoveryEmailState } from '../../shared/recovery-email.component';
 import { LauncherAppearanceComponent } from '../../shared/launcher-appearance.component';
 import { AccountSwitcherComponent } from '../../shared/account-switcher.component';
-import { NIVRA_UPDATE_URL } from '../../core/release';
+import { NIVRA_PUBLIC_SITE_URL } from '../../core/release';
 import { AccountNavigationComponent, type AccountSectionId } from './account-navigation.component';
 import { AccountIdentityRecoveryComponent } from './account-identity-recovery.component';
 import { DeviceAuthorityComponent } from './device-authority.component';
@@ -876,7 +876,7 @@ export class AccountPage implements OnInit, AfterViewInit, OnDestroy {
 
   shareUrl(): string {
     const alias = this.auth.session()?.user?.alias || '';
-    return `${NIVRA_UPDATE_URL}/contact?alias=${encodeURIComponent(alias)}`;
+    return `${NIVRA_PUBLIC_SITE_URL}/contact?alias=${encodeURIComponent(alias)}`;
   }
 
   shareMessage(): string {

@@ -38,6 +38,7 @@ import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
 import android.util.Base64;
+import android.view.View;
 import android.view.Window;
 import android.view.WindowManager;
 import android.graphics.Color;
@@ -74,6 +75,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.function.BooleanSupplier;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.security.SecureRandom;
@@ -276,6 +278,7 @@ public class NivraNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    @PluginMethod public void fetchAppUpdateFeed(PluginCall call) { appUpdateManager.fetchFeed(call); }
     @PluginMethod public void downloadAppUpdate(PluginCall call) { appUpdateManager.startDownload(call.getData(), call); }
     @PluginMethod public void installAppUpdate(PluginCall call) { appUpdateManager.install(call); }
     @PluginMethod public void cancelAppUpdate(PluginCall call) { appUpdateManager.cancel(call); }
@@ -356,7 +359,14 @@ public class NivraNativePlugin extends Plugin {
         boolean darkIcons = call.getBoolean("darkIcons", false);
         activity.runOnUiThread(() -> {
             Window window = activity.getWindow();
-            window.setNavigationBarColor(Color.parseColor(color));
+            int surface = Color.parseColor(color);
+            window.setNavigationBarColor(surface);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.VANILLA_ICE_CREAM
+                && getBridge().getWebView().getParent() instanceof View container) {
+                // Older WebViews are inset by Capacitor. Paint the exposed parent
+                // behind transparent bars and side cutouts with the same surface.
+                container.setBackgroundColor(surface);
+            }
             if (Build.VERSION.SDK_INT >= 29) window.setNavigationBarContrastEnforced(true);
             var controller = WindowCompat.getInsetsController(window, window.getDecorView());
             controller.setAppearanceLightNavigationBars(darkIcons);
@@ -513,15 +523,20 @@ public class NivraNativePlugin extends Plugin {
         result.put("model", Build.MODEL);
         NivraNativePushRegistration.diagnostics(getContext(), result);
         NotificationManager notificationManager = getContext().getSystemService(NotificationManager.class);
-        result.put("notificationsEnabled", NotificationManagerCompat.from(getContext()).areNotificationsEnabled());
+        result.put("notificationsEnabled", readNotificationCapability(
+            () -> NotificationManagerCompat.from(getContext()).areNotificationsEnabled()));
         result.put("fullScreenIntentAllowed", Build.VERSION.SDK_INT < 34 ||
-            (notificationManager != null && notificationManager.canUseFullScreenIntent()));
+            (notificationManager != null && readNotificationCapability(notificationManager::canUseFullScreenIntent)));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && notificationManager != null) {
-            NotificationChannel messages = notificationManager.getNotificationChannel("nivra_messages");
-            result.put("messageChannelEnabled", messages == null || messages.getImportance() != NotificationManager.IMPORTANCE_NONE);
-            NotificationChannel channel = notificationManager.getNotificationChannel(CHANNEL_CALLS);
-            result.put("incomingCallChannelEnabled", channel == null || channel.getImportance() != NotificationManager.IMPORTANCE_NONE);
-            result.put("incomingCallChannelAudible", channel == null || channel.getSound() != null);
+            try {
+                NotificationChannel messages = notificationManager.getNotificationChannel("nivra_messages");
+                result.put("messageChannelEnabled", messages == null || messages.getImportance() != NotificationManager.IMPORTANCE_NONE);
+                NotificationChannel channel = notificationManager.getNotificationChannel(CHANNEL_CALLS);
+                result.put("incomingCallChannelEnabled", channel == null || channel.getImportance() != NotificationManager.IMPORTANCE_NONE);
+                result.put("incomingCallChannelAudible", channel == null || channel.getSound() != null);
+            } catch (RuntimeException ignored) {
+                // Channel information can be unavailable while Android updates the package.
+            }
         }
         try {
             PackageInfo info = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), 0);
@@ -554,6 +569,15 @@ public class NivraNativePlugin extends Plugin {
             }
         }
         call.resolve(result);
+    }
+
+    static boolean readNotificationCapability(BooleanSupplier query) {
+        try {
+            return query.getAsBoolean();
+        } catch (RuntimeException ignored) {
+            // A denied or temporarily unavailable diagnostic must not stop the Capacitor process.
+            return false;
+        }
     }
 
     @PluginMethod

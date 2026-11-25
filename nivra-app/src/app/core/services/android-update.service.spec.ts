@@ -1,10 +1,11 @@
 import { TestBed, fakeAsync, flushMicrotasks, tick } from '@angular/core/testing';
-import { ANDROID_UPDATE_RUNTIME, AndroidUpdateService, androidReleaseFromFeed, validAndroidRelease, validUpdateFeedResponseUrl } from './android-update.service';
+import { ANDROID_UPDATE_RUNTIME, AndroidUpdateService, androidReleaseFromFeed, validAndroidRelease } from './android-update.service';
 import { NativeDeviceService, type AndroidRelease } from './native-device.service';
 
 describe('AndroidUpdateService', () => {
   const release: AndroidRelease = { version: '4.1.0', versionCode: 28, sha256: 'a'.repeat(64), size: 80000000,
     url: 'https://nivrapp-secure.vercel.app/downloads/Nivra-4.1.0-debug.apk' };
+  const directRelease = { ...release, url: 'https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v4.1.0/Nivra-4.1.0-debug.apk' };
   const feed = { schemaVersion: 1, version: release.version, publishedAt: '2026-10-21T12:00:00.000Z', android: release,
     windows: { version: '4.1.0', url: 'https://nivrapp-secure.vercel.app/downloads/Nivra-4.1.0-Setup.exe', sha256: 'b'.repeat(64), size: 100000000 } };
   let fetchRelease: jasmine.Spy;
@@ -31,26 +32,27 @@ describe('AndroidUpdateService', () => {
     expect(validAndroidRelease(release, 27)).toBeTrue();
     expect(validAndroidRelease(release, 28)).toBeFalse();
     for (const patch of [{ url: release.url + '?redirect=elsewhere' }, { url: 'http://localhost/app.apk' },
-      { sha256: 'xyz' }, { size: 300000000 }, { versionCode: 28.1 }, { version: '../4.1.0' },
+      { sha256: 'xyz' }, { size: 300000000 }, { versionCode: 28.1 }, { versionCode: 2_147_483_648 }, { version: '../4.1.0' },
       { url: 'https://nivrapp-secure.vercel.app.evil.test/downloads/Nivra-4.1.0-debug.apk' }]) {
       expect(validAndroidRelease({ ...release, ...patch }, 27)).toBeFalse();
     }
   });
-  it('validates the permanent feed envelope and never passes unrelated fields to native code', () => {
-    expect(androidReleaseFromFeed({ ...feed, android: { ...release, extra: 'discard' } })).toEqual(release);
+  it('validates the permanent feed envelope and maps the legacy publisher asset to the exact GitHub download', () => {
+    expect(androidReleaseFromFeed({ ...feed, android: { ...release, extra: 'discard' } })).toEqual(directRelease);
+    expect(androidReleaseFromFeed({ ...feed, android: directRelease })).toEqual(directRelease);
     for (const patch of [{ schemaVersion: 2 }, { version: '4.2.0' }, { publishedAt: 'yesterday' }, { android: null }]) {
       expect(androidReleaseFromFeed({ ...feed, ...patch })).toBeNull();
     }
     expect(androidReleaseFromFeed(release)).toBeNull();
     const future = { ...release, version: '9.0.0', versionCode: 90, url: 'https://nivrapp-secure.vercel.app/downloads/Nivra-9.0.0-debug.apk' };
-    expect(androidReleaseFromFeed({ ...feed, version: future.version, android: future })).toEqual(future);
+    expect(androidReleaseFromFeed({ ...feed, version: future.version, android: future })).toEqual({ ...future,
+      url: 'https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v9.0.0/Nivra-9.0.0-debug.apk' });
   });
-  it('accepts only the exact public feed as the final feed response', () => {
-    expect(validUpdateFeedResponseUrl('https://nivrapp-secure.vercel.app/updates/latest.json')).toBeTrue();
-    for (const url of ['https://nivrapp-secure.vercel.app/updates/other.json', 'https://nivrapp-secure.vercel.app/updates/latest.json?redirect=x',
-      'https://release-assets.githubusercontent.com/asset?signature=signed', 'https://release-assets.githubusercontent.com.evil.test/asset',
-      'https://user:pass@objects.githubusercontent.com/asset', 'http://objects.githubusercontent.com/asset']) {
-      expect(validUpdateFeedResponseUrl(url)).toBeFalse();
+  it('rejects changed GitHub repository, tag, query or an opaque CDN URL in publisher metadata', () => {
+    for (const url of [directRelease.url.replace('AnthonyManzanoC', 'someone-else'), directRelease.url.replace('v4.1.0', 'v4.2.0'),
+      directRelease.url + '?redirect=x', directRelease.url.replace('https://github.com', 'https://github.com.evil.test'),
+      'https://release-assets.githubusercontent.com/asset?signature=signed']) {
+      expect(androidReleaseFromFeed({ ...feed, android: { ...release, url } })).toBeNull();
     }
   });
   it('checks every six hours, coalesces checks and allows a manual check', async () => {
@@ -83,7 +85,7 @@ describe('AndroidUpdateService', () => {
     updates.safe.set(true);
     expect(!!updates.show()).toBeTrue();
     await updates.download();
-    expect(native.downloadAppUpdate).toHaveBeenCalledWith(release);
+    expect(native.downloadAppUpdate).toHaveBeenCalledWith(directRelease);
     updates.state.set({ phase: 'ready', progress: 100 });
     updates.safe.set(false); await updates.install();
     expect(native.installAppUpdate).not.toHaveBeenCalled();
@@ -127,7 +129,7 @@ describe('AndroidUpdateService', () => {
     updates.state.set({ phase: 'ready', progress: 100 });
     await updates.check(true);
     expect(fetchRelease).toHaveBeenCalledTimes(1);
-    expect(updates.release()).toEqual(release);
+    expect(updates.release()).toEqual(directRelease);
   });
 
   it('offers a later release even after an earlier release was dismissed in the same session', async () => {

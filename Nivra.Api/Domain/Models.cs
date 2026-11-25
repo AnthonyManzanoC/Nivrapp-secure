@@ -274,7 +274,7 @@ public sealed class ConversationParticipant
     public ParticipantRole Role { get; set; }
     public bool CanInvite { get; set; }
     public bool CanChangePrivacy { get; set; }
-    public DateTimeOffset JoinedAt { get; init; }
+    public DateTimeOffset JoinedAt { get; set; }
     public DateTimeOffset? RemovedAt { get; set; }
 }
 

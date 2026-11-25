@@ -6,8 +6,9 @@ const fsp = require('node:fs/promises');
 const path = require('node:path');
 
 const UPDATE_ORIGIN = 'https://nivrapp-secure.vercel.app';
-const UPDATE_FEED_URL = `${UPDATE_ORIGIN}/updates/latest.json`;
 const RELEASE_PATH = '/AnthonyManzanoC/Nivrapp-secure/releases/';
+const RELEASE_ORIGIN = 'https://github.com';
+const UPDATE_FEED_URL = `${RELEASE_ORIGIN}${RELEASE_PATH}latest/download/latest.json`;
 const VERSION = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const MAX_MANIFEST_BYTES = 16384;
 const MAX_INSTALLER_BYTES = 512 * 1024 * 1024;
@@ -44,7 +45,7 @@ function allowedUpdateRedirect(value, release = null) {
   if (url.hostname === 'release-assets.githubusercontent.com') {
     return /^\/github-production-release-asset-[a-z0-9]+\/[^/]+\//i.test(url.pathname);
   }
-  if (url.origin !== 'https://github.com' || url.search) return false;
+  if (url.origin !== RELEASE_ORIGIN || url.search) return false;
   if (release) {
     return url.pathname === `${RELEASE_PATH}download/v${release.version}/Nivra-${release.version}-Setup.exe`;
   }
@@ -240,7 +241,8 @@ function createUpdateManager(options) {
     let response = null, file = null;
     emit('downloading');
     try {
-      response = await request(release.url, {
+      const downloadUrl = `${RELEASE_ORIGIN}${RELEASE_PATH}download/v${release.version}/Nivra-${release.version}-Setup.exe`;
+      response = await request(downloadUrl, {
         signal: AbortSignal.timeout(10 * 60 * 1000), allowRedirect: target => allowedUpdateRedirect(target, release),
       });
       if (response.status !== 200 || !response.body) throw fail('UPDATE_NETWORK');

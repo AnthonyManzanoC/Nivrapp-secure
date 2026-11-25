@@ -61,6 +61,7 @@ public static partial class EndpointExtensions
                     ? Results.Ok(await CommunityResponse(db, prior, user.UserId, ct)) : Results.NotFound();
                 if (await db.Communities.CountAsync(row => db.Conversations.Any(c => c.Id == row.Id && c.CreatedByUserId == user.UserId), ct) >= 20)
                     return Error("community_limit", "Puedes crear hasta 20 comunidades.", 409);
+                await GroupConversationPolicy.LockRowsAsync(db, groupIds, ct);
                 var groups = await db.Conversations.Include(c => c.Participants).Where(c => groupIds.Contains(c.Id)).ToListAsync(ct);
                 if (groups.Count != groupIds.Length || groups.Any(c => !CommunityPolicy.IsAdmin(c, user.UserId)) ||
                     await db.CommunityGroups.AnyAsync(x => groupIds.Contains(x.ConversationId), ct) ||
@@ -81,8 +82,8 @@ public static partial class EndpointExtensions
                 db.CommunityGroups.AddRange(groups.Select(c => new CommunityGroupRecord { CommunityId = row.Id, ConversationId = c.Id, LinkedAt = now }));
                 try { await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); }
                 catch (DbUpdateException) { return Error("community_conflict", "Uno de los grupos cambió. Actualiza y vuelve a intentarlo.", 409); }
-                await CommunityNotify(parent, store, hub, ct);
-                await CommunityAddedPush(push,row.Id,members.Where(id=>id!=user.UserId),ct);
+                await NotifyCommittedGroupAsync(http, token => Task.WhenAll(CommunityNotify(parent, store, hub, token),
+                    CommunityAddedPush(push, row.Id, members.Where(id => id != user.UserId), token)));
                 return Results.Created("/communities/" + row.Id, await CommunityResponse(db, row, user.UserId, ct));
             });
         });
@@ -93,6 +94,7 @@ public static partial class EndpointExtensions
             return await CallCoordination.RunAsync<IResult>(db, async () =>
             {
                 await using var tx = await CallCoordination.LockAsync(db, "community:" + id, ct);
+                await GroupConversationPolicy.LockRowsAsync(db, [id, request.ConversationId], ct);
                 var row = await db.Communities.FirstOrDefaultAsync(x => x.Id == id, ct);
                 var parent = await CommunityConversation(db, id, ct);
                 var child = await CommunityConversation(db, request.ConversationId, ct);
@@ -111,8 +113,8 @@ public static partial class EndpointExtensions
                 row.UpdatedAt = now; parent.UpdatedAt = now;
                 try { await db.SaveChangesAsync(ct); await tx.CommitAsync(ct); }
                 catch (DbUpdateException) { return Error("community_conflict", "El grupo se vinculó en otro dispositivo. Actualiza la lista.", 409); }
-                await CommunityNotify(parent, store, hub, ct);
-                await CommunityAddedPush(push,row.Id,parent.Participants.Where(p=>p.RemovedAt==null&&!known.Contains(p.UserId)).Select(p=>p.UserId),ct);
+                await NotifyCommittedGroupAsync(http, token => Task.WhenAll(CommunityNotify(parent, store, hub, token),
+                    CommunityAddedPush(push, row.Id, parent.Participants.Where(p => p.RemovedAt == null && !known.Contains(p.UserId)).Select(p => p.UserId), token)));
                 return Results.Ok(await CommunityResponse(db, row, user.UserId, ct));
             });
         });
@@ -125,11 +127,13 @@ public static partial class EndpointExtensions
             return await CallCoordination.RunAsync<IResult>(db, async () =>
             {
                 await using var tx=await CallCoordination.LockAsync(db,"community:"+id,ct);
+                await GroupConversationPolicy.LockRowAsync(db, id, ct);
                 var row=await db.Communities.FirstOrDefaultAsync(x=>x.Id==id,ct);var parent=await CommunityConversation(db,id,ct);
                 if(row==null || !CommunityPolicy.IsAdmin(parent,user.UserId))return Results.NotFound();
                 parent!.GroupName=name;parent.TitleCiphertext=Convert.ToBase64String(Encoding.UTF8.GetBytes(name));parent.GroupAvatar=request.Photo;
                 row.Description=request.Description?.Trim() ?? "";row.UpdatedAt=clock.GetUtcNow();parent.UpdatedAt=row.UpdatedAt;
-                await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);await CommunityNotify(parent,store,hub,ct);
+                await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);
+                await NotifyCommittedGroupAsync(http, token => CommunityNotify(parent, store, hub, token));
                 return Results.Ok(await CommunityResponse(db,row,user.UserId,ct));
             });
         });
@@ -141,6 +145,7 @@ public static partial class EndpointExtensions
             return await CallCoordination.RunAsync<IResult>(db,async()=>
             {
                 await using var tx=await CallCoordination.LockAsync(db,"community:"+id,ct);
+                await GroupConversationPolicy.LockRowAsync(db, id, ct);
                 var row=await db.Communities.FirstOrDefaultAsync(x=>x.Id==id,ct);var parent=await CommunityConversation(db,id,ct);
                 if(row==null||!CommunityPolicy.IsAdmin(parent,user.UserId))return Results.NotFound();
                 var operationId=CommunityOperationId(user.UserId,"group:"+id,request.RequestId);
@@ -156,7 +161,11 @@ public static partial class EndpointExtensions
                     CanInvite=member==user.UserId,CanChangePrivacy=member==user.UserId,JoinedAt=now});
                 db.Conversations.Add(child);db.CommunityGroups.Add(new CommunityGroupRecord {CommunityId=id,ConversationId=child.Id,LinkedAt=now});
                 row.UpdatedAt=now;await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);
-                await CommunityNotify(child,store,hub,ct);await CommunityNotify(parent!,store,hub,ct);
+                await NotifyCommittedGroupAsync(http, async token =>
+                {
+                    await CommunityNotify(child, store, hub, token);
+                    await CommunityNotify(parent!, store, hub, token);
+                });
                 return Results.Ok(await CommunityResponse(db,row,user.UserId,ct));
             });
         });
@@ -167,10 +176,13 @@ public static partial class EndpointExtensions
             return await CallCoordination.RunAsync<IResult>(db,async()=>
             {
                 await using var tx=await CallCoordination.LockAsync(db,"community:"+id,ct);
+                await GroupConversationPolicy.LockRowsAsync(db, [id, groupId], ct);
                 var parent=await CommunityConversation(db,id,ct);
                 if(!CommunityPolicy.IsAdmin(parent,user.UserId))return Results.NotFound();
                 await db.CommunityGroups.Where(x=>x.CommunityId==id&&x.ConversationId==groupId).ExecuteDeleteAsync(ct);
-                await tx.CommitAsync(ct);await CommunityNotify(parent!,store,hub,ct);return Results.NoContent();
+                await tx.CommitAsync(ct);
+                await NotifyCommittedGroupAsync(http, token => CommunityNotify(parent!, store, hub, token));
+                return Results.NoContent();
             });
         });
         var requestGroupJoin = async Task<IResult> (string id, string groupId, HttpContext http, NivraDbContext db,
@@ -180,11 +192,10 @@ public static partial class EndpointExtensions
             return await CallCoordination.RunAsync<IResult>(db, async () =>
             {
                 await using var tx = await CallCoordination.LockAsync(db, "community:" + id, ct);
+                await GroupConversationPolicy.LockRowsAsync(db, [id, groupId], ct);
                 var parent = await CommunityConversation(db, id, ct);
                 if (!CommunityPolicy.IsMember(parent, user.UserId)
                     || !await db.CommunityGroups.AnyAsync(x => x.CommunityId == id && x.ConversationId == groupId, ct)) return Results.NotFound();
-                // Serialize with invite redemption as well as joins from other API instances.
-                await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM public.conversations WHERE \"Id\" = {groupId} FOR UPDATE", ct);
                 var child = await CommunityConversation(db, groupId, ct);
                 if (!CommunityPolicy.CanJoin(parent, child, user.UserId)) return Results.NotFound();
                 if (CommunityPolicy.IsMember(child, user.UserId)) return Results.Ok(new { conversationId = groupId });
@@ -205,7 +216,7 @@ public static partial class EndpointExtensions
                 await db.SaveChangesAsync(ct);
                 await tx.CommitAsync(ct);
                 var reviewers = CommunityReviewRecipients(parent!, child, user.UserId);
-                await NotifyUsers(hub, reviewers, "community.changed", new { communityId = id, joinRequestsChanged = true });
+                await NotifyCommittedGroupAsync(http, token => NotifyGroupUsersAsync(hub, reviewers, "community.changed", new { communityId = id, joinRequestsChanged = true }, token));
                 return Results.Accepted(value: new { pending = true });
             });
         };
@@ -238,10 +249,10 @@ public static partial class EndpointExtensions
             return await CallCoordination.RunAsync<IResult>(db, async () =>
             {
                 await using var tx = await CallCoordination.LockAsync(db, "community:" + id, ct);
+                await GroupConversationPolicy.LockRowsAsync(db, [id, groupId], ct);
                 var parent = await CommunityConversation(db, id, ct);
                 if (!CommunityPolicy.IsMember(parent, user.UserId) || !CommunityPolicy.IsMember(parent, requesterId)
                     || !await db.CommunityGroups.AnyAsync(x => x.CommunityId == id && x.ConversationId == groupId, ct)) return Results.NotFound();
-                await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM public.conversations WHERE \"Id\" = {groupId} FOR UPDATE", ct);
                 var child = await CommunityConversation(db, groupId, ct);
                 if (!CommunityPolicy.IsAdmin(child, user.UserId) || !CommunityPolicy.CanJoin(parent, child, requesterId)) return Results.NotFound();
                 var pending = await db.CommunityGroupRequests.FindAsync([id, groupId, requesterId], ct);
@@ -263,9 +274,10 @@ public static partial class EndpointExtensions
                 else pending.DeclinedAt = now;
                 await db.SaveChangesAsync(ct);
                 await tx.CommitAsync(ct);
-                if (accept) await CommunityNotify(child!, store, hub, ct);
                 var reviewers = CommunityReviewRecipients(parent!, child!, requesterId);
-                await NotifyUsers(hub, reviewers, "community.changed", new { communityId = id, joinRequestsChanged = true });
+                await NotifyCommittedGroupAsync(http, token => Task.WhenAll(
+                    accept ? CommunityNotify(child!, store, hub, token) : Task.CompletedTask,
+                    NotifyGroupUsersAsync(hub, reviewers, "community.changed", new { communityId = id, joinRequestsChanged = true }, token)));
                 return Results.NoContent();
             });
         });
@@ -273,45 +285,43 @@ public static partial class EndpointExtensions
             TimeProvider clock, IHubContext<NivraHub> hub, CancellationToken ct) =>
         {
             var user=http.GetCurrentUser();if(user==null)return Results.Unauthorized();
-            return await LeaveCommunityAsync(id,user.UserId,db,store,clock,hub,ct);
+            return await LeaveCommunityAsync(id,user.UserId,db,store,clock,hub,http,ct);
         });
     }
 
     private static async Task<IResult> LeaveCommunityAsync(string id,string userId,NivraDbContext db,INivraStore store,
-        TimeProvider clock,IHubContext<NivraHub> hub,CancellationToken ct)
+        TimeProvider clock,IHubContext<NivraHub> hub,HttpContext http,CancellationToken ct)
     {
         return await CallCoordination.RunAsync<IResult>(db,async()=>
         {
             await using var tx=await CallCoordination.LockAsync(db,"community:"+id,ct);
             if(!await db.Communities.AnyAsync(x=>x.Id==id,ct))return Results.NotFound();
-            var parent=await CommunityConversation(db,id,ct);
-            if(!CommunityPolicy.IsMember(parent,userId))return Results.NotFound();
             var ids=await db.CommunityGroups.Where(x=>x.CommunityId==id).Select(x=>x.ConversationId).ToListAsync(ct);
             ids.Add(id);
-            // A consistent row order also serializes with ordinary group invitation acceptance.
-            foreach(var key in ids.Order(StringComparer.Ordinal))
-                await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM public.conversations WHERE \"Id\" = {key} FOR UPDATE",ct);
-            db.ChangeTracker.Clear();
-            await db.CommunityGroupRequests.Where(request => request.CommunityId == id && request.UserId == userId).ExecuteDeleteAsync(ct);
+            await GroupConversationPolicy.LockRowsAsync(db, ids, ct);
             var groups=await db.Conversations.Include(c=>c.Participants).Where(c=>ids.Contains(c.Id)).ToListAsync(ct);
+            var ownMembership = groups.FirstOrDefault(group => group.Id == id)?.Participants.FirstOrDefault(member => member.UserId == userId);
+            if (ownMembership is null) return Results.NotFound();
+            if (ownMembership.RemovedAt is not null) return Results.NoContent();
+            await db.CommunityGroupRequests.Where(request => request.CommunityId == id && request.UserId == userId).ExecuteDeleteAsync(ct);
             var changed=new List<ConversationRecord>();var now=clock.GetUtcNow();
             foreach(var group in groups)
             {
                 var member=group.Participants.FirstOrDefault(p=>p.UserId==userId&&p.RemovedAt==null);
                 if(member==null)continue;
-                member.RemovedAt=now;member.Role=ParticipantRole.Member;member.CanInvite=false;member.CanChangePrivacy=false;
-                var remaining=group.Participants.Where(p=>p.RemovedAt==null).OrderBy(p=>p.JoinedAt).ToList();
-                if(remaining.Count>0&&!remaining.Any(p=>p.Role is ParticipantRole.Owner or ParticipantRole.Admin))
-                {remaining[0].Role=ParticipantRole.Owner;remaining[0].CanInvite=true;remaining[0].CanChangePrivacy=true;}
-                group.UpdatedAt=now;changed.Add(group);
+                GroupConversationPolicy.RemoveParticipant(group, member, now);
+                changed.Add(group);
             }
             await db.SaveChangesAsync(ct);await tx.CommitAsync(ct);
-            foreach(var group in changed)
+            await NotifyCommittedGroupAsync(http, async token =>
             {
-                await CommunityNotify(group,store,hub,ct);
-                await NotifyUsers(hub,[userId],"conversation.removed",new {conversationId=group.Id});
-            }
-            await NotifyUsers(hub,[userId],"community.changed",new {communityId=id});
+                foreach (var group in changed)
+                {
+                    await NotifyGroupUsersAsync(hub, [userId], "conversation.removed", new { conversationId = group.Id, removedAt = now }, token);
+                    await CommunityNotify(group, store, hub, token);
+                }
+                await NotifyGroupUsersAsync(hub, [userId], "community.changed", new { communityId = id }, token);
+            });
             return Results.NoContent();
         });
     }
@@ -356,9 +366,8 @@ public static partial class EndpointExtensions
 
     private static async Task CommunityNotify(ConversationRecord conversation, INivraStore store, IHubContext<NivraHub> hub, CancellationToken ct)
     {
-        var ids = conversation.Participants.Where(p => p.RemovedAt == null).Select(p => p.UserId).ToArray();
-        await NotifyUsers(hub, ids, "conversation.created", await ToConversationResponseAsync(conversation, store, ct));
-        await NotifyUsers(hub, ids, "community.changed", new { communityId = conversation.Id });
+        await NotifyGroupMembersAsync(hub, conversation, "conversation.created", await ToConversationResponseAsync(conversation, store, ct), ct);
+        await NotifyGroupMembersAsync(hub, conversation, "community.changed", new { communityId = conversation.Id }, ct);
     }
     private static async Task CommunityAddedPush(PushNotificationService push,string id,IEnumerable<string> members,CancellationToken ct)
     {

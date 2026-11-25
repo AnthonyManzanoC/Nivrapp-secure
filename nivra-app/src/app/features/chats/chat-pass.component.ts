@@ -8,11 +8,11 @@ import { AuthService } from '../../core/services/auth.service';
 import { NativeDeviceService } from '../../core/services/native-device.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { TranslatePipe } from '../../core/pipes/translate.pipe';
-import { NIVRA_UPDATE_URL } from '../../core/release';
+import { NIVRA_PUBLIC_SITE_URL } from '../../core/release';
 
 export function chatPassUrl(alias: string): string {
   // A native WebView origin (https://localhost) cannot be opened by a contact.
-  return `${NIVRA_UPDATE_URL}/contact?alias=${encodeURIComponent(alias)}`;
+  return `${NIVRA_PUBLIC_SITE_URL}/contact?alias=${encodeURIComponent(alias)}`;
 }
 
 @Component({

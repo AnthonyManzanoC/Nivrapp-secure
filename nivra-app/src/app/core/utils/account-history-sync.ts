@@ -17,6 +17,10 @@ export function historyRootApprovalStatement(context:HistoryRootApprovalContext,
     context.sourceLegacy,context.targetLegacy,approval.sourceHybrid,approval.targetHybrid,context.expiresAt]);
 }
 export const ACCOUNT_HISTORY_MAX_BYTES = 1024 * 1024;
+
+/** A local row that cannot be copied, even if the operation is retried. */
+export class AccountHistoryUnsupportedMessage extends Error {}
+
 const text = new TextEncoder();
 const identifier = /^[a-zA-Z0-9_-]{1,128}$/;
 export function accountHistoryContext(userId: string, row: AccountHistoryEnvelope): Uint8Array<ArrayBuffer> {
@@ -42,13 +46,20 @@ async function historyKey(secret: AccountIdentitySecret): Promise<CryptoKey> {
   } finally { entropy.fill(0); }
 }
 export async function sealAccountHistory(secret: AccountIdentitySecret, message: ChatMessageVm): Promise<AccountHistoryEnvelope> {
-  if (message.decryptError || message.deleteAfterRead || !message.payload || message.payload.type === 'view-once-opened' || message.expiresAt && Date.parse(message.expiresAt) <= Date.now()) throw Error('Este mensaje no puede guardarse en el historial.');
-  const row: AccountHistoryEnvelope = { v: 1, rootKey: secret.rootKey, messageId: message.id, clientMessageId: message.clientMessageId ?? message.id,
-    conversationId: message.conversationId, senderUserId: message.senderUserId, senderDeviceId: message.senderDeviceId ?? '', at: new Date(message.at).toISOString(),
+  const receivedAt = Date.parse(message.at);
+  const clientMessageId = message.clientMessageId ?? message.id;
+  if (message.decryptError || message.deleteAfterRead || !message.payload || message.payload.type === 'view-once-opened'
+    || message.expiresAt && Date.parse(message.expiresAt) <= Date.now() || !Number.isFinite(receivedAt)
+    || ![message.id, message.conversationId, message.senderUserId, message.senderDeviceId].every(value => typeof value === 'string' && identifier.test(value)) || message.id.length > 64
+    || typeof clientMessageId !== 'string' || !clientMessageId.trim() || clientMessageId.length > 128) {
+    throw new AccountHistoryUnsupportedMessage('Este mensaje no puede guardarse en el historial.');
+  }
+  const row: AccountHistoryEnvelope = { v: 1, rootKey: secret.rootKey, messageId: message.id, clientMessageId,
+    conversationId: message.conversationId, senderUserId: message.senderUserId, senderDeviceId: message.senderDeviceId ?? '', at: new Date(receivedAt).toISOString(),
     iv: identityB64(crypto.getRandomValues(new Uint8Array(12))), ciphertext: '', signature: '' };
   const plain = identityBytes(message.payload);
-  if (plain.length > ACCOUNT_HISTORY_MAX_BYTES) throw Error('El mensaje excede el límite de copia.');
   try {
+    if (plain.length > ACCOUNT_HISTORY_MAX_BYTES) throw new AccountHistoryUnsupportedMessage('El mensaje excede el límite de copia.');
     row.ciphertext = identityB64(new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: identityBinary(row.iv,16), additionalData: accountHistoryContext(secret.userId,row), tagLength: 128 }, await historyKey(secret), plain)));
     validate(row,secret.rootKey);
     row.signature = await signAccountIdentity(secret, accountHistoryStatement(secret.userId,row));

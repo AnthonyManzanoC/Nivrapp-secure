@@ -2,13 +2,15 @@ import { Location } from '@angular/common';
 import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { ActivatedRoute, Navigation, Router, convertToParamMap } from '@angular/router';
-import { of } from 'rxjs';
+import { of, Subject } from 'rxjs';
 import { PublicKeyDirectory } from '../../core/models/nivra.models';
 import { AuthService } from '../../core/services/auth.service';
 import { AppLockService } from '../../core/services/app-lock.service';
 import { CryptoService } from '../../core/services/crypto.service';
 import { IdentityTrustService } from '../../core/services/identity-trust.service';
 import { NivraApiService } from '../../core/services/nivra-api.service';
+import { RatchetMessagingService } from '../../core/services/ratchet-messaging.service';
+import { SignalrService } from '../../core/services/signalr.service';
 import { TranslateService } from '../../core/services/translate.service';
 import { deriveUnverifiedSafetyNumber } from '../../core/utils/identity-fingerprint';
 import { IDENTITY_QR_SCANNER_LOADER, IdentityVerificationPage, identityConversationReturnUrl } from './identity-verification.page';
@@ -35,7 +37,9 @@ describe('Identity verification return and comparison', () => {
   let other: PublicKeyDirectory;
   let api: { post: jasmine.Spy };
   let trust: { confirm: jasmine.Spy; continuity: jasmine.Spy; check: jasmine.Spy };
-  let lock: { isLocked: ReturnType<typeof signal<boolean>> };
+  let ratchet: { deviceContinuities: jasmine.Spy };
+  let realtime: Subject<{ type: string; payload: unknown }>;
+  let lock: { isLocked: ReturnType<typeof signal<boolean>>; isContentLocked: ReturnType<typeof signal<boolean>> };
   let scanner: { start: jasmine.Spy; stop: jasmine.Spy; clear: jasmine.Spy; scanFile: jasmine.Spy };
   let pages: IdentityVerificationPage[];
   let cryptoService: { currentKeyMaterial: jasmine.Spy; parsePublicJwk: (value: string) => JsonWebKey };
@@ -54,7 +58,10 @@ describe('Identity verification return and comparison', () => {
     other = directory('bob', 'C');
     api = { post: jasmine.createSpy('post').and.callFake(() => of([own, other])) };
     trust = { confirm: jasmine.createSpy('confirm').and.resolveTo(), continuity: jasmine.createSpy('continuity').and.resolveTo({ state: 'unknown' }), check: jasmine.createSpy('check').and.resolveTo() };
-    lock = { isLocked: signal(false) };
+    ratchet = { deviceContinuities: jasmine.createSpy('deviceContinuities').and.resolveTo([]) };
+    realtime = new Subject();
+    const locked = signal(false);
+    lock = { isLocked: locked, isContentLocked: locked };
     pages = [];
     scanner = { start: jasmine.createSpy('start').and.resolveTo(), stop: jasmine.createSpy('stop').and.resolveTo(), clear: jasmine.createSpy('clear'), scanFile: jasmine.createSpy('scanFile') };
     cryptoService = {
@@ -68,6 +75,8 @@ describe('Identity verification return and comparison', () => {
       { provide: CryptoService, useValue: cryptoService },
       { provide: NivraApiService, useValue: api },
       { provide: IdentityTrustService, useValue: trust },
+      { provide: RatchetMessagingService, useValue: ratchet },
+      { provide: SignalrService, useValue: { events$: realtime } },
       { provide: ActivatedRoute, useValue: { snapshot: { paramMap: convertToParamMap({ userId: 'bob' }) } } },
       { provide: Router, useValue: router },
       { provide: Location, useValue: location },
@@ -260,8 +269,37 @@ describe('Identity verification return and comparison', () => {
     expect(page.continuity).toBe('unchanged');
     expect(page.verified).toBeFalse();
     expect(page.checkedAt).toBeTruthy();
-    expect(trust.continuity).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other);
-    expect(trust.check).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other, jasmine.any(Function));
+    expect(trust.continuity).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other, []);
+    expect(trust.check).toHaveBeenCalledOnceWith(JSON.stringify(['alice', 'phone']), other, jasmine.any(Function), []);
+    expect(trust.confirm).not.toHaveBeenCalled();
+  });
+
+  it('refreshes a visible contact on its certificate event without touching a comparison in progress', () => {
+    spyOnProperty(document, 'visibilityState', 'get').and.returnValue('visible');
+    spyOnProperty(navigator, 'onLine', 'get').and.returnValue(true);
+    const page = createPage();
+    page.loading = false;
+    const load = spyOn(page, 'loadIdentity').and.resolveTo();
+    realtime.next({ type: 'device.listChanged', payload: { userId: 'someone-else', identityCertified: true } });
+    expect(load).not.toHaveBeenCalled();
+    realtime.next({ type: 'device.listChanged', payload: { userId: 'bob', identityCertified: true } });
+    expect(load).toHaveBeenCalledTimes(1);
+    page.comparison = 'typed code';
+    realtime.next({ type: 'device.listChanged', payload: { userId: 'bob', identityCertified: true } });
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(page.comparison).toBe('typed code');
+  });
+
+  it('uses checked ratchet proofs to reconcile a known identity while preserving its comparison date', async () => {
+    const proof = { sourceDeviceId:'phone', sourceIdentity:'already-known', targetDeviceId:'browser', targetIdentity:'verified-certificate' };
+    ratchet.deviceContinuities.and.resolveTo([proof]);
+    trust.continuity.and.resolveTo({ state:'verified', verifiedAt:'2026-10-09T12:00:00Z', authorizedDevice:true });
+    const page = createPage();
+    await page.loadIdentity();
+    expect(page.authorizedDevice).toBeTrue();
+    expect(page.verifiedAt).toBe('2026-10-09T12:00:00Z');
+    expect(page.comparisonExpanded).toBeFalse();
+    expect(trust.check).toHaveBeenCalledOnceWith(JSON.stringify(['alice','phone']), other, jasmine.any(Function), [proof]);
     expect(trust.confirm).not.toHaveBeenCalled();
   });
 

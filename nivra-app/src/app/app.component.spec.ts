@@ -5,20 +5,33 @@ import { TestBed } from '@angular/core/testing';
 
 import { AppComponent } from './app.component';
 import { WEB_LAUNCH_RUNTIME } from './core/services/web-launch.service';
+import { Capacitor, SystemBarsStyle } from '@capacitor/core';
 import { Style } from '@capacitor/status-bar';
 
 describe('AppComponent', () => {
   it('keeps Android navigation icons contrasted with both story and page surfaces', async () => {
+    spyOn(Capacitor, 'getPlatform').and.returnValue('android');
     const navigation = jasmine.createSpy('navigation').and.resolveTo();
+    const edgeStyle = jasmine.createSpy('edgeToEdgeStyle').and.resolveTo();
+    const show = jasmine.createSpy('show').and.resolveTo();
     const app: any = Object.assign(Object.create(AppComponent.prototype), {
       systemBarUpdate: Promise.resolve(), systemBarEpoch: 0,
-      nativeSystemBars: { setOverlaysWebView: async () => {}, setStyle: async () => {}, setBackgroundColor: async () => {} },
+      nativeSystemBars: {
+        setOverlaysWebView: async () => {},
+        setStyle: async () => {},
+        setBackgroundColor: async () => { throw new Error('Transparent edge-to-edge bars'); },
+        show,
+      },
+      nativeEdgeBars: { setStyle: edgeStyle },
       nativeDevice: { configureNavigationBar: navigation },
     });
-    await app.configureNativeSystemBars({ color: '#070b0d', style: Style.Dark });
+    await app.configureNativeSystemBars({ color: '#070b0d', style: Style.Dark, ensureVisible: true });
     expect(navigation).toHaveBeenCalledWith('#070b0d', false);
+    expect(edgeStyle).toHaveBeenCalledWith({ style: SystemBarsStyle.Dark });
     await app.configureNativeSystemBars({ color: '#f8fafc', style: Style.Light });
     expect(navigation).toHaveBeenCalledWith('#f8fafc', true);
+    expect(edgeStyle).toHaveBeenCalledWith({ style: SystemBarsStyle.Light });
+    expect(show).toHaveBeenCalledTimes(1);
   });
   it('matches Welcome system icons and background to the resolved theme', () => {
     const app = Object.create(AppComponent.prototype) as any;

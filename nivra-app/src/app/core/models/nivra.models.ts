@@ -117,6 +117,7 @@ export interface Conversation {
   groupName?: string | null;
   groupAvatar?: string | null;
   admins?: string[];
+  groupManagementVersion?: number;
   settings?: GroupSettings;
   title?: string | null;
   createdAt: string;
@@ -256,6 +257,7 @@ export interface ChatPayload {
   forwardedFrom?: unknown;
   replyTo?: unknown;
   forwardingAllowed?: boolean;
+  groupHistorySummary?: boolean;
   reactions?: MessageReaction[];
   [key: string]: unknown;
 }

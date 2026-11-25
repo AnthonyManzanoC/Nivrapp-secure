@@ -298,7 +298,10 @@ await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", n
 await Status("alice-hybrid", "/ratchet/olm/devices/dev-lab-bob-hybrid/prekey", new RatchetReserveRequest("vault-lab-other", Guid.NewGuid()), HttpStatusCode.Forbidden, "vault membership is required on both sides");
 await MessagePushChecks.Run(app.Services);
 await MessageDeliveryChecks.Run(app,tokens);
+await MessageCursorChecks.Run(app, tokens, args.Contains("--measure-sync"));
 await CommunityChecks.Run(app,tokens);
+await GroupConversationChecks.Run(app, tokens);
+await GroupHistoryChecks.Run(app, tokens);
 await DeviceEnrollmentChecks.Run(app);
 await AccountIdentityChecks.Run(app,tokens);
 await AccountHistorySyncChecks.Run(app,tokens);

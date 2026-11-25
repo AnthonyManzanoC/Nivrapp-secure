@@ -3,8 +3,8 @@ namespace Nivra.Api.Services;
 public static class ClientCompatibility
 {
     public const int CallProtocol = 2;
-    public const string Version = "10.1.1";
-    public const string UpdateUrl = "https://nivrapp-secure.vercel.app";
+    public const string Version = "10.2.0";
+    public const string UpdateUrl = "https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/latest";
 
     public static bool RequiresCallProtocol(PathString path, string method)
     {

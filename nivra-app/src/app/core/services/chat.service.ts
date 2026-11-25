@@ -88,6 +88,7 @@ interface SendPayloadOptions {
   prepareScheduledExpiry?: () => Promise<string | null>;
   deleteAfterRead?: boolean;
   internalCallSummary?: symbol;
+  groupHistory?: { recipientUserId: string; sourceMessageIds: string[] };
 }
 
 interface ChatSendContext {
@@ -335,7 +336,16 @@ export class ChatService implements OnDestroy {
         }
       }
       if (event.type === 'conversation.removed') {
-        void this.bootstrap().catch(() => undefined);
+        const { conversationId, removedAt } = event.payload as { conversationId?: string; removedAt?: string };
+        const conversation = this.conversations().find(item => item.id === conversationId);
+        const ownMember = conversation?.participants.find(member => member.userId === this.auth.session()?.user.id);
+        if (conversationId && removedAt && Number.isFinite(Date.parse(removedAt))) {
+          if (!ownMember?.joinedAt || Date.parse(ownMember.joinedAt) <= Date.parse(removedAt)) {
+            void this.removeConversationLocally(conversationId);
+          }
+        } else {
+          void this.bootstrap().catch(() => undefined);
+        }
       }
       if (event.type === 'conversation.typing') {
         void this.applyTyping(event.payload);
@@ -1036,81 +1046,6 @@ export class ChatService implements OnDestroy {
     return conversation;
   }
 
-  private createLocalGroupConversation(groupName: string, participantUserIds: string[], groupAvatar: string | null): Conversation {
-    const current = this.auth.session()?.user;
-    const now = new Date().toISOString();
-    const participantIds = [...new Set([current?.id, ...participantUserIds].filter(Boolean) as string[])];
-    return {
-      id: `local-group-${crypto.randomUUID()}`,
-      type: 'Group',
-      titleCiphertext: null,
-      title: groupName,
-      groupName,
-      groupAvatar,
-      admins: current?.id ? [current.id] : [],
-      settings: { ...DEFAULT_GROUP_SETTINGS },
-      participantIds,
-      privacySettings: current?.privacySettings ?? {},
-      participants: participantIds.map((userId) => this.groupParticipant(userId, now, userId === current?.id)),
-      createdAt: now,
-      updatedAt: now,
-      lastMessageAt: null,
-    };
-  }
-
-  private normalizeGroupConversation(
-    conversation: Conversation,
-    groupName: string,
-    participantUserIds: string[],
-    groupAvatar: string | null,
-  ): Conversation {
-    const currentUserId = this.auth.session()?.user.id;
-    const ids = [...new Set([
-      currentUserId,
-      ...(conversation.participantIds ?? []),
-      ...(conversation.participants ?? []).map((participant) => participant.userId),
-      ...participantUserIds,
-    ].filter(Boolean) as string[])];
-    const now = new Date().toISOString();
-    const existing = new Map((conversation.participants ?? []).map((participant) => [participant.userId, participant]));
-    return {
-      ...conversation,
-      type: 'Group',
-      title: this.firstText(conversation.title, conversation.groupName, groupName),
-      groupName: this.firstText(conversation.groupName, conversation.title, groupName),
-      groupAvatar: this.firstText(conversation.groupAvatar, groupAvatar),
-      admins: this.normalizedGroupAdmins(conversation, currentUserId),
-      settings: this.normalizedGroupSettings(conversation.settings),
-      participantIds: ids,
-      privacySettings: conversation.privacySettings ?? this.auth.session()?.user.privacySettings ?? {},
-      participants: ids.map((userId) => ({
-        ...this.groupParticipant(userId, existing.get(userId)?.joinedAt || now, userId === currentUserId),
-        ...(existing.get(userId) ?? {}),
-        userId,
-      })),
-      createdAt: conversation.createdAt || now,
-      updatedAt: conversation.updatedAt || now,
-    };
-  }
-
-  private groupParticipant(userId: string, joinedAt: string, owner = false) {
-    const profile = userId === this.auth.session()?.user.id
-      ? this.normalizeProfile(this.auth.session()?.user)
-      : this.profileForUser(userId) ?? this.normalizeProfile(this.contacts().find((contact) => contact.userId === userId));
-    return {
-      userId,
-      role: owner ? 'Owner' : 'Member',
-      canInvite: true,
-      canChangePrivacy: owner,
-      joinedAt,
-      removedAt: null,
-      alias: profile?.alias ?? null,
-      displayName: profile?.displayName ?? null,
-      phone: profile?.phone ?? null,
-      profilePhotoDataUrl: profile?.profilePhotoDataUrl ?? null,
-    };
-  }
-
   private defaultGroupName(participantUserIds: string[]): string {
     const names = participantUserIds
       .map((userId) => this.displayProfileName(this.profileForUser(userId) ?? this.normalizeProfile(this.contacts().find((contact) => contact.userId === userId))))
@@ -1120,37 +1055,29 @@ export class ChatService implements OnDestroy {
   }
 
   async createGroupConversation(options: GroupConversationOptions): Promise<Conversation> {
-    const current = this.auth.session()?.user;
-    if (!current) {
-      throw new Error('No hay sesion activa para crear el grupo.');
-    }
-    const participantUserIds = [...new Set((options.participantUserIds ?? [])
-      .filter(Boolean)
-      .filter((userId) => userId !== current.id))];
+    const scope = this.captureSendContext();
+    const participantUserIds = [...new Set((options.participantUserIds ?? []).filter(Boolean).map(userId => userId.trim())
+      .filter(userId => userId && userId !== scope.userId))];
     if (!participantUserIds.length) {
       throw new Error('Selecciona al menos un contacto para crear el grupo.');
     }
     const groupName = options.name.trim() || this.defaultGroupName(participantUserIds);
-    const groupAvatar = options.groupAvatar || null;
-    let conversation: Conversation;
-    try {
-      conversation = await firstValueFrom(this.api.post<Conversation>('/conversations', {
-        type: 'Group',
-        participantUserIds,
-        titleCiphertext: null,
-        privacySettings: null,
-        groupName,
-        groupAvatar,
-        admins: [current.id],
-        settings: { ...DEFAULT_GROUP_SETTINGS },
-      }));
-    } catch {
-      conversation = this.createLocalGroupConversation(groupName, participantUserIds, groupAvatar);
+    const conversation = await firstValueFrom(this.api.post<Conversation>('/conversations', {
+      type: 'Group',
+      participantUserIds,
+      titleCiphertext: null,
+      privacySettings: null,
+      groupName,
+      groupAvatar: options.groupAvatar || null,
+      admins: [scope.userId],
+      settings: { ...DEFAULT_GROUP_SETTINGS },
+    }));
+    this.assertSendContext(scope);
+    if (!conversation?.id || !this.isGroupConversation(conversation) || !this.isCurrentUserActiveInConversation(conversation)) {
+      throw new Error('No pudimos confirmar la creación del grupo.');
     }
 
-    const normalized = this.applyLocalConversationState([
-      this.normalizeGroupConversation(conversation, groupName, participantUserIds, groupAvatar),
-    ])[0];
+    const normalized = this.applyLocalConversationState([conversation])[0];
     this.rememberConversationParticipants([normalized]);
     this.conversations.update((items) => [normalized, ...items.filter((item) => item.id !== normalized.id)].sort(this.compareConversations));
     void this.hydrateConversationProfiles([normalized]);
@@ -1158,10 +1085,13 @@ export class ChatService implements OnDestroy {
     if (accountKey) {
       await this.history.putConversations(accountKey, [normalized]).catch(() => undefined);
     }
+    this.assertSendContext(scope);
     await this.selectConversation(normalized.id).catch(() => {
+      this.assertSendContext(scope);
       this.selectedConversationId.set(normalized.id);
       this.persistSelectedConversationId(normalized.id);
     });
+    this.assertSendContext(scope);
     return normalized;
   }
 
@@ -1326,7 +1256,8 @@ export class ChatService implements OnDestroy {
       return alreadySent;
     }
     const wirePayload = this.withUniformMessagePadding(outgoingPayload);
-    const recipients = await bounded(this.encryptedRecipients(conversation, wirePayload, fileObjectId, context, clientMessageId));
+    const recipients = await bounded(this.encryptedRecipients(conversation, wirePayload, fileObjectId, context, clientMessageId,
+      options.groupHistory?.recipientUserId));
     this.assertSendContext(context);
     requireAccess();
     if (!recipients.length) {
@@ -1343,9 +1274,13 @@ export class ChatService implements OnDestroy {
       encryptedPolicy: options.encryptedPolicy ?? null,
       expiresAt,
       deleteAfterRead: options.deleteAfterRead ?? false,
+      ...(options.groupHistory ? { groupHistory: options.groupHistory } : {}),
     };
     const hybrid = recipients.some(recipient => this.ratchet?.isEnvelope(recipient.header));
-    const endpoint = `/conversations/${conversation.id}/messages${hybrid ? '/ratchet' : ''}`;
+    if (options.groupHistory && (!hybrid || historyGeneration !== this.historyGeneration(conversation.id))) {
+      throw new Error('El resumen requiere cifrado actualizado e historial disponible.');
+    }
+    const endpoint = `/conversations/${conversation.id}/messages${options.groupHistory ? '/group-history/ratchet' : hybrid ? '/ratchet' : ''}`;
     if (options.queueManaged && (Date.now() >= deadline || historyGeneration !== this.historyGeneration(conversation.id))) {
       const error = new Error('El intento de envío venció o el historial del chat cambió.');
       error.name = 'TimeoutError'; throw error;
@@ -1364,6 +1299,7 @@ export class ChatService implements OnDestroy {
       await new Promise<void>((resolve) => window.setTimeout(resolve, 350));
       this.assertSendContext(context);
       requireAccess();
+      if (options.groupHistory && historyGeneration !== this.historyGeneration(conversation.id)) throw error;
       response = await firstValueFrom(this.api.post<MessageResponse>(endpoint, request));
     }
     this.assertSendContext(context);
@@ -1377,6 +1313,7 @@ export class ChatService implements OnDestroy {
   }
 
   async sendReaction(conversation: Conversation, message: ChatMessageVm, emoji: string): Promise<void> {
+    if (message.payload.groupHistorySummary) return;
     this.assertPrivateChatUnlocked(conversation.id);
     const current = this.auth.session();
     if (!current || !emoji) {
@@ -1483,7 +1420,7 @@ export class ChatService implements OnDestroy {
   async editMessage(conversation: Conversation, message: ChatMessageVm, newText: string): Promise<void> {
     this.assertPrivateChatUnlocked(conversation.id);
     const text = newText.trim();
-    if (!message.mine || !text || this.asFile(message.payload) || message.payload.type === 'system') {
+    if (!message.mine || !text || this.asFile(message.payload) || message.payload.type === 'system' || message.payload.groupHistorySummary) {
       throw new Error('Ese mensaje no se puede editar.');
     }
     this.applyEditPayload(
@@ -1576,6 +1513,7 @@ export class ChatService implements OnDestroy {
     if (message.deleteAfterRead) {
       return { ok: false, reason: 'Los mensajes de una sola vez no se pueden reenviar.' };
     }
+    if (message.payload?.groupHistorySummary) return { ok: false, reason: 'El resumen solo se puede leer en el grupo.' };
     if (!message.mine && (message.payload?.forwardingAllowed === false || this.senderAllowsForwarding(message) === false)) {
       return { ok: false, reason: 'El remitente bloqueo el reenvio.' };
     }
@@ -1995,10 +1933,7 @@ export class ChatService implements OnDestroy {
     if (!this.isGroupConversation(conversation)) {
       return true;
     }
-    const admins = this.normalizedGroupAdmins(conversation);
-    return admins.includes(userId)
-      || conversation.participants.some((participant) =>
-        participant.userId === userId && ['owner', 'admin'].includes(String(participant.role || '').toLowerCase()));
+    return this.normalizedGroupAdmins(conversation).includes(userId);
   }
 
   participantProfile(userId: string | null | undefined): LocalProfile | null {
@@ -2045,7 +1980,7 @@ export class ChatService implements OnDestroy {
   }
 
   canEditGroup(conversation: Conversation | null | undefined): boolean {
-    if (!conversation || !this.isGroupConversation(conversation)) {
+    if (!conversation || !this.isGroupConversation(conversation) || !this.isCurrentUserActiveInConversation(conversation)) {
       return false;
     }
     return this.normalizedGroupSettings(conversation.settings).editInfo === 'all' || this.isGroupAdmin(conversation);
@@ -2055,14 +1990,18 @@ export class ChatService implements OnDestroy {
     if (!conversation || !this.isGroupConversation(conversation)) {
       return true;
     }
-    return this.normalizedGroupSettings(conversation.settings).sendMessages === 'all' || this.isGroupAdmin(conversation);
+    return this.isCurrentUserActiveInConversation(conversation) && (this.normalizedGroupSettings(conversation.settings).sendMessages === 'all' || this.isGroupAdmin(conversation));
   }
 
   canAddGroupMembers(conversation: Conversation | null | undefined): boolean {
-    if (!conversation || !this.isGroupConversation(conversation)) {
+    if (!conversation || !this.isGroupConversation(conversation) || !this.isCurrentUserActiveInConversation(conversation)) {
       return false;
     }
     return this.normalizedGroupSettings(conversation.settings).addMembers === 'all' || this.isGroupAdmin(conversation);
+  }
+
+  supportsGroupManagement(conversation: Conversation | null | undefined): boolean {
+    return this.isGroupConversation(conversation) && (conversation?.groupManagementVersion ?? 0) >= 1;
   }
 
   async updateGroupInfo(conversation: Conversation, patch: { groupName?: string; groupAvatar?: string | null }): Promise<void> {
@@ -2099,87 +2038,103 @@ export class ChatService implements OnDestroy {
     if (!this.isGroupAdmin(conversation) || !userId) {
       throw new Error('Solo los admins pueden asignar moderadores.');
     }
-    const admins = new Set(this.normalizedGroupAdmins(conversation));
-    if (admin) {
-      admins.add(userId);
-    } else if (userId !== this.auth.session()?.user.id) {
-      admins.delete(userId);
+    const scope = this.captureSendContext();
+    const path = `/conversations/${encodeURIComponent(conversation.id)}`;
+    const current = this.supportsGroupManagement(conversation) ? conversation : this.mergeGroupConversationConfirmation(
+      conversation, await firstValueFrom(this.api.get<Conversation>(path)));
+    this.assertSendContext(scope);
+    if (!this.isGroupAdmin(current)) throw new Error('Solo los admins pueden asignar moderadores.');
+    const target = current.participants.find(participant => participant.userId === userId && !participant.removedAt);
+    if (!target || userId === scope.userId || String(target.role).toLowerCase() === 'owner') return;
+    let confirmed: Conversation;
+    if (this.supportsGroupManagement(current)) {
+      confirmed = await firstValueFrom(this.api.put<Conversation>(`${path}/roles/participant`, { participantUserId: userId, admin }));
+    } else {
+      // Servers predating single-member role changes require the full list.
+      const adminUserIds = new Set(this.normalizedGroupAdmins(current));
+      if (admin) adminUserIds.add(userId);
+      else adminUserIds.delete(userId);
+      confirmed = await firstValueFrom(this.api.put<Conversation>(`${path}/roles`, { adminUserIds: [...adminUserIds] }));
     }
-    const next = {
-      ...conversation,
-      admins: [...admins],
-      participants: conversation.participants.map((participant) => participant.userId === userId
-        ? {
-            ...participant,
-            role: admin ? 'Admin' : 'Member',
-            canInvite: admin || this.normalizedGroupSettings(conversation.settings).addMembers === 'all',
-            canChangePrivacy: admin,
-          }
-        : participant),
-      updatedAt: new Date().toISOString(),
-    };
-    await this.setGroupConversationLocal(next);
-    try {
-      const confirmed = await firstValueFrom(this.api.put<Conversation>(`/conversations/${encodeURIComponent(next.id)}/roles`, {
-        adminUserIds: next.admins,
-      }));
-      await this.setGroupConversationLocal(this.mergeGroupConversationConfirmation(next, confirmed));
-    } catch (error) {
-      await this.setGroupConversationLocal(conversation);
-      throw error;
-    }
-    await this.signalr.updateGroupRoles(next.id, next.admins).catch(() => undefined);
+    this.assertSendContext(scope);
+    await this.setGroupConversationLocal(this.mergeGroupConversationConfirmation(conversation, confirmed));
   }
 
-  async addGroupParticipants(conversation: Conversation, userIds: string[]): Promise<void> {
+  async addGroupParticipants(conversation: Conversation, userIds: string[], shareHistory = false): Promise<'added' | 'shared' | 'history-unavailable'> {
     if (!this.canAddGroupMembers(conversation)) {
       throw new Error('No tienes permisos para agregar participantes.');
     }
-    const normalizedIds = [...new Set(userIds.filter(Boolean))]
-      .filter((userId) => !conversation.participants.some((participant) => participant.userId === userId && !participant.removedAt));
+    const scope = this.captureSendContext();
+    const activeIds = new Set(conversation.participants.filter(participant => !participant.removedAt).map(participant => participant.userId));
+    const normalizedIds = [...new Set(userIds.map(userId => userId.trim()).filter(Boolean))]
+      .filter(userId => userId !== scope.userId && !activeIds.has(userId));
     if (!normalizedIds.length) {
-      return;
+      return 'added';
     }
-    const now = new Date().toISOString();
-    const nextParticipants = [
-      ...conversation.participants,
-      ...normalizedIds.map((userId) => this.groupParticipant(userId, now, false)),
-    ];
-    const nextParticipantIds = [...new Set([
-      ...(conversation.participantIds ?? []),
-      ...conversation.participants.map((participant) => participant.userId),
-      ...normalizedIds,
-    ].filter(Boolean))];
-    const next = {
-      ...conversation,
-      participantIds: nextParticipantIds,
-      participants: nextParticipants,
-      updatedAt: now,
-    };
-    this.rememberConversationParticipants([next]);
-    await this.setGroupConversationLocal(next);
+    const confirmed = await firstValueFrom(this.api.post<Conversation>(`/conversations/${encodeURIComponent(conversation.id)}/participants`, {
+      participantUserIds: normalizedIds,
+    }));
+    // Only confirmed membership may enter a recipient list. A stale account or a
+    // rejected admission must never change the current account's local chat.
+    this.assertSendContext(scope);
+    const updated = this.mergeGroupConversationConfirmation(conversation, confirmed);
+    await this.setGroupConversationLocal(updated);
+    if (!shareHistory) return 'added';
+    const member = updated.participants.find(participant => participant.userId === normalizedIds[0] && !participant.removedAt);
+    if (!this.supportsGroupManagement(updated) || normalizedIds.length !== 1 || !member || !this.isGroupAdmin(updated)) return 'history-unavailable';
     try {
-      const confirmed = await firstValueFrom(this.api.post<Conversation>(`/conversations/${encodeURIComponent(next.id)}/participants`, {
-        participantUserIds: normalizedIds,
-      }));
-      await this.setGroupConversationLocal(this.mergeGroupConversationConfirmation(next, confirmed));
-    } catch (error) {
-      await this.setGroupConversationLocal(conversation);
-      throw error;
+      const joined = Date.parse(member.joinedAt);
+      const source = this.groupHistoryCandidates(updated.id, scope.userId, joined);
+      if (!source.length) return 'history-unavailable';
+      const address = CHAT_PAYLOAD_TEXT_ENCODER.encode(`${updated.id}\u001f${member.userId}\u001f${joined}`);
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', address));
+      const clientMessageId = 'group-history:' + Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('');
+      this.assertSendContext(scope);
+      this.assertPrivateChatUnlocked(updated.id);
+      const currentIds = this.groupHistoryCandidates(updated.id, scope.userId, joined).map(message => message.id);
+      if (!source.every(message => currentIds.includes(message.id))) return 'history-unavailable';
+      const dates = new Intl.DateTimeFormat(undefined, { dateStyle: 'short', timeStyle: 'short' });
+      const text = source.map(message => {
+        const excerpt = message.payload.text!.trim();
+        return `${dates.format(new Date(message.at))}\n${excerpt.length > 500 ? excerpt.slice(0, 500) + '…' : excerpt}`;
+      }).join('\n\n');
+      const sent = await this.sendPayload(updated, { type: 'text', text, groupHistorySummary: true, forwardingAllowed: false },
+        'Text', null, { clientMessageId, groupHistory: { recipientUserId: member.userId, sourceMessageIds: source.map(message => message.id) } });
+      return sent ? 'shared' : 'history-unavailable';
+    } catch {
+      // Admission has already been committed even if the optional send failed.
+      return 'history-unavailable';
     }
-    await this.signalr.updateGroupParticipants(next.id, nextParticipantIds).catch(() => undefined);
+  }
+
+  private groupHistoryCandidates(conversationId: string, userId: string, joined: number): ChatMessageVm[] {
+    const cutoff = joined - 7 * 24 * 60 * 60 * 1000;
+    return (this.messagesByConversation()[conversationId] ?? []).filter(message => {
+      const at = Date.parse(message.at);
+      return message.mine && message.senderUserId === userId && at >= cutoff && at < joined
+        && !message.decryptError && message.status !== 'sending' && !message.expiresAt && !message.deleteAfterRead
+        && message.payload?.type === 'text' && typeof message.payload.text === 'string' && !!message.payload.text.trim()
+        && !message.payload.forwardedFrom && !message.payload.groupHistorySummary && !message.payload.replyTo;
+    }).slice(-10);
+  }
+
+  async removeGroupParticipant(conversation: Conversation, userId: string): Promise<void> {
+    if (!this.supportsGroupManagement(conversation)) throw new Error('La gestión de miembros requiere actualizar el servidor.');
+    const scope = this.captureSendContext();
+    const confirmed = await firstValueFrom(this.api.delete<Conversation>(`/conversations/${encodeURIComponent(conversation.id)}/participants/${encodeURIComponent(userId)}`));
+    this.assertSendContext(scope);
+    await this.setGroupConversationLocal(this.mergeGroupConversationConfirmation(conversation, confirmed));
   }
 
   async leaveGroupConversation(conversation: Conversation): Promise<void> {
     if (!this.isGroupConversation(conversation)) {
       throw new Error('Solo puedes salir de chats grupales.');
     }
-    if (!this.auth.session()?.user.id) {
-      throw new Error('No hay sesion activa.');
-    }
+    const scope = this.captureSendContext();
     if (!conversation.id.startsWith('local-group-')) {
       await firstValueFrom(this.api.post<Conversation>(`/conversations/${encodeURIComponent(conversation.id)}/leave`, {}));
     }
+    this.assertSendContext(scope);
     await this.removeConversationLocally(conversation.id);
   }
 
@@ -4171,17 +4126,16 @@ export class ChatService implements OnDestroy {
     };
   }
 
-  private normalizedGroupAdmins(conversation: Conversation | null | undefined, fallbackUserId?: string): string[] {
-    const explicit = (conversation?.admins ?? []).filter(Boolean);
-    if (explicit.length) {
-      return [...new Set(explicit)];
-    }
+  private normalizedGroupAdmins(conversation: Conversation | null | undefined): string[] {
+    const activeParticipants = (conversation?.participants ?? []).filter(participant => !participant.removedAt);
     const roleAdmins = (conversation?.participants ?? [])
-      .filter((participant) => ['owner', 'admin'].includes(String(participant.role || '').toLowerCase()))
+      .filter((participant) => !participant.removedAt && ['owner', 'admin'].includes(String(participant.role || '').toLowerCase()))
       .map((participant) => participant.userId)
       .filter(Boolean);
-    const fallback = fallbackUserId || (conversation?.participants ?? []).find((participant) => !participant.removedAt)?.userId;
-    return [...new Set([...roleAdmins, fallback].filter(Boolean) as string[])];
+    if (!conversation?.id.startsWith('local-group-')) return [...new Set(roleAdmins)];
+    const explicit = (conversation.admins ?? []).filter(userId => activeParticipants.some(participant => participant.userId === userId));
+    const fallback = roleAdmins.length || explicit.length ? [] : [activeParticipants[0]?.userId].filter(Boolean);
+    return [...new Set([...roleAdmins, ...explicit, ...fallback])];
   }
 
   private async setGroupConversationLocal(conversation: Conversation): Promise<Conversation> {
@@ -4196,34 +4150,28 @@ export class ChatService implements OnDestroy {
   }
 
   private mergeGroupConversationConfirmation(local: Conversation, confirmed: Conversation | null | undefined): Conversation {
-    if (!confirmed?.id) {
-      return local;
+    if (!confirmed || confirmed.id !== local.id || !this.isGroupConversation(confirmed)
+      || !confirmed.participants?.length || !this.isCurrentUserActiveInConversation(confirmed)) {
+      throw new Error('No pudimos confirmar el cambio del grupo.');
     }
     return {
       ...local,
       ...confirmed,
-      groupName: local.groupName ?? confirmed.groupName ?? confirmed.title ?? null,
-      groupAvatar: local.groupAvatar ?? confirmed.groupAvatar ?? null,
-      title: local.title ?? confirmed.title ?? local.groupName ?? null,
-      settings: local.settings ?? confirmed.settings,
-      admins: this.normalizedGroupAdmins(confirmed, this.auth.session()?.user.id),
-      participantIds: confirmed.participantIds ?? confirmed.participants?.map((participant) => participant.userId) ?? local.participantIds,
-      participants: confirmed.participants?.length ? confirmed.participants : local.participants,
+      groupName: confirmed.groupName ?? confirmed.title ?? local.groupName ?? null,
+      groupAvatar: confirmed.groupAvatar === undefined ? local.groupAvatar ?? null : confirmed.groupAvatar,
+      title: confirmed.groupName ?? confirmed.title ?? local.title ?? null,
+      groupManagementVersion: confirmed.groupManagementVersion ?? 0,
+      settings: confirmed.settings ?? local.settings,
+      admins: this.normalizedGroupAdmins(confirmed),
+      participantIds: confirmed.participants.filter(participant => !participant.removedAt).map(participant => participant.userId),
     };
   }
 
   private async persistGroupConversation(conversation: Conversation, patch: Record<string, unknown>): Promise<void> {
-    const previous = this.conversations().find((item) => item.id === conversation.id) ?? conversation;
-    const next = await this.setGroupConversationLocal(conversation);
-    try {
-      const confirmed = await firstValueFrom(this.api.patch<Conversation>(`/conversations/${encodeURIComponent(next.id)}`, patch));
-      await this.setGroupConversationLocal(this.mergeGroupConversationConfirmation(next, confirmed));
-    } catch (error) {
-      if (previous && previous.id === next.id) {
-        await this.setGroupConversationLocal(previous).catch(() => undefined);
-      }
-      throw error;
-    }
+    const scope = this.captureSendContext();
+    const confirmed = await firstValueFrom(this.api.patch<Conversation>(`/conversations/${encodeURIComponent(conversation.id)}`, patch));
+    this.assertSendContext(scope);
+    await this.setGroupConversationLocal(this.mergeGroupConversationConfirmation(conversation, confirmed));
   }
 
   private conversationPeople(conversation: Conversation): LocalProfile[] {
@@ -4579,14 +4527,14 @@ export class ChatService implements OnDestroy {
       delete next[conversationId];
       return next;
     });
-    const accountKey = this.localAccountKey();
-    if (accountKey) {
-      await this.history.removeConversation(accountKey, conversationId).catch(() => undefined);
-    }
     if (this.selectedConversationId() === conversationId) {
       const nextId = this.conversations()[0]?.id ?? null;
       this.selectedConversationId.set(nextId);
       this.persistSelectedConversationId(nextId);
+    }
+    const accountKey = this.localAccountKey();
+    if (accountKey) {
+      await this.history.removeConversation(accountKey, conversationId).catch(() => undefined);
     }
   }
 
@@ -4840,6 +4788,7 @@ export class ChatService implements OnDestroy {
     fileObjectId: string | null = null,
     context?: ChatSendContext,
     clientMessageId?: string,
+    historyRecipientUserId?: string,
   ): Promise<RecipientCipherRequest[]> {
     const own = await this.auth.ensureDeviceIdentity();
     const current = this.auth.session();
@@ -4850,7 +4799,9 @@ export class ChatService implements OnDestroy {
     this.assertSendContext(sendContext);
     const recipients: RecipientCipherRequest[] = [];
     const groupRecipients: PublicKeyRecipient[] = [];
-    const activeParticipants = conversation.participants.filter((participant) => !participant.removedAt);
+    const activeParticipants = conversation.participants.filter(participant => !participant.removedAt
+      && (!historyRecipientUserId || participant.userId === current.user.id || participant.userId === historyRecipientUserId));
+    if (historyRecipientUserId && activeParticipants.length !== 2) throw new Error('El destinatario ya no está disponible.');
     // Verify the exact fresh directory used to encrypt; never fall back to stale keys.
     const fresh: PublicKeyDirectory[] = [];
     for (let offset = 0; offset < activeParticipants.length; offset += 128) {
@@ -4903,6 +4854,8 @@ export class ChatService implements OnDestroy {
       this.assertSendContext(sendContext);
       if (sealed) return sealed;
     }
+
+    if (historyRecipientUserId) throw new Error('Los dispositivos requieren cifrado actualizado para compartir el historial.');
 
     for (const participant of activeParticipants) {
       const directory = directories.get(participant.userId);

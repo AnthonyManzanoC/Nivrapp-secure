@@ -144,7 +144,8 @@ test('checking never installs or downloads, and exposes only sanitized metadata'
   const { manager, calls, launched } = await fixture(t);
   const result = await manager.checkForUpdate();
   assert.deepEqual(result, { status: 'available', currentVersion: '4.0.1', version: '4.1.0', size: bytes.length });
-  assert.deepEqual(calls.map(call => call.url), [UPDATE_FEED_URL]); assert.deepEqual(launched, []);
+  assert.deepEqual(calls.map(call => call.url), ['https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/latest/download/latest.json']);
+  assert.deepEqual(launched, []);
   assert.ok(calls[0].options.signal instanceof AbortSignal);
   assert.equal(calls[0].options.allowRedirect('https://attacker.test'), false);
   await assert.rejects(manager.installUpdate(), errorIs('UPDATE_NOT_READY'));
@@ -165,6 +166,7 @@ test('download streams into an atomic cache and install revalidates the verified
   assert.equal((await manager.downloadUpdate()).status, 'downloaded');
   assert.deepEqual(await fsp.readFile(cached), bytes);
   assert.deepEqual(launched, []); assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, 'https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v4.1.0/Nivra-4.1.0-Setup.exe');
   assert.equal(calls[1].options.allowRedirect('https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v4.1.0/Nivra-4.1.0-Setup.exe'), true);
   assert.deepEqual(manager.getUpdateState(), { phase: 'ready', progress: 100 });
   const visibleState = manager.getUpdateState(); visibleState.phase = 'tampered';

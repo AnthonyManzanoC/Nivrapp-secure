@@ -3,7 +3,7 @@ import { App } from '@capacitor/app';
 import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { NativeDeviceService, type AndroidRelease, type NativeAppUpdateState } from './native-device.service';
 
-export const NIVRA_UPDATE_FEED_URL = 'https://nivrapp-secure.vercel.app/updates/latest.json';
+const GITHUB_RELEASES = 'https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download';
 const CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const RETRY_THROTTLE_MS = 5 * 60 * 1000;
 
@@ -16,40 +16,29 @@ export interface AndroidUpdateRuntime {
   now(): number;
 }
 export const ANDROID_UPDATE_RUNTIME = new InjectionToken<AndroidUpdateRuntime>('ANDROID_UPDATE_RUNTIME', {
-  providedIn: 'root', factory: () => ({
-    supported: Capacitor.getPlatform() === 'android',
-    installedBuild: async () => Number((await App.getInfo()).build),
-    onAppStateChange: listener => App.addListener('appStateChange', state => listener(state.isActive)),
-    fetchRelease: async () => {
-      // A permanent public feed also works before sign-in and while the API is
-      // unavailable. The publisher changes this one document for every release.
-      const response = await fetch(NIVRA_UPDATE_FEED_URL, {
-        cache: 'no-store', credentials: 'omit', redirect: 'error', signal: AbortSignal.timeout(15000),
-      });
-      if (!response.ok || !validUpdateFeedResponseUrl(response.url)) throw new Error('Release unavailable');
-      return response.json() as Promise<unknown>;
-    },
-    storage: { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) },
-    now: () => Date.now(),
-  }),
+  providedIn: 'root', factory: () => {
+    const native = inject(NativeDeviceService);
+    return {
+      supported: Capacitor.getPlatform() === 'android',
+      installedBuild: async () => Number((await App.getInfo()).build),
+      fetchRelease: () => native.fetchAppUpdateFeed(),
+      onAppStateChange: listener => App.addListener('appStateChange', state => listener(state.isActive)),
+      storage: { getItem: key => localStorage.getItem(key), setItem: (key, value) => localStorage.setItem(key, value) },
+      now: () => Date.now(),
+    };
+  },
 });
 
-export function validUpdateFeedResponseUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:' || url.username || url.password || url.port || url.hash) return false;
-    return url.href === NIVRA_UPDATE_FEED_URL;
-  } catch { return false; }
-}
+function githubApkUrl(version: string): string { return `${GITHUB_RELEASES}/v${version}/Nivra-${version}-debug.apk`; }
 
 export function validAndroidRelease(value: unknown, installedBuild: number): value is AndroidRelease {
   if (!value || typeof value !== 'object') return false;
   const item = value as AndroidRelease;
   return typeof item.version === 'string' && /^\d+\.\d+\.\d+$/.test(item.version)
-    && Number.isSafeInteger(item.versionCode) && item.versionCode > installedBuild
+    && Number.isSafeInteger(item.versionCode) && item.versionCode > installedBuild && item.versionCode <= 2_147_483_647
     && Number.isSafeInteger(item.size) && item.size > 0 && item.size <= 256 * 1024 * 1024
     && typeof item.sha256 === 'string' && /^[a-f0-9]{64}$/.test(item.sha256)
-    && item.url === `https://nivrapp-secure.vercel.app/downloads/Nivra-${item.version}-debug.apk`;
+    && (item.url === `https://nivrapp-secure.vercel.app/downloads/Nivra-${item.version}-debug.apk` || item.url === githubApkUrl(item.version));
 }
 
 export function androidReleaseFromFeed(value: unknown): AndroidRelease | null {
@@ -61,8 +50,9 @@ export function androidReleaseFromFeed(value: unknown): AndroidRelease | null {
     || !Number.isFinite(Date.parse(feed['publishedAt']))) return null;
   const android = feed['android'];
   if (!validAndroidRelease(android, 0) || android.version !== feed['version']) return null;
-  // Copy only the native contract. Feed extensions never cross the bridge.
-  return { version: android.version, versionCode: android.versionCode, url: android.url, sha256: android.sha256, size: android.size };
+  // The public manifest keeps its legacy URL so older clients can continue to
+  // read it. Native clients build the exact versioned GitHub download URL.
+  return { version: android.version, versionCode: android.versionCode, url: githubApkUrl(android.version), sha256: android.sha256, size: android.size };
 }
 
 @Injectable({ providedIn: 'root' })

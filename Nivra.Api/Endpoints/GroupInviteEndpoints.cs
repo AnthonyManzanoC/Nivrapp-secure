@@ -16,9 +16,10 @@ public static partial class EndpointExtensions
 {
     public static void MapGroupInviteEndpoints(this WebApplication app)
     {
-        app.MapPost("/conversations/{conversationId}/invite-links", async Task<IResult> (string conversationId, HttpContext http, NivraDbContext db, TimeProvider clock, CancellationToken ct) =>
+        app.MapPost("/conversations/{conversationId}/invite-links", async Task<IResult> (string conversationId, HttpContext http, NivraDbContext db, TimeProvider clock, CancellationToken ct) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var user = http.GetCurrentUser(); if (user is null) return Results.Unauthorized();
+            await using var tx = await GroupConversationPolicy.BeginMutationAsync(db, conversationId, ct);
             var conversation = await db.Conversations.Include(x => x.Participants).FirstOrDefaultAsync(x => x.Id == conversationId, ct);
             if (!InviteAdmin(conversation, user.UserId)) return Results.NotFound();
             var now = clock.GetUtcNow();
@@ -26,9 +27,10 @@ public static partial class EndpointExtensions
             var code = WebEncoders.Base64UrlEncode(RandomNumberGenerator.GetBytes(32));
             var invite = new GroupInviteLink { ConversationId = conversationId, CreatorUserId = user.UserId, TokenHash = InviteHash(code), ExpiresAt = now.AddHours(24) };
             db.GroupInviteLinks.Add(invite); await db.SaveChangesAsync(ct);
+            if (tx is not null) await tx.CommitAsync(ct);
             http.Response.Headers.CacheControl = "no-store";
             return Results.Ok(new { invite.Id, code, invite.ExpiresAt, invite.MaxUses });
-        }).RequireRateLimiting("auth");
+        })).RequireRateLimiting("auth");
         app.MapGet("/conversations/{conversationId}/invite-links", async Task<IResult> (string conversationId, HttpContext http, NivraDbContext db, CancellationToken ct) =>
         {
             var user = http.GetCurrentUser(); if (user is null) return Results.Unauthorized();
@@ -36,14 +38,16 @@ public static partial class EndpointExtensions
             if (!InviteAdmin(conversation, user.UserId)) return Results.NotFound();
             return Results.Ok(await db.GroupInviteLinks.Where(x => x.ConversationId == conversationId).OrderByDescending(x => x.ExpiresAt).Take(100).Select(x => new { x.Id, x.ExpiresAt, x.RevokedAt, x.Uses, x.MaxUses }).ToListAsync(ct));
         });
-        app.MapDelete("/conversations/{conversationId}/invite-links/{id}", async Task<IResult> (string conversationId, string id, HttpContext http, NivraDbContext db, TimeProvider clock, CancellationToken ct) =>
+        app.MapDelete("/conversations/{conversationId}/invite-links/{id}", async Task<IResult> (string conversationId, string id, HttpContext http, NivraDbContext db, TimeProvider clock, CancellationToken ct) => await CallCoordination.RunAsync<IResult>(db, async () =>
         {
             var user = http.GetCurrentUser(); if (user is null) return Results.Unauthorized();
+            await using var tx = await GroupConversationPolicy.BeginMutationAsync(db, conversationId, ct);
             var conversation = await db.Conversations.Include(x => x.Participants).FirstOrDefaultAsync(x => x.Id == conversationId, ct);
             if (!InviteAdmin(conversation, user.UserId)) return Results.NotFound();
-            await db.GroupInviteLinks.Where(x => x.Id == id && x.ConversationId == conversationId).ExecuteUpdateAsync(s => s.SetProperty(x => x.RevokedAt, clock.GetUtcNow()), ct);
+            await db.GroupInviteLinks.Where(x => x.Id == id && x.ConversationId == conversationId && x.RevokedAt == null).ExecuteUpdateAsync(s => s.SetProperty(x => x.RevokedAt, clock.GetUtcNow()), ct);
+            if (tx is not null) await tx.CommitAsync(ct);
             return Results.NoContent();
-        });
+        }));
         app.MapPost("/group-invites/preview", async Task<IResult> (GroupInviteCode request, HttpContext http, NivraDbContext db, TimeProvider clock, CancellationToken ct) =>
         {
             if (http.GetCurrentUser() is null) return Results.Unauthorized();
@@ -66,11 +70,14 @@ public static partial class EndpointExtensions
             var result = await db.Database.CreateExecutionStrategy().ExecuteAsync(async () =>
             {
                 db.ChangeTracker.Clear();
-                await using var tx = await db.Database.BeginTransactionAsync(ct);
+                var inviteConversation = await db.GroupInviteLinks.AsNoTracking().Where(link => link.TokenHash == hash)
+                    .Select(link => link.ConversationId).FirstOrDefaultAsync(ct);
+                if (inviteConversation is null) return (IResult)Results.NotFound();
+                // Always take the conversation lock before an invite row lock, including revocation.
+                await using var tx = await GroupConversationPolicy.BeginMutationAsync(db, inviteConversation, ct);
                 var invite = await db.GroupInviteLinks.FromSqlInterpolated($"SELECT * FROM public.\"GroupInviteLinks\" WHERE \"TokenHash\" = {hash} FOR UPDATE").FirstOrDefaultAsync(ct);
                 var now = clock.GetUtcNow();
                 if (invite is null || invite.RevokedAt != null || invite.ExpiresAt <= now) return (IResult)Results.NotFound();
-                await db.Database.ExecuteSqlInterpolatedAsync($"SELECT 1 FROM public.conversations WHERE \"Id\" = {invite.ConversationId} FOR UPDATE", ct);
                 var conversation = await db.Conversations.Include(x => x.Participants).FirstOrDefaultAsync(x => x.Id == invite.ConversationId, ct);
                 if (!InviteAdmin(conversation, invite.CreatorUserId)) return Results.NotFound();
                 var existing = conversation!.Participants.FirstOrDefault(x => x.UserId == user.UserId);
@@ -78,26 +85,29 @@ public static partial class EndpointExtensions
                 if (!GroupInvitePolicy.CanRedeem(invite, conversation, user.UserId, now)) return Results.NotFound();
                 if (existing is null)
                 {
-                    if (await db.Communities.AnyAsync(x=>x.Id==conversation.Id,ct) && conversation.Participants.Count(p=>p.RemovedAt==null)>=CommunityPolicy.MaxMembers) return Results.Conflict();
+                    if (conversation.Participants.Count(p => p.RemovedAt == null) >= CommunityPolicy.MaxMembers)
+                        return Error("group_full", "El grupo admite hasta 512 miembros.", StatusCodes.Status409Conflict);
                     if (invite.Uses >= invite.MaxUses) return Results.Conflict();
                     conversation.Participants.Add(new ConversationParticipant { UserId = user.UserId, Role = ParticipantRole.Member, CanInvite = NormalizeGroupSettings(conversation.Settings).AddMembers == "all", JoinedAt = now });
                     conversation.UpdatedAt = now;
                     invite.Uses++;
                     await db.SaveChangesAsync(ct);
                 }
-                await tx.CommitAsync(ct);
-                joinedId = conversation.Id;
-                return Results.Ok(new { conversationId = conversation.Id, communityId = await db.Communities.AnyAsync(c=>c.Id==conversation.Id,ct) ? conversation.Id : null });
+                var communityId = await db.Communities.AnyAsync(c => c.Id == conversation.Id, ct) ? conversation.Id : null;
+                if (tx is not null) await tx.CommitAsync(ct);
+                joinedId = existing is null ? conversation.Id : null;
+                return Results.Ok(new { conversationId = conversation.Id, communityId });
             });
             if (joinedId != null)
             {
-                var conversation = await store.GetConversationAsync(joinedId, ct);
-                if (conversation != null)
+                await NotifyCommittedGroupAsync(http, async token =>
                 {
-                    var response = await ToConversationResponseAsync(conversation, store, ct);
-                    await NotifyUsers(hub, conversation.Participants.Where(x => x.RemovedAt == null).Select(x => x.UserId), "conversation.updated", response);
-                    await NotifyUsers(hub, [user.UserId], "conversation.created", response);
-                }
+                    var conversation = await store.GetConversationAsync(joinedId, token);
+                    if (conversation is null) return;
+                    var response = await ToConversationResponseAsync(conversation, store, token);
+                    await NotifyGroupMembersAsync(hub, conversation, "conversation.updated", response, token);
+                    await NotifyGroupUsersAsync(hub, [user.UserId], "conversation.created", response, token);
+                });
             }
             return result;
         }).RequireRateLimiting("auth");

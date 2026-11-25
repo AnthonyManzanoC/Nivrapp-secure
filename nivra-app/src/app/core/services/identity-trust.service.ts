@@ -25,6 +25,7 @@ export interface IdentityContinuity {
   state: 'unknown' | 'unchanged' | 'verified' | 'pending-device' | 'changed';
   verifiedAt?: string;
   source?: 'this-device' | 'linked-device';
+  authorizedDevice?: boolean;
 }
 const MAX_TRANSFER_ENTRIES = 512;
 const MAX_TRANSFER_BYTES = 96 * 1024;
@@ -48,8 +49,8 @@ export class IdentityTrustService {
       request.onsuccess=()=>resolve(request.result);request.onerror=()=>{this.database=undefined;reject(request.error);};
     });
   }
-  async check(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true):Promise<void>{
-    await this.reconcile(scope,directory,isCurrent,false);
+  async check(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true,proofs:CheckedDeviceContinuity[]=[]):Promise<void>{
+    await this.reconcile(scope,directory,isCurrent,false,proofs);
   }
   /** An extra unverified browser must not stop delivery to already pinned devices. */
   async forDelivery(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true,proofs:CheckedDeviceContinuity[]=[]):Promise<PublicKeyDirectory>{
@@ -61,7 +62,7 @@ export class IdentityTrustService {
     let selected=directory,pending=0,authorized=false;
     await this.update(scope,directory.userId,current=>{
       if(!isCurrent())throw new Error('La comprobación ya no está activa.');
-      const acceptedRoot=current?.accountRoot??proofs.find(proof=>proof.accountRoot&&(!current||proof.rootEndorsed&&current.devices?.some(device=>device.deviceId===proof.sourceDeviceId&&device.identity===proof.sourceIdentity)))?.accountRoot;
+      const acceptedRoot=this.acceptedRoot(current,proofs);
       // An established root can never be replaced by a server-supplied directory.
       if(current?.accountRoot&&directory.accountIdentity?.rootKey&&current.accountRoot!==directory.accountIdentity.rootKey){
         this.setPending(scope,directory.userId,0);
@@ -96,7 +97,7 @@ export class IdentityTrustService {
     return selected;
   }
   /** Read-only continuity against a local pin; this never establishes new trust. */
-  async continuity(scope:string,directory:PublicKeyDirectory):Promise<IdentityContinuity>{
+  async continuity(scope:string,directory:PublicKeyDirectory,proofs:CheckedDeviceContinuity[]=[]):Promise<IdentityContinuity>{
     const fingerprint=await deriveDirectoryFingerprint(directory);
     const db=await this.open();
     const pin=await new Promise<Pin|undefined>((resolve,reject)=>{
@@ -106,11 +107,19 @@ export class IdentityTrustService {
     });
     if(!pin)return {state:'unknown'};
     if(pin.accountRoot&&directory.accountIdentity?.rootKey&&pin.accountRoot!==directory.accountIdentity.rootKey)return {state:'changed'};
+    let authorizedDevice = false;
     if(pin.digest!==fingerprint.digest && !this.hasKnownEncryptionKeys(pin,fingerprint)){
-      const match=this.knownDevices(pin,fingerprint);
-      return {state:!match.replaced&&match.ids.size>0?'pending-device':'changed'};
+      const match=this.knownDevices({...pin,accountRoot:this.acceptedRoot(pin,proofs)},fingerprint,proofs);
+      if(match.replaced||!match.ids.size)return {state:'changed'};
+      if(match.ids.size<fingerprint.deviceIdentities.length)return {state:'pending-device'};
+      authorizedDevice = true;
     }
-    return {state:pin.verified?'verified':'unchanged',...(pin.verifiedAt?{verifiedAt:pin.verifiedAt}:{}),source:pin.linkedFromDeviceId?'linked-device':'this-device'};
+    return {state:pin.verified?'verified':'unchanged',...(pin.verifiedAt?{verifiedAt:pin.verifiedAt}:{}),source:pin.linkedFromDeviceId?'linked-device':'this-device',
+      ...(authorizedDevice?{authorizedDevice:true}:{})};
+  }
+  private acceptedRoot(pin:Pin|undefined,proofs:CheckedDeviceContinuity[]):string|undefined {
+    return pin?.accountRoot ?? proofs.find(proof=>proof.accountRoot&&(!pin||
+      proof.rootEndorsed&&pin.devices?.some(device=>device.deviceId===proof.sourceDeviceId&&device.identity===proof.sourceIdentity)))?.accountRoot;
   }
   async confirm(scope:string,directory:PublicKeyDirectory,isCurrent:()=>boolean=()=>true):Promise<void>{
     const fingerprint=await deriveDirectoryFingerprint(directory);

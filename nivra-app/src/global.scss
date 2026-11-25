@@ -424,7 +424,7 @@ ion-action-sheet.nivra-avatar-action-sheet::part(content) {
   }
 }
 
-ion-modal:not(.story-viewer-modal):not(.nivra-story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
+ion-modal:not(.nivra-dark-viewer-modal):not(.story-viewer-modal):not(.nivra-story-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
 ion-popover::part(content) {
   color: var(--nivra-text);
   background: var(--nivra-panel-solid);
@@ -448,17 +448,60 @@ ion-modal.media-audio-modal {
   color: var(--nivra-text);
 }
 
-ion-modal.chat-media-viewer-modal {
-  --width: 100vw;
-  --height: 100dvh;
+ion-modal.nivra-dark-viewer-modal {
+  --width: 100%;
+  --height: 100%;
+  --max-width: none;
+  --max-height: none;
   --border-radius: 0;
-  --background: #030607;
-  color: var(--nivra-text);
+  --background: #070b0d;
+  --box-shadow: none;
+  color-scheme: dark;
+  color: #f5fffb;
 }
 
-ion-modal.chat-media-viewer-modal::part(content) {
+ion-modal.nivra-dark-viewer-modal::part(content) {
+  box-sizing: border-box;
+  inline-size: 100%;
+  block-size: 100%;
+  max-inline-size: none;
+  max-block-size: none;
+  overflow: hidden;
   border: 0;
-  background: #030607 !important;
+  border-radius: 0;
+  background: #070b0d;
+}
+
+ion-modal.media-audio-modal.nivra-dark-viewer-modal .audio-player-sheet {
+  box-sizing: border-box;
+  width: min(100%, 440px);
+  min-width: 0;
+  margin: auto;
+  padding: 18px;
+  grid-template-columns: minmax(0, 1fr);
+  border-color: #25433d;
+  border-radius: 16px;
+  background: #11201f;
+  color: #f5fffb;
+}
+
+ion-modal.media-audio-modal.nivra-dark-viewer-modal .audio-player-sheet small {
+  color: #b0c7c2;
+}
+
+ion-modal.media-audio-modal.nivra-dark-viewer-modal .audio-player-sheet ion-button {
+  min-width: 44px;
+  min-height: 44px;
+  --color: #f5fffb;
+}
+
+ion-modal.media-audio-modal.nivra-dark-viewer-modal::part(content) {
+  display: grid;
+  align-items: center;
+  padding: max(16px, var(--ion-safe-area-top, 0px))
+    max(16px, var(--ion-safe-area-right, 0px))
+    max(16px, var(--ion-safe-area-bottom, 0px))
+    max(16px, var(--ion-safe-area-left, 0px));
 }
 
 ion-modal.story-viewer-modal,
@@ -862,14 +905,14 @@ body.nivra-light-theme ion-content {
   --background: var(--nivra-bg);
 }
 
-body.nivra-light-theme ion-modal,
+body.nivra-light-theme ion-modal:not(.nivra-dark-viewer-modal),
 body.nivra-light-theme ion-popover {
   --background: var(--nivra-panel-solid);
   --color: var(--nivra-text);
   color: var(--nivra-text);
 }
 
-body.nivra-light-theme ion-modal:not(.story-viewer-modal):not(.nivra-story-viewer-modal):not(.chat-media-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
+body.nivra-light-theme ion-modal:not(.nivra-dark-viewer-modal):not(.story-viewer-modal):not(.nivra-story-viewer-modal):not(.profile-photo-viewer-modal):not(.account-photo-viewer-modal):not(.list-photo-viewer-modal):not(.media-viewer-modal)::part(content),
 body.nivra-light-theme ion-popover::part(content) {
   border: 1px solid var(--nivra-line);
   color: var(--nivra-text);
@@ -879,7 +922,7 @@ body.nivra-light-theme ion-popover::part(content) {
   box-shadow: var(--nivra-shadow-soft);
 }
 
-body.nivra-light-theme .audio-player-sheet {
+body.nivra-light-theme ion-modal:not(.nivra-dark-viewer-modal) .audio-player-sheet {
   color: var(--nivra-text);
   background:
     linear-gradient(180deg, rgba(255, 255, 255, .96), rgba(247, 248, 251, .9)),

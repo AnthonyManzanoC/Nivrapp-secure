@@ -841,7 +841,7 @@
   "CHAT.TAP_TO_OPEN_STORIES": "Appuyez pour les voir dans l'ordre.",
   "CHAT.UNREAD_MESSAGES": "Pas lu",
   "CHAT.VIEW_GROUP_PHOTO": "Voir photo de groupe",
-  "CHAT.VIEW_ONCE_CLOSE_NOTICE": "Lorsque vous fermerez, ce message sera marqué comme ouvert et ne sera plus disponible.",
+  "CHAT.VIEW_ONCE_CLOSE_NOTICE": "Ce message ne sera plus disponible après avoir fermé cette fenêtre.",
   "CHAT.VIEW_ONCE_HINT": "voir une fois",
   "CHAT.VIEW_ONCE_OPENED": "Message une fois ouvert",
   "CHAT.VIEW_ONCE_TEXT": "Message",
