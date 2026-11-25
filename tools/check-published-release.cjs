@@ -12,10 +12,10 @@ const origin = 'https://nivrapp-secure.vercel.app';
 const repository = 'AnthonyManzanoC/Nivrapp-secure';
 const version = process.argv[2];
 const commit = process.argv[3];
-const githubDirect = process.argv.includes('--github-direct');
+const githubDirect = !process.argv.includes('--verify-web');
 const artifactOption = process.argv.indexOf('--artifacts');
 if (!/^\d+\.\d+\.\d+$/.test(version || '') || !/^[a-f0-9]{40}$/.test(commit || '')) {
-  throw new Error('Usage: node tools/check-published-release.cjs VERSION FULL_SOURCE_COMMIT [--github-direct] [--artifacts DIRECTORY]');
+  throw new Error('Usage: node tools/check-published-release.cjs VERSION FULL_SOURCE_COMMIT [--verify-web] [--artifacts DIRECTORY]');
 }
 const artifacts = artifactOption === -1 ? path.resolve(__dirname, '../artifacts') : path.resolve(process.argv[artifactOption + 1]);
 const expected = validatedManifest(JSON.parse(fs.readFileSync(path.join(artifacts, `Nivra-${version}-update-manifest.json`), 'utf8')));

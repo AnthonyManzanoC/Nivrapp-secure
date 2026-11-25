@@ -82,6 +82,7 @@ test('metadata redirects admit only the release repository feed and GitHub asset
   for (const url of [
     'https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/latest/download/latest.json',
     'https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v4.1.0/latest.json',
+    'https://release-assets.githubusercontent.com/github-production-release-asset/123/id?signature=test',
     'https://release-assets.githubusercontent.com/github-production-release-asset-2e65be/123/id?signature=test',
   ]) assert.equal(allowedUpdateRedirect(url), true, url);
   for (const url of [
@@ -93,6 +94,7 @@ test('metadata redirects admit only the release repository feed and GitHub asset
     'https://release-assets.githubusercontent.com.attacker.test/github-production-release-asset-2e65be/123/id',
     'https://release-assets.githubusercontent.com:8443/github-production-release-asset-2e65be/123/id',
     'https://release-assets.githubusercontent.com/other/123/id',
+    'https://release-assets.githubusercontent.com/github-production-release-asset/123/id/extra',
     'file:///C:/setup.exe',
   ]) assert.equal(allowedUpdateRedirect(url), false, url);
 });
@@ -101,6 +103,7 @@ test('installer redirects pin the exact repository, release and filename', () =>
   const release = validateManifest(feed());
   const expected = 'https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/download/v4.1.0/Nivra-4.1.0-Setup.exe';
   assert.equal(allowedUpdateRedirect(expected, release), true);
+  assert.equal(allowedUpdateRedirect('https://release-assets.githubusercontent.com/github-production-release-asset/123/id?signature=test', release), true);
   for (const url of [expected.replace('v4.1.0/', 'v4.0.1/'), expected.replace('Setup.exe', 'portable.zip'), expected + '?next=other', expected.replace('github.com/', 'github.com.attacker.test/')]) {
     assert.equal(allowedUpdateRedirect(url, release), false);
   }

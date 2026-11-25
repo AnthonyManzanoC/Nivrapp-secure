@@ -1,4 +1,4 @@
-export const NIVRA_VERSION = '10.2.0';
+export const NIVRA_VERSION = '10.2.1';
 export const NIVRA_CALL_PROTOCOL = 2;
 export const NIVRA_PUBLIC_SITE_URL = 'https://nivrapp-secure.vercel.app';
 export const NIVRA_UPDATE_URL = 'https://github.com/AnthonyManzanoC/Nivrapp-secure/releases/latest';

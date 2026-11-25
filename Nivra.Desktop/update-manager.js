@@ -43,7 +43,7 @@ function allowedUpdateRedirect(value, release = null) {
   const url = safeHttps(value);
   if (!url) return false;
   if (url.hostname === 'release-assets.githubusercontent.com') {
-    return /^\/github-production-release-asset-[a-z0-9]+\/[^/]+\//i.test(url.pathname);
+    return /^\/github-production-release-asset(?:-[a-z0-9]+)?\/[^/]+\/[^/]+$/i.test(url.pathname);
   }
   if (url.origin !== RELEASE_ORIGIN || url.search) return false;
   if (release) {
